@@ -5,3 +5,4 @@ plugins {
 rootProject.name = "entkt"
 include("schema")
 include("codegen")
+include("gradle-plugin")
