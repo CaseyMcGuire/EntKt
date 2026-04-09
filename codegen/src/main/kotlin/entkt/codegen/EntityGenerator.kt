@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
@@ -20,11 +21,30 @@ class EntityGenerator(
         val mixinFields = schema.mixins().flatMap { it.fields() }
         val allFields = fields + mixinFields
 
+        val createClass = ClassName(packageName, "${schemaName}Create")
+        val updateClass = ClassName(packageName, "${schemaName}Update")
+
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
             .primaryConstructor(buildConstructor(idField, allFields))
             .addProperty(idField)
             .addProperties(allFields.map { buildProperty(it) })
+            .addFunction(
+                FunSpec.builder("update")
+                    .returns(updateClass)
+                    .addStatement("return %T(this)", updateClass)
+                    .build()
+            )
+            .addType(
+                TypeSpec.companionObjectBuilder()
+                    .addFunction(
+                        FunSpec.builder("create")
+                            .returns(createClass)
+                            .addStatement("return %T()", createClass)
+                            .build()
+                    )
+                    .build()
+            )
             .build()
 
         return FileSpec.builder(packageName, className)

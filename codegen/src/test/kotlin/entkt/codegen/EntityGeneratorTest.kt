@@ -91,4 +91,20 @@ class EntityGeneratorTest {
         val file = generator.generate("Car", Car)
         assertEquals("com.example.ent", file.packageName)
     }
+
+    @Test
+    fun `generates create companion method`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("companion object")) { "Should have companion object\n$output" }
+        assert(output.contains("fun create(): CarCreate")) { "Should have create method\n$output" }
+    }
+
+    @Test
+    fun `generates update instance method`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun update(): CarUpdate")) { "Should have update method\n$output" }
+        assert(output.contains("CarUpdate(this)")) { "Should pass this to update builder\n$output" }
+    }
 }
