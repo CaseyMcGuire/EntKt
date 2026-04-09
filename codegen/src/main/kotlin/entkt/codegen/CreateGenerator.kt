@@ -132,10 +132,12 @@ class CreateGenerator(
 
         for (field in allFields) {
             val propertyName = toCamelCase(field.name)
-            if (!field.optional && !field.nillable && field.default == null) {
-                constructorArgs.add("$propertyName = $propertyName")
-            } else {
-                constructorArgs.add("$propertyName = this.$propertyName")
+            val isRequired = !field.optional && !field.nillable && field.default == null
+            val hasDefault = !field.optional && !field.nillable && field.default != null
+            when {
+                isRequired -> constructorArgs.add("$propertyName = $propertyName")
+                hasDefault -> constructorArgs.add("$propertyName = this.$propertyName ?: ${kotlinLiteral(field.default!!)}")
+                else -> constructorArgs.add("$propertyName = this.$propertyName")
             }
         }
 
@@ -153,5 +155,12 @@ class CreateGenerator(
         )
 
         return builder.build()
+    }
+
+    private fun kotlinLiteral(value: Any): String = when (value) {
+        is String -> "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+        is Boolean -> value.toString()
+        is Number -> value.toString()
+        else -> value.toString()
     }
 }

@@ -6,3 +6,5 @@ rootProject.name = "entkt"
 include("schema")
 include("codegen")
 include("gradle-plugin")
+include("example")
+include("example-demo")

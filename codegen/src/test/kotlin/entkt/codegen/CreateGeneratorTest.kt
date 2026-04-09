@@ -46,4 +46,18 @@ class CreateGeneratorTest {
         assert(output.contains("fun setCreatedAt(")) { "Should have mixin setter\n$output" }
         assert(output.contains("fun setUpdatedAt(")) { "Should have mixin setter\n$output" }
     }
+
+    @Test
+    fun `save falls back to default literal for fields with a default`() {
+        val output = generator.generate("User", User).toString()
+
+        // User.active has .default(true). The constructor param is non-null,
+        // so save() must coalesce to the default rather than passing this.active.
+        assert(output.contains("active = this.active ?: true")) {
+            "Should coalesce to default literal for active\n$output"
+        }
+        assert(!output.contains(""""active is required"""")) {
+            "Should not validate a field with a default\n$output"
+        }
+    }
 }
