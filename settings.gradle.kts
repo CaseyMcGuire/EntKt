@@ -4,3 +4,4 @@ plugins {
 
 rootProject.name = "entkt"
 include("schema")
+include("codegen")
