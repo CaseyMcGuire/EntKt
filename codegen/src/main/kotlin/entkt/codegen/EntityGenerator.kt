@@ -23,6 +23,7 @@ class EntityGenerator(
 
         val createClass = ClassName(packageName, "${schemaName}Create")
         val updateClass = ClassName(packageName, "${schemaName}Update")
+        val queryClass = ClassName(packageName, "${schemaName}Query")
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
@@ -41,6 +42,12 @@ class EntityGenerator(
                         FunSpec.builder("create")
                             .returns(createClass)
                             .addStatement("return %T()", createClass)
+                            .build()
+                    )
+                    .addFunction(
+                        FunSpec.builder("query")
+                            .returns(queryClass)
+                            .addStatement("return %T()", queryClass)
                             .build()
                     )
                     .build()

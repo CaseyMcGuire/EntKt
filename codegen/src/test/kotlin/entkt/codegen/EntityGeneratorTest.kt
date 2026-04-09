@@ -107,4 +107,11 @@ class EntityGeneratorTest {
         assert(output.contains("fun update(): CarUpdate")) { "Should have update method\n$output" }
         assert(output.contains("CarUpdate(this)")) { "Should pass this to update builder\n$output" }
     }
+
+    @Test
+    fun `generates query companion method`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun query(): CarQuery")) { "Should have query method\n$output" }
+    }
 }
