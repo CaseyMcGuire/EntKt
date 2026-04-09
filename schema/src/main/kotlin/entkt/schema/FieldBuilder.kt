@@ -1,6 +1,7 @@
 package entkt.schema
 
-class FieldBuilder(
+@Suppress("UNCHECKED_CAST")
+abstract class FieldBuilder<T : FieldBuilder<T>>(
     private val name: String,
     private val type: FieldType,
 ) {
@@ -12,30 +13,26 @@ class FieldBuilder(
     private var default: Any? = null
     private var updateDefault: Any? = null
     private var enumValues: List<String>? = null
-    private var validators: MutableList<Validator> = mutableListOf()
+    protected var validators: MutableList<Validator> = mutableListOf()
     private var comment: String? = null
     private var storageKey: String? = null
 
-    fun optional(): FieldBuilder = apply { optional = true }
-    fun nillable(): FieldBuilder = apply { nillable = true }
-    fun unique(): FieldBuilder = apply { unique = true }
-    fun immutable(): FieldBuilder = apply { immutable = true }
-    fun sensitive(): FieldBuilder = apply { sensitive = true }
-    fun default(value: Any): FieldBuilder = apply { default = value }
-    fun updateDefault(value: Any): FieldBuilder = apply { updateDefault = value }
-    fun values(vararg values: String): FieldBuilder = apply { enumValues = values.toList() }
-    fun comment(text: String): FieldBuilder = apply { comment = text }
-    fun storageKey(key: String): FieldBuilder = apply { storageKey = key }
-    fun validate(validator: Validator): FieldBuilder = apply { validators.add(validator) }
-    fun minLen(min: Int): FieldBuilder = validate(Validators.minLen(min))
-    fun maxLen(max: Int): FieldBuilder = validate(Validators.maxLen(max))
-    fun notEmpty(): FieldBuilder = validate(Validators.notEmpty())
-    fun match(pattern: Regex): FieldBuilder = validate(Validators.match(pattern))
-    fun min(min: Number): FieldBuilder = validate(Validators.min(min))
-    fun max(max: Number): FieldBuilder = validate(Validators.max(max))
-    fun positive(): FieldBuilder = validate(Validators.positive())
-    fun negative(): FieldBuilder = validate(Validators.negative())
-    fun nonNegative(): FieldBuilder = validate(Validators.nonNegative())
+    private fun self(): T = this as T
+
+    fun optional(): T = apply { optional = true }.let { self() }
+    fun nillable(): T = apply { nillable = true }.let { self() }
+    fun unique(): T = apply { unique = true }.let { self() }
+    fun immutable(): T = apply { immutable = true }.let { self() }
+    fun sensitive(): T = apply { sensitive = true }.let { self() }
+    fun default(value: Any): T = apply { default = value }.let { self() }
+    fun updateDefault(value: Any): T = apply { updateDefault = value }.let { self() }
+    fun comment(text: String): T = apply { comment = text }.let { self() }
+    fun storageKey(key: String): T = apply { storageKey = key }.let { self() }
+    fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
+
+    internal fun setEnumValues(values: List<String>) {
+        this.enumValues = values
+    }
 
     fun build(): Field = Field(
         name = name,

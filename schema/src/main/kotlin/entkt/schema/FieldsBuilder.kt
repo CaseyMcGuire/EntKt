@@ -1,19 +1,19 @@
 package entkt.schema
 
 class FieldsBuilder {
-    private val fields = mutableListOf<FieldBuilder>()
+    private val fields = mutableListOf<FieldBuilder<*>>()
 
-    fun string(name: String): FieldBuilder = FieldBuilder(name, FieldType.STRING).also { fields.add(it) }
-    fun text(name: String): FieldBuilder = FieldBuilder(name, FieldType.TEXT).also { fields.add(it) }
-    fun bool(name: String): FieldBuilder = FieldBuilder(name, FieldType.BOOL).also { fields.add(it) }
-    fun int(name: String): FieldBuilder = FieldBuilder(name, FieldType.INT).also { fields.add(it) }
-    fun long(name: String): FieldBuilder = FieldBuilder(name, FieldType.LONG).also { fields.add(it) }
-    fun float(name: String): FieldBuilder = FieldBuilder(name, FieldType.FLOAT).also { fields.add(it) }
-    fun double(name: String): FieldBuilder = FieldBuilder(name, FieldType.DOUBLE).also { fields.add(it) }
-    fun time(name: String): FieldBuilder = FieldBuilder(name, FieldType.TIME).also { fields.add(it) }
-    fun uuid(name: String): FieldBuilder = FieldBuilder(name, FieldType.UUID).also { fields.add(it) }
-    fun bytes(name: String): FieldBuilder = FieldBuilder(name, FieldType.BYTES).also { fields.add(it) }
-    fun enum(name: String): FieldBuilder = FieldBuilder(name, FieldType.ENUM).also { fields.add(it) }
+    fun string(name: String): StringFieldBuilder = StringFieldBuilder(name).also { fields.add(it) }
+    fun text(name: String): TextFieldBuilder = TextFieldBuilder(name).also { fields.add(it) }
+    fun bool(name: String): BoolFieldBuilder = BoolFieldBuilder(name).also { fields.add(it) }
+    fun int(name: String): IntFieldBuilder = IntFieldBuilder(name).also { fields.add(it) }
+    fun long(name: String): LongFieldBuilder = LongFieldBuilder(name).also { fields.add(it) }
+    fun float(name: String): FloatFieldBuilder = FloatFieldBuilder(name).also { fields.add(it) }
+    fun double(name: String): DoubleFieldBuilder = DoubleFieldBuilder(name).also { fields.add(it) }
+    fun time(name: String): TimeFieldBuilder = TimeFieldBuilder(name).also { fields.add(it) }
+    fun uuid(name: String): UuidFieldBuilder = UuidFieldBuilder(name).also { fields.add(it) }
+    fun bytes(name: String): BytesFieldBuilder = BytesFieldBuilder(name).also { fields.add(it) }
+    fun enum(name: String): EnumFieldBuilder = EnumFieldBuilder(name).also { fields.add(it) }
 
     fun build(): List<Field> = fields.map { it.build() }
 }
