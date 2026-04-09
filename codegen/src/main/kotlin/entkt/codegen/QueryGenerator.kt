@@ -21,13 +21,18 @@ class QueryGenerator(
     private val orderFieldClass = ClassName("entkt.query", "OrderField")
     private val orderDirectionClass = ClassName("entkt.query", "OrderDirection")
 
-    fun generate(schemaName: String, schema: EntSchema): FileSpec {
+    fun generate(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String> = emptyMap(),
+    ): FileSpec {
         val className = "${schemaName}Query"
         val queryClass = ClassName(packageName, className)
 
         val fields = schema.fields()
         val mixinFields = schema.mixins().flatMap { it.fields() }
         val allFields = fields + mixinFields
+        val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addProperty(
@@ -70,6 +75,7 @@ class QueryGenerator(
             .addFunction(buildLimit(queryClass))
             .addFunction(buildOffset(queryClass))
             .addFunctions(allFields.flatMap { generatePredicateMethods(queryClass, it) })
+            .addFunctions(edgeFks.flatMap { generateEdgePredicateMethods(queryClass, it) })
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -164,6 +170,24 @@ class QueryGenerator(
             methods.add(predicateMethod("where${capName}HasPrefix", field.name, "HAS_PREFIX", typeName, queryClass))
             methods.add(predicateMethod("where${capName}HasSuffix", field.name, "HAS_SUFFIX", typeName, queryClass))
         }
+
+        return methods
+    }
+
+    private fun generateEdgePredicateMethods(queryClass: ClassName, fk: EdgeFk): List<FunSpec> {
+        val capName = fk.propertyName.replaceFirstChar { it.uppercase() }
+        val edgeCap = toCamelCase(fk.edgeName).replaceFirstChar { it.uppercase() }
+        val typeName = fk.idType.toTypeName()
+        val methods = mutableListOf<FunSpec>()
+
+        methods.add(predicateMethod("where${capName}Eq", fk.columnName, "EQ", typeName, queryClass))
+        methods.add(predicateMethod("where${capName}Neq", fk.columnName, "NEQ", typeName, queryClass))
+        methods.add(predicateListMethod("where${capName}In", fk.columnName, "IN", typeName, queryClass))
+        methods.add(predicateListMethod("where${capName}NotIn", fk.columnName, "NOT_IN", typeName, queryClass))
+
+        // whereHasOwner / whereHasNoOwner — alias for IS_NOT_NULL / IS_NULL on the FK
+        methods.add(predicateNullMethod("whereHas$edgeCap", fk.columnName, "IS_NOT_NULL", queryClass))
+        methods.add(predicateNullMethod("whereHasNo$edgeCap", fk.columnName, "IS_NULL", queryClass))
 
         return methods
     }

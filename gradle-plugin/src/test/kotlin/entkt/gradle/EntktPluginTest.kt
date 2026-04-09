@@ -53,10 +53,20 @@ class EntktPluginTest {
 
                 import entkt.schema.*
 
+                object Owner : EntSchema() {
+                    override fun fields() = fields {
+                        string("name")
+                    }
+                }
+
                 object Pet : EntSchema() {
                     override fun fields() = fields {
                         string("name")
                         int("age").optional()
+                    }
+
+                    override fun edges() = edges {
+                        from("owner", Owner).unique()
                     }
                 }
                 """.trimIndent()
@@ -101,11 +111,21 @@ class EntktPluginTest {
             assertTrue(generatedDir.resolve("PetCreate.kt").exists(), "Should generate PetCreate.kt")
             assertTrue(generatedDir.resolve("PetUpdate.kt").exists(), "Should generate PetUpdate.kt")
             assertTrue(generatedDir.resolve("PetQuery.kt").exists(), "Should generate PetQuery.kt")
+            assertTrue(generatedDir.resolve("Owner.kt").exists(), "Should generate Owner.kt")
 
             val entityContent = generatedDir.resolve("Pet.kt").readText()
             assertTrue(entityContent.contains("data class Pet"), "Should generate data class")
             assertTrue(entityContent.contains("val name: String"), "Should have name field")
             assertTrue(entityContent.contains("val age: Int?"), "Should have nullable age")
+            assertTrue(entityContent.contains("val ownerId: Int?"), "Should have FK from unique edge")
+
+            val createContent = generatedDir.resolve("PetCreate.kt").readText()
+            assertTrue(createContent.contains("setOwner(owner: Owner)"), "Should have setOwner convenience setter")
+            assertTrue(createContent.contains("setOwnerId("), "Should have setOwnerId setter")
+
+            val queryContent = generatedDir.resolve("PetQuery.kt").readText()
+            assertTrue(queryContent.contains("whereHasOwner()"), "Should have whereHasOwner alias")
+            assertTrue(queryContent.contains("whereOwnerIdEq("), "Should have FK equality predicate")
         } finally {
             projectDir.deleteRecursively()
         }

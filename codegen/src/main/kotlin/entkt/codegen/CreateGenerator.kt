@@ -13,16 +13,23 @@ class CreateGenerator(
     private val packageName: String,
 ) {
 
-    fun generate(schemaName: String, schema: EntSchema): FileSpec {
+    fun generate(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String> = emptyMap(),
+    ): FileSpec {
         val className = "${schemaName}Create"
         val fields = schema.fields()
         val mixinFields = schema.mixins().flatMap { it.fields() }
         val allFields = fields + mixinFields
+        val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addProperties(allFields.map { buildProperty(it) })
+            .addProperties(edgeFks.map { buildEdgeProperty(it) })
             .addFunctions(allFields.map { buildSetter(className, it) })
-            .addFunction(buildSaveFunction(schemaName, schema, allFields))
+            .addFunctions(edgeFks.flatMap { buildEdgeSetters(className, it) })
+            .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -33,6 +40,15 @@ class CreateGenerator(
     private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.type.toTypeName().copy(nullable = true)
         return PropertySpec.builder(toCamelCase(field.name), typeName)
+            .addModifiers(KModifier.PRIVATE)
+            .mutable(true)
+            .initializer("null")
+            .build()
+    }
+
+    private fun buildEdgeProperty(fk: EdgeFk): PropertySpec {
+        val typeName = fk.idType.toTypeName().copy(nullable = true)
+        return PropertySpec.builder(fk.propertyName, typeName)
             .addModifiers(KModifier.PRIVATE)
             .mutable(true)
             .initializer("null")
@@ -50,10 +66,36 @@ class CreateGenerator(
             .build()
     }
 
+    private fun buildEdgeSetters(className: String, fk: EdgeFk): List<FunSpec> {
+        val cap = fk.propertyName.replaceFirstChar { it.uppercase() }
+        val edgeCap = toCamelCase(fk.edgeName).replaceFirstChar { it.uppercase() }
+        val returnType = ClassName(packageName, className)
+        val targetClass = ClassName(packageName, fk.targetName)
+
+        // setOwnerId(id: Long): CarCreate
+        val idSetter = FunSpec.builder("set$cap")
+            .addParameter("value", fk.idType.toTypeName())
+            .returns(returnType)
+            .addStatement("this.%L = value", fk.propertyName)
+            .addStatement("return this")
+            .build()
+
+        // setOwner(owner: User): CarCreate
+        val entitySetter = FunSpec.builder("set$edgeCap")
+            .addParameter(toCamelCase(fk.edgeName), targetClass)
+            .returns(returnType)
+            .addStatement("this.%L = %L.id", fk.propertyName, toCamelCase(fk.edgeName))
+            .addStatement("return this")
+            .build()
+
+        return listOf(idSetter, entitySetter)
+    }
+
     private fun buildSaveFunction(
         schemaName: String,
         schema: EntSchema,
         allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val builder = FunSpec.builder("save")
@@ -72,9 +114,20 @@ class CreateGenerator(
             }
         }
 
+        // Validate required edge FKs
+        for (fk in edgeFks) {
+            if (fk.required) {
+                builder.addStatement(
+                    "val %L = this.%L ?: throw IllegalStateException(%S)",
+                    fk.propertyName,
+                    fk.propertyName,
+                    "${fk.edgeName} is required",
+                )
+            }
+        }
+
         // Build return statement
         val constructorArgs = mutableListOf<String>()
-        val idType = schema.id().type.toTypeName()
         constructorArgs.add("id = TODO(\"ID generation\")")
 
         for (field in allFields) {
@@ -83,6 +136,14 @@ class CreateGenerator(
                 constructorArgs.add("$propertyName = $propertyName")
             } else {
                 constructorArgs.add("$propertyName = this.$propertyName")
+            }
+        }
+
+        for (fk in edgeFks) {
+            if (fk.required) {
+                constructorArgs.add("${fk.propertyName} = ${fk.propertyName}")
+            } else {
+                constructorArgs.add("${fk.propertyName} = this.${fk.propertyName}")
             }
         }
 

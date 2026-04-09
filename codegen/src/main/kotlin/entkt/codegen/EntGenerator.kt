@@ -18,12 +18,13 @@ class EntGenerator(
     private val queryGenerator = QueryGenerator(packageName)
 
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
+        val schemaNames: Map<EntSchema, String> = schemas.associate { it.schema to it.name }
         return schemas.flatMap { (name, schema) ->
             listOf(
-                entityGenerator.generate(name, schema),
-                createGenerator.generate(name, schema),
-                updateGenerator.generate(name, schema),
-                queryGenerator.generate(name, schema),
+                entityGenerator.generate(name, schema, schemaNames),
+                createGenerator.generate(name, schema, schemaNames),
+                updateGenerator.generate(name, schema, schemaNames),
+                queryGenerator.generate(name, schema, schemaNames),
             )
         }
     }

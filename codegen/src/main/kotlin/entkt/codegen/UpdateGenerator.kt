@@ -13,11 +13,16 @@ class UpdateGenerator(
     private val packageName: String,
 ) {
 
-    fun generate(schemaName: String, schema: EntSchema): FileSpec {
+    fun generate(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String> = emptyMap(),
+    ): FileSpec {
         val className = "${schemaName}Update"
         val fields = schema.fields()
         val mixinFields = schema.mixins().flatMap { it.fields() }
-        val allFields = (fields + mixinFields).filter { !it.immutable }
+        val mutableFields = (fields + mixinFields).filter { !it.immutable }
+        val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val entityClass = ClassName(packageName, schemaName)
 
@@ -33,9 +38,11 @@ class UpdateGenerator(
                     .initializer("entity")
                     .build()
             )
-            .addProperties(allFields.map { buildProperty(it) })
-            .addFunctions(allFields.map { buildSetter(className, it) })
-            .addFunction(buildSaveFunction(schemaName, schema, allFields))
+            .addProperties(mutableFields.map { buildProperty(it) })
+            .addProperties(edgeFks.map { buildEdgeProperty(it) })
+            .addFunctions(mutableFields.map { buildSetter(className, it) })
+            .addFunctions(edgeFks.flatMap { buildEdgeSetters(className, it) })
+            .addFunction(buildSaveFunction(schemaName, schema, edgeFks))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -46,6 +53,15 @@ class UpdateGenerator(
     private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.type.toTypeName().copy(nullable = true)
         return PropertySpec.builder(toCamelCase(field.name), typeName)
+            .addModifiers(KModifier.PRIVATE)
+            .mutable(true)
+            .initializer("null")
+            .build()
+    }
+
+    private fun buildEdgeProperty(fk: EdgeFk): PropertySpec {
+        val typeName = fk.idType.toTypeName().copy(nullable = true)
+        return PropertySpec.builder(fk.propertyName, typeName)
             .addModifiers(KModifier.PRIVATE)
             .mutable(true)
             .initializer("null")
@@ -63,16 +79,38 @@ class UpdateGenerator(
             .build()
     }
 
+    private fun buildEdgeSetters(className: String, fk: EdgeFk): List<FunSpec> {
+        val cap = fk.propertyName.replaceFirstChar { it.uppercase() }
+        val edgeCap = toCamelCase(fk.edgeName).replaceFirstChar { it.uppercase() }
+        val returnType = ClassName(packageName, className)
+        val targetClass = ClassName(packageName, fk.targetName)
+
+        val idSetter = FunSpec.builder("set$cap")
+            .addParameter("value", fk.idType.toTypeName())
+            .returns(returnType)
+            .addStatement("this.%L = value", fk.propertyName)
+            .addStatement("return this")
+            .build()
+
+        val entitySetter = FunSpec.builder("set$edgeCap")
+            .addParameter(toCamelCase(fk.edgeName), targetClass)
+            .returns(returnType)
+            .addStatement("this.%L = %L.id", fk.propertyName, toCamelCase(fk.edgeName))
+            .addStatement("return this")
+            .build()
+
+        return listOf(idSetter, entitySetter)
+    }
+
     private fun buildSaveFunction(
         schemaName: String,
         schema: EntSchema,
-        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val builder = FunSpec.builder("save")
             .returns(entityClass)
 
-        // For each mutable field, use the new value if set, otherwise keep the entity's value
         val allFields = schema.fields() + schema.mixins().flatMap { it.fields() }
         val constructorArgs = mutableListOf("id = entity.id")
 
@@ -83,6 +121,10 @@ class UpdateGenerator(
             } else {
                 constructorArgs.add("$propertyName = this.$propertyName ?: entity.$propertyName")
             }
+        }
+
+        for (fk in edgeFks) {
+            constructorArgs.add("${fk.propertyName} = this.${fk.propertyName} ?: entity.${fk.propertyName}")
         }
 
         builder.addStatement(
