@@ -1,0 +1,19 @@
+package entkt.schema
+
+data class Edge(
+    val name: String,
+    val type: EdgeType,
+    val target: EntSchema,
+    val unique: Boolean = false,
+    val required: Boolean = false,
+    val field: String? = null,
+    val through: Through? = null,
+    val comment: String? = null,
+    val storageKey: String? = null,
+    val ref: String? = null,
+)
+
+data class Through(
+    val name: String,
+    val target: EntSchema,
+)

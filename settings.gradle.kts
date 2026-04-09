@@ -3,4 +3,4 @@ plugins {
 }
 
 rootProject.name = "entkt"
-include("lib")
+include("schema")
