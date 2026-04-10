@@ -50,8 +50,12 @@ class PostgresDriver(
     override fun register(schema: EntitySchema) {
         if (schemas.putIfAbsent(schema.table, schema) != null) return
         val ddl = createTableSql(schema)
+        val indexDdl = createIndexesSql(schema)
         dataSource.connection.use { conn ->
-            conn.createStatement().use { it.execute(ddl) }
+            conn.createStatement().use { stmt ->
+                stmt.execute(ddl)
+                for (sql in indexDdl) stmt.execute(sql)
+            }
         }
     }
 
@@ -230,10 +234,24 @@ class PostgresDriver(
         val constraints = buildList {
             if (col.primaryKey) add("PRIMARY KEY")
             if (!col.nullable && !col.primaryKey && !isAutoSerial(schema, col)) add("NOT NULL")
+            if (col.unique && !col.primaryKey) add("UNIQUE")
         }.joinToString(" ")
         val tail = if (constraints.isEmpty()) "" else " $constraints"
         return "${quote(col.name)} $sqlType$tail"
     }
+
+    private fun createIndexesSql(schema: EntitySchema): List<String> =
+        schema.indexes.map { idx ->
+            val cols = idx.columns.joinToString(", ") { quote(it) }
+            val name = idx.storageKey
+                ?: buildString {
+                    append("idx_${schema.table}")
+                    for (col in idx.columns) append("_$col")
+                    if (idx.unique) append("_unique")
+                }
+            val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
+            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} ($cols)"
+        }
 
     private fun isAutoSerial(schema: EntitySchema, col: ColumnMetadata): Boolean {
         if (!col.primaryKey) return false

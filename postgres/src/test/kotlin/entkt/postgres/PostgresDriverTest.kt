@@ -8,6 +8,7 @@ import entkt.runtime.ColumnMetadata
 import entkt.runtime.EdgeMetadata
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
+import entkt.runtime.IndexMetadata
 import entkt.schema.FieldType
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
@@ -448,6 +449,90 @@ class PostgresDriverTest {
         assertFailsWith<IllegalStateException> {
             captured!!.insert("users", mapOf<String, Any?>("name" to "Late"))
         }
+    }
+
+    // ---------- Unique / Index DDL ----------
+
+    @Test
+    fun `unique column constraint rejects duplicate values`() {
+        val schema = EntitySchema(
+            table = "emails",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("addr", FieldType.STRING, nullable = false, unique = true),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = PostgresDriver(dataSource)
+        driver.register(schema)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE \"emails\" RESTART IDENTITY")
+            }
+        }
+
+        driver.insert("emails", mapOf("addr" to "a@b.com"))
+        // Second insert with the same addr should violate the UNIQUE constraint.
+        assertFailsWith<Exception> {
+            driver.insert("emails", mapOf("addr" to "a@b.com"))
+        }
+    }
+
+    @Test
+    fun `composite unique index rejects duplicate combinations`() {
+        val schema = EntitySchema(
+            table = "memberships",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("user_id", FieldType.LONG, nullable = false),
+                ColumnMetadata("group_id", FieldType.LONG, nullable = false),
+            ),
+            edges = emptyMap(),
+            indexes = listOf(
+                IndexMetadata(columns = listOf("user_id", "group_id"), unique = true),
+            ),
+        )
+        val driver = PostgresDriver(dataSource)
+        driver.register(schema)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE \"memberships\" RESTART IDENTITY")
+            }
+        }
+
+        driver.insert("memberships", mapOf("user_id" to 1L, "group_id" to 10L))
+        // Same pair should be rejected.
+        assertFailsWith<Exception> {
+            driver.insert("memberships", mapOf("user_id" to 1L, "group_id" to 10L))
+        }
+        // Different pair should be fine.
+        driver.insert("memberships", mapOf("user_id" to 1L, "group_id" to 20L))
+    }
+
+    @Test
+    fun `non-unique composite index is created without error`() {
+        val schema = EntitySchema(
+            table = "events",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("category", FieldType.STRING, nullable = false),
+                ColumnMetadata("priority", FieldType.INT, nullable = false),
+            ),
+            edges = emptyMap(),
+            indexes = listOf(
+                IndexMetadata(columns = listOf("category", "priority")),
+            ),
+        )
+        val driver = PostgresDriver(dataSource)
+        // Should not throw — idempotent index creation.
+        driver.register(schema)
+        driver.register(schema)
     }
 
     @Test

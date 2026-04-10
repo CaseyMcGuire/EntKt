@@ -5,6 +5,7 @@ import entkt.schema.EntMixin
 import entkt.schema.EntSchema
 import entkt.schema.fields
 import entkt.schema.edges
+import entkt.schema.indexes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -37,6 +38,11 @@ object User : EntSchema() {
 
     override fun edges() = edges {
         to("cars", Car)
+    }
+
+    override fun indexes() = indexes {
+        index("name", "email").unique()
+        index("created_at")
     }
 }
 
@@ -166,6 +172,31 @@ class EntityGeneratorTest {
         }
         assert(output.contains("val cars: EdgeRef<Car, CarQuery> = EdgeRef(\"cars\") { CarQuery(NoopDriver) }")) {
             "Should emit a typed EdgeRef for the cars edge wired to NoopDriver\n$output"
+        }
+    }
+
+    @Test
+    fun `generated SCHEMA includes unique flag on unique columns`() {
+        val output = generator.generate("User", User).toString()
+
+        // email is declared .unique() so the generated ColumnMetadata should carry unique = true
+        assert(output.contains("unique = true")) {
+            "Should emit unique = true for the email column\n$output"
+        }
+    }
+
+    @Test
+    fun `generated SCHEMA includes indexes from the schema DSL`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("IndexMetadata")) {
+            "Should emit IndexMetadata entries\n$output"
+        }
+        assert(output.contains("\"name\", \"email\"")) {
+            "Should include the composite unique index fields\n$output"
+        }
+        assert(output.contains("\"created_at\"")) {
+            "Should include the non-unique index field\n$output"
         }
     }
 

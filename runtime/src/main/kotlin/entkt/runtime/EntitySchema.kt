@@ -34,6 +34,11 @@ data class EntitySchema(
      * rows). Each entry is the join recipe — see [EdgeMetadata].
      */
     val edges: Map<String, EdgeMetadata>,
+    /**
+     * Composite indexes declared on the entity. Single-column unique
+     * constraints live on [ColumnMetadata.unique] instead.
+     */
+    val indexes: List<IndexMetadata> = emptyList(),
 )
 
 /**
@@ -51,6 +56,23 @@ data class ColumnMetadata(
     val nullable: Boolean,
     /** True iff this column is the entity's primary key. */
     val primaryKey: Boolean = false,
+    /** True if this column carries a single-column UNIQUE constraint. */
+    val unique: Boolean = false,
+)
+
+/**
+ * A composite index on one or more columns. Single-column unique
+ * constraints are expressed directly on [ColumnMetadata.unique]; this
+ * type covers multi-column and non-unique indexes declared via the
+ * schema DSL's `indexes { }` block.
+ */
+data class IndexMetadata(
+    /** Column names in index order. */
+    val columns: List<String>,
+    /** Whether this is a UNIQUE index. */
+    val unique: Boolean = false,
+    /** Optional explicit name; drivers derive one if null. */
+    val storageKey: String? = null,
 )
 
 /**

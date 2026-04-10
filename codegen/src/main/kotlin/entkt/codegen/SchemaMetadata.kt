@@ -9,6 +9,7 @@ import entkt.schema.FieldType
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
 internal val COLUMN_METADATA = ClassName("entkt.runtime", "ColumnMetadata")
 internal val EDGE_METADATA = ClassName("entkt.runtime", "EdgeMetadata")
+internal val INDEX_METADATA = ClassName("entkt.runtime", "IndexMetadata")
 internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 
@@ -47,6 +48,7 @@ internal data class ColumnDescriptor(
     val type: FieldType,
     val nullable: Boolean,
     val primaryKey: Boolean = false,
+    val unique: Boolean = false,
 )
 
 /**
@@ -77,6 +79,7 @@ internal fun columnMetadataFor(
                     name = field.name,
                     type = field.type,
                     nullable = field.optional || field.nillable,
+                    unique = field.unique,
                 ),
             )
         }
@@ -147,13 +150,14 @@ internal fun entitySchemaCodeBlock(
         .also { cb ->
             for (col in columns) {
                 cb.add(
-                    "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L),\n",
+                    "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L),\n",
                     COLUMN_METADATA,
                     col.name,
                     FIELD_TYPE,
                     col.type.name,
                     col.nullable,
                     col.primaryKey,
+                    col.unique,
                 )
             }
         }
@@ -186,6 +190,32 @@ internal fun entitySchemaCodeBlock(
         edgesLiteral.add(")")
     }
 
+    val schemaIndexes = schema.indexes()
+    val indexesLiteral = CodeBlock.builder()
+    if (schemaIndexes.isEmpty()) {
+        indexesLiteral.add("emptyList()")
+    } else {
+        indexesLiteral.add("listOf(\n")
+        for (idx in schemaIndexes) {
+            val fieldsLiteral = idx.fields.joinToString(", ") { "\"$it\"" }
+            if (idx.storageKey != null) {
+                indexesLiteral.add(
+                    "  %T(columns = listOf($fieldsLiteral), unique = %L, storageKey = %S),\n",
+                    INDEX_METADATA,
+                    idx.unique,
+                    idx.storageKey,
+                )
+            } else {
+                indexesLiteral.add(
+                    "  %T(columns = listOf($fieldsLiteral), unique = %L),\n",
+                    INDEX_METADATA,
+                    idx.unique,
+                )
+            }
+        }
+        indexesLiteral.add(")")
+    }
+
     return CodeBlock.builder()
         .add("%T(\n", ENTITY_SCHEMA)
         .add("  table = %S,\n", table)
@@ -193,6 +223,7 @@ internal fun entitySchemaCodeBlock(
         .add("  idStrategy = %T.%L,\n", ID_STRATEGY, idStrategyName(schema))
         .add("  columns = %L,\n", columnsLiteral)
         .add("  edges = %L,\n", edgesLiteral.build())
+        .add("  indexes = %L,\n", indexesLiteral.build())
         .add(")")
         .build()
 }
