@@ -47,7 +47,6 @@ class EntityGenerator(
         // non-unique to-many edges that don't get a synthetic FK column.
         // The runtime uses these to lower has/exists predicates.
         val edgeRefs = schema.edges()
-            .filter { it.through == null }
             .mapNotNull { edge -> buildEdgeRef(edge, schemaNames) }
 
         val entityClass = ClassName(packageName, className)

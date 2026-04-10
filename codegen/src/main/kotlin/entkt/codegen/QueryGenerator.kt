@@ -33,8 +33,13 @@ class QueryGenerator(
         val entityClass = ClassName(packageName, schemaName)
 
         val traversalMethods = schema.edges()
-            .filter { it.through == null }
-            .mapNotNull { edge -> buildTraversal(edge, schema, schemaNames) }
+            .mapNotNull { edge ->
+                if (edge.through != null) {
+                    buildM2MTraversal(edge, schema, schemaNames)
+                } else {
+                    buildTraversal(edge, schema, schemaNames)
+                }
+            }
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
@@ -178,6 +183,47 @@ class QueryGenerator(
                 "return predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
                 predicateClass,
             )
+            .build()
+    }
+
+    /**
+     * Generate a `queryX(): TargetQuery` traversal for a many-to-many
+     * [edge] (one with `.through(...)`). Unlike direct traversal, there's
+     * no inverse edge on the target schema. Instead, the target's
+     * generated `EntitySchema` carries a reverse M2M edge entry (injected
+     * by [reverseM2MEdgeEntries]) whose name is the *source* schema's
+     * table name. The generated method references that reverse name so
+     * the runtime can walk the junction table in the right direction.
+     */
+    private fun buildM2MTraversal(
+        edge: Edge,
+        source: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): FunSpec? {
+        val targetName = schemaNames[edge.target] ?: return null
+        val sourceName = schemaNames[source] ?: return null
+        val targetQueryClass = ClassName(packageName, "${targetName}Query")
+        val methodName = "query${toPascalCase(edge.name)}"
+        val reverseEdgeName = tableNameFor(sourceName)
+
+        return FunSpec.builder(methodName)
+            .returns(targetQueryClass)
+            .addStatement("val parent = combinedPredicate()")
+            .addStatement("val target = %T(driver)", targetQueryClass)
+            .beginControlFlow("if (parent != null)")
+            .addStatement(
+                "target.where(%T.HasEdgeWith(%S, parent))",
+                predicateClass,
+                reverseEdgeName,
+            )
+            .nextControlFlow("else")
+            .addStatement(
+                "target.where(%T.HasEdge(%S))",
+                predicateClass,
+                reverseEdgeName,
+            )
+            .endControlFlow()
+            .addStatement("return target")
             .build()
     }
 

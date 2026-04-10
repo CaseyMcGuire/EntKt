@@ -225,12 +225,33 @@ class InMemoryDriver : Driver {
         val edge = sourceSchema.edges[edgeName]
             ?: error("Edge $sourceTable.$edgeName has no metadata — was the schema registered?")
 
-        val joinValue = sourceRow[edge.sourceColumn] ?: return false
-        val targetRows = tables[edge.targetTable] ?: return false
+        val sourceValue = sourceRow[edge.sourceColumn] ?: return false
 
+        // M2M edge: walk through the junction table.
+        if (edge.junctionTable != null) {
+            val junctionRows = tables[edge.junctionTable] ?: return false
+            val targetRows = tables[edge.targetTable] ?: return false
+            val jSrcCol = edge.junctionSourceColumn!!
+            val jTgtCol = edge.junctionTargetColumn!!
+            synchronized(junctionRows) {
+                val matchingJunctions = junctionRows.filter { it[jSrcCol] == sourceValue }
+                return synchronized(targetRows) {
+                    matchingJunctions.any { jr ->
+                        val targetJoinValue = jr[jTgtCol]
+                        targetRows.any { tr ->
+                            tr[edge.targetColumn] == targetJoinValue &&
+                                (innerPredicate == null || evaluate(tr, innerPredicate, edge.targetTable))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Direct edge: simple column join.
+        val targetRows = tables[edge.targetTable] ?: return false
         synchronized(targetRows) {
             return targetRows.any { targetRow ->
-                targetRow[edge.targetColumn] == joinValue &&
+                targetRow[edge.targetColumn] == sourceValue &&
                     (innerPredicate == null || evaluate(targetRow, innerPredicate, edge.targetTable))
             }
         }

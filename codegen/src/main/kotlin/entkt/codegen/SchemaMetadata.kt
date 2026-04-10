@@ -104,8 +104,15 @@ internal fun columnMetadataFor(
  * Join shape for a single edge: which column on *this* row joins to
  * which column on the target row. Both directions of an edge resolve
  * through this — owning side uses its FK, owned side uses its id.
+ * M2M edges additionally carry junction table info.
  */
-internal data class EdgeJoin(val sourceColumn: String, val targetColumn: String)
+internal data class EdgeJoin(
+    val sourceColumn: String,
+    val targetColumn: String,
+    val junctionTable: String? = null,
+    val junctionSourceColumn: String? = null,
+    val junctionTargetColumn: String? = null,
+)
 
 /**
  * Resolve [edge]'s join columns by asking "is this edge's FK stored on
@@ -135,6 +142,42 @@ internal fun resolveEdgeJoin(
     if (!inverse.unique || inverse.through != null) return null
     val fkColumn = inverse.field ?: "${inverse.name}_id"
     return EdgeJoin(sourceColumn = "id", targetColumn = fkColumn)
+}
+
+/**
+ * Resolve a many-to-many edge's join through its junction table.
+ * The junction schema declares two unique edges with `.field(...)` —
+ * one pointing back at [source], one at [edge.target]. We read those
+ * FK column names to build the junction join.
+ */
+internal fun resolveM2MEdgeJoin(
+    edge: Edge,
+    source: EntSchema,
+    schemaNames: Map<EntSchema, String>,
+): EdgeJoin? {
+    val through = edge.through ?: return null
+    val junctionSchema = through.target
+    val junctionTable = tableNameFor(schemaNames[junctionSchema] ?: return null)
+
+    // Find the junction edge pointing at the source schema.
+    val sourceEdge = junctionSchema.edges()
+        .firstOrNull { it.target === source && it.unique }
+        ?: return null
+    val sourceFk = sourceEdge.field ?: "${sourceEdge.name}_id"
+
+    // Find the junction edge pointing at the target schema.
+    val targetEdge = junctionSchema.edges()
+        .firstOrNull { it.target === edge.target && it.unique }
+        ?: return null
+    val targetFk = targetEdge.field ?: "${targetEdge.name}_id"
+
+    return EdgeJoin(
+        sourceColumn = "id",
+        targetColumn = "id",
+        junctionTable = junctionTable,
+        junctionSourceColumn = sourceFk,
+        junctionTargetColumn = targetFk,
+    )
 }
 
 /**
@@ -187,27 +230,46 @@ internal fun entitySchemaCodeBlock(
         .build()
 
     val edgesLiteral = CodeBlock.builder()
-    val edgeEntries = schema.edges()
-        .filter { it.through == null }
+    val forwardEntries = schema.edges()
         .mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            val join = resolveEdgeJoin(edge, schema) ?: return@mapNotNull null
+            val join = if (edge.through != null) {
+                resolveM2MEdgeJoin(edge, schema, schemaNames)
+            } else {
+                resolveEdgeJoin(edge, schema)
+            } ?: return@mapNotNull null
             Triple(edge.name, tableNameFor(targetName), join)
         }
+    val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames)
+    val edgeEntries = forwardEntries + reverseEntries
 
     if (edgeEntries.isEmpty()) {
         edgesLiteral.add("emptyMap()")
     } else {
         edgesLiteral.add("mapOf(\n")
         for ((edgeName, targetTable, join) in edgeEntries) {
-            edgesLiteral.add(
-                "  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S),\n",
-                edgeName,
-                EDGE_METADATA,
-                targetTable,
-                join.sourceColumn,
-                join.targetColumn,
-            )
+            if (join.junctionTable != null) {
+                edgesLiteral.add(
+                    "  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S, junctionTable = %S, junctionSourceColumn = %S, junctionTargetColumn = %S),\n",
+                    edgeName,
+                    EDGE_METADATA,
+                    targetTable,
+                    join.sourceColumn,
+                    join.targetColumn,
+                    join.junctionTable,
+                    join.junctionSourceColumn,
+                    join.junctionTargetColumn,
+                )
+            } else {
+                edgesLiteral.add(
+                    "  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S),\n",
+                    edgeName,
+                    EDGE_METADATA,
+                    targetTable,
+                    join.sourceColumn,
+                    join.targetColumn,
+                )
+            }
         }
         edgesLiteral.add(")")
     }
@@ -248,4 +310,39 @@ internal fun entitySchemaCodeBlock(
         .add("  indexes = %L,\n", indexesLiteral.build())
         .add(")")
         .build()
+}
+
+/**
+ * Find M2M edges declared on *other* schemas that target [schema] and
+ * produce reverse edge entries so the runtime can resolve `HasEdge` /
+ * `HasEdgeWith` predicates from the target side. Each reverse entry
+ * swaps the junction's source and target FK columns so the join walks
+ * from [schema] back through the junction to the declaring schema.
+ *
+ * The reverse edge name is the declaring schema's table name — e.g. for
+ * `Group.to("users", User).through(...)`, User gets a reverse edge
+ * named `"groups"`.
+ */
+internal fun reverseM2MEdgeEntries(
+    schema: EntSchema,
+    schemaNames: Map<EntSchema, String>,
+): List<Triple<String, String, EdgeJoin>> {
+    return schemaNames.flatMap { (otherSchema, otherName) ->
+        otherSchema.edges()
+            .filter { it.through != null && it.target === schema }
+            .mapNotNull { edge ->
+                val forwardJoin = resolveM2MEdgeJoin(edge, otherSchema, schemaNames)
+                    ?: return@mapNotNull null
+                val reverseJoin = EdgeJoin(
+                    sourceColumn = "id",
+                    targetColumn = "id",
+                    junctionTable = forwardJoin.junctionTable,
+                    junctionSourceColumn = forwardJoin.junctionTargetColumn,
+                    junctionTargetColumn = forwardJoin.junctionSourceColumn,
+                )
+                val reverseName = tableNameFor(otherName)
+                val targetTable = tableNameFor(otherName)
+                Triple(reverseName, targetTable, reverseJoin)
+            }
+    }
 }

@@ -403,8 +403,22 @@ class PostgresDriver(
                 ?: error("Edge ${sourceSchema.table}.$edgeName has no metadata — was the schema registered?")
             val targetSchema = schemas[edge.targetTable]
                 ?: error("Edge ${sourceSchema.table}.$edgeName points at unregistered ${edge.targetTable}")
-            val targetAlias = nextAlias()
 
+            // M2M edge: join through the junction table.
+            if (edge.junctionTable != null) {
+                val jAlias = nextAlias()
+                val tAlias = nextAlias()
+                val onClause = "$tAlias.${quote(edge.targetColumn)} = $jAlias.${quote(edge.junctionTargetColumn!!)}"
+                val whereClause = "$jAlias.${quote(edge.junctionSourceColumn!!)} = $sourceAlias.${quote(edge.sourceColumn)}"
+                val innerSql = inner?.let { lower(it, targetSchema, tAlias) }
+                val fullWhere = if (innerSql == null) whereClause else "$whereClause AND $innerSql"
+                return "EXISTS (SELECT 1 FROM ${quote(edge.junctionTable!!)} AS $jAlias" +
+                    " JOIN ${quote(edge.targetTable)} AS $tAlias ON $onClause" +
+                    " WHERE $fullWhere)"
+            }
+
+            // Direct edge: simple subquery.
+            val targetAlias = nextAlias()
             val join = "$targetAlias.${quote(edge.targetColumn)} = $sourceAlias.${quote(edge.sourceColumn)}"
             val innerSql = inner?.let { lower(it, targetSchema, targetAlias) }
             val where = if (innerSql == null) join else "$join AND $innerSql"

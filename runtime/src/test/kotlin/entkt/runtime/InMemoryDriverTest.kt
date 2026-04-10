@@ -50,6 +50,58 @@ private val POST_SCHEMA = EntitySchema(
     ),
 )
 
+// ---------- M2M test schemas ----------
+
+private val GROUP_SCHEMA = EntitySchema(
+    table = "groups",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_LONG,
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("name", FieldType.STRING, nullable = false),
+    ),
+    edges = mapOf(
+        "users" to EdgeMetadata(
+            targetTable = "users",
+            sourceColumn = "id",
+            targetColumn = "id",
+            junctionTable = "user_groups",
+            junctionSourceColumn = "group_id",
+            junctionTargetColumn = "user_id",
+        ),
+    ),
+)
+
+private val USER_GROUP_SCHEMA = EntitySchema(
+    table = "user_groups",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_LONG,
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("user_id", FieldType.LONG, nullable = false),
+        ColumnMetadata("group_id", FieldType.LONG, nullable = false),
+    ),
+    edges = emptyMap(),
+)
+
+// USER_SCHEMA with reverse M2M edge (as codegen would inject)
+private val USER_SCHEMA_WITH_M2M = EntitySchema(
+    table = "users",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_LONG,
+    columns = USER_SCHEMA.columns,
+    edges = USER_SCHEMA.edges + mapOf(
+        "groups" to EdgeMetadata(
+            targetTable = "groups",
+            sourceColumn = "id",
+            targetColumn = "id",
+            junctionTable = "user_groups",
+            junctionSourceColumn = "user_id",
+            junctionTargetColumn = "group_id",
+        ),
+    ),
+)
+
 class InMemoryDriverTest {
 
     private fun fresh(): InMemoryDriver = InMemoryDriver().apply {
@@ -311,5 +363,93 @@ class InMemoryDriverTest {
         // Pre-existing "users" table should be unaffected.
         driver.insert("users", mapOf("name" to "Alice"))
         assertEquals(1L, driver.byId("users", 1L)!!["id"])
+    }
+
+    // ---------- M2M edge predicates ----------
+
+    private fun freshM2M(): InMemoryDriver = InMemoryDriver().apply {
+        register(USER_SCHEMA_WITH_M2M)
+        register(POST_SCHEMA)
+        register(GROUP_SCHEMA)
+        register(USER_GROUP_SCHEMA)
+    }
+
+    @Test
+    fun `HasEdge through junction table`() {
+        val driver = freshM2M()
+        val alice = driver.insert("users", mapOf("name" to "Alice"))
+        val bob = driver.insert("users", mapOf("name" to "Bob"))
+        val group = driver.insert("groups", mapOf("name" to "Admins"))
+
+        // Only Alice is in the group.
+        driver.insert("user_groups", mapOf("user_id" to alice["id"], "group_id" to group["id"]))
+
+        // Query groups that have any users.
+        val rows = driver.query(
+            "groups",
+            listOf(Predicate.HasEdge("users")),
+            emptyList(), null, null,
+        )
+        assertEquals(1, rows.size)
+        assertEquals("Admins", rows.single()["name"])
+    }
+
+    @Test
+    fun `HasEdgeWith through junction table with inner predicate`() {
+        val driver = freshM2M()
+        val alice = driver.insert("users", mapOf("name" to "Alice", "age" to 30))
+        val bob = driver.insert("users", mapOf("name" to "Bob", "age" to 17))
+        val admins = driver.insert("groups", mapOf("name" to "Admins"))
+        val interns = driver.insert("groups", mapOf("name" to "Interns"))
+
+        driver.insert("user_groups", mapOf("user_id" to alice["id"], "group_id" to admins["id"]))
+        driver.insert("user_groups", mapOf("user_id" to bob["id"], "group_id" to interns["id"]))
+
+        // Groups that have a user with age >= 18.
+        val rows = driver.query(
+            "groups",
+            listOf(Predicate.HasEdgeWith("users", Predicate.Leaf("age", Op.GTE, 18))),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Admins"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `reverse M2M HasEdge from target side`() {
+        val driver = freshM2M()
+        val alice = driver.insert("users", mapOf("name" to "Alice"))
+        val bob = driver.insert("users", mapOf("name" to "Bob"))
+        val group = driver.insert("groups", mapOf("name" to "Admins"))
+
+        // Only Alice is in a group.
+        driver.insert("user_groups", mapOf("user_id" to alice["id"], "group_id" to group["id"]))
+
+        // Query users that belong to any group.
+        val rows = driver.query(
+            "users",
+            listOf(Predicate.HasEdge("groups")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `reverse M2M HasEdgeWith with inner predicate`() {
+        val driver = freshM2M()
+        val alice = driver.insert("users", mapOf("name" to "Alice"))
+        val bob = driver.insert("users", mapOf("name" to "Bob"))
+        val admins = driver.insert("groups", mapOf("name" to "Admins"))
+        val guests = driver.insert("groups", mapOf("name" to "Guests"))
+
+        driver.insert("user_groups", mapOf("user_id" to alice["id"], "group_id" to admins["id"]))
+        driver.insert("user_groups", mapOf("user_id" to bob["id"], "group_id" to guests["id"]))
+
+        // Users who belong to a group named "Admins".
+        val rows = driver.query(
+            "users",
+            listOf(Predicate.HasEdgeWith("groups", Predicate.Leaf("name", Op.EQ, "Admins"))),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
     }
 }

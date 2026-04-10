@@ -99,11 +99,23 @@ data class IndexMetadata(
  * Examples for `User`/`Post` (Post owns the FK as `author_id`):
  * - `User.posts`: `targetTable=posts, sourceColumn=id, targetColumn=author_id`
  * - `Post.author`: `targetTable=users, sourceColumn=author_id, targetColumn=id`
+ *
+ * Many-to-many edges set the junction fields. For `Group → users`
+ * through `user_groups`:
+ * - `targetTable=users, sourceColumn=id, targetColumn=id`
+ * - `junctionTable=user_groups, junctionSourceColumn=group_id,
+ *    junctionTargetColumn=user_id`
  */
 data class EdgeMetadata(
     val targetTable: String,
     val sourceColumn: String,
     val targetColumn: String,
+    /** Junction table for M2M edges; null for direct edges. */
+    val junctionTable: String? = null,
+    /** Column on the junction table that references the source. */
+    val junctionSourceColumn: String? = null,
+    /** Column on the junction table that references the target. */
+    val junctionTargetColumn: String? = null,
 )
 
 /**

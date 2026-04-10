@@ -61,6 +61,61 @@ private val POST_SCHEMA = EntitySchema(
     ),
 )
 
+// ---------- M2M test schemas ----------
+
+private val M2M_USER_SCHEMA = EntitySchema(
+    table = "m2m_users",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_LONG,
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("name", FieldType.STRING, nullable = false),
+        ColumnMetadata("age", FieldType.INT, nullable = true),
+    ),
+    edges = mapOf(
+        "groups" to EdgeMetadata(
+            targetTable = "m2m_groups",
+            sourceColumn = "id",
+            targetColumn = "id",
+            junctionTable = "m2m_user_groups",
+            junctionSourceColumn = "user_id",
+            junctionTargetColumn = "group_id",
+        ),
+    ),
+)
+
+private val M2M_GROUP_SCHEMA = EntitySchema(
+    table = "m2m_groups",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_LONG,
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("name", FieldType.STRING, nullable = false),
+    ),
+    edges = mapOf(
+        "users" to EdgeMetadata(
+            targetTable = "m2m_users",
+            sourceColumn = "id",
+            targetColumn = "id",
+            junctionTable = "m2m_user_groups",
+            junctionSourceColumn = "group_id",
+            junctionTargetColumn = "user_id",
+        ),
+    ),
+)
+
+private val M2M_USER_GROUP_SCHEMA = EntitySchema(
+    table = "m2m_user_groups",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_LONG,
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("user_id", FieldType.LONG, nullable = false),
+        ColumnMetadata("group_id", FieldType.LONG, nullable = false),
+    ),
+    edges = emptyMap(),
+)
+
 private fun quoteIdent(identifier: String): String =
     "\"${identifier.replace("\"", "\"\"")}\""
 
@@ -654,5 +709,94 @@ class PostgresDriverTest {
                 it.execute("TRUNCATE TABLE \"users\" RESTART IDENTITY")
             }
         }
+    }
+
+    // ---------- M2M edge predicates ----------
+
+    private fun freshM2M(): PostgresDriver {
+        val driver = PostgresDriver(dataSource)
+        driver.register(M2M_USER_SCHEMA)
+        driver.register(M2M_GROUP_SCHEMA)
+        driver.register(M2M_USER_GROUP_SCHEMA)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE \"m2m_user_groups\", \"m2m_groups\", \"m2m_users\" RESTART IDENTITY")
+            }
+        }
+        return driver
+    }
+
+    @Test
+    fun `HasEdge through junction table`() {
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice"))
+        val group = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+        driver.insert("m2m_user_groups", mapOf<String, Any?>("user_id" to alice["id"], "group_id" to group["id"]))
+
+        // Empty group to verify filtering works.
+        driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Empty"))
+
+        val rows = driver.query(
+            "m2m_groups",
+            listOf(Predicate.HasEdge("users")),
+            emptyList(), null, null,
+        )
+        assertEquals(1, rows.size)
+        assertEquals("Admins", rows.single()["name"])
+    }
+
+    @Test
+    fun `HasEdgeWith through junction table with inner predicate`() {
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice", "age" to 30))
+        val bob = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Bob", "age" to 17))
+        val admins = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+        val interns = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Interns"))
+
+        driver.insert("m2m_user_groups", mapOf<String, Any?>("user_id" to alice["id"], "group_id" to admins["id"]))
+        driver.insert("m2m_user_groups", mapOf<String, Any?>("user_id" to bob["id"], "group_id" to interns["id"]))
+
+        val rows = driver.query(
+            "m2m_groups",
+            listOf(Predicate.HasEdgeWith("users", Predicate.Leaf("age", Op.GTE, 18))),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Admins"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `reverse M2M HasEdge from target side`() {
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice"))
+        val bob = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Bob"))
+        val group = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+
+        driver.insert("m2m_user_groups", mapOf<String, Any?>("user_id" to alice["id"], "group_id" to group["id"]))
+
+        val rows = driver.query(
+            "m2m_users",
+            listOf(Predicate.HasEdge("groups")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `reverse M2M HasEdgeWith with inner predicate`() {
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice"))
+        val bob = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Bob"))
+        val admins = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+        val guests = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Guests"))
+
+        driver.insert("m2m_user_groups", mapOf<String, Any?>("user_id" to alice["id"], "group_id" to admins["id"]))
+        driver.insert("m2m_user_groups", mapOf<String, Any?>("user_id" to bob["id"], "group_id" to guests["id"]))
+
+        val rows = driver.query(
+            "m2m_users",
+            listOf(Predicate.HasEdgeWith("groups", Predicate.Leaf("name", Op.EQ, "Admins"))),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
     }
 }

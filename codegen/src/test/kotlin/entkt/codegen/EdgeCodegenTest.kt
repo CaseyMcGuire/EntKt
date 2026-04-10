@@ -51,11 +51,36 @@ object LooseDog : EntSchema() {
     }
 }
 
+// ---------- M2M test schemas ----------
+
+object Team : EntSchema() {
+    override fun fields() = fields {
+        string("name")
+    }
+
+    override fun edges() = edges {
+        to("members", Pet).through("team_members", TeamMember)
+    }
+}
+
+object TeamMember : EntSchema() {
+    override fun fields() = fields {
+        time("joined_at")
+    }
+
+    override fun edges() = edges {
+        to("team", Team).unique().required().field("team_id")
+        to("member", Pet).unique().required().field("member_id")
+    }
+}
+
 private val schemaNames: Map<EntSchema, String> = mapOf(
     Owner to "Owner",
     Pet to "Pet",
     RequiredPet to "RequiredPet",
     LooseDog to "LooseDog",
+    Team to "Team",
+    TeamMember to "TeamMember",
 )
 
 class EdgeCodegenTest {
@@ -276,6 +301,74 @@ class EdgeCodegenTest {
         // no `queryRequiredPets()` should appear.
         assert(!output.contains("queryRequiredPets")) {
             "Should not emit traversal when there's no matching back-edge\n$output"
+        }
+    }
+
+    // ---------- M2M edge codegen ----------
+
+    @Test
+    fun `entity emits EdgeRef for M2M edge`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString()
+
+        assert(output.contains("val members: EdgeRef<Pet, PetQuery> = EdgeRef(\"members\") { PetQuery(NoopDriver) }")) {
+            "Should emit EdgeRef for M2M members edge\n$output"
+        }
+    }
+
+    @Test
+    fun `M2M edge does not produce FK on source entity`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString()
+
+        assert(!output.contains("membersId")) {
+            "M2M edge should not produce an FK property on the source\n$output"
+        }
+    }
+
+    @Test
+    fun `generated SCHEMA includes junction metadata for M2M edge`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString()
+
+        assert(output.contains("junctionTable")) {
+            "Should include junction metadata in SCHEMA\n$output"
+        }
+        assert(output.contains("\"teamMembers\"")) {
+            "Junction table should be the TeamMember table name\n$output"
+        }
+    }
+
+    @Test
+    fun `target entity gets reverse M2M edge in SCHEMA`() {
+        // Pet is the target of Team's M2M "members" edge — Pet's SCHEMA
+        // should include a reverse "teams" edge with junction metadata.
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("\"teams\"")) {
+            "Pet SCHEMA should include reverse 'teams' M2M edge\n$output"
+        }
+        assert(output.contains("junctionTable = \"teamMembers\"")) {
+            "Reverse edge should carry junction table metadata\n$output"
+        }
+    }
+
+    @Test
+    fun `query gets M2M traversal method`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString()
+
+        assert(output.contains("fun queryMembers(): PetQuery")) {
+            "Should generate M2M traversal queryMembers()\n$output"
+        }
+        // M2M traversal references the reverse edge name on the target
+        // (Pet's table-name-derived "teams" edge).
+        assert(output.contains("Predicate.HasEdgeWith(\"teams\", parent)")) {
+            "Should reference reverse M2M edge name\n$output"
+        }
+        assert(output.contains("Predicate.HasEdge(\"teams\")")) {
+            "Should fall back to HasEdge when parent has no wheres\n$output"
         }
     }
 }
