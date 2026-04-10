@@ -22,6 +22,10 @@ object TimeMixin : EntMixin {
         time("created_at").immutable()
         time("updated_at")
     }
+
+    override fun indexes() = indexes {
+        index("created_at")
+    }
 }
 
 object User : EntSchema() {
@@ -42,7 +46,6 @@ object User : EntSchema() {
 
     override fun indexes() = indexes {
         index("name", "email").unique()
-        index("created_at")
     }
 }
 
@@ -186,17 +189,19 @@ class EntityGeneratorTest {
     }
 
     @Test
-    fun `generated SCHEMA includes indexes from the schema DSL`() {
+    fun `generated SCHEMA includes indexes from the schema and its mixins`() {
         val output = generator.generate("User", User).toString()
 
         assert(output.contains("IndexMetadata")) {
             "Should emit IndexMetadata entries\n$output"
         }
         assert(output.contains("\"name\", \"email\"")) {
-            "Should include the composite unique index fields\n$output"
+            "Should include the composite unique index from User.indexes()\n$output"
         }
+        // created_at index comes from TimeMixin.indexes(), not User — verifies
+        // mixin indexes are merged into the generated schema.
         assert(output.contains("\"created_at\"")) {
-            "Should include the non-unique index field\n$output"
+            "Should include the index declared by TimeMixin\n$output"
         }
     }
 

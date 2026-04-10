@@ -48,7 +48,7 @@ class PostgresDriver(
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
 
     override fun register(schema: EntitySchema) {
-        if (schemas.putIfAbsent(schema.table, schema) != null) return
+        if (schemas.containsKey(schema.table)) return
         val ddl = createTableSql(schema)
         val indexDdl = createIndexesSql(schema)
         dataSource.connection.use { conn ->
@@ -57,6 +57,9 @@ class PostgresDriver(
                 for (sql in indexDdl) stmt.execute(sql)
             }
         }
+        // Cache only after all DDL succeeds so a failed register() can
+        // be retried.
+        schemas.putIfAbsent(schema.table, schema)
     }
 
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
@@ -234,7 +237,6 @@ class PostgresDriver(
         val constraints = buildList {
             if (col.primaryKey) add("PRIMARY KEY")
             if (!col.nullable && !col.primaryKey && !isAutoSerial(schema, col)) add("NOT NULL")
-            if (col.unique && !col.primaryKey) add("UNIQUE")
             val ref = col.references
             if (ref != null) {
                 val onDelete = if (col.nullable) "SET NULL" else "RESTRICT"
@@ -245,8 +247,23 @@ class PostgresDriver(
         return "${quote(col.name)} $sqlType$tail"
     }
 
-    private fun createIndexesSql(schema: EntitySchema): List<String> =
-        schema.indexes.map { idx ->
+    /**
+     * Build `CREATE [UNIQUE] INDEX IF NOT EXISTS` statements for both
+     * composite indexes declared via [EntitySchema.indexes] and
+     * single-column unique constraints from [ColumnMetadata.unique].
+     * Using standalone index DDL (rather than inline `UNIQUE` in
+     * `CREATE TABLE`) ensures the constraint is applied even when the
+     * table already exists.
+     */
+    private fun createIndexesSql(schema: EntitySchema): List<String> {
+        val columnUniques = schema.columns
+            .filter { it.unique && !it.primaryKey }
+            .map { col ->
+                val name = "idx_${schema.table}_${col.name}_unique"
+                "CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} (${quote(col.name)})"
+            }
+
+        val compositeIndexes = schema.indexes.map { idx ->
             val cols = idx.columns.joinToString(", ") { quote(it) }
             val name = idx.storageKey
                 ?: buildString {
@@ -257,6 +274,9 @@ class PostgresDriver(
             val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
             "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} ($cols)"
         }
+
+        return columnUniques + compositeIndexes
+    }
 
     private fun isAutoSerial(schema: EntitySchema, col: ColumnMetadata): Boolean {
         if (!col.primaryKey) return false

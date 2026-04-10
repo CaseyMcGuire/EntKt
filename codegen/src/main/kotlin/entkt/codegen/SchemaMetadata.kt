@@ -212,7 +212,7 @@ internal fun entitySchemaCodeBlock(
         edgesLiteral.add(")")
     }
 
-    val schemaIndexes = schema.indexes()
+    val schemaIndexes = schema.indexes() + schema.mixins().flatMap { it.indexes() }
     val indexesLiteral = CodeBlock.builder()
     if (schemaIndexes.isEmpty()) {
         indexesLiteral.add("emptyList()")
