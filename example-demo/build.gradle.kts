@@ -16,6 +16,10 @@ val codegenRunner: Configuration by configurations.creating
 dependencies {
     // Demo.kt imports the generated code which in turn imports entkt.query.*
     implementation(project(":schema"))
+    // The generated code references entkt.runtime.{Driver, EntitySchema,
+    // EdgeMetadata, IdStrategy, NoopDriver}, and Demo.kt wires up an
+    // InMemoryDriver — both live here.
+    implementation(project(":runtime"))
 
     // Used only by the generateEntkt JavaExec task below.
     codegenRunner(project(":example"))

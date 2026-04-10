@@ -164,8 +164,8 @@ class EntityGeneratorTest {
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
         }
-        assert(output.contains("val cars: EdgeRef<Car, CarQuery> = EdgeRef(\"cars\") { CarQuery() }")) {
-            "Should emit a typed EdgeRef for the cars edge\n$output"
+        assert(output.contains("val cars: EdgeRef<Car, CarQuery> = EdgeRef(\"cars\") { CarQuery(NoopDriver) }")) {
+            "Should emit a typed EdgeRef for the cars edge wired to NoopDriver\n$output"
         }
     }
 

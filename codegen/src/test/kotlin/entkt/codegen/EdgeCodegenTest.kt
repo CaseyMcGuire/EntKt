@@ -172,8 +172,8 @@ class EdgeCodegenTest {
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
         }
-        assert(output.contains("val pets: EdgeRef<Pet, PetQuery> = EdgeRef(\"pets\") { PetQuery() }")) {
-            "Should emit EdgeRef for the pets edge\n$output"
+        assert(output.contains("val pets: EdgeRef<Pet, PetQuery> = EdgeRef(\"pets\") { PetQuery(NoopDriver) }")) {
+            "Should emit EdgeRef for the pets edge wired to NoopDriver\n$output"
         }
     }
 
@@ -184,8 +184,8 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", Pet, schemaNames).toString()
 
-        assert(output.contains("val owner: EdgeRef<Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery() }")) {
-            "Should emit EdgeRef for the owner edge\n$output"
+        assert(output.contains("val owner: EdgeRef<Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery(NoopDriver) }")) {
+            "Should emit EdgeRef for the owner edge wired to NoopDriver\n$output"
         }
         // The FK column ref still lives next to it
         assert(output.contains("val ownerId: NullableComparableColumn<Long>")) {

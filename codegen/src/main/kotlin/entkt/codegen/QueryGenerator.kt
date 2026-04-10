@@ -15,6 +15,7 @@ import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val EDGE_QUERY = ClassName("entkt.query", "EdgeQuery")
+private val DRIVER = ClassName("entkt.runtime", "Driver")
 
 class QueryGenerator(
     private val packageName: String,
@@ -29,6 +30,7 @@ class QueryGenerator(
     ): FileSpec {
         val className = "${schemaName}Query"
         val queryClass = ClassName(packageName, className)
+        val entityClass = ClassName(packageName, schemaName)
 
         val traversalMethods = schema.edges()
             .filter { it.through == null }
@@ -37,6 +39,17 @@ class QueryGenerator(
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
             .addSuperinterface(EDGE_QUERY)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter("driver", DRIVER)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("driver", DRIVER)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("driver")
+                    .build()
+            )
             .addProperty(
                 PropertySpec.builder(
                     "predicates",
@@ -72,11 +85,46 @@ class QueryGenerator(
             .addFunction(buildLimit(queryClass))
             .addFunction(buildOffset(queryClass))
             .addFunction(buildCombinedPredicate())
+            .addFunction(buildAll(entityClass))
+            .addFunction(buildFirstOrNull(entityClass))
             .addFunctions(traversalMethods)
             .build()
 
         return FileSpec.builder(packageName, className)
             .addType(typeSpec)
+            .build()
+    }
+
+    /**
+     * Terminal op: execute the query and return every matching entity.
+     * Delegates filtering, ordering, and pagination to the driver — this
+     * method is just the typed-row conversion around that call.
+     */
+    private fun buildAll(entityClass: ClassName): FunSpec {
+        return FunSpec.builder("all")
+            .returns(List::class.asClassName().parameterizedBy(entityClass))
+            .addStatement(
+                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                entityClass,
+            )
+            .addStatement("return rows.map { %T.fromRow(it) }", entityClass)
+            .build()
+    }
+
+    /**
+     * Terminal op: ask the driver for one row and stop. We override
+     * `queryLimit` with 1 so the driver doesn't materialize the whole
+     * result set — honoring any pre-set offset so pagination still works
+     * (`query { offset(5); firstOrNull() }` returns the 6th row).
+     */
+    private fun buildFirstOrNull(entityClass: ClassName): FunSpec {
+        return FunSpec.builder("firstOrNull")
+            .returns(entityClass.copy(nullable = true))
+            .addStatement(
+                "val row = driver.query(%T.TABLE, predicates, orderFields, 1, queryOffset).firstOrNull()",
+                entityClass,
+            )
+            .addStatement("return row?.let { %T.fromRow(it) }", entityClass)
             .build()
     }
 
@@ -160,7 +208,7 @@ class QueryGenerator(
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
             .addStatement("val parent = combinedPredicate()")
-            .addStatement("val target = %T()", targetQueryClass)
+            .addStatement("val target = %T(driver)", targetQueryClass)
             .beginControlFlow("if (parent != null)")
             .addStatement(
                 "target.where(%T.HasEdgeWith(%S, parent))",

@@ -56,11 +56,23 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `byId is a TODO until the runtime exists`() {
+    fun `byId delegates to the driver and hydrates via fromRow`() {
         val output = generator.generate("Car", Car).toString()
 
-        assert(output.contains("TODO(\"byId requires the runtime layer\")")) {
-            "byId should TODO with a clear message\n$output"
+        assert(output.contains("driver.byId(Car.TABLE, id)")) {
+            "byId should call driver.byId with the entity's TABLE constant\n$output"
+        }
+        assert(output.contains("Car.fromRow(it)")) {
+            "byId should hydrate the driver's row via Car.fromRow\n$output"
+        }
+    }
+
+    @Test
+    fun `repo registers the entity schema in its init block`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("driver.register(Car.SCHEMA)")) {
+            "Repo should register Car.SCHEMA with the driver on construction\n$output"
         }
     }
 }

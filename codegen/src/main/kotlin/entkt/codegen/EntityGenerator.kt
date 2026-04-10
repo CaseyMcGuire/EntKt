@@ -1,20 +1,27 @@
 package entkt.codegen
 
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asTypeName
 import entkt.schema.Edge
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
 
 private val EDGE_REF = ClassName("entkt.query", "EdgeRef")
+private val NOOP_DRIVER = ClassName("entkt.runtime", "NoopDriver")
+private val ANY_NULLABLE = Any::class.asTypeName().copy(nullable = true)
+private val ROW_TYPE = ClassName("kotlin.collections", "Map")
+    .parameterizedBy(STRING, ANY_NULLABLE)
 
 class EntityGenerator(
     private val packageName: String,
@@ -43,6 +50,16 @@ class EntityGenerator(
             .filter { it.through == null }
             .mapNotNull { edge -> buildEdgeRef(edge, schemaNames) }
 
+        val entityClass = ClassName(packageName, className)
+        val tableName = tableNameFor(schemaName)
+        val tableProperty = PropertySpec.builder("TABLE", STRING)
+            .initializer("%S", tableName)
+            .build()
+        val schemaProperty = PropertySpec.builder("SCHEMA", ENTITY_SCHEMA)
+            .initializer(entitySchemaCodeBlock(schemaName, schema, schemaNames))
+            .build()
+        val fromRowFn = buildFromRowFunction(entityClass, schema, schemaNames)
+
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
             .primaryConstructor(buildConstructor(idField, allFields, edgeFks))
@@ -51,14 +68,65 @@ class EntityGenerator(
             .addProperties(edgeFks.map { buildEdgeProperty(it) })
             .addType(
                 TypeSpec.companionObjectBuilder()
+                    .addProperty(tableProperty)
+                    .addProperty(schemaProperty)
                     .addProperties(columnRefs)
                     .addProperties(edgeRefs)
+                    .addFunction(fromRowFn)
                     .build()
             )
             .build()
 
         return FileSpec.builder(packageName, className)
             .addType(typeSpec)
+            .build()
+    }
+
+    /**
+     * Emit a `fromRow(row: Map<String, Any?>): Entity` on the companion.
+     * The driver hands back typed values (`Instant`, `UUID`, ...), so
+     * this is almost entirely unchecked casts — the driver's per-column
+     * metadata is the authority. Null columns for non-nullable fields
+     * are a driver/schema bug and will surface as a ClassCastException,
+     * which is more useful than a silent null-coalesce.
+     */
+    private fun buildFromRowFunction(
+        entityClass: ClassName,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): FunSpec {
+        val allFields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        val edgeFks = computeEdgeFks(schema, schemaNames)
+        val idType = schema.id().type.toTypeName()
+
+        val body = CodeBlock.builder()
+            .add("return %T(\n", entityClass)
+            .add("  id = row[%S] as %T,\n", "id", idType)
+
+        for (field in allFields) {
+            val prop = toCamelCase(field.name)
+            val base = field.type.toTypeName()
+            val nullable = field.optional || field.nillable
+            val target = base.copy(nullable = nullable)
+            if (nullable) {
+                body.add("  %L = row[%S] as %T,\n", prop, field.name, target)
+            } else {
+                body.add("  %L = row[%S] as %T,\n", prop, field.name, target)
+            }
+        }
+
+        for (fk in edgeFks) {
+            val base = fk.idType.toTypeName()
+            val target = base.copy(nullable = !fk.required)
+            body.add("  %L = row[%S] as %T,\n", fk.propertyName, fk.columnName, target)
+        }
+
+        body.add(")")
+
+        return FunSpec.builder("fromRow")
+            .addParameter("row", ROW_TYPE)
+            .returns(entityClass)
+            .addCode(body.build())
             .build()
     }
 
@@ -145,8 +213,12 @@ class EntityGenerator(
         val targetQuery = ClassName(packageName, "${targetName}Query")
         val edgeRefType = EDGE_REF.parameterizedBy(targetEntity, targetQuery)
         val propertyName = toCamelCase(edge.name)
+        // EdgeRef.has { block } only accumulates predicates off the
+        // query — it never calls the driver — so we hand it NoopDriver
+        // and bail loudly if something tries to run a terminal op
+        // inside `has { }`.
         return PropertySpec.builder(propertyName, edgeRefType)
-            .initializer("%T(%S) { %T() }", EDGE_REF, edge.name, targetQuery)
+            .initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetQuery, NOOP_DRIVER)
             .build()
     }
 }

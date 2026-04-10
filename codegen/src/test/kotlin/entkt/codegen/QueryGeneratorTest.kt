@@ -65,7 +65,9 @@ class QueryGeneratorTest {
         assert(output.contains("import entkt.query.EdgeQuery")) {
             "Should import EdgeQuery\n$output"
         }
-        assert(output.contains("class CarQuery : EdgeQuery")) {
+        // The generated class takes a Driver in its primary constructor
+        // now, so the EdgeQuery supertype moves to after the closing paren.
+        assert(output.contains(": EdgeQuery") && output.contains("class CarQuery")) {
             "Query class should implement EdgeQuery\n$output"
         }
     }

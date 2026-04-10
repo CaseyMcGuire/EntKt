@@ -2,14 +2,18 @@ package entkt.codegen
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
+private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val UUID_CLASS = ClassName("java.util", "UUID")
 
 class CreateGenerator(
     private val packageName: String,
@@ -28,6 +32,17 @@ class CreateGenerator(
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter("driver", DRIVER)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("driver", DRIVER)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("driver")
+                    .build()
+            )
             .addProperties(allFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
@@ -76,6 +91,21 @@ class CreateGenerator(
             .build()
     }
 
+    /**
+     * `save()` lowers the builder's accumulated state into a row map and
+     * hands it to the driver. The driver minting strategy decides how
+     * the id is produced:
+     * - `CLIENT_UUID`: we mint a `UUID` here so the caller can see it
+     *   before the round trip.
+     * - `AUTO_INT` / `AUTO_LONG`: we omit `id` and let the driver pick.
+     * - `EXPLICIT`: unsupported in `save()` for now — caller must go
+     *   through the driver directly.
+     *
+     * After insert, the driver returns the persisted row (including the
+     * assigned id), which we feed into `fromRow` to hydrate a typed
+     * entity. That avoids any inconsistency between the row we sent and
+     * the row the driver actually stored.
+     */
     private fun buildSaveFunction(
         schemaName: String,
         schema: EntSchema,
@@ -86,20 +116,42 @@ class CreateGenerator(
         val builder = FunSpec.builder("save")
             .returns(entityClass)
 
-        // Validate required fields
+        val idStrategy = idStrategyName(schema)
+        if (idStrategy == "EXPLICIT") {
+            // EXPLICIT ids aren't supported by the generated builder —
+            // the caller would have to thread an id in before `save()`
+            // even runs, which doesn't fit the DSL shape. Keep the TODO
+            // so anyone who wires up an EXPLICIT-id entity sees an
+            // obvious error instead of a silent mis-insert.
+            builder.addStatement(
+                "TODO(%S)",
+                "save() on $schemaName requires EXPLICIT id support",
+            )
+            return builder.build()
+        }
+
+        // ---- Validate and bind each property to a local. ----
         for (field in allFields) {
-            if (!field.optional && !field.nillable && field.default == null) {
-                val propertyName = toCamelCase(field.name)
-                builder.addStatement(
+            val prop = toCamelCase(field.name)
+            val required = !field.optional && !field.nillable && field.default == null
+            val hasDefault = !field.optional && !field.nillable && field.default != null
+            when {
+                required -> builder.addStatement(
                     "val %L = this.%L ?: throw IllegalStateException(%S)",
-                    propertyName,
-                    propertyName,
+                    prop,
+                    prop,
                     "${field.name} is required",
                 )
+                hasDefault -> builder.addStatement(
+                    "val %L = this.%L ?: %L",
+                    prop,
+                    prop,
+                    kotlinLiteral(field.default!!),
+                )
+                else -> builder.addStatement("val %L = this.%L", prop, prop)
             }
         }
 
-        // Validate required edge FKs
         for (fk in edgeFks) {
             if (fk.required) {
                 builder.addStatement(
@@ -108,36 +160,33 @@ class CreateGenerator(
                     fk.propertyName,
                     "${fk.edgeName} is required",
                 )
+            } else {
+                builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
             }
         }
 
-        // Build return statement
-        val constructorArgs = mutableListOf<String>()
-        constructorArgs.add("id = TODO(\"ID generation\")")
+        // ---- Build the row map. ----
+        val rowBuilder = CodeBlock.builder()
+            .add("val values: Map<String, Any?> = mapOf(\n")
+
+        if (idStrategy == "CLIENT_UUID") {
+            rowBuilder.add("  %S to %T.randomUUID(),\n", "id", UUID_CLASS)
+        }
 
         for (field in allFields) {
-            val propertyName = toCamelCase(field.name)
-            val isRequired = !field.optional && !field.nillable && field.default == null
-            val hasDefault = !field.optional && !field.nillable && field.default != null
-            when {
-                isRequired -> constructorArgs.add("$propertyName = $propertyName")
-                hasDefault -> constructorArgs.add("$propertyName = this.$propertyName ?: ${kotlinLiteral(field.default!!)}")
-                else -> constructorArgs.add("$propertyName = this.$propertyName")
-            }
+            rowBuilder.add("  %S to %L,\n", field.name, toCamelCase(field.name))
         }
-
         for (fk in edgeFks) {
-            if (fk.required) {
-                constructorArgs.add("${fk.propertyName} = ${fk.propertyName}")
-            } else {
-                constructorArgs.add("${fk.propertyName} = this.${fk.propertyName}")
-            }
+            rowBuilder.add("  %S to %L,\n", fk.columnName, fk.propertyName)
         }
+        rowBuilder.add(")\n")
 
+        builder.addCode(rowBuilder.build())
         builder.addStatement(
-            "return %T(\n${constructorArgs.joinToString(",\n") { "  $it" }}\n)",
+            "val row = driver.insert(%T.TABLE, values)",
             entityClass,
         )
+        builder.addStatement("return %T.fromRow(row)", entityClass)
 
         return builder.build()
     }

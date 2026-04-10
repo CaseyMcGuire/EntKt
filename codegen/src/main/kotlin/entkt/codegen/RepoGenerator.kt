@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
@@ -16,8 +17,10 @@ private val DRIVER = ClassName("entkt.runtime", "Driver")
 /**
  * Emits a per-schema repository class. The repo is the only entry point
  * for I/O — it owns the [Driver] and exposes `query`, `create`,
- * `update(entity)`, and `byId` accessors. The entity's companion is
- * left as pure metadata (column refs only).
+ * `update(entity)`, and `byId` accessors. Its `init` block registers the
+ * entity's [entkt.runtime.EntitySchema] so the driver knows the table
+ * layout before any other call lands, and every builder it hands back is
+ * constructed with the same driver reference.
  */
 class RepoGenerator(
     private val packageName: String,
@@ -59,6 +62,9 @@ class RepoGenerator(
                     .initializer("driver")
                     .build()
             )
+            .addInitializerBlock(
+                CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
+            )
             .addFunction(
                 FunSpec.builder("query")
                     .addParameter(
@@ -67,14 +73,14 @@ class RepoGenerator(
                             .build()
                     )
                     .returns(queryClass)
-                    .addStatement("return %T().apply(block)", queryClass)
+                    .addStatement("return %T(driver).apply(block)", queryClass)
                     .build()
             )
             .addFunction(
                 FunSpec.builder("create")
                     .addParameter("block", createLambda)
                     .returns(createClass)
-                    .addStatement("return %T().apply(block)", createClass)
+                    .addStatement("return %T(driver).apply(block)", createClass)
                     .build()
             )
             .addFunction(
@@ -82,14 +88,18 @@ class RepoGenerator(
                     .addParameter("entity", entityClass)
                     .addParameter("block", updateLambda)
                     .returns(updateClass)
-                    .addStatement("return %T(entity).apply(block)", updateClass)
+                    .addStatement("return %T(driver, entity).apply(block)", updateClass)
                     .build()
             )
             .addFunction(
                 FunSpec.builder("byId")
                     .addParameter("id", idType)
                     .returns(entityClass.copy(nullable = true))
-                    .addStatement("TODO(%S)", "byId requires the runtime layer")
+                    .addStatement(
+                        "return driver.byId(%T.TABLE, id)?.let { %T.fromRow(it) }",
+                        entityClass,
+                        entityClass,
+                    )
                     .build()
             )
             .build()

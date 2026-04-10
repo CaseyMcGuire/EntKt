@@ -2,6 +2,7 @@ package entkt.codegen
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
@@ -11,6 +12,7 @@ import entkt.schema.EntSchema
 import entkt.schema.Field
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
+private val DRIVER = ClassName("entkt.runtime", "Driver")
 
 class UpdateGenerator(
     private val packageName: String,
@@ -24,7 +26,8 @@ class UpdateGenerator(
         val className = "${schemaName}Update"
         val fields = schema.fields()
         val mixinFields = schema.mixins().flatMap { it.fields() }
-        val mutableFields = (fields + mixinFields).filter { !it.immutable }
+        val allFields = fields + mixinFields
+        val mutableFields = allFields.filter { !it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val entityClass = ClassName(packageName, schemaName)
@@ -33,7 +36,14 @@ class UpdateGenerator(
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
             .primaryConstructor(
                 FunSpec.constructorBuilder()
+                    .addParameter("driver", DRIVER)
                     .addParameter("entity", entityClass)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("driver", DRIVER)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("driver")
                     .build()
             )
             .addProperty(
@@ -45,7 +55,8 @@ class UpdateGenerator(
             .addProperties(mutableFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
-            .addFunction(buildSaveFunction(schemaName, schema, edgeFks))
+            .addFunction(buildSaveFunction(schemaName, allFields, edgeFks))
+            .addFunction(buildSaveOrThrowFunction(schemaName))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -90,36 +101,81 @@ class UpdateGenerator(
             .build()
     }
 
+    /**
+     * `save()` writes the builder's changes to the driver and returns
+     * the refreshed entity — or null when the row has been deleted out
+     * from under us. Each mutable field falls back to the entity's
+     * current value, so untouched builder properties round-trip
+     * through the driver as-is. Immutables are sourced straight from
+     * the entity (they can't change) and included in the map so the
+     * fallback behavior stays obvious — the driver's merge semantics
+     * make it a no-op write.
+     */
     private fun buildSaveFunction(
         schemaName: String,
-        schema: EntSchema,
+        allFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val builder = FunSpec.builder("save")
-            .returns(entityClass)
-
-        val allFields = schema.fields() + schema.mixins().flatMap { it.fields() }
-        val constructorArgs = mutableListOf("id = entity.id")
+            .returns(entityClass.copy(nullable = true))
 
         for (field in allFields) {
-            val propertyName = toCamelCase(field.name)
+            val prop = toCamelCase(field.name)
             if (field.immutable) {
-                constructorArgs.add("$propertyName = entity.$propertyName")
+                builder.addStatement("val %L = entity.%L", prop, prop)
             } else {
-                constructorArgs.add("$propertyName = this.$propertyName ?: entity.$propertyName")
+                builder.addStatement(
+                    "val %L = this.%L ?: entity.%L",
+                    prop,
+                    prop,
+                    prop,
+                )
             }
         }
 
         for (fk in edgeFks) {
-            constructorArgs.add("${fk.propertyName} = this.${fk.propertyName} ?: entity.${fk.propertyName}")
+            builder.addStatement(
+                "val %L = this.%L ?: entity.%L",
+                fk.propertyName,
+                fk.propertyName,
+                fk.propertyName,
+            )
         }
 
+        val rowBuilder = CodeBlock.builder()
+            .add("val values: Map<String, Any?> = mapOf(\n")
+        for (field in allFields) {
+            rowBuilder.add("  %S to %L,\n", field.name, toCamelCase(field.name))
+        }
+        for (fk in edgeFks) {
+            rowBuilder.add("  %S to %L,\n", fk.columnName, fk.propertyName)
+        }
+        rowBuilder.add(")\n")
+
+        builder.addCode(rowBuilder.build())
         builder.addStatement(
-            "return %T(\n${constructorArgs.joinToString(",\n") { "  $it" }}\n)",
+            "val row = driver.update(%T.TABLE, entity.id, values) ?: return null",
             entityClass,
         )
+        builder.addStatement("return %T.fromRow(row)", entityClass)
 
         return builder.build()
+    }
+
+    /**
+     * Non-null variant: throws when the row has vanished. Useful from
+     * callers that already know the entity exists (e.g. re-saving the
+     * result of a recent query) and don't want to deal with the `?`.
+     */
+    private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        return FunSpec.builder("saveOrThrow")
+            .returns(entityClass)
+            .addStatement(
+                "return save() ?: throw IllegalStateException(%S)",
+                "$schemaName row not found",
+            )
+            .build()
     }
 }
