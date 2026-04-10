@@ -59,6 +59,9 @@ private val POST_SCHEMA = EntitySchema(
     ),
 )
 
+private fun quoteIdent(identifier: String): String =
+    "\"${identifier.replace("\"", "\"\"")}\""
+
 /**
  * Parity tests for [PostgresDriver] against a real Postgres container.
  * The assertions mirror `InMemoryDriverTest` so any divergence between
@@ -324,6 +327,43 @@ class PostgresDriverTest {
             emptyList(), null, null,
         )
         assertEquals(setOf("Alice"), withAge.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `embedded quotes in identifiers are escaped defensively`() {
+        val table = "audit\"logs"
+        val nameColumn = "display\"name"
+        val schema = EntitySchema(
+            table = table,
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(nameColumn, FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+
+        val driver = PostgresDriver(dataSource)
+        driver.register(schema)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE ${quoteIdent(table)} RESTART IDENTITY")
+            }
+        }
+
+        val inserted = driver.insert(table, mapOf(nameColumn to "Alice"))
+        assertEquals("Alice", inserted[nameColumn])
+
+        val rows = driver.query(
+            table = table,
+            predicates = listOf(Predicate.Leaf(nameColumn, Op.EQ, "Alice")),
+            orderBy = listOf(OrderField(nameColumn, OrderDirection.ASC)),
+            limit = null,
+            offset = null,
+        )
+        assertEquals(1, rows.size)
+        assertEquals("Alice", rows.single()[nameColumn])
     }
 
     @Test

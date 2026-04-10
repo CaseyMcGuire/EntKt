@@ -434,10 +434,11 @@ class PostgresDriver(
     // ---------- Identifier quoting ----------
 
     /**
-     * Wrap a snake_case identifier in PG's `"..."` quoting so reserved
-     * words don't collide. Identifiers come from generated schema and
-     * codegen — never from user input — so we don't need to escape
-     * embedded quotes.
+     * Wrap an identifier in PG's `"..."` quoting and escape embedded
+     * quotes defensively. Most identifiers originate in generated
+     * schema metadata, but callers can still construct raw predicates
+     * and order fields by hand.
      */
-    private fun quote(identifier: String): String = "\"$identifier\""
+    private fun quote(identifier: String): String =
+        "\"${identifier.replace("\"", "\"\"")}\""
 }
