@@ -68,6 +68,39 @@ class RepoGeneratorTest {
     }
 
     @Test
+    fun `repo exposes delete taking the entity and deleteById taking the id`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun delete(entity: Car): Boolean")) {
+            "Should have delete(entity)\n$output"
+        }
+        assert(output.contains("fun deleteById(id: Int): Boolean")) {
+            "Should have deleteById taking the schema id type\n$output"
+        }
+    }
+
+    @Test
+    fun `delete delegates to the driver`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("driver.delete(Car.TABLE, entity.id)")) {
+            "delete should call driver.delete with entity.id\n$output"
+        }
+        assert(output.contains("driver.delete(Car.TABLE, id)")) {
+            "deleteById should call driver.delete with the id\n$output"
+        }
+    }
+
+    @Test
+    fun `deleteById uses the correct id type for UUID schemas`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("fun deleteById(id: UUID): Boolean")) {
+            "deleteById should use UUID for User's id type\n$output"
+        }
+    }
+
+    @Test
     fun `repo registers the entity schema in its init block`() {
         val output = generator.generate("Car", Car).toString()
 

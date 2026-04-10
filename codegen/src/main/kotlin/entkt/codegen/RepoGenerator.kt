@@ -102,6 +102,26 @@ class RepoGenerator(
                     )
                     .build()
             )
+            .addFunction(
+                FunSpec.builder("delete")
+                    .addParameter("entity", entityClass)
+                    .returns(Boolean::class)
+                    .addStatement(
+                        "return driver.delete(%T.TABLE, entity.id)",
+                        entityClass,
+                    )
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("deleteById")
+                    .addParameter("id", idType)
+                    .returns(Boolean::class)
+                    .addStatement(
+                        "return driver.delete(%T.TABLE, id)",
+                        entityClass,
+                    )
+                    .build()
+            )
             .build()
 
         return FileSpec.builder(packageName, className)
