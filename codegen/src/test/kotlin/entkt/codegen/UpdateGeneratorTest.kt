@@ -7,19 +7,26 @@ class UpdateGeneratorTest {
     private val generator = UpdateGenerator("com.example.ent")
 
     @Test
-    fun `generates update builder with setters for mutable fields`() {
+    fun `generates update builder with mutable properties for mutable fields`() {
         val output = generator.generate("User", User).toString()
 
         assert(output.contains("class UserUpdate")) { "Should generate UserUpdate class\n$output" }
-        assert(output.contains("fun setName(")) { "Should have setName\n$output" }
-        assert(output.contains("fun setAge(")) { "Should have setAge\n$output" }
+        assert(output.contains("var name: String?")) { "Should have name var\n$output" }
+        assert(output.contains("var age: Int?")) { "Should have age var\n$output" }
     }
 
     @Test
-    fun `excludes immutable fields from setters`() {
+    fun `update builder is annotated as DSL scope`() {
         val output = generator.generate("User", User).toString()
 
-        assert(!output.contains("fun setCreatedAt")) { "Should not have setter for immutable field\n$output" }
+        assert(output.contains("@EntktDsl")) { "Should be annotated @EntktDsl\n$output" }
+    }
+
+    @Test
+    fun `excludes immutable fields from mutable properties`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(!output.contains("var createdAt")) { "Should not have mutable createdAt\n$output" }
     }
 
     @Test

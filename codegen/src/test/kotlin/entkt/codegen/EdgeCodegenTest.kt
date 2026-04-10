@@ -81,18 +81,18 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder gets id and entity setters for unique edge`() {
+    fun `create builder gets id and entity properties for unique edge`() {
         val output = CreateGenerator("com.example.ent")
             .generate("Pet", Pet, schemaNames).toString()
 
-        assert(output.contains("fun setOwnerId(")) {
-            "Should have setOwnerId(Long)\n$output"
+        assert(output.contains("var ownerId: Long?")) {
+            "Should have ownerId: Long? property\n$output"
         }
-        assert(output.contains("fun setOwner(owner: Owner)")) {
-            "Should have setOwner(Owner) convenience setter\n$output"
+        assert(output.contains("var owner: Owner?")) {
+            "Should have owner: Owner? convenience property\n$output"
         }
-        assert(output.contains("this.ownerId = owner.id")) {
-            "setOwner should write owner.id to ownerId\n$output"
+        assert(output.contains("ownerId = value?.id")) {
+            "owner setter should write value.id to ownerId\n$output"
         }
     }
 
@@ -107,15 +107,15 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `update builder gets id and entity setters for unique edge`() {
+    fun `update builder gets id and entity properties for unique edge`() {
         val output = UpdateGenerator("com.example.ent")
             .generate("Pet", Pet, schemaNames).toString()
 
-        assert(output.contains("fun setOwnerId(")) {
-            "Should have setOwnerId(Long)\n$output"
+        assert(output.contains("var ownerId: Long?")) {
+            "Should have ownerId: Long? property\n$output"
         }
-        assert(output.contains("fun setOwner(owner: Owner)")) {
-            "Should have setOwner(Owner) convenience setter\n$output"
+        assert(output.contains("var owner: Owner?")) {
+            "Should have owner: Owner? convenience property\n$output"
         }
     }
 
@@ -130,17 +130,26 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `query builder emits FK predicates and whereHas helpers`() {
-        val output = QueryGenerator("com.example.ent")
+    fun `entity emits nullable column ref for optional unique edge FK`() {
+        val output = EntityGenerator("com.example.ent")
             .generate("Pet", Pet, schemaNames).toString()
 
-        assert(output.contains("fun whereOwnerIdEq(")) { "Should have whereOwnerIdEq\n$output" }
-        assert(output.contains("fun whereOwnerIdIn(")) { "Should have whereOwnerIdIn\n$output" }
-        assert(output.contains("fun whereHasOwner(): PetQuery")) {
-            "Should have whereHasOwner alias\n$output"
+        // Optional edge -> nullable FK. Long is Comparable so the FK
+        // gets NullableComparableColumn (range queries on IDs are useful
+        // for pagination). Being nullable, it implements [Nullable] so
+        // isNotNull() is callable.
+        assert(output.contains("val ownerId: NullableComparableColumn<Long> = NullableComparableColumn<Long>(\"owner_id\")")) {
+            "Should emit NullableComparableColumn<Long> for optional edge FK\n$output"
         }
-        assert(output.contains("fun whereHasNoOwner(): PetQuery")) {
-            "Should have whereHasNoOwner alias\n$output"
+    }
+
+    @Test
+    fun `entity emits non-null column ref for required unique edge FK`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("RequiredPet", RequiredPet, schemaNames).toString()
+
+        assert(output.contains("val ownerId: ComparableColumn<Long> = ComparableColumn<Long>(\"owner_id\")")) {
+            "Should emit non-null ComparableColumn<Long> for required edge FK\n$output"
         }
     }
 }

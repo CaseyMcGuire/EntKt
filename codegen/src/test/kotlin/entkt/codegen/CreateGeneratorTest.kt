@@ -7,20 +7,20 @@ class CreateGeneratorTest {
     private val generator = CreateGenerator("com.example.ent")
 
     @Test
-    fun `generates create builder with setters for each field`() {
+    fun `generates create builder with mutable properties for each field`() {
         val output = generator.generate("Car", Car).toString()
 
         assert(output.contains("class CarCreate")) { "Should generate CarCreate class\n$output" }
-        assert(output.contains("fun setModel(")) { "Should have setModel\n$output" }
-        assert(output.contains("fun setYear(")) { "Should have setYear\n$output" }
-        assert(output.contains("fun setPrice(")) { "Should have setPrice\n$output" }
+        assert(output.contains("var model: String?")) { "Should have model var\n$output" }
+        assert(output.contains("var year: Int?")) { "Should have year var\n$output" }
+        assert(output.contains("var price: Float?")) { "Should have price var\n$output" }
     }
 
     @Test
-    fun `setters return builder for chaining`() {
+    fun `create builder is annotated as DSL scope`() {
         val output = generator.generate("Car", Car).toString()
 
-        assert(output.contains("): CarCreate")) { "Should return CarCreate for chaining\n$output" }
+        assert(output.contains("@EntktDsl")) { "Should be annotated @EntktDsl\n$output" }
     }
 
     @Test
@@ -40,11 +40,11 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `includes mixin fields`() {
+    fun `includes mixin fields as properties`() {
         val output = generator.generate("User", User).toString()
 
-        assert(output.contains("fun setCreatedAt(")) { "Should have mixin setter\n$output" }
-        assert(output.contains("fun setUpdatedAt(")) { "Should have mixin setter\n$output" }
+        assert(output.contains("var createdAt: Instant?")) { "Should have mixin property\n$output" }
+        assert(output.contains("var updatedAt: Instant?")) { "Should have mixin property\n$output" }
     }
 
     @Test

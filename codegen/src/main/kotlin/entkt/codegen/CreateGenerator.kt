@@ -1,13 +1,15 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
-import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.schema.EntSchema
 import entkt.schema.Field
+
+private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 
 class CreateGenerator(
     private val packageName: String,
@@ -25,10 +27,10 @@ class CreateGenerator(
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val typeSpec = TypeSpec.classBuilder(className)
+            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
             .addProperties(allFields.map { buildProperty(it) })
-            .addProperties(edgeFks.map { buildEdgeProperty(it) })
-            .addFunctions(allFields.map { buildSetter(className, it) })
-            .addFunctions(edgeFks.flatMap { buildEdgeSetters(className, it) })
+            .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
+            .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
             .build()
 
@@ -40,55 +42,38 @@ class CreateGenerator(
     private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.type.toTypeName().copy(nullable = true)
         return PropertySpec.builder(toCamelCase(field.name), typeName)
-            .addModifiers(KModifier.PRIVATE)
             .mutable(true)
             .initializer("null")
             .build()
     }
 
-    private fun buildEdgeProperty(fk: EdgeFk): PropertySpec {
+    private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {
         val typeName = fk.idType.toTypeName().copy(nullable = true)
         return PropertySpec.builder(fk.propertyName, typeName)
-            .addModifiers(KModifier.PRIVATE)
             .mutable(true)
             .initializer("null")
             .build()
     }
 
-    private fun buildSetter(className: String, field: Field): FunSpec {
-        val propertyName = toCamelCase(field.name)
-        val paramType = field.type.toTypeName()
-        return FunSpec.builder("set${propertyName.replaceFirstChar { it.uppercase() }}")
-            .addParameter("value", paramType)
-            .returns(ClassName(packageName, className))
-            .addStatement("this.%L = value", propertyName)
-            .addStatement("return this")
+    /**
+     * Convenience property mirroring the edge name: assigning a target
+     * entity here also writes its id into the underlying FK property.
+     * e.g. `author = alice` sets `authorId = alice.id`.
+     */
+    private fun buildEdgeEntityProperty(fk: EdgeFk): PropertySpec {
+        val targetClass = ClassName(packageName, fk.targetName).copy(nullable = true)
+        val edgeProp = toCamelCase(fk.edgeName)
+        return PropertySpec.builder(edgeProp, targetClass)
+            .mutable(true)
+            .initializer("null")
+            .setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", targetClass)
+                    .addStatement("field = value")
+                    .addStatement("%L = value?.id", fk.propertyName)
+                    .build()
+            )
             .build()
-    }
-
-    private fun buildEdgeSetters(className: String, fk: EdgeFk): List<FunSpec> {
-        val cap = fk.propertyName.replaceFirstChar { it.uppercase() }
-        val edgeCap = toCamelCase(fk.edgeName).replaceFirstChar { it.uppercase() }
-        val returnType = ClassName(packageName, className)
-        val targetClass = ClassName(packageName, fk.targetName)
-
-        // setOwnerId(id: Long): CarCreate
-        val idSetter = FunSpec.builder("set$cap")
-            .addParameter("value", fk.idType.toTypeName())
-            .returns(returnType)
-            .addStatement("this.%L = value", fk.propertyName)
-            .addStatement("return this")
-            .build()
-
-        // setOwner(owner: User): CarCreate
-        val entitySetter = FunSpec.builder("set$edgeCap")
-            .addParameter(toCamelCase(fk.edgeName), targetClass)
-            .returns(returnType)
-            .addStatement("this.%L = %L.id", fk.propertyName, toCamelCase(fk.edgeName))
-            .addStatement("return this")
-            .build()
-
-        return listOf(idSetter, entitySetter)
     }
 
     private fun buildSaveFunction(

@@ -118,14 +118,34 @@ class EntktPluginTest {
             assertTrue(entityContent.contains("val name: String"), "Should have name field")
             assertTrue(entityContent.contains("val age: Int?"), "Should have nullable age")
             assertTrue(entityContent.contains("val ownerId: Int?"), "Should have FK from unique edge")
+            // Column refs are emitted on the companion
+            assertTrue(
+                entityContent.contains("val name: StringColumn = StringColumn(\"name\")"),
+                "Should emit StringColumn for name field",
+            )
+            assertTrue(
+                entityContent.contains("val ownerId: NullableComparableColumn<Int>"),
+                "Should emit NullableComparableColumn for optional edge FK",
+            )
 
             val createContent = generatedDir.resolve("PetCreate.kt").readText()
-            assertTrue(createContent.contains("setOwner(owner: Owner)"), "Should have setOwner convenience setter")
-            assertTrue(createContent.contains("setOwnerId("), "Should have setOwnerId setter")
+            assertTrue(createContent.contains("@EntktDsl"), "Should be annotated @EntktDsl")
+            assertTrue(createContent.contains("var owner: Owner?"), "Should have owner convenience property")
+            assertTrue(createContent.contains("var ownerId: Int?"), "Should have ownerId FK property")
 
             val queryContent = generatedDir.resolve("PetQuery.kt").readText()
-            assertTrue(queryContent.contains("whereHasOwner()"), "Should have whereHasOwner alias")
-            assertTrue(queryContent.contains("whereOwnerIdEq("), "Should have FK equality predicate")
+            assertTrue(queryContent.contains("@EntktDsl"), "Query class should be annotated @EntktDsl")
+            assertTrue(
+                queryContent.contains("`where`(predicate: Predicate)"),
+                "Query class should have where(Predicate)",
+            )
+            assertTrue(
+                queryContent.contains("fun orderBy(`field`: OrderField)"),
+                "Query class should have orderBy(OrderField)",
+            )
+            // Per-field predicate methods are gone — predicates go through column refs
+            assertTrue(!queryContent.contains("whereHasOwner"), "Should not emit old whereHasOwner alias")
+            assertTrue(!queryContent.contains("whereOwnerIdEq"), "Should not emit old per-field predicate")
         } finally {
             projectDir.deleteRecursively()
         }

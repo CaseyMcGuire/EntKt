@@ -4,11 +4,16 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.UNIT
 import entkt.schema.EntSchema
 import entkt.schema.Field
+import entkt.schema.FieldType
 
 class EntityGenerator(
     private val packageName: String,
@@ -30,6 +35,24 @@ class EntityGenerator(
         val updateClass = ClassName(packageName, "${schemaName}Update")
         val queryClass = ClassName(packageName, "${schemaName}Query")
 
+        val createLambda = LambdaTypeName.get(
+            receiver = createClass,
+            returnType = UNIT,
+        )
+        val updateLambda = LambdaTypeName.get(
+            receiver = updateClass,
+            returnType = UNIT,
+        )
+        val queryLambda = LambdaTypeName.get(
+            receiver = queryClass,
+            returnType = UNIT,
+        )
+
+        val columnRefs = buildList {
+            addAll(allFields.map { buildFieldColumnRef(it) })
+            addAll(edgeFks.map { buildEdgeColumnRef(it) })
+        }
+
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
             .primaryConstructor(buildConstructor(idField, allFields, edgeFks))
@@ -38,22 +61,30 @@ class EntityGenerator(
             .addProperties(edgeFks.map { buildEdgeProperty(it) })
             .addFunction(
                 FunSpec.builder("update")
+                    .addParameter("block", updateLambda)
                     .returns(updateClass)
-                    .addStatement("return %T(this)", updateClass)
+                    .addStatement("return %T(this).apply(block)", updateClass)
                     .build()
             )
             .addType(
                 TypeSpec.companionObjectBuilder()
+                    .addProperties(columnRefs)
                     .addFunction(
                         FunSpec.builder("create")
+                            .addParameter("block", createLambda)
                             .returns(createClass)
-                            .addStatement("return %T()", createClass)
+                            .addStatement("return %T().apply(block)", createClass)
                             .build()
                     )
                     .addFunction(
                         FunSpec.builder("query")
+                            .addParameter(
+                                ParameterSpec.builder("block", queryLambda)
+                                    .defaultValue("{}")
+                                    .build()
+                            )
                             .returns(queryClass)
-                            .addStatement("return %T()", queryClass)
+                            .addStatement("return %T().apply(block)", queryClass)
                             .build()
                     )
                     .build()
@@ -120,6 +151,49 @@ class EntityGenerator(
         return PropertySpec.builder(fk.propertyName, typeName)
             .initializer(fk.propertyName)
             .build()
+    }
+
+    private fun buildFieldColumnRef(field: Field): PropertySpec {
+        val propertyName = toCamelCase(field.name)
+        val nullable = field.optional || field.nillable
+        val columnType = columnClassFor(field.type, nullable)
+        return PropertySpec.builder(propertyName, columnType)
+            .initializer("%T(%S)", columnType, field.name)
+            .build()
+    }
+
+    private fun buildEdgeColumnRef(fk: EdgeFk): PropertySpec {
+        val nullable = !fk.required
+        val columnType = columnClassFor(fk.idType, nullable)
+        return PropertySpec.builder(fk.propertyName, columnType)
+            .initializer("%T(%S)", columnType, fk.columnName)
+            .build()
+    }
+}
+
+internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
+    return when (type) {
+        FieldType.STRING, FieldType.TEXT -> {
+            if (nullable) ClassName("entkt.query", "NullableStringColumn")
+            else ClassName("entkt.query", "StringColumn")
+        }
+        FieldType.INT,
+        FieldType.LONG,
+        FieldType.FLOAT,
+        FieldType.DOUBLE,
+        FieldType.TIME -> {
+            val cls = if (nullable) ClassName("entkt.query", "NullableComparableColumn")
+            else ClassName("entkt.query", "ComparableColumn")
+            cls.parameterizedBy(type.toTypeName())
+        }
+        FieldType.BOOL,
+        FieldType.UUID,
+        FieldType.BYTES,
+        FieldType.ENUM -> {
+            val cls = if (nullable) ClassName("entkt.query", "NullableColumn")
+            else ClassName("entkt.query", "Column")
+            cls.parameterizedBy(type.toTypeName())
+        }
     }
 }
 
