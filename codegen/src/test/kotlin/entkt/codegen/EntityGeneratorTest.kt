@@ -98,39 +98,24 @@ class EntityGeneratorTest {
     }
 
     @Test
-    fun `generates create companion method taking DSL lambda`() {
+    fun `entity companion has no I_O entry points (those live on the repo)`() {
         val output = generator.generate("Car", Car).toString()
 
-        assert(output.contains("companion object")) { "Should have companion object\n$output" }
-        assert(output.contains("fun create(block: CarCreate.() -> Unit): CarCreate")) {
-            "Should have create method taking DSL lambda\n$output"
+        assert(output.contains("companion object")) { "Should still have companion object for column refs\n$output" }
+        assert(!output.contains("fun create(")) {
+            "create() should live on CarRepo, not on the entity companion\n$output"
         }
-        assert(output.contains("CarCreate().apply(block)")) {
-            "Should apply block to new builder\n$output"
+        assert(!output.contains("fun query(")) {
+            "query() should live on CarRepo, not on the entity companion\n$output"
         }
     }
 
     @Test
-    fun `generates update instance method taking DSL lambda`() {
+    fun `entity has no instance update method (it lives on the repo)`() {
         val output = generator.generate("Car", Car).toString()
 
-        assert(output.contains("fun update(block: CarUpdate.() -> Unit): CarUpdate")) {
-            "Should have update method taking DSL lambda\n$output"
-        }
-        assert(output.contains("CarUpdate(this).apply(block)")) {
-            "Should pass this to update builder and apply block\n$output"
-        }
-    }
-
-    @Test
-    fun `generates query companion method taking optional DSL lambda`() {
-        val output = generator.generate("Car", Car).toString()
-
-        assert(output.contains("fun query(block: CarQuery.() -> Unit = {}): CarQuery")) {
-            "Should have query method with optional DSL lambda\n$output"
-        }
-        assert(output.contains("CarQuery().apply(block)")) {
-            "Should apply block to new query\n$output"
+        assert(!output.contains("fun update(")) {
+            "update() should live on CarRepo, not on the entity instance\n$output"
         }
     }
 

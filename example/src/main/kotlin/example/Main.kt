@@ -34,13 +34,14 @@ fun main(args: Array<String>) {
     val generator = EntGenerator("example.ent")
     generator.writeTo(outputDir, schemas)
 
-    println("Generated ${schemas.size * 4} files for ${schemas.size} schemas:")
-    outputDir.toFile().walkTopDown()
+    val generated = outputDir.toFile().walkTopDown()
         .filter { it.extension == "kt" }
         .sorted()
-        .forEach { file ->
-            println("  ${file.relativeTo(outputDir.toFile())}")
-        }
+        .toList()
+    println("Generated ${generated.size} files for ${schemas.size} schemas:")
+    generated.forEach { file ->
+        println("  ${file.relativeTo(outputDir.toFile())}")
+    }
     println()
     println("Output directory: ${outputDir.toAbsolutePath()}")
 }

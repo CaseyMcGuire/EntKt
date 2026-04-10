@@ -111,7 +111,10 @@ class EntktPluginTest {
             assertTrue(generatedDir.resolve("PetCreate.kt").exists(), "Should generate PetCreate.kt")
             assertTrue(generatedDir.resolve("PetUpdate.kt").exists(), "Should generate PetUpdate.kt")
             assertTrue(generatedDir.resolve("PetQuery.kt").exists(), "Should generate PetQuery.kt")
+            assertTrue(generatedDir.resolve("PetRepo.kt").exists(), "Should generate PetRepo.kt")
             assertTrue(generatedDir.resolve("Owner.kt").exists(), "Should generate Owner.kt")
+            assertTrue(generatedDir.resolve("OwnerRepo.kt").exists(), "Should generate OwnerRepo.kt")
+            assertTrue(generatedDir.resolve("EntClient.kt").exists(), "Should generate EntClient.kt")
 
             val entityContent = generatedDir.resolve("Pet.kt").readText()
             assertTrue(entityContent.contains("data class Pet"), "Should generate data class")
@@ -127,6 +130,10 @@ class EntktPluginTest {
                 entityContent.contains("val ownerId: NullableComparableColumn<Int>"),
                 "Should emit NullableComparableColumn for optional edge FK",
             )
+            // I/O entry points live on the repo, not the entity companion
+            assertTrue(!entityContent.contains("fun create("), "create() should not live on entity")
+            assertTrue(!entityContent.contains("fun query("), "query() should not live on entity")
+            assertTrue(!entityContent.contains("fun update("), "update() should not live on entity")
 
             val createContent = generatedDir.resolve("PetCreate.kt").readText()
             assertTrue(createContent.contains("@EntktDsl"), "Should be annotated @EntktDsl")
@@ -146,6 +153,37 @@ class EntktPluginTest {
             // Per-field predicate methods are gone — predicates go through column refs
             assertTrue(!queryContent.contains("whereHasOwner"), "Should not emit old whereHasOwner alias")
             assertTrue(!queryContent.contains("whereOwnerIdEq"), "Should not emit old per-field predicate")
+
+            // Repo is the DI seam — takes a Driver, exposes create/query/update/byId
+            val repoContent = generatedDir.resolve("PetRepo.kt").readText()
+            assertTrue(repoContent.contains("class PetRepo"), "Should generate PetRepo class")
+            assertTrue(repoContent.contains("import entkt.runtime.Driver"), "Should import Driver")
+            assertTrue(repoContent.contains("driver: Driver"), "Should take Driver in constructor")
+            assertTrue(
+                repoContent.contains("fun create(block: PetCreate.() -> Unit): PetCreate"),
+                "Repo should expose create(block)",
+            )
+            assertTrue(
+                repoContent.contains("fun update(entity: Pet, block: PetUpdate.() -> Unit): PetUpdate"),
+                "Repo should expose update(entity, block)",
+            )
+            assertTrue(
+                repoContent.contains("fun query(block: PetQuery.() -> Unit = {}): PetQuery"),
+                "Repo should expose query(block)",
+            )
+
+            // EntClient wires repos together — this is the DI entry point
+            val clientContent = generatedDir.resolve("EntClient.kt").readText()
+            assertTrue(clientContent.contains("class EntClient"), "Should generate EntClient class")
+            assertTrue(clientContent.contains("driver: Driver"), "Client should take Driver")
+            assertTrue(
+                clientContent.contains("val pets: PetRepo = PetRepo(driver)"),
+                "Client should expose pets: PetRepo",
+            )
+            assertTrue(
+                clientContent.contains("val owners: OwnerRepo = OwnerRepo(driver)"),
+                "Client should expose owners: OwnerRepo",
+            )
         } finally {
             projectDir.deleteRecursively()
         }

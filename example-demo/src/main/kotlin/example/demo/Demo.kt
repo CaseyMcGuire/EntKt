@@ -1,6 +1,8 @@
 package example.demo
 
 import entkt.query.isNotNull
+import entkt.runtime.StubDriver
+import example.ent.EntClient
 import example.ent.Post
 import example.ent.Tag
 import example.ent.User
@@ -16,6 +18,12 @@ import java.util.UUID
  * out via `TODO("ID generation")`. The demo just *constructs* the
  * create/update/query builders to illustrate the fluent API surface.
  *
+ * The `EntClient` is the dependency-injection seam: production code
+ * passes a real `Driver`, this demo passes the `StubDriver`. There are
+ * no static entry points to intercept — every I/O operation goes
+ * through `client.users` / `client.posts` / `client.tags`, so a service
+ * that needs to be tested just takes an `EntClient` in its constructor.
+ *
  * Run with: ./gradlew :example-demo:run
  */
 fun main() {
@@ -25,14 +33,18 @@ fun main() {
         println("=".repeat(60))
     }
 
+    // The DI seam: hand the client a driver. In tests, swap StubDriver
+    // for an in-memory or fake driver.
+    val client = EntClient(StubDriver)
+
     banner("entkt API demo")
     println("This demo builds generated create/update/query builders to show")
     println("the API shape. save() is never called — there is no runtime yet.")
     println()
 
     // ---------- Create builder ----------
-    banner("User.create { ... }")
-    val newUser = User.create {
+    banner("client.users.create { ... }")
+    val newUser = client.users.create {
         name = "Alice"
         email = "alice@example.com"
         age = 30
@@ -44,8 +56,8 @@ fun main() {
     println("(Calling .save() here would hit TODO(\"ID generation\"))")
     println()
 
-    // ---------- Update builder via entity.update { ... } ----------
-    banner("existingUser.update { ... }")
+    // ---------- Update builder via client.users.update(entity) { ... } ----------
+    banner("client.users.update(existingUser) { ... }")
     // Construct a User instance directly to simulate one loaded from a DB.
     val existingUser = User(
         id = UUID.randomUUID(),
@@ -56,7 +68,7 @@ fun main() {
         createdAt = Instant.now().minusSeconds(3600),
         updatedAt = Instant.now().minusSeconds(3600),
     )
-    val updatedUser = existingUser.update {
+    val updatedUser = client.users.update(existingUser) {
         age = 31
         updatedAt = Instant.now()
     }
@@ -66,8 +78,8 @@ fun main() {
     println()
 
     // ---------- Query builder with typed column refs ----------
-    banner("User.query { ... } with typed column refs")
-    val activeUsers = User.query {
+    banner("client.users.query { ... } with typed column refs")
+    val activeUsers = client.users.query {
         where(User.active eq true)
         where(User.age gte 18)
         where(User.email hasSuffix "@example.com")
@@ -81,7 +93,7 @@ fun main() {
 
     // ---------- Compound predicates via and/or ----------
     banner("compound predicates with and / or")
-    val specialUsers = User.query {
+    val specialUsers = client.users.query {
         where(
             (User.active eq true) and
                 ((User.age gte 65) or (User.email hasSuffix "@admin.example.com")),
@@ -94,15 +106,15 @@ fun main() {
     banner("isNotNull on nullable column")
     // User.age is nullable (optional), so isNotNull lights up.
     // If you try `User.name.isNotNull()`, it won't compile — name is non-null.
-    val usersWithAge = User.query {
+    val usersWithAge = client.users.query {
         where(User.age.isNotNull())
     }
     println("predicates=${usersWithAge.predicates}")
     println()
 
     // ---------- Post with edge ----------
-    banner("Post.create { ... } with edge convenience property")
-    val post = Post.create {
+    banner("client.posts.create { ... } with edge convenience property")
+    val post = client.posts.create {
         title = "Hello entkt"
         body = "A minimal port of Ent for Kotlin"
         published = true
@@ -115,8 +127,8 @@ fun main() {
     println()
 
     // ---------- Edge-aware query ----------
-    banner("Post.query { ... } with edge FK predicate")
-    val postsByAlice = Post.query {
+    banner("client.posts.query { ... } with edge FK predicate")
+    val postsByAlice = client.posts.query {
         where(Post.authorId eq existingUser.id)
         where(Post.published eq true)
         where(Post.title contains "entkt")
@@ -126,8 +138,8 @@ fun main() {
     println()
 
     // ---------- Enum field ----------
-    banner("Tag.create { ... } with enum field")
-    val tag = Tag.create {
+    banner("client.tags.create { ... } with enum field")
+    val tag = client.tags.create {
         name = "kotlin"
         category = "LANGUAGE"
     }

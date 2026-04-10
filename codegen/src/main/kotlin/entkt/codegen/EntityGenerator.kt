@@ -4,13 +4,11 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.UNIT
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
@@ -31,23 +29,6 @@ class EntityGenerator(
         val allFields = fields + mixinFields
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
-        val createClass = ClassName(packageName, "${schemaName}Create")
-        val updateClass = ClassName(packageName, "${schemaName}Update")
-        val queryClass = ClassName(packageName, "${schemaName}Query")
-
-        val createLambda = LambdaTypeName.get(
-            receiver = createClass,
-            returnType = UNIT,
-        )
-        val updateLambda = LambdaTypeName.get(
-            receiver = updateClass,
-            returnType = UNIT,
-        )
-        val queryLambda = LambdaTypeName.get(
-            receiver = queryClass,
-            returnType = UNIT,
-        )
-
         val columnRefs = buildList {
             addAll(allFields.map { buildFieldColumnRef(it) })
             addAll(edgeFks.map { buildEdgeColumnRef(it) })
@@ -59,34 +40,9 @@ class EntityGenerator(
             .addProperty(idField)
             .addProperties(allFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeProperty(it) })
-            .addFunction(
-                FunSpec.builder("update")
-                    .addParameter("block", updateLambda)
-                    .returns(updateClass)
-                    .addStatement("return %T(this).apply(block)", updateClass)
-                    .build()
-            )
             .addType(
                 TypeSpec.companionObjectBuilder()
                     .addProperties(columnRefs)
-                    .addFunction(
-                        FunSpec.builder("create")
-                            .addParameter("block", createLambda)
-                            .returns(createClass)
-                            .addStatement("return %T().apply(block)", createClass)
-                            .build()
-                    )
-                    .addFunction(
-                        FunSpec.builder("query")
-                            .addParameter(
-                                ParameterSpec.builder("block", queryLambda)
-                                    .defaultValue("{}")
-                                    .build()
-                            )
-                            .returns(queryClass)
-                            .addStatement("return %T().apply(block)", queryClass)
-                            .build()
-                    )
                     .build()
             )
             .build()

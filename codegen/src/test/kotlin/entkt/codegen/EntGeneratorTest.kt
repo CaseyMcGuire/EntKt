@@ -15,13 +15,19 @@ class EntGeneratorTest {
     )
 
     @Test
-    fun `generates four files per schema`() {
+    fun `generates five files per schema plus one EntClient`() {
         val files = generator.generate(schemas)
 
-        assertEquals(8, files.size)
+        // Per schema: entity, create, update, query, repo. Plus a single
+        // EntClient that wires every repo together.
+        assertEquals(5 * schemas.size + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
-            setOf("Car", "CarCreate", "CarUpdate", "CarQuery", "User", "UserCreate", "UserUpdate", "UserQuery"),
+            setOf(
+                "Car", "CarCreate", "CarUpdate", "CarQuery", "CarRepo",
+                "User", "UserCreate", "UserUpdate", "UserQuery", "UserRepo",
+                "EntClient",
+            ),
             names,
         )
     }
@@ -46,10 +52,13 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("CarCreate.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarUpdate.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarQuery.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarRepo.kt")))
             assertTrue(Files.exists(packageDir.resolve("User.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserCreate.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserUpdate.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserQuery.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserRepo.kt")))
+            assertTrue(Files.exists(packageDir.resolve("EntClient.kt")))
         } finally {
             outputDir.toFile().deleteRecursively()
         }

@@ -16,17 +16,21 @@ class EntGenerator(
     private val createGenerator = CreateGenerator(packageName)
     private val updateGenerator = UpdateGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
+    private val repoGenerator = RepoGenerator(packageName)
+    private val clientGenerator = ClientGenerator(packageName)
 
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
         val schemaNames: Map<EntSchema, String> = schemas.associate { it.schema to it.name }
-        return schemas.flatMap { (name, schema) ->
+        val perSchema = schemas.flatMap { (name, schema) ->
             listOf(
                 entityGenerator.generate(name, schema, schemaNames),
                 createGenerator.generate(name, schema, schemaNames),
                 updateGenerator.generate(name, schema, schemaNames),
                 queryGenerator.generate(name, schema, schemaNames),
+                repoGenerator.generate(name, schema),
             )
         }
+        return perSchema + clientGenerator.generate(schemas)
     }
 
     fun writeTo(outputDir: Path, schemas: List<SchemaInput>) {
