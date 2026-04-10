@@ -60,4 +60,19 @@ interface Driver {
 
     /** Returns true if a row was actually removed. */
     fun delete(table: String, id: Any): Boolean
+
+    /**
+     * Run [block] inside a transaction. The block receives a
+     * transaction-scoped [Driver] that shares a single underlying
+     * connection / snapshot. If [block] completes normally the
+     * transaction is committed; if it throws the transaction is rolled
+     * back and the exception propagates.
+     *
+     * Calling [withTransaction] on an already-transactional driver
+     * reuses the existing transaction (no savepoints).
+     *
+     * The driver passed to [block] is only valid for the duration of
+     * the block — using it after the block returns will throw.
+     */
+    fun <T> withTransaction(block: (Driver) -> T): T
 }

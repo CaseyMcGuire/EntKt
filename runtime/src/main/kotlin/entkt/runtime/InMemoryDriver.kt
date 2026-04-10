@@ -120,6 +120,38 @@ class InMemoryDriver : Driver {
         }
     }
 
+    override fun <T> withTransaction(block: (Driver) -> T): T {
+        // Snapshot current table contents and id counters.
+        val tableSnapshot = mutableMapOf<String, MutableList<MutableMap<String, Any?>>>()
+        for ((name, rows) in tables) {
+            synchronized(rows) {
+                tableSnapshot[name] = rows.map { it.toMutableMap() }.toMutableList()
+            }
+        }
+        val idSnapshot = numericIds.mapValues { (_, counter) -> counter.get() }
+
+        val txDriver = InMemoryTransactionalDriver(this)
+        try {
+            return block(txDriver)
+        } catch (e: Throwable) {
+            // Restore tables from snapshot.
+            for ((name, snapshot) in tableSnapshot) {
+                val rows = tables[name] ?: continue
+                synchronized(rows) {
+                    rows.clear()
+                    rows.addAll(snapshot)
+                }
+            }
+            // Restore id counters.
+            for ((name, value) in idSnapshot) {
+                numericIds[name]?.set(value)
+            }
+            throw e
+        } finally {
+            txDriver.closed = true
+        }
+    }
+
     // ---------- Predicate evaluation ----------
 
     /**
@@ -211,5 +243,60 @@ class InMemoryDriver : Driver {
             }
             0
         }
+    }
+}
+
+/**
+ * Thin wrapper returned by [InMemoryDriver.withTransaction]. All I/O
+ * methods delegate to the root driver so mutations are visible within
+ * the transaction. [register] also delegates to the root so schema
+ * state is shared. Nested [withTransaction] reuses the same
+ * transaction (no savepoints). The wrapper is block-scoped — [closed]
+ * is set to true when the block exits and any subsequent call throws.
+ */
+private class InMemoryTransactionalDriver(
+    private val root: InMemoryDriver,
+) : Driver {
+    @Volatile var closed = false
+
+    private fun checkOpen() {
+        check(!closed) { "Transaction driver used after transaction block returned" }
+    }
+
+    override fun register(schema: EntitySchema) {
+        // Always delegate to root — DDL is not transactional.
+        root.register(schema)
+    }
+
+    override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
+        checkOpen(); return root.insert(table, values)
+    }
+
+    override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? {
+        checkOpen(); return root.update(table, id, values)
+    }
+
+    override fun byId(table: String, id: Any): Map<String, Any?>? {
+        checkOpen(); return root.byId(table, id)
+    }
+
+    override fun query(
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): List<Map<String, Any?>> {
+        checkOpen(); return root.query(table, predicates, orderBy, limit, offset)
+    }
+
+    override fun delete(table: String, id: Any): Boolean {
+        checkOpen(); return root.delete(table, id)
+    }
+
+    override fun <T> withTransaction(block: (Driver) -> T): T {
+        checkOpen()
+        // Nested: reuse the same transaction.
+        return block(this)
     }
 }

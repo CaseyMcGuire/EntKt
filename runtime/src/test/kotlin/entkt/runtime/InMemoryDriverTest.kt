@@ -209,4 +209,72 @@ class InMemoryDriverTest {
         val driver = InMemoryDriver()
         assertFailsWith<IllegalStateException> { driver.insert("nope", emptyMap()) }
     }
+
+    // ---------- Transactions ----------
+
+    @Test
+    fun `withTransaction commits on success`() {
+        val driver = fresh()
+        driver.withTransaction { tx ->
+            tx.insert("users", mapOf("name" to "Alice"))
+            tx.insert("users", mapOf("name" to "Bob"))
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `withTransaction rolls back on exception`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Pre-existing"))
+
+        assertFailsWith<IllegalStateException> {
+            driver.withTransaction { tx ->
+                tx.insert("users", mapOf("name" to "Alice"))
+                tx.insert("users", mapOf("name" to "Bob"))
+                error("boom")
+            }
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(listOf("Pre-existing"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `withTransaction rollback restores id counters`() {
+        val driver = fresh()
+        assertFailsWith<IllegalStateException> {
+            driver.withTransaction { tx ->
+                tx.insert("users", mapOf("name" to "Ghost"))  // id=1
+                error("boom")
+            }
+        }
+        // After rollback, the next insert should get id=1 again.
+        val row = driver.insert("users", mapOf("name" to "Real"))
+        assertEquals(1L, row["id"])
+    }
+
+    @Test
+    fun `nested withTransaction reuses the same transaction`() {
+        val driver = fresh()
+        driver.withTransaction { outer ->
+            outer.insert("users", mapOf("name" to "Alice"))
+            outer.withTransaction { inner ->
+                inner.insert("users", mapOf("name" to "Bob"))
+            }
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `transaction driver throws after block returns`() {
+        val driver = fresh()
+        var captured: Driver? = null
+        driver.withTransaction { tx ->
+            captured = tx
+        }
+        assertFailsWith<IllegalStateException> {
+            captured!!.insert("users", mapOf("name" to "Late"))
+        }
+    }
 }

@@ -10,6 +10,7 @@ import entkt.runtime.EdgeMetadata
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
 import entkt.schema.FieldType
+import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Types
@@ -54,7 +55,34 @@ class PostgresDriver(
         }
     }
 
-    override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
+    override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
+        dataSource.connection.use { insertWith(it, table, values) }
+
+    override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? =
+        dataSource.connection.use { updateWith(it, table, id, values) }
+
+    override fun byId(table: String, id: Any): Map<String, Any?>? =
+        dataSource.connection.use { byIdWith(it, table, id) }
+
+    override fun query(
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): List<Map<String, Any?>> =
+        dataSource.connection.use { queryWith(it, table, predicates, orderBy, limit, offset) }
+
+    override fun delete(table: String, id: Any): Boolean =
+        dataSource.connection.use { deleteWith(it, table, id) }
+
+    // ---------- Connection-taking internals ----------
+
+    private fun insertWith(
+        conn: Connection,
+        table: String,
+        values: Map<String, Any?>,
+    ): Map<String, Any?> {
         val schema = schemaFor(table)
 
         // For numeric auto-id strategies, drop the id column from the
@@ -74,20 +102,19 @@ class PostgresDriver(
             "INSERT INTO ${quote(table)} ($colList) VALUES ($placeholders) RETURNING *"
         }
 
-        return dataSource.connection.use { conn ->
-            conn.prepareStatement(sql).use { stmt ->
-                for ((i, col) in cols.withIndex()) {
-                    bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
-                }
-                stmt.executeQuery().use { rs ->
-                    check(rs.next()) { "INSERT into $table returned no row" }
-                    decodeRow(rs, schema.columns)
-                }
+        return conn.prepareStatement(sql).use { stmt ->
+            for ((i, col) in cols.withIndex()) {
+                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
+            }
+            stmt.executeQuery().use { rs ->
+                check(rs.next()) { "INSERT into $table returned no row" }
+                decodeRow(rs, schema.columns)
             }
         }
     }
 
-    override fun update(
+    private fun updateWith(
+        conn: Connection,
         table: String,
         id: Any,
         values: Map<String, Any?>,
@@ -98,38 +125,35 @@ class PostgresDriver(
         val cols = values.keys.filter { it != schema.idColumn }
         if (cols.isEmpty()) {
             // Nothing to update; just return the existing row (or null).
-            return byId(table, id)
+            return byIdWith(conn, table, id)
         }
         val setClause = cols.joinToString(", ") { "${quote(it)} = ?" }
         val sql = "UPDATE ${quote(table)} SET $setClause WHERE ${quote(schema.idColumn)} = ? RETURNING *"
 
-        return dataSource.connection.use { conn ->
-            conn.prepareStatement(sql).use { stmt ->
-                for ((i, col) in cols.withIndex()) {
-                    bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
-                }
-                bind(stmt, cols.size + 1, columnTypeOf(schema, schema.idColumn), id)
-                stmt.executeQuery().use { rs ->
-                    if (rs.next()) decodeRow(rs, schema.columns) else null
-                }
+        return conn.prepareStatement(sql).use { stmt ->
+            for ((i, col) in cols.withIndex()) {
+                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
+            }
+            bind(stmt, cols.size + 1, columnTypeOf(schema, schema.idColumn), id)
+            stmt.executeQuery().use { rs ->
+                if (rs.next()) decodeRow(rs, schema.columns) else null
             }
         }
     }
 
-    override fun byId(table: String, id: Any): Map<String, Any?>? {
+    private fun byIdWith(conn: Connection, table: String, id: Any): Map<String, Any?>? {
         val schema = schemaFor(table)
         val sql = "SELECT * FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ?"
-        return dataSource.connection.use { conn ->
-            conn.prepareStatement(sql).use { stmt ->
-                bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
-                stmt.executeQuery().use { rs ->
-                    if (rs.next()) decodeRow(rs, schema.columns) else null
-                }
+        return conn.prepareStatement(sql).use { stmt ->
+            bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
+            stmt.executeQuery().use { rs ->
+                if (rs.next()) decodeRow(rs, schema.columns) else null
             }
         }
     }
 
-    override fun query(
+    private fun queryWith(
+        conn: Connection,
         table: String,
         predicates: List<Predicate>,
         orderBy: List<OrderField>,
@@ -163,28 +187,24 @@ class PostgresDriver(
         if (limit != null) sql.append(" LIMIT ").append(limit)
         if (offset != null) sql.append(" OFFSET ").append(offset)
 
-        return dataSource.connection.use { conn ->
-            conn.prepareStatement(sql.toString()).use { stmt ->
-                for ((i, p) in builder.params.withIndex()) {
-                    bind(stmt, i + 1, p.type, p.value)
-                }
-                stmt.executeQuery().use { rs ->
-                    val out = ArrayList<Map<String, Any?>>()
-                    while (rs.next()) out.add(decodeRow(rs, schema.columns))
-                    out
-                }
+        return conn.prepareStatement(sql.toString()).use { stmt ->
+            for ((i, p) in builder.params.withIndex()) {
+                bind(stmt, i + 1, p.type, p.value)
+            }
+            stmt.executeQuery().use { rs ->
+                val out = ArrayList<Map<String, Any?>>()
+                while (rs.next()) out.add(decodeRow(rs, schema.columns))
+                out
             }
         }
     }
 
-    override fun delete(table: String, id: Any): Boolean {
+    private fun deleteWith(conn: Connection, table: String, id: Any): Boolean {
         val schema = schemaFor(table)
         val sql = "DELETE FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ?"
-        return dataSource.connection.use { conn ->
-            conn.prepareStatement(sql).use { stmt ->
-                bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
-                stmt.executeUpdate() > 0
-            }
+        return conn.prepareStatement(sql).use { stmt ->
+            bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
+            stmt.executeUpdate() > 0
         }
     }
 
@@ -431,6 +451,29 @@ class PostgresDriver(
         }
     }
 
+    // ---------- Transactions ----------
+
+    override fun <T> withTransaction(block: (Driver) -> T): T {
+        val conn = dataSource.connection
+        try {
+            conn.autoCommit = false
+            val txDriver = PostgresTransactionalDriver(conn, this)
+            try {
+                val result = block(txDriver)
+                conn.commit()
+                return result
+            } catch (e: Throwable) {
+                conn.rollback()
+                throw e
+            } finally {
+                txDriver.closed = true
+            }
+        } finally {
+            conn.autoCommit = true
+            conn.close()
+        }
+    }
+
     // ---------- Identifier quoting ----------
 
     /**
@@ -441,4 +484,60 @@ class PostgresDriver(
      */
     private fun quote(identifier: String): String =
         "\"${identifier.replace("\"", "\"\"")}\""
+
+    // ---------- Transaction-scoped driver ----------
+
+    /**
+     * A [Driver] that runs all I/O on a single JDBC [Connection] with
+     * `autoCommit = false`. [register] delegates to [root] so DDL never
+     * runs inside user transactions. Nested [withTransaction] reuses the
+     * same transaction. The driver is block-scoped — [closed] is set to
+     * true when the block exits and subsequent calls throw.
+     */
+    private inner class PostgresTransactionalDriver(
+        private val conn: Connection,
+        private val root: PostgresDriver,
+    ) : Driver {
+        @Volatile var closed = false
+
+        private fun checkOpen() {
+            check(!closed) { "Transaction driver used after transaction block returned" }
+        }
+
+        override fun register(schema: EntitySchema) {
+            root.register(schema)
+        }
+
+        override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
+            checkOpen(); return insertWith(conn, table, values)
+        }
+
+        override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? {
+            checkOpen(); return updateWith(conn, table, id, values)
+        }
+
+        override fun byId(table: String, id: Any): Map<String, Any?>? {
+            checkOpen(); return byIdWith(conn, table, id)
+        }
+
+        override fun query(
+            table: String,
+            predicates: List<Predicate>,
+            orderBy: List<OrderField>,
+            limit: Int?,
+            offset: Int?,
+        ): List<Map<String, Any?>> {
+            checkOpen(); return queryWith(conn, table, predicates, orderBy, limit, offset)
+        }
+
+        override fun delete(table: String, id: Any): Boolean {
+            checkOpen(); return deleteWith(conn, table, id)
+        }
+
+        override fun <T> withTransaction(block: (Driver) -> T): T {
+            checkOpen()
+            // Nested: reuse the same transaction.
+            return block(this)
+        }
+    }
 }

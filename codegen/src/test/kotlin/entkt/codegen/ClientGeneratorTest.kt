@@ -49,6 +49,18 @@ class ClientGeneratorTest {
     }
 
     @Test
+    fun `EntClient emits withTransaction that creates a transactional client`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("fun <T> withTransaction(block: (EntClient) -> T): T")) {
+            "Should emit withTransaction method\n$output"
+        }
+        assert(output.contains("driver.withTransaction")) {
+            "Should delegate to driver.withTransaction\n$output"
+        }
+    }
+
+    @Test
     fun `pluralize handles the cases the example schemas exercise`() {
         assertEquals("users", pluralize("user"))
         assertEquals("posts", pluralize("post"))

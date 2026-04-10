@@ -51,4 +51,7 @@ object NoopDriver : Driver {
 
     override fun delete(table: String, id: Any): Boolean =
         error("NoopDriver cannot delete — was a terminal op called inside EdgeRef.has { }?")
+
+    override fun <T> withTransaction(block: (Driver) -> T): T =
+        error("NoopDriver cannot start a transaction — was withTransaction called inside EdgeRef.has { }?")
 }

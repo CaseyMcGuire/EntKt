@@ -383,4 +383,94 @@ class PostgresDriverTest {
             driver.insert("nope", emptyMap())
         }
     }
+
+    // ---------- Transactions ----------
+
+    @Test
+    fun `withTransaction commits on success`() {
+        val driver = fresh()
+        driver.withTransaction { tx ->
+            tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
+            tx.insert("users", mapOf<String, Any?>("name" to "Bob"))
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `withTransaction rolls back on exception`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Pre-existing"))
+
+        assertFailsWith<IllegalStateException> {
+            driver.withTransaction { tx ->
+                tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
+                tx.insert("users", mapOf<String, Any?>("name" to "Bob"))
+                error("boom")
+            }
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(listOf("Pre-existing"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `withTransaction supports queries inside the transaction`() {
+        val driver = fresh()
+        driver.withTransaction { tx ->
+            tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
+            // Should see the uncommitted insert within the same transaction.
+            val rows = tx.query("users", emptyList(), emptyList(), null, null)
+            assertEquals(1, rows.size)
+            assertEquals("Alice", rows.single()["name"])
+        }
+    }
+
+    @Test
+    fun `nested withTransaction reuses the same transaction`() {
+        val driver = fresh()
+        driver.withTransaction { outer ->
+            outer.insert("users", mapOf<String, Any?>("name" to "Alice"))
+            outer.withTransaction { inner ->
+                inner.insert("users", mapOf<String, Any?>("name" to "Bob"))
+            }
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `transaction driver throws after block returns`() {
+        val driver = fresh()
+        var captured: entkt.runtime.Driver? = null
+        driver.withTransaction { tx ->
+            captured = tx
+        }
+        assertFailsWith<IllegalStateException> {
+            captured!!.insert("users", mapOf<String, Any?>("name" to "Late"))
+        }
+    }
+
+    @Test
+    fun `register inside transaction delegates to root driver`() {
+        val driver = PostgresDriver(dataSource)
+        // register() inside withTransaction should run DDL outside
+        // the transaction — the table should exist even if we roll back.
+        assertFailsWith<IllegalStateException> {
+            driver.withTransaction { tx ->
+                tx.register(USER_SCHEMA)
+                error("rollback")
+            }
+        }
+        // Table should still exist despite rollback.
+        driver.register(USER_SCHEMA)  // idempotent, no error
+        // Verify by inserting outside the transaction.
+        val row = driver.insert("users", mapOf<String, Any?>("name" to "After rollback"))
+        assertNotNull(row["id"])
+        // Clean up
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE \"users\" RESTART IDENTITY")
+            }
+        }
+    }
 }

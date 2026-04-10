@@ -3,8 +3,10 @@ package entkt.codegen
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.TypeVariableName
 
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 
@@ -24,13 +26,38 @@ class ClientGenerator(
 ) {
 
     fun generate(schemas: List<SchemaInput>): FileSpec {
+        val clientClass = ClassName(packageName, "EntClient")
+        val t = TypeVariableName("T")
+
         val typeSpec = TypeSpec.classBuilder("EntClient")
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
                     .build()
             )
+            .addProperty(
+                PropertySpec.builder("driver", DRIVER)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("driver")
+                    .build()
+            )
             .addProperties(schemas.map { buildRepoProperty(it) })
+            .addFunction(
+                FunSpec.builder("withTransaction")
+                    .addTypeVariable(t)
+                    .addParameter(
+                        "block",
+                        com.squareup.kotlinpoet.LambdaTypeName.get(
+                            parameters = listOf(
+                                com.squareup.kotlinpoet.ParameterSpec.unnamed(clientClass),
+                            ),
+                            returnType = t,
+                        ),
+                    )
+                    .returns(t)
+                    .addStatement("return driver.withTransaction { txDriver -> block(%T(txDriver)) }", clientClass)
+                    .build()
+            )
             .build()
 
         return FileSpec.builder(packageName, "EntClient")
