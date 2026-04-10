@@ -9,9 +9,12 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import entkt.schema.Edge
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
+
+private val EDGE_REF = ClassName("entkt.query", "EdgeRef")
 
 class EntityGenerator(
     private val packageName: String,
@@ -33,6 +36,12 @@ class EntityGenerator(
             addAll(allFields.map { buildFieldColumnRef(it) })
             addAll(edgeFks.map { buildEdgeColumnRef(it) })
         }
+        // Edge refs are emitted for *every* declared edge — including
+        // non-unique to-many edges that don't get a synthetic FK column.
+        // The runtime uses these to lower has/exists predicates.
+        val edgeRefs = schema.edges()
+            .filter { it.through == null }
+            .mapNotNull { edge -> buildEdgeRef(edge, schemaNames) }
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
@@ -43,6 +52,7 @@ class EntityGenerator(
             .addType(
                 TypeSpec.companionObjectBuilder()
                     .addProperties(columnRefs)
+                    .addProperties(edgeRefs)
                     .build()
             )
             .build()
@@ -123,6 +133,20 @@ class EntityGenerator(
         val columnType = columnClassFor(fk.idType, nullable)
         return PropertySpec.builder(fk.propertyName, columnType)
             .initializer("%T(%S)", columnType, fk.columnName)
+            .build()
+    }
+
+    private fun buildEdgeRef(
+        edge: Edge,
+        schemaNames: Map<EntSchema, String>,
+    ): PropertySpec? {
+        val targetName = schemaNames[edge.target] ?: return null
+        val targetEntity = ClassName(packageName, targetName)
+        val targetQuery = ClassName(packageName, "${targetName}Query")
+        val edgeRefType = EDGE_REF.parameterizedBy(targetEntity, targetQuery)
+        val propertyName = toCamelCase(edge.name)
+        return PropertySpec.builder(propertyName, edgeRefType)
+            .initializer("%T(%S) { %T() }", EDGE_REF, edge.name, targetQuery)
             .build()
     }
 }

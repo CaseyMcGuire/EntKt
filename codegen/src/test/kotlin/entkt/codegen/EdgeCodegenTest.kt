@@ -12,6 +12,12 @@ object Owner : EntSchema() {
     override fun fields() = fields {
         string("name")
     }
+
+    override fun edges() = edges {
+        // The User-side of the Owner ↔ Pet pair: an Owner has many Pets.
+        // No FK on Owner — the FK lives on Pet via the inverse `owner` edge.
+        to("pets", Pet)
+    }
 }
 
 object Pet : EntSchema() {
@@ -20,7 +26,7 @@ object Pet : EntSchema() {
     }
 
     override fun edges() = edges {
-        from("owner", Owner).unique()
+        from("owner", Owner).ref("pets").unique()
     }
 }
 
@@ -150,6 +156,98 @@ class EdgeCodegenTest {
 
         assert(output.contains("val ownerId: ComparableColumn<Long> = ComparableColumn<Long>(\"owner_id\")")) {
             "Should emit non-null ComparableColumn<Long> for required edge FK\n$output"
+        }
+    }
+
+    // ---------- EdgeRef emission ----------
+
+    @Test
+    fun `entity emits EdgeRef on the companion for to-many edges`() {
+        // Owner has `to("pets", Pet)`, no FK on Owner — but it should
+        // still get an EdgeRef so callers can write
+        // `Owner.pets.has { ... }` and `client.owners.query{}.queryPets()`.
+        val output = EntityGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(output.contains("import entkt.query.EdgeRef")) {
+            "Should import EdgeRef\n$output"
+        }
+        assert(output.contains("val pets: EdgeRef<Pet, PetQuery> = EdgeRef(\"pets\") { PetQuery() }")) {
+            "Should emit EdgeRef for the pets edge\n$output"
+        }
+    }
+
+    @Test
+    fun `entity emits EdgeRef on the companion for from-side unique edges`() {
+        // Pet has `from("owner", Owner).ref("pets").unique()` — both the
+        // FK column ref AND a separate EdgeRef should be emitted.
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("val owner: EdgeRef<Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery() }")) {
+            "Should emit EdgeRef for the owner edge\n$output"
+        }
+        // The FK column ref still lives next to it
+        assert(output.contains("val ownerId: NullableComparableColumn<Long>")) {
+            "FK column ref should coexist with the EdgeRef\n$output"
+        }
+    }
+
+    // ---------- Traversal methods ----------
+
+    @Test
+    fun `query gets traversal method for paired to-many edge`() {
+        // Owner has `to("pets", Pet)` paired with Pet's
+        // `from("owner", Owner).ref("pets")` — the inverse on Pet is "owner".
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(output.contains("fun queryPets(): PetQuery")) {
+            "Should generate traversal queryPets()\n$output"
+        }
+        // The inverse edge on Pet is "owner" — that's the name baked
+        // into the HasEdgeWith node so the runtime knows which FK to
+        // join through.
+        assert(output.contains("Predicate.HasEdgeWith(\"owner\", parent)")) {
+            "Should reference the inverse edge name in HasEdgeWith\n$output"
+        }
+        // Empty parent → still emit HasEdge so optional inverse edges
+        // filter out unrelated rows (no-op for required edges).
+        assert(output.contains("Predicate.HasEdge(\"owner\")")) {
+            "Should fall back to HasEdge when parent has no wheres\n$output"
+        }
+    }
+
+    @Test
+    fun `query gets traversal method on the from-side too`() {
+        // Same pair from the other direction: PetQuery.queryOwner() should
+        // exist and reference Owner's "pets" edge as the inverse.
+        val output = QueryGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("fun queryOwner(): OwnerQuery")) {
+            "Should generate traversal queryOwner()\n$output"
+        }
+        assert(output.contains("Predicate.HasEdgeWith(\"pets\", parent)")) {
+            "Should reference Owner's 'pets' edge as the inverse\n$output"
+        }
+    }
+
+    @Test
+    fun `does not emit traversal when the inverse edge cannot be resolved`() {
+        // RequiredPet has `from("owner", Owner).unique()` with no .ref(),
+        // and Owner declares `to("pets", Pet)` (not RequiredPet) — there's
+        // no back-edge from Owner to RequiredPet, so PetQuery → Owner
+        // can be resolved via the single-back-edge fallback, but the
+        // OwnerQuery → RequiredPet direction has no inverse and should
+        // skip emitting a traversal. We assert the failing direction.
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        // Owner.queryPets exists (paired with Pet, not RequiredPet) but
+        // no `queryRequiredPets()` should appear.
+        assert(!output.contains("queryRequiredPets")) {
+            "Should not emit traversal when there's no matching back-edge\n$output"
         }
     }
 }

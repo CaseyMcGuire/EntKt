@@ -57,4 +57,52 @@ class QueryGeneratorTest {
         assert(!output.contains("whereYearGt")) { "Should not have whereYearGt\n$output" }
         assert(!output.contains("whereModelContains")) { "Should not have whereModelContains\n$output" }
     }
+
+    @Test
+    fun `query implements EdgeQuery`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("import entkt.query.EdgeQuery")) {
+            "Should import EdgeQuery\n$output"
+        }
+        assert(output.contains("class CarQuery : EdgeQuery")) {
+            "Query class should implement EdgeQuery\n$output"
+        }
+    }
+
+    @Test
+    fun `query implements combinedPredicate by ANDing accumulated wheres`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("override fun combinedPredicate(): Predicate?")) {
+            "Should override combinedPredicate\n$output"
+        }
+        assert(output.contains("predicates.reduceOrNull")) {
+            "Should fold predicates with reduceOrNull\n$output"
+        }
+        assert(output.contains("Predicate.And(acc, p)")) {
+            "Should AND consecutive predicates\n$output"
+        }
+    }
+
+    @Test
+    fun `does not emit traversal methods for schemas with no edges`() {
+        val output = generator.generate("Car", Car).toString()
+
+        // Car has no edges in EntityGeneratorTest fixtures, so the
+        // generated query should have no `queryX()` methods at all.
+        assert(!output.contains("queryCars")) { "Car has no edges → no traversal\n$output" }
+        assert(!output.contains("queryUsers")) { "Car has no edges → no traversal\n$output" }
+    }
+
+    @Test
+    fun `does not emit traversal when schemaNames is empty`() {
+        // User declares `to("cars", Car)`, but without a schemaNames map
+        // we can't resolve the target's class name → no traversal method.
+        val output = generator.generate("User", User).toString()
+
+        assert(!output.contains("queryCars")) {
+            "Without schemaNames, traversal should be skipped\n$output"
+        }
+    }
 }

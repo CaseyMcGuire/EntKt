@@ -137,6 +137,65 @@ fun main() {
     println("predicates=${postsByAlice.predicates}")
     println()
 
+    // ---------- Edge predicates: forward (User → Posts) ----------
+    banner("client.users.query { where(User.posts.has { ... }) }")
+    // "users with at least one published post" — the runtime later
+    // lowers this to an EXISTS subquery joining User → Post on the
+    // Post.author_id FK.
+    val usersWithPublishedPosts = client.users.query {
+        where(User.posts.has { where(Post.published eq true) })
+    }
+    println("predicates=${usersWithPublishedPosts.predicates}")
+    println()
+
+    // ---------- Edge predicates: backward (Post → Author) ----------
+    banner("client.posts.query { where(Post.author.has { ... }) }")
+    // "posts whose author is active" — the predicate hops over the
+    // author edge and applies a column predicate on the User side.
+    val postsByActiveAuthors = client.posts.query {
+        where(Post.author.has { where(User.active eq true) })
+    }
+    println("predicates=${postsByActiveAuthors.predicates}")
+    println()
+
+    // ---------- Nested edge predicates ----------
+    banner("nested: posts whose author has any other published post")
+    val postsByAuthorsWithOtherPublishedPosts = client.posts.query {
+        where(
+            Post.author.has {
+                where(User.posts.has { where(Post.published eq true) })
+            },
+        )
+    }
+    println("predicates=${postsByAuthorsWithOtherPublishedPosts.predicates}")
+    println()
+
+    // ---------- Edge exists ----------
+    banner("client.users.query { where(User.posts.exists()) }")
+    // The trivial form: "users that have at least one post."
+    val usersWithAnyPost = client.users.query { where(User.posts.exists()) }
+    println("predicates=${usersWithAnyPost.predicates}")
+    println()
+
+    // ---------- Traversal: client.users.query{...}.queryPosts() ----------
+    banner("client.users.query { ... }.queryPosts() — traversal")
+    // Filter users first, then traverse to their posts. The result is
+    // a PostQuery whose where carries a HasEdgeWith naming the inverse
+    // edge ("author") so the runtime can resolve it as
+    //   posts WHERE author_id IN (SELECT id FROM users WHERE active = true)
+    val postsOfActiveUsers = client.users
+        .query { where(User.active eq true) }
+        .queryPosts()
+    println("predicates=${postsOfActiveUsers.predicates}")
+    println()
+
+    banner("traversal back: client.posts.query { ... }.queryAuthor()")
+    val authorsOfPublishedPosts = client.posts
+        .query { where(Post.published eq true) }
+        .queryAuthor()
+    println("predicates=${authorsOfPublishedPosts.predicates}")
+    println()
+
     // ---------- Enum field ----------
     banner("client.tags.create { ... } with enum field")
     val tag = client.tags.create {

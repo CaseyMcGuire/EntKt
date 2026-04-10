@@ -153,4 +153,31 @@ class EntityGeneratorTest {
             "Should use snake_case column name\n$output"
         }
     }
+
+    @Test
+    fun `emits an EdgeRef on the companion for each declared edge`() {
+        // User has `to("cars", Car)` — needs the schemaNames map so the
+        // generator can resolve the target's class names.
+        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
+        val output = generator.generate("User", User, schemaNames).toString()
+
+        assert(output.contains("import entkt.query.EdgeRef")) {
+            "Should import EdgeRef\n$output"
+        }
+        assert(output.contains("val cars: EdgeRef<Car, CarQuery> = EdgeRef(\"cars\") { CarQuery() }")) {
+            "Should emit a typed EdgeRef for the cars edge\n$output"
+        }
+    }
+
+    @Test
+    fun `does not emit EdgeRef when target is missing from the schema map`() {
+        // Without the schema map the generator can't resolve target
+        // class names — it should silently skip EdgeRef emission rather
+        // than producing a broken `EdgeRef<???, ???>`.
+        val output = generator.generate("User", User).toString()
+
+        assert(!output.contains("EdgeRef")) {
+            "Should not emit EdgeRef without schemaNames\n$output"
+        }
+    }
 }
