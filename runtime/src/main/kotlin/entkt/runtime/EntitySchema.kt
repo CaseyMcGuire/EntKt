@@ -1,5 +1,7 @@
 package entkt.runtime
 
+import entkt.schema.FieldType
+
 /**
  * Runtime metadata describing one entity to a [Driver]: enough to look
  * up rows by id, evaluate predicates, and resolve edges into joins.
@@ -19,14 +21,36 @@ data class EntitySchema(
      * supply one. The driver consults this when building a row.
      */
     val idStrategy: IdStrategy,
-    /** Every column the entity carries, by snake_case column name. */
-    val columns: List<String>,
+    /**
+     * Every column the entity carries, in declaration order: id first,
+     * then declared/mixin fields, then any synthesized edge FKs. Carries
+     * enough type information for SQL drivers to emit DDL without
+     * reflecting on the generated entity classes.
+     */
+    val columns: List<ColumnMetadata>,
     /**
      * Outgoing edges keyed by the *local* edge name as declared on this
      * entity (so `User.edges["posts"]` describes how to walk to Post
      * rows). Each entry is the join recipe — see [EdgeMetadata].
      */
     val edges: Map<String, EdgeMetadata>,
+)
+
+/**
+ * One column on a registered entity. Drivers that need to materialize
+ * a table (Postgres, SQLite, etc.) read [type] and [nullable] to pick
+ * the right SQL type and constraints; the in-memory driver ignores
+ * everything but [name].
+ */
+data class ColumnMetadata(
+    /** snake_case column name as it appears in `Driver` row maps. */
+    val name: String,
+    /** Logical type, mapped to a SQL type by each driver. */
+    val type: FieldType,
+    /** Whether the column accepts NULL values. */
+    val nullable: Boolean,
+    /** True iff this column is the entity's primary key. */
+    val primaryKey: Boolean = false,
 )
 
 /**

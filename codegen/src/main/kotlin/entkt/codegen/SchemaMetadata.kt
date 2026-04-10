@@ -7,8 +7,10 @@ import entkt.schema.EntSchema
 import entkt.schema.FieldType
 
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
+internal val COLUMN_METADATA = ClassName("entkt.runtime", "ColumnMetadata")
 internal val EDGE_METADATA = ClassName("entkt.runtime", "EdgeMetadata")
 internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
+internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 
 /**
  * Convert a generated entity name (`User`, `Post`, `Tag`) to its SQL
@@ -35,21 +37,58 @@ internal fun idStrategyName(schema: EntSchema): String {
 }
 
 /**
- * The list of every column backing the entity: `id`, each declared and
- * mixin field, and any synthesized edge FKs. Used as the `columns` list
- * on the generated [entkt.runtime.EntitySchema] constant so drivers can
- * enumerate them without reflection.
+ * One column descriptor as it should appear in the generated
+ * `EntitySchema.columns` list. Captured as a plain Kotlin record so
+ * codegen can fold it into either the runtime [entkt.runtime.ColumnMetadata]
+ * literal or other emitters without re-deriving nullability.
  */
-internal fun columnNamesFor(
+internal data class ColumnDescriptor(
+    val name: String,
+    val type: FieldType,
+    val nullable: Boolean,
+    val primaryKey: Boolean = false,
+)
+
+/**
+ * Every column backing the entity, in declaration order: `id` first,
+ * then declared and mixin fields, then any synthesized edge FKs. Used
+ * to build the `columns` list on the generated [entkt.runtime.EntitySchema]
+ * constant so SQL drivers can enumerate them — type and all — without
+ * reflection.
+ */
+internal fun columnMetadataFor(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
-): List<String> {
+): List<ColumnDescriptor> {
     val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
     val edgeFks = computeEdgeFks(schema, schemaNames)
     return buildList {
-        add("id")
-        addAll(fields.map { it.name })
-        addAll(edgeFks.map { it.columnName })
+        add(
+            ColumnDescriptor(
+                name = "id",
+                type = schema.id().type,
+                nullable = false,
+                primaryKey = true,
+            ),
+        )
+        for (field in fields) {
+            add(
+                ColumnDescriptor(
+                    name = field.name,
+                    type = field.type,
+                    nullable = field.optional || field.nillable,
+                ),
+            )
+        }
+        for (fk in edgeFks) {
+            add(
+                ColumnDescriptor(
+                    name = fk.columnName,
+                    type = fk.idType,
+                    nullable = !fk.required,
+                ),
+            )
+        }
     }
 }
 
@@ -102,10 +141,22 @@ internal fun entitySchemaCodeBlock(
     schemaNames: Map<EntSchema, String>,
 ): CodeBlock {
     val table = tableNameFor(schemaName)
-    val columns = columnNamesFor(schema, schemaNames)
+    val columns = columnMetadataFor(schema, schemaNames)
     val columnsLiteral = CodeBlock.builder()
-        .add("listOf(")
-        .add(columns.joinToString(", ") { "%S" }, *columns.toTypedArray())
+        .add("listOf(\n")
+        .also { cb ->
+            for (col in columns) {
+                cb.add(
+                    "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L),\n",
+                    COLUMN_METADATA,
+                    col.name,
+                    FIELD_TYPE,
+                    col.type.name,
+                    col.nullable,
+                    col.primaryKey,
+                )
+            }
+        }
         .add(")")
         .build()
 

@@ -4,6 +4,7 @@ import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.schema.FieldType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -15,7 +16,12 @@ private val USER_SCHEMA = EntitySchema(
     table = "users",
     idColumn = "id",
     idStrategy = IdStrategy.AUTO_LONG,
-    columns = listOf("id", "name", "age", "active"),
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("name", FieldType.STRING, nullable = false),
+        ColumnMetadata("age", FieldType.INT, nullable = true),
+        ColumnMetadata("active", FieldType.BOOL, nullable = true),
+    ),
     edges = mapOf(
         "posts" to EdgeMetadata(
             targetTable = "posts",
@@ -29,7 +35,12 @@ private val POST_SCHEMA = EntitySchema(
     table = "posts",
     idColumn = "id",
     idStrategy = IdStrategy.AUTO_LONG,
-    columns = listOf("id", "title", "published", "author_id"),
+    columns = listOf(
+        ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+        ColumnMetadata("title", FieldType.STRING, nullable = false),
+        ColumnMetadata("published", FieldType.BOOL, nullable = false),
+        ColumnMetadata("author_id", FieldType.LONG, nullable = true),
+    ),
     edges = mapOf(
         "author" to EdgeMetadata(
             targetTable = "users",
