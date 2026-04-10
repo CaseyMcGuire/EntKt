@@ -159,6 +159,34 @@ class EdgeCodegenTest {
         }
     }
 
+    // ---------- Foreign key references in generated SCHEMA ----------
+
+    @Test
+    fun `generated SCHEMA includes ForeignKeyRef for edge FK columns`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("ForeignKeyRef")) {
+            "Should emit ForeignKeyRef for the owner_id FK column\n$output"
+        }
+        assert(output.contains("table = \"owners\"")) {
+            "Should reference the owners table\n$output"
+        }
+        assert(output.contains("column = \"id\"")) {
+            "Should reference the id column\n$output"
+        }
+    }
+
+    @Test
+    fun `non-FK columns do not get ForeignKeyRef`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(!output.contains("ForeignKeyRef")) {
+            "Owner has no FK columns — should not emit ForeignKeyRef\n$output"
+        }
+    }
+
     // ---------- EdgeRef emission ----------
 
     @Test

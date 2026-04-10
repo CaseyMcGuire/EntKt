@@ -7,6 +7,7 @@ import entkt.query.Predicate
 import entkt.runtime.ColumnMetadata
 import entkt.runtime.EdgeMetadata
 import entkt.runtime.EntitySchema
+import entkt.runtime.ForeignKeyRef
 import entkt.runtime.IdStrategy
 import entkt.runtime.IndexMetadata
 import entkt.schema.FieldType
@@ -536,6 +537,99 @@ class PostgresDriverTest {
         // Should not throw — idempotent index creation.
         driver.register(schema)
         driver.register(schema)
+    }
+
+    // ---------- Foreign key constraints ----------
+
+    @Test
+    fun `nullable FK emits REFERENCES with ON DELETE SET NULL`() {
+        val parentSchema = EntitySchema(
+            table = "fk_parents",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        val childSchema = EntitySchema(
+            table = "fk_children",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = true,
+                    references = ForeignKeyRef(table = "fk_parents", column = "id"),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = PostgresDriver(dataSource)
+        driver.register(parentSchema)
+        driver.register(childSchema)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE \"fk_children\", \"fk_parents\" RESTART IDENTITY")
+            }
+        }
+
+        val parent = driver.insert("fk_parents", mapOf("name" to "Alice"))
+        driver.insert("fk_children", mapOf("parent_id" to parent["id"]))
+
+        // Inserting a child referencing a non-existent parent should fail.
+        assertFailsWith<Exception> {
+            driver.insert("fk_children", mapOf("parent_id" to 9999L))
+        }
+
+        // Deleting the parent should SET NULL on the child.
+        driver.delete("fk_parents", parent["id"]!!)
+        val child = driver.query("fk_children", emptyList(), emptyList(), null, null).single()
+        assertNull(child["parent_id"])
+    }
+
+    @Test
+    fun `required FK emits REFERENCES with ON DELETE RESTRICT`() {
+        val parentSchema = EntitySchema(
+            table = "fk_req_parents",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        val childSchema = EntitySchema(
+            table = "fk_req_children",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = false,
+                    references = ForeignKeyRef(table = "fk_req_parents", column = "id"),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = PostgresDriver(dataSource)
+        driver.register(parentSchema)
+        driver.register(childSchema)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE \"fk_req_children\", \"fk_req_parents\" RESTART IDENTITY")
+            }
+        }
+
+        val parent = driver.insert("fk_req_parents", mapOf("name" to "Alice"))
+        driver.insert("fk_req_children", mapOf("parent_id" to parent["id"]))
+
+        // Deleting the parent should fail because the child still references it.
+        assertFailsWith<Exception> {
+            driver.delete("fk_req_parents", parent["id"]!!)
+        }
     }
 
     @Test

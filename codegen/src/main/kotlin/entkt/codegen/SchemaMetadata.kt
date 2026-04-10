@@ -10,6 +10,7 @@ internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
 internal val COLUMN_METADATA = ClassName("entkt.runtime", "ColumnMetadata")
 internal val EDGE_METADATA = ClassName("entkt.runtime", "EdgeMetadata")
 internal val INDEX_METADATA = ClassName("entkt.runtime", "IndexMetadata")
+internal val FOREIGN_KEY_REF = ClassName("entkt.runtime", "ForeignKeyRef")
 internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 
@@ -49,6 +50,8 @@ internal data class ColumnDescriptor(
     val nullable: Boolean,
     val primaryKey: Boolean = false,
     val unique: Boolean = false,
+    /** If non-null, this column is an FK referencing (table, column). */
+    val references: Pair<String, String>? = null,
 )
 
 /**
@@ -84,11 +87,13 @@ internal fun columnMetadataFor(
             )
         }
         for (fk in edgeFks) {
+            val targetTable = tableNameFor(fk.targetName)
             add(
                 ColumnDescriptor(
                     name = fk.columnName,
                     type = fk.idType,
                     nullable = !fk.required,
+                    references = targetTable to "id",
                 ),
             )
         }
@@ -149,16 +154,33 @@ internal fun entitySchemaCodeBlock(
         .add("listOf(\n")
         .also { cb ->
             for (col in columns) {
-                cb.add(
-                    "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L),\n",
-                    COLUMN_METADATA,
-                    col.name,
-                    FIELD_TYPE,
-                    col.type.name,
-                    col.nullable,
-                    col.primaryKey,
-                    col.unique,
-                )
+                if (col.references != null) {
+                    val (refTable, refCol) = col.references
+                    cb.add(
+                        "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L, references = %T(table = %S, column = %S)),\n",
+                        COLUMN_METADATA,
+                        col.name,
+                        FIELD_TYPE,
+                        col.type.name,
+                        col.nullable,
+                        col.primaryKey,
+                        col.unique,
+                        FOREIGN_KEY_REF,
+                        refTable,
+                        refCol,
+                    )
+                } else {
+                    cb.add(
+                        "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L),\n",
+                        COLUMN_METADATA,
+                        col.name,
+                        FIELD_TYPE,
+                        col.type.name,
+                        col.nullable,
+                        col.primaryKey,
+                        col.unique,
+                    )
+                }
             }
         }
         .add(")")

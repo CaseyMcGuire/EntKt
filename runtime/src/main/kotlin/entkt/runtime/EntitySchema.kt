@@ -58,6 +58,20 @@ data class ColumnMetadata(
     val primaryKey: Boolean = false,
     /** True if this column carries a single-column UNIQUE constraint. */
     val unique: Boolean = false,
+    /** Foreign key reference, if this column points at another table's id. */
+    val references: ForeignKeyRef? = null,
+)
+
+/**
+ * Describes a foreign key reference from one column to another table's
+ * column. SQL drivers use this to emit `REFERENCES` and `ON DELETE`
+ * clauses.
+ */
+data class ForeignKeyRef(
+    /** Target table name. */
+    val table: String,
+    /** Target column name (usually `"id"`). */
+    val column: String,
 )
 
 /**

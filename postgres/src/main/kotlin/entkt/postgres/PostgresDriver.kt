@@ -235,6 +235,11 @@ class PostgresDriver(
             if (col.primaryKey) add("PRIMARY KEY")
             if (!col.nullable && !col.primaryKey && !isAutoSerial(schema, col)) add("NOT NULL")
             if (col.unique && !col.primaryKey) add("UNIQUE")
+            val ref = col.references
+            if (ref != null) {
+                val onDelete = if (col.nullable) "SET NULL" else "RESTRICT"
+                add("REFERENCES ${quote(ref.table)}(${quote(ref.column)}) ON DELETE $onDelete")
+            }
         }.joinToString(" ")
         val tail = if (constraints.isEmpty()) "" else " $constraints"
         return "${quote(col.name)} $sqlType$tail"
