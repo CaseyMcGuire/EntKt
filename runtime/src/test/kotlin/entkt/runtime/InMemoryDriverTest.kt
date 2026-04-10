@@ -267,7 +267,7 @@ class InMemoryDriverTest {
     }
 
     @Test
-    fun `transaction driver throws after block returns`() {
+    fun `transaction driver throws after block returns including register`() {
         val driver = fresh()
         var captured: Driver? = null
         driver.withTransaction { tx ->
@@ -276,5 +276,40 @@ class InMemoryDriverTest {
         assertFailsWith<IllegalStateException> {
             captured!!.insert("users", mapOf("name" to "Late"))
         }
+        assertFailsWith<IllegalStateException> {
+            captured!!.register(USER_SCHEMA)
+        }
+    }
+
+    @Test
+    fun `rollback removes tables first registered inside the transaction`() {
+        val driver = InMemoryDriver()
+        driver.register(USER_SCHEMA)
+
+        val newSchema = EntitySchema(
+            table = "tags",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("label", FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+
+        assertFailsWith<IllegalStateException> {
+            driver.withTransaction { tx ->
+                tx.register(newSchema)
+                tx.insert("tags", mapOf("label" to "kotlin"))
+                error("boom")
+            }
+        }
+        // The "tags" table should not exist after rollback.
+        assertFailsWith<IllegalStateException> {
+            driver.query("tags", emptyList(), emptyList(), null, null)
+        }
+        // Pre-existing "users" table should be unaffected.
+        driver.insert("users", mapOf("name" to "Alice"))
+        assertEquals(1L, driver.byId("users", 1L)!!["id"])
     }
 }

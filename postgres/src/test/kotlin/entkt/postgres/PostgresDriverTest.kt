@@ -440,7 +440,7 @@ class PostgresDriverTest {
     }
 
     @Test
-    fun `transaction driver throws after block returns`() {
+    fun `transaction driver throws after block returns including register`() {
         val driver = fresh()
         var captured: entkt.runtime.Driver? = null
         driver.withTransaction { tx ->
@@ -448,6 +448,9 @@ class PostgresDriverTest {
         }
         assertFailsWith<IllegalStateException> {
             captured!!.insert("users", mapOf<String, Any?>("name" to "Late"))
+        }
+        assertFailsWith<IllegalStateException> {
+            captured!!.register(USER_SCHEMA)
         }
     }
 

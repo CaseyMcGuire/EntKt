@@ -121,20 +121,31 @@ class InMemoryDriver : Driver {
     }
 
     override fun <T> withTransaction(block: (Driver) -> T): T {
-        // Snapshot current table contents and id counters.
+        // Snapshot current state: table names, their contents, and id counters.
+        val knownTables = tables.keys.toSet()
         val tableSnapshot = mutableMapOf<String, MutableList<MutableMap<String, Any?>>>()
         for ((name, rows) in tables) {
             synchronized(rows) {
                 tableSnapshot[name] = rows.map { it.toMutableMap() }.toMutableList()
             }
         }
+        val knownCounters = numericIds.keys.toSet()
         val idSnapshot = numericIds.mapValues { (_, counter) -> counter.get() }
 
         val txDriver = InMemoryTransactionalDriver(this)
         try {
             return block(txDriver)
         } catch (e: Throwable) {
-            // Restore tables from snapshot.
+            // Remove tables/schemas/counters that were first registered
+            // inside the transaction — they shouldn't survive rollback.
+            for (name in tables.keys - knownTables) {
+                tables.remove(name)
+                schemas.remove(name)
+            }
+            for (name in numericIds.keys - knownCounters) {
+                numericIds.remove(name)
+            }
+            // Restore pre-existing tables from snapshot.
             for ((name, snapshot) in tableSnapshot) {
                 val rows = tables[name] ?: continue
                 synchronized(rows) {
@@ -264,7 +275,7 @@ private class InMemoryTransactionalDriver(
     }
 
     override fun register(schema: EntitySchema) {
-        // Always delegate to root — DDL is not transactional.
+        checkOpen()
         root.register(schema)
     }
 

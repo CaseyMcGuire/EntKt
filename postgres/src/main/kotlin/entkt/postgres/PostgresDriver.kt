@@ -523,6 +523,7 @@ class PostgresDriver(
         }
 
         override fun register(schema: EntitySchema) {
+            checkOpen()
             root.register(schema)
         }
 
