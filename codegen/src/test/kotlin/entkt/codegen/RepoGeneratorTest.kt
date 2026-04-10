@@ -80,14 +80,29 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `delete delegates to the driver`() {
+    fun `delete calls hooks around driver delete`() {
         val output = generator.generate("Car", Car).toString()
 
+        assert(output.contains("for (hook in beforeDeleteHooks) hook(entity)")) {
+            "delete should call beforeDelete hooks\n$output"
+        }
         assert(output.contains("driver.delete(Car.TABLE, entity.id)")) {
             "delete should call driver.delete with entity.id\n$output"
         }
-        assert(output.contains("driver.delete(Car.TABLE, id)")) {
-            "deleteById should call driver.delete with the id\n$output"
+        assert(output.contains("if (deleted) for (hook in afterDeleteHooks) hook(entity)")) {
+            "delete should call afterDelete hooks on success\n$output"
+        }
+    }
+
+    @Test
+    fun `deleteById fetches entity then delegates to delete`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("val entity = byId(id) ?: return false")) {
+            "deleteById should fetch entity first\n$output"
+        }
+        assert(output.contains("return delete(entity)")) {
+            "deleteById should delegate to delete(entity)\n$output"
         }
     }
 
@@ -97,6 +112,51 @@ class RepoGeneratorTest {
 
         assert(output.contains("fun deleteById(id: UUID): Boolean")) {
             "deleteById should use UUID for User's id type\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has hook registration methods that return this for chaining`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun onBeforeSave(hook: (CarMutation) -> Unit): CarRepo")) {
+            "Should have onBeforeSave returning CarRepo\n$output"
+        }
+        assert(output.contains("fun onBeforeCreate(hook: (CarCreate) -> Unit): CarRepo")) {
+            "Should have onBeforeCreate returning CarRepo\n$output"
+        }
+        assert(output.contains("fun onAfterCreate(hook: (Car) -> Unit): CarRepo")) {
+            "Should have onAfterCreate returning CarRepo\n$output"
+        }
+        assert(output.contains("fun onBeforeUpdate(hook: (CarUpdate) -> Unit): CarRepo")) {
+            "Should have onBeforeUpdate returning CarRepo\n$output"
+        }
+        assert(output.contains("fun onAfterUpdate(hook: (Car) -> Unit): CarRepo")) {
+            "Should have onAfterUpdate returning CarRepo\n$output"
+        }
+        assert(output.contains("fun onBeforeDelete(hook: (Car) -> Unit): CarRepo")) {
+            "Should have onBeforeDelete returning CarRepo\n$output"
+        }
+        assert(output.contains("fun onAfterDelete(hook: (Car) -> Unit): CarRepo")) {
+            "Should have onAfterDelete returning CarRepo\n$output"
+        }
+    }
+
+    @Test
+    fun `create passes hook lists to the builder`() {
+        val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("CarCreate(driver, beforeSaveHooks, beforeCreateHooks, afterCreateHooks)")) {
+            "create should pass hook lists to CarCreate\n$output"
+        }
+    }
+
+    @Test
+    fun `update passes hook lists to the builder`() {
+        val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("CarUpdate(driver, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
+            "update should pass hook lists to CarUpdate\n$output"
         }
     }
 

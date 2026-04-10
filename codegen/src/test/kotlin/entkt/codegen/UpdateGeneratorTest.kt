@@ -49,4 +49,61 @@ class UpdateGeneratorTest {
 
         assert(output.contains("entity: User")) { "Should take entity parameter\n$output" }
     }
+
+    @Test
+    fun `implements the mutation interface`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("UserUpdate") && output.contains("UserMutation")) {
+            "Should implement UserMutation interface\n$output"
+        }
+    }
+
+    @Test
+    fun `entity is public for hook access`() {
+        val output = generator.generate("User", User).toString()
+
+        // entity should NOT be private — hooks need to inspect current state
+        assert(!output.contains("private val entity")) {
+            "entity should be public so hooks can access current state\n$output"
+        }
+        assert(output.contains("val entity: User")) {
+            "Should have public entity property\n$output"
+        }
+    }
+
+    @Test
+    fun `constructor takes hook list parameters`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("beforeSaveHooks: List<(UserMutation) -> Unit>")) {
+            "Should take beforeSaveHooks\n$output"
+        }
+        assert(output.contains("beforeUpdateHooks: List<(UserUpdate) -> Unit>")) {
+            "Should take beforeUpdateHooks\n$output"
+        }
+        assert(output.contains("afterUpdateHooks: List<(User) -> Unit>")) {
+            "Should take afterUpdateHooks\n$output"
+        }
+    }
+
+    @Test
+    fun `save calls before hooks before fallback`() {
+        val output = generator.generate("User", User).toString()
+
+        val hookCall = output.indexOf("beforeSaveHooks")
+        val fallback = output.indexOf("this.name ?: entity.name")
+        assert(hookCall != -1 && fallback != -1 && hookCall < fallback) {
+            "Before hooks should run before fallback resolution\n$output"
+        }
+    }
+
+    @Test
+    fun `save calls after hooks after update`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("for (hook in afterUpdateHooks) hook(updatedEntity)")) {
+            "Should call afterUpdate hooks\n$output"
+        }
+    }
 }

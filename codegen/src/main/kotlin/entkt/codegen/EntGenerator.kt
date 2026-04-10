@@ -13,6 +13,7 @@ class EntGenerator(
     private val packageName: String,
 ) {
     private val entityGenerator = EntityGenerator(packageName)
+    private val mutationGenerator = MutationGenerator(packageName)
     private val createGenerator = CreateGenerator(packageName)
     private val updateGenerator = UpdateGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
@@ -24,6 +25,7 @@ class EntGenerator(
         val perSchema = schemas.flatMap { (name, schema) ->
             listOf(
                 entityGenerator.generate(name, schema, schemaNames),
+                mutationGenerator.generate(name, schema, schemaNames),
                 createGenerator.generate(name, schema, schemaNames),
                 updateGenerator.generate(name, schema, schemaNames),
                 queryGenerator.generate(name, schema, schemaNames),

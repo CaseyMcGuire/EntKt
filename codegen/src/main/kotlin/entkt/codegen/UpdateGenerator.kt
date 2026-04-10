@@ -14,6 +14,7 @@ import entkt.schema.Field
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 
+
 class UpdateGenerator(
     private val packageName: String,
 ) {
@@ -31,13 +32,23 @@ class UpdateGenerator(
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val entityClass = ClassName(packageName, schemaName)
+        val updateClass = ClassName(packageName, className)
+        val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+
+        val beforeSaveHookType = hookListType(mutationClass)
+        val beforeUpdateHookType = hookListType(updateClass)
+        val afterUpdateHookType = hookListType(entityClass)
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            .addSuperinterface(mutationClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
                     .addParameter("entity", entityClass)
+                    .addParameter("beforeSaveHooks", beforeSaveHookType)
+                    .addParameter("beforeUpdateHooks", beforeUpdateHookType)
+                    .addParameter("afterUpdateHooks", afterUpdateHookType)
                     .build()
             )
             .addProperty(
@@ -48,8 +59,25 @@ class UpdateGenerator(
             )
             .addProperty(
                 PropertySpec.builder("entity", entityClass)
-                    .addModifiers(KModifier.PRIVATE)
                     .initializer("entity")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("beforeSaveHooks", beforeSaveHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("beforeSaveHooks")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("beforeUpdateHooks", beforeUpdateHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("beforeUpdateHooks")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("afterUpdateHooks", afterUpdateHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("afterUpdateHooks")
                     .build()
             )
             .addProperties(mutableFields.map { buildProperty(it) })
@@ -67,6 +95,7 @@ class UpdateGenerator(
     private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.type.toTypeName().copy(nullable = true)
         return PropertySpec.builder(toCamelCase(field.name), typeName)
+            .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
             .build()
@@ -75,6 +104,7 @@ class UpdateGenerator(
     private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {
         val typeName = fk.idType.toTypeName().copy(nullable = true)
         return PropertySpec.builder(fk.propertyName, typeName)
+            .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
             .build()
@@ -120,6 +150,10 @@ class UpdateGenerator(
         val builder = FunSpec.builder("save")
             .returns(entityClass.copy(nullable = true))
 
+        // ---- Lifecycle hooks (before fallback so hooks can set fields). ----
+        builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
+        builder.addStatement("for (hook in beforeUpdateHooks) hook(this)")
+
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             if (field.immutable) {
@@ -158,7 +192,9 @@ class UpdateGenerator(
             "val row = driver.update(%T.TABLE, entity.id, values) ?: return null",
             entityClass,
         )
-        builder.addStatement("return %T.fromRow(row)", entityClass)
+        builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)
+        builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
+        builder.addStatement("return updatedEntity")
 
         return builder.build()
     }

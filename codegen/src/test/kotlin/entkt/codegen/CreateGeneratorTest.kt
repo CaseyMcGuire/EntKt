@@ -48,6 +48,50 @@ class CreateGeneratorTest {
     }
 
     @Test
+    fun `implements the mutation interface`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("CarCreate") && output.contains("CarMutation")) {
+            "Should implement CarMutation interface\n$output"
+        }
+    }
+
+    @Test
+    fun `constructor takes hook list parameters`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("beforeSaveHooks: List<(CarMutation) -> Unit>")) {
+            "Should take beforeSaveHooks\n$output"
+        }
+        assert(output.contains("beforeCreateHooks: List<(CarCreate) -> Unit>")) {
+            "Should take beforeCreateHooks\n$output"
+        }
+        assert(output.contains("afterCreateHooks: List<(Car) -> Unit>")) {
+            "Should take afterCreateHooks\n$output"
+        }
+    }
+
+    @Test
+    fun `save calls before hooks before validation`() {
+        val output = generator.generate("Car", Car).toString()
+
+        val hookCall = output.indexOf("beforeSaveHooks")
+        val validate = output.indexOf("model is required")
+        assert(hookCall != -1 && validate != -1 && hookCall < validate) {
+            "Before hooks should run before validation\n$output"
+        }
+    }
+
+    @Test
+    fun `save calls after hooks after insert`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("for (hook in afterCreateHooks) hook(entity)")) {
+            "Should call afterCreate hooks\n$output"
+        }
+    }
+
+    @Test
     fun `save falls back to default literal for fields with a default`() {
         val output = generator.generate("User", User).toString()
 

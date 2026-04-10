@@ -6,8 +6,12 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.UNIT
+import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
@@ -28,13 +32,26 @@ class CreateGenerator(
         val fields = schema.fields()
         val mixinFields = schema.mixins().flatMap { it.fields() }
         val allFields = fields + mixinFields
+        val mutableFields = allFields.filter { !it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
+
+        val entityClass = ClassName(packageName, schemaName)
+        val createClass = ClassName(packageName, className)
+        val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+
+        val beforeSaveHookType = hookListType(mutationClass)
+        val beforeCreateHookType = hookListType(createClass)
+        val afterCreateHookType = hookListType(entityClass)
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            .addSuperinterface(mutationClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
+                    .addParameter("beforeSaveHooks", beforeSaveHookType)
+                    .addParameter("beforeCreateHooks", beforeCreateHookType)
+                    .addParameter("afterCreateHooks", afterCreateHookType)
                     .build()
             )
             .addProperty(
@@ -43,8 +60,27 @@ class CreateGenerator(
                     .initializer("driver")
                     .build()
             )
-            .addProperties(allFields.map { buildProperty(it) })
-            .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
+            .addProperty(
+                PropertySpec.builder("beforeSaveHooks", beforeSaveHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("beforeSaveHooks")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("beforeCreateHooks", beforeCreateHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("beforeCreateHooks")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("afterCreateHooks", afterCreateHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("afterCreateHooks")
+                    .build()
+            )
+            .addProperties(mutableFields.map { buildProperty(it, override = true) })
+            .addProperties(allFields.filter { it.immutable }.map { buildProperty(it, override = false) })
+            .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
             .build()
@@ -54,20 +90,22 @@ class CreateGenerator(
             .build()
     }
 
-    private fun buildProperty(field: Field): PropertySpec {
+    private fun buildProperty(field: Field, override: Boolean): PropertySpec {
         val typeName = field.type.toTypeName().copy(nullable = true)
-        return PropertySpec.builder(toCamelCase(field.name), typeName)
+        val builder = PropertySpec.builder(toCamelCase(field.name), typeName)
             .mutable(true)
             .initializer("null")
-            .build()
+        if (override) builder.addModifiers(KModifier.OVERRIDE)
+        return builder.build()
     }
 
-    private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {
+    private fun buildEdgeFkProperty(fk: EdgeFk, override: Boolean): PropertySpec {
         val typeName = fk.idType.toTypeName().copy(nullable = true)
-        return PropertySpec.builder(fk.propertyName, typeName)
+        val builder = PropertySpec.builder(fk.propertyName, typeName)
             .mutable(true)
             .initializer("null")
-            .build()
+        if (override) builder.addModifiers(KModifier.OVERRIDE)
+        return builder.build()
     }
 
     /**
@@ -130,6 +168,10 @@ class CreateGenerator(
             return builder.build()
         }
 
+        // ---- Lifecycle hooks (before validation so hooks can set fields). ----
+        builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
+        builder.addStatement("for (hook in beforeCreateHooks) hook(this)")
+
         // ---- Validate and bind each property to a local. ----
         for (field in allFields) {
             val prop = toCamelCase(field.name)
@@ -186,7 +228,9 @@ class CreateGenerator(
             "val row = driver.insert(%T.TABLE, values)",
             entityClass,
         )
-        builder.addStatement("return %T.fromRow(row)", entityClass)
+        builder.addStatement("val entity = %T.fromRow(row)", entityClass)
+        builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
+        builder.addStatement("return entity")
 
         return builder.build()
     }
@@ -198,3 +242,8 @@ class CreateGenerator(
         else -> value.toString()
     }
 }
+
+internal fun hookListType(paramType: ClassName) =
+    List::class.asClassName().parameterizedBy(
+        LambdaTypeName.get(parameters = arrayOf(paramType), returnType = UNIT),
+    )
