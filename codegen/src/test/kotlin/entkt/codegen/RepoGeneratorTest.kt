@@ -168,4 +168,19 @@ class RepoGeneratorTest {
             "Repo should register Car.SCHEMA with the driver on construction\n$output"
         }
     }
+
+    @Test
+    fun `repo has copyHooksFrom that copies all hook lists`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun copyHooksFrom(other: CarRepo)")) {
+            "Should have copyHooksFrom method\n$output"
+        }
+        assert(output.contains("beforeSaveHooks.addAll(other.beforeSaveHooks)")) {
+            "Should copy beforeSaveHooks\n$output"
+        }
+        assert(output.contains("afterDeleteHooks.addAll(other.afterDeleteHooks)")) {
+            "Should copy afterDeleteHooks\n$output"
+        }
+    }
 }

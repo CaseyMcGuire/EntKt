@@ -61,6 +61,18 @@ class ClientGeneratorTest {
     }
 
     @Test
+    fun `withTransaction copies hooks from original repos to transactional repos`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("tx.cars.copyHooksFrom(this.cars)")) {
+            "Should copy hooks for cars repo\n$output"
+        }
+        assert(output.contains("tx.users.copyHooksFrom(this.users)")) {
+            "Should copy hooks for users repo\n$output"
+        }
+    }
+
+    @Test
     fun `pluralize handles the cases the example schemas exercise`() {
         assertEquals("users", pluralize("user"))
         assertEquals("posts", pluralize("post"))

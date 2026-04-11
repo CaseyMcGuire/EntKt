@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
@@ -42,26 +43,42 @@ class ClientGenerator(
                     .build()
             )
             .addProperties(schemas.map { buildRepoProperty(it) })
-            .addFunction(
-                FunSpec.builder("withTransaction")
-                    .addTypeVariable(t)
-                    .addParameter(
-                        "block",
-                        com.squareup.kotlinpoet.LambdaTypeName.get(
-                            parameters = listOf(
-                                com.squareup.kotlinpoet.ParameterSpec.unnamed(clientClass),
-                            ),
-                            returnType = t,
-                        ),
-                    )
-                    .returns(t)
-                    .addStatement("return driver.withTransaction { txDriver -> block(%T(txDriver)) }", clientClass)
-                    .build()
-            )
+            .addFunction(buildWithTransaction(clientClass, t, schemas))
             .build()
 
         return FileSpec.builder(packageName, "EntClient")
             .addType(typeSpec)
+            .build()
+    }
+
+    private fun buildWithTransaction(
+        clientClass: ClassName,
+        t: TypeVariableName,
+        schemas: List<SchemaInput>,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+        body.beginControlFlow("return driver.withTransaction { txDriver ->")
+        body.addStatement("val tx = %T(txDriver)", clientClass)
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
+        }
+        body.addStatement("block(tx)")
+        body.endControlFlow()
+
+        return FunSpec.builder("withTransaction")
+            .addTypeVariable(t)
+            .addParameter(
+                "block",
+                com.squareup.kotlinpoet.LambdaTypeName.get(
+                    parameters = listOf(
+                        com.squareup.kotlinpoet.ParameterSpec.unnamed(clientClass),
+                    ),
+                    returnType = t,
+                ),
+            )
+            .returns(t)
+            .addCode(body.build())
             .build()
     }
 
