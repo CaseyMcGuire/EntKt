@@ -15,6 +15,7 @@ import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
+import entkt.schema.ValidatorSpec
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
@@ -195,6 +196,15 @@ class CreateGenerator(
             }
         }
 
+        // ---- Field-level validation. ----
+        for (field in allFields) {
+            val codegenValidators = field.validators.filter { it.spec != null }
+            if (codegenValidators.isEmpty()) continue
+            val prop = toCamelCase(field.name)
+            val nullable = field.optional || field.nillable
+            emitFieldValidation(builder, prop, field.name, codegenValidators, nullable)
+        }
+
         for (fk in edgeFks) {
             if (fk.required) {
                 builder.addStatement(
@@ -257,3 +267,65 @@ internal fun hookListType(paramType: ClassName) =
     List::class.asClassName().parameterizedBy(
         LambdaTypeName.get(parameters = arrayOf(paramType), returnType = UNIT),
     )
+
+/**
+ * Emit inline validation checks for a single field's validators.
+ * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
+ */
+internal fun emitFieldValidation(
+    builder: FunSpec.Builder,
+    prop: String,
+    fieldName: String,
+    validators: List<entkt.schema.Validator>,
+    nullable: Boolean,
+) {
+    if (nullable) {
+        builder.beginControlFlow("if (%L != null)", prop)
+    }
+    for (validator in validators) {
+        val spec = validator.spec ?: continue
+        emitValidatorCheck(builder, prop, fieldName, validator.message, spec)
+    }
+    if (nullable) {
+        builder.endControlFlow()
+    }
+}
+
+private fun emitValidatorCheck(
+    builder: FunSpec.Builder,
+    prop: String,
+    fieldName: String,
+    message: String,
+    spec: ValidatorSpec,
+) {
+    val errorMsg = "$fieldName: $message"
+    when (spec) {
+        is ValidatorSpec.MinLen -> builder.addStatement(
+            "if (%L.length < %L) throw IllegalStateException(%S)", prop, spec.min, errorMsg,
+        )
+        is ValidatorSpec.MaxLen -> builder.addStatement(
+            "if (%L.length > %L) throw IllegalStateException(%S)", prop, spec.max, errorMsg,
+        )
+        is ValidatorSpec.NotEmpty -> builder.addStatement(
+            "if (%L.isEmpty()) throw IllegalStateException(%S)", prop, errorMsg,
+        )
+        is ValidatorSpec.Match -> builder.addStatement(
+            "if (!Regex(%S).matches(%L)) throw IllegalStateException(%S)", spec.pattern, prop, errorMsg,
+        )
+        is ValidatorSpec.Min -> builder.addStatement(
+            "if (%L < %L) throw IllegalStateException(%S)", prop, spec.min, errorMsg,
+        )
+        is ValidatorSpec.Max -> builder.addStatement(
+            "if (%L > %L) throw IllegalStateException(%S)", prop, spec.max, errorMsg,
+        )
+        is ValidatorSpec.Positive -> builder.addStatement(
+            "if (%L <= 0) throw IllegalStateException(%S)", prop, errorMsg,
+        )
+        is ValidatorSpec.Negative -> builder.addStatement(
+            "if (%L >= 0) throw IllegalStateException(%S)", prop, errorMsg,
+        )
+        is ValidatorSpec.NonNegative -> builder.addStatement(
+            "if (%L < 0) throw IllegalStateException(%S)", prop, errorMsg,
+        )
+    }
+}

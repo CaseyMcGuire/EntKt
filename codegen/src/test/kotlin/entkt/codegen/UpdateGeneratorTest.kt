@@ -126,4 +126,54 @@ class UpdateGeneratorTest {
             "Should call afterUpdate hooks\n$output"
         }
     }
+
+    @Test
+    fun `save emits validation for mutable validated fields`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        assert(output.contains("name.length < 3")) {
+            "Should emit minLen check\n$output"
+        }
+        assert(output.contains("name.length > 100")) {
+            "Should emit maxLen check\n$output"
+        }
+        assert(output.contains("name.isEmpty()")) {
+            "Should emit notEmpty check\n$output"
+        }
+    }
+
+    @Test
+    fun `save wraps update validation in null check`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        // All update locals are nullable, so validation should be null-guarded
+        assert(output.contains("if (name != null)")) {
+            "Should null-guard validation in update builder\n$output"
+        }
+        assert(output.contains("if (age != null)")) {
+            "Should null-guard numeric validation in update builder\n$output"
+        }
+    }
+
+    @Test
+    fun `save does not validate immutable fields in update`() {
+        val output = generator.generate("User", User).toString()
+
+        // createdAt is immutable — should not have validation
+        assert(!output.contains("createdAt.length")) {
+            "Should not validate immutable fields\n$output"
+        }
+    }
+
+    @Test
+    fun `validation appears after dirty resolution and before row map`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        val dirtyPos = output.indexOf("in dirtyFields")
+        val validationPos = output.indexOf("name.length < 3")
+        val rowMapPos = output.indexOf("val values: Map<String, Any?>")
+        assert(dirtyPos < validationPos && validationPos < rowMapPos) {
+            "Validation should appear after dirty resolution and before row map\n$output"
+        }
+    }
 }

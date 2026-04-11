@@ -11,6 +11,14 @@ object Event : EntSchema() {
     }
 }
 
+object ValidatedEntity : EntSchema() {
+    override fun fields() = fields {
+        string("name").minLen(3).maxLen(100).notEmpty()
+        int("age").positive()
+        string("nickname").optional().match(Regex("^[a-z]+$"))
+    }
+}
+
 class CreateGeneratorTest {
 
     private val generator = CreateGenerator("com.example.ent")
@@ -123,6 +131,74 @@ class CreateGeneratorTest {
         }
         assert(!output.contains("?: \"now\"")) {
             "Should not emit string literal \"now\" for time default\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits validation checks for string validators`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        assert(output.contains("name.length < 3")) {
+            "Should emit minLen check\n$output"
+        }
+        assert(output.contains("name.length > 100")) {
+            "Should emit maxLen check\n$output"
+        }
+        assert(output.contains("name.isEmpty()")) {
+            "Should emit notEmpty check\n$output"
+        }
+        assert(output.contains("name: value must be at least 3 characters")) {
+            "Should include validator message\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits validation checks for numeric validators`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        assert(output.contains("age <= 0")) {
+            "Should emit positive check\n$output"
+        }
+        assert(output.contains("age: value must be positive")) {
+            "Should include validator message\n$output"
+        }
+    }
+
+    @Test
+    fun `save wraps optional field validation in null check`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        // nickname is optional, so validation should be wrapped
+        assert(output.contains("if (nickname != null)")) {
+            "Should null-guard optional field validation\n$output"
+        }
+        assert(output.contains("Regex(") && output.contains(".matches(nickname)")) {
+            "Should emit match check for optional field\n$output"
+        }
+    }
+
+    @Test
+    fun `save does not emit validation for fields without validators`() {
+        val output = generator.generate("Car", Car).toString()
+
+        // Car has no validators, so no validation checks
+        assert(!output.contains(".length <")) {
+            "Should not emit validation for unvalidated fields\n$output"
+        }
+        assert(!output.contains(".isEmpty()")) {
+            "Should not emit isEmpty for unvalidated fields\n$output"
+        }
+    }
+
+    @Test
+    fun `validation appears after field binding and before row map`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        val bindingPos = output.indexOf("name is required")
+        val validationPos = output.indexOf("name.length < 3")
+        val rowMapPos = output.indexOf("val values: Map<String, Any?>")
+        assert(bindingPos < validationPos && validationPos < rowMapPos) {
+            "Validation should appear after binding and before row map\n$output"
         }
     }
 }

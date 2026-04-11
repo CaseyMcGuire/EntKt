@@ -206,6 +206,16 @@ class UpdateGenerator(
             )
         }
 
+        // ---- Field-level validation (mutable fields only). ----
+        for (field in allFields) {
+            if (field.immutable) continue
+            val codegenValidators = field.validators.filter { it.spec != null }
+            if (codegenValidators.isEmpty()) continue
+            val prop = toCamelCase(field.name)
+            // All update locals are nullable (dirty tracking fallback).
+            emitFieldValidation(builder, prop, field.name, codegenValidators, nullable = true)
+        }
+
         val rowBuilder = CodeBlock.builder()
             .add("val values: Map<String, Any?> = mapOf(\n")
         for (field in allFields) {
