@@ -107,4 +107,25 @@ class QueryGeneratorTest {
             "Without schemaNames, traversal should be skipped\n$output"
         }
     }
+
+    @Test
+    fun `does not emit eager loading methods when schemaNames is empty`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(!output.contains("withCars")) {
+            "Without schemaNames, with{Edge} should be skipped\n$output"
+        }
+        assert(!output.contains("loadEdges")) {
+            "Without schemaNames, loadEdges should be skipped\n$output"
+        }
+    }
+
+    @Test
+    fun `does not emit eager loading methods for schema with no edges`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(!output.contains("loadEdges")) {
+            "Schema with no edges should not have loadEdges\n$output"
+        }
+    }
 }

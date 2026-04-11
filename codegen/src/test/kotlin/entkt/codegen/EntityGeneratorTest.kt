@@ -216,4 +216,50 @@ class EntityGeneratorTest {
             "Should not emit EdgeRef without schemaNames\n$output"
         }
     }
+
+    @Test
+    fun `entity with edges gets an Edges inner data class`() {
+        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
+        val output = generator.generate("User", User, schemaNames).toString()
+
+        assert(output.contains("data class Edges")) {
+            "Should generate inner Edges data class\n$output"
+        }
+        assert(output.contains("val edges: Edges = Edges()")) {
+            "Should have edges property with default\n$output"
+        }
+    }
+
+    @Test
+    fun `Edges class has list property for to-many edges`() {
+        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
+        val output = generator.generate("User", User, schemaNames).toString()
+
+        assert(output.contains("val cars: List<Car>? = null")) {
+            "To-many edge should produce nullable list property\n$output"
+        }
+    }
+
+    @Test
+    fun `entity without edges does not get Edges class`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(!output.contains("data class Edges")) {
+            "Entity with no edges should not have Edges class\n$output"
+        }
+        assert(!output.contains("val edges:")) {
+            "Entity with no edges should not have edges property\n$output"
+        }
+    }
+
+    @Test
+    fun `fromRow does not reference edges`() {
+        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
+        val output = generator.generate("User", User, schemaNames).toString()
+
+        val fromRowBlock = output.substringAfter("fun fromRow").substringBefore("}")
+        assert(!fromRowBlock.contains("edges")) {
+            "fromRow should not reference edges — it uses the default\n$fromRowBlock"
+        }
+    }
 }

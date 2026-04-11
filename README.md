@@ -46,6 +46,15 @@ val authorsWithPublishedPosts = client.users.query {
     where(User.posts.has { where(Post.published eq true) })
 }.all()
 
+// Eager loading
+val usersWithPosts = client.users.query {
+    where(User.active eq true)
+    withPosts {                        // batch-load posts for each user
+        where(Post.published eq true)  // optional: filter the loaded edge
+    }
+}.all()
+usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if withPosts wasn't called)
+
 // Delete
 client.users.delete(alice)       // or client.users.deleteById(alice.id)
 
@@ -105,7 +114,8 @@ For each schema the generator emits:
 
 - **Entity data class** with typed properties, companion-object column refs
   (`User.name: StringColumn`, `User.age: NullableComparableColumn<Int>`), baked-in
-  `EntitySchema` metadata, and a `fromRow()` row decoder.
+  `EntitySchema` metadata, a `fromRow()` row decoder, and a nested `Edges`
+  data class for eagerly loaded relationships.
 - **`{Entity}Mutation` interface** — shared interface implemented by both
   Create and Update builders, with `var` properties for all mutable fields.
   Enables shared validators via `onBeforeSave`.
@@ -114,8 +124,8 @@ For each schema the generator emits:
 - **`{Entity}Update` builder** — DSL setters (immutable fields are elided) + `.save()`.
   Implements `{Entity}Mutation`. Exposes `entity` for hooks to inspect current state.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
-  `.offset(...)`, `.all()`, `.firstOrNull()`, plus edge traversal methods
-  (e.g. `.queryPosts()`).
+  `.offset(...)`, `.all()`, `.firstOrNull()`, edge traversal methods
+  (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
 - **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
   `.byId(id)`, `.delete(entity)`, `.deleteById(id)`. Registers the entity's
   `EntitySchema` with the driver on construction. Supports typed lifecycle
@@ -197,6 +207,39 @@ Registration methods return `this` for chaining. `onBeforeSave` accepts the
 shared `{Entity}Mutation` interface so the same validator works for both
 creates and updates.
 
+### Eager loading
+
+Query builders support eager loading of related entities via `with{Edge}()`
+methods. This avoids N+1 queries by batch-loading edges using `IN` predicates
+after the main query.
+
+```kotlin
+val users = client.users.query {
+    where(User.active eq true)
+    withPosts {                          // load posts for each user
+        where(Post.published eq true)    // optional: filter/order the edge
+        orderBy(Post.createdAt.desc())
+    }
+}.all()
+
+users[0].edges.posts  // → List<Post> (loaded)
+users[0].edges.posts  // → null if withPosts() wasn't called
+```
+
+Each entity with edges gets a nested `Edges` data class with nullable
+properties — `null` means not loaded, `emptyList()` means loaded but empty.
+
+Supports all edge types (to-one, to-many, M2M via junction table) and
+nested eager loading:
+
+```kotlin
+val owners = client.owners.query {
+    withPets {
+        withOwner()  // nested: also load each pet's owner
+    }
+}.all()
+```
+
 ### Postgres driver (`:postgres`)
 
 JDBC-backed `Driver` talking to real PostgreSQL.
@@ -243,14 +286,14 @@ Configuration lives under an `entkt { packageName = "..." }` extension.
 
 ### Tests
 
-155 tests across all modules:
+172 tests across all modules:
 
 - `:schema` — schema DSL shape tests (13)
 - `:runtime` — full `InMemoryDriver` coverage including CRUD, compound
   predicates, edge traversal, M2M junction tables, transactions, ordering,
   pagination (21)
 - `:codegen` — per-generator unit tests for entity, mutation, create, update,
-  query, repo, client, edge codegen, and lifecycle hooks (90)
+  query, repo, client, edge codegen, lifecycle hooks, and eager loading (107)
 - `:gradle-plugin` — end-to-end plugin invocation in a generated test build (1)
 - `:postgres` — full parity coverage against `InMemoryDriverTest` including
   M2M and transactions, running against `postgres:16-alpine` via

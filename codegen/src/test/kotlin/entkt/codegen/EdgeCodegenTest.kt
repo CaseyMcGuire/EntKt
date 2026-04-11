@@ -371,4 +371,133 @@ class EdgeCodegenTest {
             "Should fall back to HasEdge when parent has no wheres\n$output"
         }
     }
+
+    // ---------- Edges inner data class ----------
+
+    @Test
+    fun `entity Edges class has nullable entity for to-one edge`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("data class Edges")) {
+            "Should generate inner Edges class\n$output"
+        }
+        assert(output.contains("val owner: Owner? = null")) {
+            "To-one edge should produce nullable entity property\n$output"
+        }
+    }
+
+    @Test
+    fun `entity Edges class has nullable list for to-many edge`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(output.contains("val pets: List<Pet>? = null")) {
+            "To-many edge should produce nullable list property\n$output"
+        }
+    }
+
+    @Test
+    fun `entity Edges class has nullable list for M2M edge`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString()
+
+        assert(output.contains("val members: List<Pet>? = null")) {
+            "M2M edge should produce nullable list property\n$output"
+        }
+    }
+
+    // ---------- Eager loading: with{Edge} methods ----------
+
+    @Test
+    fun `query generates withPets for to-many edge`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(output.contains("fun withPets(")) {
+            "Should generate withPets method\n$output"
+        }
+        assert(output.contains("PetQuery.() -> Unit")) {
+            "withPets should accept a PetQuery DSL block\n$output"
+        }
+        assert(output.contains(": OwnerQuery")) {
+            "withPets should return OwnerQuery for chaining\n$output"
+        }
+    }
+
+    @Test
+    fun `query generates withOwner for to-one edge`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("fun withOwner(")) {
+            "Should generate withOwner method\n$output"
+        }
+        assert(output.contains("OwnerQuery.() -> Unit")) {
+            "withOwner should accept an OwnerQuery DSL block\n$output"
+        }
+    }
+
+    @Test
+    fun `query generates withMembers for M2M edge`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString()
+
+        assert(output.contains("fun withMembers(")) {
+            "Should generate withMembers method\n$output"
+        }
+    }
+
+    @Test
+    fun `query generates loadEdges for schemas with edges`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(output.contains("fun loadEdges(")) {
+            "Should generate loadEdges method\n$output"
+        }
+    }
+
+    @Test
+    fun `all() delegates to loadEdges for schemas with edges`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString()
+
+        assert(output.contains("return loadEdges(results)")) {
+            "all() should delegate to loadEdges\n$output"
+        }
+    }
+
+    @Test
+    fun `to-many eager loading queries target with IN predicate on FK column`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("Predicate.Leaf(\"owner_id\", Op.IN, sourceIds)")) {
+            "Should build IN predicate on the FK column\n$output"
+        }
+    }
+
+    @Test
+    fun `to-one eager loading queries target by id`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("Predicate.Leaf(\"id\", Op.IN, fkValues)")) {
+            "Should build IN predicate on target id column\n$output"
+        }
+    }
+
+    @Test
+    fun `M2M eager loading queries junction table then target`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("\"teamMembers\"")) {
+            "Should query junction table\n$output"
+        }
+        assert(output.contains("Predicate.Leaf(\"team_id\", Op.IN, sourceIds)")) {
+            "Should query junction with source FK\n$output"
+        }
+    }
 }

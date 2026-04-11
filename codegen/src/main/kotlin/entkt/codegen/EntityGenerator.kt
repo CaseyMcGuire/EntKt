@@ -11,6 +11,7 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import entkt.schema.Edge
 import entkt.schema.EntSchema
@@ -59,12 +60,31 @@ class EntityGenerator(
             .build()
         val fromRowFn = buildFromRowFunction(entityClass, schema, schemaNames)
 
+        // Build Edges inner data class for schemas with edges
+        val edgeDescriptors = schema.edges().mapNotNull { edge ->
+            val targetName = schemaNames[edge.target] ?: return@mapNotNull null
+            val targetClass = ClassName(packageName, targetName)
+            EdgeDescriptor(edge.name, targetClass, edge.unique)
+        }
+        val edgesClass = if (edgeDescriptors.isNotEmpty()) buildEdgesClass(edgeDescriptors) else null
+        val edgesClassName = entityClass.nestedClass("Edges")
+
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
-            .primaryConstructor(buildConstructor(idField, allFields, edgeFks))
+            .primaryConstructor(buildConstructor(idField, allFields, edgeFks, edgesClass?.let { edgesClassName }))
             .addProperty(idField)
             .addProperties(allFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeProperty(it) })
+            .apply {
+                if (edgesClass != null) {
+                    addProperty(
+                        PropertySpec.builder("edges", edgesClassName)
+                            .initializer("edges")
+                            .build()
+                    )
+                    addType(edgesClass)
+                }
+            }
             .addType(
                 TypeSpec.companionObjectBuilder()
                     .addProperty(tableProperty)
@@ -133,6 +153,7 @@ class EntityGenerator(
         idProperty: PropertySpec,
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
+        edgesClassName: ClassName? = null,
     ): FunSpec {
         val builder = FunSpec.constructorBuilder()
             .addParameter(
@@ -157,6 +178,14 @@ class EntityGenerator(
                 param.defaultValue("null")
             }
             builder.addParameter(param.build())
+        }
+
+        if (edgesClassName != null) {
+            builder.addParameter(
+                ParameterSpec.builder("edges", edgesClassName)
+                    .defaultValue("%T()", edgesClassName)
+                    .build()
+            )
         }
 
         return builder.build()
@@ -220,6 +249,50 @@ class EntityGenerator(
             .initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetQuery, NOOP_DRIVER)
             .build()
     }
+}
+
+/**
+ * Describes one edge on a schema for the purpose of building the `Edges`
+ * inner data class on the entity.
+ */
+internal data class EdgeDescriptor(
+    val name: String,
+    val targetClass: ClassName,
+    val toOne: Boolean,
+)
+
+/**
+ * Build the inner `Edges` data class for an entity. To-one edges become
+ * a nullable target entity; to-many edges become a nullable list.
+ */
+private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
+    val constructor = FunSpec.constructorBuilder()
+    val properties = mutableListOf<PropertySpec>()
+
+    for (edge in edges) {
+        val propName = toCamelCase(edge.name)
+        val propType = if (edge.toOne) {
+            edge.targetClass.copy(nullable = true)
+        } else {
+            List::class.asClassName().parameterizedBy(edge.targetClass).copy(nullable = true)
+        }
+        constructor.addParameter(
+            ParameterSpec.builder(propName, propType)
+                .defaultValue("null")
+                .build()
+        )
+        properties.add(
+            PropertySpec.builder(propName, propType)
+                .initializer(propName)
+                .build()
+        )
+    }
+
+    return TypeSpec.classBuilder("Edges")
+        .addModifiers(KModifier.DATA)
+        .primaryConstructor(constructor.build())
+        .addProperties(properties)
+        .build()
 }
 
 internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
