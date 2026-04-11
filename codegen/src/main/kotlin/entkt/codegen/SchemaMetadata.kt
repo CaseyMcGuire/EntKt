@@ -159,14 +159,20 @@ internal fun resolveM2MEdgeJoin(
     val junctionSchema = through.target
     val junctionTable = tableNameFor(schemaNames[junctionSchema] ?: return null)
 
+    val junctionEdges = junctionSchema.edges()
+
     // Find the junction edge pointing at the source schema.
-    val sourceEdge = junctionSchema.edges()
+    val sourceEdge = junctionEdges
         .firstOrNull { it.target === source && it.unique }
         ?: return null
     val sourceFk = sourceEdge.field ?: "${sourceEdge.name}_id"
 
     // Find the junction edge pointing at the target schema.
-    val targetEdge = junctionSchema.edges()
+    // Exclude sourceEdge by index so self-referential M2M (source === target)
+    // resolves two distinct junction edges instead of the same one twice.
+    val sourceIdx = junctionEdges.indexOf(sourceEdge)
+    val targetEdge = junctionEdges
+        .filterIndexed { i, _ -> i != sourceIdx }
         .firstOrNull { it.target === edge.target && it.unique }
         ?: return null
     val targetFk = targetEdge.field ?: "${targetEdge.name}_id"

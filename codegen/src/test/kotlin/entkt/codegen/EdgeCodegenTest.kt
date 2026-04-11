@@ -74,6 +74,29 @@ object TeamMember : EntSchema() {
     }
 }
 
+// ---------- Self-referential M2M test schemas ----------
+
+object Person : EntSchema() {
+    override fun fields() = fields {
+        string("name")
+    }
+
+    override fun edges() = edges {
+        to("friends", Person).through("friendships", Friendship)
+    }
+}
+
+object Friendship : EntSchema() {
+    override fun fields() = fields {
+        time("created_at")
+    }
+
+    override fun edges() = edges {
+        to("person", Person).unique().required().field("person_id")
+        to("friend", Person).unique().required().field("friend_id")
+    }
+}
+
 private val schemaNames: Map<EntSchema, String> = mapOf(
     Owner to "Owner",
     Pet to "Pet",
@@ -81,6 +104,8 @@ private val schemaNames: Map<EntSchema, String> = mapOf(
     LooseDog to "LooseDog",
     Team to "Team",
     TeamMember to "TeamMember",
+    Person to "Person",
+    Friendship to "Friendship",
 )
 
 class EdgeCodegenTest {
@@ -498,6 +523,34 @@ class EdgeCodegenTest {
         }
         assert(output.contains("Predicate.Leaf(\"team_id\", Op.IN, sourceIds)")) {
             "Should query junction with source FK\n$output"
+        }
+    }
+
+    // ---------- Self-referential M2M ----------
+
+    @Test
+    fun `self-referential M2M resolves distinct source and target FKs`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Person", Person, schemaNames).toString()
+
+        // The junction has person_id (source) and friend_id (target).
+        // Both junction edges target Person, so without the fix they'd
+        // both resolve to person_id.
+        assert(output.contains("junctionSourceColumn = \"person_id\"")) {
+            "Source FK should be person_id\n$output"
+        }
+        assert(output.contains("junctionTargetColumn = \"friend_id\"")) {
+            "Target FK should be friend_id (not person_id again)\n$output"
+        }
+    }
+
+    @Test
+    fun `self-referential M2M query uses correct junction FKs`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Person", Person, schemaNames).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("Predicate.Leaf(\"person_id\", Op.IN, sourceIds)")) {
+            "Should query junction with source FK person_id\n$output"
         }
     }
 }
