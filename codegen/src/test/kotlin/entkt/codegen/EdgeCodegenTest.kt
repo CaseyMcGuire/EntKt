@@ -97,6 +97,35 @@ object Friendship : EntSchema() {
     }
 }
 
+// ---------- Ambiguous junction test schemas ----------
+
+object Project : EntSchema() {
+    override fun fields() = fields {
+        string("name")
+    }
+
+    override fun edges() = edges {
+        // The junction has two edges to Pet: "assignee" and "reviewer".
+        // sourceEdge/targetEdge disambiguate which FK to use.
+        to("assignees", Pet).through(
+            "projectAssignments", ProjectAssignment,
+            sourceEdge = "project", targetEdge = "assignee",
+        )
+    }
+}
+
+object ProjectAssignment : EntSchema() {
+    override fun fields() = fields {
+        time("assigned_at")
+    }
+
+    override fun edges() = edges {
+        to("project", Project).unique().required().field("project_id")
+        to("assignee", Pet).unique().required().field("assignee_id")
+        to("reviewer", Pet).unique().field("reviewer_id")
+    }
+}
+
 private val schemaNames: Map<EntSchema, String> = mapOf(
     Owner to "Owner",
     Pet to "Pet",
@@ -106,6 +135,8 @@ private val schemaNames: Map<EntSchema, String> = mapOf(
     TeamMember to "TeamMember",
     Person to "Person",
     Friendship to "Friendship",
+    Project to "Project",
+    ProjectAssignment to "ProjectAssignment",
 )
 
 class EdgeCodegenTest {
@@ -592,6 +623,22 @@ class EdgeCodegenTest {
         }
         assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
             "Should apply limit/offset per group\n$output"
+        }
+    }
+
+    // ---------- Ambiguous junction disambiguation ----------
+
+    @Test
+    fun `through with sourceEdge and targetEdge picks the correct junction FKs`() {
+        val output = EntityGenerator("com.example.ent")
+            .generate("Project", Project, schemaNames).toString()
+
+        // Should use "assignee_id" (from the "assignee" edge), not "reviewer_id"
+        assert(output.contains("junctionSourceColumn = \"project_id\"")) {
+            "Source FK should be project_id\n$output"
+        }
+        assert(output.contains("junctionTargetColumn = \"assignee_id\"")) {
+            "Target FK should be assignee_id, not reviewer_id\n$output"
         }
     }
 }

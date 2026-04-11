@@ -17,6 +17,12 @@ class EdgeBuilder(
     fun required(): EdgeBuilder = apply { required = true }
     fun field(name: String): EdgeBuilder = apply { field = name }
     fun through(name: String, target: EntSchema): EdgeBuilder = apply { through = Through(name, target) }
+    fun through(
+        name: String,
+        target: EntSchema,
+        sourceEdge: String,
+        targetEdge: String,
+    ): EdgeBuilder = apply { through = Through(name, target, sourceEdge, targetEdge) }
     fun comment(text: String): EdgeBuilder = apply { comment = text }
     fun storageKey(key: String): EdgeBuilder = apply { storageKey = key }
     fun ref(name: String): EdgeBuilder = apply { ref = name }

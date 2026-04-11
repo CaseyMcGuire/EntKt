@@ -149,6 +149,11 @@ internal fun resolveEdgeJoin(
  * The junction schema declares two unique edges with `.field(...)` —
  * one pointing back at [source], one at [edge.target]. We read those
  * FK column names to build the junction join.
+ *
+ * When the junction has multiple unique edges to the same schema
+ * (e.g. a `ProjectAssignment` with both `user` and `approver` edges
+ * to `User`), the [Through.sourceEdge] and [Through.targetEdge] hints
+ * disambiguate which junction edges participate in the M2M.
  */
 internal fun resolveM2MEdgeJoin(
     edge: Edge,
@@ -162,19 +167,25 @@ internal fun resolveM2MEdgeJoin(
     val junctionEdges = junctionSchema.edges()
 
     // Find the junction edge pointing at the source schema.
-    val sourceEdge = junctionEdges
-        .firstOrNull { it.target === source && it.unique }
-        ?: return null
+    // If through.sourceEdge is set, match by name for disambiguation.
+    val sourceEdge = if (through.sourceEdge != null) {
+        junctionEdges.firstOrNull { it.name == through.sourceEdge && it.unique }
+    } else {
+        junctionEdges.firstOrNull { it.target === source && it.unique }
+    } ?: return null
     val sourceFk = sourceEdge.field ?: "${sourceEdge.name}_id"
 
     // Find the junction edge pointing at the target schema.
-    // Exclude sourceEdge by index so self-referential M2M (source === target)
-    // resolves two distinct junction edges instead of the same one twice.
-    val sourceIdx = junctionEdges.indexOf(sourceEdge)
-    val targetEdge = junctionEdges
-        .filterIndexed { i, _ -> i != sourceIdx }
-        .firstOrNull { it.target === edge.target && it.unique }
-        ?: return null
+    // If through.targetEdge is set, match by name; otherwise exclude
+    // sourceEdge by index so self-referential M2M resolves two distinct edges.
+    val targetEdge = if (through.targetEdge != null) {
+        junctionEdges.firstOrNull { it.name == through.targetEdge && it.unique }
+    } else {
+        val sourceIdx = junctionEdges.indexOf(sourceEdge)
+        junctionEdges
+            .filterIndexed { i, _ -> i != sourceIdx }
+            .firstOrNull { it.target === edge.target && it.unique }
+    } ?: return null
     val targetFk = targetEdge.field ?: "${targetEdge.name}_id"
 
     return EdgeJoin(
