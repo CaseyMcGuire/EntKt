@@ -340,9 +340,18 @@ internal fun reverseM2MEdgeEntries(
                     junctionSourceColumn = forwardJoin.junctionTargetColumn,
                     junctionTargetColumn = forwardJoin.junctionSourceColumn,
                 )
-                val reverseName = tableNameFor(otherName)
+                val reverseName = reverseM2MEdgeName(otherName, edge.name)
                 val targetTable = tableNameFor(otherName)
                 Triple(reverseName, targetTable, reverseJoin)
             }
     }
 }
+
+/**
+ * Compute the name for a reverse M2M edge entry on the target schema.
+ * Incorporates both the source table name and the forward edge name so
+ * that multiple M2M edges from the same source to the same target each
+ * get their own unique reverse entry.
+ */
+internal fun reverseM2MEdgeName(sourceName: String, forwardEdgeName: String): String =
+    "${tableNameFor(sourceName)}_$forwardEdgeName"

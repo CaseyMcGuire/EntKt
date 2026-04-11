@@ -457,9 +457,10 @@ class QueryGenerator(
      * [edge] (one with `.through(...)`). Unlike direct traversal, there's
      * no inverse edge on the target schema. Instead, the target's
      * generated `EntitySchema` carries a reverse M2M edge entry (injected
-     * by [reverseM2MEdgeEntries]) whose name is the *source* schema's
-     * table name. The generated method references that reverse name so
-     * the runtime can walk the junction table in the right direction.
+     * by [reverseM2MEdgeEntries]) whose name combines the source table
+     * name and the forward edge name. The generated method references
+     * that reverse name so the runtime can walk the junction table in
+     * the right direction.
      */
     private fun buildM2MTraversal(
         edge: Edge,
@@ -470,7 +471,7 @@ class QueryGenerator(
         val sourceName = schemaNames[source] ?: return null
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
-        val reverseEdgeName = tableNameFor(sourceName)
+        val reverseEdgeName = reverseM2MEdgeName(sourceName, edge.name)
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)

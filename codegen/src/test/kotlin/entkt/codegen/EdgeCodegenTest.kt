@@ -346,8 +346,8 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", Pet, schemaNames).toString()
 
-        assert(output.contains("\"teams\"")) {
-            "Pet SCHEMA should include reverse 'teams' M2M edge\n$output"
+        assert(output.contains("\"teams_members\"")) {
+            "Pet SCHEMA should include reverse 'teams_members' M2M edge\n$output"
         }
         assert(output.contains("junctionTable = \"teamMembers\"")) {
             "Reverse edge should carry junction table metadata\n$output"
@@ -364,10 +364,10 @@ class EdgeCodegenTest {
         }
         // M2M traversal references the reverse edge name on the target
         // (Pet's table-name-derived "teams" edge).
-        assert(output.contains("Predicate.HasEdgeWith(\"teams\", parent)")) {
+        assert(output.contains("Predicate.HasEdgeWith(\"teams_members\", parent)")) {
             "Should reference reverse M2M edge name\n$output"
         }
-        assert(output.contains("Predicate.HasEdge(\"teams\")")) {
+        assert(output.contains("Predicate.HasEdge(\"teams_members\")")) {
             "Should fall back to HasEdge when parent has no wheres\n$output"
         }
     }
