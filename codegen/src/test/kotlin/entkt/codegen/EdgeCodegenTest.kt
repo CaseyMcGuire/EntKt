@@ -176,12 +176,22 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `update builder save falls back to entity value for edge FK`() {
+    fun `update builder save uses dirty tracking for edge FK`() {
         val output = UpdateGenerator("com.example.ent")
             .generate("Pet", Pet, schemaNames).toString()
 
-        assert(output.contains("ownerId = this.ownerId ?: entity.ownerId")) {
-            "Should fall back to existing entity value\n$output"
+        assert(output.contains("if (\"ownerId\" in dirtyFields) this.ownerId else entity.ownerId")) {
+            "Should check dirtyFields for edge FK fallback\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder edge FK setter tracks dirty state`() {
+        val output = UpdateGenerator("com.example.ent")
+            .generate("Pet", Pet, schemaNames).toString()
+
+        assert(output.contains("dirtyFields.add(\"ownerId\")")) {
+            "Setting ownerId should add to dirtyFields\n$output"
         }
     }
 

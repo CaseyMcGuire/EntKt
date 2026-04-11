@@ -6,7 +6,9 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.schema.EntSchema
 import entkt.schema.Field
@@ -80,6 +82,15 @@ class UpdateGenerator(
                     .initializer("afterUpdateHooks")
                     .build()
             )
+            .addProperty(
+                PropertySpec.builder(
+                    "dirtyFields",
+                    ClassName("kotlin.collections", "MutableSet").parameterizedBy(STRING),
+                )
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("mutableSetOf()")
+                    .build()
+            )
             .addProperties(mutableFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
@@ -93,11 +104,19 @@ class UpdateGenerator(
     }
 
     private fun buildProperty(field: Field): PropertySpec {
+        val prop = toCamelCase(field.name)
         val typeName = field.type.toTypeName().copy(nullable = true)
-        return PropertySpec.builder(toCamelCase(field.name), typeName)
+        return PropertySpec.builder(prop, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
+            .setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", typeName)
+                    .addStatement("field = value")
+                    .addStatement("dirtyFields.add(%S)", prop)
+                    .build()
+            )
             .build()
     }
 
@@ -107,6 +126,13 @@ class UpdateGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
+            .setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", typeName)
+                    .addStatement("field = value")
+                    .addStatement("dirtyFields.add(%S)", fk.propertyName)
+                    .build()
+            )
             .build()
     }
 
@@ -134,12 +160,13 @@ class UpdateGenerator(
     /**
      * `save()` writes the builder's changes to the driver and returns
      * the refreshed entity — or null when the row has been deleted out
-     * from under us. Each mutable field falls back to the entity's
-     * current value, so untouched builder properties round-trip
-     * through the driver as-is. Immutables are sourced straight from
-     * the entity (they can't change) and included in the map so the
-     * fallback behavior stays obvious — the driver's merge semantics
-     * make it a no-op write.
+     * from under us. Each mutable field checks [dirtyFields] to decide
+     * whether to use the builder's value or fall back to the entity's
+     * current value — this lets callers explicitly set nullable fields
+     * to null. Immutables are sourced straight from the entity (they
+     * can't change) and included in the map so the fallback behavior
+     * stays obvious — the driver's merge semantics make it a no-op
+     * write.
      */
     private fun buildSaveFunction(
         schemaName: String,
@@ -160,7 +187,8 @@ class UpdateGenerator(
                 builder.addStatement("val %L = entity.%L", prop, prop)
             } else {
                 builder.addStatement(
-                    "val %L = this.%L ?: entity.%L",
+                    "val %L = if (%S in dirtyFields) this.%L else entity.%L",
+                    prop,
                     prop,
                     prop,
                     prop,
@@ -170,7 +198,8 @@ class UpdateGenerator(
 
         for (fk in edgeFks) {
             builder.addStatement(
-                "val %L = this.%L ?: entity.%L",
+                "val %L = if (%S in dirtyFields) this.%L else entity.%L",
+                fk.propertyName,
                 fk.propertyName,
                 fk.propertyName,
                 fk.propertyName,

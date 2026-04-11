@@ -37,10 +37,30 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `save uses new value or falls back to entity`() {
+    fun `save uses dirty tracking to distinguish unset from explicit null`() {
         val output = generator.generate("User", User).toString()
 
-        assert(output.contains("name = this.name ?: entity.name")) { "Should use new value or fallback\n$output" }
+        assert(output.contains("if (\"name\" in dirtyFields) this.name else entity.name")) {
+            "Should check dirtyFields for fallback\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder has dirtyFields set`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("dirtyFields: MutableSet<String> = mutableSetOf()")) {
+            "Should have dirtyFields set\n$output"
+        }
+    }
+
+    @Test
+    fun `mutable property setter tracks dirty state`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("dirtyFields.add(\"name\")")) {
+            "Setting name should add to dirtyFields\n$output"
+        }
     }
 
     @Test
@@ -92,7 +112,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", User).toString()
 
         val hookCall = output.indexOf("beforeSaveHooks")
-        val fallback = output.indexOf("this.name ?: entity.name")
+        val fallback = output.indexOf("in dirtyFields")
         assert(hookCall != -1 && fallback != -1 && hookCall < fallback) {
             "Before hooks should run before fallback resolution\n$output"
         }
