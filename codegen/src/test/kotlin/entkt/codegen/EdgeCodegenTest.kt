@@ -1,10 +1,14 @@
 package entkt.codegen
 
+import entkt.schema.Edge
+import entkt.schema.EdgeType
 import entkt.schema.EntId
 import entkt.schema.EntSchema
+import entkt.schema.Through
 import entkt.schema.edges
 import entkt.schema.fields
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 
 object Owner : EntSchema() {
     override fun id() = EntId.long()
@@ -639,6 +643,29 @@ class EdgeCodegenTest {
         }
         assert(output.contains("junctionTargetColumn = \"assignee_id\"")) {
             "Target FK should be assignee_id, not reviewer_id\n$output"
+        }
+    }
+
+    @Test
+    fun `ambiguous junction without hints fails fast`() {
+        // ProjectAssignment has two unique edges to Pet ("assignee" and
+        // "reviewer"). Without sourceEdge/targetEdge hints, the target
+        // side is ambiguous and should fail at codegen time.
+        val edge = Edge(
+            name = "assignees",
+            type = EdgeType.TO,
+            target = Pet,
+            through = Through("projectAssignments", ProjectAssignment),
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            resolveM2MEdgeJoin(edge, Project, schemaNames)
+        }
+        assert(error.message!!.contains("Ambiguous M2M")) {
+            "Should mention ambiguous M2M: ${error.message}"
+        }
+        assert(error.message!!.contains("sourceEdge")) {
+            "Should suggest sourceEdge/targetEdge: ${error.message}"
         }
     }
 }

@@ -162,7 +162,8 @@ internal fun resolveM2MEdgeJoin(
 ): EdgeJoin? {
     val through = edge.through ?: return null
     val junctionSchema = through.target
-    val junctionTable = tableNameFor(schemaNames[junctionSchema] ?: return null)
+    val junctionName = schemaNames[junctionSchema] ?: return null
+    val junctionTable = tableNameFor(junctionName)
 
     val junctionEdges = junctionSchema.edges()
 
@@ -171,7 +172,19 @@ internal fun resolveM2MEdgeJoin(
     val sourceEdge = if (through.sourceEdge != null) {
         junctionEdges.firstOrNull { it.name == through.sourceEdge && it.unique }
     } else {
-        junctionEdges.firstOrNull { it.target === source && it.unique }
+        val candidates = junctionEdges.filter { it.target === source && it.unique }
+        // For non-self-referential edges, multiple candidates are ambiguous.
+        // Self-referential (source === target) with exactly 2 is fine — first
+        // becomes source, second becomes target after exclusion below.
+        if (candidates.size > 1 && source !== edge.target) {
+            val names = candidates.map { it.name }
+            error(
+                "Ambiguous M2M: junction $junctionName has ${candidates.size} unique edges " +
+                    "targeting ${schemaNames[source] ?: "source"}: $names. " +
+                    "Use through(..., sourceEdge = \"...\", targetEdge = \"...\") to disambiguate.",
+            )
+        }
+        candidates.firstOrNull()
     } ?: return null
     val sourceFk = sourceEdge.field ?: "${sourceEdge.name}_id"
 
@@ -182,9 +195,18 @@ internal fun resolveM2MEdgeJoin(
         junctionEdges.firstOrNull { it.name == through.targetEdge && it.unique }
     } else {
         val sourceIdx = junctionEdges.indexOf(sourceEdge)
-        junctionEdges
+        val candidates = junctionEdges
             .filterIndexed { i, _ -> i != sourceIdx }
-            .firstOrNull { it.target === edge.target && it.unique }
+            .filter { it.target === edge.target && it.unique }
+        if (candidates.size > 1) {
+            val names = candidates.map { it.name }
+            error(
+                "Ambiguous M2M: junction $junctionName has ${candidates.size} unique edges " +
+                    "targeting ${schemaNames[edge.target] ?: "target"}: $names. " +
+                    "Use through(..., sourceEdge = \"...\", targetEdge = \"...\") to disambiguate.",
+            )
+        }
+        candidates.firstOrNull()
     } ?: return null
     val targetFk = targetEdge.field ?: "${targetEdge.name}_id"
 
