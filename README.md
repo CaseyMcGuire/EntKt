@@ -45,6 +45,16 @@ val adults = client.users.query {
 val authorsWithPublishedPosts = client.users.query {
     where(User.posts.has { where(Post.published eq true) })
 }.all()
+
+// Delete
+client.users.delete(alice)       // or client.users.deleteById(alice.id)
+
+// Transactions
+client.driver.withTransaction { txDriver ->
+    val txClient = EntClient(txDriver)
+    txClient.users.create { name = "Bob"; email = "bob@example.com" }.save()
+    txClient.posts.create { title = "Hello"; authorId = bob.id }.save()
+}
 ```
 
 See [`example-demo/src/main/kotlin/example/demo/Demo.kt`](example-demo/src/main/kotlin/example/demo/Demo.kt)
@@ -233,21 +243,24 @@ Configuration lives under an `entkt { packageName = "..." }` extension.
 
 ### Tests
 
-- `:schema` — schema DSL shape tests
-- `:runtime` — full `InMemoryDriver` coverage (CRUD, compound predicates,
-  edge traversal, ordering, pagination)
-- `:codegen` — per-generator unit tests for entity, create, update, query,
-  repo, client, and edge codegen
-- `:gradle-plugin` — end-to-end plugin invocation in a generated test build
-- `:postgres` — full parity coverage against `InMemoryDriverTest`, 13 tests
+155 tests across all modules:
+
+- `:schema` — schema DSL shape tests (13)
+- `:runtime` — full `InMemoryDriver` coverage including CRUD, compound
+  predicates, edge traversal, M2M junction tables, transactions, ordering,
+  pagination (21)
+- `:codegen` — per-generator unit tests for entity, mutation, create, update,
+  query, repo, client, edge codegen, and lifecycle hooks (90)
+- `:gradle-plugin` — end-to-end plugin invocation in a generated test build (1)
+- `:postgres` — full parity coverage against `InMemoryDriverTest` including
+  M2M and transactions, running against `postgres:16-alpine` via
+  Testcontainers (30)
 
 ## Roadmap
 
 Things that are **not yet implemented**, roughly in order of severity:
 
 ### Driver capabilities
-- **Transactions.** `Driver` has no `begin`/`commit`/`rollback`; every call
-  borrows its own connection and runs one statement.
 - **Bulk operations.** No `insertMany`, `updateMany`, or `deleteMany`.
 - **Upsert.** No `INSERT ... ON CONFLICT` / `MERGE` path.
 - **More drivers.** Only `InMemoryDriver` and `PostgresDriver` exist today.
@@ -259,23 +272,14 @@ Things that are **not yet implemented**, roughly in order of severity:
 - **Migrations.** `register()` is `CREATE TABLE IF NOT EXISTS` and nothing
   more — no `ALTER TABLE`, no diffing, no drop-recreate, no migration
   history.
-- **Unique / composite / partial indexes.** `field.unique()` and
-  `index.unique()` are captured in the DSL but the Postgres driver does not
-  emit `CREATE UNIQUE INDEX` for them. Indexes only support a simple field
-  list today.
+- **Partial indexes.** Only simple and composite indexes are supported;
+  no partial / conditional indexes.
 - **Exotic column types.** No JSON/JSONB, arrays, enums (as PG enum types),
   hstore, or composites.
-- **Cascade delete / FK constraints.** Edge FKs are stored as plain nullable
-  columns without `REFERENCES ... ON DELETE` clauses.
+- **Cascade delete.** Edge FK columns have `REFERENCES` constraints but no
+  `ON DELETE CASCADE` / `SET NULL` clauses.
 
 ### DSL / codegen
-- **Delete builder.** `Driver.delete(id)` works, but there's no generated
-  `{Entity}Delete` DSL or `repo.delete(entity)` convenience.
-- **Many-to-many via `through`.** `EdgeBuilder.through(...)` is declared but
-  codegen does not emit junction-table support yet.
-- **Lifecycle hooks.** No `beforeSave`, `afterLoad`, etc. Validators are
-  checked in the generated create/update builders but don't translate into
-  runtime `CHECK` constraints.
 - **Self-referential edges.** No explicit handling or codegen tests.
 - **Incremental codegen.** The Gradle plugin always regenerates the full
   tree; there's no per-schema caching or watch mode.
