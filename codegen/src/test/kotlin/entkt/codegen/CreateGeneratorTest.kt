@@ -1,6 +1,15 @@
 package entkt.codegen
 
+import entkt.schema.EntSchema
+import entkt.schema.fields
 import kotlin.test.Test
+
+object Event : EntSchema() {
+    override fun fields() = fields {
+        string("title")
+        time("created_at").default("now").immutable()
+    }
+}
 
 class CreateGeneratorTest {
 
@@ -102,6 +111,18 @@ class CreateGeneratorTest {
         }
         assert(!output.contains(""""active is required"""")) {
             "Should not validate a field with a default\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits Instant_now() for time fields with default now`() {
+        val output = generator.generate("Event", Event).toString()
+
+        assert(output.contains("Instant.now()")) {
+            "Should emit Instant.now() for time default \"now\"\n$output"
+        }
+        assert(!output.contains("?: \"now\"")) {
+            "Should not emit string literal \"now\" for time default\n$output"
         }
     }
 }

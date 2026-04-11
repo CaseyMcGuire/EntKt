@@ -14,6 +14,7 @@ import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 import entkt.schema.Field
+import entkt.schema.FieldType
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
@@ -188,7 +189,7 @@ class CreateGenerator(
                     "val %L = this.%L ?: %L",
                     prop,
                     prop,
-                    kotlinLiteral(field.default!!),
+                    defaultCodeBlock(field),
                 )
                 else -> builder.addStatement("val %L = this.%L", prop, prop)
             }
@@ -233,6 +234,15 @@ class CreateGenerator(
         builder.addStatement("return entity")
 
         return builder.build()
+    }
+
+    private fun defaultCodeBlock(field: Field): CodeBlock {
+        val value = field.default!!
+        return when {
+            field.type == FieldType.TIME && value == "now" ->
+                CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
+            else -> CodeBlock.of("%L", kotlinLiteral(value))
+        }
     }
 
     private fun kotlinLiteral(value: Any): String = when (value) {
