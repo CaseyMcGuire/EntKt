@@ -170,7 +170,12 @@ internal fun resolveM2MEdgeJoin(
     // Find the junction edge pointing at the source schema.
     // If through.sourceEdge is set, match by name for disambiguation.
     val sourceEdge = if (through.sourceEdge != null) {
-        junctionEdges.firstOrNull { it.name == through.sourceEdge && it.unique }
+        junctionEdges.firstOrNull { it.name == through.sourceEdge && it.unique && it.target === source }
+            ?: error(
+                "M2M sourceEdge hint \"${through.sourceEdge}\" does not match any unique edge " +
+                    "on junction $junctionName targeting ${schemaNames[source] ?: "source"}. " +
+                    "Available unique edges: ${junctionEdges.filter { it.unique }.map { it.name }}.",
+            )
     } else {
         val candidates = junctionEdges.filter { it.target === source && it.unique }
         // For non-self-referential edges, multiple candidates are ambiguous.
@@ -192,7 +197,12 @@ internal fun resolveM2MEdgeJoin(
     // If through.targetEdge is set, match by name; otherwise exclude
     // sourceEdge by index so self-referential M2M resolves two distinct edges.
     val targetEdge = if (through.targetEdge != null) {
-        junctionEdges.firstOrNull { it.name == through.targetEdge && it.unique }
+        junctionEdges.firstOrNull { it.name == through.targetEdge && it.unique && it.target === edge.target }
+            ?: error(
+                "M2M targetEdge hint \"${through.targetEdge}\" does not match any unique edge " +
+                    "on junction $junctionName targeting ${schemaNames[edge.target] ?: "target"}. " +
+                    "Available unique edges: ${junctionEdges.filter { it.unique }.map { it.name }}.",
+            )
     } else {
         val sourceIdx = junctionEdges.indexOf(sourceEdge)
         val candidates = junctionEdges

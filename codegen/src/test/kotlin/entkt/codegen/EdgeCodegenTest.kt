@@ -668,4 +668,50 @@ class EdgeCodegenTest {
             "Should suggest sourceEdge/targetEdge: ${error.message}"
         }
     }
+
+    @Test
+    fun `wrong sourceEdge hint fails fast with clear error`() {
+        // sourceEdge "assignee" points at Pet, not Project — should
+        // error rather than silently dropping the edge.
+        val edge = Edge(
+            name = "assignees",
+            type = EdgeType.TO,
+            target = Pet,
+            through = Through(
+                "projectAssignments", ProjectAssignment,
+                sourceEdge = "assignee",  // wrong: points at Pet, not source (Project)
+                targetEdge = "reviewer",
+            ),
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            resolveM2MEdgeJoin(edge, Project, schemaNames)
+        }
+        assert(error.message!!.contains("sourceEdge hint")) {
+            "Should mention sourceEdge hint: ${error.message}"
+        }
+    }
+
+    @Test
+    fun `wrong targetEdge hint fails fast with clear error`() {
+        // targetEdge "project" points at Project, not Pet — should
+        // error rather than silently dropping the edge.
+        val edge = Edge(
+            name = "assignees",
+            type = EdgeType.TO,
+            target = Pet,
+            through = Through(
+                "projectAssignments", ProjectAssignment,
+                sourceEdge = "project",
+                targetEdge = "project",  // wrong: points at Project, not target (Pet)
+            ),
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            resolveM2MEdgeJoin(edge, Project, schemaNames)
+        }
+        assert(error.message!!.contains("targetEdge hint")) {
+            "Should mention targetEdge hint: ${error.message}"
+        }
+    }
 }
