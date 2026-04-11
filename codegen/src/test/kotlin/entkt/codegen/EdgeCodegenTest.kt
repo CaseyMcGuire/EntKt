@@ -563,4 +563,35 @@ class EdgeCodegenTest {
             "Should query junction with source FK person_id\n$output"
         }
     }
+
+    // ---------- Per-group limit/offset in eager loading ----------
+
+    @Test
+    fun `to-many eager loading applies limit per group not globally`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", Owner, schemaNames).toString().replace("\\s+".toRegex(), " ")
+
+        // The batch query should pass null for limit/offset
+        assert(output.contains("subQuery.orderFields, null, null)")) {
+            "Batch query should not pass limit/offset to driver\n$output"
+        }
+        // Per-group slicing should exist
+        assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
+            "Should apply limit/offset per group\n$output"
+        }
+    }
+
+    @Test
+    fun `M2M eager loading applies limit per group not globally`() {
+        val output = QueryGenerator("com.example.ent")
+            .generate("Team", Team, schemaNames).toString().replace("\\s+".toRegex(), " ")
+
+        // Target query should pass null for limit/offset
+        assert(output.contains("subQuery.orderFields, null, null)")) {
+            "Target query should not pass limit/offset to driver\n$output"
+        }
+        assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
+            "Should apply limit/offset per group\n$output"
+        }
+    }
 }

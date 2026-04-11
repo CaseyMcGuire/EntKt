@@ -318,16 +318,19 @@ class QueryGenerator(
     ) {
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
+        // Fetch all matching rows — limit/offset are applied per group below.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, sourceIds), subQuery.orderFields, subQuery.queryLimit, subQuery.queryOffset)",
+            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, sourceIds), subQuery.orderFields, null, null)",
             targetClass, PREDICATE, join.targetColumn, OP,
         )
         body.addStatement(
             "val grouped = targetRows.groupBy { it[%S] }",
             join.targetColumn,
         )
+        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
+        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement(
-            "val loadedGroups = grouped.mapValues { (_, rows) -> subQuery.loadEdges(rows.map { %T.fromRow(it) }) }",
+            "val loadedGroups = grouped.mapValues { (_, rows) -> subQuery.loadEdges(rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) }) }",
             targetClass,
         )
         body.addStatement(
@@ -358,8 +361,9 @@ class QueryGenerator(
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
         body.beginControlFlow("if (fkValues.isNotEmpty())")
+        // Fetch all matching targets — limit/offset is meaningless for to-one.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, fkValues), subQuery.orderFields, subQuery.queryLimit, subQuery.queryOffset)",
+            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, fkValues), subQuery.orderFields, null, null)",
             targetClass, PREDICATE, join.targetColumn, OP,
         )
         body.addStatement(
@@ -402,8 +406,9 @@ class QueryGenerator(
             "val targetIds = junctionRows.map { it[%S] }.distinct()",
             join.junctionTargetColumn,
         )
+        // Fetch all matching targets — limit/offset are applied per group below.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, targetIds), subQuery.orderFields, subQuery.queryLimit, subQuery.queryOffset)",
+            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, targetIds), subQuery.orderFields, null, null)",
             targetClass, PREDICATE, "id", OP,
         )
         body.addStatement(
@@ -422,8 +427,10 @@ class QueryGenerator(
             join.junctionSourceColumn,
         )
         body.endControlFlow()
+        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
+        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement(
-            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = grouped[entity.id] ?: emptyList())) }",
+            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = (grouped[entity.id] ?: emptyList()).drop(perGroupOffset).take(perGroupLimit))) }",
             edgePropName,
         )
         body.nextControlFlow("else")
