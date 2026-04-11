@@ -82,7 +82,8 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 
 **Edges:** `to(name, target)` (one-to-many), `from(name, target)` (inverse,
 synthesizes FK on source). Modifiers: `.unique()`, `.required()`, `.ref(...)`,
-`.field(...)`.
+`.field(...)`, `.through(junctionTable, sourceCol, targetCol)` (many-to-many
+via junction table).
 
 **Mixins:** any `EntMixin` contributing `fields()`, `edges()`, `indexes()`.
 
@@ -95,20 +96,26 @@ For each schema the generator emits:
 - **Entity data class** with typed properties, companion-object column refs
   (`User.name: StringColumn`, `User.age: NullableComparableColumn<Int>`), baked-in
   `EntitySchema` metadata, and a `fromRow()` row decoder.
+- **`{Entity}Mutation` interface** — shared interface implemented by both
+  Create and Update builders, with `var` properties for all mutable fields.
+  Enables shared validators via `onBeforeSave`.
 - **`{Entity}Create` builder** — DSL setters + `.save()`. Mints client UUIDs
-  when `IdStrategy.CLIENT_UUID`.
+  when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
 - **`{Entity}Update` builder** — DSL setters (immutable fields are elided) + `.save()`.
+  Implements `{Entity}Mutation`. Exposes `entity` for hooks to inspect current state.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
   `.offset(...)`, `.all()`, `.firstOrNull()`, plus edge traversal methods
   (e.g. `.queryPosts()`).
-- **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`, `.byId(id)`.
-  Registers the entity's `EntitySchema` with the driver on construction.
+- **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
+  `.byId(id)`, `.delete(entity)`, `.deleteById(id)`. Registers the entity's
+  `EntitySchema` with the driver on construction. Supports typed lifecycle
+  hooks via chainable registration methods (see below).
 - **`EntClient`** — single entry point holding one repo per entity, constructed
   with a `Driver` for dependency injection.
 
 ### Runtime (`:runtime`)
 
-**`Driver` interface (six methods):**
+**`Driver` interface (seven methods):**
 
 ```kotlin
 interface Driver {
@@ -124,6 +131,7 @@ interface Driver {
         offset: Int?,
     ): List<Map<String, Any?>>
     fun delete(table: String, id: Any): Boolean
+    fun <T> withTransaction(block: (Driver) -> T): T
 }
 ```
 
@@ -137,10 +145,47 @@ the typed facade.
 **Ops:** `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`, `IN`, `NOT_IN`, `IS_NULL`,
 `IS_NOT_NULL`, `CONTAINS`, `HAS_PREFIX`, `HAS_SUFFIX`.
 
+**Transactions:** `driver.withTransaction { txDriver -> ... }` runs a block
+inside a transaction. The block receives a transaction-scoped driver; if it
+completes normally the transaction commits, if it throws the transaction rolls
+back. Nested `withTransaction` calls reuse the existing transaction.
+
 **`InMemoryDriver`:** thread-safe in-process storage using `ConcurrentHashMap`
 and `AtomicLong` id counters. Edge predicates recursively scan related tables
-via registered `EdgeMetadata`. Used by the demo and as the parity oracle for
-the Postgres driver tests.
+via registered `EdgeMetadata`. Supports transactions with snapshot isolation
+and rollback on error. Used by the demo and as the parity oracle for the
+Postgres driver tests.
+
+### Lifecycle hooks
+
+Generated repos support typed lifecycle hooks for cross-cutting concerns like
+timestamps, audit logging, validation, and cache invalidation. Hooks receive
+the actual generated entity/builder types — not raw maps.
+
+| Hook | Signature | When |
+|------|-----------|------|
+| `onBeforeSave` | `(UserMutation) -> Unit` | Both create & update, before validation |
+| `onBeforeCreate` | `(UserCreate) -> Unit` | Create only, after beforeSave |
+| `onAfterCreate` | `(User) -> Unit` | After successful insert |
+| `onBeforeUpdate` | `(UserUpdate) -> Unit` | Update only, after beforeSave |
+| `onAfterUpdate` | `(User) -> Unit` | After successful update |
+| `onBeforeDelete` | `(User) -> Unit` | Before driver delete |
+| `onAfterDelete` | `(User) -> Unit` | After successful delete |
+
+```kotlin
+client.users
+    .onBeforeSave { it.updatedAt = Instant.now() }
+    .onBeforeCreate { it.createdAt = Instant.now() }
+    .onBeforeUpdate { update ->
+        if (update.name != update.entity.name) println("name changed!")
+    }
+    .onAfterCreate { user -> println("Created: ${user.name}") }
+    .onBeforeDelete { user -> println("Deleting: ${user.name}") }
+```
+
+Registration methods return `this` for chaining. `onBeforeSave` accepts the
+shared `{Entity}Mutation` interface so the same validator works for both
+creates and updates.
 
 ### Postgres driver (`:postgres`)
 
@@ -151,13 +196,16 @@ JDBC-backed `Driver` talking to real PostgreSQL.
   `BOOL` → `boolean`, `INT` → `integer`, `LONG` → `bigint`, `FLOAT` → `real`,
   `DOUBLE` → `double precision`, `TIME` → `timestamptz`, `UUID` → `uuid`,
   `BYTES` → `bytea`. Primary keys for `AUTO_INT`/`AUTO_LONG` become
-  `serial`/`bigserial`.
+  `serial`/`bigserial`. Edge FK columns emit `REFERENCES target("id")`
+  constraints. Unique fields and composite indexes emit `UNIQUE`
+  constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
 - **Insert/update:** `INSERT ... RETURNING *` and `UPDATE ... RETURNING *`
   with fully parameterized bindings. Never rewrites the id through `update`.
 - **Query:** predicate tree lowered to SQL; `AND`/`OR` nest naturally,
   leaves bind parameters through a type-aware `PreparedStatement.bind(...)`,
   edges become `EXISTS (SELECT 1 FROM target ...)` subqueries walking
-  registered `EdgeMetadata`. `IN`/`NOT_IN` expand to placeholder lists
+  registered `EdgeMetadata` (including junction-table joins for M2M edges).
+  `IN`/`NOT_IN` expand to placeholder lists
   (empty IN short-circuits to `FALSE`, empty NOT IN to `TRUE`). String ops
   use `LIKE` with safely built patterns.
 - **Identifier quoting:** all identifiers wrapped in `"..."`. Values are
