@@ -116,33 +116,6 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has hook registration methods that return this for chaining`() {
-        val output = generator.generate("Car", Car).toString()
-
-        assert(output.contains("fun onBeforeSave(hook: (CarMutation) -> Unit): CarRepo")) {
-            "Should have onBeforeSave returning CarRepo\n$output"
-        }
-        assert(output.contains("fun onBeforeCreate(hook: (CarCreate) -> Unit): CarRepo")) {
-            "Should have onBeforeCreate returning CarRepo\n$output"
-        }
-        assert(output.contains("fun onAfterCreate(hook: (Car) -> Unit): CarRepo")) {
-            "Should have onAfterCreate returning CarRepo\n$output"
-        }
-        assert(output.contains("fun onBeforeUpdate(hook: (CarUpdate) -> Unit): CarRepo")) {
-            "Should have onBeforeUpdate returning CarRepo\n$output"
-        }
-        assert(output.contains("fun onAfterUpdate(hook: (Car) -> Unit): CarRepo")) {
-            "Should have onAfterUpdate returning CarRepo\n$output"
-        }
-        assert(output.contains("fun onBeforeDelete(hook: (Car) -> Unit): CarRepo")) {
-            "Should have onBeforeDelete returning CarRepo\n$output"
-        }
-        assert(output.contains("fun onAfterDelete(hook: (Car) -> Unit): CarRepo")) {
-            "Should have onAfterDelete returning CarRepo\n$output"
-        }
-    }
-
-    @Test
     fun `create passes hook lists to the builder`() {
         val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
 
@@ -170,6 +143,21 @@ class RepoGeneratorTest {
     }
 
     @Test
+    fun `repo has applyHooks that copies from entity hooks config`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun applyHooks(hooks: CarHooks)")) {
+            "Should have applyHooks method taking CarHooks\n$output"
+        }
+        assert(output.contains("beforeSaveHooks.addAll(hooks.beforeSaveHooks)")) {
+            "Should copy beforeSaveHooks from config\n$output"
+        }
+        assert(output.contains("afterDeleteHooks.addAll(hooks.afterDeleteHooks)")) {
+            "Should copy afterDeleteHooks from config\n$output"
+        }
+    }
+
+    @Test
     fun `repo has copyHooksFrom that copies all hook lists`() {
         val output = generator.generate("Car", Car).toString()
 
@@ -181,6 +169,18 @@ class RepoGeneratorTest {
         }
         assert(output.contains("afterDeleteHooks.addAll(other.afterDeleteHooks)")) {
             "Should copy afterDeleteHooks\n$output"
+        }
+    }
+
+    @Test
+    fun `repo does not expose hook registration methods`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(!output.contains("fun onBeforeSave")) {
+            "Should not have onBeforeSave — hooks are registered via client config DSL\n$output"
+        }
+        assert(!output.contains("fun onAfterCreate")) {
+            "Should not have onAfterCreate — hooks are registered via client config DSL\n$output"
         }
     }
 }

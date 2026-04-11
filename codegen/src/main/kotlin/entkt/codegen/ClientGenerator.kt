@@ -1,26 +1,43 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
+import com.squareup.kotlinpoet.UNIT
+import com.squareup.kotlinpoet.asClassName
 
 private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
+private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
- * together. The client takes a [Driver] in its constructor and exposes
- * each repo as a property — this is the dependency-injection seam:
- * production code constructs `EntClient(realDriver)`, tests construct
- * `EntClient(StubDriver)` (or a fake), and consumer code never touches
- * a static entry point.
+ * together, plus the hooks DSL classes (`EntClientConfig`,
+ * `EntClientHooks`, and per-entity `{Entity}Hooks`).
  *
- * The repo property names are derived from the schema name by
- * camel-casing and pluralizing (`User` → `users`, `Post` → `posts`).
+ * The client takes a [Driver] and an optional configuration lambda:
+ *
+ * ```kotlin
+ * val client = EntClient(driver) {
+ *     hooks {
+ *         users {
+ *             beforeSave { it.updatedAt = Instant.now() }
+ *         }
+ *     }
+ * }
+ * ```
+ *
+ * Hooks are registered once at construction time and automatically
+ * inherited by transactional clients via `copyHooksFrom`.
  */
 class ClientGenerator(
     private val packageName: String,
@@ -28,12 +45,38 @@ class ClientGenerator(
 
     fun generate(schemas: List<SchemaInput>): FileSpec {
         val clientClass = ClassName(packageName, "EntClient")
+        val configClass = ClassName(packageName, "EntClientConfig")
+        val hooksClass = ClassName(packageName, "EntClientHooks")
         val t = TypeVariableName("T")
+
+        val fileBuilder = FileSpec.builder(packageName, "EntClient")
+
+        // Generate per-entity hooks DSL classes
+        for (input in schemas) {
+            fileBuilder.addType(buildEntityHooksClass(input))
+        }
+
+        // Generate EntClientHooks
+        fileBuilder.addType(buildHooksClass(hooksClass, schemas))
+
+        // Generate EntClientConfig
+        fileBuilder.addType(buildConfigClass(configClass, hooksClass))
+
+        // Generate EntClient
+        val configLambda = LambdaTypeName.get(
+            receiver = configClass,
+            returnType = UNIT,
+        )
 
         val typeSpec = TypeSpec.classBuilder("EntClient")
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
+                    .addParameter(
+                        ParameterSpec.builder("config", configLambda)
+                            .defaultValue("{}")
+                            .build(),
+                    )
                     .build()
             )
             .addProperty(
@@ -43,16 +86,137 @@ class ClientGenerator(
                     .build()
             )
             .addProperties(schemas.map { buildRepoProperty(it) })
-            .addFunction(buildWithTransaction(clientClass, t, schemas))
+            .addInitializerBlock(buildInitBlock(configClass, schemas))
+            .addFunction(buildWithTransaction(clientClass, configClass, t, schemas))
             .build()
 
-        return FileSpec.builder(packageName, "EntClient")
-            .addType(typeSpec)
+        fileBuilder.addType(typeSpec)
+
+        return fileBuilder.build()
+    }
+
+    private fun buildEntityHooksClass(input: SchemaInput): TypeSpec {
+        val schemaName = input.name
+        val className = "${schemaName}Hooks"
+        val entityClass = ClassName(packageName, schemaName)
+        val createClass = ClassName(packageName, "${schemaName}Create")
+        val updateClass = ClassName(packageName, "${schemaName}Update")
+        val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+
+        val hookDefs = listOf(
+            HookDef("beforeSave", mutationClass),
+            HookDef("beforeCreate", createClass),
+            HookDef("afterCreate", entityClass),
+            HookDef("beforeUpdate", updateClass),
+            HookDef("afterUpdate", entityClass),
+            HookDef("beforeDelete", entityClass),
+            HookDef("afterDelete", entityClass),
+        )
+
+        val builder = TypeSpec.classBuilder(className)
+            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+
+        for (def in hookDefs) {
+            val lambdaType = LambdaTypeName.get(parameters = arrayOf(def.paramType), returnType = UNIT)
+            val listType = MUTABLE_LIST.parameterizedBy(lambdaType)
+
+            // Internal property: the hook list
+            builder.addProperty(
+                PropertySpec.builder("${def.name}Hooks", listType)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("mutableListOf()")
+                    .build()
+            )
+
+            // Public DSL method: beforeSave { ... }
+            builder.addFunction(
+                FunSpec.builder(def.name)
+                    .addParameter("hook", lambdaType)
+                    .addStatement("%LHooks.add(hook)", def.name)
+                    .build()
+            )
+        }
+
+        return builder.build()
+    }
+
+    private fun buildHooksClass(
+        hooksClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): TypeSpec {
+        val builder = TypeSpec.classBuilder(hooksClass)
+            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+
+        for (input in schemas) {
+            val entityHooksClass = ClassName(packageName, "${input.name}Hooks")
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+
+            // Internal property holding the entity hooks
+            builder.addProperty(
+                PropertySpec.builder(propName, entityHooksClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", entityHooksClass)
+                    .build()
+            )
+
+            // DSL method: users { ... }
+            val blockLambda = LambdaTypeName.get(
+                receiver = entityHooksClass,
+                returnType = UNIT,
+            )
+            builder.addFunction(
+                FunSpec.builder(propName)
+                    .addParameter("block", blockLambda)
+                    .addStatement("%L.apply(block)", propName)
+                    .build()
+            )
+        }
+
+        return builder.build()
+    }
+
+    private fun buildConfigClass(
+        configClass: ClassName,
+        hooksClass: ClassName,
+    ): TypeSpec {
+        val blockLambda = LambdaTypeName.get(
+            receiver = hooksClass,
+            returnType = UNIT,
+        )
+
+        return TypeSpec.classBuilder(configClass)
+            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            .addProperty(
+                PropertySpec.builder("hooksConfig", hooksClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", hooksClass)
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("hooks")
+                    .addParameter("block", blockLambda)
+                    .addStatement("hooksConfig.apply(block)")
+                    .build()
+            )
             .build()
+    }
+
+    private fun buildInitBlock(
+        configClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): CodeBlock {
+        val block = CodeBlock.builder()
+        block.addStatement("val cfg = %T().apply(config)", configClass)
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            block.addStatement("%L.applyHooks(cfg.hooksConfig.%L)", propName, propName)
+        }
+        return block.build()
     }
 
     private fun buildWithTransaction(
         clientClass: ClassName,
+        configClass: ClassName,
         t: TypeVariableName,
         schemas: List<SchemaInput>,
     ): FunSpec {
@@ -70,9 +234,9 @@ class ClientGenerator(
             .addTypeVariable(t)
             .addParameter(
                 "block",
-                com.squareup.kotlinpoet.LambdaTypeName.get(
+                LambdaTypeName.get(
                     parameters = listOf(
-                        com.squareup.kotlinpoet.ParameterSpec.unnamed(clientClass),
+                        ParameterSpec.unnamed(clientClass),
                     ),
                     returnType = t,
                 ),
@@ -90,6 +254,8 @@ class ClientGenerator(
             .build()
     }
 }
+
+private data class HookDef(val name: String, val paramType: ClassName)
 
 /**
  * Naive English pluralization good enough for the small surface area of

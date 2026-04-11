@@ -11,7 +11,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
-import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime", "Driver")
@@ -24,6 +23,10 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
  * entity's [entkt.runtime.EntitySchema] so the driver knows the table
  * layout before any other call lands, and every builder it hands back is
  * constructed with the same driver reference.
+ *
+ * Hooks are applied from the client's hooks DSL via [applyHooks] at
+ * construction time, and inherited by transactional repos via
+ * [copyHooksFrom].
  */
 class RepoGenerator(
     private val packageName: String,
@@ -40,6 +43,7 @@ class RepoGenerator(
         val updateClass = ClassName(packageName, "${schemaName}Update")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+        val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
         val idType = schema.id().type.toTypeName()
 
         val createLambda = LambdaTypeName.get(
@@ -90,14 +94,6 @@ class RepoGenerator(
             .addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
-            // Hook registration methods
-            .addFunction(hookRegistration("onBeforeSave", beforeSaveHookLambda, "beforeSaveHooks", repoClass))
-            .addFunction(hookRegistration("onBeforeCreate", beforeCreateHookLambda, "beforeCreateHooks", repoClass))
-            .addFunction(hookRegistration("onAfterCreate", afterCreateHookLambda, "afterCreateHooks", repoClass))
-            .addFunction(hookRegistration("onBeforeUpdate", beforeUpdateHookLambda, "beforeUpdateHooks", repoClass))
-            .addFunction(hookRegistration("onAfterUpdate", afterUpdateHookLambda, "afterUpdateHooks", repoClass))
-            .addFunction(hookRegistration("onBeforeDelete", beforeDeleteHookLambda, "beforeDeleteHooks", repoClass))
-            .addFunction(hookRegistration("onAfterDelete", afterDeleteHookLambda, "afterDeleteHooks", repoClass))
             .addFunction(
                 FunSpec.builder("query")
                     .addParameter(
@@ -162,19 +158,8 @@ class RepoGenerator(
                     .addStatement("return delete(entity)")
                     .build()
             )
-            .addFunction(
-                FunSpec.builder("copyHooksFrom")
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("other", repoClass)
-                    .addStatement("beforeSaveHooks.addAll(other.beforeSaveHooks)")
-                    .addStatement("beforeCreateHooks.addAll(other.beforeCreateHooks)")
-                    .addStatement("afterCreateHooks.addAll(other.afterCreateHooks)")
-                    .addStatement("beforeUpdateHooks.addAll(other.beforeUpdateHooks)")
-                    .addStatement("afterUpdateHooks.addAll(other.afterUpdateHooks)")
-                    .addStatement("beforeDeleteHooks.addAll(other.beforeDeleteHooks)")
-                    .addStatement("afterDeleteHooks.addAll(other.afterDeleteHooks)")
-                    .build()
-            )
+            .addFunction(buildApplyHooks(entityHooksClass))
+            .addFunction(buildCopyHooksFrom(repoClass))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -182,22 +167,35 @@ class RepoGenerator(
             .build()
     }
 
+    private fun buildApplyHooks(entityHooksClass: ClassName): FunSpec =
+        FunSpec.builder("applyHooks")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("hooks", entityHooksClass)
+            .addStatement("beforeSaveHooks.addAll(hooks.beforeSaveHooks)")
+            .addStatement("beforeCreateHooks.addAll(hooks.beforeCreateHooks)")
+            .addStatement("afterCreateHooks.addAll(hooks.afterCreateHooks)")
+            .addStatement("beforeUpdateHooks.addAll(hooks.beforeUpdateHooks)")
+            .addStatement("afterUpdateHooks.addAll(hooks.afterUpdateHooks)")
+            .addStatement("beforeDeleteHooks.addAll(hooks.beforeDeleteHooks)")
+            .addStatement("afterDeleteHooks.addAll(hooks.afterDeleteHooks)")
+            .build()
+
+    private fun buildCopyHooksFrom(repoClass: ClassName): FunSpec =
+        FunSpec.builder("copyHooksFrom")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("other", repoClass)
+            .addStatement("beforeSaveHooks.addAll(other.beforeSaveHooks)")
+            .addStatement("beforeCreateHooks.addAll(other.beforeCreateHooks)")
+            .addStatement("afterCreateHooks.addAll(other.afterCreateHooks)")
+            .addStatement("beforeUpdateHooks.addAll(other.beforeUpdateHooks)")
+            .addStatement("afterUpdateHooks.addAll(other.afterUpdateHooks)")
+            .addStatement("beforeDeleteHooks.addAll(other.beforeDeleteHooks)")
+            .addStatement("afterDeleteHooks.addAll(other.afterDeleteHooks)")
+            .build()
+
     private fun hookListProperty(name: String, type: com.squareup.kotlinpoet.TypeName): PropertySpec =
         PropertySpec.builder(name, type)
             .addModifiers(KModifier.PRIVATE)
             .initializer("mutableListOf()")
-            .build()
-
-    private fun hookRegistration(
-        methodName: String,
-        hookLambda: LambdaTypeName,
-        listName: String,
-        repoClass: ClassName,
-    ): FunSpec =
-        FunSpec.builder(methodName)
-            .addParameter("hook", hookLambda)
-            .returns(repoClass)
-            .addStatement("%L.add(hook)", listName)
-            .addStatement("return this")
             .build()
 }

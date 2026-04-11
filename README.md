@@ -28,7 +28,14 @@ object User : EntSchema() {
 
 ```kotlin
 // 2. Use the generated code
-val client = EntClient(InMemoryDriver()) // or PostgresDriver(dataSource)
+val client = EntClient(InMemoryDriver()) {  // or PostgresDriver(dataSource)
+    hooks {
+        users {
+            beforeSave { it.updatedAt = Instant.now() }
+            beforeCreate { it.createdAt = Instant.now() }
+        }
+    }
+}
 
 val alice = client.users.create {
     name = "Alice"
@@ -58,11 +65,10 @@ usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if wit
 // Delete
 client.users.delete(alice)       // or client.users.deleteById(alice.id)
 
-// Transactions
-client.driver.withTransaction { txDriver ->
-    val txClient = EntClient(txDriver)
-    txClient.users.create { name = "Bob"; email = "bob@example.com" }.save()
-    txClient.posts.create { title = "Hello"; authorId = bob.id }.save()
+// Transactions — hooks are automatically inherited
+client.withTransaction { tx ->
+    tx.users.create { name = "Bob"; email = "bob@example.com" }.save()
+    tx.posts.create { title = "Hello"; authorId = bob.id }.save()
 }
 ```
 
@@ -92,7 +98,7 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 `.sensitive()`, `.comment(...)`, `.storageKey(...)`, `.default(...)`,
 `.updateDefault(...)`.
 
-**Type-specific validators:**
+**Type-specific validators** (enforced as inline checks in generated `save()` methods):
 - Strings: `.minLen()`, `.maxLen()`, `.notEmpty()`, `.match(regex)`
 - Numbers: `.min()`, `.max()`, `.positive()`, `.negative()`, `.nonNegative()`
 
@@ -128,10 +134,12 @@ For each schema the generator emits:
   (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
 - **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
   `.byId(id)`, `.delete(entity)`, `.deleteById(id)`. Registers the entity's
-  `EntitySchema` with the driver on construction. Supports typed lifecycle
-  hooks via chainable registration methods (see below).
+  `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
-  with a `Driver` for dependency injection.
+  with a `Driver` and an optional configuration lambda for lifecycle hooks.
+- **Hooks DSL classes** — `EntClientConfig`, `EntClientHooks`, and per-entity
+  `{Entity}Hooks` classes that provide a structured DSL for registering
+  lifecycle hooks at client construction time.
 
 ### Runtime (`:runtime`)
 
@@ -178,34 +186,42 @@ Postgres driver tests.
 
 ### Lifecycle hooks
 
-Generated repos support typed lifecycle hooks for cross-cutting concerns like
-timestamps, audit logging, validation, and cache invalidation. Hooks receive
-the actual generated entity/builder types — not raw maps.
+Hooks are registered once at client construction time via a structured DSL and
+automatically inherited by transactional clients. They receive the actual
+generated entity/builder types — not raw maps.
 
 | Hook | Signature | When |
 |------|-----------|------|
-| `onBeforeSave` | `(UserMutation) -> Unit` | Both create & update, before validation |
-| `onBeforeCreate` | `(UserCreate) -> Unit` | Create only, after beforeSave |
-| `onAfterCreate` | `(User) -> Unit` | After successful insert |
-| `onBeforeUpdate` | `(UserUpdate) -> Unit` | Update only, after beforeSave |
-| `onAfterUpdate` | `(User) -> Unit` | After successful update |
-| `onBeforeDelete` | `(User) -> Unit` | Before driver delete |
-| `onAfterDelete` | `(User) -> Unit` | After successful delete |
+| `beforeSave` | `(UserMutation) -> Unit` | Both create & update, before validation |
+| `beforeCreate` | `(UserCreate) -> Unit` | Create only, after beforeSave |
+| `afterCreate` | `(User) -> Unit` | After successful insert |
+| `beforeUpdate` | `(UserUpdate) -> Unit` | Update only, after beforeSave |
+| `afterUpdate` | `(User) -> Unit` | After successful update |
+| `beforeDelete` | `(User) -> Unit` | Before driver delete |
+| `afterDelete` | `(User) -> Unit` | After successful delete |
 
 ```kotlin
-client.users
-    .onBeforeSave { it.updatedAt = Instant.now() }
-    .onBeforeCreate { it.createdAt = Instant.now() }
-    .onBeforeUpdate { update ->
-        if (update.name != update.entity.name) println("name changed!")
+val client = EntClient(driver) {
+    hooks {
+        users {
+            beforeSave { it.updatedAt = Instant.now() }
+            beforeCreate { it.createdAt = Instant.now() }
+            beforeUpdate { update ->
+                if (update.name != update.entity.name) println("name changed!")
+            }
+            afterCreate { user -> println("Created: ${user.name}") }
+            beforeDelete { user -> println("Deleting: ${user.name}") }
+        }
+        posts {
+            beforeSave { it.updatedAt = Instant.now() }
+        }
     }
-    .onAfterCreate { user -> println("Created: ${user.name}") }
-    .onBeforeDelete { user -> println("Deleting: ${user.name}") }
+}
 ```
 
-Registration methods return `this` for chaining. `onBeforeSave` accepts the
-shared `{Entity}Mutation` interface so the same validator works for both
-creates and updates.
+`beforeSave` accepts the shared `{Entity}Mutation` interface so the same
+hook works for both creates and updates. Hooks are declared once and
+automatically apply within transactions — no re-registration needed.
 
 ### Eager loading
 
@@ -286,14 +302,15 @@ Configuration lives under an `entkt { packageName = "..." }` extension.
 
 ### Tests
 
-172 tests across all modules:
+202 tests across all modules:
 
 - `:schema` — schema DSL shape tests (13)
 - `:runtime` — full `InMemoryDriver` coverage including CRUD, compound
   predicates, edge traversal, M2M junction tables, transactions, ordering,
   pagination (21)
 - `:codegen` — per-generator unit tests for entity, mutation, create, update,
-  query, repo, client, edge codegen, lifecycle hooks, and eager loading (107)
+  query, repo, client, edge codegen, lifecycle hooks, eager loading, field
+  validation, and M2M disambiguation (137)
 - `:gradle-plugin` — end-to-end plugin invocation in a generated test build (1)
 - `:postgres` — full parity coverage against `InMemoryDriverTest` including
   M2M and transactions, running against `postgres:16-alpine` via
@@ -323,7 +340,6 @@ Things that are **not yet implemented**, roughly in order of severity:
   `ON DELETE CASCADE` / `SET NULL` clauses.
 
 ### DSL / codegen
-- **Self-referential edges.** No explicit handling or codegen tests.
 - **Incremental codegen.** The Gradle plugin always regenerates the full
   tree; there's no per-schema caching or watch mode.
 

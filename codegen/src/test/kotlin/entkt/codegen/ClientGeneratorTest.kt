@@ -20,23 +20,40 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient takes a Driver in its constructor`() {
+    fun `EntClient takes a Driver and optional config in its constructor`() {
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("import entkt.runtime.Driver")) { "Should import Driver\n$output" }
         assert(output.contains("driver: Driver")) { "Should take Driver in constructor\n$output" }
+        assert(output.contains("config: EntClientConfig.() -> Unit = {}")) {
+            "Should take optional config lambda\n$output"
+        }
     }
 
     @Test
     fun `EntClient exposes a repo property per schema`() {
         val output = generator.generate(schemas).toString()
 
-        // Pluralized, camel-cased property name, initialized with the driver.
         assert(output.contains("val cars: CarRepo = CarRepo(driver)")) {
             "Should expose cars: CarRepo\n$output"
         }
         assert(output.contains("val users: UserRepo = UserRepo(driver)")) {
             "Should expose users: UserRepo\n$output"
+        }
+    }
+
+    @Test
+    fun `EntClient init block applies hooks from config`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("val cfg = EntClientConfig().apply(config)")) {
+            "Should create config and apply lambda\n$output"
+        }
+        assert(output.contains("cars.applyHooks(cfg.hooksConfig.cars)")) {
+            "Should apply car hooks from config\n$output"
+        }
+        assert(output.contains("users.applyHooks(cfg.hooksConfig.users)")) {
+            "Should apply user hooks from config\n$output"
         }
     }
 
@@ -69,6 +86,80 @@ class ClientGeneratorTest {
         }
         assert(output.contains("tx.users.copyHooksFrom(this.users)")) {
             "Should copy hooks for users repo\n$output"
+        }
+    }
+
+    @Test
+    fun `generates per-entity hooks DSL class`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("class CarHooks")) { "Should generate CarHooks\n$output" }
+        assert(output.contains("class UserHooks")) { "Should generate UserHooks\n$output" }
+    }
+
+    @Test
+    fun `entity hooks class has DSL methods for each lifecycle phase`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("fun beforeSave(hook: (CarMutation) -> Unit)")) {
+            "Should have beforeSave\n$output"
+        }
+        assert(output.contains("fun beforeCreate(hook: (CarCreate) -> Unit)")) {
+            "Should have beforeCreate\n$output"
+        }
+        assert(output.contains("fun afterCreate(hook: (Car) -> Unit)")) {
+            "Should have afterCreate\n$output"
+        }
+        assert(output.contains("fun beforeUpdate(hook: (CarUpdate) -> Unit)")) {
+            "Should have beforeUpdate\n$output"
+        }
+        assert(output.contains("fun afterUpdate(hook: (Car) -> Unit)")) {
+            "Should have afterUpdate\n$output"
+        }
+        assert(output.contains("fun beforeDelete(hook: (Car) -> Unit)")) {
+            "Should have beforeDelete\n$output"
+        }
+        assert(output.contains("fun afterDelete(hook: (Car) -> Unit)")) {
+            "Should have afterDelete\n$output"
+        }
+    }
+
+    @Test
+    fun `generates EntClientHooks with per-entity methods`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("class EntClientHooks")) {
+            "Should generate EntClientHooks\n$output"
+        }
+        assert(output.contains("fun cars(block: CarHooks.() -> Unit)")) {
+            "Should have cars method on EntClientHooks\n$output"
+        }
+        assert(output.contains("fun users(block: UserHooks.() -> Unit)")) {
+            "Should have users method on EntClientHooks\n$output"
+        }
+    }
+
+    @Test
+    fun `generates EntClientConfig with hooks method`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("class EntClientConfig")) {
+            "Should generate EntClientConfig\n$output"
+        }
+        assert(output.contains("fun hooks(block: EntClientHooks.() -> Unit)")) {
+            "Should have hooks method on EntClientConfig\n$output"
+        }
+    }
+
+    @Test
+    fun `hooks DSL classes are annotated with EntktDsl`() {
+        val output = generator.generate(schemas).toString()
+
+        // Check that @EntktDsl appears before each hooks class
+        val carHooksPos = output.indexOf("class CarHooks")
+        val entktDslBeforeCar = output.lastIndexOf("@EntktDsl", carHooksPos)
+        assert(entktDslBeforeCar != -1 && entktDslBeforeCar < carHooksPos) {
+            "CarHooks should be annotated with @EntktDsl\n$output"
         }
     }
 
