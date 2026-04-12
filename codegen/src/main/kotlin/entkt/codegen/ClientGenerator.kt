@@ -88,6 +88,7 @@ class ClientGenerator(
             .addProperties(schemas.map { buildRepoProperty(it) })
             .addInitializerBlock(buildInitBlock(configClass, schemas))
             .addFunction(buildWithTransaction(clientClass, configClass, t, schemas))
+            .addType(buildCompanionObject(schemas))
             .build()
 
         fileBuilder.addType(typeSpec)
@@ -243,6 +244,26 @@ class ClientGenerator(
             )
             .returns(t)
             .addCode(body.build())
+            .build()
+    }
+
+    private fun buildCompanionObject(schemas: List<SchemaInput>): TypeSpec {
+        val listType = ClassName("kotlin.collections", "List")
+            .parameterizedBy(ENTITY_SCHEMA)
+        val code = CodeBlock.builder()
+            .add("listOf(\n")
+        for ((i, input) in schemas.withIndex()) {
+            val entityClass = ClassName(packageName, input.name)
+            val suffix = if (i < schemas.size - 1) "," else ""
+            code.add("  %T.SCHEMA$suffix\n", entityClass)
+        }
+        code.add(")")
+        return TypeSpec.companionObjectBuilder()
+            .addProperty(
+                PropertySpec.builder("SCHEMAS", listType)
+                    .initializer(code.build())
+                    .build()
+            )
             .build()
     }
 
