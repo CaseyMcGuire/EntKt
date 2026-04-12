@@ -14,7 +14,7 @@ dependencies {
     implementation(project(":schema"))
     implementation(project(":runtime"))
 
-    codegenRunner(project(":example"))
+    codegenRunner(project(":example-spring:schema"))
     codegenRunner(project(":codegen"))
 }
 
@@ -27,7 +27,7 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     mainClass.set("entkt.codegen.GenerateMainKt")
     args("example.ent", generatedDir.get().asFile.absolutePath)
     outputs.dir(generatedDir)
-    inputs.files(project(":example").fileTree("src/main/kotlin"))
+    inputs.files(project(":example-spring:schema").fileTree("src/main/kotlin"))
 }
 
 sourceSets {
