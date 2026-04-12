@@ -9,13 +9,9 @@ repositories {
 
 dependencies {
     api(project(":runtime"))
-    api(project(":migrations"))
-    implementation(libs.postgresql)
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
-    testImplementation(libs.testcontainers.postgresql)
-    testImplementation(libs.testcontainers.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

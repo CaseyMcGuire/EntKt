@@ -259,18 +259,19 @@ class PostgresDriver(
         val columnUniques = schema.columns
             .filter { it.unique && !it.primaryKey }
             .map { col ->
-                val name = "idx_${schema.table}_${col.name}_unique"
+                val name = typeMapper.normalizeIdentifier("idx_${schema.table}_${col.name}_unique")
                 "CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} (${quote(col.name)})"
             }
 
         val compositeIndexes = schema.indexes.map { idx ->
             val cols = idx.columns.joinToString(", ") { quote(it) }
-            val name = idx.storageKey
+            val rawName = idx.storageKey
                 ?: buildString {
                     append("idx_${schema.table}")
                     for (col in idx.columns) append("_$col")
                     if (idx.unique) append("_unique")
                 }
+            val name = typeMapper.normalizeIdentifier(rawName)
             val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
             "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} ($cols)"
         }
@@ -284,26 +285,10 @@ class PostgresDriver(
             schema.idStrategy == IdStrategy.AUTO_LONG
     }
 
-    private fun sqlTypeFor(schema: EntitySchema, col: ColumnMetadata): String {
-        if (col.primaryKey) {
-            when (schema.idStrategy) {
-                IdStrategy.AUTO_INT -> return "serial"
-                IdStrategy.AUTO_LONG -> return "bigserial"
-                else -> Unit
-            }
-        }
-        return when (col.type) {
-            FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> "text"
-            FieldType.BOOL -> "boolean"
-            FieldType.INT -> "integer"
-            FieldType.LONG -> "bigint"
-            FieldType.FLOAT -> "real"
-            FieldType.DOUBLE -> "double precision"
-            FieldType.TIME -> "timestamptz"
-            FieldType.UUID -> "uuid"
-            FieldType.BYTES -> "bytea"
-        }
-    }
+    private val typeMapper = PostgresTypeMapper()
+
+    private fun sqlTypeFor(schema: EntitySchema, col: ColumnMetadata): String =
+        typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy)
 
     // ---------- Predicate lowering ----------
 
