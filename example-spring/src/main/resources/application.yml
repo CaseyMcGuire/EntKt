@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: entkt-spring-example
+  datasource:
+    url: jdbc:postgresql://localhost:5432/entkt_example
+    username: postgres
+    password: postgres

@@ -88,6 +88,7 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 | `:postgres` | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
 | `:example` | Sample schemas (`User`, `Post`, `Tag`, `TimestampMixin`) plus a `main()` that runs codegen as a CLI |
 | `:example-demo` | Executable demo of the full API against `InMemoryDriver` |
+| `:example-spring` | Spring Boot REST API example with Postgres, dev-mode migrations, and lifecycle hooks |
 
 ## Status
 
