@@ -9,6 +9,7 @@ repositories {
 
 dependencies {
     implementation(project(":schema"))
+    implementation(project(":runtime"))
     implementation(libs.kotlinpoet)
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")

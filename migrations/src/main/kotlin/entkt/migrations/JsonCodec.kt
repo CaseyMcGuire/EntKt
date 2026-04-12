@@ -10,9 +10,14 @@ package entkt.migrations
  */
 internal object JsonCodec {
 
-    fun encode(schema: NormalizedSchema): String {
+    fun encode(schema: NormalizedSchema, parentChecksum: String? = null): String {
         val sb = StringBuilder()
         sb.append("{\n")
+        if (parentChecksum != null) {
+            sb.append("  \"parent\": ").append(escStr(parentChecksum)).append(",\n")
+        } else {
+            sb.append("  \"parent\": null,\n")
+        }
         sb.append("  \"tables\": {\n")
         val sortedTables = schema.tables.values.sortedBy { it.name }
         for ((ti, table) in sortedTables.withIndex()) {
@@ -89,7 +94,12 @@ internal object JsonCodec {
 
     fun decode(json: String): NormalizedSchema {
         val parser = JsonParser(json)
-        return parser.parseSchema()
+        return parser.parseSchema().second
+    }
+
+    fun decodeParent(json: String): String? {
+        val parser = JsonParser(json)
+        return parser.parseSchema().first
     }
 
     /**
@@ -99,33 +109,41 @@ internal object JsonCodec {
     private class JsonParser(private val input: String) {
         private var pos = 0
 
-        fun parseSchema(): NormalizedSchema {
+        fun parseSchema(): Pair<String?, NormalizedSchema> {
             skipWs()
             expect('{')
             val tables = mutableMapOf<String, NormalizedTable>()
+            var parent: String? = null
             skipWs()
-            if (peek() != '}') {
+            while (peek() != '}') {
                 val key = readString()
-                check(key == "tables") { "Expected \"tables\", got \"$key\"" }
                 skipWs(); expect(':'); skipWs()
-                expect('{')
-                skipWs()
-                if (peek() != '}') {
-                    while (true) {
+                when (key) {
+                    "parent" -> parent = readNullableString()
+                    "tables" -> {
+                        expect('{')
                         skipWs()
-                        val tableName = readString()
-                        skipWs(); expect(':'); skipWs()
-                        val table = parseTable(tableName)
-                        tables[tableName] = table
-                        skipWs()
-                        if (peek() == ',') { advance(); continue }
-                        break
+                        if (peek() != '}') {
+                            while (true) {
+                                skipWs()
+                                val tableName = readString()
+                                skipWs(); expect(':'); skipWs()
+                                val table = parseTable(tableName)
+                                tables[tableName] = table
+                                skipWs()
+                                if (peek() == ',') { advance(); continue }
+                                break
+                            }
+                        }
+                        skipWs(); expect('}')
                     }
+                    else -> skipValue()
                 }
-                skipWs(); expect('}')
+                skipWs()
+                if (peek() == ',') { advance(); skipWs() }
             }
-            skipWs(); expect('}')
-            return NormalizedSchema(tables)
+            expect('}')
+            return parent to NormalizedSchema(tables)
         }
 
         private fun parseTable(name: String): NormalizedTable {
@@ -253,6 +271,15 @@ internal object JsonCodec {
             }
             expect('"')
             return sb.toString()
+        }
+
+        private fun readNullableString(): String? {
+            skipWs()
+            return if (input.startsWith("null", pos)) {
+                pos += 4; null
+            } else {
+                readString()
+            }
         }
 
         private fun readBool(): Boolean {

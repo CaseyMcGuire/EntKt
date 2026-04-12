@@ -9,10 +9,28 @@ class EntktPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create("entkt", EntktExtension::class.java)
 
+        extension.migrationsDirectory.convention(project.layout.projectDirectory.dir("db/migrations"))
+
+        val schemasConfig = project.configurations.create("schemas") {
+            it.isCanBeConsumed = false
+            it.isCanBeResolved = true
+        }
+
         val generateTask = project.tasks.register("generateEntkt", GenerateEntktTask::class.java) { task ->
+            task.schemaClasspath.from(schemasConfig)
             task.packageName.set(extension.packageName)
             task.outputDirectory.set(project.layout.buildDirectory.dir("generated/entkt"))
             task.description = "Generate entkt entity classes from schemas"
+            task.group = "entkt"
+        }
+
+        project.tasks.register("planMigration", PlanMigrationTask::class.java) { task ->
+            task.schemaClasspath.from(schemasConfig)
+            task.migrationsDirectory.set(extension.migrationsDirectory)
+            task.migrationDescription.set(
+                project.providers.gradleProperty("description").orElse("migration"),
+            )
+            task.description = "Generate a versioned migration SQL file by diffing schemas against the snapshot"
             task.group = "entkt"
         }
 

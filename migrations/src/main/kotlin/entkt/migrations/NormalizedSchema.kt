@@ -94,13 +94,16 @@ data class NormalizedSchema(
      * Serialize to a JSON snapshot with deterministic ordering:
      * tables sorted by name, columns in declaration order, indexes
      * sorted by (columns, unique), FKs sorted by column name.
+     *
+     * @param parentChecksum SHA-256 of the previous snapshot's content,
+     *   or null for the first snapshot in the chain.
      */
-    fun toJson(path: Path) {
-        path.toFile().writer().use { toJson(it) }
+    fun toJson(path: Path, parentChecksum: String? = null) {
+        path.toFile().writer().use { toJson(it, parentChecksum) }
     }
 
-    fun toJson(writer: Writer) {
-        writer.write(JsonCodec.encode(this))
+    fun toJson(writer: Writer, parentChecksum: String? = null) {
+        writer.write(JsonCodec.encode(this, parentChecksum))
     }
 }
 

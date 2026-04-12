@@ -271,18 +271,14 @@ class PostgresMigratorTest {
         migrator.migrate(listOf(usersSchema, postsSchema))
 
         val tmpDir = Files.createTempDirectory("entkt_test_bootstrap")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
-        assertFalse(snapshotPath.toFile().exists())
 
         // plan() with no snapshot should diff against the live DB,
-        // find nothing to do, and create the initial snapshot
-        val plan = migrator.plan(listOf(usersSchema, postsSchema), snapshotPath, tmpDir, "bootstrap")
+        // find nothing to do, and produce no files
+        val plan = migrator.plan(listOf(usersSchema, postsSchema), tmpDir, "bootstrap")
 
         assertNull(plan.filePath, "No migration file needed — DB already matches")
         assertTrue(plan.ops.isEmpty())
         assertTrue(plan.manual.isEmpty())
-        assertTrue(plan.snapshotAdvanced, "Initial snapshot should be created even with no ops")
-        assertTrue(snapshotPath.toFile().exists(), "Snapshot file should exist after bootstrap")
 
         tmpDir.toFile().deleteRecursively()
     }
@@ -295,10 +291,9 @@ class PostgresMigratorTest {
         migrator.migrate(listOf(usersSchema))
 
         val tmpDir = Files.createTempDirectory("entkt_test_bootstrap_delta")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
         // plan() should only generate CreateTable for posts, not users
-        val plan = migrator.plan(listOf(usersSchema, postsSchema), snapshotPath, tmpDir, "add_posts")
+        val plan = migrator.plan(listOf(usersSchema, postsSchema), tmpDir, "add_posts")
 
         assertNotNull(plan.filePath)
         val creates = plan.ops.filterIsInstance<MigrationOp.CreateTable>()
@@ -313,23 +308,21 @@ class PostgresMigratorTest {
     }
 
     @Test
-    fun `plan with no manual ops generates file and advances snapshot`() {
+    fun `plan with no manual ops generates file and snapshot`() {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_migrations")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
         val plan = migrator.plan(
             schemas = listOf(usersSchema),
-            snapshotPath = snapshotPath,
             outputDir = tmpDir,
             description = "initial",
         )
 
         assertNotNull(plan.filePath)
         assertTrue(plan.filePath!!.toFile().exists())
-        assertTrue(plan.snapshotAdvanced)
-        assertTrue(snapshotPath.toFile().exists())
+        assertTrue(plan.filePath!!.fileName.toString().startsWith("V1__"))
+        assertTrue(tmpDir.resolve("V1.schema.json").toFile().exists(), "Paired snapshot should exist")
         assertTrue(plan.ops.isNotEmpty())
 
         // Verify the SQL file content
@@ -346,10 +339,9 @@ class PostgresMigratorTest {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_migrations")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
-        // Create initial snapshot
-        migrator.plan(listOf(usersSchema), snapshotPath, tmpDir, "initial")
+        // Create initial migration
+        migrator.plan(listOf(usersSchema), tmpDir, "initial")
 
         // Now add a non-null column — manual op
         val updated = usersSchema.copy(
@@ -357,10 +349,10 @@ class PostgresMigratorTest {
         )
 
         assertFailsWith<ManualMigrationRequiredException> {
-            migrator.plan(listOf(updated), snapshotPath, tmpDir, "add_required")
+            migrator.plan(listOf(updated), tmpDir, "add_required")
         }
 
-        // Snapshot should not have advanced (only 1 file from initial)
+        // Should still only have 1 SQL file from initial
         val files = tmpDir.toFile().listFiles { f -> f.name.endsWith(".sql") }!!
         assertEquals(1, files.size, "No new file should be generated on FAIL")
 
@@ -368,14 +360,13 @@ class PostgresMigratorTest {
     }
 
     @Test
-    fun `plan with ACKNOWLEDGE_AND_ADVANCE emits manual checklist and advances snapshot`() {
+    fun `plan with ACKNOWLEDGE_AND_ADVANCE emits manual checklist`() {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_migrations")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
-        // Create initial snapshot
-        migrator.plan(listOf(usersSchema), snapshotPath, tmpDir, "initial")
+        // Create initial migration
+        migrator.plan(listOf(usersSchema), tmpDir, "initial")
 
         // Add a non-null column (manual) + nullable column (auto)
         val updated = usersSchema.copy(
@@ -385,12 +376,11 @@ class PostgresMigratorTest {
         )
 
         val plan = migrator.plan(
-            listOf(updated), snapshotPath, tmpDir, "mixed_changes",
+            listOf(updated), tmpDir, "mixed_changes",
             manualMode = ManualMode.ACKNOWLEDGE_AND_ADVANCE,
         )
 
         assertNotNull(plan.filePath)
-        assertTrue(plan.snapshotAdvanced)
         assertTrue(plan.manual.isNotEmpty())
 
         val content = plan.filePath!!.toFile().readText()
@@ -398,52 +388,49 @@ class PostgresMigratorTest {
         assertTrue(content.contains("[ ]"))
         assertTrue(content.contains("ADD COLUMN"))
 
+        // Should have V2 snapshot
+        assertTrue(tmpDir.resolve("V2.schema.json").toFile().exists())
+
         tmpDir.toFile().deleteRecursively()
     }
 
     @Test
-    fun `plan preserves real index and FK names across snapshot advancement`() {
+    fun `plan preserves real index and FK names across snapshots`() {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_name_preserve")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
-        // Seed the initial snapshot by planning with users + posts
-        migrator.plan(listOf(usersSchema, postsSchema), snapshotPath, tmpDir, "initial")
+        // Seed the initial migration
+        migrator.plan(listOf(usersSchema, postsSchema), tmpDir, "initial")
 
-        // Manually patch the snapshot to simulate real names from introspection:
-        // index "legacy_email_idx" instead of derived name (storageKey absent),
-        // FK constraint "mig_posts_author_id_fkey" instead of derived name (constraintName absent)
-        val snapshotText = snapshotPath.toFile().readText()
+        // Manually patch V1 snapshot to simulate real names from introspection
+        val snapshotFile = tmpDir.resolve("V1.schema.json").toFile()
+        val snapshotText = snapshotFile.readText()
         val patched = snapshotText
-            // Index entries look like: {"columns": ["email"], "unique": true}
-            // Insert storageKey before the closing brace
             .replace(
                 "\"unique\": true}",
                 "\"unique\": true, \"storageKey\": \"legacy_email_idx\"}",
             )
-            // FK entries end with: "columnNullable": true}
-            // Insert constraintName before the closing brace
             .replace(
                 "\"columnNullable\": true}",
                 "\"columnNullable\": true, \"constraintName\": \"mig_posts_author_id_fkey\"}",
             )
-        snapshotPath.toFile().writeText(patched)
+        snapshotFile.writeText(patched)
 
-        // Add a nullable column so plan() produces an op and advances the snapshot
+        // Add a nullable column so plan() produces an op and writes V2 snapshot
         val updatedUsers = usersSchema.copy(
             columns = usersSchema.columns + ColumnMetadata("bio", FieldType.TEXT, nullable = true),
         )
-        migrator.plan(listOf(updatedUsers, postsSchema), snapshotPath, tmpDir, "add_bio")
+        migrator.plan(listOf(updatedUsers, postsSchema), tmpDir, "add_bio")
 
-        // Verify the advanced snapshot still has the real names
-        val advancedSnapshot = snapshotPath.toFile().readText()
+        // Verify V2 snapshot preserves the real names
+        val v2Snapshot = tmpDir.resolve("V2.schema.json").toFile().readText()
         assertTrue(
-            advancedSnapshot.contains("legacy_email_idx"),
+            v2Snapshot.contains("legacy_email_idx"),
             "Snapshot should preserve real index name across advancement",
         )
         assertTrue(
-            advancedSnapshot.contains("mig_posts_author_id_fkey"),
+            v2Snapshot.contains("mig_posts_author_id_fkey"),
             "Snapshot should preserve real FK constraint name across advancement",
         )
 
@@ -455,18 +442,18 @@ class PostgresMigratorTest {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_fk_recreate")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
-        // Seed initial snapshot with posts (nullable author_id FK)
-        migrator.plan(listOf(usersSchema, postsSchema), snapshotPath, tmpDir, "initial")
+        // Seed initial migration with posts (nullable author_id FK)
+        migrator.plan(listOf(usersSchema, postsSchema), tmpDir, "initial")
 
-        // Patch snapshot to have a real constraint name
-        val snapshotText = snapshotPath.toFile().readText()
+        // Patch V1 snapshot to have a real constraint name
+        val snapshotFile = tmpDir.resolve("V1.schema.json").toFile()
+        val snapshotText = snapshotFile.readText()
         val patched = snapshotText.replace(
             "\"columnNullable\": true}",
             "\"columnNullable\": true, \"constraintName\": \"old_fk_name\"}",
         )
-        snapshotPath.toFile().writeText(patched)
+        snapshotFile.writeText(patched)
 
         // Flip author_id to non-null — this triggers FK drop+recreate
         val nonNullPosts = postsSchema.copy(
@@ -476,14 +463,14 @@ class PostgresMigratorTest {
         )
 
         val plan = migrator.plan(
-            listOf(usersSchema, nonNullPosts), snapshotPath, tmpDir, "flip_nullable",
+            listOf(usersSchema, nonNullPosts), tmpDir, "flip_nullable",
             manualMode = ManualMode.ACKNOWLEDGE_AND_ADVANCE,
         )
 
-        // The old name should NOT be carried into the new snapshot
-        val advancedSnapshot = snapshotPath.toFile().readText()
+        // The old name should NOT be carried into V2 snapshot
+        val v2Snapshot = tmpDir.resolve("V2.schema.json").toFile().readText()
         assertFalse(
-            advancedSnapshot.contains("old_fk_name"),
+            v2Snapshot.contains("old_fk_name"),
             "Old FK name should not survive a nullability flip (FK is recreated under a new name)",
         )
 
@@ -495,7 +482,6 @@ class PostgresMigratorTest {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_introspect_names")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
         // Create tables via raw DDL with non-standard naming (simulating
         // pre-migration-system tables or PostgresDriver.register() output)
@@ -528,15 +514,26 @@ class PostgresMigratorTest {
 
         // First plan() — tables already exist in DB, so no ops needed.
         // But the snapshot should capture real names from introspection.
-        val plan = migrator.plan(listOf(usersSchema, postsSchema), snapshotPath, tmpDir, "initial")
+        val plan = migrator.plan(listOf(usersSchema, postsSchema), tmpDir, "initial")
 
-        val snapshot = snapshotPath.toFile().readText()
+        // Bootstrap against live DB with no changes produces no files
+        // but a subsequent plan with changes would capture names
+        // Let's add a column to force a migration + snapshot
+        val updated = usersSchema.copy(
+            columns = usersSchema.columns + ColumnMetadata("bio", FieldType.TEXT, nullable = true),
+        )
+        migrator.plan(listOf(updated, postsSchema), tmpDir, "add_bio")
+
+        // Find the latest snapshot
+        val latestSnapshot = tmpDir.toFile().listFiles { f -> f.name.endsWith(".schema.json") }!!
+            .maxByOrNull { it.name }!!.readText()
+
         assertTrue(
-            snapshot.contains("legacy_email_idx"),
+            latestSnapshot.contains("legacy_email_idx"),
             "Snapshot should capture real index name from live DB",
         )
         assertTrue(
-            snapshot.contains("mig_posts_author_id_fkey"),
+            latestSnapshot.contains("mig_posts_author_id_fkey"),
             "Snapshot should capture real FK constraint name from live DB",
         )
 
@@ -551,7 +548,7 @@ class PostgresMigratorTest {
         val tmpDir = Files.createTempDirectory("entkt_test_runner")
 
         // Write a migration file
-        val migrationFile = tmpDir.resolve("V20260411120000__create_test.sql").toFile()
+        val migrationFile = tmpDir.resolve("V1__create_test.sql").toFile()
         migrationFile.writeText(
             """
             CREATE TABLE "runner_test" (
@@ -565,7 +562,7 @@ class PostgresMigratorTest {
         val result = runner.applyPending(tmpDir)
 
         assertEquals(1, result.applied.size)
-        assertEquals("V20260411120000", result.applied[0])
+        assertEquals("V1", result.applied[0])
 
         // Verify table exists
         dataSource.connection.use { conn ->
@@ -588,7 +585,7 @@ class PostgresMigratorTest {
         cleanDb()
         val tmpDir = Files.createTempDirectory("entkt_test_checksum")
 
-        val file = tmpDir.resolve("V20260411120000__test.sql").toFile()
+        val file = tmpDir.resolve("V1__test.sql").toFile()
         file.writeText("CREATE TABLE \"checksum_test\" (\"id\" serial PRIMARY KEY);")
 
         val runner = PostgresMigrator.runner(dataSource)
@@ -679,36 +676,32 @@ class PostgresMigratorTest {
         assertTrue(withoutKeySql[0].contains("idx_users_email_unique"), "Should derive index name")
     }
 
-    // ---- Version collision protection ----
+    // ---- Sequential versioning ----
 
     @Test
-    fun `plan generates suffixed version on collision`() {
+    fun `plan generates sequential versions V1 V2 V3`() {
         cleanDb()
         val migrator = PostgresMigrator.create(dataSource)
-        val tmpDir = java.nio.file.Files.createTempDirectory("entkt_test_collision")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
+        val tmpDir = Files.createTempDirectory("entkt_test_sequential")
 
-        // Generate the first migration
-        val plan1 = migrator.plan(listOf(usersSchema), snapshotPath, tmpDir, "first")
+        // V1
+        val plan1 = migrator.plan(listOf(usersSchema), tmpDir, "first")
         assertNotNull(plan1.filePath)
+        assertTrue(plan1.filePath!!.fileName.toString().startsWith("V1__"))
+        assertTrue(tmpDir.resolve("V1.schema.json").toFile().exists())
 
-        // Extract the version from the generated filename
-        val version1 = plan1.filePath!!.toFile().nameWithoutExtension.substringBefore("__")
-
-        // Create a fake file with the next version that would be generated
-        // (same timestamp in the same millisecond). We simulate by writing
-        // a file with the same version prefix that the next plan() would produce.
+        // V2
         val updatedSchema = usersSchema.copy(
             columns = usersSchema.columns + ColumnMetadata("bio", FieldType.TEXT, nullable = true),
         )
-        val plan2 = migrator.plan(listOf(updatedSchema, postsSchema), snapshotPath, tmpDir, "second")
+        val plan2 = migrator.plan(listOf(updatedSchema, postsSchema), tmpDir, "second")
         assertNotNull(plan2.filePath)
+        assertTrue(plan2.filePath!!.fileName.toString().startsWith("V2__"))
+        assertTrue(tmpDir.resolve("V2.schema.json").toFile().exists())
 
-        // Both files should exist with different names
+        // Both files should exist
         val sqlFiles = tmpDir.toFile().listFiles { f -> f.name.endsWith(".sql") }!!
-        assertTrue(sqlFiles.size >= 2, "Should have at least 2 migration files")
-        val versions = sqlFiles.map { it.nameWithoutExtension.substringBefore("__") }.toSet()
-        assertEquals(sqlFiles.size, versions.size, "All versions should be unique")
+        assertEquals(2, sqlFiles.size)
 
         tmpDir.toFile().deleteRecursively()
     }
@@ -718,11 +711,11 @@ class PostgresMigratorTest {
     @Test
     fun `migration runner accepts pre-CRLF checksum for existing migrations`() {
         cleanDb()
-        val tmpDir = java.nio.file.Files.createTempDirectory("entkt_test_crlf")
+        val tmpDir = Files.createTempDirectory("entkt_test_crlf")
 
         // Write a file with CRLF line endings
         val crlfContent = "CREATE TABLE \"crlf_test\" (\r\n  \"id\" serial PRIMARY KEY\r\n);"
-        val migrationFile = tmpDir.resolve("V20260411120000__crlf.sql").toFile()
+        val migrationFile = tmpDir.resolve("V1__crlf.sql").toFile()
         migrationFile.writeText(crlfContent)
 
         // First apply — the runner normalizes to LF for the stored checksum
@@ -732,7 +725,7 @@ class PostgresMigratorTest {
 
         // Verify the stored checksum is based on the LF-normalized content
         val storedVersions = PostgresMigrationExecutor(dataSource).appliedVersions()
-        val storedChecksum = storedVersions["V20260411120000"]!!
+        val storedChecksum = storedVersions["V1"]!!
 
         // LF-normalized checksum
         val lfContent = crlfContent.replace("\r\n", "\n")
@@ -788,10 +781,10 @@ class PostgresMigratorTest {
         cleanDb()
         val tmpDir = Files.createTempDirectory("entkt_test_manual_marker")
 
-        val file = tmpDir.resolve("V20260411120000__mixed.sql").toFile()
+        val file = tmpDir.resolve("V1__mixed.sql").toFile()
         file.writeText(
             """
-            -- entkt migration V20260411120000
+            -- entkt migration V1
             --
             -- !! MANUAL STEPS REQUIRED !!
             -- [ ] DropColumn: posts.legacy_field

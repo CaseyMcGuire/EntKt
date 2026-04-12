@@ -3,8 +3,6 @@ package entkt.migrations
 import entkt.runtime.EntitySchema
 import java.nio.file.Path
 import java.security.MessageDigest
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 
 /**
  * Marker embedded in migration files generated with
@@ -36,9 +34,9 @@ class Migrator(
      * Dev mode: introspect live DB, diff against desired schemas.
      *
      * Managed surface = desired table names ∪ snapshot table names (if
-     * a snapshot exists at [snapshotPath]). If no snapshot, managed
-     * surface = desired table names only (fresh DB — drops can't be
-     * detected, but there's nothing to drop).
+     * a `.schema.json` exists in [migrationsDir]). If no snapshot,
+     * managed surface = desired table names only (fresh DB — drops
+     * can't be detected, but there's nothing to drop).
      *
      * If [DiffResult.manual] is non-empty, fails BEFORE applying
      * anything (all-or-nothing). If only auto ops, applies them in a
@@ -51,14 +49,14 @@ class Migrator(
      * @throws ManualMigrationRequiredException if manual ops are detected.
      * @throws IllegalStateException if introspector or executor were not provided.
      */
-    fun migrate(schemas: List<EntitySchema>, snapshotPath: Path? = null): MigrationResult {
+    fun migrate(schemas: List<EntitySchema>, migrationsDir: Path? = null): MigrationResult {
         val intr = checkNotNull(introspector) { "migrate() requires a DatabaseIntrospector" }
         val exec = checkNotNull(executor) { "migrate() requires a MigrationExecutor" }
 
         val desired = NormalizedSchema.fromEntitySchemas(schemas, typeMapper)
 
-        val snapshotTableNames = if (snapshotPath != null && snapshotPath.toFile().exists()) {
-            NormalizedSchema.fromJson(snapshotPath).tables.keys
+        val snapshotTableNames = if (migrationsDir != null) {
+            latestSnapshot(migrationsDir)?.tables?.keys ?: emptySet()
         } else {
             emptySet()
         }
@@ -82,42 +80,44 @@ class Migrator(
     }
 
     /**
-     * Prod mode: diff desired schemas against a committed snapshot (no
-     * live DB needed).
+     * Prod mode: diff desired schemas against the latest committed
+     * snapshot in [outputDir] (no live DB needed).
+     *
+     * Each migration produces a paired SQL file and schema snapshot:
+     * `V1__description.sql` + `V1.schema.json`. The planner reads the
+     * highest-numbered `.schema.json` as the baseline.
+     *
+     * Sequential versions (`V1`, `V2`, `V3`) ensure that concurrent
+     * branches creating the same version cause a git merge conflict,
+     * forcing the team to resolve ordering before merging.
      *
      * Default ([ManualMode.FAIL]): if manual ops exist, throws
-     * [ManualMigrationRequiredException] — no migration file emitted,
-     * snapshot unchanged.
+     * [ManualMigrationRequiredException] — no files emitted.
      *
      * [ManualMode.ACKNOWLEDGE_AND_ADVANCE]: emits auto SQL + a loud
      * structured checklist of manual ops at the top of the migration
-     * file, and advances the snapshot.
+     * file, and writes the snapshot.
      *
-     * @param snapshotPath path to the JSON schema snapshot (created if
-     *   it doesn't exist yet).
-     * @param outputDir directory to write the migration SQL file.
+     * @param outputDir directory for migration SQL and snapshot files.
      * @param description human-readable label for the migration filename.
      * @return the plan including the file path and ops.
      */
     fun plan(
         schemas: List<EntitySchema>,
-        snapshotPath: Path,
         outputDir: Path,
         description: String = "migration",
         manualMode: ManualMode = ManualMode.FAIL,
     ): MigrationPlan {
+        verifySnapshotChain(outputDir)
+
         val desired = NormalizedSchema.fromEntitySchemas(schemas, typeMapper)
 
-        val current = if (snapshotPath.toFile().exists()) {
-            NormalizedSchema.fromJson(snapshotPath)
-        } else if (introspector != null) {
-            // No snapshot yet but a live DB is available — diff against
-            // the actual schema so bootstrapping on an existing DB
-            // produces only the delta, not a full CREATE TABLE set.
-            introspector.introspect(desired.tables.keys)
-        } else {
-            NormalizedSchema(emptyMap())
-        }
+        val current = latestSnapshot(outputDir)
+            ?: if (introspector != null) {
+                introspector.introspect(desired.tables.keys)
+            } else {
+                NormalizedSchema(emptyMap())
+            }
         val result = differ.diff(desired, current)
 
         if (result.manual.isNotEmpty() && manualMode == ManualMode.FAIL) {
@@ -125,18 +125,10 @@ class Migrator(
         }
 
         if (result.ops.isEmpty() && result.manual.isEmpty()) {
-            // No changes, but if no snapshot exists yet this is a
-            // bootstrap — write the initial snapshot to establish the
-            // baseline (enriched with real names if a DB is available).
-            val snapshotAdvanced = !snapshotPath.toFile().exists()
-            if (snapshotAdvanced) {
-                advanceSnapshot(desired, current, snapshotPath)
-            }
             return MigrationPlan(
                 filePath = null,
                 ops = emptyList(),
                 manual = emptyList(),
-                snapshotAdvanced = snapshotAdvanced,
             )
         }
 
@@ -144,19 +136,21 @@ class Migrator(
         outputDir.toFile().mkdirs()
         val version = nextVersion(outputDir)
         val slug = description.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
-        val filename = "${version}__${slug}.sql"
-        val filePath = outputDir.resolve(filename)
+        val sqlFilename = "${version}__${slug}.sql"
+        val sqlPath = outputDir.resolve(sqlFilename)
 
         val content = buildMigrationFileContent(version, result, manualMode)
-        filePath.toFile().writeText(content)
+        sqlPath.toFile().writeText(content)
 
-        advanceSnapshot(desired, current, snapshotPath)
+        // Write paired snapshot with parent checksum
+        val parentChecksum = latestSnapshotChecksum(outputDir)
+        val snapshotPath = outputDir.resolve("${version}.schema.json")
+        writeSnapshot(desired, current, snapshotPath, parentChecksum)
 
         return MigrationPlan(
-            filePath = filePath,
+            filePath = sqlPath,
             ops = result.ops,
             manual = result.manual,
-            snapshotAdvanced = true,
         )
     }
 
@@ -202,24 +196,28 @@ class Migrator(
     }
 
     /**
-     * Generate a unique version string. Scans the output directory for
-     * existing files to avoid collisions when multiple plans run within
-     * the same millisecond (scripted/CI workflows).
+     * Next sequential version: scans for existing `V{N}` prefixes and
+     * returns `V{max + 1}`. Starts at `V1` for an empty directory.
      */
     private fun nextVersion(outputDir: Path): String {
-        val existing = outputDir.toFile()
-            .listFiles { f -> f.name.endsWith(".sql") }
-            ?.mapTo(mutableSetOf()) { it.name.substringBefore("__") }
-            ?: emptySet()
+        val maxVersion = outputDir.toFile()
+            .listFiles()
+            ?.mapNotNull { parseVersionNumber(it.name) }
+            ?.maxOrNull()
+            ?: 0
+        return "V${maxVersion + 1}"
+    }
 
-        val timestamp = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS").format(LocalDateTime.now())
-        var version = "V$timestamp"
-        var seq = 1
-        while (version in existing) {
-            version = "V${timestamp}_%03d".format(seq)
-            seq++
-        }
-        return version
+    /**
+     * Read the latest `.schema.json` from [dir] by version order.
+     * Returns null if no snapshots exist.
+     */
+    private fun latestSnapshot(dir: Path): NormalizedSchema? {
+        val latest = dir.toFile()
+            .listFiles { f -> f.name.endsWith(".schema.json") }
+            ?.maxByOrNull { parseVersionNumber(it.name) ?: 0 }
+            ?: return null
+        return NormalizedSchema.fromJson(latest.toPath())
     }
 
     /**
@@ -227,10 +225,11 @@ class Migrator(
      * future DropIndex/DropForeignKey ops point at actual names.
      * Priority: introspected (ground truth) > previous snapshot > null.
      */
-    private fun advanceSnapshot(
+    private fun writeSnapshot(
         desired: NormalizedSchema,
         current: NormalizedSchema,
         snapshotPath: Path,
+        parentChecksum: String?,
     ) {
         val managedTables = desired.tables.keys + current.tables.keys
         val enriched = if (introspector != null) {
@@ -240,7 +239,53 @@ class Migrator(
             mergeStorageNames(desired, current)
         }
         snapshotPath.parent?.toFile()?.mkdirs()
-        enriched.toJson(snapshotPath)
+        enriched.toJson(snapshotPath, parentChecksum)
+    }
+
+    /**
+     * SHA-256 of the latest `.schema.json` file content, or null if
+     * no snapshots exist yet.
+     */
+    private fun latestSnapshotChecksum(dir: Path): String? {
+        val latest = dir.toFile()
+            .listFiles { f -> f.name.endsWith(".schema.json") }
+            ?.maxByOrNull { parseVersionNumber(it.name) ?: 0 }
+            ?: return null
+        return sha256(latest.readText())
+    }
+
+    /**
+     * Verify the snapshot chain is intact. Each V{N}.schema.json must
+     * have a `parent` checksum matching the SHA-256 of V{N-1}.schema.json.
+     *
+     * @throws BrokenSnapshotChainException if a mismatch is detected.
+     */
+    private fun verifySnapshotChain(dir: Path) {
+        val snapshots = dir.toFile()
+            .listFiles { f -> f.name.endsWith(".schema.json") }
+            ?.sortedBy { parseVersionNumber(it.name) ?: 0 }
+            ?: return
+
+        if (snapshots.size < 2) return
+
+        for (i in 1 until snapshots.size) {
+            val current = snapshots[i]
+            val previous = snapshots[i - 1]
+            val currentContent = current.readText()
+            val expectedParent = sha256(previous.readText())
+            val actualParent = JsonCodec.decodeParent(currentContent)
+
+            if (actualParent != null && actualParent != expectedParent) {
+                val currentVersion = parseVersionNumber(current.name) ?: 0
+                val previousVersion = parseVersionNumber(previous.name) ?: 0
+                throw BrokenSnapshotChainException(
+                    version = "V$currentVersion",
+                    parentVersion = "V$previousVersion",
+                    expectedChecksum = expectedParent,
+                    actualChecksum = actualParent,
+                )
+            }
+        }
     }
 
     /**
@@ -331,7 +376,33 @@ data class MigrationPlan(
     val filePath: Path?,
     val ops: List<MigrationOp>,
     val manual: List<MigrationOp>,
-    val snapshotAdvanced: Boolean,
+)
+
+/**
+ * Extract the integer version number from a filename like `V3__foo.sql`
+ * or `V3.schema.json`. Returns null if the name doesn't match.
+ */
+internal fun parseVersionNumber(filename: String): Int? {
+    val match = Regex("^V(\\d+)").find(filename) ?: return null
+    return match.groupValues[1].toIntOrNull()
+}
+
+internal fun sha256(content: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hash = digest.digest(content.toByteArray(Charsets.UTF_8))
+    return hash.joinToString("") { "%02x".format(it) }
+}
+
+class BrokenSnapshotChainException(
+    val version: String,
+    val parentVersion: String,
+    val expectedChecksum: String,
+    val actualChecksum: String,
+) : RuntimeException(
+    "Snapshot chain broken: $version.schema.json expects parent checksum " +
+        "${actualChecksum.take(12)}... but $parentVersion.schema.json has checksum " +
+        "${expectedChecksum.take(12)}.... Re-run planMigration to regenerate " +
+        "from the correct baseline.",
 )
 
 class ManualMigrationRequiredException(
@@ -358,7 +429,7 @@ class MigrationRunner(
     fun applyPending(migrationDir: Path): ApplyResult {
         val applied = executor.appliedVersions()
         val files = migrationDir.toFile().listFiles { f -> f.name.endsWith(".sql") }
-            ?.sortedWith(migrationFileOrder)
+            ?.sortedBy { parseVersionNumber(it.name) ?: 0 }
             ?: emptyList()
 
         val pending = mutableListOf<String>()
@@ -393,38 +464,6 @@ class MigrationRunner(
         }
 
         return ApplyResult(applied = pending)
-    }
-
-    companion object {
-        /**
-         * Parse a version like "V20260411120000123_002" into (timestamp, suffix)
-         * for numeric ordering. Falls back to lexicographic on unparseable names.
-         */
-        private val migrationFileOrder = Comparator<java.io.File> { a, b ->
-            fun parseVersion(f: java.io.File): Pair<String, Int> {
-                val version = f.nameWithoutExtension.substringBefore("__")
-                val underscoreIdx = version.lastIndexOf('_')
-                // Only treat as suffixed if the part after _ is all digits
-                // and there's a V-prefix timestamp before it
-                if (underscoreIdx > 1) {
-                    val suffix = version.substring(underscoreIdx + 1)
-                    if (suffix.all { it.isDigit() }) {
-                        return version.substring(0, underscoreIdx) to suffix.toInt()
-                    }
-                }
-                return version to 0
-            }
-            val (aBase, aSuffix) = parseVersion(a)
-            val (bBase, bSuffix) = parseVersion(b)
-            val cmp = aBase.compareTo(bBase)
-            if (cmp != 0) cmp else aSuffix.compareTo(bSuffix)
-        }
-    }
-
-    private fun sha256(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(content.toByteArray(Charsets.UTF_8))
-        return hash.joinToString("") { "%02x".format(it) }
     }
 }
 

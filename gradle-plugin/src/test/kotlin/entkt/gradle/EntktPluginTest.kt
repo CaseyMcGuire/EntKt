@@ -88,11 +88,8 @@ class EntktPluginTest {
                         packageName.set("com.example.ent")
                     }
 
-                    tasks.named<entkt.gradle.GenerateEntktTask>("generateEntkt") {
-                        schemaClasspath.from(project(":schema").tasks.named("compileKotlin").map {
-                            (it as org.jetbrains.kotlin.gradle.tasks.KotlinCompile).destinationDirectory
-                        })
-                        schemaClasspath.from(files("${schemaJar.absolutePath.replace("\\", "\\\\")}"))
+                    dependencies {
+                        schemas(project(":schema"))
                     }
                     """.trimIndent()
                 )

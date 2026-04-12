@@ -10,6 +10,7 @@ repositories {
 dependencies {
     implementation(project(":schema"))
     implementation(project(":codegen"))
+    implementation(project(":postgres"))
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)

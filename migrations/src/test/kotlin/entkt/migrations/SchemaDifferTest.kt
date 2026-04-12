@@ -4,6 +4,7 @@ import java.io.StringReader
 import java.io.StringWriter
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -663,7 +664,6 @@ class SchemaDifferTest {
         )
 
         val tmpDir = java.nio.file.Files.createTempDirectory("entkt_planner_test")
-        val snapshotPath = tmpDir.resolve("schema_snapshot.json")
 
         val usersSchema = entkt.runtime.EntitySchema(
             table = "users",
@@ -676,14 +676,90 @@ class SchemaDifferTest {
             edges = emptyMap(),
         )
 
-        val plan = migrator.plan(listOf(usersSchema), snapshotPath, tmpDir, "initial")
+        val plan = migrator.plan(listOf(usersSchema), tmpDir, "initial")
 
         assertNotNull(plan.filePath, "Should generate a migration file")
+        assertTrue(plan.filePath!!.fileName.toString().startsWith("V1__"))
         val creates = plan.ops.filterIsInstance<MigrationOp.CreateTable>()
         assertEquals(1, creates.size)
         assertEquals("users", creates[0].table.name)
-        assertTrue(plan.snapshotAdvanced)
-        assertTrue(snapshotPath.toFile().exists(), "Snapshot should be created")
+        assertTrue(tmpDir.resolve("V1.schema.json").toFile().exists(), "Snapshot should be created alongside SQL")
+
+        // V1 snapshot should have null parent
+        val v1Content = tmpDir.resolve("V1.schema.json").toFile().readText()
+        assertTrue(v1Content.contains("\"parent\": null"), "V1 should have null parent")
+
+        // Generate V2
+        val updatedSchema = usersSchema.copy(
+            columns = usersSchema.columns + entkt.runtime.ColumnMetadata("bio", entkt.schema.FieldType.STRING, nullable = true),
+        )
+        migrator.plan(listOf(updatedSchema), tmpDir, "add_bio")
+
+        // V2 snapshot should have parent = sha256(V1 content)
+        val v2Content = tmpDir.resolve("V2.schema.json").toFile().readText()
+        val expectedParent = sha256(v1Content)
+        assertTrue(v2Content.contains(expectedParent), "V2 parent should be sha256 of V1 snapshot")
+
+        tmpDir.toFile().deleteRecursively()
+    }
+
+    @Test
+    fun `plan detects broken snapshot chain`() {
+        val typeMapper = object : TypeMapper {
+            override fun sqlTypeFor(fieldType: entkt.schema.FieldType, isPrimaryKey: Boolean, idStrategy: entkt.runtime.IdStrategy): String {
+                return when (fieldType) {
+                    entkt.schema.FieldType.INT -> if (isPrimaryKey) "serial" else "integer"
+                    entkt.schema.FieldType.STRING -> "text"
+                    else -> "text"
+                }
+            }
+            override fun canonicalize(rawSqlType: String): String = rawSqlType
+            override fun normalizeIdentifier(name: String): String = name
+        }
+        val renderer = object : MigrationSqlRenderer {
+            override fun render(op: MigrationOp, mode: RenderMode): List<String> {
+                return listOf("-- placeholder")
+            }
+        }
+        val migrator = Migrator(
+            differ = SchemaDiffer(),
+            renderer = renderer,
+            typeMapper = typeMapper,
+        )
+
+        val tmpDir = java.nio.file.Files.createTempDirectory("entkt_chain_test")
+
+        val usersSchema = entkt.runtime.EntitySchema(
+            table = "users",
+            idColumn = "id",
+            idStrategy = entkt.runtime.IdStrategy.AUTO_INT,
+            columns = listOf(
+                entkt.runtime.ColumnMetadata("id", entkt.schema.FieldType.INT, nullable = false, primaryKey = true),
+                entkt.runtime.ColumnMetadata("name", entkt.schema.FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+
+        // Generate V1
+        migrator.plan(listOf(usersSchema), tmpDir, "initial")
+
+        // Generate V2 with a change
+        val updated = usersSchema.copy(
+            columns = usersSchema.columns + entkt.runtime.ColumnMetadata("bio", entkt.schema.FieldType.STRING, nullable = true),
+        )
+        migrator.plan(listOf(updated), tmpDir, "add_bio")
+
+        // Now tamper V1 snapshot — V2's parent checksum no longer matches sha256(V1)
+        val v1File = tmpDir.resolve("V1.schema.json").toFile()
+        v1File.writeText(v1File.readText().replace("\"name\"", "\"full_name\""))
+
+        val further = updated.copy(
+            columns = updated.columns + entkt.runtime.ColumnMetadata("age", entkt.schema.FieldType.INT, nullable = true),
+        )
+
+        assertFailsWith<BrokenSnapshotChainException> {
+            migrator.plan(listOf(further), tmpDir, "add_age")
+        }
 
         tmpDir.toFile().deleteRecursively()
     }
