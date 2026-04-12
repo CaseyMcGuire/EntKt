@@ -1,0 +1,64 @@
+{
+  "parent": "4ba45f9a2152ef9bb0a23822562bdf9c51524eb35f0f6412098d5464b3c94710",
+  "tables": {
+    "friendships": {
+      "columns": [
+        {"name": "id", "sqlType": "serial", "nullable": false, "primaryKey": true},
+        {"name": "status", "sqlType": "text", "nullable": false, "primaryKey": false},
+        {"name": "requester_id", "sqlType": "uuid", "nullable": false, "primaryKey": false},
+        {"name": "recipient_id", "sqlType": "uuid", "nullable": false, "primaryKey": false}
+      ],
+      "indexes": [
+        {"columns": ["requester_id", "recipient_id"], "unique": true}
+      ],
+      "foreignKeys": [
+        {"column": "recipient_id", "targetTable": "users", "targetColumn": "id", "columnNullable": false},
+        {"column": "requester_id", "targetTable": "users", "targetColumn": "id", "columnNullable": false}
+      ]
+    },
+    "posts": {
+      "columns": [
+        {"name": "id", "sqlType": "bigserial", "nullable": false, "primaryKey": true},
+        {"name": "title", "sqlType": "text", "nullable": false, "primaryKey": false},
+        {"name": "body", "sqlType": "text", "nullable": false, "primaryKey": false},
+        {"name": "published", "sqlType": "boolean", "nullable": false, "primaryKey": false},
+        {"name": "created_at", "sqlType": "timestamptz", "nullable": false, "primaryKey": false},
+        {"name": "updated_at", "sqlType": "timestamptz", "nullable": false, "primaryKey": false},
+        {"name": "author_id", "sqlType": "uuid", "nullable": false, "primaryKey": false}
+      ],
+      "indexes": [
+      ],
+      "foreignKeys": [
+        {"column": "author_id", "targetTable": "users", "targetColumn": "id", "columnNullable": false}
+      ]
+    },
+    "tags": {
+      "columns": [
+        {"name": "id", "sqlType": "serial", "nullable": false, "primaryKey": true},
+        {"name": "name", "sqlType": "text", "nullable": false, "primaryKey": false},
+        {"name": "category", "sqlType": "text", "nullable": false, "primaryKey": false}
+      ],
+      "indexes": [
+        {"columns": ["name"], "unique": true}
+      ],
+      "foreignKeys": [
+      ]
+    },
+    "users": {
+      "columns": [
+        {"name": "id", "sqlType": "uuid", "nullable": false, "primaryKey": true},
+        {"name": "name", "sqlType": "text", "nullable": false, "primaryKey": false},
+        {"name": "email", "sqlType": "text", "nullable": false, "primaryKey": false},
+        {"name": "age", "sqlType": "integer", "nullable": true, "primaryKey": false},
+        {"name": "active", "sqlType": "boolean", "nullable": false, "primaryKey": false},
+        {"name": "created_at", "sqlType": "timestamptz", "nullable": false, "primaryKey": false},
+        {"name": "updated_at", "sqlType": "timestamptz", "nullable": false, "primaryKey": false}
+      ],
+      "indexes": [
+        {"columns": ["email"], "unique": true}
+      ],
+      "foreignKeys": [
+      ]
+    }
+  }
+}

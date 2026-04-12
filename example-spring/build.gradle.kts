@@ -9,7 +9,7 @@ repositories {
     mavenCentral()
 }
 
-// Classpath for running the codegen entry point.
+// Classpath for running codegen and migration planning.
 val codegenRunner: Configuration by configurations.creating
 
 dependencies {
@@ -24,6 +24,8 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
     codegenRunner(project(":example"))
+    codegenRunner(project(":codegen"))
+    codegenRunner(project(":postgres"))
 }
 
 val generatedDir = layout.buildDirectory.dir("generated/entkt")
@@ -32,8 +34,8 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     group = "entkt"
     description = "Runs entkt codegen against the example schemas"
     classpath = codegenRunner
-    mainClass.set("example.MainKt")
-    args(generatedDir.get().asFile.absolutePath)
+    mainClass.set("entkt.codegen.GenerateMainKt")
+    args("example.ent", generatedDir.get().asFile.absolutePath)
     outputs.dir(generatedDir)
     inputs.files(project(":example").fileTree("src/main/kotlin"))
 }

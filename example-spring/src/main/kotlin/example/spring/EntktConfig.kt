@@ -20,11 +20,13 @@ class EntktConfig {
         driver: PostgresDriver,
         userHooks: UserHooksConfig,
         postHooks: PostHooksConfig,
+        friendshipHooks: FriendshipHooksConfig,
     ): EntClient {
         return EntClient(driver) {
             hooks {
                 users { userHooks.apply(this) }
                 posts { postHooks.apply(this) }
+                friendships { friendshipHooks.apply(this) }
             }
         }
     }
