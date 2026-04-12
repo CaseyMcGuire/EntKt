@@ -116,20 +116,29 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `create passes hook lists to the builder`() {
+    fun `create passes client and hook lists to the builder`() {
         val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarCreate(driver, beforeSaveHooks, beforeCreateHooks, afterCreateHooks)")) {
-            "create should pass hook lists to CarCreate\n$output"
+        assert(output.contains("CarCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks)")) {
+            "create should pass client and hook lists to CarCreate\n$output"
         }
     }
 
     @Test
-    fun `update passes hook lists to the builder`() {
+    fun `update passes client and hook lists to the builder`() {
         val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarUpdate(driver, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
-            "update should pass hook lists to CarUpdate\n$output"
+        assert(output.contains("CarUpdate(driver, client, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
+            "update should pass client and hook lists to CarUpdate\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has lateinit client property`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("internal lateinit var client: EntClient")) {
+            "Should have internal lateinit var client\n$output"
         }
     }
 

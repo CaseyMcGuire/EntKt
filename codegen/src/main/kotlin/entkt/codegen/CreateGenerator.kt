@@ -20,6 +20,7 @@ import entkt.schema.ValidatorSpec
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val UUID_CLASS = ClassName("java.util", "UUID")
+private val ENT_CLIENT_NAME = "EntClient"
 
 class CreateGenerator(
     private val packageName: String,
@@ -40,6 +41,7 @@ class CreateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val createClass = ClassName(packageName, className)
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
 
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeCreateHookType = hookListType(createClass)
@@ -51,6 +53,7 @@ class CreateGenerator(
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
+                    .addParameter("client", clientClass)
                     .addParameter("beforeSaveHooks", beforeSaveHookType)
                     .addParameter("beforeCreateHooks", beforeCreateHookType)
                     .addParameter("afterCreateHooks", afterCreateHookType)
@@ -60,6 +63,11 @@ class CreateGenerator(
                 PropertySpec.builder("driver", DRIVER)
                     .addModifiers(KModifier.PRIVATE)
                     .initializer("driver")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("client", clientClass)
+                    .initializer("client")
                     .build()
             )
             .addProperty(

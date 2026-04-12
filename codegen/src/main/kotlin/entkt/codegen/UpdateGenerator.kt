@@ -15,6 +15,7 @@ import entkt.schema.Field
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val ENT_CLIENT_NAME = "EntClient"
 
 
 class UpdateGenerator(
@@ -36,6 +37,7 @@ class UpdateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val updateClass = ClassName(packageName, className)
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
 
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeUpdateHookType = hookListType(updateClass)
@@ -47,6 +49,7 @@ class UpdateGenerator(
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
+                    .addParameter("client", clientClass)
                     .addParameter("entity", entityClass)
                     .addParameter("beforeSaveHooks", beforeSaveHookType)
                     .addParameter("beforeUpdateHooks", beforeUpdateHookType)
@@ -57,6 +60,11 @@ class UpdateGenerator(
                 PropertySpec.builder("driver", DRIVER)
                     .addModifiers(KModifier.PRIVATE)
                     .initializer("driver")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("client", clientClass)
+                    .initializer("client")
                     .build()
             )
             .addProperty(

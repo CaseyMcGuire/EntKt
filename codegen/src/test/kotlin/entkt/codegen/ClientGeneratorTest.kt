@@ -43,9 +43,15 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient init block applies hooks from config`() {
+    fun `EntClient init block sets client on repos and applies hooks`() {
         val output = generator.generate(schemas).toString()
 
+        assert(output.contains("cars.client = this")) {
+            "Should set client on cars repo\n$output"
+        }
+        assert(output.contains("users.client = this")) {
+            "Should set client on users repo\n$output"
+        }
         assert(output.contains("val cfg = EntClientConfig().apply(config)")) {
             "Should create config and apply lambda\n$output"
         }

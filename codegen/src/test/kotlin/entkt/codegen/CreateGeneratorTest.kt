@@ -74,9 +74,12 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `constructor takes hook list parameters`() {
+    fun `constructor takes client and hook list parameters`() {
         val output = generator.generate("Car", Car).toString()
 
+        assert(output.contains("client: EntClient")) {
+            "Should take client\n$output"
+        }
         assert(output.contains("beforeSaveHooks: List<(CarMutation) -> Unit>")) {
             "Should take beforeSaveHooks\n$output"
         }
@@ -85,6 +88,18 @@ class CreateGeneratorTest {
         }
         assert(output.contains("afterCreateHooks: List<(Car) -> Unit>")) {
             "Should take afterCreateHooks\n$output"
+        }
+    }
+
+    @Test
+    fun `exposes client as public property`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("val client: EntClient")) {
+            "Should expose client as public property\n$output"
+        }
+        assert(!output.contains("private val client")) {
+            "client should not be private\n$output"
         }
     }
 

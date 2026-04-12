@@ -207,6 +207,10 @@ class ClientGenerator(
         schemas: List<SchemaInput>,
     ): CodeBlock {
         val block = CodeBlock.builder()
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            block.addStatement("%L.client = this", propName)
+        }
         block.addStatement("val cfg = %T().apply(config)", configClass)
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })

@@ -15,6 +15,7 @@ import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val ENT_CLIENT_NAME = "EntClient"
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -44,6 +45,7 @@ class RepoGenerator(
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
+        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
 
         val createLambda = LambdaTypeName.get(
@@ -83,6 +85,13 @@ class RepoGenerator(
                     .initializer("driver")
                     .build()
             )
+            // Client reference — set by EntClient after construction.
+            .addProperty(
+                PropertySpec.builder("client", clientClass)
+                    .addModifiers(KModifier.INTERNAL, KModifier.LATEINIT)
+                    .mutable(true)
+                    .build()
+            )
             // Hook list properties
             .addProperty(hookListProperty("beforeSaveHooks", mutableHookList(beforeSaveHookLambda)))
             .addProperty(hookListProperty("beforeCreateHooks", mutableHookList(beforeCreateHookLambda)))
@@ -110,7 +119,7 @@ class RepoGenerator(
                     .addParameter("block", createLambda)
                     .returns(createClass)
                     .addStatement(
-                        "return %T(driver, beforeSaveHooks, beforeCreateHooks, afterCreateHooks).apply(block)",
+                        "return %T(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks).apply(block)",
                         createClass,
                     )
                     .build()
@@ -121,7 +130,7 @@ class RepoGenerator(
                     .addParameter("block", updateLambda)
                     .returns(updateClass)
                     .addStatement(
-                        "return %T(driver, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
+                        "return %T(driver, client, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
                         updateClass,
                     )
                     .build()
