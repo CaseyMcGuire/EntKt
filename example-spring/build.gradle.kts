@@ -48,6 +48,19 @@ tasks.named("compileKotlin") {
     dependsOn(generateEntkt)
 }
 
+tasks.register<JavaExec>("planMigration") {
+    group = "entkt"
+    description = "Generates a versioned migration SQL file by diffing schemas against the snapshot"
+    classpath = codegenRunner
+    mainClass.set("entkt.postgres.PlanMigrationMainKt")
+    args(project.projectDir.absolutePath)
+    args(project.findProperty("description")?.toString() ?: "migration")
+}
+
+springBoot {
+    mainClass.set("example.spring.ApplicationKt")
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)

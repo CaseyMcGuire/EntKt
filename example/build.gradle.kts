@@ -10,6 +10,7 @@ repositories {
 dependencies {
     implementation(project(":schema"))
     implementation(project(":codegen"))
+    implementation(project(":postgres"))
 }
 
 java {

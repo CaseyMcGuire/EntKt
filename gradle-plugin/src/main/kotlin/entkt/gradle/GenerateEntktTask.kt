@@ -30,7 +30,7 @@ abstract class GenerateEntktTask : DefaultTask() {
 
         val result = SchemaScanner.scan(schemaClasspath.files)
         if (result.schemas.isEmpty()) {
-            throw GradleException(SchemaScanner.noSchemasMessage(result.loadFailures))
+            throw GradleException(SchemaScanner.noSchemasMessage())
         }
         val generator = EntGenerator(packageName.get())
         generator.writeTo(outputDir.toPath(), result.schemas)

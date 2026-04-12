@@ -10,6 +10,7 @@ repositories {
 dependencies {
     api(project(":runtime"))
     api(project(":migrations"))
+    implementation(project(":codegen"))
     implementation(libs.postgresql)
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")

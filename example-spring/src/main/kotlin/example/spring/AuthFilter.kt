@@ -9,12 +9,12 @@ import java.util.UUID
 
 /**
  * Extracts the current user ID from the `X-User-Id` header and
- * stores it in the request-scoped [RequestContext].
+ * stores it in the request-scoped [AuthContext].
  *
  * In a real app this would verify a JWT or session token.
  */
 @Component
-class AuthFilter(private val requestContext: RequestContext) : OncePerRequestFilter() {
+class AuthFilter(private val authContext: AuthContext) : OncePerRequestFilter() {
 
     override fun doFilterInternal(
         request: HttpServletRequest,
@@ -23,7 +23,7 @@ class AuthFilter(private val requestContext: RequestContext) : OncePerRequestFil
     ) {
         request.getHeader("X-User-Id")?.let { header ->
             runCatching { UUID.fromString(header) }
-                .onSuccess { requestContext.userId = it }
+                .onSuccess { authContext.userId = it }
         }
         filterChain.doFilter(request, response)
     }

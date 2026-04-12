@@ -5,3 +5,13 @@ spring:
     url: jdbc:postgresql://localhost:5432/entkt_example
     username: postgres
     password: postgres
+
+entkt:
+  migrations:
+    dir: db/migrations
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev

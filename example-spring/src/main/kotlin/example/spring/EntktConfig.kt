@@ -3,57 +3,71 @@ package example.spring
 import entkt.postgres.PostgresDriver
 import entkt.postgres.PostgresMigrator
 import example.ent.EntClient
-import example.ent.Post
-import example.ent.User
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import java.time.Instant
+import org.springframework.context.annotation.Profile
 import javax.sql.DataSource
 
 @Configuration
 class EntktConfig {
 
-    /**
-     * Run dev-mode migrations on startup: introspects the live database,
-     * diffs against the entity schemas, and applies any additive changes
-     * (new tables, nullable columns, indexes, foreign keys).
-     *
-     * In a production app you'd use [PostgresMigrator.runner] with
-     * versioned SQL files instead.
-     */
     @Bean
-    fun entClient(dataSource: DataSource, requestContext: RequestContext): EntClient {
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(User.SCHEMA, Post.SCHEMA))
+    fun driver(dataSource: DataSource): PostgresDriver = PostgresDriver(dataSource)
 
-        val driver = PostgresDriver(dataSource)
+    @Bean
+    fun entClient(
+        driver: PostgresDriver,
+        userHooks: UserHooksConfig,
+        postHooks: PostHooksConfig,
+    ): EntClient {
         return EntClient(driver) {
             hooks {
-                users {
-                    beforeSave { it.updatedAt = Instant.now() }
-                    beforeCreate { it.createdAt = Instant.now() }
-                }
-                posts {
-                    beforeSave { it.updatedAt = Instant.now() }
-                    beforeCreate { it.createdAt = Instant.now() }
-                    beforeUpdate { update ->
-                        val userId = requestContext.userId
-                            ?: throw AccessDeniedException("Authentication required")
-                        if (update.entity.authorId != userId) {
-                            throw AccessDeniedException("You can only update your own posts")
-                        }
-                    }
-                    beforeDelete { post ->
-                        val userId = requestContext.userId
-                            ?: throw AccessDeniedException("Authentication required")
-                        if (post.authorId != userId) {
-                            throw AccessDeniedException("You can only delete your own posts")
-                        }
-                    }
-                }
+                users { userHooks.apply(this) }
+                posts { postHooks.apply(this) }
             }
         }
     }
 }
 
-class AccessDeniedException(message: String) : RuntimeException(message)
+/**
+ * Dev mode: auto-applies schema changes on startup by introspecting the
+ * live database and diffing against the desired schemas.
+ */
+@Configuration
+@Profile("dev")
+class DevMigrationConfig {
+
+    @Bean
+    fun devMigration(dataSource: DataSource): DevMigrationRunner {
+        val migrator = PostgresMigrator.create(dataSource)
+        migrator.migrate(EntClient.SCHEMAS)
+        return DevMigrationRunner
+    }
+
+    /** Marker bean so other beans can depend on migration completion. */
+    object DevMigrationRunner
+}
+
+/**
+ * Prod mode: applies versioned SQL migration files from the migrations
+ * directory. Files are generated at build time via the `planMigration`
+ * Gradle task and committed to version control.
+ */
+@Configuration
+@Profile("!dev")
+class ProdMigrationConfig {
+
+    @Bean
+    fun prodMigration(
+        dataSource: DataSource,
+        @Value("\${entkt.migrations.dir:db/migrations}") migrationsDir: String,
+    ): ProdMigrationRunner {
+        val runner = PostgresMigrator.runner(dataSource)
+        runner.applyPending(java.nio.file.Path.of(migrationsDir))
+        return ProdMigrationRunner
+    }
+
+    /** Marker bean so other beans can depend on migration completion. */
+    object ProdMigrationRunner
+}

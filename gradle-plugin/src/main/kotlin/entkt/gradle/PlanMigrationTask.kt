@@ -29,7 +29,7 @@ abstract class PlanMigrationTask : DefaultTask() {
     fun plan() {
         val scanResult = SchemaScanner.scan(schemaClasspath.files)
         if (scanResult.schemas.isEmpty()) {
-            throw GradleException(SchemaScanner.noSchemasMessage(scanResult.loadFailures))
+            throw GradleException(SchemaScanner.noSchemasMessage())
         }
 
         val schemas = buildEntitySchemas(scanResult.schemas)

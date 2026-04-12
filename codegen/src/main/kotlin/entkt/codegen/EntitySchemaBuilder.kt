@@ -6,6 +6,93 @@ import entkt.runtime.EntitySchema
 import entkt.runtime.ForeignKeyRef
 import entkt.runtime.IdStrategy
 import entkt.runtime.IndexMetadata
+import entkt.schema.EntSchema
+import java.io.File
+import java.net.URLClassLoader
+import java.util.jar.JarFile
+
+/**
+ * Scan the given classpath entries (directories and JARs) for [EntSchema]
+ * object instances. Returns them as [SchemaInput] ready for codegen or
+ * [buildEntitySchemas].
+ */
+fun scanForSchemas(classpath: Iterable<File>): List<SchemaInput> {
+    val classLoader = URLClassLoader(
+        classpath.map { it.toURI().toURL() }.toTypedArray(),
+        EntSchema::class.java.classLoader,
+    )
+    val schemas = mutableListOf<SchemaInput>()
+    val failures = mutableListOf<String>()
+    for (file in classpath) {
+        when {
+            file.isDirectory -> scanDirectory(file, file, classLoader, schemas, failures)
+            file.isFile && file.extension == "jar" -> scanJar(file, classLoader, schemas, failures)
+        }
+    }
+    if (schemas.isEmpty() && failures.isNotEmpty()) {
+        val detail = failures.joinToString("\n  - ", prefix = "\n  - ")
+        error(
+            "No EntSchema objects found. The following classes failed to load " +
+                "(missing dependency?) and may include your schemas:$detail",
+        )
+    }
+    return schemas
+}
+
+private fun scanDirectory(
+    root: File,
+    dir: File,
+    classLoader: ClassLoader,
+    out: MutableList<SchemaInput>,
+    failures: MutableList<String>,
+) {
+    dir.listFiles()?.forEach { file ->
+        if (file.isDirectory) {
+            scanDirectory(root, file, classLoader, out, failures)
+        } else if (file.extension == "class") {
+            val className = file.relativeTo(root).path
+                .removeSuffix(".class")
+                .replace(File.separatorChar, '.')
+            tryLoadSchema(classLoader, className, failures)?.let { out.add(it) }
+        }
+    }
+}
+
+private fun scanJar(
+    jar: File,
+    classLoader: ClassLoader,
+    out: MutableList<SchemaInput>,
+    failures: MutableList<String>,
+) {
+    JarFile(jar).use { jf ->
+        for (entry in jf.entries()) {
+            if (entry.isDirectory) continue
+            val name = entry.name
+            if (!name.endsWith(".class")) continue
+            if (name.startsWith("META-INF/")) continue
+            val className = name.removeSuffix(".class").replace('/', '.')
+            tryLoadSchema(classLoader, className, failures)?.let { out.add(it) }
+        }
+    }
+}
+
+private fun tryLoadSchema(
+    classLoader: ClassLoader,
+    className: String,
+    failures: MutableList<String>,
+): SchemaInput? {
+    val clazz = try {
+        classLoader.loadClass(className)
+    } catch (_: ClassNotFoundException) {
+        return null
+    } catch (e: NoClassDefFoundError) {
+        failures.add("$className: ${e.message}")
+        return null
+    }
+    if (!EntSchema::class.java.isAssignableFrom(clazz)) return null
+    val instance = clazz.kotlin.objectInstance as? EntSchema ?: return null
+    return SchemaInput(clazz.simpleName, instance)
+}
 
 /**
  * Builds [EntitySchema] objects directly from [SchemaInput] definitions,
