@@ -22,7 +22,7 @@ class EntktConfig {
      * versioned SQL files instead.
      */
     @Bean
-    fun entClient(dataSource: DataSource): EntClient {
+    fun entClient(dataSource: DataSource, requestContext: RequestContext): EntClient {
         val migrator = PostgresMigrator.create(dataSource)
         migrator.migrate(listOf(User.SCHEMA, Post.SCHEMA))
 
@@ -36,8 +36,24 @@ class EntktConfig {
                 posts {
                     beforeSave { it.updatedAt = Instant.now() }
                     beforeCreate { it.createdAt = Instant.now() }
+                    beforeUpdate { update ->
+                        val userId = requestContext.userId
+                            ?: throw AccessDeniedException("Authentication required")
+                        if (update.entity.authorId != userId) {
+                            throw AccessDeniedException("You can only update your own posts")
+                        }
+                    }
+                    beforeDelete { post ->
+                        val userId = requestContext.userId
+                            ?: throw AccessDeniedException("Authentication required")
+                        if (post.authorId != userId) {
+                            throw AccessDeniedException("You can only delete your own posts")
+                        }
+                    }
                 }
             }
         }
     }
 }
+
+class AccessDeniedException(message: String) : RuntimeException(message)

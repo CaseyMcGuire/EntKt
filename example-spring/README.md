@@ -60,6 +60,10 @@ curl -X DELETE localhost:8080/users/{id}
 
 ### Posts
 
+Updating and deleting posts requires an `X-User-Id` header matching the
+post's author. This is enforced by `beforeUpdate` and `beforeDelete`
+hooks in `EntktConfig.kt`.
+
 ```bash
 # List posts (optionally filter by published)
 curl localhost:8080/posts
@@ -73,13 +77,15 @@ curl -X POST localhost:8080/posts \
   -H 'Content-Type: application/json' \
   -d '{"title": "Hello", "body": "First post!", "authorId": "{user-id}"}'
 
-# Update a post
+# Update a post (X-User-Id must match the author)
 curl -X PUT localhost:8080/posts/{id} \
   -H 'Content-Type: application/json' \
+  -H 'X-User-Id: {user-id}' \
   -d '{"published": true}'
 
-# Delete a post
-curl -X DELETE localhost:8080/posts/{id}
+# Delete a post (X-User-Id must match the author)
+curl -X DELETE localhost:8080/posts/{id} \
+  -H 'X-User-Id: {user-id}'
 ```
 
 ## How It Works
@@ -93,6 +99,9 @@ The `EntClient` is configured as a Spring bean:
    are created automatically.
 2. **PostgresDriver** is wired with Spring's auto-configured `DataSource`.
 3. **Lifecycle hooks** set `createdAt`/`updatedAt` timestamps automatically.
+4. **Ownership hooks** on posts use a request-scoped `RequestContext`
+   (populated from `X-User-Id` by `AuthFilter`) to prevent users from
+   updating or deleting posts they don't own.
 
 ### Controllers
 
