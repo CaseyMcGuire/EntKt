@@ -5,7 +5,8 @@ entities in a Kotlin DSL, run code generation, and get typed data classes,
 query builders, and repositories that talk to a pluggable `Driver`.
 
 This project is under active development — see [Status](#status) for what
-works today and [Roadmap](#roadmap) for what's missing.
+works today and [Roadmap](#roadmap) for what's missing. For detailed
+guides, see the [documentation](docs/index.md).
 
 ## Overview
 
@@ -82,8 +83,9 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 | `:schema` | Declarative schema DSL — `EntSchema`, field/edge/index/mixin builders, `FieldType` |
 | `:runtime` | `Driver` interface, `InMemoryDriver`, `EntitySchema`/`ColumnMetadata`/`EdgeMetadata`, query `Predicate` hierarchy, `Op` enum |
 | `:codegen` | KotlinPoet-based generator: entity classes, create/update/query builders, repos, `EntClient` |
+| `:migrations` | Driver-agnostic schema diffing, migration planning (prod), auto-apply (dev), `MigrationRunner` |
 | `:gradle-plugin` | `entkt` Gradle plugin registering a `generateEntkt` task that wires codegen into `compileKotlin` |
-| `:postgres` | JDBC driver for PostgreSQL with DDL emission and predicate-to-SQL lowering |
+| `:postgres` | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
 | `:example` | Sample schemas (`User`, `Post`, `Tag`, `TimestampMixin`) plus a `main()` that runs codegen as a CLI |
 | `:example-demo` | Executable demo of the full API against `InMemoryDriver` |
 
@@ -329,15 +331,14 @@ Things that are **not yet implemented**, roughly in order of severity:
   driver interface.
 
 ### Schema & DDL
-- **Migrations.** `register()` is `CREATE TABLE IF NOT EXISTS` and nothing
-  more — no `ALTER TABLE`, no diffing, no drop-recreate, no migration
-  history.
 - **Partial indexes.** Only simple and composite indexes are supported;
   no partial / conditional indexes.
 - **Exotic column types.** No JSON/JSONB, arrays, enums (as PG enum types),
   hstore, or composites.
-- **Cascade delete.** Edge FK columns have `REFERENCES` constraints but no
-  `ON DELETE CASCADE` / `SET NULL` clauses.
+- **Cascade delete.** Edge FK columns emit `ON DELETE SET NULL` (nullable)
+  or `ON DELETE RESTRICT` (required) via the migration renderer, but there
+  is no `ON DELETE CASCADE` option and `register()` does not emit `ON DELETE`
+  clauses.
 
 ### DSL / codegen
 - **Incremental codegen.** The Gradle plugin always regenerates the full

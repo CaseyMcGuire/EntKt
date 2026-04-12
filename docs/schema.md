@@ -1,0 +1,210 @@
+# Schema
+
+Schemas are the source of truth for your data model. Each schema is a
+Kotlin `object` that extends `EntSchema` and declares its ID strategy,
+fields, edges, indexes, and mixins.
+
+```kotlin
+object User : EntSchema() {
+    override fun id() = EntId.uuid()
+    override fun mixins() = listOf(TimestampMixin)
+    override fun fields() = fields { ... }
+    override fun edges() = edges { ... }
+    override fun indexes() = indexes { ... }
+}
+```
+
+## ID Strategies
+
+Every schema has a primary key. The `id()` method controls how it's
+generated:
+
+| Strategy | Kotlin type | SQL type (Postgres) | Assignment |
+|----------|------------|---------------------|------------|
+| `EntId.int()` | `Int` | `serial` | Auto-increment |
+| `EntId.long()` | `Long` | `bigserial` | Auto-increment |
+| `EntId.uuid()` | `UUID` | `uuid` | Client-generated on create |
+| `EntId.string()` | `String` | `text` | Caller-provided |
+
+The default is `EntId.int()` if `id()` is not overridden.
+
+## Fields
+
+Fields are declared inside a `fields { }` block using type-specific
+builder methods:
+
+```kotlin
+override fun fields() = fields {
+    string("name").minLen(1).maxLen(64)
+    text("body")
+    bool("active").default(true)
+    int("count").positive()
+    long("big_number")
+    float("score")
+    double("precise_score")
+    time("created_at").immutable()
+    uuid("external_id")
+    bytes("data")
+    enum("status").values("DRAFT", "PUBLISHED", "ARCHIVED")
+}
+```
+
+### Field Types
+
+| Builder | `FieldType` | Kotlin type | Postgres type |
+|---------|------------|-------------|---------------|
+| `string()` | `STRING` | `String` | `text` |
+| `text()` | `TEXT` | `String` | `text` |
+| `bool()` | `BOOL` | `Boolean` | `boolean` |
+| `int()` | `INT` | `Int` | `integer` |
+| `long()` | `LONG` | `Long` | `bigint` |
+| `float()` | `FLOAT` | `Float` | `real` |
+| `double()` | `DOUBLE` | `Double` | `double precision` |
+| `time()` | `TIME` | `Instant` | `timestamptz` |
+| `uuid()` | `UUID` | `UUID` | `uuid` |
+| `bytes()` | `BYTES` | `ByteArray` | `bytea` |
+| `enum()` | `ENUM` | `String` | `text` |
+
+### Common Modifiers
+
+These are available on all field types:
+
+| Modifier | Effect |
+|----------|--------|
+| `.optional()` | Field is nullable in the generated code |
+| `.nillable()` | Field distinguishes between null and absent |
+| `.unique()` | Adds a unique constraint |
+| `.immutable()` | Omitted from update builder setters |
+| `.sensitive()` | Excluded from string representations |
+| `.default(value)` | Default value for creates |
+| `.updateDefault(value)` | Default value applied on every update |
+| `.comment(text)` | Documentation comment |
+| `.storageKey(name)` | Override the database column name |
+
+### Validators
+
+String fields:
+
+```kotlin
+string("name").minLen(1).maxLen(100).notEmpty()
+string("slug").match(Regex("^[a-z0-9-]+$"))
+```
+
+Numeric fields (`int`, `long`, `float`, `double`):
+
+```kotlin
+int("age").min(0).max(150)
+int("quantity").positive()
+int("balance").nonNegative()
+double("temperature").negative()
+```
+
+Validators are enforced as inline checks in the generated `save()` methods.
+They throw `IllegalArgumentException` if the value is invalid.
+
+## Edges
+
+Edges define relationships between entities. They are declared inside an
+`edges { }` block:
+
+```kotlin
+override fun edges() = edges {
+    to("posts", Post)                              // one-to-many
+    from("author", User).ref("posts").unique()     // many-to-one (inverse)
+}
+```
+
+### One-to-Many
+
+`to(name, target)` declares the "one" side. No FK column is added to this
+entity -- the FK lives on the target.
+
+```kotlin
+// User schema
+override fun edges() = edges {
+    to("posts", Post)  // User has many Posts
+}
+```
+
+### Many-to-One / One-to-One
+
+`from(name, target)` declares the "many" or "belongs-to" side. This
+synthesizes a FK column (e.g. `author_id`) on the current entity.
+
+```kotlin
+// Post schema
+override fun edges() = edges {
+    from("author", User).ref("posts").unique().required()
+}
+```
+
+| Modifier | Effect |
+|----------|--------|
+| `.ref(name)` | Names the inverse edge on the target schema |
+| `.unique()` | Makes this a one-to-one relationship |
+| `.required()` | FK column is NOT NULL |
+| `.field(name)` | Override the FK column name |
+
+### Many-to-Many
+
+Use `.through()` to declare an M2M relationship via a junction table:
+
+```kotlin
+// User schema
+override fun edges() = edges {
+    to("groups", Group).through("user_groups", UserGroup)
+}
+```
+
+The junction schema (`UserGroup`) is itself an `EntSchema` with two
+`from()` edges pointing at the two sides.
+
+For ambiguous junction tables (where both sides point to the same entity
+type), use `sourceEdge` and `targetEdge` to disambiguate:
+
+```kotlin
+to("friends", User).through(
+    "friendships", Friendship,
+    sourceEdge = "user", targetEdge = "friend"
+)
+```
+
+## Indexes
+
+Composite indexes are declared in an `indexes { }` block:
+
+```kotlin
+override fun indexes() = indexes {
+    index("name", "email").unique()
+    index("created_at")
+    index("status", "priority").storageKey("idx_status_priority")
+}
+```
+
+Single-column unique constraints are simpler -- just use `.unique()` on the
+field directly. Composite indexes that need a custom database name use
+`.storageKey()`.
+
+## Mixins
+
+Mixins are reusable groups of fields, edges, and indexes that can be
+included in multiple schemas:
+
+```kotlin
+object TimestampMixin : EntMixin {
+    override fun fields() = fields {
+        time("created_at").immutable()
+        time("updated_at")
+    }
+}
+
+object User : EntSchema() {
+    override fun mixins() = listOf(TimestampMixin)
+    // ...
+}
+```
+
+Mixin fields are merged into the schema's field list during code generation.
+The generated entity class, create builder, and update builder all include
+the mixin fields. Immutable mixin fields (like `created_at` above) are
+omitted from the update builder.
