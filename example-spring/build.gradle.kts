@@ -9,6 +9,14 @@ repositories {
     mavenCentral()
 }
 
+configurations.matching { it.name.startsWith("test") }.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.testcontainers") {
+            useVersion(libs.versions.testcontainers.get())
+        }
+    }
+}
+
 // Classpath for running codegen and migration planning.
 val codegenRunner: Configuration by configurations.creating
 
@@ -26,6 +34,11 @@ dependencies {
     codegenRunner(project(":example-spring:schema"))
     codegenRunner(project(":codegen"))
     codegenRunner(project(":postgres"))
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation(libs.testcontainers.postgresql)
+    testImplementation(libs.testcontainers.junit.jupiter)
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 val generatedDir = layout.buildDirectory.dir("generated/entkt")
@@ -67,4 +80,8 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
     }
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform()
 }

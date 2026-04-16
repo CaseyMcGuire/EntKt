@@ -14,4 +14,18 @@ class ErrorHandler {
             .status(HttpStatus.FORBIDDEN)
             .body(mapOf("error" to (ex.message ?: "Access denied")))
     }
+
+    @ExceptionHandler(IllegalArgumentException::class)
+    fun handleIllegalArgument(ex: IllegalArgumentException): ResponseEntity<Map<String, String>> {
+        return ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(mapOf("error" to (ex.message ?: "Invalid request")))
+    }
+
+    @ExceptionHandler(IllegalStateException::class)
+    fun handleIllegalState(ex: IllegalStateException): ResponseEntity<Map<String, String>> {
+        return ResponseEntity
+            .status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .body(mapOf("error" to (ex.message ?: "Internal error")))
+    }
 }
