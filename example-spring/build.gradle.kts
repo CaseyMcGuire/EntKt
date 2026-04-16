@@ -9,13 +9,9 @@ repositories {
     mavenCentral()
 }
 
-configurations.matching { it.name.startsWith("test") }.configureEach {
-    resolutionStrategy.eachDependency {
-        if (requested.group == "org.testcontainers") {
-            useVersion(libs.versions.testcontainers.get())
-        }
-    }
-}
+// Spring Boot's BOM pins Testcontainers core to 1.x; this project uses 2.x.
+// Override Spring's managed version so the whole classpath stays on 2.x.
+ext["testcontainers.version"] = libs.versions.testcontainers.get()
 
 // Classpath for running codegen and migration planning.
 val codegenRunner: Configuration by configurations.creating
