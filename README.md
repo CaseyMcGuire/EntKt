@@ -86,9 +86,9 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 | `:migrations` | Driver-agnostic schema diffing, migration planning (prod), auto-apply (dev), `MigrationRunner` |
 | `:gradle-plugin` | `entkt` Gradle plugin registering a `generateEntkt` task that wires codegen into `compileKotlin` |
 | `:postgres` | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
-| `:example` | Sample schemas (`User`, `Post`, `Tag`, `TimestampMixin`) plus a `main()` that runs codegen as a CLI |
+| `:example-spring:schema` | Shared schema definitions (`User`, `Post`, `Tag`, `Friendship`, `TimestampMixin`) used by both example modules |
 | `:example-demo` | Executable demo of the full API against `InMemoryDriver` |
-| `:example-spring` | Spring Boot REST API example with Postgres, dev-mode migrations, and lifecycle hooks |
+| `:example-spring` | Spring Boot REST API example with Postgres, dev-mode migrations, lifecycle hooks, and friendship management |
 
 ## Status
 
@@ -298,10 +298,10 @@ Applying `id("entkt")` in a consumer build:
 
 Configuration lives under an `entkt { packageName = "..." }` extension.
 
-> **Note:** the current `:example-demo` module sidesteps the plugin and
-> invokes codegen via a hand-rolled `JavaExec` task against `:example`'s
-> `main()`. The plugin and the CLI path both exist; `example-demo` exercises
-> the CLI path today.
+> **Note:** the `:example-demo` module sidesteps the plugin and invokes
+> codegen via a hand-rolled `JavaExec` task against the CLI entry point
+> (`entkt.codegen.GenerateMainKt`). The plugin and the CLI path both
+> exist; `example-demo` exercises the CLI path today.
 
 ### Tests
 

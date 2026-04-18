@@ -1,8 +1,8 @@
 # entkt Spring Boot Example
 
-A simple REST API built with Spring Boot and entkt, demonstrating how to
-wire the Postgres driver, migrations (dev + prod), lifecycle hooks, and
-CRUD endpoints.
+A REST API built with Spring Boot and entkt, demonstrating how to wire
+the Postgres driver, migrations (dev + prod), lifecycle hooks, CRUD
+endpoints, and friendship management (a first-class M2M junction entity).
 
 ## Prerequisites
 
@@ -121,6 +121,32 @@ curl -X DELETE localhost:8080/posts/{id} \
   -H 'X-User-Id: {user-id}'
 ```
 
+### Friendships
+
+Friendships are a first-class junction entity between two users, with a
+status (`PENDING` → `ACCEPTED`) managed via lifecycle hooks.
+
+```bash
+# Send a friend request
+curl -X POST localhost:8080/users/{id}/friends \
+  -H 'Content-Type: application/json' \
+  -d '{"recipientId": "{other-user-id}"}'
+
+# Accept a friend request
+curl -X POST localhost:8080/friendships/{id}/accept
+
+# List a user's accepted friends
+curl localhost:8080/users/{id}/friends
+
+# List a user's pending friend requests
+curl localhost:8080/users/{id}/friend-requests
+```
+
+Friendship hooks (`FriendshipHooks.kt`) enforce:
+- Requester and recipient must be different users
+- Duplicate friend requests are rejected
+- Only `PENDING → ACCEPTED` status transitions are allowed
+
 ## How It Works
 
 ### Configuration (`EntktConfig.kt`)
@@ -134,6 +160,8 @@ The `EntClient` is configured as a Spring bean:
 4. **Ownership hooks** on posts use a request-scoped `AuthContext`
    (populated from `X-User-Id` by `AuthFilter`) to prevent users from
    updating or deleting posts they don't own.
+5. **Friendship hooks** (`FriendshipHooksConfig`) validate participants,
+   prevent duplicate requests, and enforce status transitions.
 
 ### Controllers
 

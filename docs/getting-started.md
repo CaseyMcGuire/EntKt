@@ -45,17 +45,16 @@ The plugin registers a `generateEntkt` task that:
 
 ### Without the plugin
 
-You can also invoke codegen directly via the CLI entry point. See the
-`:example` module's `Main.kt` for this approach:
+You can also invoke codegen directly via the CLI entry point
+(`entkt.codegen.GenerateMainKt`). See `:example-demo`'s `build.gradle.kts`
+for this approach — it registers a `JavaExec` task that scans the classpath
+for `EntSchema` objects:
 
 ```kotlin
-fun main(args: Array<String>) {
-    val outputDir = Paths.get(args.getOrElse(0) { "build/generated/entkt" })
-    val schemas = listOf(
-        SchemaInput("User", User),
-        SchemaInput("Post", Post),
-    )
-    EntGenerator("com.example.ent").writeTo(outputDir, schemas)
+val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
+    classpath = codegenRunner
+    mainClass.set("entkt.codegen.GenerateMainKt")
+    args("com.example.ent", generatedDir.get().asFile.absolutePath)
 }
 ```
 
