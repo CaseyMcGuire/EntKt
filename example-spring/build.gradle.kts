@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":runtime"))
     implementation(project(":postgres"))
     implementation(project(":migrations"))
+    implementation(project(":example-spring:schema"))
 
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")

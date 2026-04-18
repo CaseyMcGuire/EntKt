@@ -95,7 +95,13 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 ### Schema DSL (`:schema`)
 
 **Field types:** `STRING`, `TEXT`, `BOOL`, `INT`, `LONG`, `FLOAT`, `DOUBLE`,
-`TIME` (`Instant`), `UUID`, `BYTES`, `ENUM`.
+`TIME` (`Instant`), `UUID`, `BYTES`, `ENUM` (untyped string values or
+typed Kotlin enum classes via `enum<E>()`).
+
+**Typed enums:** `enum<MyStatus>("status")` binds the field to a Kotlin enum
+class — entity properties, builders, query predicates, and defaults are all
+fully typed. Defaults must be constants from the correct enum class.
+Stored as strings in the database.
 
 **Field modifiers:** `.optional()`, `.nillable()`, `.unique()`, `.immutable()`,
 `.sensitive()`, `.comment(...)`, `.storageKey(...)`, `.default(...)`,

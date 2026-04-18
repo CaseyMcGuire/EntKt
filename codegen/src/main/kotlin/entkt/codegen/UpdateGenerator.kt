@@ -12,6 +12,7 @@ import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.schema.EntSchema
 import entkt.schema.Field
+import entkt.schema.FieldType
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
@@ -113,7 +114,7 @@ class UpdateGenerator(
 
     private fun buildProperty(field: Field): PropertySpec {
         val prop = toCamelCase(field.name)
-        val typeName = field.type.toTypeName().copy(nullable = true)
+        val typeName = field.resolvedTypeName().copy(nullable = true)
         return PropertySpec.builder(prop, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
@@ -227,7 +228,12 @@ class UpdateGenerator(
         val rowBuilder = CodeBlock.builder()
             .add("val values: Map<String, Any?> = mapOf(\n")
         for (field in allFields) {
-            rowBuilder.add("  %S to %L,\n", field.name, toCamelCase(field.name))
+            val prop = toCamelCase(field.name)
+            if (field.type == FieldType.ENUM && field.enumClass != null) {
+                rowBuilder.add("  %S to %L?.name,\n", field.name, prop)
+            } else {
+                rowBuilder.add("  %S to %L,\n", field.name, prop)
+            }
         }
         for (fk in edgeFks) {
             rowBuilder.add("  %S to %L,\n", fk.columnName, fk.propertyName)

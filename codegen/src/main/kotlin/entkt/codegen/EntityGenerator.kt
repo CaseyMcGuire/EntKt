@@ -124,12 +124,23 @@ class EntityGenerator(
 
         for (field in allFields) {
             val prop = toCamelCase(field.name)
-            val base = field.type.toTypeName()
             val nullable = field.optional || field.nillable
-            val target = base.copy(nullable = nullable)
-            if (nullable) {
-                body.add("  %L = row[%S] as %T,\n", prop, field.name, target)
+            if (field.type == FieldType.ENUM && field.enumClass != null) {
+                val enumType = field.resolvedTypeName()
+                if (nullable) {
+                    body.add(
+                        "  %L = (row[%S] as %T?)?.let { %T.valueOf(it) },\n",
+                        prop, field.name, String::class, enumType,
+                    )
+                } else {
+                    body.add(
+                        "  %L = %T.valueOf(row[%S] as %T),\n",
+                        prop, enumType, field.name, String::class,
+                    )
+                }
             } else {
+                val base = field.type.toTypeName()
+                val target = base.copy(nullable = nullable)
                 body.add("  %L = row[%S] as %T,\n", prop, field.name, target)
             }
         }
@@ -161,7 +172,7 @@ class EntityGenerator(
             )
 
         for (field in fields) {
-            val typeName = field.type.toTypeName().let {
+            val typeName = field.resolvedTypeName().let {
                 if (field.optional || field.nillable) it.copy(nullable = true) else it
             }
             val param = ParameterSpec.builder(toCamelCase(field.name), typeName)
@@ -199,7 +210,7 @@ class EntityGenerator(
     }
 
     private fun buildProperty(field: Field): PropertySpec {
-        val typeName = field.type.toTypeName().let {
+        val typeName = field.resolvedTypeName().let {
             if (field.optional || field.nillable) it.copy(nullable = true) else it
         }
         val propertyName = toCamelCase(field.name)
@@ -218,7 +229,14 @@ class EntityGenerator(
     private fun buildFieldColumnRef(field: Field): PropertySpec {
         val propertyName = toCamelCase(field.name)
         val nullable = field.optional || field.nillable
-        val columnType = columnClassFor(field.type, nullable)
+        val columnType = if (field.type == FieldType.ENUM && field.enumClass != null) {
+            val enumTypeName = field.resolvedTypeName()
+            val cls = if (nullable) ClassName("entkt.query", "NullableEnumColumn")
+            else ClassName("entkt.query", "EnumColumn")
+            cls.parameterizedBy(enumTypeName)
+        } else {
+            columnClassFor(field.type, nullable)
+        }
         return PropertySpec.builder(propertyName, columnType)
             .initializer("%T(%S)", columnType, field.name)
             .build()

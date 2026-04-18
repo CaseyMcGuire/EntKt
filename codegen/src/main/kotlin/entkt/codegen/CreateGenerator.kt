@@ -101,7 +101,7 @@ class CreateGenerator(
     }
 
     private fun buildProperty(field: Field, override: Boolean): PropertySpec {
-        val typeName = field.type.toTypeName().copy(nullable = true)
+        val typeName = field.resolvedTypeName().copy(nullable = true)
         val builder = PropertySpec.builder(toCamelCase(field.name), typeName)
             .mutable(true)
             .initializer("null")
@@ -235,7 +235,17 @@ class CreateGenerator(
         }
 
         for (field in allFields) {
-            rowBuilder.add("  %S to %L,\n", field.name, toCamelCase(field.name))
+            val prop = toCamelCase(field.name)
+            if (field.type == FieldType.ENUM && field.enumClass != null) {
+                val nullable = field.optional || field.nillable
+                if (nullable) {
+                    rowBuilder.add("  %S to %L?.name,\n", field.name, prop)
+                } else {
+                    rowBuilder.add("  %S to %L.name,\n", field.name, prop)
+                }
+            } else {
+                rowBuilder.add("  %S to %L,\n", field.name, prop)
+            }
         }
         for (fk in edgeFks) {
             rowBuilder.add("  %S to %L,\n", fk.columnName, fk.propertyName)
@@ -259,6 +269,16 @@ class CreateGenerator(
         return when {
             field.type == FieldType.TIME && value == "now" ->
                 CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
+            field.type == FieldType.ENUM && field.enumClass != null -> {
+                require(value is Enum<*>) {
+                    "Typed enum field '${field.name}' must use an enum constant as its default, not a String"
+                }
+                require(value::class == field.enumClass) {
+                    "Typed enum field '${field.name}' default must be a ${field.enumClass!!.simpleName} constant, got ${value::class.simpleName}"
+                }
+                val enumType = field.resolvedTypeName()
+                CodeBlock.of("%T.%L", enumType, value.name)
+            }
             else -> CodeBlock.of("%L", kotlinLiteral(value))
         }
     }

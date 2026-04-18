@@ -34,6 +34,13 @@ User.name `in` listOf("Alice", "Bob")   // IN
 User.name notIn listOf("Charlie")       // NOT IN
 ```
 
+Available on typed enum columns:
+
+```kotlin
+Ticket.priority eq Priority.HIGH          // passes the enum's .name to the driver
+Ticket.priority `in` listOf(Priority.LOW, Priority.MEDIUM)
+```
+
 Available on comparable columns (`Int`, `Long`, `Float`, `Double`, `Instant`):
 
 ```kotlin

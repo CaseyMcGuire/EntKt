@@ -2,6 +2,10 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
 }
 
+base {
+    archivesName = "example-spring-schema"
+}
+
 repositories {
     mavenCentral()
 }

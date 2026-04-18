@@ -16,6 +16,12 @@ class EntktPlugin : Plugin<Project> {
             it.isCanBeResolved = true
         }
 
+        // Schema classes (including enum types) are imported by generated
+        // code, so they must be on the compile classpath too.
+        project.configurations.named("implementation") {
+            it.extendsFrom(schemasConfig)
+        }
+
         val generateTask = project.tasks.register("generateEntkt", GenerateEntktTask::class.java) { task ->
             task.schemaClasspath.from(schemasConfig)
             task.packageName.set(extension.packageName)

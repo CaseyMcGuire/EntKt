@@ -181,6 +181,24 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `typed enum property uses the Kotlin enum type`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("var priority: Priority?")) {
+            "Should use the Kotlin enum type on the update property\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum save converts to name for the row map`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("\"priority\" to priority?.name")) {
+            "Should convert typed enum to ?.name in the row map\n$output"
+        }
+    }
+
+    @Test
     fun `validation appears after dirty resolution and before row map`() {
         val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
 

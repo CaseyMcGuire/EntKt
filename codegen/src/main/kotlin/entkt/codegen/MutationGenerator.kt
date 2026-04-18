@@ -33,7 +33,7 @@ class MutationGenerator(
         val typeSpec = TypeSpec.interfaceBuilder(interfaceName)
 
         for (field in mutableFields) {
-            val typeName = field.type.toTypeName().copy(nullable = true)
+            val typeName = field.resolvedTypeName().copy(nullable = true)
             typeSpec.addProperty(
                 PropertySpec.builder(toCamelCase(field.name), typeName)
                     .mutable(true)

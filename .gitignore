@@ -7,3 +7,6 @@ entkt.iml
 
 # Ignore Gradle build output directory
 build
+
+# Claude Code
+.claude/worktrees

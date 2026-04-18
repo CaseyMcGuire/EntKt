@@ -4,6 +4,7 @@ import example.ent.Friendship
 import example.ent.FriendshipCreate
 import example.ent.FriendshipHooks
 import example.ent.FriendshipUpdate
+import example.schema.FriendshipStatus
 import org.springframework.stereotype.Component
 
 @Component
@@ -41,7 +42,7 @@ class FriendshipHooksConfig {
         val oldStatus = m.entity.status
         val newStatus = m.status ?: oldStatus
         if (oldStatus != newStatus) {
-            require(oldStatus == "PENDING" && newStatus == "ACCEPTED") {
+            require(oldStatus == FriendshipStatus.PENDING && newStatus == FriendshipStatus.ACCEPTED) {
                 "Can only transition from PENDING to ACCEPTED"
             }
         }

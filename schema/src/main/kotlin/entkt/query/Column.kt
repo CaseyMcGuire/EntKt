@@ -16,11 +16,11 @@ interface Nullable
  * e.g. `User.active`, `User.age`, `User.email`.
  */
 open class Column<T>(val name: String) {
-    infix fun eq(value: T): Predicate = Predicate.Leaf(name, Op.EQ, value)
-    infix fun neq(value: T): Predicate = Predicate.Leaf(name, Op.NEQ, value)
-    infix fun `in`(values: Collection<T>): Predicate =
+    open infix fun eq(value: T): Predicate = Predicate.Leaf(name, Op.EQ, value)
+    open infix fun neq(value: T): Predicate = Predicate.Leaf(name, Op.NEQ, value)
+    open infix fun `in`(values: Collection<T>): Predicate =
         Predicate.Leaf(name, Op.IN, values.toList())
-    infix fun notIn(values: Collection<T>): Predicate =
+    open infix fun notIn(values: Collection<T>): Predicate =
         Predicate.Leaf(name, Op.NOT_IN, values.toList())
 
     fun asc(): OrderField = OrderField(name, OrderDirection.ASC)
@@ -58,10 +58,25 @@ open class StringColumn(name: String) : ComparableColumn<String>(name) {
 // field's nullability, so a non-null field's column ref simply does not
 // expose isNull/isNotNull.
 
+/**
+ * A column whose type is a Kotlin enum class. Converts enum values to
+ * their [Enum.name] string when creating predicates, so the driver layer
+ * continues to work with plain strings.
+ */
+open class EnumColumn<E : Enum<E>>(name: String) : Column<E>(name) {
+    override infix fun eq(value: E): Predicate = Predicate.Leaf(name, Op.EQ, value.name)
+    override infix fun neq(value: E): Predicate = Predicate.Leaf(name, Op.NEQ, value.name)
+    override infix fun `in`(values: Collection<E>): Predicate =
+        Predicate.Leaf(name, Op.IN, values.map { it.name })
+    override infix fun notIn(values: Collection<E>): Predicate =
+        Predicate.Leaf(name, Op.NOT_IN, values.map { it.name })
+}
+
 class NullableColumn<T>(name: String) : Column<T>(name), Nullable
 class NullableComparableColumn<T : Comparable<T>>(name: String) :
     ComparableColumn<T>(name), Nullable
 class NullableStringColumn(name: String) : StringColumn(name), Nullable
+class NullableEnumColumn<E : Enum<E>>(name: String) : EnumColumn<E>(name), Nullable
 
 /**
  * isNull predicate. Only visible when the receiver column is both a

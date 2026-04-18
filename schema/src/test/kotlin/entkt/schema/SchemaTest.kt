@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // Example mixins
@@ -73,6 +74,15 @@ object UserGroup : EntSchema() {
     override fun edges() = edges {
         to("user", User).unique().required().field("user_id")
         to("group", Group).unique().required().field("group_id")
+    }
+}
+
+enum class TaskStatus { TODO, IN_PROGRESS, DONE }
+
+object Task : EntSchema() {
+    override fun fields() = fields {
+        string("title")
+        enum<TaskStatus>("status").default(TaskStatus.TODO)
     }
 }
 
@@ -238,6 +248,25 @@ class SchemaTest {
         val groupEdge = edges[1]
         assertEquals("group", groupEdge.name)
         assertEquals("group_id", groupEdge.field)
+    }
+
+    @Test
+    fun `typed enum populates enumClass and enumValues`() {
+        val fields = Task.fields()
+        val status = fields[1]
+        assertEquals(FieldType.ENUM, status.type)
+        assertEquals(TaskStatus::class, status.enumClass)
+        assertEquals(listOf("TODO", "IN_PROGRESS", "DONE"), status.enumValues)
+        assertEquals(TaskStatus.TODO, status.default)
+    }
+
+    @Test
+    fun `untyped enum has null enumClass`() {
+        val fields = User.fields()
+        val role = fields[3]
+        assertEquals(FieldType.ENUM, role.type)
+        assertNull(role.enumClass)
+        assertEquals(listOf("admin", "user", "moderator"), role.enumValues)
     }
 
     @Test

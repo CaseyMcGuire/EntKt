@@ -13,6 +13,7 @@ val codegenRunner: Configuration by configurations.creating
 dependencies {
     implementation(project(":schema"))
     implementation(project(":runtime"))
+    implementation(project(":example-spring:schema"))
 
     codegenRunner(project(":example-spring:schema"))
     codegenRunner(project(":codegen"))

@@ -3,11 +3,21 @@ package entkt.codegen
 import entkt.schema.EntSchema
 import entkt.schema.fields
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 
 object Event : EntSchema() {
     override fun fields() = fields {
         string("title")
         time("created_at").default("now").immutable()
+    }
+}
+
+enum class Status { LOW, MEDIUM, HIGH }
+enum class OtherStatus { PENDING, ACCEPTED }
+
+object DefaultedEnumEntity : EntSchema() {
+    override fun fields() = fields {
+        enum<Status>("priority").default(Status.LOW)
     }
 }
 
@@ -202,6 +212,60 @@ class CreateGeneratorTest {
         }
         assert(!output.contains(".isEmpty()")) {
             "Should not emit isEmpty for unvalidated fields\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum property uses the Kotlin enum type`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("var priority: Priority?")) {
+            "Should use the Kotlin enum type on the builder property\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum save converts to name for the row map`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("\"priority\" to priority.name")) {
+            "Should convert typed enum to .name in the row map\n$output"
+        }
+    }
+
+    @Test
+    fun `untyped enum save uses value directly`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("\"category\" to category")) {
+            "Untyped enum should be put directly in the row map\n$output"
+        }
+        assert(!output.contains("\"category\" to category.name")) {
+            "Untyped enum should not use .name\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum default emits enum constant reference`() {
+        val output = generator.generate("DefaultedEnumEntity", DefaultedEnumEntity).toString()
+
+        assert(output.contains("this.priority ?: Status.LOW")) {
+            "Should coalesce to the enum constant for typed enum default\n$output"
+        }
+        assert(!output.contains("this.priority ?: \"LOW\"")) {
+            "Should not emit string literal for typed enum default\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum default rejects constant from wrong enum class`() {
+        val wrongDefault = object : EntSchema() {
+            override fun fields() = fields {
+                enum<Status>("priority").default(OtherStatus.PENDING)
+            }
+        }
+        assertFailsWith<IllegalArgumentException> {
+            generator.generate("WrongDefault", wrongDefault)
         }
     }
 

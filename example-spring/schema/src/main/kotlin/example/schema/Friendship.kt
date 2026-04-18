@@ -5,6 +5,8 @@ import entkt.schema.edges
 import entkt.schema.fields
 import entkt.schema.indexes
 
+enum class FriendshipStatus { PENDING, ACCEPTED }
+
 /**
  * A friendship request between two users. The junction holds state
  * (PENDING vs ACCEPTED) so it's a first-class entity, not a
@@ -12,7 +14,7 @@ import entkt.schema.indexes
  */
 object Friendship : EntSchema() {
     override fun fields(): List<entkt.schema.Field> = fields {
-        enum("status").values("PENDING", "ACCEPTED")
+        enum<FriendshipStatus>("status")
     }
 
     override fun edges(): List<entkt.schema.Edge> = edges {

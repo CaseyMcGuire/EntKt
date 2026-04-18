@@ -2,6 +2,7 @@ package example.spring
 
 import example.ent.EntClient
 import example.ent.Friendship
+import example.schema.FriendshipStatus
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -15,7 +16,7 @@ data class FriendRequestBody(val recipientId: UUID)
 
 data class FriendshipResponse(
     val id: Int,
-    val status: String,
+    val status: FriendshipStatus,
     val requesterId: UUID,
     val recipientId: UUID,
 )
@@ -40,7 +41,7 @@ class FriendshipController(private val client: EntClient) {
         val friendship = client.friendships.create {
             this.requester = requester
             this.recipient = recipient
-            status = "PENDING"
+            status = FriendshipStatus.PENDING
         }.save()
         return friendship.toResponse()
     }
@@ -50,7 +51,7 @@ class FriendshipController(private val client: EntClient) {
         val friendship = client.friendships.byId(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val updated = client.friendships.update(friendship) {
-            status = "ACCEPTED"
+            status = FriendshipStatus.ACCEPTED
         }.saveOrThrow()
         return updated.toResponse()
     }
@@ -64,7 +65,7 @@ class FriendshipController(private val client: EntClient) {
             where(
                 (Friendship.requesterId eq id) or (Friendship.recipientId eq id),
             )
-            where(Friendship.status eq "ACCEPTED")
+            where(Friendship.status eq FriendshipStatus.ACCEPTED)
         }.all()
 
         val friendIds = accepted.map { f ->
@@ -81,7 +82,7 @@ class FriendshipController(private val client: EntClient) {
 
         return client.friendships.query {
             where(Friendship.recipientId eq id)
-            where(Friendship.status eq "PENDING")
+            where(Friendship.status eq FriendshipStatus.PENDING)
         }.all().map { it.toResponse() }
     }
 }

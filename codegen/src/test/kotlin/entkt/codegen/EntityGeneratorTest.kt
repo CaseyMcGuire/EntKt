@@ -9,11 +9,21 @@ import entkt.schema.indexes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+enum class Priority { LOW, MEDIUM, HIGH }
+
 object Car : EntSchema() {
     override fun fields() = fields {
         string("model")
         int("year")
         float("price").optional()
+    }
+}
+
+object Ticket : EntSchema() {
+    override fun fields() = fields {
+        string("title")
+        enum<Priority>("priority")
+        enum("category").values("BUG", "FEATURE")
     }
 }
 
@@ -249,6 +259,45 @@ class EntityGeneratorTest {
         }
         assert(!output.contains("val edges:")) {
             "Entity with no edges should not have edges property\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum field emits the Kotlin enum type on the entity`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("val priority: Priority")) {
+            "Should use the Kotlin enum type\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum column ref uses EnumColumn`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("val priority: EnumColumn<Priority> = EnumColumn<Priority>(\"priority\")")) {
+            "Should emit EnumColumn parameterized with the enum class\n$output"
+        }
+    }
+
+    @Test
+    fun `typed enum fromRow uses valueOf`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("priority = Priority.valueOf(row[\"priority\"] as String)")) {
+            "Should convert via valueOf in fromRow\n$output"
+        }
+    }
+
+    @Test
+    fun `untyped enum still uses String and Column`() {
+        val output = generator.generate("Ticket", Ticket).toString()
+
+        assert(output.contains("val category: String")) {
+            "Untyped enum should stay as String\n$output"
+        }
+        assert(output.contains("val category: Column<String> = Column<String>(\"category\")")) {
+            "Untyped enum should use Column<String>\n$output"
         }
     }
 

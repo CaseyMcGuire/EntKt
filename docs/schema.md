@@ -46,6 +46,7 @@ override fun fields() = fields {
     uuid("external_id")
     bytes("data")
     enum("status").values("DRAFT", "PUBLISHED", "ARCHIVED")
+    enum<Priority>("priority").default(Priority.LOW)  // typed enum
 }
 ```
 
@@ -64,6 +65,7 @@ override fun fields() = fields {
 | `uuid()` | `UUID` | `UUID` | `uuid` |
 | `bytes()` | `BYTES` | `ByteArray` | `bytea` |
 | `enum()` | `ENUM` | `String` | `text` |
+| `enum<E>()` | `ENUM` | `E` | `text` |
 
 ### Common Modifiers
 
@@ -101,6 +103,38 @@ double("temperature").negative()
 
 Validators are enforced as inline checks in the generated `save()` methods.
 They throw `IllegalArgumentException` if the value is invalid.
+
+### Typed Enums
+
+Use the reified `enum<E>()` builder to bind a field to a Kotlin enum class.
+The generated entity, create builder, update builder, and query column
+references all use the actual enum type instead of `String`:
+
+```kotlin
+enum class Priority { LOW, MEDIUM, HIGH }
+
+object Ticket : EntSchema() {
+    override fun fields() = fields {
+        string("title")
+        enum<Priority>("priority").default(Priority.LOW)
+    }
+}
+```
+
+With this declaration:
+
+- The generated `Ticket` entity has `val priority: Priority`
+- The create/update builders have `var priority: Priority?`
+- Query predicates accept enum values: `Ticket.priority eq Priority.HIGH`
+- The `.default()` method requires a constant from the same enum class —
+  passing a value from a different enum (e.g. `OtherEnum.FOO`) is rejected
+  at codegen time
+
+Values are stored as strings in the database (via `.name`) and converted
+back with `valueOf()` when reading rows. The driver layer is unchanged.
+
+The untyped `enum("field").values("A", "B")` form is still supported for
+cases where a Kotlin enum class isn't available.
 
 ## Edges
 

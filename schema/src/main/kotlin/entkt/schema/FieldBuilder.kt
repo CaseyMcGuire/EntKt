@@ -13,6 +13,7 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     private var default: Any? = null
     private var updateDefault: Any? = null
     private var enumValues: List<String>? = null
+    private var enumClass: kotlin.reflect.KClass<out Enum<*>>? = null
     protected var validators: MutableList<Validator> = mutableListOf()
     private var comment: String? = null
     private var storageKey: String? = null
@@ -30,8 +31,14 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     fun storageKey(key: String): T = apply { storageKey = key }.let { self() }
     fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
 
+    @PublishedApi
     internal fun setEnumValues(values: List<String>) {
         this.enumValues = values
+    }
+
+    @PublishedApi
+    internal fun setEnumClass(klass: kotlin.reflect.KClass<out Enum<*>>) {
+        this.enumClass = klass
     }
 
     fun build(): Field = Field(
@@ -45,6 +52,7 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
         default = default,
         updateDefault = updateDefault,
         enumValues = enumValues,
+        enumClass = enumClass,
         validators = validators,
         comment = comment,
         storageKey = storageKey,

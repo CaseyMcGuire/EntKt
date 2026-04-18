@@ -1,7 +1,9 @@
 package entkt.schema
 
+
 class FieldsBuilder {
-    private val fields = mutableListOf<FieldBuilder<*>>()
+    @PublishedApi
+    internal val fields = mutableListOf<FieldBuilder<*>>()
 
     fun string(name: String): StringFieldBuilder = StringFieldBuilder(name).also { fields.add(it) }
     fun text(name: String): TextFieldBuilder = TextFieldBuilder(name).also { fields.add(it) }
@@ -14,6 +16,13 @@ class FieldsBuilder {
     fun uuid(name: String): UuidFieldBuilder = UuidFieldBuilder(name).also { fields.add(it) }
     fun bytes(name: String): BytesFieldBuilder = BytesFieldBuilder(name).also { fields.add(it) }
     fun enum(name: String): EnumFieldBuilder = EnumFieldBuilder(name).also { fields.add(it) }
+    @JvmName("typedEnum")
+    inline fun <reified E : Enum<E>> enum(name: String): EnumFieldBuilder =
+        EnumFieldBuilder(name).also {
+            it.setEnumClass(E::class)
+            it.setEnumValues(enumValues<E>().map { c -> c.name })
+            fields.add(it)
+        }
 
     fun build(): List<Field> = fields.map { it.build() }
 }
