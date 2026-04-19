@@ -168,6 +168,57 @@ class InMemoryDriver : Driver {
         }
     }
 
+    override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> {
+        if (values.isEmpty()) return emptyList()
+        val schema = schemas[table] ?: error("Unregistered table: $table")
+        val rows = tables.getValue(table)
+        // Build all rows first, then add atomically — if any row fails
+        // (e.g. missing id for EXPLICIT strategy), none are persisted.
+        val built = values.map { v ->
+            val row = v.toMutableMap()
+            if (row[schema.idColumn] == null) {
+                row[schema.idColumn] = when (schema.idStrategy) {
+                    IdStrategy.AUTO_INT -> numericIds.getValue(table).incrementAndGet().toInt()
+                    IdStrategy.AUTO_LONG -> numericIds.getValue(table).incrementAndGet()
+                    else -> error("insert into $table requires an id (strategy=${schema.idStrategy})")
+                }
+            }
+            row
+        }
+        synchronized(rows) { rows.addAll(built) }
+        return built.map { it.toMap() }
+    }
+
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int {
+        val schema = schemas[table] ?: error("Unregistered table: $table")
+        val cols = values.keys.filter { it != schema.idColumn }
+        if (cols.isEmpty()) return 0
+        val rows = tables.getValue(table)
+        synchronized(rows) {
+            // Collect matches before mutating so edge predicates that
+            // reference the same table see a consistent snapshot.
+            val matched = rows.filter { row -> predicates.all { evaluate(row, it, table) } }
+            for (row in matched) {
+                for (k in cols) {
+                    row[k] = values[k]
+                }
+            }
+            return matched.size
+        }
+    }
+
+    override fun deleteMany(table: String, predicates: List<Predicate>): Int {
+        schemas[table] ?: error("Unregistered table: $table")
+        val rows = tables.getValue(table)
+        synchronized(rows) {
+            // Collect matches before removing so edge predicates that
+            // reference the same table see a consistent snapshot.
+            val matched = rows.filter { row -> predicates.all { evaluate(row, it, table) } }
+            rows.removeAll(matched.toSet())
+            return matched.size
+        }
+    }
+
     override fun <T> withTransaction(block: (Driver) -> T): T {
         // Snapshot current state: table names, their contents, and id counters.
         val knownTables = tables.keys.toSet()
@@ -389,6 +440,18 @@ private class InMemoryTransactionalDriver(
 
     override fun delete(table: String, id: Any): Boolean {
         checkOpen(); return root.delete(table, id)
+    }
+
+    override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> {
+        checkOpen(); return root.insertMany(table, values)
+    }
+
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int {
+        checkOpen(); return root.updateMany(table, values, predicates)
+    }
+
+    override fun deleteMany(table: String, predicates: List<Predicate>): Int {
+        checkOpen(); return root.deleteMany(table, predicates)
     }
 
     override fun <T> withTransaction(block: (Driver) -> T): T {

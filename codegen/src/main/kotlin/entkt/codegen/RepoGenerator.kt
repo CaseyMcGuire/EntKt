@@ -12,10 +12,14 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
+import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val PREDICATE = ClassName("entkt.query", "Predicate")
+private val LIST = ClassName("kotlin.collections", "List")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val INT = Int::class.asClassName()
 private val ENT_CLIENT_NAME = "EntClient"
 
 /**
@@ -169,6 +173,8 @@ class RepoGenerator(
                     .addStatement("return delete(entity)")
                     .build()
             )
+            .addFunction(buildCreateMany(entityClass, createLambda))
+            .addFunction(buildDeleteMany(entityClass, queryClass))
             .addFunction(buildApplyHooks(entityHooksClass))
             .addFunction(buildCopyHooksFrom(repoClass))
             .build()
@@ -197,6 +203,42 @@ class RepoGenerator(
                 "return %T(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks).apply(block).upsert(*onConflict)",
                 createClass,
             )
+            .build()
+    }
+
+    private fun buildCreateMany(
+        entityClass: ClassName,
+        createLambda: LambdaTypeName,
+    ): FunSpec {
+        return FunSpec.builder("createMany")
+            .addParameter(
+                ParameterSpec.builder("blocks", createLambda)
+                    .addModifiers(KModifier.VARARG)
+                    .build()
+            )
+            .returns(LIST.parameterizedBy(entityClass))
+            .addStatement("return blocks.map { create(it).save() }")
+            .build()
+    }
+
+    private fun buildDeleteMany(
+        entityClass: ClassName,
+        queryClass: ClassName,
+    ): FunSpec {
+        return FunSpec.builder("deleteMany")
+            .addParameter(
+                ParameterSpec.builder("predicates", PREDICATE)
+                    .addModifiers(KModifier.VARARG)
+                    .build(),
+            )
+            .returns(INT)
+            .addStatement(
+                "val entities = %T(driver).apply { for (p in predicates) where(p) }.all()",
+                queryClass,
+            )
+            .addStatement("var count = 0")
+            .addStatement("for (entity in entities) { if (delete(entity)) count++ }")
+            .addStatement("return count")
             .build()
     }
 

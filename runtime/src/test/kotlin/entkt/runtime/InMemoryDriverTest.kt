@@ -606,4 +606,181 @@ class InMemoryDriverTest {
             driver.upsert("users", mapOf("name" to "Alice"), emptyList())
         }
     }
+
+    // ---------- insertMany ----------
+
+    @Test
+    fun `insertMany inserts multiple rows and assigns ids`() {
+        val driver = fresh()
+        val rows = driver.insertMany(
+            "users",
+            listOf(
+                mapOf("name" to "Alice", "age" to 30),
+                mapOf("name" to "Bob", "age" to 25),
+                mapOf("name" to "Carol", "age" to 40),
+            ),
+        )
+
+        assertEquals(3, rows.size)
+        assertEquals("Alice", rows[0]["name"])
+        assertEquals("Bob", rows[1]["name"])
+        assertEquals("Carol", rows[2]["name"])
+        // Ids should be unique and sequential
+        assertEquals(1L, rows[0]["id"])
+        assertEquals(2L, rows[1]["id"])
+        assertEquals(3L, rows[2]["id"])
+    }
+
+    @Test
+    fun `insertMany with empty list returns empty`() {
+        val driver = fresh()
+        assertEquals(emptyList(), driver.insertMany("users", emptyList()))
+    }
+
+    @Test
+    fun `insertMany rows are queryable`() {
+        val driver = fresh()
+        driver.insertMany("users", listOf(
+            mapOf("name" to "Alice"),
+            mapOf("name" to "Bob"),
+        ))
+
+        val all = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(2, all.size)
+    }
+
+    @Test
+    fun `insertMany with sparse maps preserves all columns`() {
+        val driver = fresh()
+        val rows = driver.insertMany("users", listOf(
+            mapOf("name" to "Alice"),
+            mapOf("name" to "Bob", "age" to 25),
+        ))
+
+        assertEquals(2, rows.size)
+        assertNull(rows[0]["age"], "First row should have null age")
+        assertEquals(25, rows[1]["age"], "Second row should keep its age")
+    }
+
+    // ---------- updateMany ----------
+
+    @Test
+    fun `updateMany updates matching rows and returns count`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
+        driver.insert("users", mapOf("name" to "Bob", "age" to 17, "active" to true))
+        driver.insert("users", mapOf("name" to "Carol", "age" to 65, "active" to false))
+
+        val count = driver.updateMany(
+            "users",
+            mapOf("active" to false),
+            listOf(Predicate.Leaf("age", Op.LT, 18)),
+        )
+
+        assertEquals(1, count)
+        val bob = driver.query(
+            "users",
+            listOf(Predicate.Leaf("name", Op.EQ, "Bob")),
+            emptyList(), null, null,
+        ).single()
+        assertEquals(false, bob["active"])
+    }
+
+    @Test
+    fun `updateMany with no predicates updates all rows`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "active" to true))
+        driver.insert("users", mapOf("name" to "Bob", "active" to true))
+
+        val count = driver.updateMany("users", mapOf("active" to false), emptyList())
+        assertEquals(2, count)
+    }
+
+    @Test
+    fun `updateMany never rewrites the id`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+
+        driver.updateMany("users", mapOf("id" to 999L, "name" to "Updated"), emptyList())
+
+        val row = driver.query("users", emptyList(), emptyList(), null, null).single()
+        assertEquals(1L, row["id"])
+        assertEquals("Updated", row["name"])
+    }
+
+    @Test
+    fun `updateMany returns zero when no rows match`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+
+        val count = driver.updateMany(
+            "users",
+            mapOf("name" to "Updated"),
+            listOf(Predicate.Leaf("name", Op.EQ, "Nobody")),
+        )
+        assertEquals(0, count)
+    }
+
+    @Test
+    fun `updateMany with empty values returns zero`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "active" to true))
+        driver.insert("users", mapOf("name" to "Bob", "active" to true))
+
+        val count = driver.updateMany("users", emptyMap(), emptyList())
+        assertEquals(0, count, "No columns to update means zero rows updated")
+    }
+
+    @Test
+    fun `updateMany with only id column returns zero`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+
+        val count = driver.updateMany("users", mapOf("id" to 999L), emptyList())
+        assertEquals(0, count, "Id-only values means no actual update")
+    }
+
+    // ---------- deleteMany ----------
+
+    @Test
+    fun `deleteMany deletes matching rows and returns count`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "age" to 30))
+        driver.insert("users", mapOf("name" to "Bob", "age" to 17))
+        driver.insert("users", mapOf("name" to "Carol", "age" to 65))
+
+        val count = driver.deleteMany(
+            "users",
+            listOf(Predicate.Leaf("age", Op.LT, 18)),
+        )
+
+        assertEquals(1, count)
+        val remaining = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(2, remaining.size)
+        assertEquals(setOf("Alice", "Carol"), remaining.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `deleteMany with no predicates deletes all rows`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+        driver.insert("users", mapOf("name" to "Bob"))
+
+        val count = driver.deleteMany("users", emptyList())
+        assertEquals(2, count)
+        assertEquals(0, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `deleteMany returns zero when no rows match`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+
+        val count = driver.deleteMany(
+            "users",
+            listOf(Predicate.Leaf("name", Op.EQ, "Nobody")),
+        )
+        assertEquals(0, count)
+        assertEquals(1, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
 }

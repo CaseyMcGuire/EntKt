@@ -133,3 +133,16 @@ users {
     // Both run, in order
 }
 ```
+
+## Bulk Operations and Hooks
+
+Bulk operations (`createMany`, `deleteMany`) **fire lifecycle hooks**
+for every row. `createMany` delegates to `create { }.save()` per entry,
+and `deleteMany` queries for matching entities then calls `delete(entity)`
+for each one.
+
+```kotlin
+// Hooks fire for every row
+client.users.createMany({ name = "Alice" }, { name = "Bob" })  // beforeSave, beforeCreate, afterCreate × 2
+client.users.deleteMany(User.active eq false)                   // beforeDelete, afterDelete per match
+```

@@ -66,6 +66,15 @@ object NoopDriver : Driver {
     override fun delete(table: String, id: Any): Boolean =
         error("NoopDriver cannot delete — was a terminal op called inside EdgeRef.has { }?")
 
+    override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> =
+        error("NoopDriver cannot insertMany — was a terminal op called inside EdgeRef.has { }?")
+
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int =
+        error("NoopDriver cannot updateMany — was a terminal op called inside EdgeRef.has { }?")
+
+    override fun deleteMany(table: String, predicates: List<Predicate>): Int =
+        error("NoopDriver cannot deleteMany — was a terminal op called inside EdgeRef.has { }?")
+
     override fun <T> withTransaction(block: (Driver) -> T): T =
         error("NoopDriver cannot start a transaction — was withTransaction called inside EdgeRef.has { }?")
 }

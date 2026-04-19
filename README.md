@@ -148,7 +148,8 @@ For each schema the generator emits:
   `.offset(...)`, `.all()`, `.firstOrNull()`, edge traversal methods
   (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
 - **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
-  `.byId(id)`, `.upsert(onConflict) { }`, `.delete(entity)`, `.deleteById(id)`.
+  `.byId(id)`, `.upsert(onConflict) { }`, `.delete(entity)`, `.deleteById(id)`,
+  `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)`.
   Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
   with a `Driver` and an optional configuration lambda for lifecycle hooks.
@@ -158,7 +159,7 @@ For each schema the generator emits:
 
 ### Runtime (`:runtime`)
 
-**`Driver` interface (ten methods):**
+**`Driver` interface (thirteen methods):**
 
 ```kotlin
 interface Driver {
@@ -182,6 +183,9 @@ interface Driver {
     fun count(table: String, predicates: List<Predicate>): Long
     fun exists(table: String, predicates: List<Predicate>): Boolean
     fun delete(table: String, id: Any): Boolean
+    fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
+    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
+    fun deleteMany(table: String, predicates: List<Predicate>): Int
     fun <T> withTransaction(block: (Driver) -> T): T
 }
 ```
@@ -245,6 +249,10 @@ val client = EntClient(driver) {
 `beforeSave` accepts the shared `{Entity}Mutation` interface so the same
 hook works for both creates and updates. Hooks are declared once and
 automatically apply within transactions — no re-registration needed.
+
+**Bulk operations run hooks.** `createMany` delegates to `create { }.save()`
+per entry, and `deleteMany` queries then deletes through `delete(entity)` —
+all lifecycle hooks fire for every row.
 
 ### Eager loading
 
@@ -329,26 +337,27 @@ Configuration lives under an `entkt { packageName = "..." }` extension.
 
 ### Tests
 
-202 tests across all modules:
+366 tests across all modules:
 
-- `:schema` — schema DSL shape tests (13)
-- `:runtime` — full `InMemoryDriver` coverage including CRUD, compound
-  predicates, edge traversal, M2M junction tables, transactions, ordering,
-  pagination (21)
+- `:schema` — schema DSL shape tests (17)
+- `:runtime` — full `InMemoryDriver` coverage including CRUD, bulk ops,
+  compound predicates, edge traversal, M2M junction tables, transactions,
+  ordering, pagination (47)
 - `:codegen` — per-generator unit tests for entity, mutation, create, update,
   query, repo, client, edge codegen, lifecycle hooks, eager loading, field
-  validation, and M2M disambiguation (137)
+  validation, bulk ops, and M2M disambiguation (166)
+- `:migrations` — schema diffing, migration planning, predicate normalization (51)
 - `:gradle-plugin` — end-to-end plugin invocation in a generated test build (1)
 - `:postgres` — full parity coverage against `InMemoryDriverTest` including
-  M2M and transactions, running against `postgres:16-alpine` via
-  Testcontainers (30)
+  M2M, bulk ops, and transactions, running against `postgres:16-alpine` via
+  Testcontainers (75)
+- `:example-spring` — integration tests for friendship management (9)
 
 ## Roadmap
 
 Things that are **not yet implemented**, roughly in order of severity:
 
 ### Driver capabilities
-- **Bulk operations.** No `insertMany`, `updateMany`, or `deleteMany`.
 - **More drivers.** Only `InMemoryDriver` and `PostgresDriver` exist today.
   No SQLite, MySQL, etc.
 - **Observability.** No logging, metrics, or query-lifecycle hooks on the

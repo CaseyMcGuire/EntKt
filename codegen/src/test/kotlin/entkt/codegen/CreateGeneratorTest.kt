@@ -346,4 +346,5 @@ class CreateGeneratorTest {
             "Validation should appear after binding and before row map\n$output"
         }
     }
+
 }

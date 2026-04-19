@@ -98,6 +98,15 @@ class PostgresDriver(
     override fun delete(table: String, id: Any): Boolean =
         dataSource.connection.use { deleteWith(it, table, id) }
 
+    override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> =
+        dataSource.connection.use { insertManyWith(it, table, values) }
+
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int =
+        dataSource.connection.use { updateManyWith(it, table, values, predicates) }
+
+    override fun deleteMany(table: String, predicates: List<Predicate>): Int =
+        dataSource.connection.use { deleteManyWith(it, table, predicates) }
+
     // ---------- Connection-taking internals ----------
 
     private fun insertWith(
@@ -335,7 +344,159 @@ class PostgresDriver(
         }
     }
 
+    private fun insertManyWith(
+        conn: Connection,
+        table: String,
+        values: List<Map<String, Any?>>,
+    ): List<Map<String, Any?>> {
+        if (values.isEmpty()) return emptyList()
+        val schema = schemaFor(table)
+
+        val isAutoId = schema.idStrategy == IdStrategy.AUTO_INT ||
+            schema.idStrategy == IdStrategy.AUTO_LONG
+
+        // Normalize rows: for auto-id schemas, treat explicit null id the
+        // same as omitted id (both should use the serial default).
+        val normalized = if (isAutoId) {
+            values.map { row ->
+                if (row.containsKey(schema.idColumn) && row[schema.idColumn] == null)
+                    row - schema.idColumn
+                else row
+            }
+        } else values
+
+        // Group rows by their column sets so each group gets its own
+        // multi-row INSERT. This ensures absent columns use database
+        // defaults rather than being bound as NULL.
+        // Track original indices so we can return results in input order.
+        data class IndexedRow(val index: Int, val row: Map<String, Any?>)
+
+        val groups = normalized.mapIndexed { i, row -> IndexedRow(i, row) }
+            .groupBy { it.row.keys }
+
+        val results = arrayOfNulls<Map<String, Any?>>(values.size)
+
+        inTransaction(conn) {
+            for ((keys, indexedRows) in groups) {
+                val rows = indexedRows.map { it.row }
+                val skipId = isAutoId && rows.all { it[schema.idColumn] == null }
+                val cols = keys.filter { !(skipId && it == schema.idColumn) }.toList()
+
+                if (cols.isEmpty()) {
+                    // All rows in this group are empty maps — per-row DEFAULT VALUES.
+                    for (ir in indexedRows) {
+                        results[ir.index] = insertWith(conn, table, ir.row)
+                    }
+                    continue
+                }
+
+                val singlePlaceholders = "(${cols.joinToString(", ") { "?" }})"
+                val allPlaceholders = rows.joinToString(", ") { singlePlaceholders }
+                val colList = cols.joinToString(", ") { quote(it) }
+                val sql = "INSERT INTO ${quote(table)} ($colList) VALUES $allPlaceholders RETURNING *"
+
+                conn.prepareStatement(sql).use { stmt ->
+                    var idx = 1
+                    for (row in rows) {
+                        for (col in cols) {
+                            bind(stmt, idx++, columnTypeOf(schema, col), row[col])
+                        }
+                    }
+                    stmt.executeQuery().use { rs ->
+                        for (ir in indexedRows) {
+                            check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
+                            results[ir.index] = decodeRow(rs, schema.columns)
+                        }
+                    }
+                }
+            }
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        return results.toList() as List<Map<String, Any?>>
+    }
+
+    private fun updateManyWith(
+        conn: Connection,
+        table: String,
+        values: Map<String, Any?>,
+        predicates: List<Predicate>,
+    ): Int {
+        val schema = schemaFor(table)
+        val cols = values.keys.filter { it != schema.idColumn }
+        if (cols.isEmpty()) return 0
+
+        val builder = SqlBuilder()
+        val baseAlias = "t0"
+
+        val setClause = cols.joinToString(", ") { "${quote(it)} = ?" }
+        val sql = StringBuilder()
+        sql.append("UPDATE ${quote(table)} AS $baseAlias SET $setClause")
+
+        val combined = predicates.reduceOrNull(Predicate::And)
+        if (combined != null) {
+            val whereSql = builder.lower(combined, schema, baseAlias)
+            sql.append(" WHERE ").append(whereSql)
+        }
+
+        return conn.prepareStatement(sql.toString()).use { stmt ->
+            var idx = 1
+            for (col in cols) {
+                bind(stmt, idx++, columnTypeOf(schema, col), values[col])
+            }
+            for (p in builder.params) {
+                bind(stmt, idx++, p.type, p.value)
+            }
+            stmt.executeUpdate()
+        }
+    }
+
+    private fun deleteManyWith(
+        conn: Connection,
+        table: String,
+        predicates: List<Predicate>,
+    ): Int {
+        val schema = schemaFor(table)
+        val builder = SqlBuilder()
+        val baseAlias = "t0"
+
+        val sql = StringBuilder()
+        sql.append("DELETE FROM ${quote(table)} AS $baseAlias")
+
+        val combined = predicates.reduceOrNull(Predicate::And)
+        if (combined != null) {
+            val whereSql = builder.lower(combined, schema, baseAlias)
+            sql.append(" WHERE ").append(whereSql)
+        }
+
+        return conn.prepareStatement(sql.toString()).use { stmt ->
+            for ((i, p) in builder.params.withIndex()) {
+                bind(stmt, i + 1, p.type, p.value)
+            }
+            stmt.executeUpdate()
+        }
+    }
+
     // ---------- Schema lookup ----------
+
+    /**
+     * Run [block] inside a transaction on [conn]. If autocommit is already
+     * off (we're inside a transaction), just run the block directly.
+     */
+    private fun <T> inTransaction(conn: Connection, block: () -> T): T {
+        if (!conn.autoCommit) return block()
+        conn.autoCommit = false
+        try {
+            val result = block()
+            conn.commit()
+            return result
+        } catch (e: Throwable) {
+            conn.rollback()
+            throw e
+        } finally {
+            conn.autoCommit = true
+        }
+    }
 
     private fun schemaFor(table: String): EntitySchema =
         schemas[table] ?: error("Unregistered table: $table")
@@ -717,6 +878,18 @@ class PostgresDriver(
 
         override fun delete(table: String, id: Any): Boolean {
             checkOpen(); return deleteWith(conn, table, id)
+        }
+
+        override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> {
+            checkOpen(); return insertManyWith(conn, table, values)
+        }
+
+        override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int {
+            checkOpen(); return updateManyWith(conn, table, values, predicates)
+        }
+
+        override fun deleteMany(table: String, predicates: List<Predicate>): Int {
+            checkOpen(); return deleteManyWith(conn, table, predicates)
         }
 
         override fun <T> withTransaction(block: (Driver) -> T): T {

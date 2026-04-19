@@ -27,6 +27,9 @@ interface Driver {
         offset: Int?,
     ): List<Map<String, Any?>>
     fun delete(table: String, id: Any): Boolean
+    fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
+    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
+    fun deleteMany(table: String, predicates: List<Predicate>): Int
     fun <T> withTransaction(block: (Driver) -> T): T
 }
 ```
@@ -40,6 +43,16 @@ interface Driver {
   `UpsertResult(row, inserted)` so callers know which path was taken. Columns
   in `immutableColumns` are included in the insert but excluded from the
   update-on-conflict set. Requires at least one conflict column.
+- `insertMany()` batch-inserts multiple rows, returning all persisted rows
+  with assigned IDs. PostgresDriver uses multi-row `INSERT ... VALUES`.
+- `updateMany()` updates all rows matching the predicates with the same
+  values. Returns the count of updated rows.
+- `deleteMany()` deletes all rows matching the predicates. Returns the
+  count of deleted rows.
+
+These three bulk methods are low-level driver operations that do **not**
+fire lifecycle hooks. The generated repo methods (`createMany`,
+`deleteMany`) wrap them with hook support — see [Hooks](hooks.md).
 - `withTransaction()` runs a block in a transaction. The block receives a
   transaction-scoped driver. If it completes normally, the transaction
   commits. If it throws, the transaction rolls back.

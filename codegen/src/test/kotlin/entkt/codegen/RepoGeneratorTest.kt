@@ -210,4 +210,40 @@ class RepoGeneratorTest {
             "Should not have onAfterCreate — hooks are registered via client config DSL\n$output"
         }
     }
+
+    @Test
+    fun `repo exposes createMany with vararg blocks`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun createMany(vararg blocks: CarCreate.() -> Unit): List<Car>")) {
+            "Should have createMany with vararg blocks\n$output"
+        }
+    }
+
+    @Test
+    fun `createMany delegates to create and save for hook support`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("create(it).save()")) {
+            "createMany should delegate to create(block).save() so hooks fire\n$output"
+        }
+    }
+
+    @Test
+    fun `repo exposes deleteMany with vararg predicates`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun deleteMany(vararg predicates: Predicate): Int")) {
+            "Should have deleteMany with vararg Predicate\n$output"
+        }
+    }
+
+    @Test
+    fun `deleteMany queries then deletes through hook path`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("if (delete(entity)) count++")) {
+            "deleteMany should delegate to delete(entity) for hook support\n$output"
+        }
+    }
 }

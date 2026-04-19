@@ -105,6 +105,38 @@ interface Driver {
     fun delete(table: String, id: Any): Boolean
 
     /**
+     * Insert multiple rows in a single batch. Returns the persisted rows
+     * in the same order as [values], each with its assigned id. Drivers
+     * should use an efficient batch strategy (e.g. multi-row `INSERT`).
+     *
+     * This is a low-level driver method that does not fire lifecycle
+     * hooks. The generated `createMany` repo method delegates to
+     * `create { }.save()` per row so hooks fire for every entity.
+     */
+    fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
+
+    /**
+     * Update all rows matching [predicates] with the same [values].
+     * Predicates are AND-ed together, same as [query]. Returns the
+     * number of rows updated.
+     *
+     * This is a low-level driver method that does not fire lifecycle
+     * hooks. No generated repo method wraps this — callers who need
+     * per-row hooks should loop over [update].
+     */
+    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
+
+    /**
+     * Delete all rows matching [predicates]. Predicates are AND-ed
+     * together, same as [query]. Returns the number of rows deleted.
+     *
+     * This is a low-level driver method that does not fire lifecycle
+     * hooks. The generated `deleteMany` repo method queries matching
+     * entities and deletes each through `delete(entity)` so hooks fire.
+     */
+    fun deleteMany(table: String, predicates: List<Predicate>): Int
+
+    /**
      * Run [block] inside a transaction. The block receives a
      * transaction-scoped [Driver] that shares a single underlying
      * connection / snapshot. If [block] completes normally the

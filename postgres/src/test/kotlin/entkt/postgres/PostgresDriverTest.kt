@@ -851,4 +851,136 @@ class PostgresDriverTest {
 
         assertEquals(false, driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, false))))
     }
+
+    // ---------- insertMany ----------
+
+    @Test
+    fun `insertMany inserts multiple rows and assigns ids`() {
+        val driver = fresh()
+        val rows = driver.insertMany("users", listOf(
+            mapOf("name" to "Alice", "age" to 30),
+            mapOf("name" to "Bob", "age" to 25),
+            mapOf("name" to "Carol", "age" to 40),
+        ))
+
+        assertEquals(3, rows.size)
+        assertEquals("Alice", rows[0]["name"])
+        assertEquals("Bob", rows[1]["name"])
+        assertEquals("Carol", rows[2]["name"])
+        assertEquals(1L, rows[0]["id"])
+        assertEquals(2L, rows[1]["id"])
+        assertEquals(3L, rows[2]["id"])
+    }
+
+    @Test
+    fun `insertMany with empty list returns empty`() {
+        val driver = fresh()
+        assertEquals(emptyList(), driver.insertMany("users", emptyList()))
+    }
+
+    @Test
+    fun `insertMany with sparse maps preserves defaults`() {
+        val driver = fresh()
+        // active has a DB default of null — first row omits it, second provides it.
+        // The first row should get null (DB default), not fail.
+        val rows = driver.insertMany("users", listOf(
+            mapOf("name" to "Alice"),
+            mapOf("name" to "Bob", "active" to false),
+        ))
+
+        assertEquals(2, rows.size)
+        assertNull(rows[0]["active"], "First row should get DB default (null)")
+        assertEquals(false, rows[1]["active"])
+    }
+
+    @Test
+    fun `insertMany with explicit null id uses serial default`() {
+        val driver = fresh()
+        // Explicit null id should be treated the same as omitted id
+        val rows = driver.insertMany("users", listOf(
+            mapOf("id" to null, "name" to "Alice"),
+            mapOf("name" to "Bob"),
+        ))
+
+        assertEquals(2, rows.size)
+        assertNotNull(rows[0]["id"], "First row should get auto-assigned id")
+        assertNotNull(rows[1]["id"], "Second row should get auto-assigned id")
+        assertTrue(rows[0]["id"] != rows[1]["id"], "IDs should be distinct")
+    }
+
+    @Test
+    fun `insertMany rolls back on failure`() {
+        val driver = fresh()
+        // Insert a row to claim id=1
+        driver.insert("users", mapOf("name" to "Existing"))
+
+        // Try to batch-insert where the second row has a conflicting explicit id
+        assertFailsWith<Exception> {
+            driver.insertMany("users", listOf(
+                mapOf("name" to "New"),
+                mapOf("id" to 1L, "name" to "Conflict"),
+            ))
+        }
+
+        // Only the original row should exist — the batch should have rolled back
+        val all = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(1, all.size, "Batch should have rolled back")
+        assertEquals("Existing", all[0]["name"])
+    }
+
+    // ---------- updateMany ----------
+
+    @Test
+    fun `updateMany updates matching rows and returns count`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
+        driver.insert("users", mapOf("name" to "Bob", "age" to 17, "active" to true))
+        driver.insert("users", mapOf("name" to "Carol", "age" to 65, "active" to false))
+
+        val count = driver.updateMany(
+            "users",
+            mapOf("active" to false),
+            listOf(Predicate.Leaf("age", Op.LT, 18)),
+        )
+
+        assertEquals(1, count)
+        val bob = driver.query("users", listOf(Predicate.Leaf("name", Op.EQ, "Bob")), emptyList(), null, null).single()
+        assertEquals(false, bob["active"])
+    }
+
+    @Test
+    fun `updateMany with empty values returns zero`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "active" to true))
+
+        val count = driver.updateMany("users", emptyMap(), emptyList())
+        assertEquals(0, count)
+    }
+
+    // ---------- deleteMany ----------
+
+    @Test
+    fun `deleteMany deletes matching rows and returns count`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "age" to 30))
+        driver.insert("users", mapOf("name" to "Bob", "age" to 17))
+        driver.insert("users", mapOf("name" to "Carol", "age" to 65))
+
+        val count = driver.deleteMany("users", listOf(Predicate.Leaf("age", Op.LT, 18)))
+
+        assertEquals(1, count)
+        val remaining = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(2, remaining.size)
+    }
+
+    @Test
+    fun `deleteMany with no predicates deletes all rows`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+        driver.insert("users", mapOf("name" to "Bob"))
+
+        val count = driver.deleteMany("users", emptyList())
+        assertEquals(2, count)
+        assertEquals(0, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
 }
