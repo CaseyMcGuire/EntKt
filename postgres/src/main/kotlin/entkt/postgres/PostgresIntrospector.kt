@@ -6,6 +6,7 @@ import entkt.migrations.NormalizedForeignKey
 import entkt.migrations.NormalizedIndex
 import entkt.migrations.NormalizedSchema
 import entkt.migrations.NormalizedTable
+import entkt.migrations.normalizeWhere
 import javax.sql.DataSource
 
 /**
@@ -179,7 +180,7 @@ class PostgresIntrospector(
                             columns = columns,
                             unique = isUnique,
                             storageKey = indexName,
-                            where = predicate,
+                            where = normalizeWhere(predicate),
                         ),
                     )
                 }

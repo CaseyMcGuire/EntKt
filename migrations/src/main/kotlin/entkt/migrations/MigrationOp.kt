@@ -40,7 +40,7 @@ sealed interface MigrationOp {
 
     data class DropColumnNotNull(val table: String, val columnName: String) : MigrationOp
 
-    data class DropIndex(val table: String, val columns: List<String>, val unique: Boolean, val storageKey: String?) : MigrationOp
+    data class DropIndex(val table: String, val columns: List<String>, val unique: Boolean, val storageKey: String?, val where: String? = null) : MigrationOp
 
     data class AlterPrimaryKey(val table: String, val columnName: String, val added: Boolean) : MigrationOp
 

@@ -305,11 +305,11 @@ class Migrator(
             val currentTable = current.tables[tableName] ?: return@mapValues desiredTable
 
             data class IndexShape(val columns: List<String>, val unique: Boolean, val where: String?)
-            val currentIndexByShape = currentTable.indexes.associateBy { IndexShape(it.columns, it.unique, it.where) }
+            val currentIndexByShape = currentTable.indexes.associateBy { IndexShape(it.columns, it.unique, normalizeWhere(it.where)) }
             val mergedIndexes = desiredTable.indexes.map { idx ->
                 if (idx.storageKey != null) idx
                 else {
-                    val currentIdx = currentIndexByShape[IndexShape(idx.columns, idx.unique, idx.where)]
+                    val currentIdx = currentIndexByShape[IndexShape(idx.columns, idx.unique, normalizeWhere(idx.where))]
                     if (currentIdx?.storageKey != null) idx.copy(storageKey = currentIdx.storageKey)
                     else idx
                 }

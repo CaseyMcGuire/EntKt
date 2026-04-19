@@ -44,7 +44,7 @@ class PostgresSqlRenderer(
             listOf("-- TODO: ALTER TABLE ${quote(op.table)} DROP ${quote(op.columnName)} from PRIMARY KEY (requires DROP + re-CREATE)")
         }
         is MigrationOp.DropIndex -> listOf(
-            "-- TODO: DROP INDEX ${quote(truncateIdentifier(op.storageKey ?: deriveIndexName(op.table, op.columns, op.unique)))}",
+            "-- TODO: DROP INDEX ${quote(truncateIdentifier(op.storageKey ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
         )
         is MigrationOp.DropForeignKey -> listOf(
             "-- TODO: ALTER TABLE ${quote(op.table)} DROP CONSTRAINT ${quote(truncateIdentifier(op.constraintName ?: "fk_${op.table}_${op.column}"))}",
@@ -83,7 +83,7 @@ class PostgresSqlRenderer(
     ): List<String> {
         val ifNotExists = if (mode == RenderMode.DEV) " IF NOT EXISTS" else ""
         val cols = index.columns.joinToString(", ") { quote(it) }
-        val name = truncateIdentifier(index.storageKey ?: deriveIndexName(table, index.columns, index.unique))
+        val name = truncateIdentifier(index.storageKey ?: deriveIndexName(table, index.columns, index.unique, index.where))
         val keyword = if (index.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
         val whereSuffix = if (index.where != null) " WHERE ${index.where}" else ""
         return listOf("$keyword$ifNotExists ${quote(name)} ON ${quote(table)} ($cols)$whereSuffix")
@@ -106,12 +106,20 @@ class PostgresSqlRenderer(
      * Derive an index name and truncate to 63 bytes (Postgres
      * NAMEDATALEN - 1). Postgres silently truncates identifiers at this
      * limit, so the derived name must match what the DB actually stores.
+     *
+     * When [where] is non-null, a short hash suffix is appended so that
+     * indexes on the same columns with different predicates (or a full
+     * index plus a partial one) get distinct names.
      */
-    private fun deriveIndexName(table: String, columns: List<String>, unique: Boolean): String {
+    private fun deriveIndexName(table: String, columns: List<String>, unique: Boolean, where: String? = null): String {
         val full = buildString {
             append("idx_$table")
             for (col in columns) append("_$col")
             if (unique) append("_unique")
+            if (where != null) {
+                append("_w")
+                append(where.hashCode().toUInt().toString(16).take(8))
+            }
         }
         return truncateIdentifier(full)
     }

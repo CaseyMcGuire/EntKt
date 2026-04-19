@@ -390,6 +390,10 @@ class PostgresDriver(
                     append("idx_${schema.table}")
                     for (col in idx.columns) append("_$col")
                     if (idx.unique) append("_unique")
+                    if (idx.where != null) {
+                        append("_w")
+                        append(idx.where.hashCode().toUInt().toString(16).take(8))
+                    }
                 }
             val name = typeMapper.normalizeIdentifier(rawName)
             val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"

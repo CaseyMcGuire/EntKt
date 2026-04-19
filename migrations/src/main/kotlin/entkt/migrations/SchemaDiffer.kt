@@ -127,10 +127,12 @@ class SchemaDiffer {
         manualOps: MutableList<MigrationOp>,
     ) {
         // Match indexes by semantic identity: (columns, unique, where)
+        // Predicates are normalized so that PostgreSQL's deparsed form
+        // (with outer parens, extra whitespace) matches the user-written form.
         data class IndexKey(val columns: List<String>, val unique: Boolean, val where: String?)
 
-        val currentByKey = current.indexes.associateBy { IndexKey(it.columns, it.unique, it.where) }
-        val desiredByKey = desired.indexes.associateBy { IndexKey(it.columns, it.unique, it.where) }
+        val currentByKey = current.indexes.associateBy { IndexKey(it.columns, it.unique, normalizeWhere(it.where)) }
+        val desiredByKey = desired.indexes.associateBy { IndexKey(it.columns, it.unique, normalizeWhere(it.where)) }
 
         // New indexes
         for ((key, idx) in desiredByKey) {
@@ -141,7 +143,7 @@ class SchemaDiffer {
                 // Desired has an explicit name that differs from current
                 // (which may be null/derived or a different explicit name)
                 // — manual drop of the old index + auto add under the new name.
-                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.storageKey))
+                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.storageKey, currentIdx.where))
                 autoOps.add(MigrationOp.AddIndex(table, idx))
             }
         }
@@ -149,7 +151,7 @@ class SchemaDiffer {
         // Dropped indexes
         for ((key, currentIdx) in currentByKey) {
             if (key !in desiredByKey) {
-                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.storageKey))
+                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.storageKey, currentIdx.where))
             }
         }
     }

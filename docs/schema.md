@@ -233,6 +233,17 @@ This generates `CREATE UNIQUE INDEX ... ON users (email) WHERE active = true`.
 Partial indexes are useful for enforcing uniqueness on a subset of rows or
 speeding up queries that always filter by a condition.
 
+When two indexes share the same columns and uniqueness but differ only by
+predicate, entkt derives distinct index names automatically (using a hash
+of the WHERE clause). You can also use `.storageKey()` to set explicit names.
+
+**Predicate normalization:** PostgreSQL's catalog deparses predicates
+differently from the user-written form (adding outer parentheses, type
+casts, etc.). The migration differ normalizes both sides before comparing,
+so `active = true` and `((active)::boolean = true)` are treated as
+equivalent. For very exotic expressions where normalization falls short,
+pin the index with `.storageKey()` to avoid spurious diffs.
+
 ## Mixins
 
 Mixins are reusable groups of fields, edges, and indexes that can be

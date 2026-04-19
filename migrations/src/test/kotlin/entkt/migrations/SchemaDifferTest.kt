@@ -684,6 +684,118 @@ class SchemaDifferTest {
         assertTrue(index.unique)
     }
 
+    // ---- normalizeWhere tests ----
+
+    @Test
+    fun `normalizeWhere strips outer parens`() {
+        assertEquals("active = true", normalizeWhere("(active = true)"))
+    }
+
+    @Test
+    fun `normalizeWhere strips nested outer parens`() {
+        assertEquals("active = true", normalizeWhere("((active = true))"))
+    }
+
+    @Test
+    fun `normalizeWhere does not strip compound parens`() {
+        assertEquals("(a = 1) OR (b = 2)", normalizeWhere("(a = 1) OR (b = 2)"))
+    }
+
+    @Test
+    fun `normalizeWhere normalizes whitespace`() {
+        assertEquals("active = true", normalizeWhere("active  =  true"))
+    }
+
+    @Test
+    fun `normalizeWhere returns null for null`() {
+        assertNull(normalizeWhere(null))
+    }
+
+    @Test
+    fun `normalizeWhere strips column casts`() {
+        // pg_get_expr deparses boolean column refs as (col)::boolean
+        assertEquals("active = true", normalizeWhere("((active)::boolean = true)"))
+    }
+
+    @Test
+    fun `normalizeWhere strips literal casts`() {
+        // pg_get_expr deparses text comparisons with ::text casts
+        assertEquals("status = 'active'", normalizeWhere("((status)::text = 'active'::text)"))
+    }
+
+    @Test
+    fun `normalizeWhere strips bare identifier casts`() {
+        assertEquals("x = 5", normalizeWhere("x::integer = 5"))
+    }
+
+    @Test
+    fun `differ matches indexes with outer-paren difference in where`() {
+        // Simulates pg_get_expr wrapping the predicate in parens
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "(active = true)")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        // Should see no changes — same index semantically
+        assertTrue(result.ops.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
+        assertTrue(result.manual.filterIsInstance<MigrationOp.DropIndex>().isEmpty())
+    }
+
+    @Test
+    fun `differ matches indexes when introspected predicate has PG casts`() {
+        // Simulates pg_get_expr adding casts to a boolean predicate
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "((active)::boolean = true)")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertTrue(result.ops.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
+        assertTrue(result.manual.filterIsInstance<MigrationOp.DropIndex>().isEmpty())
+    }
+
+    @Test
+    fun `DropIndex carries where clause`() {
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        val dropIdx = result.manual.filterIsInstance<MigrationOp.DropIndex>().single()
+        assertEquals("active = true", dropIdx.where)
+    }
+
     // ---- JsonCodec tests ----
 
     @Test

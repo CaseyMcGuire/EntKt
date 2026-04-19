@@ -134,6 +134,61 @@ data class NormalizedIndex(
     val where: String? = null,
 )
 
+/**
+ * Normalize a SQL WHERE predicate for comparison. PostgreSQL's
+ * `pg_get_expr` deparses predicates with differences from the
+ * user-written form:
+ *
+ * - Outer parentheses: `active = true` → `(active = true)`
+ * - Type casts on columns: `active` → `(active)::boolean`
+ * - Type casts on literals: `'foo'` → `'foo'::text`
+ * - Whitespace differences
+ *
+ * This function strips balanced outer parens, removes simple
+ * PostgreSQL type casts, and collapses whitespace so that the
+ * deparsed and user-written forms compare equal for typical
+ * predicates. For exotic expressions where this isn't enough,
+ * use `.storageKey()` to pin the index name and avoid spurious
+ * diffs.
+ */
+fun normalizeWhere(predicate: String?): String? {
+    if (predicate == null) return null
+    var s = predicate.trim()
+
+    // Strip PostgreSQL type casts:
+    //   (col)::type  → col
+    //   'literal'::type  → 'literal'
+    //   identifier::type → identifier
+    s = s.replace(Regex("\\(([^()]+)\\)::[a-z_]+"), "$1")
+    s = s.replace(Regex("('[^']*')::[a-z_]+"), "$1")
+    s = s.replace(Regex("([a-zA-Z_][a-zA-Z0-9_]*)::[a-z_]+"), "$1")
+
+    // Strip balanced outer parentheses.
+    while (s.startsWith("(") && s.endsWith(")")) {
+        // Verify the opening paren matches the closing one (not part
+        // of a compound expression like "(a = 1) OR (b = 2)").
+        var depth = 0
+        var wraps = false
+        for ((i, c) in s.withIndex()) {
+            when (c) {
+                '(' -> depth++
+                ')' -> {
+                    depth--
+                    if (depth == 0) {
+                        wraps = i == s.length - 1
+                        break
+                    }
+                }
+            }
+        }
+        if (!wraps) break
+        s = s.substring(1, s.length - 1).trim()
+    }
+
+    // Collapse runs of whitespace.
+    return s.replace(Regex("\\s+"), " ")
+}
+
 data class NormalizedForeignKey(
     val column: String,
     val targetTable: String,
