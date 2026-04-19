@@ -10,3 +10,5 @@ build
 
 # Claude Code
 .claude/worktrees
+
+.gradle-cache
