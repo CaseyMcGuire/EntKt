@@ -34,7 +34,8 @@ class SchemaDifferTest {
         columns: List<String>,
         unique: Boolean = false,
         storageKey: String? = null,
-    ) = NormalizedIndex(columns, unique, storageKey)
+        where: String? = null,
+    ) = NormalizedIndex(columns, unique, storageKey, where)
 
     private fun fk(
         column: String,
@@ -563,6 +564,124 @@ class SchemaDifferTest {
 
         val withoutName = describeOp(MigrationOp.DropForeignKey("posts", "author_id", constraintName = null))
         assertFalse(withoutName.contains("["), "Should not have brackets when constraintName is null")
+    }
+
+    // ---- Partial index tests ----
+
+    @Test
+    fun `adding a partial index emits AddIndex with where clause`() {
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        val addIdxs = result.ops.filterIsInstance<MigrationOp.AddIndex>()
+        assertEquals(1, addIdxs.size)
+        assertEquals("active = true", addIdxs[0].index.where)
+    }
+
+    @Test
+    fun `dropping a partial index emits DropIndex`() {
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        val dropIdxs = result.manual.filterIsInstance<MigrationOp.DropIndex>()
+        assertEquals(1, dropIdxs.size)
+    }
+
+    @Test
+    fun `changing where clause triggers drop and add`() {
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = false")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        val dropIdxs = result.manual.filterIsInstance<MigrationOp.DropIndex>()
+        assertEquals(1, dropIdxs.size)
+        val addIdxs = result.ops.filterIsInstance<MigrationOp.AddIndex>()
+        assertEquals(1, addIdxs.size)
+        assertEquals("active = false", addIdxs[0].index.where)
+    }
+
+    @Test
+    fun `same columns with vs without where are different indexes`() {
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true)),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(
+                    idx(listOf("email"), unique = true),
+                    idx(listOf("email"), unique = true, where = "active = true"),
+                ),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        // The non-partial index matches, so only the partial one is new
+        val addIdxs = result.ops.filterIsInstance<MigrationOp.AddIndex>()
+        assertEquals(1, addIdxs.size)
+        assertEquals("active = true", addIdxs[0].index.where)
+        // No drops
+        assertTrue(result.manual.filterIsInstance<MigrationOp.DropIndex>().isEmpty())
+    }
+
+    @Test
+    fun `snapshot round-trip preserves partial index where clause`() {
+        val original = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+            ),
+        )
+
+        val writer = java.io.StringWriter()
+        original.toJson(writer)
+        val decoded = NormalizedSchema.fromJson(java.io.StringReader(writer.toString()))
+
+        val index = decoded.tables["users"]!!.indexes[0]
+        assertEquals("active = true", index.where)
+        assertTrue(index.unique)
     }
 
     // ---- JsonCodec tests ----

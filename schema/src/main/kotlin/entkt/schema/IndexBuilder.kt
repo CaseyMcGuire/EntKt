@@ -5,13 +5,16 @@ class IndexBuilder(
 ) {
     private var unique: Boolean = false
     private var storageKey: String? = null
+    private var where: String? = null
 
     fun unique(): IndexBuilder = apply { unique = true }
     fun storageKey(key: String): IndexBuilder = apply { storageKey = key }
+    fun where(clause: String): IndexBuilder = apply { where = clause }
 
     fun build(): Index = Index(
         fields = fields,
         unique = unique,
         storageKey = storageKey,
+        where = where,
     )
 }

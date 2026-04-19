@@ -53,6 +53,7 @@ object User : EntSchema() {
     override fun indexes() = indexes {
         index("name", "email").unique()
         index("created_at")
+        index("email").unique().where("active = true")
     }
 }
 
@@ -188,7 +189,7 @@ class SchemaTest {
     @Test
     fun `indexes are defined with correct fields`() {
         val indexes = User.indexes()
-        assertEquals(2, indexes.size)
+        assertEquals(3, indexes.size)
 
         val composite = indexes[0]
         assertEquals(listOf("name", "email"), composite.fields)
@@ -197,6 +198,22 @@ class SchemaTest {
         val single = indexes[1]
         assertEquals(listOf("created_at"), single.fields)
         assertFalse(single.unique)
+    }
+
+    @Test
+    fun `partial index has where clause`() {
+        val indexes = User.indexes()
+        val partial = indexes[2]
+        assertEquals(listOf("email"), partial.fields)
+        assertTrue(partial.unique)
+        assertEquals("active = true", partial.where)
+    }
+
+    @Test
+    fun `non-partial indexes have null where`() {
+        val indexes = User.indexes()
+        assertNull(indexes[0].where)
+        assertNull(indexes[1].where)
     }
 
     @Test

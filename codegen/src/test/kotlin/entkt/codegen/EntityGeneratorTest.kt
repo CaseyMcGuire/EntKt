@@ -56,6 +56,7 @@ object User : EntSchema() {
 
     override fun indexes() = indexes {
         index("name", "email").unique()
+        index("email").where("active = true")
     }
 }
 
@@ -212,6 +213,15 @@ class EntityGeneratorTest {
         // mixin indexes are merged into the generated schema.
         assert(output.contains("\"created_at\"")) {
             "Should include the index declared by TimeMixin\n$output"
+        }
+    }
+
+    @Test
+    fun `generated SCHEMA includes where clause for partial indexes`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("""where = "active = true"""")) {
+            "Should emit where clause for partial index\n$output"
         }
     }
 

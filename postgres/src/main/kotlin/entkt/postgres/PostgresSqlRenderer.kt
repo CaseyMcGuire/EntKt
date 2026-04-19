@@ -85,7 +85,8 @@ class PostgresSqlRenderer(
         val cols = index.columns.joinToString(", ") { quote(it) }
         val name = truncateIdentifier(index.storageKey ?: deriveIndexName(table, index.columns, index.unique))
         val keyword = if (index.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
-        return listOf("$keyword$ifNotExists ${quote(name)} ON ${quote(table)} ($cols)")
+        val whereSuffix = if (index.where != null) " WHERE ${index.where}" else ""
+        return listOf("$keyword$ifNotExists ${quote(name)} ON ${quote(table)} ($cols)$whereSuffix")
     }
 
     private fun renderAddForeignKey(

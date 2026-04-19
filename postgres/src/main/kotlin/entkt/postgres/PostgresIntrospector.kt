@@ -149,7 +149,8 @@ class PostgresIntrospector(
             """
             SELECT i.relname AS index_name,
                    ix.indisunique AS is_unique,
-                   array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) AS columns
+                   array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) AS columns,
+                   pg_get_expr(ix.indpred, ix.indrelid) AS predicate
             FROM pg_index ix
             JOIN pg_class t ON t.oid = ix.indrelid
             JOIN pg_class i ON i.oid = ix.indexrelid
@@ -158,7 +159,7 @@ class PostgresIntrospector(
             WHERE n.nspname = 'public'
               AND t.relname = ?
               AND NOT ix.indisprimary
-            GROUP BY i.relname, ix.indisunique
+            GROUP BY i.relname, ix.indisunique, ix.indpred, ix.indrelid
             """.trimIndent(),
         ).use { stmt ->
             stmt.setString(1, tableName)
@@ -168,6 +169,7 @@ class PostgresIntrospector(
                     val isUnique = rs.getBoolean("is_unique")
                     val colArray = rs.getArray("columns")
                     val columns = (colArray.array as Array<*>).map { it.toString() }
+                    val predicate = rs.getString("predicate")
 
                     // Skip PK indexes
                     if (columns.size == 1 && columns[0] in primaryKeys && !isUnique) continue
@@ -177,6 +179,7 @@ class PostgresIntrospector(
                             columns = columns,
                             unique = isUnique,
                             storageKey = indexName,
+                            where = predicate,
                         ),
                     )
                 }

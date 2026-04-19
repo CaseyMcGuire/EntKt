@@ -138,6 +138,7 @@ private fun buildEntitySchema(
                 columns = idx.fields,
                 unique = idx.unique,
                 storageKey = idx.storageKey,
+                where = idx.where,
             )
         },
     )

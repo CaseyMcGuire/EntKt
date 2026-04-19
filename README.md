@@ -127,7 +127,7 @@ via junction table).
 
 **Mixins:** any `EntMixin` contributing `fields()`, `edges()`, `indexes()`.
 
-**Indexes:** field list + `.unique()` + `.storageKey()`.
+**Indexes:** field list + `.unique()` + `.storageKey()` + `.where(predicate)` (partial indexes).
 
 ### Codegen (`:codegen`)
 
@@ -291,6 +291,7 @@ JDBC-backed `Driver` talking to real PostgreSQL.
   `serial`/`bigserial`. Edge FK columns emit `REFERENCES target("id")`
   constraints. Unique fields and composite indexes emit `UNIQUE`
   constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
+  Partial indexes append `WHERE predicate` when declared via `.where()`.
 - **Insert/update/upsert:** `INSERT ... RETURNING *`, `UPDATE ... RETURNING *`,
   and `INSERT ... ON CONFLICT ... DO UPDATE SET ... RETURNING *` with fully
   parameterized bindings. Never rewrites the id through `update`. Upsert uses
@@ -354,8 +355,6 @@ Things that are **not yet implemented**, roughly in order of severity:
   driver interface.
 
 ### Schema & DDL
-- **Partial indexes.** Only simple and composite indexes are supported;
-  no partial / conditional indexes.
 - **Exotic column types.** No JSON/JSONB, arrays, enums (as PG enum types),
   hstore, or composites.
 - **Cascade delete.** Edge FK columns emit `ON DELETE SET NULL` (nullable)

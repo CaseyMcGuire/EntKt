@@ -60,6 +60,9 @@ internal object JsonCodec {
             if (idx.storageKey != null) {
                 sb.append(", \"storageKey\": ").append(escStr(idx.storageKey))
             }
+            if (idx.where != null) {
+                sb.append(", \"where\": ").append(escStr(idx.where))
+            }
             sb.append("}")
             if (ii < sortedIndexes.size - 1) sb.append(",")
             sb.append("\n")
@@ -197,6 +200,7 @@ internal object JsonCodec {
             var columns = emptyList<String>()
             var unique = false
             var storageKey: String? = null
+            var where: String? = null
             skipWs()
             while (peek() != '}') {
                 val key = readString()
@@ -205,13 +209,14 @@ internal object JsonCodec {
                     "columns" -> columns = parseArray { readString() }
                     "unique" -> unique = readBool()
                     "storageKey" -> storageKey = readString()
+                    "where" -> where = readString()
                     else -> skipValue()
                 }
                 skipWs()
                 if (peek() == ',') { advance(); skipWs() }
             }
             expect('}')
-            return NormalizedIndex(columns, unique, storageKey)
+            return NormalizedIndex(columns, unique, storageKey, where)
         }
 
         private fun parseForeignKey(): NormalizedForeignKey {

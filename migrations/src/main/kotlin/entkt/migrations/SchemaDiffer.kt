@@ -126,11 +126,11 @@ class SchemaDiffer {
         autoOps: MutableList<MigrationOp>,
         manualOps: MutableList<MigrationOp>,
     ) {
-        // Match indexes by semantic identity: (columns, unique)
-        data class IndexKey(val columns: List<String>, val unique: Boolean)
+        // Match indexes by semantic identity: (columns, unique, where)
+        data class IndexKey(val columns: List<String>, val unique: Boolean, val where: String?)
 
-        val currentByKey = current.indexes.associateBy { IndexKey(it.columns, it.unique) }
-        val desiredByKey = desired.indexes.associateBy { IndexKey(it.columns, it.unique) }
+        val currentByKey = current.indexes.associateBy { IndexKey(it.columns, it.unique, it.where) }
+        val desiredByKey = desired.indexes.associateBy { IndexKey(it.columns, it.unique, it.where) }
 
         // New indexes
         for ((key, idx) in desiredByKey) {

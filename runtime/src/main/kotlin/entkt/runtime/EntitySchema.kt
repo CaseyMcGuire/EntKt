@@ -87,6 +87,8 @@ data class IndexMetadata(
     val unique: Boolean = false,
     /** Optional explicit name; drivers derive one if null. */
     val storageKey: String? = null,
+    /** Optional SQL WHERE clause for partial indexes (e.g. `"active = true"`). */
+    val where: String? = null,
 )
 
 /**

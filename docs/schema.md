@@ -219,6 +219,20 @@ Single-column unique constraints are simpler -- just use `.unique()` on the
 field directly. Composite indexes that need a custom database name use
 `.storageKey()`.
 
+### Partial indexes
+
+Partial (conditional) indexes include only rows matching a `WHERE` predicate:
+
+```kotlin
+override fun indexes() = indexes {
+    index("email").unique().where("active = true")
+}
+```
+
+This generates `CREATE UNIQUE INDEX ... ON users (email) WHERE active = true`.
+Partial indexes are useful for enforcing uniqueness on a subset of rows or
+speeding up queries that always filter by a condition.
+
 ## Mixins
 
 Mixins are reusable groups of fields, edges, and indexes that can be

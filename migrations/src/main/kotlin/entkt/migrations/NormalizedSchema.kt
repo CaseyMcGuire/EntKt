@@ -53,6 +53,7 @@ data class NormalizedSchema(
                         columns = idx.columns,
                         unique = idx.unique,
                         storageKey = idx.storageKey?.let { typeMapper.normalizeIdentifier(it) },
+                        where = idx.where,
                     )
                 }
 
@@ -129,6 +130,8 @@ data class NormalizedIndex(
     val unique: Boolean,
     /** Explicit name override, or null (name is a rendering detail). */
     val storageKey: String?,
+    /** SQL WHERE clause for partial indexes — part of semantic identity. */
+    val where: String? = null,
 )
 
 data class NormalizedForeignKey(

@@ -331,20 +331,12 @@ internal fun entitySchemaCodeBlock(
         indexesLiteral.add("listOf(\n")
         for (idx in schemaIndexes) {
             val fieldsLiteral = idx.fields.joinToString(", ") { "\"$it\"" }
-            if (idx.storageKey != null) {
-                indexesLiteral.add(
-                    "  %T(columns = listOf($fieldsLiteral), unique = %L, storageKey = %S),\n",
-                    INDEX_METADATA,
-                    idx.unique,
-                    idx.storageKey,
-                )
-            } else {
-                indexesLiteral.add(
-                    "  %T(columns = listOf($fieldsLiteral), unique = %L),\n",
-                    INDEX_METADATA,
-                    idx.unique,
-                )
-            }
+            val cb = CodeBlock.builder()
+                .add("  %T(columns = listOf($fieldsLiteral), unique = %L", INDEX_METADATA, idx.unique)
+            if (idx.storageKey != null) cb.add(", storageKey = %S", idx.storageKey)
+            if (idx.where != null) cb.add(", where = %S", idx.where)
+            cb.add("),\n")
+            indexesLiteral.add(cb.build())
         }
         indexesLiteral.add(")")
     }

@@ -393,7 +393,8 @@ class PostgresDriver(
                 }
             val name = typeMapper.normalizeIdentifier(rawName)
             val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
-            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} ($cols)"
+            val whereSuffix = if (idx.where != null) " WHERE ${idx.where}" else ""
+            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} ($cols)$whereSuffix"
         }
 
         return columnUniques + compositeIndexes

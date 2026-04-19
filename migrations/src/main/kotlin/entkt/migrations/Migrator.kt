@@ -304,11 +304,12 @@ class Migrator(
         val mergedTables = desired.tables.mapValues { (tableName, desiredTable) ->
             val currentTable = current.tables[tableName] ?: return@mapValues desiredTable
 
-            val currentIndexByShape = currentTable.indexes.associateBy { it.columns to it.unique }
+            data class IndexShape(val columns: List<String>, val unique: Boolean, val where: String?)
+            val currentIndexByShape = currentTable.indexes.associateBy { IndexShape(it.columns, it.unique, it.where) }
             val mergedIndexes = desiredTable.indexes.map { idx ->
                 if (idx.storageKey != null) idx
                 else {
-                    val currentIdx = currentIndexByShape[idx.columns to idx.unique]
+                    val currentIdx = currentIndexByShape[IndexShape(idx.columns, idx.unique, idx.where)]
                     if (currentIdx?.storageKey != null) idx.copy(storageKey = currentIdx.storageKey)
                     else idx
                 }
@@ -343,7 +344,8 @@ internal fun describeOp(op: MigrationOp): String = when (op) {
     is MigrationOp.AddIndex -> {
         val cols = op.index.columns.joinToString(", ")
         val u = if (op.index.unique) " unique" else ""
-        "AddIndex: ${op.table} ($cols)$u"
+        val w = if (op.index.where != null) " WHERE ${op.index.where}" else ""
+        "AddIndex: ${op.table} ($cols)$u$w"
     }
     is MigrationOp.AddForeignKey -> "AddForeignKey: ${op.table}.${op.fk.column} -> ${op.fk.targetTable}.${op.fk.targetColumn}"
     is MigrationOp.DropTable -> "DropTable: ${op.tableName}"
