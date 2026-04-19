@@ -11,6 +11,7 @@ class EntktPluginTest {
 
     @Test
     fun `generateEntkt task produces entity files`() {
+        val kotlinVersion = KotlinVersion.CURRENT.let { "${it.major}.${it.minor}.${it.patch}" }
         val projectDir = File.createTempFile("entkt-test", "").apply {
             delete()
             mkdirs()
@@ -35,7 +36,7 @@ class EntktPluginTest {
                 writeText(
                     """
                     plugins {
-                        kotlin("jvm") version "2.0.21"
+                        kotlin("jvm") version "$kotlinVersion"
                     }
                     repositories { mavenCentral() }
                     dependencies {
@@ -79,7 +80,7 @@ class EntktPluginTest {
                 writeText(
                     """
                     plugins {
-                        kotlin("jvm") version "2.0.21"
+                        kotlin("jvm") version "$kotlinVersion"
                         id("entkt")
                     }
                     repositories { mavenCentral() }
