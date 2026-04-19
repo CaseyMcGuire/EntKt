@@ -21,5 +21,3 @@ class AuthContext {
         }
     }
 }
-
-class AccessDeniedException(message: String) : RuntimeException(message)

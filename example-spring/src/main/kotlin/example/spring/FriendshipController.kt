@@ -12,22 +12,6 @@ import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import java.util.UUID
 
-data class FriendRequestBody(val recipientId: UUID)
-
-data class FriendshipResponse(
-    val id: Int,
-    val status: FriendshipStatus,
-    val requesterId: UUID,
-    val recipientId: UUID,
-)
-
-fun Friendship.toResponse() = FriendshipResponse(
-    id = id,
-    status = status,
-    requesterId = requesterId,
-    recipientId = recipientId,
-)
-
 @RestController
 class FriendshipController(private val client: EntClient) {
 
