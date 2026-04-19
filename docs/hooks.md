@@ -82,6 +82,20 @@ For an **update**:
 4. `driver.update(...)`
 5. `afterUpdate` (receives `User`)
 
+For an **upsert**:
+
+1. `beforeSave` (receives `UserMutation`)
+2. `beforeCreate` (receives `UserCreate`)
+3. Field validation
+4. `driver.upsert(...)` — the database decides insert vs update
+5. If the row was **inserted**: `afterCreate` (receives `User`)
+6. If the row was **updated** (conflict): `afterUpdate` (receives `User`)
+
+Because upsert uses the create builder, `beforeSave` and `beforeCreate` hooks
+always run. The "after" hook is chosen based on what the database actually did.
+Immutable fields (e.g. `created_at`) are included in the insert but excluded
+from the conflict-update set, so they are preserved on subsequent upserts.
+
 For a **delete**:
 
 1. `beforeDelete` (receives `User`)

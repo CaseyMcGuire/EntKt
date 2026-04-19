@@ -126,6 +126,40 @@ class InMemoryDriver : Driver {
         return snapshot.any { row -> predicates.all { evaluate(row, it, table) } }
     }
 
+    override fun upsert(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+        immutableColumns: List<String>,
+    ): UpsertResult {
+        require(conflictColumns.isNotEmpty()) { "upsert requires at least one conflict column" }
+        val schema = schemas[table] ?: error("Unregistered table: $table")
+        val rows = tables.getValue(table)
+        synchronized(rows) {
+            val existing = rows.firstOrNull { row ->
+                conflictColumns.all { col -> row[col] == values[col] }
+            }
+            if (existing != null) {
+                for ((k, v) in values) {
+                    if (k == schema.idColumn || k in conflictColumns || k in immutableColumns) continue
+                    existing[k] = v
+                }
+                return UpsertResult(existing.toMap(), inserted = false)
+            }
+            // No conflict — insert a new row.
+            val row = values.toMutableMap()
+            if (row[schema.idColumn] == null) {
+                row[schema.idColumn] = when (schema.idStrategy) {
+                    IdStrategy.AUTO_INT -> numericIds.getValue(table).incrementAndGet().toInt()
+                    IdStrategy.AUTO_LONG -> numericIds.getValue(table).incrementAndGet()
+                    else -> error("insert into $table requires an id (strategy=${schema.idStrategy})")
+                }
+            }
+            rows.add(row)
+            return UpsertResult(row.toMap(), inserted = true)
+        }
+    }
+
     override fun delete(table: String, id: Any): Boolean {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
@@ -342,6 +376,15 @@ private class InMemoryTransactionalDriver(
 
     override fun exists(table: String, predicates: List<Predicate>): Boolean {
         checkOpen(); return root.exists(table, predicates)
+    }
+
+    override fun upsert(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+        immutableColumns: List<String>,
+    ): UpsertResult {
+        checkOpen(); return root.upsert(table, values, conflictColumns, immutableColumns)
     }
 
     override fun delete(table: String, id: Any): Boolean {

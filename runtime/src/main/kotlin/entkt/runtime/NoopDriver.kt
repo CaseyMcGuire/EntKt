@@ -55,6 +55,14 @@ object NoopDriver : Driver {
     override fun exists(table: String, predicates: List<Predicate>): Boolean =
         error("NoopDriver cannot exists — was a terminal op called inside EdgeRef.has { }?")
 
+    override fun upsert(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+        immutableColumns: List<String>,
+    ): UpsertResult =
+        error("NoopDriver cannot upsert — was a terminal op called inside EdgeRef.has { }?")
+
     override fun delete(table: String, id: Any): Boolean =
         error("NoopDriver cannot delete — was a terminal op called inside EdgeRef.has { }?")
 

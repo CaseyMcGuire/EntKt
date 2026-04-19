@@ -12,6 +12,12 @@ interface Driver {
     fun register(schema: EntitySchema)
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
+    fun upsert(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+        immutableColumns: List<String> = emptyList(),
+    ): UpsertResult
     fun byId(table: String, id: Any): Map<String, Any?>?
     fun query(
         table: String,
@@ -30,6 +36,10 @@ interface Driver {
 - `insert()` returns the persisted row including any server-assigned values
   (auto-increment IDs, defaults).
 - `update()` returns the updated row, or `null` if the row was not found.
+- `upsert()` inserts or updates based on a unique constraint. Returns an
+  `UpsertResult(row, inserted)` so callers know which path was taken. Columns
+  in `immutableColumns` are included in the insert but excluded from the
+  update-on-conflict set. Requires at least one conflict column.
 - `withTransaction()` runs a block in a transaction. The block receives a
   transaction-scoped driver. If it completes normally, the transaction
   commits. If it throws, the transaction rolls back.
@@ -170,8 +180,11 @@ contract:
 
 1. `register()` must be idempotent -- called on every repo construction
 2. `insert()` must return the full row including server-assigned values
-3. `query()` must evaluate all `Predicate` types (including edge predicates)
-4. `withTransaction()` must roll back on exception
+3. `upsert()` must return `UpsertResult(row, inserted)` with the correct
+   `inserted` flag, exclude `immutableColumns` from the conflict-update set,
+   and reject empty `conflictColumns`
+4. `query()` must evaluate all `Predicate` types (including edge predicates)
+5. `withTransaction()` must roll back on exception
 
 For the migration system, you'll also need:
 

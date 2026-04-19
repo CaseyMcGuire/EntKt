@@ -7,8 +7,10 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
@@ -46,6 +48,7 @@ class CreateGenerator(
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeCreateHookType = hookListType(createClass)
         val afterCreateHookType = hookListType(entityClass)
+        val afterUpdateHookType = hookListType(entityClass)
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
@@ -57,6 +60,11 @@ class CreateGenerator(
                     .addParameter("beforeSaveHooks", beforeSaveHookType)
                     .addParameter("beforeCreateHooks", beforeCreateHookType)
                     .addParameter("afterCreateHooks", afterCreateHookType)
+                    .addParameter(
+                        ParameterSpec.builder("afterUpdateHooks", afterUpdateHookType)
+                            .defaultValue("emptyList()")
+                            .build()
+                    )
                     .build()
             )
             .addProperty(
@@ -88,11 +96,18 @@ class CreateGenerator(
                     .initializer("afterCreateHooks")
                     .build()
             )
+            .addProperty(
+                PropertySpec.builder("afterUpdateHooks", afterUpdateHookType)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("afterUpdateHooks")
+                    .build()
+            )
             .addProperties(mutableFields.map { buildProperty(it, override = true) })
             .addProperties(allFields.filter { it.immutable }.map { buildProperty(it, override = false) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
+            .addFunction(buildUpsertFunction(schemaName, schema, allFields, edgeFks))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -166,17 +181,97 @@ class CreateGenerator(
 
         val idStrategy = idStrategyName(schema)
         if (idStrategy == "EXPLICIT") {
-            // EXPLICIT ids aren't supported by the generated builder —
-            // the caller would have to thread an id in before `save()`
-            // even runs, which doesn't fit the DSL shape. Keep the TODO
-            // so anyone who wires up an EXPLICIT-id entity sees an
-            // obvious error instead of a silent mis-insert.
             builder.addStatement(
                 "TODO(%S)",
                 "save() on $schemaName requires EXPLICIT id support",
             )
             return builder.build()
         }
+
+        emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
+        builder.addStatement(
+            "val row = driver.insert(%T.TABLE, values)",
+            entityClass,
+        )
+        builder.addStatement("val entity = %T.fromRow(row)", entityClass)
+        builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
+        builder.addStatement("return entity")
+
+        return builder.build()
+    }
+
+    /**
+     * `upsert(onConflict)` collects fields the same way as `save()` but
+     * calls `driver.upsert` with the specified conflict columns. On
+     * conflict, the driver updates non-id, non-conflict columns and
+     * returns the persisted row.
+     */
+    private fun buildUpsertFunction(
+        schemaName: String,
+        schema: EntSchema,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        val columnClass = ClassName("entkt.query", "Column")
+        val builder = FunSpec.builder("upsert")
+            .returns(entityClass)
+            .addParameter(
+                ParameterSpec.builder(
+                    "onConflict",
+                    columnClass.parameterizedBy(STAR),
+                ).addModifiers(KModifier.VARARG).build(),
+            )
+
+        val idStrategy = idStrategyName(schema)
+        if (idStrategy == "EXPLICIT") {
+            builder.addStatement(
+                "TODO(%S)",
+                "upsert() on $schemaName requires EXPLICIT id support",
+            )
+            return builder.build()
+        }
+
+        emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
+
+        val immutableNames = allFields.filter { it.immutable }.map { it.name }
+        if (immutableNames.isEmpty()) {
+            builder.addStatement(
+                "val result = driver.upsert(%T.TABLE, values, onConflict.map { it.name })",
+                entityClass,
+            )
+        } else {
+            builder.addStatement(
+                "val result = driver.upsert(%T.TABLE, values, onConflict.map { it.name }, listOf(%L))",
+                entityClass,
+                immutableNames.joinToString(", ") { "\"$it\"" },
+            )
+        }
+        builder.addStatement("val entity = %T.fromRow(result.row)", entityClass)
+        builder.beginControlFlow("if (result.inserted)")
+        builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
+        builder.nextControlFlow("else")
+        builder.addStatement("for (hook in afterUpdateHooks) hook(entity)")
+        builder.endControlFlow()
+        builder.addStatement("return entity")
+
+        return builder.build()
+    }
+
+    /**
+     * Emit the common body shared by [buildSaveFunction] and
+     * [buildUpsertFunction]: lifecycle hooks, field extraction with
+     * defaults and validation, FK validation, and the `values` map.
+     * After this method, the caller appends the driver call.
+     */
+    private fun emitCreateBody(
+        builder: FunSpec.Builder,
+        schemaName: String,
+        schema: EntSchema,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ) {
+        val idStrategy = idStrategyName(schema)
 
         // ---- Lifecycle hooks (before validation so hooks can set fields). ----
         builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
@@ -253,15 +348,6 @@ class CreateGenerator(
         rowBuilder.add(")\n")
 
         builder.addCode(rowBuilder.build())
-        builder.addStatement(
-            "val row = driver.insert(%T.TABLE, values)",
-            entityClass,
-        )
-        builder.addStatement("val entity = %T.fromRow(row)", entityClass)
-        builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
-        builder.addStatement("return entity")
-
-        return builder.build()
     }
 
     private fun defaultCodeBlock(field: Field): CodeBlock {

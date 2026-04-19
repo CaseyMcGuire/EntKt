@@ -4,6 +4,16 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 
 /**
+ * Result of a [Driver.upsert] call. Carries the persisted row and
+ * whether it was freshly inserted or updated on conflict, so generated
+ * code can fire the correct lifecycle hooks.
+ */
+data class UpsertResult(
+    val row: Map<String, Any?>,
+    val inserted: Boolean,
+)
+
+/**
  * The runtime an `EntClient` talks to. Generated repos forward every
  * I/O operation through this interface, so production code, tests, and
  * demos all swap drivers without changing call sites.
@@ -69,6 +79,27 @@ interface Driver {
      * equivalent to `count(...) > 0` but drivers can short-circuit.
      */
     fun exists(table: String, predicates: List<Predicate>): Boolean
+
+    /**
+     * Insert or update a row based on a unique constraint. If no row
+     * matches the [conflictColumns], insert a new row. If a row already
+     * exists with the same values for those columns, update the
+     * remaining (non-id, non-conflict) columns in place.
+     *
+     * Columns listed in [immutableColumns] are included in the INSERT
+     * but excluded from the UPDATE SET clause on conflict, so
+     * create-only data (e.g. `created_at`) is preserved on subsequent
+     * upserts.
+     *
+     * Returns an [UpsertResult] carrying the persisted row and whether
+     * it was freshly inserted, so callers can fire the correct hooks.
+     */
+    fun upsert(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+        immutableColumns: List<String> = emptyList(),
+    ): UpsertResult
 
     /** Returns true if a row was actually removed. */
     fun delete(table: String, id: Any): Boolean

@@ -527,4 +527,83 @@ class InMemoryDriverTest {
 
         assertTrue(driver.exists("users", emptyList()))
     }
+
+    // ---------- upsert ----------
+
+    @Test
+    fun `upsert inserts when no conflict exists`() {
+        val driver = fresh()
+        val result = driver.upsert(
+            "users",
+            mapOf("name" to "Alice", "age" to 30),
+            listOf("name"),
+        )
+
+        assertTrue(result.inserted, "Should report as inserted")
+        assertEquals("Alice", result.row["name"])
+        assertEquals(30, result.row["age"])
+        assertNotNull(result.row["id"], "Should have minted an id")
+    }
+
+    @Test
+    fun `upsert updates non-conflict columns on conflict`() {
+        val driver = fresh()
+        val first = driver.upsert(
+            "users",
+            mapOf("name" to "Alice", "age" to 30),
+            listOf("name"),
+        )
+
+        val second = driver.upsert(
+            "users",
+            mapOf("name" to "Alice", "age" to 31),
+            listOf("name"),
+        )
+
+        assertTrue(first.inserted, "First should be an insert")
+        assertTrue(!second.inserted, "Second should be an update")
+        assertEquals(first.row["id"], second.row["id"], "Should keep existing id")
+        assertEquals(31, second.row["age"], "Should update age")
+        assertEquals(1, driver.query("users", emptyList(), emptyList(), null, null).size,
+            "Should still have one row")
+    }
+
+    @Test
+    fun `upsert preserves conflict column values`() {
+        val driver = fresh()
+        driver.upsert("users", mapOf("name" to "Alice", "age" to 30), listOf("name"))
+        val result = driver.upsert("users", mapOf("name" to "Alice", "age" to 99), listOf("name"))
+
+        assertEquals("Alice", result.row["name"], "Conflict column should be preserved")
+    }
+
+    @Test
+    fun `upsert preserves immutable columns on conflict`() {
+        val driver = fresh()
+        val first = driver.upsert(
+            "users",
+            mapOf("name" to "Alice", "age" to 30, "active" to true),
+            conflictColumns = listOf("name"),
+            immutableColumns = listOf("active"),
+        )
+
+        val second = driver.upsert(
+            "users",
+            mapOf("name" to "Alice", "age" to 31, "active" to false),
+            conflictColumns = listOf("name"),
+            immutableColumns = listOf("active"),
+        )
+
+        assertEquals(first.row["id"], second.row["id"], "Should keep existing id")
+        assertEquals(31, second.row["age"], "Should update mutable column")
+        assertEquals(true, second.row["active"], "Should preserve immutable column")
+    }
+
+    @Test
+    fun `upsert rejects empty conflict columns`() {
+        val driver = fresh()
+        assertFailsWith<IllegalArgumentException> {
+            driver.upsert("users", mapOf("name" to "Alice"), emptyList())
+        }
+    }
 }

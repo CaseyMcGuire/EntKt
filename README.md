@@ -63,6 +63,12 @@ val usersWithPosts = client.users.query {
 }.all()
 usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if withPosts wasn't called)
 
+// Upsert — insert or update on conflict
+client.users.upsert(User.email) {
+    name = "Alice"
+    email = "alice@example.com"
+}
+
 // Delete
 client.users.delete(alice)       // or client.users.deleteById(alice.id)
 
@@ -134,16 +140,16 @@ For each schema the generator emits:
 - **`{Entity}Mutation` interface** — shared interface implemented by both
   Create and Update builders, with `var` properties for all mutable fields.
   Enables shared validators via `onBeforeSave`.
-- **`{Entity}Create` builder** — DSL setters + `.save()`. Mints client UUIDs
-  when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
+- **`{Entity}Create` builder** — DSL setters + `.save()` / `.upsert(onConflict)`.
+  Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
 - **`{Entity}Update` builder** — DSL setters (immutable fields are elided) + `.save()`.
   Implements `{Entity}Mutation`. Exposes `entity` for hooks to inspect current state.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
   `.offset(...)`, `.all()`, `.firstOrNull()`, edge traversal methods
   (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
 - **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
-  `.byId(id)`, `.delete(entity)`, `.deleteById(id)`. Registers the entity's
-  `EntitySchema` with the driver on construction.
+  `.byId(id)`, `.upsert(onConflict) { }`, `.delete(entity)`, `.deleteById(id)`.
+  Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
   with a `Driver` and an optional configuration lambda for lifecycle hooks.
 - **Hooks DSL classes** — `EntClientConfig`, `EntClientHooks`, and per-entity
@@ -152,13 +158,19 @@ For each schema the generator emits:
 
 ### Runtime (`:runtime`)
 
-**`Driver` interface (nine methods):**
+**`Driver` interface (ten methods):**
 
 ```kotlin
 interface Driver {
     fun register(schema: EntitySchema)
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
+    fun upsert(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+        immutableColumns: List<String> = emptyList(),
+    ): UpsertResult
     fun byId(table: String, id: Any): Map<String, Any?>?
     fun query(
         table: String,
@@ -279,8 +291,11 @@ JDBC-backed `Driver` talking to real PostgreSQL.
   `serial`/`bigserial`. Edge FK columns emit `REFERENCES target("id")`
   constraints. Unique fields and composite indexes emit `UNIQUE`
   constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
-- **Insert/update:** `INSERT ... RETURNING *` and `UPDATE ... RETURNING *`
-  with fully parameterized bindings. Never rewrites the id through `update`.
+- **Insert/update/upsert:** `INSERT ... RETURNING *`, `UPDATE ... RETURNING *`,
+  and `INSERT ... ON CONFLICT ... DO UPDATE SET ... RETURNING *` with fully
+  parameterized bindings. Never rewrites the id through `update`. Upsert uses
+  PostgreSQL's `xmax` system column to detect insert vs conflict-update, so
+  lifecycle hooks fire correctly.
 - **Query:** predicate tree lowered to SQL; `AND`/`OR` nest naturally,
   leaves bind parameters through a type-aware `PreparedStatement.bind(...)`,
   edges become `EXISTS (SELECT 1 FROM target ...)` subqueries walking
@@ -333,7 +348,6 @@ Things that are **not yet implemented**, roughly in order of severity:
 
 ### Driver capabilities
 - **Bulk operations.** No `insertMany`, `updateMany`, or `deleteMany`.
-- **Upsert.** No `INSERT ... ON CONFLICT` / `MERGE` path.
 - **More drivers.** Only `InMemoryDriver` and `PostgresDriver` exist today.
   No SQLite, MySQL, etc.
 - **Observability.** No logging, metrics, or query-lifecycle hooks on the

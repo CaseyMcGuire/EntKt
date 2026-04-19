@@ -270,6 +270,72 @@ class CreateGeneratorTest {
     }
 
     @Test
+    fun `upsert method takes vararg Column and calls driver upsert`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun upsert(vararg onConflict: Column<*>): Car")) {
+            "Should generate upsert method with vararg Column param\n$output"
+        }
+        assert(output.contains("val result = driver.upsert(Car.TABLE, values, onConflict.map { it.name })")) {
+            "Should call driver.upsert and store UpsertResult\n$output"
+        }
+    }
+
+    @Test
+    fun `upsert shares same validation as save`() {
+        val output = generator.generate("Car", Car).toString()
+
+        // Find the upsert method body and check it validates required fields
+        val upsertBlock = output.substringAfter("fun upsert(")
+        assert(upsertBlock.contains("model is required")) {
+            "upsert should validate required fields\n$output"
+        }
+    }
+
+    @Test
+    fun `upsert passes immutable columns to driver`() {
+        val output = generator.generate("Event", Event).toString()
+
+        assert(output.contains("""listOf("created_at")""")) {
+            "Should pass immutable field names to driver.upsert\n$output"
+        }
+    }
+
+    @Test
+    fun `upsert fires afterCreateHooks on insert and afterUpdateHooks on conflict`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("if (result.inserted)")) {
+            "Should branch on result.inserted\n$output"
+        }
+        assert(output.contains("for (hook in afterCreateHooks) hook(entity)")) {
+            "Should fire afterCreateHooks on insert path\n$output"
+        }
+        assert(output.contains("for (hook in afterUpdateHooks) hook(entity)")) {
+            "Should fire afterUpdateHooks on conflict path\n$output"
+        }
+    }
+
+    @Test
+    fun `constructor takes afterUpdateHooks with default`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("afterUpdateHooks: List<(Car) -> Unit> = emptyList()")) {
+            "Should take afterUpdateHooks with default empty list\n$output"
+        }
+    }
+
+    @Test
+    fun `upsert omits immutableColumns when none exist`() {
+        val output = generator.generate("Car", Car).toString()
+
+        // Car has no immutable fields, so driver.upsert should use the 3-arg form
+        assert(!output.contains("listOf(\"")) {
+            "Should not pass immutableColumns list when there are none\n$output"
+        }
+    }
+
+    @Test
     fun `validation appears after field binding and before row map`() {
         val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
 

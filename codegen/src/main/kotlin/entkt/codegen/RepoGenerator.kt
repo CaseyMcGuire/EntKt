@@ -9,6 +9,7 @@ import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import entkt.schema.EntSchema
@@ -124,6 +125,7 @@ class RepoGenerator(
                     )
                     .build()
             )
+            .addFunction(buildRepoUpsert(entityClass, createClass, createLambda))
             .addFunction(
                 FunSpec.builder("update")
                     .addParameter("entity", entityClass)
@@ -173,6 +175,28 @@ class RepoGenerator(
 
         return FileSpec.builder(packageName, className)
             .addType(typeSpec)
+            .build()
+    }
+
+    private fun buildRepoUpsert(
+        entityClass: ClassName,
+        createClass: ClassName,
+        createLambda: LambdaTypeName,
+    ): FunSpec {
+        val columnClass = ClassName("entkt.query", "Column")
+        return FunSpec.builder("upsert")
+            .addParameter(
+                ParameterSpec.builder(
+                    "onConflict",
+                    columnClass.parameterizedBy(STAR),
+                ).addModifiers(KModifier.VARARG).build(),
+            )
+            .addParameter("block", createLambda)
+            .returns(entityClass)
+            .addStatement(
+                "return %T(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks).apply(block).upsert(*onConflict)",
+                createClass,
+            )
             .build()
     }
 

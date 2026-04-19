@@ -182,6 +182,24 @@ class RepoGeneratorTest {
     }
 
     @Test
+    fun `repo exposes upsert with vararg conflict columns and block`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun upsert(vararg onConflict: Column<*>, block: CarCreate.() -> Unit): Car")) {
+            "Should have upsert method\n$output"
+        }
+    }
+
+    @Test
+    fun `repo upsert passes afterUpdateHooks to the create builder`() {
+        val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("CarCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks)")) {
+            "upsert should pass afterUpdateHooks to CarCreate\n$output"
+        }
+    }
+
+    @Test
     fun `repo does not expose hook registration methods`() {
         val output = generator.generate("Car", Car).toString()
 
