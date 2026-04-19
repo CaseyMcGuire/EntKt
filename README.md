@@ -152,7 +152,7 @@ For each schema the generator emits:
 
 ### Runtime (`:runtime`)
 
-**`Driver` interface (seven methods):**
+**`Driver` interface (nine methods):**
 
 ```kotlin
 interface Driver {
@@ -167,6 +167,8 @@ interface Driver {
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>>
+    fun count(table: String, predicates: List<Predicate>): Long
+    fun exists(table: String, predicates: List<Predicate>): Boolean
     fun delete(table: String, id: Any): Boolean
     fun <T> withTransaction(block: (Driver) -> T): T
 }

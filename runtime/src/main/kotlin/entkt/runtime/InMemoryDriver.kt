@@ -112,6 +112,20 @@ class InMemoryDriver : Driver {
         return limited
     }
 
+    override fun count(table: String, predicates: List<Predicate>): Long {
+        schemas[table] ?: error("Unregistered table: $table")
+        val rows = tables.getValue(table)
+        val snapshot = synchronized(rows) { rows.map { it.toMap() } }
+        return snapshot.count { row -> predicates.all { evaluate(row, it, table) } }.toLong()
+    }
+
+    override fun exists(table: String, predicates: List<Predicate>): Boolean {
+        schemas[table] ?: error("Unregistered table: $table")
+        val rows = tables.getValue(table)
+        val snapshot = synchronized(rows) { rows.map { it.toMap() } }
+        return snapshot.any { row -> predicates.all { evaluate(row, it, table) } }
+    }
+
     override fun delete(table: String, id: Any): Boolean {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
@@ -320,6 +334,14 @@ private class InMemoryTransactionalDriver(
         offset: Int?,
     ): List<Map<String, Any?>> {
         checkOpen(); return root.query(table, predicates, orderBy, limit, offset)
+    }
+
+    override fun count(table: String, predicates: List<Predicate>): Long {
+        checkOpen(); return root.count(table, predicates)
+    }
+
+    override fun exists(table: String, predicates: List<Predicate>): Boolean {
+        checkOpen(); return root.exists(table, predicates)
     }
 
     override fun delete(table: String, id: Any): Boolean {

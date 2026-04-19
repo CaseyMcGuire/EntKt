@@ -15,7 +15,9 @@ val users = client.users.query {
 }.all()
 ```
 
-`.all()` returns a `List<User>`. Use `.firstOrNull()` for single results.
+`.all()` returns a `List<User>`. Use `.firstOrNull()` for single results,
+`.count()` for the number of matching rows, or `.exists()` to check
+whether any match exists without loading data.
 
 ## Predicates
 
@@ -120,6 +122,27 @@ client.users.query {
     offset(20)
 }
 ```
+
+## Count and Exists
+
+Use `count()` to get the number of matching rows without loading them,
+or `exists()` to check whether any match exists:
+
+```kotlin
+val activeUsers = client.users.query {
+    where(User.active eq true)
+}.count()  // → Long
+
+val hasAdmins = client.users.query {
+    where(User.role eq "admin")
+}.exists()  // → Boolean
+```
+
+Both methods respect all accumulated `where()` predicates but ignore
+`orderBy`, `limit`, and `offset` — they operate on the full filtered
+result set. Under the hood, the Postgres driver emits
+`SELECT COUNT(*)` and `SELECT EXISTS(SELECT 1 ...)` respectively,
+so no rows are materialized.
 
 ## Edge Traversal
 

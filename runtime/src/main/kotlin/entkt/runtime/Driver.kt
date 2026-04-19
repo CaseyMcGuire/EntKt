@@ -58,6 +58,18 @@ interface Driver {
         offset: Int?,
     ): List<Map<String, Any?>>
 
+    /**
+     * Count rows matching [predicates]. Predicates are AND-ed together,
+     * same as [query]. Returns zero for an empty or unmatched table.
+     */
+    fun count(table: String, predicates: List<Predicate>): Long
+
+    /**
+     * Return true if at least one row matches [predicates]. Semantically
+     * equivalent to `count(...) > 0` but drivers can short-circuit.
+     */
+    fun exists(table: String, predicates: List<Predicate>): Boolean
+
     /** Returns true if a row was actually removed. */
     fun delete(table: String, id: Any): Boolean
 

@@ -799,4 +799,56 @@ class PostgresDriverTest {
         )
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
     }
+
+    // ---------- count ----------
+
+    @Test
+    fun `count returns total rows with no predicates`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Alice"))
+        driver.insert("users", mapOf<String, Any?>("name" to "Bob"))
+        driver.insert("users", mapOf<String, Any?>("name" to "Carol"))
+
+        assertEquals(3L, driver.count("users", emptyList()))
+    }
+
+    @Test
+    fun `count returns zero for empty table`() {
+        val driver = fresh()
+        assertEquals(0L, driver.count("users", emptyList()))
+    }
+
+    @Test
+    fun `count filters with predicates`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Alice", "active" to true))
+        driver.insert("users", mapOf<String, Any?>("name" to "Bob", "active" to true))
+        driver.insert("users", mapOf<String, Any?>("name" to "Carol", "active" to false))
+
+        assertEquals(2L, driver.count("users", listOf(Predicate.Leaf("active", Op.EQ, true))))
+    }
+
+    // ---------- exists ----------
+
+    @Test
+    fun `exists returns true when rows match`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Alice", "active" to true))
+
+        assertTrue(driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, true))))
+    }
+
+    @Test
+    fun `exists returns false for empty table`() {
+        val driver = fresh()
+        assertEquals(false, driver.exists("users", emptyList()))
+    }
+
+    @Test
+    fun `exists returns false when no rows match`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Alice", "active" to true))
+
+        assertEquals(false, driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, false))))
+    }
 }

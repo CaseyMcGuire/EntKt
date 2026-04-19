@@ -452,4 +452,79 @@ class InMemoryDriverTest {
         )
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
     }
+
+    // ---------- count ----------
+
+    @Test
+    fun `count returns total rows with no predicates`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+        driver.insert("users", mapOf("name" to "Bob"))
+        driver.insert("users", mapOf("name" to "Carol"))
+
+        assertEquals(3L, driver.count("users", emptyList()))
+    }
+
+    @Test
+    fun `count returns zero for empty table`() {
+        val driver = fresh()
+        assertEquals(0L, driver.count("users", emptyList()))
+    }
+
+    @Test
+    fun `count filters with predicates`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
+        driver.insert("users", mapOf("name" to "Bob", "age" to 17, "active" to true))
+        driver.insert("users", mapOf("name" to "Carol", "age" to 65, "active" to false))
+
+        val count = driver.count("users", listOf(Predicate.Leaf("active", Op.EQ, true)))
+        assertEquals(2L, count)
+    }
+
+    @Test
+    fun `count works with compound predicates`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
+        driver.insert("users", mapOf("name" to "Bob", "age" to 70, "active" to false))
+        driver.insert("users", mapOf("name" to "Carol", "age" to 17, "active" to true))
+
+        val pred = Predicate.And(
+            Predicate.Leaf("active", Op.EQ, true),
+            Predicate.Leaf("age", Op.GTE, 18),
+        )
+        assertEquals(1L, driver.count("users", listOf(pred)))
+    }
+
+    // ---------- exists ----------
+
+    @Test
+    fun `exists returns true when rows match`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "active" to true))
+
+        assertTrue(driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, true))))
+    }
+
+    @Test
+    fun `exists returns false for empty table`() {
+        val driver = fresh()
+        assertEquals(false, driver.exists("users", emptyList()))
+    }
+
+    @Test
+    fun `exists returns false when no rows match`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice", "active" to true))
+
+        assertEquals(false, driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, false))))
+    }
+
+    @Test
+    fun `exists with no predicates returns true when table has rows`() {
+        val driver = fresh()
+        driver.insert("users", mapOf("name" to "Alice"))
+
+        assertTrue(driver.exists("users", emptyList()))
+    }
 }

@@ -49,6 +49,12 @@ object NoopDriver : Driver {
     ): List<Map<String, Any?>> =
         error("NoopDriver cannot query — was a terminal op called inside EdgeRef.has { }?")
 
+    override fun count(table: String, predicates: List<Predicate>): Long =
+        error("NoopDriver cannot count — was a terminal op called inside EdgeRef.has { }?")
+
+    override fun exists(table: String, predicates: List<Predicate>): Boolean =
+        error("NoopDriver cannot exists — was a terminal op called inside EdgeRef.has { }?")
+
     override fun delete(table: String, id: Any): Boolean =
         error("NoopDriver cannot delete — was a terminal op called inside EdgeRef.has { }?")
 

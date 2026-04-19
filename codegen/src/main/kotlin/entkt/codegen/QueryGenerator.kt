@@ -5,8 +5,10 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LONG
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
@@ -112,6 +114,8 @@ class QueryGenerator(
             }
             .addFunction(buildAll(entityClass, hasEdges))
             .addFunction(buildFirstOrNull(entityClass, hasEdges))
+            .addFunction(buildCount(entityClass))
+            .addFunction(buildExists(entityClass))
             .addFunctions(traversalMethods)
             .build()
 
@@ -163,6 +167,26 @@ class QueryGenerator(
             builder.addStatement("return row?.let { %T.fromRow(it) }", entityClass)
         }
         return builder.build()
+    }
+
+    /**
+     * Terminal op: count matching rows without materializing them.
+     */
+    private fun buildCount(entityClass: ClassName): FunSpec {
+        return FunSpec.builder("count")
+            .returns(LONG)
+            .addStatement("return driver.count(%T.TABLE, predicates)", entityClass)
+            .build()
+    }
+
+    /**
+     * Terminal op: check whether at least one matching row exists.
+     */
+    private fun buildExists(entityClass: ClassName): FunSpec {
+        return FunSpec.builder("exists")
+            .returns(BOOLEAN)
+            .addStatement("return driver.exists(%T.TABLE, predicates)", entityClass)
+            .build()
     }
 
     private fun buildWhere(queryClass: ClassName): FunSpec {

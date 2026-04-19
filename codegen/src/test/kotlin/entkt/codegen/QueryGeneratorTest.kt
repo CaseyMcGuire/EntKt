@@ -128,4 +128,28 @@ class QueryGeneratorTest {
             "Schema with no edges should not have loadEdges\n$output"
         }
     }
+
+    @Test
+    fun `generates count terminal method`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun count(): Long")) {
+            "Should generate count(): Long\n$output"
+        }
+        assert(output.contains("driver.count(Car.TABLE, predicates)")) {
+            "count() should delegate to driver.count\n$output"
+        }
+    }
+
+    @Test
+    fun `generates exists terminal method`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun exists(): Boolean")) {
+            "Should generate exists(): Boolean\n$output"
+        }
+        assert(output.contains("driver.exists(Car.TABLE, predicates)")) {
+            "exists() should delegate to driver.exists\n$output"
+        }
+    }
 }

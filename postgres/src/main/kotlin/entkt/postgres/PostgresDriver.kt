@@ -80,6 +80,12 @@ class PostgresDriver(
     ): List<Map<String, Any?>> =
         dataSource.connection.use { queryWith(it, table, predicates, orderBy, limit, offset) }
 
+    override fun count(table: String, predicates: List<Predicate>): Long =
+        dataSource.connection.use { countWith(it, table, predicates) }
+
+    override fun exists(table: String, predicates: List<Predicate>): Boolean =
+        dataSource.connection.use { existsWith(it, table, predicates) }
+
     override fun delete(table: String, id: Any): Boolean =
         dataSource.connection.use { deleteWith(it, table, id) }
 
@@ -202,6 +208,67 @@ class PostgresDriver(
                 val out = ArrayList<Map<String, Any?>>()
                 while (rs.next()) out.add(decodeRow(rs, schema.columns))
                 out
+            }
+        }
+    }
+
+    private fun countWith(
+        conn: Connection,
+        table: String,
+        predicates: List<Predicate>,
+    ): Long {
+        val schema = schemaFor(table)
+        val builder = SqlBuilder()
+        val baseAlias = "t0"
+
+        val sql = StringBuilder()
+        sql.append("SELECT COUNT(*) FROM ")
+            .append(quote(table)).append(" AS ").append(baseAlias)
+
+        val combined = predicates.reduceOrNull(Predicate::And)
+        if (combined != null) {
+            val whereSql = builder.lower(combined, schema, baseAlias)
+            sql.append(" WHERE ").append(whereSql)
+        }
+
+        return conn.prepareStatement(sql.toString()).use { stmt ->
+            for ((i, p) in builder.params.withIndex()) {
+                bind(stmt, i + 1, p.type, p.value)
+            }
+            stmt.executeQuery().use { rs ->
+                rs.next()
+                rs.getLong(1)
+            }
+        }
+    }
+
+    private fun existsWith(
+        conn: Connection,
+        table: String,
+        predicates: List<Predicate>,
+    ): Boolean {
+        val schema = schemaFor(table)
+        val builder = SqlBuilder()
+        val baseAlias = "t0"
+
+        val sql = StringBuilder()
+        sql.append("SELECT EXISTS(SELECT 1 FROM ")
+            .append(quote(table)).append(" AS ").append(baseAlias)
+
+        val combined = predicates.reduceOrNull(Predicate::And)
+        if (combined != null) {
+            val whereSql = builder.lower(combined, schema, baseAlias)
+            sql.append(" WHERE ").append(whereSql)
+        }
+        sql.append(")")
+
+        return conn.prepareStatement(sql.toString()).use { stmt ->
+            for ((i, p) in builder.params.withIndex()) {
+                bind(stmt, i + 1, p.type, p.value)
+            }
+            stmt.executeQuery().use { rs ->
+                rs.next()
+                rs.getBoolean(1)
             }
         }
     }
@@ -571,6 +638,14 @@ class PostgresDriver(
             offset: Int?,
         ): List<Map<String, Any?>> {
             checkOpen(); return queryWith(conn, table, predicates, orderBy, limit, offset)
+        }
+
+        override fun count(table: String, predicates: List<Predicate>): Long {
+            checkOpen(); return countWith(conn, table, predicates)
+        }
+
+        override fun exists(table: String, predicates: List<Predicate>): Boolean {
+            checkOpen(); return existsWith(conn, table, predicates)
         }
 
         override fun delete(table: String, id: Any): Boolean {
