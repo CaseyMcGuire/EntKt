@@ -5,6 +5,7 @@ import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.schema.FieldType
+import entkt.schema.OnDelete
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -782,5 +783,351 @@ class InMemoryDriverTest {
         )
         assertEquals(0, count)
         assertEquals(1, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
+
+    // ---------- Referential actions (ON DELETE) ----------
+
+    private val CASCADE_PARENT = EntitySchema(
+        table = "parents",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+        ),
+        edges = emptyMap(),
+    )
+
+    private val CASCADE_CHILD = EntitySchema(
+        table = "children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ColumnMetadata(
+                "parent_id", FieldType.LONG, nullable = false,
+                references = ForeignKeyRef("parents", "id", OnDelete.CASCADE),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    private val SET_NULL_CHILD = EntitySchema(
+        table = "sn_children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ColumnMetadata(
+                "parent_id", FieldType.LONG, nullable = true,
+                references = ForeignKeyRef("parents", "id", OnDelete.SET_NULL),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    private val RESTRICT_CHILD = EntitySchema(
+        table = "restrict_children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ColumnMetadata(
+                "parent_id", FieldType.LONG, nullable = false,
+                references = ForeignKeyRef("parents", "id", OnDelete.RESTRICT),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    private fun freshReferential(vararg childSchemas: EntitySchema): InMemoryDriver = InMemoryDriver().apply {
+        register(CASCADE_PARENT)
+        for (schema in childSchemas) register(schema)
+    }
+
+    @Test
+    fun `cascade delete removes child rows`() {
+        val driver = freshReferential(CASCADE_CHILD)
+        val parent = driver.insert("parents", mapOf("name" to "P1"))
+        driver.insert("children", mapOf("name" to "C1", "parent_id" to parent["id"]))
+        driver.insert("children", mapOf("name" to "C2", "parent_id" to parent["id"]))
+
+        driver.delete("parents", parent["id"]!!)
+
+        assertEquals(0, driver.query("children", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `cascade delete does not remove unrelated child rows`() {
+        val driver = freshReferential(CASCADE_CHILD)
+        val p1 = driver.insert("parents", mapOf("name" to "P1"))
+        val p2 = driver.insert("parents", mapOf("name" to "P2"))
+        driver.insert("children", mapOf("name" to "C1", "parent_id" to p1["id"]))
+        driver.insert("children", mapOf("name" to "C2", "parent_id" to p2["id"]))
+
+        driver.delete("parents", p1["id"]!!)
+
+        val remaining = driver.query("children", emptyList(), emptyList(), null, null)
+        assertEquals(1, remaining.size)
+        assertEquals("C2", remaining.single()["name"])
+    }
+
+    @Test
+    fun `set null nulls FK on child rows`() {
+        val driver = freshReferential(SET_NULL_CHILD)
+        val parent = driver.insert("parents", mapOf("name" to "P1"))
+        driver.insert("sn_children", mapOf("name" to "C1", "parent_id" to parent["id"]))
+
+        driver.delete("parents", parent["id"]!!)
+
+        val children = driver.query("sn_children", emptyList(), emptyList(), null, null)
+        assertEquals(1, children.size)
+        assertNull(children.single()["parent_id"])
+    }
+
+    @Test
+    fun `restrict prevents delete when children exist`() {
+        val driver = freshReferential(RESTRICT_CHILD)
+        val parent = driver.insert("parents", mapOf("name" to "P1"))
+        driver.insert("restrict_children", mapOf("name" to "C1", "parent_id" to parent["id"]))
+
+        assertFailsWith<IllegalStateException> {
+            driver.delete("parents", parent["id"]!!)
+        }
+        // Parent should still exist
+        assertNotNull(driver.byId("parents", parent["id"]!!))
+    }
+
+    @Test
+    fun `restrict allows delete when no children reference the row`() {
+        val driver = freshReferential(RESTRICT_CHILD)
+        val p1 = driver.insert("parents", mapOf("name" to "P1"))
+        val p2 = driver.insert("parents", mapOf("name" to "P2"))
+        driver.insert("restrict_children", mapOf("name" to "C1", "parent_id" to p2["id"]))
+
+        // p1 has no children — should be deletable
+        assertTrue(driver.delete("parents", p1["id"]!!))
+    }
+
+    @Test
+    fun `cascade delete chains through multiple levels`() {
+        // grandparent → parent (CASCADE) → child (CASCADE)
+        val grandparentSchema = EntitySchema(
+            table = "grandparents",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        val midSchema = EntitySchema(
+            table = "mid",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false),
+                ColumnMetadata(
+                    "gp_id", FieldType.LONG, nullable = false,
+                    references = ForeignKeyRef("grandparents", "id", OnDelete.CASCADE),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val leafSchema = EntitySchema(
+            table = "leaves",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false),
+                ColumnMetadata(
+                    "mid_id", FieldType.LONG, nullable = false,
+                    references = ForeignKeyRef("mid", "id", OnDelete.CASCADE),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+
+        val driver = InMemoryDriver().apply {
+            register(grandparentSchema)
+            register(midSchema)
+            register(leafSchema)
+        }
+
+        val gp = driver.insert("grandparents", mapOf("name" to "GP"))
+        val mid = driver.insert("mid", mapOf("name" to "M", "gp_id" to gp["id"]))
+        driver.insert("leaves", mapOf("name" to "L", "mid_id" to mid["id"]))
+
+        driver.delete("grandparents", gp["id"]!!)
+
+        assertEquals(0, driver.query("mid", emptyList(), emptyList(), null, null).size)
+        assertEquals(0, driver.query("leaves", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `default onDelete infers from nullability`() {
+        // No explicit onDelete — nullable FK defaults to SET_NULL, required defaults to RESTRICT
+        val nullableChild = EntitySchema(
+            table = "opt_children",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = true,
+                    references = ForeignKeyRef("parents", "id"),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val requiredChild = EntitySchema(
+            table = "req_children",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = false,
+                    references = ForeignKeyRef("parents", "id"),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply {
+            register(CASCADE_PARENT)
+            register(nullableChild)
+            register(requiredChild)
+        }
+
+        val p1 = driver.insert("parents", mapOf("name" to "P1"))
+        val p2 = driver.insert("parents", mapOf("name" to "P2"))
+        driver.insert("opt_children", mapOf("parent_id" to p1["id"]))
+        driver.insert("req_children", mapOf("parent_id" to p2["id"]))
+
+        // Nullable FK → SET_NULL
+        driver.delete("parents", p1["id"]!!)
+        val optChild = driver.query("opt_children", emptyList(), emptyList(), null, null).single()
+        assertNull(optChild["parent_id"])
+
+        // Required FK → RESTRICT
+        assertFailsWith<IllegalStateException> {
+            driver.delete("parents", p2["id"]!!)
+        }
+    }
+
+    @Test
+    fun `deleteMany applies cascade`() {
+        val driver = freshReferential(CASCADE_CHILD)
+        val p1 = driver.insert("parents", mapOf("name" to "P1"))
+        val p2 = driver.insert("parents", mapOf("name" to "P2"))
+        driver.insert("children", mapOf("name" to "C1", "parent_id" to p1["id"]))
+        driver.insert("children", mapOf("name" to "C2", "parent_id" to p2["id"]))
+
+        driver.deleteMany("parents", emptyList())
+
+        assertEquals(0, driver.query("children", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `self-referential cascade does not stack overflow`() {
+        val selfRefSchema = EntitySchema(
+            table = "nodes",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = true,
+                    references = ForeignKeyRef("nodes", "id", OnDelete.CASCADE),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply { register(selfRefSchema) }
+        val root = driver.insert("nodes", mapOf("name" to "root"))
+        val child = driver.insert("nodes", mapOf("name" to "child", "parent_id" to root["id"]))
+        // Self-referential: child points back at itself
+        driver.insert("nodes", mapOf("name" to "self", "parent_id" to child["id"]))
+
+        // Should not stack overflow
+        driver.delete("nodes", root["id"]!!)
+        assertEquals(0, driver.query("nodes", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `set null on non-nullable FK is rejected`() {
+        val badSchema = EntitySchema(
+            table = "bad_children",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = false,
+                    references = ForeignKeyRef("parents", "id", OnDelete.SET_NULL),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply {
+            register(CASCADE_PARENT)
+            register(badSchema)
+        }
+        val parent = driver.insert("parents", mapOf("name" to "P1"))
+        driver.insert("bad_children", mapOf("parent_id" to parent["id"]))
+
+        assertFailsWith<IllegalStateException> {
+            driver.delete("parents", parent["id"]!!)
+        }
+    }
+
+    @Test
+    fun `cascade delete matches on referenced column, not primary key`() {
+        // Parent has a "code" column; child FK references parents.code, not parents.id
+        val codedParent = EntitySchema(
+            table = "coded_parents",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("code", FieldType.STRING, nullable = false, unique = true),
+            ),
+            edges = emptyMap(),
+        )
+        val codedChild = EntitySchema(
+            table = "coded_children",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_code", FieldType.STRING, nullable = false,
+                    references = ForeignKeyRef("coded_parents", "code", OnDelete.CASCADE),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+
+        val driver = InMemoryDriver().apply {
+            register(codedParent)
+            register(codedChild)
+        }
+        val p1 = driver.insert("coded_parents", mapOf("code" to "A"))
+        val p2 = driver.insert("coded_parents", mapOf("code" to "B"))
+        driver.insert("coded_children", mapOf("parent_code" to "A"))
+        driver.insert("coded_children", mapOf("parent_code" to "B"))
+
+        driver.delete("coded_parents", p1["id"]!!)
+
+        val remaining = driver.query("coded_children", emptyList(), emptyList(), null, null)
+        assertEquals(1, remaining.size)
+        assertEquals("B", remaining.single()["parent_code"])
     }
 }

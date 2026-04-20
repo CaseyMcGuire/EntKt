@@ -178,6 +178,28 @@ override fun edges() = edges {
 | `.unique()` | Makes this a one-to-one relationship |
 | `.required()` | FK column is NOT NULL |
 | `.field(name)` | Override the FK column name |
+| `.onDelete(action)` | Set the FK `ON DELETE` action (see below) |
+
+### ON DELETE Actions
+
+By default, FK columns use `ON DELETE SET NULL` (nullable) or
+`ON DELETE RESTRICT` (required). Use `.onDelete()` to override:
+
+```kotlin
+override fun edges() = edges {
+    from("owner", Owner).unique().required().onDelete(OnDelete.CASCADE)
+}
+```
+
+| Action | Effect |
+|--------|--------|
+| `OnDelete.CASCADE` | Delete child rows when the parent is deleted |
+| `OnDelete.SET_NULL` | Set the FK column to NULL (only valid on optional edges) |
+| `OnDelete.RESTRICT` | Prevent deletion of the parent while children exist |
+
+Both `PostgresDriver` and `InMemoryDriver` enforce these actions.
+The migration system detects changes to `onDelete` and generates the
+appropriate `DROP CONSTRAINT` / `ADD CONSTRAINT` ops.
 
 ### Many-to-Many
 

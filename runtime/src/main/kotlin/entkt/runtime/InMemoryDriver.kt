@@ -4,6 +4,7 @@ import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.schema.OnDelete
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -164,7 +165,11 @@ class InMemoryDriver : Driver {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
         synchronized(rows) {
-            return rows.removeAll { it[schema.idColumn] == id }
+            val matched = rows.filter { it[schema.idColumn] == id }
+            if (matched.isEmpty()) return false
+            applyReferentialActions(table, matched)
+            rows.removeAll(matched.toSet())
+            return true
         }
     }
 
@@ -208,12 +213,14 @@ class InMemoryDriver : Driver {
     }
 
     override fun deleteMany(table: String, predicates: List<Predicate>): Int {
-        schemas[table] ?: error("Unregistered table: $table")
+        val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
         synchronized(rows) {
             // Collect matches before removing so edge predicates that
             // reference the same table see a consistent snapshot.
             val matched = rows.filter { row -> predicates.all { evaluate(row, it, table) } }
+            if (matched.isEmpty()) return 0
+            applyReferentialActions(table, matched)
             rows.removeAll(matched.toSet())
             return matched.size
         }
@@ -259,6 +266,126 @@ class InMemoryDriver : Driver {
             throw e
         } finally {
             txDriver.closed = true
+        }
+    }
+
+    // ---------- Referential actions ----------
+
+    /**
+     * Enforce ON DELETE referential actions for rows being removed from
+     * [sourceTable]. Scans all registered schemas for FK columns that
+     * reference [sourceTable] and applies the declared action:
+     *
+     * - **RESTRICT**: throws if any referencing rows exist.
+     * - **SET_NULL**: nulls out FK columns on referencing rows.
+     * - **CASCADE**: removes referencing rows and recurses.
+     *
+     * When no explicit [OnDelete] is declared, the default is inferred
+     * from column nullability (SET_NULL for nullable, RESTRICT for required).
+     *
+     * Must be called *before* the source rows are removed so that a
+     * RESTRICT violation prevents the delete.
+     */
+    private fun applyReferentialActions(sourceTable: String, deletedRows: List<Map<String, Any?>>) {
+        if (deletedRows.isEmpty()) return
+        // Two-pass: check all RESTRICT constraints first (recursively
+        // following CASCADE chains) so that no mutations occur if any
+        // RESTRICT violation exists. Then apply SET_NULL and CASCADE.
+        // Both passes carry a visited set to guard against cycles
+        // (self-referential or circular CASCADE relationships).
+        checkRestrict(sourceTable, deletedRows, mutableSetOf())
+        applyCascadeAndSetNull(sourceTable, deletedRows, mutableSetOf())
+    }
+
+    /** Recursively verify no RESTRICT constraint blocks the delete. */
+    private fun checkRestrict(
+        sourceTable: String,
+        deletedRows: List<Map<String, Any?>>,
+        visited: MutableSet<Pair<String, Any>>,
+    ) {
+        for ((refTable, refSchema) in schemas) {
+            for (col in refSchema.columns) {
+                val ref = col.references ?: continue
+                if (ref.table != sourceTable) continue
+                // Build the set of referenced-column values from the deleted rows
+                val refValues = deletedRows.mapNotNull { it[ref.column] }.toSet()
+                if (refValues.isEmpty()) continue
+                val effective = ref.onDelete
+                    ?: if (col.nullable) OnDelete.SET_NULL else OnDelete.RESTRICT
+                val refRows = tables.getValue(refTable)
+                synchronized(refRows) {
+                    when (effective) {
+                        OnDelete.RESTRICT -> {
+                            if (refRows.any { it[col.name] in refValues }) {
+                                error(
+                                    "foreign key constraint: cannot delete from $sourceTable — " +
+                                        "referenced by $refTable.${col.name}",
+                                )
+                            }
+                        }
+                        OnDelete.CASCADE -> {
+                            // CASCADE would delete these rows — check their RESTRICT constraints too
+                            val cascadeRows = refRows.filter { it[col.name] in refValues }
+                            if (cascadeRows.isNotEmpty()) {
+                                val unvisited = cascadeRows.filter {
+                                    visited.add(refTable to it[refSchema.idColumn]!!)
+                                }
+                                if (unvisited.isNotEmpty()) {
+                                    checkRestrict(refTable, unvisited, visited)
+                                }
+                            }
+                        }
+                        OnDelete.SET_NULL -> {
+                            if (!col.nullable) {
+                                error(
+                                    "invalid schema: ON DELETE SET NULL on non-nullable column " +
+                                        "$refTable.${col.name}",
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Apply SET_NULL and CASCADE mutations after RESTRICT checks pass. */
+    private fun applyCascadeAndSetNull(
+        sourceTable: String,
+        deletedRows: List<Map<String, Any?>>,
+        visited: MutableSet<Pair<String, Any>>,
+    ) {
+        for ((refTable, refSchema) in schemas) {
+            for (col in refSchema.columns) {
+                val ref = col.references ?: continue
+                if (ref.table != sourceTable) continue
+                val refValues = deletedRows.mapNotNull { it[ref.column] }.toSet()
+                if (refValues.isEmpty()) continue
+                val effective = ref.onDelete
+                    ?: if (col.nullable) OnDelete.SET_NULL else OnDelete.RESTRICT
+                val refRows = tables.getValue(refTable)
+                synchronized(refRows) {
+                    when (effective) {
+                        OnDelete.RESTRICT -> { /* already checked */ }
+                        OnDelete.SET_NULL -> {
+                            // Nullability already validated in checkRestrict
+                            for (row in refRows) {
+                                if (row[col.name] in refValues) row[col.name] = null
+                            }
+                        }
+                        OnDelete.CASCADE -> {
+                            val toDelete = refRows.filter { it[col.name] in refValues }
+                            val unvisited = toDelete.filter {
+                                visited.add(refTable to it[refSchema.idColumn]!!)
+                            }
+                            if (unvisited.isNotEmpty()) {
+                                applyCascadeAndSetNull(refTable, unvisited, visited)
+                            }
+                            refRows.removeAll(toDelete.toSet())
+                        }
+                    }
+                }
+            }
         }
     }
 

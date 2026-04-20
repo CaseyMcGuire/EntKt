@@ -123,7 +123,7 @@ Stored as strings in the database.
 **Edges:** `to(name, target)` (one-to-many), `from(name, target)` (inverse,
 synthesizes FK on source). Modifiers: `.unique()`, `.required()`, `.ref(...)`,
 `.field(...)`, `.through(junctionTable, sourceCol, targetCol)` (many-to-many
-via junction table).
+via junction table), `.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.
 
 **Mixins:** any `EntMixin` contributing `fields()`, `edges()`, `indexes()`.
 
@@ -296,8 +296,9 @@ JDBC-backed `Driver` talking to real PostgreSQL.
   `BOOL` → `boolean`, `INT` → `integer`, `LONG` → `bigint`, `FLOAT` → `real`,
   `DOUBLE` → `double precision`, `TIME` → `timestamptz`, `UUID` → `uuid`,
   `BYTES` → `bytea`. Primary keys for `AUTO_INT`/`AUTO_LONG` become
-  `serial`/`bigserial`. Edge FK columns emit `REFERENCES target("id")`
-  constraints. Unique fields and composite indexes emit `UNIQUE`
+  `serial`/`bigserial`. Edge FK columns emit `REFERENCES target("id")
+  ON DELETE ...` constraints (CASCADE, SET_NULL, or RESTRICT — defaults
+  inferred from nullability). Unique fields and composite indexes emit `UNIQUE`
   constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
   Partial indexes append `WHERE predicate` when declared via `.where()`.
 - **Insert/update/upsert:** `INSERT ... RETURNING *`, `UPDATE ... RETURNING *`,
@@ -337,12 +338,12 @@ Configuration lives under an `entkt { packageName = "..." }` extension.
 
 ### Tests
 
-366 tests across all modules:
+375 tests across all modules:
 
 - `:schema` — schema DSL shape tests (17)
 - `:runtime` — full `InMemoryDriver` coverage including CRUD, bulk ops,
-  compound predicates, edge traversal, M2M junction tables, transactions,
-  ordering, pagination (47)
+  referential actions (CASCADE, SET_NULL, RESTRICT), compound predicates,
+  edge traversal, M2M junction tables, transactions, ordering, pagination (56)
 - `:codegen` — per-generator unit tests for entity, mutation, create, update,
   query, repo, client, edge codegen, lifecycle hooks, eager loading, field
   validation, bulk ops, and M2M disambiguation (166)
@@ -366,10 +367,6 @@ Things that are **not yet implemented**, roughly in order of severity:
 ### Schema & DDL
 - **Exotic column types.** No JSON/JSONB, arrays, enums (as PG enum types),
   hstore, or composites.
-- **Cascade delete.** Edge FK columns emit `ON DELETE SET NULL` (nullable)
-  or `ON DELETE RESTRICT` (required) via the migration renderer, but there
-  is no `ON DELETE CASCADE` option and `register()` does not emit `ON DELETE`
-  clauses.
 
 ### DSL / codegen
 - **Incremental codegen.** The Gradle plugin always regenerates the full

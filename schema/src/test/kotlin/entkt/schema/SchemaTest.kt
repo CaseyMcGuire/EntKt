@@ -2,6 +2,7 @@ package entkt.schema
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -297,5 +298,54 @@ class SchemaTest {
         assertNotNull(usersEdge.through)
         assertEquals("user_groups", usersEdge.through!!.name)
         assertEquals(UserGroup, usersEdge.through!!.target)
+    }
+
+    @Test
+    fun `onDelete rejected on non-unique edge`() {
+        assertFailsWith<IllegalArgumentException> {
+            EdgeBuilder("cars", EdgeType.TO, Car)
+                .onDelete(OnDelete.CASCADE)
+                .build()
+        }
+    }
+
+    @Test
+    fun `onDelete rejected on through edge`() {
+        assertFailsWith<IllegalArgumentException> {
+            EdgeBuilder("users", EdgeType.TO, User)
+                .unique()
+                .through("user_groups", UserGroup)
+                .onDelete(OnDelete.CASCADE)
+                .build()
+        }
+    }
+
+    @Test
+    fun `onDelete accepted on unique edge without through`() {
+        val edge = EdgeBuilder("owner", EdgeType.TO, User)
+            .unique()
+            .onDelete(OnDelete.CASCADE)
+            .build()
+        assertEquals(OnDelete.CASCADE, edge.onDelete)
+    }
+
+    @Test
+    fun `onDelete SET_NULL rejected on required edge`() {
+        assertFailsWith<IllegalArgumentException> {
+            EdgeBuilder("owner", EdgeType.TO, User)
+                .unique()
+                .required()
+                .onDelete(OnDelete.SET_NULL)
+                .build()
+        }
+    }
+
+    @Test
+    fun `onDelete SET_NULL accepted on non-required unique edge`() {
+        val edge = EdgeBuilder("owner", EdgeType.TO, User)
+            .unique()
+            .onDelete(OnDelete.SET_NULL)
+            .build()
+        assertEquals(OnDelete.SET_NULL, edge.onDelete)
     }
 }

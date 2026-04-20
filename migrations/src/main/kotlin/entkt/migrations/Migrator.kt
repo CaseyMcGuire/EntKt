@@ -315,17 +315,26 @@ class Migrator(
                 }
             }
 
-            // Include columnNullable in the key so a nullability flip
-            // (which triggers drop+recreate of the FK under a new name)
-            // doesn't carry the old constraint name into the snapshot.
-            data class FkKey(val column: String, val targetTable: String, val targetColumn: String, val columnNullable: Boolean)
+            // Include the effective ON DELETE action in the key so that
+            // a nullability flip or onDelete change (which triggers drop+
+            // recreate of the FK under a new name) doesn't carry the old
+            // constraint name into the snapshot. Use the effective action
+            // (not raw) so that null matches its inferred default.
+            data class FkKey(
+                val column: String,
+                val targetTable: String,
+                val targetColumn: String,
+                val effectiveOnDelete: entkt.schema.OnDelete,
+            )
+            fun effectiveOnDelete(fk: NormalizedForeignKey): entkt.schema.OnDelete =
+                fk.onDelete ?: if (fk.columnNullable) entkt.schema.OnDelete.SET_NULL else entkt.schema.OnDelete.RESTRICT
             val currentFkByKey = currentTable.foreignKeys.associateBy {
-                FkKey(it.column, it.targetTable, it.targetColumn, it.columnNullable)
+                FkKey(it.column, it.targetTable, it.targetColumn, effectiveOnDelete(it))
             }
             val mergedFks = desiredTable.foreignKeys.map { fk ->
                 if (fk.constraintName != null) fk
                 else {
-                    val currentFk = currentFkByKey[FkKey(fk.column, fk.targetTable, fk.targetColumn, fk.columnNullable)]
+                    val currentFk = currentFkByKey[FkKey(fk.column, fk.targetTable, fk.targetColumn, effectiveOnDelete(fk))]
                     if (currentFk?.constraintName != null) fk.copy(constraintName = currentFk.constraintName)
                     else fk
                 }

@@ -2,6 +2,7 @@ package entkt.migrations
 
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
+import entkt.schema.OnDelete
 import java.io.Reader
 import java.io.Writer
 import java.nio.file.Path
@@ -65,6 +66,7 @@ data class NormalizedSchema(
                             targetTable = col.references!!.table,
                             targetColumn = col.references!!.column,
                             columnNullable = col.nullable,
+                            onDelete = col.references!!.onDelete,
                         )
                     }
 
@@ -193,8 +195,10 @@ data class NormalizedForeignKey(
     val column: String,
     val targetTable: String,
     val targetColumn: String,
-    /** Whether the FK column is nullable — drives ON DELETE behavior. */
+    /** Whether the FK column is nullable — drives ON DELETE behavior when [onDelete] is null. */
     val columnNullable: Boolean,
     /** Actual constraint name from introspection, or null for entity-derived FKs. */
     val constraintName: String? = null,
+    /** Explicit ON DELETE action, or null to infer from [columnNullable]. */
+    val onDelete: OnDelete? = null,
 )

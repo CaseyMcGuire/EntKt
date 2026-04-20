@@ -1,5 +1,7 @@
 package entkt.migrations
 
+import entkt.schema.OnDelete
+
 /**
  * Pure function that diffs two [NormalizedSchema] values and returns a
  * [DiffResult] containing additive (auto) ops and destructive (manual) ops.
@@ -173,7 +175,7 @@ class SchemaDiffer {
             val currentFk = currentByKey[key]
             if (currentFk == null) {
                 autoOps.add(MigrationOp.AddForeignKey(table, fk))
-            } else if (fk.columnNullable != currentFk.columnNullable) {
+            } else if (effectiveOnDelete(fk) != effectiveOnDelete(currentFk)) {
                 // ON DELETE behavior changed — drop old constraint (manual)
                 // and add the new one (auto).
                 manualOps.add(MigrationOp.DropForeignKey(table, currentFk.column, currentFk.constraintName))
@@ -187,6 +189,16 @@ class SchemaDiffer {
             }
         }
     }
+
+    /**
+     * Resolve the effective ON DELETE action for a FK.
+     * When [NormalizedForeignKey.onDelete] is null, the default is
+     * inferred from column nullability (SET_NULL for nullable, RESTRICT
+     * for required). This ensures a null `onDelete` compares equal to
+     * its inferred equivalent from introspection.
+     */
+    private fun effectiveOnDelete(fk: NormalizedForeignKey): OnDelete =
+        fk.onDelete ?: if (fk.columnNullable) OnDelete.SET_NULL else OnDelete.RESTRICT
 
     /**
      * Sort ops in dependency order:

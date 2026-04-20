@@ -1,5 +1,7 @@
 package entkt.migrations
 
+import entkt.schema.OnDelete
+
 /**
  * Minimal hand-rolled JSON serialization for [NormalizedSchema] snapshots.
  * Avoids pulling in a JSON library just for this one use case.
@@ -80,6 +82,9 @@ internal object JsonCodec {
             sb.append(", \"columnNullable\": ").append(fk.columnNullable)
             if (fk.constraintName != null) {
                 sb.append(", \"constraintName\": ").append(escStr(fk.constraintName))
+            }
+            if (fk.onDelete != null) {
+                sb.append(", \"onDelete\": ").append(escStr(fk.onDelete.name))
             }
             sb.append("}")
             if (fi < sortedFks.size - 1) sb.append(",")
@@ -226,6 +231,7 @@ internal object JsonCodec {
             var targetColumn = ""
             var columnNullable = false
             var constraintName: String? = null
+            var onDelete: OnDelete? = null
             skipWs()
             while (peek() != '}') {
                 val key = readString()
@@ -236,13 +242,14 @@ internal object JsonCodec {
                     "targetColumn" -> targetColumn = readString()
                     "columnNullable" -> columnNullable = readBool()
                     "constraintName" -> constraintName = readString()
+                    "onDelete" -> onDelete = OnDelete.valueOf(readString())
                     else -> skipValue()
                 }
                 skipWs()
                 if (peek() == ',') { advance(); skipWs() }
             }
             expect('}')
-            return NormalizedForeignKey(column, targetTable, targetColumn, columnNullable, constraintName)
+            return NormalizedForeignKey(column, targetTable, targetColumn, columnNullable, constraintName, onDelete)
         }
 
         private fun <T> parseArray(parseItem: () -> T): List<T> {

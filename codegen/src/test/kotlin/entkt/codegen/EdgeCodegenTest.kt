@@ -4,11 +4,14 @@ import entkt.schema.Edge
 import entkt.schema.EdgeType
 import entkt.schema.EntId
 import entkt.schema.EntSchema
+import entkt.schema.OnDelete
 import entkt.schema.Through
 import entkt.schema.edges
 import entkt.schema.fields
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 
 object Owner : EntSchema() {
     override fun id() = EntId.long()
@@ -712,6 +715,54 @@ class EdgeCodegenTest {
         }
         assert(error.message!!.contains("targetEdge hint")) {
             "Should mention targetEdge hint: ${error.message}"
+        }
+    }
+
+    // ---------- onDelete with explicit .field() ----------
+
+    @Test
+    fun `onDelete propagates through explicit field edges`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                long("owner_id")
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique().field("owner_id").onDelete(OnDelete.CASCADE)
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        val columns = columnMetadataFor(child, names)
+        val fkCol = columns.firstOrNull { it.name == "owner_id" }
+
+        assertNotNull(fkCol, "Should find owner_id column")
+        val refs = assertNotNull(fkCol.references, "Explicit-field edge should produce FK references")
+        assertEquals("parents", refs.first, "Should reference parents table")
+        assertEquals(OnDelete.CASCADE, fkCol.onDelete, "Should carry CASCADE from edge")
+    }
+
+    @Test
+    fun `SET_NULL rejected on non-nullable explicit field`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                long("owner_id") // not optional — non-nullable
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique().field("owner_id").onDelete(OnDelete.SET_NULL)
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        assertFailsWith<IllegalStateException> {
+            columnMetadataFor(child, names)
         }
     }
 }

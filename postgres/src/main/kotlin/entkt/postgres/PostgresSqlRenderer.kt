@@ -94,7 +94,7 @@ class PostgresSqlRenderer(
         fk: entkt.migrations.NormalizedForeignKey,
     ): List<String> {
         val constraintName = truncateIdentifier("fk_${table}_${fk.column}")
-        val onDelete = if (fk.columnNullable) "SET NULL" else "RESTRICT"
+        val onDelete = fk.onDelete.toSql(fk.columnNullable)
         return listOf(
             "ALTER TABLE ${quote(table)} ADD CONSTRAINT ${quote(constraintName)} " +
                 "FOREIGN KEY (${quote(fk.column)}) REFERENCES ${quote(fk.targetTable)} (${quote(fk.targetColumn)}) " +

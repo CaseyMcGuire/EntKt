@@ -1,6 +1,7 @@
 package entkt.runtime
 
 import entkt.schema.FieldType
+import entkt.schema.OnDelete
 
 /**
  * Runtime metadata describing one entity to a [Driver]: enough to look
@@ -72,6 +73,12 @@ data class ForeignKeyRef(
     val table: String,
     /** Target column name (usually `"id"`). */
     val column: String,
+    /**
+     * Referential action when the referenced row is deleted.
+     * `null` means the driver infers from column nullability
+     * (SET NULL for nullable, RESTRICT for required).
+     */
+    val onDelete: OnDelete? = null,
 )
 
 /**

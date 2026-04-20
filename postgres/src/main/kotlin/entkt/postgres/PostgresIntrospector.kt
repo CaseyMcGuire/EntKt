@@ -201,7 +201,8 @@ class PostgresIntrospector(
             SELECT tc.constraint_name,
                    kcu.column_name,
                    ccu.table_name AS target_table,
-                   ccu.column_name AS target_column
+                   ccu.column_name AS target_column,
+                   rc.delete_rule
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
               ON tc.constraint_name = kcu.constraint_name
@@ -209,6 +210,9 @@ class PostgresIntrospector(
             JOIN information_schema.constraint_column_usage ccu
               ON tc.constraint_name = ccu.constraint_name
               AND tc.table_schema = ccu.table_schema
+            JOIN information_schema.referential_constraints rc
+              ON tc.constraint_name = rc.constraint_name
+              AND tc.table_schema = rc.constraint_schema
             WHERE tc.table_schema = 'public'
               AND tc.table_name = ?
               AND tc.constraint_type = 'FOREIGN KEY'
@@ -218,6 +222,13 @@ class PostgresIntrospector(
             stmt.executeQuery().use { rs ->
                 while (rs.next()) {
                     val colName = rs.getString("column_name")
+                    val deleteRule = rs.getString("delete_rule")
+                    val onDelete = when (deleteRule) {
+                        "CASCADE" -> entkt.schema.OnDelete.CASCADE
+                        "SET NULL" -> entkt.schema.OnDelete.SET_NULL
+                        "RESTRICT", "NO ACTION" -> entkt.schema.OnDelete.RESTRICT
+                        else -> null
+                    }
                     fks.add(
                         NormalizedForeignKey(
                             column = colName,
@@ -225,6 +236,7 @@ class PostgresIntrospector(
                             targetColumn = rs.getString("target_column"),
                             columnNullable = nullabilityByName[colName] ?: false,
                             constraintName = rs.getString("constraint_name"),
+                            onDelete = onDelete,
                         ),
                     )
                 }

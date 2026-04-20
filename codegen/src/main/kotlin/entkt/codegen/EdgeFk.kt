@@ -2,6 +2,7 @@ package entkt.codegen
 
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
+import entkt.schema.OnDelete
 
 /**
  * A synthetic foreign-key field derived from a unique edge that doesn't
@@ -15,6 +16,7 @@ data class EdgeFk(
     val targetName: String,
     val idType: FieldType,
     val required: Boolean,
+    val onDelete: OnDelete? = null,
 )
 
 /**
@@ -38,6 +40,7 @@ fun computeEdgeFks(
                 targetName = targetName,
                 idType = edge.target.id().type,
                 required = edge.required,
+                onDelete = edge.onDelete,
             )
         }
 }

@@ -11,6 +11,7 @@ import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
 import entkt.runtime.UpsertResult
 import entkt.schema.FieldType
+import entkt.schema.OnDelete
 import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
@@ -520,7 +521,7 @@ class PostgresDriver(
             if (!col.nullable && !col.primaryKey && !isAutoSerial(schema, col)) add("NOT NULL")
             val ref = col.references
             if (ref != null) {
-                val onDelete = if (col.nullable) "SET NULL" else "RESTRICT"
+                val onDelete = ref.onDelete.toSql(col.nullable)
                 add("REFERENCES ${quote(ref.table)}(${quote(ref.column)}) ON DELETE $onDelete")
             }
         }.joinToString(" ")

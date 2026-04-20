@@ -11,6 +11,7 @@ import entkt.runtime.ForeignKeyRef
 import entkt.runtime.IdStrategy
 import entkt.runtime.IndexMetadata
 import entkt.schema.FieldType
+import entkt.schema.OnDelete
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -982,5 +983,140 @@ class PostgresDriverTest {
         val count = driver.deleteMany("users", emptyList())
         assertEquals(2, count)
         assertEquals(0, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
+
+    // ---------- ON DELETE referential actions ----------
+
+    private val CASCADE_PARENT_SCHEMA = EntitySchema(
+        table = "cascade_parents",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+        ),
+        edges = emptyMap(),
+    )
+
+    private val CASCADE_CHILD_SCHEMA = EntitySchema(
+        table = "cascade_children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ColumnMetadata(
+                "parent_id", FieldType.LONG, nullable = false,
+                references = ForeignKeyRef("cascade_parents", "id", OnDelete.CASCADE),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    private val SET_NULL_CHILD_SCHEMA = EntitySchema(
+        table = "setnull_children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ColumnMetadata(
+                "parent_id", FieldType.LONG, nullable = true,
+                references = ForeignKeyRef("cascade_parents", "id", OnDelete.SET_NULL),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    private val RESTRICT_CHILD_SCHEMA = EntitySchema(
+        table = "restrict_children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("name", FieldType.STRING, nullable = false),
+            ColumnMetadata(
+                "parent_id", FieldType.LONG, nullable = false,
+                references = ForeignKeyRef("cascade_parents", "id", OnDelete.RESTRICT),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    private fun freshCascade(childSchema: EntitySchema): PostgresDriver {
+        val driver = PostgresDriver(dataSource)
+        // Register all child schemas so their tables exist, then truncate everything
+        driver.register(CASCADE_PARENT_SCHEMA)
+        driver.register(CASCADE_CHILD_SCHEMA)
+        driver.register(SET_NULL_CHILD_SCHEMA)
+        driver.register(RESTRICT_CHILD_SCHEMA)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute(
+                    "TRUNCATE TABLE \"cascade_children\", \"setnull_children\", " +
+                        "\"restrict_children\", \"cascade_parents\" RESTART IDENTITY",
+                )
+            }
+        }
+        return driver
+    }
+
+    @Test
+    fun `cascade delete removes child rows in postgres`() {
+        val driver = freshCascade(CASCADE_CHILD_SCHEMA)
+        val parent = driver.insert("cascade_parents", mapOf("name" to "P1"))
+        driver.insert("cascade_children", mapOf("name" to "C1", "parent_id" to parent["id"]))
+        driver.insert("cascade_children", mapOf("name" to "C2", "parent_id" to parent["id"]))
+
+        driver.delete("cascade_parents", parent["id"]!!)
+
+        assertEquals(0, driver.query("cascade_children", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `set null nulls FK on child rows in postgres`() {
+        val driver = freshCascade(SET_NULL_CHILD_SCHEMA)
+        val parent = driver.insert("cascade_parents", mapOf("name" to "P1"))
+        driver.insert("setnull_children", mapOf("name" to "C1", "parent_id" to parent["id"]))
+
+        driver.delete("cascade_parents", parent["id"]!!)
+
+        val children = driver.query("setnull_children", emptyList(), emptyList(), null, null)
+        assertEquals(1, children.size)
+        assertNull(children.single()["parent_id"])
+    }
+
+    @Test
+    fun `restrict prevents delete when children exist in postgres`() {
+        val driver = freshCascade(RESTRICT_CHILD_SCHEMA)
+        val parent = driver.insert("cascade_parents", mapOf("name" to "P1"))
+        driver.insert("restrict_children", mapOf("name" to "C1", "parent_id" to parent["id"]))
+
+        assertFailsWith<Exception> {
+            driver.delete("cascade_parents", parent["id"]!!)
+        }
+        // Parent should still exist
+        assertNotNull(driver.byId("cascade_parents", parent["id"]!!))
+    }
+
+    @Test
+    fun `SET_NULL on non-nullable column rejects at DDL render time`() {
+        val badSchema = EntitySchema(
+            table = "bad_setnull",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "parent_id", FieldType.LONG, nullable = false,
+                    references = ForeignKeyRef("cascade_parents", "id", OnDelete.SET_NULL),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val pgDriver = PostgresDriver(dataSource)
+        assertFailsWith<IllegalArgumentException> {
+            pgDriver.register(badSchema)
+        }
     }
 }

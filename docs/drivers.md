@@ -70,6 +70,8 @@ Features:
 
 - `ConcurrentHashMap`-based storage with `AtomicLong` ID counters
 - Full predicate support including edge traversal and M2M junction tables
+- Referential actions on delete (CASCADE, SET_NULL, RESTRICT) enforced
+  from `ForeignKeyRef.onDelete` metadata
 - Snapshot-based transactions with rollback on exception
 - Nested `withTransaction` calls reuse the existing transaction
 
@@ -99,7 +101,8 @@ val client = EntClient(PostgresDriver(dataSource))
 - `PRIMARY KEY` on the ID column
 - `NOT NULL` constraints on required columns
 - `UNIQUE` constraints on unique columns
-- `REFERENCES` for foreign key columns
+- `REFERENCES ... ON DELETE` for foreign key columns (action from schema
+  metadata, or inferred from nullability)
 - `CREATE INDEX` / `CREATE UNIQUE INDEX` for composite indexes
 
 ### Type Mapping

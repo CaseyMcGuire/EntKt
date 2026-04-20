@@ -129,7 +129,7 @@ private fun buildEntitySchema(
                 nullable = col.nullable,
                 primaryKey = col.primaryKey,
                 unique = col.unique,
-                references = col.references?.let { (t, c) -> ForeignKeyRef(t, c) },
+                references = col.references?.let { (t, c) -> ForeignKeyRef(t, c, col.onDelete) },
             )
         },
         edges = buildEdgeMap(schema, schemaNames),

@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.CodeBlock
 import entkt.schema.Edge
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
+import entkt.schema.OnDelete
 
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
 internal val COLUMN_METADATA = ClassName("entkt.runtime", "ColumnMetadata")
@@ -13,6 +14,7 @@ internal val INDEX_METADATA = ClassName("entkt.runtime", "IndexMetadata")
 internal val FOREIGN_KEY_REF = ClassName("entkt.runtime", "ForeignKeyRef")
 internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
+internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
 
 /**
  * Convert a generated entity name (`User`, `Post`, `Tag`) to its SQL
@@ -52,6 +54,8 @@ internal data class ColumnDescriptor(
     val unique: Boolean = false,
     /** If non-null, this column is an FK referencing (table, column). */
     val references: Pair<String, String>? = null,
+    /** Referential action on delete for FK columns. */
+    val onDelete: OnDelete? = null,
 )
 
 /**
@@ -67,6 +71,18 @@ internal fun columnMetadataFor(
 ): List<ColumnDescriptor> {
     val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
     val edgeFks = computeEdgeFks(schema, schemaNames)
+
+    // Edges with .field("col_name") re-use a declared field as their FK
+    // column. Build a lookup so the declared field picks up the FK
+    // reference and onDelete action from the edge.
+    val explicitFieldEdges = schema.edges()
+        .filter { it.unique && it.field != null && it.through == null }
+        .mapNotNull { edge ->
+            val targetName = schemaNames[edge.target] ?: return@mapNotNull null
+            edge.field!! to (tableNameFor(targetName) to edge.onDelete)
+        }
+        .toMap()
+
     return buildList {
         add(
             ColumnDescriptor(
@@ -77,12 +93,22 @@ internal fun columnMetadataFor(
             ),
         )
         for (field in fields) {
+            val edgeRef = explicitFieldEdges[field.name]
+            val fieldNullable = field.optional || field.nillable
+            if (edgeRef?.second == OnDelete.SET_NULL && !fieldNullable) {
+                error(
+                    "ON DELETE SET_NULL on edge with .field(\"${field.name}\") requires " +
+                        "the backing field to be optional or nillable",
+                )
+            }
             add(
                 ColumnDescriptor(
                     name = field.name,
                     type = field.type,
-                    nullable = field.optional || field.nillable,
+                    nullable = fieldNullable,
                     unique = field.unique,
+                    references = edgeRef?.let { (table, _) -> table to "id" },
+                    onDelete = edgeRef?.second,
                 ),
             )
         }
@@ -94,6 +120,7 @@ internal fun columnMetadataFor(
                     type = fk.idType,
                     nullable = !fk.required,
                     references = targetTable to "id",
+                    onDelete = fk.onDelete,
                 ),
             )
         }
@@ -248,19 +275,37 @@ internal fun entitySchemaCodeBlock(
             for (col in columns) {
                 if (col.references != null) {
                     val (refTable, refCol) = col.references
-                    cb.add(
-                        "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L, references = %T(table = %S, column = %S)),\n",
-                        COLUMN_METADATA,
-                        col.name,
-                        FIELD_TYPE,
-                        col.type.name,
-                        col.nullable,
-                        col.primaryKey,
-                        col.unique,
-                        FOREIGN_KEY_REF,
-                        refTable,
-                        refCol,
-                    )
+                    if (col.onDelete != null) {
+                        cb.add(
+                            "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L, references = %T(table = %S, column = %S, onDelete = %T.%L)),\n",
+                            COLUMN_METADATA,
+                            col.name,
+                            FIELD_TYPE,
+                            col.type.name,
+                            col.nullable,
+                            col.primaryKey,
+                            col.unique,
+                            FOREIGN_KEY_REF,
+                            refTable,
+                            refCol,
+                            ON_DELETE,
+                            col.onDelete.name,
+                        )
+                    } else {
+                        cb.add(
+                            "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L, references = %T(table = %S, column = %S)),\n",
+                            COLUMN_METADATA,
+                            col.name,
+                            FIELD_TYPE,
+                            col.type.name,
+                            col.nullable,
+                            col.primaryKey,
+                            col.unique,
+                            FOREIGN_KEY_REF,
+                            refTable,
+                            refCol,
+                        )
+                    }
                 } else {
                     cb.add(
                         "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L),\n",
