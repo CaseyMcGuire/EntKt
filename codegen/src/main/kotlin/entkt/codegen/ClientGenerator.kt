@@ -44,6 +44,10 @@ class ClientGenerator(
 ) {
 
     fun generate(schemas: List<SchemaInput>): FileSpec {
+        // Sort schemas so that FK dependencies are registered before
+        // dependents — e.g. User before Friendship (which references User).
+        val sorted = topologicalSort(schemas)
+
         val clientClass = ClassName(packageName, "EntClient")
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
@@ -85,10 +89,10 @@ class ClientGenerator(
                     .initializer("driver")
                     .build()
             )
-            .addProperties(schemas.map { buildRepoProperty(it) })
-            .addInitializerBlock(buildInitBlock(configClass, schemas))
-            .addFunction(buildWithTransaction(clientClass, configClass, t, schemas))
-            .addType(buildCompanionObject(schemas))
+            .addProperties(sorted.map { buildRepoProperty(it) })
+            .addInitializerBlock(buildInitBlock(configClass, sorted))
+            .addFunction(buildWithTransaction(clientClass, configClass, t, sorted))
+            .addType(buildCompanionObject(sorted))
             .build()
 
         fileBuilder.addType(typeSpec)
@@ -278,6 +282,41 @@ class ClientGenerator(
             .initializer("%T(driver)", repoClass)
             .build()
     }
+}
+
+/**
+ * Topologically sort schemas so that FK dependencies come before the
+ * schemas that reference them. Falls back to the original order for
+ * schemas with no dependency relationship (stable sort).
+ */
+private fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
+    val bySchema = schemas.associateBy { it.schema }
+    // Build adjacency: schema → set of schemas it depends on (FK targets)
+    val deps = schemas.associate { input ->
+        input to input.schema.edges()
+            .filter { edge -> edge.unique && edge.through == null }
+            .mapNotNull { edge -> bySchema[edge.target] }
+            .toSet()
+    }
+
+    val result = mutableListOf<SchemaInput>()
+    val visited = mutableSetOf<SchemaInput>()
+    val visiting = mutableSetOf<SchemaInput>() // cycle guard
+
+    fun visit(input: SchemaInput) {
+        if (input in visited) return
+        if (input in visiting) return // cycle — break it
+        visiting.add(input)
+        for (dep in deps[input].orEmpty()) {
+            visit(dep)
+        }
+        visiting.remove(input)
+        visited.add(input)
+        result.add(input)
+    }
+
+    for (input in schemas) visit(input)
+    return result
 }
 
 private data class HookDef(val name: String, val paramType: ClassName)
