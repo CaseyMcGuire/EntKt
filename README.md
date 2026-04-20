@@ -368,10 +368,6 @@ Things that are **not yet implemented**, roughly in order of severity:
 - **Exotic column types.** No JSON/JSONB, arrays, enums (as PG enum types),
   hstore, or composites.
 
-### DSL / codegen
-- **Incremental codegen.** The Gradle plugin always regenerates the full
-  tree; there's no per-schema caching or watch mode.
-
 ### Tooling
 - **No published artifacts.** The plugin and runtime are not yet on any
   Maven repository — consumers would currently need a composite build or
