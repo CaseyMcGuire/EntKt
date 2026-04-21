@@ -1,5 +1,6 @@
 package example.spring
 
+import entkt.runtime.PrivacyDeniedException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -10,6 +11,13 @@ class ErrorHandler {
 
     @ExceptionHandler(AccessDeniedException::class)
     fun handleAccessDenied(ex: AccessDeniedException): ResponseEntity<Map<String, String>> {
+        return ResponseEntity
+            .status(HttpStatus.FORBIDDEN)
+            .body(mapOf("error" to (ex.message ?: "Access denied")))
+    }
+
+    @ExceptionHandler(PrivacyDeniedException::class)
+    fun handlePrivacyDenied(ex: PrivacyDeniedException): ResponseEntity<Map<String, String>> {
         return ResponseEntity
             .status(HttpStatus.FORBIDDEN)
             .body(mapOf("error" to (ex.message ?: "Access denied")))

@@ -170,6 +170,84 @@ class ClientGeneratorTest {
     }
 
     @Test
+    fun `generates EntClientPolicies with per-entity registration`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("class EntClientPolicies")) {
+            "Should generate EntClientPolicies\n$output"
+        }
+        assert(output.contains("fun cars(policy: EntityPolicy<Car, CarPolicyScope>)")) {
+            "Should have cars policy registration method\n$output"
+        }
+        assert(output.contains("fun users(policy: EntityPolicy<User, UserPolicyScope>)")) {
+            "Should have users policy registration method\n$output"
+        }
+    }
+
+    @Test
+    fun `EntClientConfig has policies method`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("fun policies(block: EntClientPolicies.() -> Unit)")) {
+            "Should have policies method on EntClientConfig\n$output"
+        }
+    }
+
+    @Test
+    fun `EntClientConfig has privacyContext method`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("fun privacyContext(provider: () -> PrivacyContext)")) {
+            "Should have privacyContext method on EntClientConfig\n$output"
+        }
+    }
+
+    @Test
+    fun `EntClient has withPrivacyContext method`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("fun <T> withPrivacyContext(context: PrivacyContext, block: (EntClient) -> T): T")) {
+            "Should have withPrivacyContext method\n$output"
+        }
+    }
+
+    @Test
+    fun `EntClient has internal withFixedPrivacyContextForInternalUse method`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("internal fun withFixedPrivacyContextForInternalUse(context: PrivacyContext): EntClient")) {
+            "Should have withFixedPrivacyContextForInternalUse method\n$output"
+        }
+    }
+
+    @Test
+    fun `withTransaction copies privacy context and privacy config`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("tx.privacyContextProvider = this.privacyContextProvider")) {
+            "withTransaction should copy privacy context provider\n$output"
+        }
+        assert(output.contains("tx.cars.copyPrivacyFrom(this.cars)")) {
+            "withTransaction should copy privacy for cars repo\n$output"
+        }
+        assert(output.contains("tx.users.copyPrivacyFrom(this.users)")) {
+            "withTransaction should copy privacy for users repo\n$output"
+        }
+    }
+
+    @Test
+    fun `init block applies policies from config`() {
+        val output = generator.generate(schemas).toString()
+
+        assert(output.contains("cars.applyPrivacy(cfg.policiesConfig.carsConfig)")) {
+            "Should apply car privacy from policies config\n$output"
+        }
+        assert(output.contains("users.applyPrivacy(cfg.policiesConfig.usersConfig)")) {
+            "Should apply user privacy from policies config\n$output"
+        }
+    }
+
+    @Test
     fun `pluralize handles the cases the example schemas exercise`() {
         assertEquals("users", pluralize("user"))
         assertEquals("posts", pluralize("post"))

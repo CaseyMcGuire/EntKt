@@ -130,14 +130,26 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `generates count terminal method`() {
+    fun `generates visibleCount terminal method`() {
         val output = generator.generate("Car", Car).toString()
 
-        assert(output.contains("fun count(): Long")) {
-            "Should generate count(): Long\n$output"
+        assert(output.contains("fun visibleCount(): Long")) {
+            "Should generate visibleCount(): Long\n$output"
+        }
+        assert(output.contains("evaluateLoadPrivacy")) {
+            "visibleCount() should evaluate LOAD privacy\n$output"
+        }
+    }
+
+    @Test
+    fun `generates rawCount terminal method`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun rawCount(): Long")) {
+            "Should generate rawCount(): Long\n$output"
         }
         assert(output.contains("driver.count(Car.TABLE, predicates)")) {
-            "count() should delegate to driver.count\n$output"
+            "rawCount() should delegate to driver.count\n$output"
         }
     }
 
@@ -148,8 +160,11 @@ class QueryGeneratorTest {
         assert(output.contains("fun exists(): Boolean")) {
             "Should generate exists(): Boolean\n$output"
         }
-        assert(output.contains("driver.exists(Car.TABLE, predicates)")) {
-            "exists() should delegate to driver.exists\n$output"
+        assert(output.contains("driver.query(Car.TABLE, predicates, orderFields, 1, queryOffset)")) {
+            "exists() should fetch one row via driver.query\n$output"
+        }
+        assert(output.contains("evaluateLoadPrivacy")) {
+            "exists() should evaluate LOAD privacy\n$output"
         }
     }
 }

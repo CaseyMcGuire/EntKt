@@ -23,6 +23,9 @@ private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
+private val PREDICATE = ClassName("entkt.query", "Predicate")
+private val OP = ClassName("entkt.query", "Op")
 
 class CreateGenerator(
     private val packageName: String,
@@ -189,6 +192,7 @@ class CreateGenerator(
         }
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
+        emitCreatePrivacy(builder, schemaName, allFields, edgeFks)
         builder.addStatement(
             "val row = driver.insert(%T.TABLE, values)",
             entityClass,
@@ -233,6 +237,7 @@ class CreateGenerator(
         }
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
+        emitUpsertPrivacy(builder, schemaName, allFields, edgeFks)
 
         val immutableNames = allFields.filter { it.immutable }.map { it.name }
         if (immutableNames.isEmpty()) {
@@ -374,6 +379,86 @@ class CreateGenerator(
         is Boolean -> value.toString()
         is Number -> value.toString()
         else -> value.toString()
+    }
+
+    private fun buildCandidateArgs(allFields: List<Field>, edgeFks: List<EdgeFk>): List<String> {
+        val args = mutableListOf<String>()
+        for (field in allFields) {
+            args.add("${toCamelCase(field.name)} = ${toCamelCase(field.name)}")
+        }
+        for (fk in edgeFks) {
+            args.add("${fk.propertyName} = ${fk.propertyName}")
+        }
+        return args
+    }
+
+    /**
+     * Emit upsert privacy enforcement: look up the existing row by
+     * conflict columns to decide whether this is an insert or update,
+     * then evaluate the appropriate privacy rules before the driver call.
+     */
+    private fun emitUpsertPrivacy(
+        builder: FunSpec.Builder,
+        schemaName: String,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ) {
+        val entityClass = ClassName(packageName, schemaName)
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        builder.addStatement("val privacy = client.currentPrivacyContext()")
+        val candidateArgs = buildCandidateArgs(allFields, edgeFks)
+        builder.addStatement(
+            "val candidate = %T(${candidateArgs.joinToString(", ")})",
+            candidateClass,
+        )
+        builder.addStatement("require(onConflict.isNotEmpty()) { %S }", "upsert requires at least one conflict column")
+        builder.addStatement(
+            "val conflictPredicates = onConflict.map { %T.Leaf(it.name, %T.EQ, values[it.name]) }",
+            PREDICATE,
+            OP,
+        )
+        builder.addStatement(
+            "val existing = driver.query(%T.TABLE, conflictPredicates, emptyList(), 1, null).firstOrNull()?.let { %T.fromRow(it) }",
+            entityClass,
+            entityClass,
+        )
+        builder.beginControlFlow("if (existing != null)")
+        val immutableFields = allFields.filter { it.immutable }
+        if (immutableFields.isNotEmpty()) {
+            val copyArgs = immutableFields.joinToString(", ") {
+                val prop = toCamelCase(it.name)
+                "$prop = existing.$prop"
+            }
+            builder.addStatement("val updateCandidate = candidate.copy($copyArgs)")
+            builder.addStatement("client.%L.evaluateUpdatePrivacy(privacy, existing, updateCandidate)", repoPropName)
+        } else {
+            builder.addStatement("client.%L.evaluateUpdatePrivacy(privacy, existing, candidate)", repoPropName)
+        }
+        builder.nextControlFlow("else")
+        builder.addStatement("client.%L.evaluateCreatePrivacy(privacy, candidate)", repoPropName)
+        builder.endControlFlow()
+    }
+
+    /**
+     * Emit CREATE privacy enforcement: build a WriteCandidate from the
+     * resolved field locals and call the repo's evaluateCreatePrivacy.
+     */
+    private fun emitCreatePrivacy(
+        builder: FunSpec.Builder,
+        schemaName: String,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ) {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        builder.addStatement("val privacy = client.currentPrivacyContext()")
+        val candidateArgs = buildCandidateArgs(allFields, edgeFks)
+        builder.addStatement(
+            "val candidate = %T(${candidateArgs.joinToString(", ")})",
+            candidateClass,
+        )
+        builder.addStatement("client.%L.evaluateCreatePrivacy(privacy, candidate)", repoPropName)
     }
 }
 

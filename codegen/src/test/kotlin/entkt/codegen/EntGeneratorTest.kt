@@ -15,17 +15,17 @@ class EntGeneratorTest {
     )
 
     @Test
-    fun `generates six files per schema plus one EntClient`() {
+    fun `generates seven files per schema plus one EntClient`() {
         val files = generator.generate(schemas)
 
-        // Per schema: entity, mutation, create, update, query, repo. Plus a
-        // single EntClient that wires every repo together.
-        assertEquals(6 * schemas.size + 1, files.size)
+        // Per schema: entity, mutation, create, update, query, repo, privacy.
+        // Plus a single EntClient that wires every repo together.
+        assertEquals(7 * schemas.size + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
-                "Car", "CarMutation", "CarCreate", "CarUpdate", "CarQuery", "CarRepo",
-                "User", "UserMutation", "UserCreate", "UserUpdate", "UserQuery", "UserRepo",
+                "Car", "CarMutation", "CarCreate", "CarUpdate", "CarQuery", "CarRepo", "CarPrivacy",
+                "User", "UserMutation", "UserCreate", "UserUpdate", "UserQuery", "UserRepo", "UserPrivacy",
                 "EntClient",
             ),
             names,
@@ -54,12 +54,14 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("CarUpdate.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarQuery.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarRepo.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarPrivacy.kt")))
             assertTrue(Files.exists(packageDir.resolve("User.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserMutation.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserCreate.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserUpdate.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserQuery.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserRepo.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserPrivacy.kt")))
             assertTrue(Files.exists(packageDir.resolve("EntClient.kt")))
         } finally {
             outputDir.toFile().deleteRecursively()

@@ -16,8 +16,8 @@ val users = client.users.query {
 ```
 
 `.all()` returns a `List<User>`. Use `.firstOrNull()` for single results,
-`.count()` for the number of matching rows, or `.exists()` to check
-whether any match exists without loading data.
+`.visibleCount()` for a privacy-aware count, `.rawCount()` for a fast
+aggregate count, or `.exists()` to check whether a match exists.
 
 ## Predicates
 
@@ -125,24 +125,41 @@ client.users.query {
 
 ## Count and Exists
 
-Use `count()` to get the number of matching rows without loading them,
-or `exists()` to check whether any match exists:
+### `visibleCount()` -- privacy-aware count
+
+Materializes matching rows, evaluates LOAD privacy on each, and returns
+the count of allowed entities. Denied entities are silently excluded.
+Respects `limit` and `offset`.
 
 ```kotlin
-val activeUsers = client.users.query {
+val visibleActiveUsers = client.users.query {
     where(User.active eq true)
-}.count()  // → Long
+}.visibleCount()  // → Long
+```
 
+### `rawCount()` -- fast aggregate count
+
+Uses `SELECT COUNT(*)` without materializing rows. Does **not** evaluate
+LOAD privacy, so it may count rows the viewer cannot read. Ignores
+`orderBy`, `limit`, and `offset`.
+
+```kotlin
+val totalActiveUsers = client.users.query {
+    where(User.active eq true)
+}.rawCount()  // → Long
+```
+
+### `exists()` -- privacy-aware existence check
+
+Fetches one matching row and evaluates LOAD privacy on it. Returns
+`true` if the row is allowed, `false` if no matching row exists, or
+throws `PrivacyDeniedException` if the row is denied.
+
+```kotlin
 val hasAdmins = client.users.query {
     where(User.role eq "admin")
 }.exists()  // → Boolean
 ```
-
-Both methods respect all accumulated `where()` predicates but ignore
-`orderBy`, `limit`, and `offset` — they operate on the full filtered
-result set. Under the hood, the Postgres driver emits
-`SELECT COUNT(*)` and `SELECT EXISTS(SELECT 1 ...)` respectively,
-so no rows are materialized.
 
 ## Edge Traversal
 

@@ -18,6 +18,7 @@ class EntGenerator(
     private val updateGenerator = UpdateGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
     private val repoGenerator = RepoGenerator(packageName)
+    private val privacyGenerator = PrivacyGenerator(packageName)
     private val clientGenerator = ClientGenerator(packageName)
 
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
@@ -29,7 +30,8 @@ class EntGenerator(
                 createGenerator.generate(name, schema, schemaNames),
                 updateGenerator.generate(name, schema, schemaNames),
                 queryGenerator.generate(name, schema, schemaNames),
-                repoGenerator.generate(name, schema),
+                repoGenerator.generate(name, schema, schemaNames),
+                privacyGenerator.generate(name, schema, schemaNames),
             )
         }
         return perSchema + clientGenerator.generate(schemas)

@@ -132,4 +132,5 @@ For each schema, the codegen emits:
 | `UserUpdate.kt` | Builder with `.save()` for updates (omits immutable fields) |
 | `UserQuery.kt` | Query builder with `.where()`, `.orderBy()`, `.all()`, edge traversal, eager loading |
 | `UserRepo.kt` | Repository with `.create {}`, `.update() {}`, `.query {}`, `.byId()`, `.delete()` |
+| `UserPrivacy.kt` | Privacy contexts, rules, WriteCandidate, and policy scope (see [Privacy](privacy.md)) |
 | `EntClient.kt` | Single entry point holding all repos, constructed with a `Driver` |

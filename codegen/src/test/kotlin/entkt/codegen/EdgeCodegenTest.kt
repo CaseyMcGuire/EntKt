@@ -536,8 +536,8 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", Owner, schemaNames).toString()
 
-        assert(output.contains("return loadEdges(results)")) {
-            "all() should delegate to loadEdges\n$output"
+        assert(output.contains("loadEdges(results, privacy)")) {
+            "all() should delegate to loadEdges after privacy check\n$output"
         }
     }
 

@@ -18,6 +18,9 @@ import com.squareup.kotlinpoet.asClassName
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
+private val VIEWER = ClassName("entkt.runtime", "Viewer")
+private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -63,14 +66,20 @@ class ClientGenerator(
         // Generate EntClientHooks
         fileBuilder.addType(buildHooksClass(hooksClass, schemas))
 
+        // Generate EntClientPolicies
+        val policiesClass = ClassName(packageName, "EntClientPolicies")
+        fileBuilder.addType(buildPoliciesClass(policiesClass, schemas))
+
         // Generate EntClientConfig
-        fileBuilder.addType(buildConfigClass(configClass, hooksClass))
+        fileBuilder.addType(buildConfigClass(configClass, hooksClass, policiesClass))
 
         // Generate EntClient
         val configLambda = LambdaTypeName.get(
             receiver = configClass,
             returnType = UNIT,
         )
+
+        val privacyProviderType = LambdaTypeName.get(returnType = PRIVACY_CONTEXT)
 
         val typeSpec = TypeSpec.classBuilder("EntClient")
             .primaryConstructor(
@@ -89,8 +98,31 @@ class ClientGenerator(
                     .initializer("driver")
                     .build()
             )
+            .addProperty(
+                PropertySpec.builder("privacyContextProvider", privacyProviderType)
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("{ %T(%T.Anonymous) }", PRIVACY_CONTEXT, VIEWER)
+                    .build()
+            )
             .addProperties(sorted.map { buildRepoProperty(it) })
             .addInitializerBlock(buildInitBlock(configClass, sorted))
+            .addFunction(
+                FunSpec.builder("currentPrivacyContext")
+                    .addModifiers(KModifier.INTERNAL)
+                    .returns(PRIVACY_CONTEXT)
+                    .addStatement("return privacyContextProvider()")
+                    .build()
+            )
+            .addFunction(buildWithPrivacyContext(clientClass, t, sorted))
+            .addFunction(
+                FunSpec.builder("withFixedPrivacyContextForInternalUse")
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter("context", PRIVACY_CONTEXT)
+                    .returns(clientClass)
+                    .addCode(buildFixedContextBody(clientClass, sorted))
+                    .build()
+            )
             .addFunction(buildWithTransaction(clientClass, configClass, t, sorted))
             .addType(buildCompanionObject(sorted))
             .build()
@@ -183,11 +215,17 @@ class ClientGenerator(
     private fun buildConfigClass(
         configClass: ClassName,
         hooksClass: ClassName,
+        policiesClass: ClassName,
     ): TypeSpec {
-        val blockLambda = LambdaTypeName.get(
+        val hooksBlockLambda = LambdaTypeName.get(
             receiver = hooksClass,
             returnType = UNIT,
         )
+        val policiesBlockLambda = LambdaTypeName.get(
+            receiver = policiesClass,
+            returnType = UNIT,
+        )
+        val privacyProviderType = LambdaTypeName.get(returnType = PRIVACY_CONTEXT)
 
         return TypeSpec.classBuilder(configClass)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
@@ -197,10 +235,35 @@ class ClientGenerator(
                     .initializer("%T()", hooksClass)
                     .build()
             )
+            .addProperty(
+                PropertySpec.builder("policiesConfig", policiesClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", policiesClass)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("privacyContextProviderConfig", privacyProviderType.copy(nullable = true))
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("null")
+                    .build()
+            )
             .addFunction(
                 FunSpec.builder("hooks")
-                    .addParameter("block", blockLambda)
+                    .addParameter("block", hooksBlockLambda)
                     .addStatement("hooksConfig.apply(block)")
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("policies")
+                    .addParameter("block", policiesBlockLambda)
+                    .addStatement("policiesConfig.apply(block)")
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("privacyContext")
+                    .addParameter("provider", privacyProviderType)
+                    .addStatement("privacyContextProviderConfig = provider")
                     .build()
             )
             .build()
@@ -220,6 +283,11 @@ class ClientGenerator(
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             block.addStatement("%L.applyHooks(cfg.hooksConfig.%L)", propName, propName)
         }
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            block.addStatement("%L.applyPrivacy(cfg.policiesConfig.%LConfig)", propName, propName)
+        }
+        block.addStatement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
         return block.build()
     }
 
@@ -232,9 +300,11 @@ class ClientGenerator(
         val body = CodeBlock.builder()
         body.beginControlFlow("return driver.withTransaction { txDriver ->")
         body.addStatement("val tx = %T(txDriver)", clientClass)
+        body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
+            body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
         }
         body.addStatement("block(tx)")
         body.endControlFlow()
@@ -273,6 +343,86 @@ class ClientGenerator(
                     .build()
             )
             .build()
+    }
+
+    private fun buildPoliciesClass(
+        policiesClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): TypeSpec {
+        val builder = TypeSpec.classBuilder(policiesClass)
+            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+
+        for (input in schemas) {
+            val entityClass = ClassName(packageName, input.name)
+            val policyScopeClass = ClassName(packageName, "${input.name}PolicyScope")
+            val configClass = ClassName(packageName, "${input.name}PrivacyConfig")
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val policyType = ENTITY_POLICY.parameterizedBy(entityClass, policyScopeClass)
+
+            // Internal config property
+            builder.addProperty(
+                PropertySpec.builder("${propName}Config", configClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", configClass)
+                    .build()
+            )
+
+            // DSL method: users(policy)
+            builder.addFunction(
+                FunSpec.builder(propName)
+                    .addParameter("policy", policyType)
+                    .addStatement("policy.configure(%T(%LConfig))", policyScopeClass, propName)
+                    .build()
+            )
+        }
+
+        return builder.build()
+    }
+
+    private fun buildWithPrivacyContext(
+        clientClass: ClassName,
+        t: TypeVariableName,
+        schemas: List<SchemaInput>,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+        body.addStatement("val scoped = %T(driver)", clientClass)
+        body.addStatement("scoped.privacyContextProvider = { context }")
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
+            body.addStatement("scoped.%L.copyPrivacyFrom(this.%L)", propName, propName)
+        }
+        body.addStatement("return block(scoped)")
+
+        return FunSpec.builder("withPrivacyContext")
+            .addTypeVariable(t)
+            .addParameter("context", PRIVACY_CONTEXT)
+            .addParameter(
+                "block",
+                LambdaTypeName.get(
+                    parameters = listOf(ParameterSpec.unnamed(clientClass)),
+                    returnType = t,
+                ),
+            )
+            .returns(t)
+            .addCode(body.build())
+            .build()
+    }
+
+    private fun buildFixedContextBody(
+        clientClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): CodeBlock {
+        val body = CodeBlock.builder()
+        body.addStatement("val fixed = %T(driver)", clientClass)
+        body.addStatement("fixed.privacyContextProvider = { context }")
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            body.addStatement("fixed.%L.copyHooksFrom(this.%L)", propName, propName)
+            body.addStatement("fixed.%L.copyPrivacyFrom(this.%L)", propName, propName)
+        }
+        body.addStatement("return fixed")
+        return body.build()
     }
 
     private fun buildRepoProperty(input: SchemaInput): PropertySpec {

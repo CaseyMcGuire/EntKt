@@ -17,6 +17,7 @@ import entkt.schema.FieldType
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val ENT_CLIENT_NAME = "EntClient"
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 
 
 class UpdateGenerator(
@@ -241,6 +242,7 @@ class UpdateGenerator(
         rowBuilder.add(")\n")
 
         builder.addCode(rowBuilder.build())
+        emitUpdatePrivacy(builder, schemaName, allFields, edgeFks)
         builder.addStatement(
             "val row = driver.update(%T.TABLE, entity.id, values) ?: return null",
             entityClass,
@@ -266,5 +268,36 @@ class UpdateGenerator(
                 "$schemaName row not found",
             )
             .build()
+    }
+
+    /**
+     * Emit UPDATE privacy enforcement: build a WriteCandidate from the
+     * resolved field locals and call the repo's evaluateUpdatePrivacy.
+     */
+    private fun emitUpdatePrivacy(
+        builder: FunSpec.Builder,
+        schemaName: String,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ) {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        builder.addStatement("val privacy = client.currentPrivacyContext()")
+        val candidateArgs = mutableListOf<String>()
+        for (field in allFields) {
+            val propName = toCamelCase(field.name)
+            // Mutable fields have nullable locals from dirty tracking; cast to non-null
+            // for required fields since the fallback to entity.field guarantees non-null.
+            val needsCast = !field.immutable && !field.optional && !field.nillable
+            candidateArgs.add("$propName = $propName${if (needsCast) "!!" else ""}")
+        }
+        for (fk in edgeFks) {
+            candidateArgs.add("${fk.propertyName} = ${fk.propertyName}${if (fk.required) "!!" else ""}")
+        }
+        builder.addStatement(
+            "val candidate = %T(${candidateArgs.joinToString(", ")})",
+            candidateClass,
+        )
+        builder.addStatement("client.%L.evaluateUpdatePrivacy(privacy, entity, candidate)", repoPropName)
     }
 }

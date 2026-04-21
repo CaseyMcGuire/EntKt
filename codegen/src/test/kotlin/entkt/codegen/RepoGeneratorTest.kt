@@ -98,8 +98,8 @@ class RepoGeneratorTest {
     fun `deleteById fetches entity then delegates to delete`() {
         val output = generator.generate("Car", Car).toString()
 
-        assert(output.contains("val entity = byId(id) ?: return false")) {
-            "deleteById should fetch entity first\n$output"
+        assert(output.contains("driver.byId(Car.TABLE, id)")) {
+            "deleteById should fetch entity via driver (bypassing LOAD privacy)\n$output"
         }
         assert(output.contains("return delete(entity)")) {
             "deleteById should delegate to delete(entity)\n$output"
@@ -244,6 +244,96 @@ class RepoGeneratorTest {
 
         assert(output.contains("if (delete(entity)) count++")) {
             "deleteMany should delegate to delete(entity) for hook support\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has privacy config property`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("internal val privacyConfig: CarPrivacyConfig")) {
+            "Should have internal privacyConfig property\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has applyPrivacy and copyPrivacyFrom`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun applyPrivacy(config: CarPrivacyConfig)")) {
+            "Should have applyPrivacy method\n$output"
+        }
+        assert(output.contains("fun copyPrivacyFrom(other: CarRepo)")) {
+            "Should have copyPrivacyFrom method\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has hasPrivacy methods for all operations`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun hasLoadPrivacy(): Boolean")) {
+            "Should have hasLoadPrivacy\n$output"
+        }
+        assert(output.contains("fun hasCreatePrivacy(): Boolean")) {
+            "Should have hasCreatePrivacy\n$output"
+        }
+        assert(output.contains("fun hasUpdatePrivacy(): Boolean")) {
+            "Should have hasUpdatePrivacy\n$output"
+        }
+        assert(output.contains("fun hasDeletePrivacy(): Boolean")) {
+            "Should have hasDeletePrivacy\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has evaluate methods for load, create, update, and delete privacy`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun evaluateLoadPrivacy(privacy: PrivacyContext, entity: Car)")) {
+            "Should have evaluateLoadPrivacy\n$output"
+        }
+        assert(output.contains("fun evaluateCreatePrivacy(privacy: PrivacyContext, candidate: CarWriteCandidate)")) {
+            "Should have evaluateCreatePrivacy\n$output"
+        }
+        assert(output.contains("evaluateUpdatePrivacy")) {
+            "Should have evaluateUpdatePrivacy\n$output"
+        }
+        assert(output.contains("evaluateDeletePrivacy")) {
+            "Should have evaluateDeletePrivacy\n$output"
+        }
+    }
+
+    @Test
+    fun `byId enforces load privacy`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("val privacy = client.currentPrivacyContext()")) {
+            "byId should capture privacy context\n$output"
+        }
+        assert(output.contains("evaluateLoadPrivacy(privacy, entity)")) {
+            "byId should call evaluateLoadPrivacy\n$output"
+        }
+    }
+
+    @Test
+    fun `delete enforces delete privacy`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("val candidate = buildDeleteCandidate(entity)")) {
+            "delete should build delete candidate\n$output"
+        }
+        assert(output.contains("evaluateDeletePrivacy(privacy, entity, candidate)")) {
+            "delete should call evaluateDeletePrivacy\n$output"
+        }
+    }
+
+    @Test
+    fun `deleteMany queries driver directly to bypass load privacy`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("driver.query(Car.TABLE, predicates.toList()")) {
+            "deleteMany should query driver directly to bypass LOAD privacy\n$output"
         }
     }
 }
