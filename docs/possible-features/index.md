@@ -18,6 +18,7 @@ These pages are design notes, not committed API contracts.
 - [Cursor Pagination](cursor-pagination.md)
 - [Projection / Select API](projection-select-api.md)
 - [Aggregations](aggregations.md)
+- [Indexed Query Helpers](indexed-query-helpers.md)
 
 ## Model Behavior
 
@@ -36,4 +37,3 @@ These pages are design notes, not committed API contracts.
 - [Generated Test Fixtures](generated-test-fixtures.md)
 - [In-Memory Generated Integration Tests](in-memory-generated-integration-tests.md)
 - [Gradle Developer Experience](gradle-dx.md)
-
