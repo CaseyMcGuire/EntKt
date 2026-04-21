@@ -17,6 +17,4 @@ query builders, and repositories that talk to a pluggable `Driver`.
 
 ## Possible Features
 
-- [Edge-Derived LOAD Privacy](possible-features/edge-derived-load-privacy.md) -- RFC for allowing child reads through specific readable parent edges
-- [GraphQL Kotlin Type Generation](possible-features/graphql-kotlin-generation.md) -- RFC for generating GraphQL DTOs and resolver scaffolding
-- [Schema Printer](possible-features/schema-printer.md) -- RFC for printing the relational tables generated from schemas
+- [Possible Features Index](possible-features/index.md) -- catalog of future feature RFCs and design notes
