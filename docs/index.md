@@ -14,3 +14,9 @@ query builders, and repositories that talk to a pluggable `Driver`.
 - [Privacy Limitations](privacy-limitations.md) -- V1 aggregate, filtering, pagination, and upsert caveats
 - [Migrations](migrations.md) -- dev-mode auto-apply and prod-mode SQL file generation
 - [Drivers](drivers.md) -- InMemoryDriver, PostgresDriver, writing your own
+
+## Possible Features
+
+- [Edge-Derived LOAD Privacy](possible-features/edge-derived-load-privacy.md) -- RFC for allowing child reads through specific readable parent edges
+- [GraphQL Kotlin Type Generation](possible-features/graphql-kotlin-generation.md) -- RFC for generating GraphQL DTOs and resolver scaffolding
+- [Schema Printer](possible-features/schema-printer.md) -- RFC for printing the relational tables generated from schemas
