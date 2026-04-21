@@ -412,7 +412,7 @@ class BrokenSnapshotChainException(
 ) : RuntimeException(
     "Snapshot chain broken: $version.schema.json expects parent checksum " +
         "${actualChecksum.take(12)}... but $parentVersion.schema.json has checksum " +
-        "${expectedChecksum.take(12)}.... Re-run planMigration to regenerate " +
+        "${expectedChecksum.take(12)}.... Re-run generateMigrationFile to regenerate " +
         "from the correct baseline.",
 )
 

@@ -22,6 +22,14 @@ class EntktPluginTest {
             val schemaJar = findClasspathEntry("entkt/schema/EntSchema.class")
                 ?: throw IllegalStateException("Cannot find entkt-schema on test classpath")
 
+            // The plugin uses JavaExec with the entktCodegen configuration.
+            // Provide the full test classpath so the JavaExec process can
+            // find codegen classes and all transitive dependencies.
+            val codegenClasspath = System.getProperty("java.class.path")
+                .split(File.pathSeparator)
+                .filter { it.isNotBlank() }
+                .joinToString(",\n                        ") { "\"${it.replace("\\", "\\\\")}\"" }
+
             projectDir.resolve("settings.gradle.kts").writeText(
                 """
                 include("schema")
@@ -91,6 +99,9 @@ class EntktPluginTest {
 
                     dependencies {
                         schemas(project(":schema"))
+                        entktCodegen(files(
+                            $codegenClasspath
+                        ))
                     }
                     """.trimIndent()
                 )

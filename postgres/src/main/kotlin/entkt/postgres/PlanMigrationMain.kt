@@ -12,18 +12,19 @@ import java.nio.file.Path
  *
  * Usage from a Gradle JavaExec task:
  * ```kotlin
- * tasks.register<JavaExec>("planMigration") {
+ * tasks.register<JavaExec>("generateMigrationFile") {
  *     classpath = yourSchemaClasspath
  *     mainClass.set("entkt.postgres.PlanMigrationMainKt")
- *     args(project.projectDir.absolutePath)
+ *     args(migrationsDir.absolutePath)
  *     args(project.findProperty("description")?.toString() ?: "migration")
  * }
  * ```
  *
- * Args: [baseDir] [description]
+ * Args: [migrationsDir] [description]
  */
 fun main(args: Array<String>) {
-    val baseDir = if (args.isNotEmpty()) Path.of(args[0]) else Path.of(".")
+    require(args.isNotEmpty()) { "Usage: PlanMigrationMain <migrationsDir> [description]" }
+    val migrationsDir = Path.of(args[0])
     val description = if (args.size > 1) args[1] else "migration"
 
     val classpath = System.getProperty("java.class.path")
@@ -31,8 +32,6 @@ fun main(args: Array<String>) {
         .map { File(it) }
     val schemas = buildEntitySchemas(scanForSchemas(classpath))
     check(schemas.isNotEmpty()) { "No EntSchema objects found on the classpath" }
-
-    val migrationsDir = baseDir.resolve("db/migrations")
 
     val planner = PostgresMigrator.planner()
     val plan = planner.plan(

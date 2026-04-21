@@ -196,10 +196,36 @@ Plain SQL, up-only. Named `V{YYYYMMDDHHmmssSSS}__{description}.sql`.
 - Version collision protection: if the timestamp already exists in the
   output directory, a `_001`, `_002`, etc. suffix is appended
 
+## Gradle Plugin: `generateMigrationFile` Task
+
+If you're using the entkt Gradle plugin, the `generateMigrationFile` task wraps
+the prod-mode planner so you don't need to write any Kotlin to generate
+migrations:
+
+```bash
+./gradlew generateMigrationFile -Pdescription="add users table"
+```
+
+The task scans the `schemas` classpath for `EntSchema` objects, diffs
+against the stored snapshot, and writes a versioned SQL file.
+
+Migrations are written to `db/migrations/` by default. You can change
+this in the `entkt` extension:
+
+```kotlin
+entkt {
+    packageName.set("com.example.ent")
+    migrationsDirectory.set(layout.projectDirectory.dir("src/main/resources/db/migrations"))
+}
+```
+
+If no description is provided, it defaults to `"migration"`.
+
 ## Typical Workflow
 
 1. Modify your `EntSchema` definitions
-2. Run `migrator.plan(...)` to generate a migration file
+2. Run `./gradlew generateMigrationFile -Pdescription="describe your change"` to
+   generate a migration file
 3. Review the generated SQL
 4. If manual ops are flagged: write a manual migration, then re-run with
    `ACKNOWLEDGE_AND_ADVANCE`

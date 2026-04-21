@@ -53,23 +53,28 @@ class CreateGenerator(
         val afterCreateHookType = hookListType(entityClass)
         val afterUpdateHookType = hookListType(entityClass)
 
+        val idStrategy = idStrategyName(schema)
+        val idType = schema.id().type.toTypeName()
+
+        val constructorBuilder = FunSpec.constructorBuilder()
+            .addParameter("driver", DRIVER)
+            .addParameter("client", clientClass)
+            .addParameter("beforeSaveHooks", beforeSaveHookType)
+            .addParameter("beforeCreateHooks", beforeCreateHookType)
+            .addParameter("afterCreateHooks", afterCreateHookType)
+            .addParameter(
+                ParameterSpec.builder("afterUpdateHooks", afterUpdateHookType)
+                    .defaultValue("emptyList()")
+                    .build()
+            )
+        if (idStrategy == "EXPLICIT") {
+            constructorBuilder.addParameter("id", idType)
+        }
+
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
             .addSuperinterface(mutationClass)
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addParameter("driver", DRIVER)
-                    .addParameter("client", clientClass)
-                    .addParameter("beforeSaveHooks", beforeSaveHookType)
-                    .addParameter("beforeCreateHooks", beforeCreateHookType)
-                    .addParameter("afterCreateHooks", afterCreateHookType)
-                    .addParameter(
-                        ParameterSpec.builder("afterUpdateHooks", afterUpdateHookType)
-                            .defaultValue("emptyList()")
-                            .build()
-                    )
-                    .build()
-            )
+            .primaryConstructor(constructorBuilder.build())
             .addProperty(
                 PropertySpec.builder("driver", DRIVER)
                     .addModifiers(KModifier.PRIVATE)
@@ -105,6 +110,15 @@ class CreateGenerator(
                     .initializer("afterUpdateHooks")
                     .build()
             )
+            .also { builder ->
+                if (idStrategy == "EXPLICIT") {
+                    builder.addProperty(
+                        PropertySpec.builder("id", idType)
+                            .initializer("id")
+                            .build()
+                    )
+                }
+            }
             .addProperties(mutableFields.map { buildProperty(it, override = true) })
             .addProperties(allFields.filter { it.immutable }.map { buildProperty(it, override = false) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
@@ -164,8 +178,8 @@ class CreateGenerator(
      * - `CLIENT_UUID`: we mint a `UUID` here so the caller can see it
      *   before the round trip.
      * - `AUTO_INT` / `AUTO_LONG`: we omit `id` and let the driver pick.
-     * - `EXPLICIT`: unsupported in `save()` for now — caller must go
-     *   through the driver directly.
+     * - `EXPLICIT`: the caller must set `id` on the builder before
+     *   calling `save()`; an error is thrown if it's missing.
      *
      * After insert, the driver returns the persisted row (including the
      * assigned id), which we feed into `fromRow` to hydrate a typed
@@ -181,15 +195,6 @@ class CreateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val builder = FunSpec.builder("save")
             .returns(entityClass)
-
-        val idStrategy = idStrategyName(schema)
-        if (idStrategy == "EXPLICIT") {
-            builder.addStatement(
-                "TODO(%S)",
-                "save() on $schemaName requires EXPLICIT id support",
-            )
-            return builder.build()
-        }
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
         emitCreatePrivacy(builder, schemaName, allFields, edgeFks)
@@ -226,15 +231,6 @@ class CreateGenerator(
                     columnClass.parameterizedBy(STAR),
                 ).addModifiers(KModifier.VARARG).build(),
             )
-
-        val idStrategy = idStrategyName(schema)
-        if (idStrategy == "EXPLICIT") {
-            builder.addStatement(
-                "TODO(%S)",
-                "upsert() on $schemaName requires EXPLICIT id support",
-            )
-            return builder.build()
-        }
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
         emitUpsertPrivacy(builder, schemaName, allFields, edgeFks)
@@ -332,6 +328,8 @@ class CreateGenerator(
 
         if (idStrategy == "CLIENT_UUID") {
             rowBuilder.add("  %S to %T.randomUUID(),\n", "id", UUID_CLASS)
+        } else if (idStrategy == "EXPLICIT") {
+            rowBuilder.add("  %S to id,\n", "id")
         }
 
         for (field in allFields) {

@@ -9,7 +9,7 @@ import javax.sql.DataSource
 
 /**
  * Prod mode: applies versioned SQL migration files from the migrations
- * directory. Files are generated at build time via the `planMigration`
+ * directory. Files are generated at build time via the `generateMigrationFile`
  * Gradle task and committed to version control.
  */
 @Configuration

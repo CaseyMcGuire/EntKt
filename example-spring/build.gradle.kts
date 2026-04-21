@@ -60,12 +60,12 @@ tasks.named("compileKotlin") {
     dependsOn(generateEntkt)
 }
 
-tasks.register<JavaExec>("planMigration") {
+tasks.register<JavaExec>("generateMigrationFile") {
     group = "entkt"
     description = "Generates a versioned migration SQL file by diffing schemas against the snapshot"
     classpath = codegenRunner
     mainClass.set("entkt.postgres.PlanMigrationMainKt")
-    args(project.projectDir.absolutePath)
+    args(project.projectDir.resolve("db/migrations").absolutePath)
     args(project.findProperty("description")?.toString() ?: "migration")
 }
 

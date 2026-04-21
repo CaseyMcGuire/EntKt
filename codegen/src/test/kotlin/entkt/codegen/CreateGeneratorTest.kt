@@ -1,9 +1,17 @@
 package entkt.codegen
 
+import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.fields
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+
+object Session : EntSchema() {
+    override fun id() = EntId.string()
+    override fun fields() = fields {
+        string("token")
+    }
+}
 
 object Event : EntSchema() {
     override fun fields() = fields {
@@ -344,6 +352,39 @@ class CreateGeneratorTest {
         val rowMapPos = output.indexOf("val values: Map<String, Any?>")
         assert(bindingPos < validationPos && validationPos < rowMapPos) {
             "Validation should appear after binding and before row map\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id strategy adds id as constructor parameter`() {
+        val output = generator.generate("Session", Session).toString()
+
+        assert(output.contains("id: String")) {
+            "Should have id as constructor parameter\n$output"
+        }
+        assert(!output.contains("var id: String?")) {
+            "Should not have nullable mutable id property\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id strategy save includes id in values map`() {
+        val output = generator.generate("Session", Session).toString()
+
+        assert(output.contains(""""id" to id""")) {
+            "Should include id in the row values map\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id strategy upsert works without TODO`() {
+        val output = generator.generate("Session", Session).toString()
+
+        assert(output.contains("fun upsert(vararg onConflict: Column<*>): Session")) {
+            "Should generate upsert method\n$output"
+        }
+        assert(!output.contains("TODO")) {
+            "Should not contain TODO stubs\n$output"
         }
     }
 

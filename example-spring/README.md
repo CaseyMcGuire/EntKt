@@ -39,12 +39,12 @@ Applies versioned SQL migration files from `db/migrations/`. Files are
 generated at build time and committed to version control.
 
 **Generate a migration** after changing your schemas. The `entkt` Gradle
-plugin provides a `planMigration` task automatically:
+plugin provides a `generateMigrationFile` task automatically:
 
 ```bash
-./gradlew planMigration
+./gradlew generateMigrationFile
 # or with a description:
-./gradlew planMigration -Pdescription="add_subtitle"
+./gradlew generateMigrationFile -Pdescription="add_subtitle"
 ```
 
 This diffs your schemas against `db/schema_snapshot.json` and writes a

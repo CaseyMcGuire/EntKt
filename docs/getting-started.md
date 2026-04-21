@@ -17,31 +17,65 @@ generation into your build automatically.
 
 ### Using the Gradle plugin
 
+The plugin ID is `"entkt"`:
+
 ```kotlin
-// build.gradle.kts
-plugins {
-    id("entkt")
-}
-
-entkt {
-    packageName = "com.example.ent"
-}
-
-dependencies {
-    implementation(project(":runtime"))
-    implementation(project(":schema"))
-    // For Postgres:
-    implementation(project(":postgres"))
+// settings.gradle.kts
+pluginManagement {
+    repositories {
+        mavenLocal()
+        gradlePluginPortal()
+    }
 }
 ```
 
-The plugin registers a `generateEntkt` task that:
+```kotlin
+// build.gradle.kts
+plugins {
+    id("entkt") version "0.1.0-SNAPSHOT"
+}
 
-1. Scans the classpath for `EntSchema` objects
-2. Generates entity classes, builders, repos, and an `EntClient` into
-   `build/generated/entkt/`
-3. Adds that directory to the `main` source set
-4. Runs automatically before `compileKotlin`
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+entkt {
+    packageName.set("com.example.ent")
+}
+
+dependencies {
+    schemas(project(":schema"))  // your schema module
+    implementation("io.entkt:runtime:0.1.0-SNAPSHOT")
+    implementation("io.entkt:postgres:0.1.0-SNAPSHOT")
+    implementation("io.entkt:migrations:0.1.0-SNAPSHOT")
+}
+```
+
+The `schemas` configuration is created by the plugin. It puts your schema
+classes on the codegen classpath and also adds them to `implementation`
+so generated code can reference schema types (e.g. enum classes).
+
+**Schemas must live in a separate module.** The codegen task needs
+compiled schema classes on its classpath before it can generate code.
+If schemas are in the same module as the generated output, Gradle hits a
+circular dependency (`compileKotlin` → `generateEntkt` → `compileKotlin`).
+A typical project structure:
+
+```
+my-project/
+  schema/                # EntSchema objects + entkt:schema dependency
+  app/                   # applies id("entkt"), schemas(project(":schema"))
+```
+
+The plugin registers two tasks:
+
+- **`generateEntkt`** — Scans the `schemas` classpath for `EntSchema`
+  objects, generates entity classes into `build/generated/entkt/`, adds
+  them to the `main` source set, and runs automatically before
+  `compileKotlin`.
+- **`generateMigrationFile`** — Diffs schemas against the stored snapshot
+  and writes a versioned SQL migration file. See [Migrations](migrations.md).
 
 ### Without the plugin
 

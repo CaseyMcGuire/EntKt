@@ -69,7 +69,7 @@ private fun scanJar(
             if (entry.isDirectory) continue
             val name = entry.name
             if (!name.endsWith(".class")) continue
-            if (name.startsWith("META-INF/")) continue
+            if ("META-INF/" in name) continue
             val className = name.removeSuffix(".class").replace('/', '.')
             tryLoadSchema(classLoader, className, failures)?.let { out.add(it) }
         }
@@ -85,7 +85,7 @@ private fun tryLoadSchema(
         classLoader.loadClass(className)
     } catch (_: ClassNotFoundException) {
         return null
-    } catch (e: NoClassDefFoundError) {
+    } catch (e: LinkageError) {
         failures.add("$className: ${e.message}")
         return null
     }
@@ -99,7 +99,7 @@ private fun tryLoadSchema(
  * using the same logic as the codegen emitter but producing runtime
  * objects instead of KotlinPoet code.
  *
- * This is used by the Gradle plugin's `planMigration` task so it can
+ * This is used by the Gradle plugin's `generateMigrationFile` task so it can
  * compute schema diffs without needing the compiled generated code.
  */
 fun buildEntitySchemas(inputs: List<SchemaInput>): List<EntitySchema> {

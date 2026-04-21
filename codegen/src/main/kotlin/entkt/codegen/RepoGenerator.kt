@@ -136,17 +136,8 @@ class RepoGenerator(
                     .addStatement("return %T(driver, client).apply(block)", queryClass)
                     .build()
             )
-            .addFunction(
-                FunSpec.builder("create")
-                    .addParameter("block", createLambda)
-                    .returns(createClass)
-                    .addStatement(
-                        "return %T(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks).apply(block)",
-                        createClass,
-                    )
-                    .build()
-            )
-            .addFunction(buildRepoUpsert(entityClass, createClass, createLambda))
+            .addFunction(buildRepoCreate(schema, entityClass, createClass, createLambda))
+            .addFunction(buildRepoUpsert(schema, entityClass, createClass, createLambda))
             .addFunction(
                 FunSpec.builder("update")
                     .addParameter("entity", entityClass)
@@ -167,7 +158,11 @@ class RepoGenerator(
             )
             .addFunction(buildDelete(schemaName, entityClass, candidateClass))
             .addFunction(buildDeleteById(schemaName, entityClass, idType, candidateClass))
-            .addFunction(buildCreateMany(entityClass, createLambda))
+            .also { builder ->
+                if (idStrategyName(schema) != "EXPLICIT") {
+                    builder.addFunction(buildCreateMany(entityClass, createLambda))
+                }
+            }
             .addFunction(buildDeleteMany(schemaName, entityClass, candidateClass))
             .addFunction(buildApplyHooks(entityHooksClass))
             .addFunction(buildCopyHooksFrom(repoClass))
@@ -463,14 +458,41 @@ class RepoGenerator(
             .build()
     }
 
-    private fun buildRepoUpsert(
+    private fun buildRepoCreate(
+        schema: EntSchema,
         entityClass: ClassName,
         createClass: ClassName,
         createLambda: LambdaTypeName,
     ): FunSpec {
+        val idStrategy = idStrategyName(schema)
+        val builder = FunSpec.builder("create")
+        if (idStrategy == "EXPLICIT") {
+            builder.addParameter("id", schema.id().type.toTypeName())
+        }
+        builder.addParameter("block", createLambda)
+            .returns(createClass)
+        val createArgs = if (idStrategy == "EXPLICIT") {
+            "driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, id = id"
+        } else {
+            "driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks"
+        }
+        builder.addStatement("return %T($createArgs).apply(block)", createClass)
+        return builder.build()
+    }
+
+    private fun buildRepoUpsert(
+        schema: EntSchema,
+        entityClass: ClassName,
+        createClass: ClassName,
+        createLambda: LambdaTypeName,
+    ): FunSpec {
+        val idStrategy = idStrategyName(schema)
         val columnClass = ClassName("entkt.query", "Column")
-        return FunSpec.builder("upsert")
-            .addParameter(
+        val builder = FunSpec.builder("upsert")
+        if (idStrategy == "EXPLICIT") {
+            builder.addParameter("id", schema.id().type.toTypeName())
+        }
+        builder.addParameter(
                 ParameterSpec.builder(
                     "onConflict",
                     columnClass.parameterizedBy(STAR),
@@ -478,11 +500,16 @@ class RepoGenerator(
             )
             .addParameter("block", createLambda)
             .returns(entityClass)
-            .addStatement(
-                "return %T(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks).apply(block).upsert(*onConflict)",
-                createClass,
-            )
-            .build()
+        val createArgs = if (idStrategy == "EXPLICIT") {
+            "driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks, id = id"
+        } else {
+            "driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks"
+        }
+        builder.addStatement(
+            "return %T($createArgs).apply(block).upsert(*onConflict)",
+            createClass,
+        )
+        return builder.build()
     }
 
     private fun buildCreateMany(

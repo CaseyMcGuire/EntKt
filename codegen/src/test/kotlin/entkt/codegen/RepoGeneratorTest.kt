@@ -1,5 +1,8 @@
 package entkt.codegen
 
+import entkt.schema.EntId
+import entkt.schema.EntSchema
+import entkt.schema.fields
 import kotlin.test.Test
 
 class RepoGeneratorTest {
@@ -334,6 +337,48 @@ class RepoGeneratorTest {
 
         assert(output.contains("driver.query(Car.TABLE, predicates.toList()")) {
             "deleteMany should query driver directly to bypass LOAD privacy\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id create takes id as first parameter`() {
+        val output = generator.generate("Session", Session).toString()
+
+        assert(output.contains("fun create(id: String, block: SessionCreate.() -> Unit): SessionCreate")) {
+            "create() should take id as first parameter for EXPLICIT strategy\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id create passes id to constructor`() {
+        val output = generator.generate("Session", Session).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("SessionCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, id = id)")) {
+            "create() should pass id to SessionCreate constructor\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id upsert takes id as first parameter`() {
+        val output = generator.generate("Session", Session).toString()
+
+        assert(output.contains("fun upsert(")) {
+            "Should have upsert method\n$output"
+        }
+        assert(output.contains("id: String") && output.contains("vararg onConflict: Column<*>")) {
+            "upsert() should take id and onConflict for EXPLICIT strategy\n$output"
+        }
+        assert(!output.contains("TODO")) {
+            "upsert should not contain TODO\n$output"
+        }
+    }
+
+    @Test
+    fun `explicit id repo does not generate createMany`() {
+        val output = generator.generate("Session", Session).toString()
+
+        assert(!output.contains("fun createMany")) {
+            "Should not generate createMany for EXPLICIT id strategy\n$output"
         }
     }
 }
