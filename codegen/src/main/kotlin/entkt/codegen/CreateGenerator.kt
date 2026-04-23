@@ -395,7 +395,8 @@ internal fun emitFieldValidation(
         builder.beginControlFlow("if (%L != null)", prop)
     }
     for (validator in validators) {
-        val spec = validator.spec ?: continue
+        val spec = validator.spec
+            ?: error("Validator '${validator.name}' on field '$fieldName' has no spec — codegen cannot emit it")
         emitValidatorCheck(builder, prop, fieldName, validator.message, spec)
     }
     if (nullable) {

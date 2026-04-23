@@ -32,7 +32,7 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     fun default(value: Any): T = apply { default = value }.let { self() }
     fun comment(text: String): T = apply { comment = text }.let { self() }
     fun storageKey(key: String): T = apply { storageKey = key }.let { self() }
-    fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
+    protected fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
 
     @PublishedApi
     internal fun setEnumValues(values: List<String>) {
