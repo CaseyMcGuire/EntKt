@@ -391,4 +391,37 @@ class EntityGeneratorTest {
             "IndexMetadata should NOT use field name when storageKey is set\n$output"
         }
     }
+
+    @Test
+    fun `sensitive field is redacted in generated toString`() {
+        val schema = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                string("password").sensitive()
+            }
+        }
+        val output = generator.generate("Account", schema).toString()
+
+        assert(output.contains("override fun toString(): String")) {
+            "Should generate explicit toString override\n$output"
+        }
+        assert(output.contains("password=***")) {
+            "Sensitive field should be redacted\n$output"
+        }
+        assert(output.contains("\$name")) {
+            "Non-sensitive field should use interpolation\n$output"
+        }
+        assert(!output.contains("\$password")) {
+            "Sensitive field should not be interpolated\n$output"
+        }
+    }
+
+    @Test
+    fun `no toString override when no sensitive fields`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(!output.contains("override fun toString()")) {
+            "Should not generate toString when no fields are sensitive\n$output"
+        }
+    }
 }

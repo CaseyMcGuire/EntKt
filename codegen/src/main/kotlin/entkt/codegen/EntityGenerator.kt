@@ -85,6 +85,10 @@ class EntityGenerator(
                     addType(edgesClass)
                 }
             }
+            .apply {
+                val toStringFn = buildToString(className, schema, edgeFks, edgesClass != null)
+                if (toStringFn != null) addFunction(toStringFn)
+            }
             .addType(
                 TypeSpec.companionObjectBuilder()
                     .addProperty(tableProperty)
@@ -224,6 +228,41 @@ class EntityGenerator(
         val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
         return PropertySpec.builder(fk.propertyName, typeName)
             .initializer(fk.propertyName)
+            .build()
+    }
+
+    /**
+     * Generate an explicit `toString()` that redacts sensitive fields.
+     * Returns null when no fields are sensitive — Kotlin's data class
+     * toString is fine in that case.
+     */
+    private fun buildToString(
+        className: String,
+        schema: EntSchema,
+        edgeFks: List<EdgeFk>,
+        hasEdges: Boolean,
+    ): FunSpec? {
+        val allFields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        if (allFields.none { it.sensitive }) return null
+
+        val parts = mutableListOf<String>()
+        parts.add("id=\$id")
+        for (field in allFields) {
+            val prop = toCamelCase(field.name)
+            parts.add(if (field.sensitive) "$prop=***" else "$prop=\$$prop")
+        }
+        for (fk in edgeFks) {
+            parts.add("${fk.propertyName}=\$${fk.propertyName}")
+        }
+        if (hasEdges) {
+            parts.add("edges=\$edges")
+        }
+
+        val template = "$className(${parts.joinToString(", ")})"
+        return FunSpec.builder("toString")
+            .addModifiers(KModifier.OVERRIDE)
+            .returns(String::class)
+            .addStatement("return %P", template)
             .build()
     }
 
