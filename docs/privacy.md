@@ -108,8 +108,9 @@ If no provider is configured, the default is `Viewer.Anonymous`.
 
 ### Policies
 
-Policies group rules per entity. Implement `EntityPolicy` and register
-it in the client config:
+Policies group rules for entity operations — both privacy and
+[validation](validation.md). Implement `EntityPolicy` and register it
+in the client config:
 
 ```kotlin
 object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
@@ -308,8 +309,10 @@ Some operations need to bypass LOAD privacy internally:
   filtering, hydrates entities, then calls `delete(entity)` per row
   for DELETE privacy enforcement.
 
-Raw query bypasses are generated inside repo internals only. Query
-builders do not expose raw terminal methods for application code.
+Raw entity-loading bypasses are generated inside repo internals only
+and are not exposed to application code. The one public aggregate
+escape hatch is `rawCount()`, which returns a row count without
+materializing or privacy-checking entities.
 
 ## Limitations
 
@@ -348,5 +351,5 @@ For each schema with a policy registered, the codegen emits:
 | `{Entity}DeletePrivacyContext` | Context for DELETE rules |
 | `{Entity}PrivacyConfig` | Internal storage for rule lists |
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |
-| `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` |
+| `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |

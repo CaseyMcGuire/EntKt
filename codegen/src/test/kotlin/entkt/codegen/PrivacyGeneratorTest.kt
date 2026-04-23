@@ -162,4 +162,25 @@ class PrivacyGeneratorTest {
             "Should have privacy DSL method\n$output"
         }
     }
+
+    @Test
+    fun `generates PolicyScope with validation block`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("fun validation(block: UserValidationScope.() -> Unit)")) {
+            "Should have validation DSL method\n$output"
+        }
+    }
+
+    @Test
+    fun `PolicyScope constructor takes both privacy and validation config`() {
+        val output = generator.generate("User", User).toString()
+
+        assert(output.contains("privacyConfig: UserPrivacyConfig")) {
+            "PolicyScope should take privacyConfig\n$output"
+        }
+        assert(output.contains("validationConfig: UserValidationConfig")) {
+            "PolicyScope should take validationConfig\n$output"
+        }
+    }
 }

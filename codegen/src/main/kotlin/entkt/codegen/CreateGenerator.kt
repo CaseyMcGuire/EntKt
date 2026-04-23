@@ -198,12 +198,14 @@ class CreateGenerator(
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
         emitCreatePrivacy(builder, schemaName, allFields, edgeFks)
+        emitCreateValidation(builder, schemaName)
         builder.addStatement(
             "val row = driver.insert(%T.TABLE, values)",
             entityClass,
         )
         builder.addStatement("val entity = %T.fromRow(row)", entityClass)
         builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
+        emitLoadPrivacyOnReturn(builder, schemaName, "entity")
         builder.addStatement("return entity")
 
         return builder.build()
@@ -234,6 +236,7 @@ class CreateGenerator(
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
         emitUpsertPrivacy(builder, schemaName, allFields, edgeFks)
+        emitCreateValidation(builder, schemaName)
 
         val immutableNames = allFields.filter { it.immutable }.map { it.name }
         if (immutableNames.isEmpty()) {
@@ -254,6 +257,7 @@ class CreateGenerator(
         builder.nextControlFlow("else")
         builder.addStatement("for (hook in afterUpdateHooks) hook(entity)")
         builder.endControlFlow()
+        emitLoadPrivacyOnReturn(builder, schemaName, "entity")
         builder.addStatement("return entity")
 
         return builder.build()
@@ -436,6 +440,32 @@ class CreateGenerator(
         builder.nextControlFlow("else")
         builder.addStatement("client.%L.evaluateCreatePrivacy(privacy, candidate)", repoPropName)
         builder.endControlFlow()
+    }
+
+    /**
+     * Emit LOAD privacy enforcement on the returned entity. If denied,
+     * the write has already succeeded but the caller gets a
+     * [PrivacyDeniedException] explaining why they cannot see it.
+     */
+    private fun emitLoadPrivacyOnReturn(
+        builder: FunSpec.Builder,
+        schemaName: String,
+        entityVar: String,
+    ) {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, %L)", repoPropName, entityVar)
+    }
+
+    /**
+     * Emit CREATE validation enforcement: call the repo's
+     * evaluateCreateValidation with the already-built candidate.
+     */
+    private fun emitCreateValidation(
+        builder: FunSpec.Builder,
+        schemaName: String,
+    ) {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        builder.addStatement("client.%L.evaluateCreateValidation(candidate)", repoPropName)
     }
 
     /**

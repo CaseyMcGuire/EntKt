@@ -11,6 +11,7 @@ These pages are design notes, not committed API contracts.
 - [Policy Test Helpers](policy-test-helpers.md)
 - [Query Observability Privacy](query-observability-privacy.md)
 - [Edge-Derived LOAD Privacy](edge-derived-load-privacy.md)
+- [Preflighted Bulk Operations](preflighted-bulk-operations.md)
 
 ## Query And Mutation APIs
 

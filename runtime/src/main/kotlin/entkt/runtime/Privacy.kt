@@ -13,8 +13,10 @@ sealed interface Viewer {
 }
 
 /**
- * Privacy context captured once per public operation and threaded
- * through all privacy checks within that operation.
+ * Privacy context captured for a generated operation and threaded
+ * through all privacy checks within that operation. Scalar operations
+ * capture one context; bulk convenience methods may invoke the
+ * provider once per item since they delegate to per-entity paths.
  */
 data class PrivacyContext(
     val viewer: Viewer,
@@ -62,9 +64,9 @@ fun interface PrivacyRule<in C> {
 }
 
 /**
- * An entity-scoped policy that configures privacy rules through a
- * generated scope object. Policies are registered per-entity on
- * the generated `EntClient`.
+ * An entity-scoped policy that configures rules for entity operations
+ * (privacy and validation) through a generated scope object. Policies
+ * are registered per-entity on the generated `EntClient`.
  */
 interface EntityPolicy<E, Scope> {
     fun configure(scope: Scope)

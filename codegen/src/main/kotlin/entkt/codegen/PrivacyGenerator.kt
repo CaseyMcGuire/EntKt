@@ -106,7 +106,7 @@ class PrivacyGenerator(
         )
 
         // PolicyScope
-        fileBuilder.addType(buildPolicyScope(policyScopeClass, privacyScopeClass, configClass))
+        fileBuilder.addType(buildPolicyScope(schemaName, policyScopeClass, privacyScopeClass, configClass))
 
         return fileBuilder.build()
     }
@@ -326,31 +326,51 @@ class PrivacyGenerator(
     }
 
     private fun buildPolicyScope(
+        schemaName: String,
         policyScopeClass: ClassName,
         privacyScopeClass: ClassName,
         configClass: ClassName,
     ): TypeSpec {
+        val validationConfigClass = ClassName(packageName, "${schemaName}ValidationConfig")
+        val validationScopeClass = ClassName(packageName, "${schemaName}ValidationScope")
         val privacyBlockLambda = com.squareup.kotlinpoet.LambdaTypeName.get(
             receiver = privacyScopeClass,
+            returnType = UNIT,
+        )
+        val validationBlockLambda = com.squareup.kotlinpoet.LambdaTypeName.get(
+            receiver = validationScopeClass,
             returnType = UNIT,
         )
         return TypeSpec.classBuilder(policyScopeClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addModifiers(KModifier.INTERNAL)
-                    .addParameter("config", configClass)
+                    .addParameter("privacyConfig", configClass)
+                    .addParameter("validationConfig", validationConfigClass)
                     .build(),
             )
             .addProperty(
-                PropertySpec.builder("config", configClass)
+                PropertySpec.builder("privacyConfig", configClass)
                     .addModifiers(KModifier.PRIVATE)
-                    .initializer("config")
+                    .initializer("privacyConfig")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("validationConfig", validationConfigClass)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("validationConfig")
                     .build(),
             )
             .addFunction(
                 FunSpec.builder("privacy")
                     .addParameter("block", privacyBlockLambda)
-                    .addStatement("%T(config).apply(block)", privacyScopeClass)
+                    .addStatement("%T(privacyConfig).apply(block)", privacyScopeClass)
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("validation")
+                    .addParameter("block", validationBlockLambda)
+                    .addStatement("%T(validationConfig).apply(block)", validationScopeClass)
                     .build(),
             )
             .build()

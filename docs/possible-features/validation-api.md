@@ -2,7 +2,10 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+**Superseded by [docs/validation.md](../validation.md).** The final
+design uses privacy-before-validation ordering (reversed from this
+RFC) and `ValidationDecision.Valid`/`Invalid` instead of
+`Continue`/`Reject`. See the spec for the accepted design.
 
 ## Summary
 

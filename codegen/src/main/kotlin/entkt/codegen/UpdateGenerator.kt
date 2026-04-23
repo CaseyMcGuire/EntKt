@@ -216,6 +216,29 @@ class UpdateGenerator(
             )
         }
 
+        // ---- Required-field null checks (mutable fields only). ----
+        // Dirty tracking makes all mutable locals nullable. If a required
+        // field was explicitly set to null, catch it here with a domain
+        // error instead of letting it NPE during candidate construction.
+        for (field in allFields) {
+            if (field.immutable) continue
+            if (field.optional || field.nillable) continue
+            val prop = toCamelCase(field.name)
+            builder.addStatement(
+                "if (%L == null) throw IllegalStateException(%S)",
+                prop,
+                "${field.name} is required",
+            )
+        }
+        for (fk in edgeFks) {
+            if (!fk.required) continue
+            builder.addStatement(
+                "if (%L == null) throw IllegalStateException(%S)",
+                fk.propertyName,
+                "${fk.edgeName} is required",
+            )
+        }
+
         // ---- Field-level validation (mutable fields only). ----
         for (field in allFields) {
             if (field.immutable) continue
@@ -243,12 +266,15 @@ class UpdateGenerator(
 
         builder.addCode(rowBuilder.build())
         emitUpdatePrivacy(builder, schemaName, allFields, edgeFks)
+        emitUpdateValidation(builder, schemaName)
         builder.addStatement(
             "val row = driver.update(%T.TABLE, entity.id, values) ?: return null",
             entityClass,
         )
         builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)
         builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, updatedEntity)", repoPropName)
         builder.addStatement("return updatedEntity")
 
         return builder.build()
@@ -271,6 +297,18 @@ class UpdateGenerator(
     }
 
     /**
+     * Emit UPDATE validation enforcement: call the repo's
+     * evaluateUpdateValidation with the entity and already-built candidate.
+     */
+    private fun emitUpdateValidation(
+        builder: FunSpec.Builder,
+        schemaName: String,
+    ) {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        builder.addStatement("client.%L.evaluateUpdateValidation(entity, candidate)", repoPropName)
+    }
+
+    /**
      * Emit UPDATE privacy enforcement: build a WriteCandidate from the
      * resolved field locals and call the repo's evaluateUpdatePrivacy.
      */
@@ -286,13 +324,10 @@ class UpdateGenerator(
         val candidateArgs = mutableListOf<String>()
         for (field in allFields) {
             val propName = toCamelCase(field.name)
-            // Mutable fields have nullable locals from dirty tracking; cast to non-null
-            // for required fields since the fallback to entity.field guarantees non-null.
-            val needsCast = !field.immutable && !field.optional && !field.nillable
-            candidateArgs.add("$propName = $propName${if (needsCast) "!!" else ""}")
+            candidateArgs.add("$propName = $propName")
         }
         for (fk in edgeFks) {
-            candidateArgs.add("${fk.propertyName} = ${fk.propertyName}${if (fk.required) "!!" else ""}")
+            candidateArgs.add("${fk.propertyName} = ${fk.propertyName}")
         }
         builder.addStatement(
             "val candidate = %T(${candidateArgs.joinToString(", ")})",

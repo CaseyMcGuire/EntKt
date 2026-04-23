@@ -31,7 +31,7 @@ val client = EntClient(driver) {
 | `afterCreate` | `User` | After successful insert | Logging, notifications |
 | `beforeUpdate` | `UserUpdate` | Update only, after `beforeSave` | Audit trails |
 | `afterUpdate` | `User` | After successful update | Cache invalidation |
-| `beforeDelete` | `User` | Before driver delete | Cleanup, authorization |
+| `beforeDelete` | `User` | Before driver delete | Cleanup, cascading side effects |
 | `afterDelete` | `User` | After successful delete | Logging, cascading cleanup |
 
 ## The Mutation Interface
@@ -66,30 +66,44 @@ users {
 
 ## Execution Order
 
-For a **create** operation, hooks run in this order:
+For a **create** operation, the full execution order is:
 
 1. `beforeSave` (receives `UserMutation`)
 2. `beforeCreate` (receives `UserCreate`)
-3. Field validation (generated from schema validators)
-4. `driver.insert(...)`
-5. `afterCreate` (receives `User`)
+3. Field extraction + defaults
+4. Field validation (generated from schema validators)
+5. Build `WriteCandidate`
+6. Privacy create check
+7. Entity validation create (see [Validation](validation.md))
+8. `driver.insert(...)`
+9. `afterCreate` (receives `User`)
+10. Load privacy on returned entity
 
 For an **update**:
 
 1. `beforeSave` (receives `UserMutation`)
 2. `beforeUpdate` (receives `UserUpdate`)
-3. Field validation
-4. `driver.update(...)`
-5. `afterUpdate` (receives `User`)
+3. Compute final values (dirty tracking)
+4. Field validation
+5. Build `WriteCandidate`
+6. Privacy update check
+7. Entity validation update
+8. `driver.update(...)`
+9. `afterUpdate` (receives `User`)
+10. Load privacy on returned entity
 
 For an **upsert**:
 
 1. `beforeSave` (receives `UserMutation`)
 2. `beforeCreate` (receives `UserCreate`)
 3. Field validation
-4. `driver.upsert(...)` — the database decides insert vs update
-5. If the row was **inserted**: `afterCreate` (receives `User`)
-6. If the row was **updated** (conflict): `afterUpdate` (receives `User`)
+4. Build `WriteCandidate`
+5. Privacy preflight check
+6. Entity validation create (update validation rules do not run)
+7. `driver.upsert(...)` — the database decides insert vs update
+8. If the row was **inserted**: `afterCreate` (receives `User`)
+9. If the row was **updated** (conflict): `afterUpdate` (receives `User`)
+10. Load privacy on returned entity
 
 Because upsert uses the create builder, `beforeSave` and `beforeCreate` hooks
 always run. The "after" hook is chosen based on what the database actually did.
@@ -98,9 +112,17 @@ from the conflict-update set, so they are preserved on subsequent upserts.
 
 For a **delete**:
 
-1. `beforeDelete` (receives `User`)
-2. `driver.delete(...)`
-3. `afterDelete` (receives `User`)
+1. Build `WriteCandidate`
+2. Privacy delete check
+3. Entity validation delete
+4. `beforeDelete` (receives `User`)
+5. `driver.delete(...)`
+6. `afterDelete` (receives `User`)
+
+Hooks are for side effects (setting timestamps, logging, notifications),
+not for authorization or invariant enforcement. Use
+[privacy](privacy.md) for authorization and
+[validation](validation.md) for data model invariants.
 
 ## Hooks and Transactions
 

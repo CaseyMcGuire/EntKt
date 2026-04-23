@@ -191,6 +191,9 @@ class RepoGeneratorTest {
         assert(output.contains("fun upsert(vararg onConflict: Column<*>, block: CarCreate.() -> Unit): Car")) {
             "Should have upsert method\n$output"
         }
+        assert(!output.contains("fun upsert(vararg onConflict: Column<*>, block: CarCreate.() -> Unit): Car?")) {
+            "upsert() should return non-nullable Car\n$output"
+        }
     }
 
     @Test
@@ -379,6 +382,60 @@ class RepoGeneratorTest {
 
         assert(!output.contains("fun createMany")) {
             "Should not generate createMany for EXPLICIT id strategy\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has validation config property`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("internal val validationConfig: CarValidationConfig")) {
+            "Should have internal validationConfig property\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has applyValidation and copyValidationFrom`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun applyValidation(config: CarValidationConfig)")) {
+            "Should have applyValidation method\n$output"
+        }
+        assert(output.contains("fun copyValidationFrom(other: CarRepo)")) {
+            "Should have copyValidationFrom method\n$output"
+        }
+    }
+
+    @Test
+    fun `repo has evaluate methods for create, update, and delete validation`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("fun evaluateCreateValidation(candidate: CarWriteCandidate)")) {
+            "Should have evaluateCreateValidation\n$output"
+        }
+        assert(output.contains("evaluateUpdateValidation")) {
+            "Should have evaluateUpdateValidation\n$output"
+        }
+        assert(output.contains("evaluateDeleteValidation")) {
+            "Should have evaluateDeleteValidation\n$output"
+        }
+    }
+
+    @Test
+    fun `delete enforces delete validation after privacy`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("evaluateDeleteValidation(entity, candidate)")) {
+            "delete should call evaluateDeleteValidation\n$output"
+        }
+    }
+
+    @Test
+    fun `evaluateCreateValidation uses system-scoped client`() {
+        val output = generator.generate("Car", Car).toString()
+
+        assert(output.contains("client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.System))")) {
+            "Validation evaluator should use system-scoped client\n$output"
         }
     }
 }

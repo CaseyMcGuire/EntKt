@@ -26,6 +26,8 @@ private val PRIVACY_OPERATION = ClassName("entkt.runtime", "PrivacyOperation")
 private val PRIVACY_DENIED = ClassName("entkt.runtime", "PrivacyDeniedException")
 private val PRIVACY_DECISION = ClassName("entkt.runtime", "PrivacyDecision")
 private val VIEWER = ClassName("entkt.runtime", "Viewer")
+private val VALIDATION_DECISION = ClassName("entkt.runtime", "ValidationDecision")
+private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -57,6 +59,7 @@ class RepoGenerator(
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
         val privacyConfigClass = ClassName(packageName, "${schemaName}PrivacyConfig")
+        val validationConfigClass = ClassName(packageName, "${schemaName}ValidationConfig")
         val loadCtxClass = ClassName(packageName, "${schemaName}LoadPrivacyContext")
         val deleteCtxClass = ClassName(packageName, "${schemaName}DeletePrivacyContext")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
@@ -122,6 +125,13 @@ class RepoGenerator(
                     .initializer("%T()", privacyConfigClass)
                     .build()
             )
+            // Validation config
+            .addProperty(
+                PropertySpec.builder("validationConfig", validationConfigClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", validationConfigClass)
+                    .build()
+            )
             .addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
@@ -177,6 +187,11 @@ class RepoGenerator(
             .addFunction(buildEvaluateUpdatePrivacy(schemaName, entityClass, candidateClass))
             .addFunction(buildEvaluateDeletePrivacy(schemaName, entityClass, candidateClass))
             .addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
+            .addFunction(buildApplyValidation(validationConfigClass))
+            .addFunction(buildCopyValidationFrom(repoClass))
+            .addFunction(buildEvaluateCreateValidation(schemaName, candidateClass))
+            .addFunction(buildEvaluateUpdateValidation(schemaName, entityClass, candidateClass))
+            .addFunction(buildEvaluateDeleteValidation(schemaName, entityClass, candidateClass))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -207,6 +222,7 @@ class RepoGenerator(
             .addStatement("val privacy = client.currentPrivacyContext()")
             .addStatement("val candidate = buildDeleteCandidate(entity)")
             .addStatement("evaluateDeletePrivacy(privacy, entity, candidate)")
+            .addStatement("evaluateDeleteValidation(entity, candidate)")
             .addStatement("for (hook in beforeDeleteHooks) hook(entity)")
             .addStatement("val deleted = driver.delete(%T.TABLE, entity.id)", entityClass)
             .addStatement("if (deleted) for (hook in afterDeleteHooks) hook(entity)")
@@ -560,4 +576,114 @@ class RepoGenerator(
             .addModifiers(KModifier.PRIVATE)
             .initializer("mutableListOf()")
             .build()
+
+    private fun buildApplyValidation(validationConfigClass: ClassName): FunSpec =
+        FunSpec.builder("applyValidation")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("config", validationConfigClass)
+            .addStatement("validationConfig.createRules.addAll(config.createRules)")
+            .addStatement("validationConfig.updateRules.addAll(config.updateRules)")
+            .addStatement("validationConfig.deleteRules.addAll(config.deleteRules)")
+            .addStatement("if (config.updateDerivesFromCreate) validationConfig.updateDerivesFromCreate = true")
+            .build()
+
+    private fun buildCopyValidationFrom(repoClass: ClassName): FunSpec =
+        FunSpec.builder("copyValidationFrom")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("other", repoClass)
+            .addStatement("validationConfig.createRules.addAll(other.validationConfig.createRules)")
+            .addStatement("validationConfig.updateRules.addAll(other.validationConfig.updateRules)")
+            .addStatement("validationConfig.deleteRules.addAll(other.validationConfig.deleteRules)")
+            .addStatement("validationConfig.updateDerivesFromCreate = other.validationConfig.updateDerivesFromCreate")
+            .build()
+
+    private fun buildEvaluateCreateValidation(
+        schemaName: String,
+        candidateClass: ClassName,
+    ): FunSpec {
+        val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
+        return FunSpec.builder("evaluateCreateValidation")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("candidate", candidateClass)
+            .addCode(CodeBlock.builder()
+                .addStatement("val rules = validationConfig.createRules")
+                .addStatement("if (rules.isEmpty()) return")
+                .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.System))", PRIVACY_CONTEXT, VIEWER)
+                .addStatement("val ctx = %T(validationClient, candidate)", createCtxClass)
+                .addStatement("val violations = rules.mapNotNull { rule ->")
+                .addStatement("  when (val decision = rule.validate(ctx)) {")
+                .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
+                .addStatement("    is %T.Invalid -> decision", VALIDATION_DECISION)
+                .addStatement("  }")
+                .addStatement("}")
+                .addStatement("if (violations.isNotEmpty()) throw %T(%S, violations)", VALIDATION_EXCEPTION, schemaName)
+                .build()
+            )
+            .build()
+    }
+
+    private fun buildEvaluateUpdateValidation(
+        schemaName: String,
+        entityClass: ClassName,
+        candidateClass: ClassName,
+    ): FunSpec {
+        val updateCtxClass = ClassName(packageName, "${schemaName}UpdateValidationContext")
+        val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
+        return FunSpec.builder("evaluateUpdateValidation")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("before", entityClass)
+            .addParameter("candidate", candidateClass)
+            .addCode(CodeBlock.builder()
+                .addStatement("val rules = validationConfig.updateRules")
+                .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return")
+                .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.System))", PRIVACY_CONTEXT, VIEWER)
+                .addStatement("val updateCtx = %T(validationClient, before, candidate)", updateCtxClass)
+                .addStatement("val violations = mutableListOf<%T.Invalid>()", VALIDATION_DECISION)
+                .beginControlFlow("for (rule in rules)")
+                .beginControlFlow("when (val decision = rule.validate(updateCtx))")
+                .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
+                .addStatement("is %T.Invalid -> violations.add(decision)", VALIDATION_DECISION)
+                .endControlFlow()
+                .endControlFlow()
+                .beginControlFlow("if (validationConfig.updateDerivesFromCreate)")
+                .addStatement("val createCtx = %T(validationClient, candidate)", createCtxClass)
+                .beginControlFlow("for (rule in validationConfig.createRules)")
+                .beginControlFlow("when (val decision = rule.validate(createCtx))")
+                .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
+                .addStatement("is %T.Invalid -> violations.add(decision)", VALIDATION_DECISION)
+                .endControlFlow()
+                .endControlFlow()
+                .endControlFlow()
+                .addStatement("if (violations.isNotEmpty()) throw %T(%S, violations)", VALIDATION_EXCEPTION, schemaName)
+                .build()
+            )
+            .build()
+    }
+
+    private fun buildEvaluateDeleteValidation(
+        schemaName: String,
+        entityClass: ClassName,
+        candidateClass: ClassName,
+    ): FunSpec {
+        val deleteCtxClass = ClassName(packageName, "${schemaName}DeleteValidationContext")
+        return FunSpec.builder("evaluateDeleteValidation")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("entity", entityClass)
+            .addParameter("candidate", candidateClass)
+            .addCode(CodeBlock.builder()
+                .addStatement("val rules = validationConfig.deleteRules")
+                .addStatement("if (rules.isEmpty()) return")
+                .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.System))", PRIVACY_CONTEXT, VIEWER)
+                .addStatement("val ctx = %T(validationClient, entity, candidate)", deleteCtxClass)
+                .addStatement("val violations = rules.mapNotNull { rule ->")
+                .addStatement("  when (val decision = rule.validate(ctx)) {")
+                .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
+                .addStatement("    is %T.Invalid -> decision", VALIDATION_DECISION)
+                .addStatement("  }")
+                .addStatement("}")
+                .addStatement("if (violations.isNotEmpty()) throw %T(%S, violations)", VALIDATION_EXCEPTION, schemaName)
+                .build()
+            )
+            .build()
+    }
 }

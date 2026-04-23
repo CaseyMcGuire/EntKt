@@ -221,7 +221,7 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `withTransaction copies privacy context and privacy config`() {
+    fun `withTransaction copies privacy context, privacy config, and validation config`() {
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("tx.privacyContextProvider = this.privacyContextProvider")) {
@@ -233,17 +233,29 @@ class ClientGeneratorTest {
         assert(output.contains("tx.users.copyPrivacyFrom(this.users)")) {
             "withTransaction should copy privacy for users repo\n$output"
         }
+        assert(output.contains("tx.cars.copyValidationFrom(this.cars)")) {
+            "withTransaction should copy validation for cars repo\n$output"
+        }
+        assert(output.contains("tx.users.copyValidationFrom(this.users)")) {
+            "withTransaction should copy validation for users repo\n$output"
+        }
     }
 
     @Test
     fun `init block applies policies from config`() {
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("cars.applyPrivacy(cfg.policiesConfig.carsConfig)")) {
+        assert(output.contains("cars.applyPrivacy(cfg.policiesConfig.carsPrivacyConfig)")) {
             "Should apply car privacy from policies config\n$output"
         }
-        assert(output.contains("users.applyPrivacy(cfg.policiesConfig.usersConfig)")) {
+        assert(output.contains("users.applyPrivacy(cfg.policiesConfig.usersPrivacyConfig)")) {
             "Should apply user privacy from policies config\n$output"
+        }
+        assert(output.contains("cars.applyValidation(cfg.policiesConfig.carsValidationConfig)")) {
+            "Should apply car validation from policies config\n$output"
+        }
+        assert(output.contains("users.applyValidation(cfg.policiesConfig.usersValidationConfig)")) {
+            "Should apply user validation from policies config\n$output"
         }
     }
 

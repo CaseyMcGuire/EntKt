@@ -33,8 +33,9 @@ fun main(args: Array<String>) {
     outputDir.toFile().mkdirs()
 
     val generator = EntGenerator(packageName)
-    generator.writeTo(outputDir, schemas)
+    val files = generator.generate(schemas)
+    files.forEach { it.writeTo(outputDir) }
 
-    println("Generated ${schemas.size * 6 + 1} files for ${schemas.size} schemas")
+    println("Generated ${files.size} files for ${schemas.size} schemas")
     println("Output directory: ${outputDir.toAbsolutePath()}")
 }

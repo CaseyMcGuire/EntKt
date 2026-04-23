@@ -285,7 +285,8 @@ class ClientGenerator(
         }
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
-            block.addStatement("%L.applyPrivacy(cfg.policiesConfig.%LConfig)", propName, propName)
+            block.addStatement("%L.applyPrivacy(cfg.policiesConfig.%LPrivacyConfig)", propName, propName)
+            block.addStatement("%L.applyValidation(cfg.policiesConfig.%LValidationConfig)", propName, propName)
         }
         block.addStatement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
         return block.build()
@@ -305,6 +306,7 @@ class ClientGenerator(
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
             body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
+            body.addStatement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
         }
         body.addStatement("block(tx)")
         body.endControlFlow()
@@ -355,15 +357,24 @@ class ClientGenerator(
         for (input in schemas) {
             val entityClass = ClassName(packageName, input.name)
             val policyScopeClass = ClassName(packageName, "${input.name}PolicyScope")
-            val configClass = ClassName(packageName, "${input.name}PrivacyConfig")
+            val privacyConfigClass = ClassName(packageName, "${input.name}PrivacyConfig")
+            val validationConfigClass = ClassName(packageName, "${input.name}ValidationConfig")
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             val policyType = ENTITY_POLICY.parameterizedBy(entityClass, policyScopeClass)
 
-            // Internal config property
+            // Internal privacy config property
             builder.addProperty(
-                PropertySpec.builder("${propName}Config", configClass)
+                PropertySpec.builder("${propName}PrivacyConfig", privacyConfigClass)
                     .addModifiers(KModifier.INTERNAL)
-                    .initializer("%T()", configClass)
+                    .initializer("%T()", privacyConfigClass)
+                    .build()
+            )
+
+            // Internal validation config property
+            builder.addProperty(
+                PropertySpec.builder("${propName}ValidationConfig", validationConfigClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", validationConfigClass)
                     .build()
             )
 
@@ -371,7 +382,7 @@ class ClientGenerator(
             builder.addFunction(
                 FunSpec.builder(propName)
                     .addParameter("policy", policyType)
-                    .addStatement("policy.configure(%T(%LConfig))", policyScopeClass, propName)
+                    .addStatement("policy.configure(%T(%LPrivacyConfig, %LValidationConfig))", policyScopeClass, propName, propName)
                     .build()
             )
         }
@@ -391,6 +402,7 @@ class ClientGenerator(
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
             body.addStatement("scoped.%L.copyPrivacyFrom(this.%L)", propName, propName)
+            body.addStatement("scoped.%L.copyValidationFrom(this.%L)", propName, propName)
         }
         body.addStatement("return block(scoped)")
 
@@ -420,6 +432,7 @@ class ClientGenerator(
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("fixed.%L.copyHooksFrom(this.%L)", propName, propName)
             body.addStatement("fixed.%L.copyPrivacyFrom(this.%L)", propName, propName)
+            body.addStatement("fixed.%L.copyValidationFrom(this.%L)", propName, propName)
         }
         body.addStatement("return fixed")
         return body.build()

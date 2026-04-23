@@ -11,6 +11,7 @@ query builders, and repositories that talk to a pluggable `Driver`.
 - [Queries](queries.md) -- predicates, ordering, pagination, edge traversal, eager loading
 - [Hooks](hooks.md) -- lifecycle hooks for create, update, and delete
 - [Privacy](privacy.md) -- per-entity privacy rules for read and write operations
+- [Validation](validation.md) -- entity-level validation rules for data model invariants
 - [Privacy Limitations](privacy-limitations.md) -- V1 aggregate, filtering, pagination, and upsert caveats
 - [Migrations](migrations.md) -- dev-mode auto-apply and prod-mode SQL file generation
 - [Drivers](drivers.md) -- InMemoryDriver, PostgresDriver, writing your own

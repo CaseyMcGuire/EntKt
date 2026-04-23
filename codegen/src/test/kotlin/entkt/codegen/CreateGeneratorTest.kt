@@ -63,6 +63,7 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", Car).toString()
 
         assert(output.contains("fun save(): Car")) { "Should have save method returning entity\n$output" }
+        assert(!output.contains("fun save(): Car?")) { "save() should return non-nullable Car\n$output" }
         assert(output.contains(""""model is required"""")) { "Should validate model is required\n$output" }
         assert(output.contains(""""year is required"""")) { "Should validate year is required\n$output" }
     }
@@ -284,6 +285,9 @@ class CreateGeneratorTest {
         assert(output.contains("fun upsert(vararg onConflict: Column<*>): Car")) {
             "Should generate upsert method with vararg Column param\n$output"
         }
+        assert(!output.contains("fun upsert(vararg onConflict: Column<*>): Car?")) {
+            "upsert() should return non-nullable Car\n$output"
+        }
         assert(output.contains("val result = driver.upsert(Car.TABLE, values, onConflict.map { it.name })")) {
             "Should call driver.upsert and store UpsertResult\n$output"
         }
@@ -382,6 +386,9 @@ class CreateGeneratorTest {
 
         assert(output.contains("fun upsert(vararg onConflict: Column<*>): Session")) {
             "Should generate upsert method\n$output"
+        }
+        assert(!output.contains("fun upsert(vararg onConflict: Column<*>): Session?")) {
+            "upsert() should return non-nullable Session\n$output"
         }
         assert(!output.contains("TODO")) {
             "Should not contain TODO stubs\n$output"
