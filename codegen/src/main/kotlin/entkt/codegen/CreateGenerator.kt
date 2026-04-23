@@ -238,11 +238,10 @@ class CreateGenerator(
 
         // ---- Field-level validation. ----
         for (field in allFields) {
-            val codegenValidators = field.validators.filter { it.spec != null }
-            if (codegenValidators.isEmpty()) continue
+            if (field.validators.isEmpty()) continue
             val prop = toCamelCase(field.name)
             val nullable = field.optional || field.nillable
-            emitFieldValidation(builder, prop, field.name, codegenValidators, nullable)
+            emitFieldValidation(builder, prop, field.name, field.validators, nullable)
         }
 
         for (fk in edgeFks) {

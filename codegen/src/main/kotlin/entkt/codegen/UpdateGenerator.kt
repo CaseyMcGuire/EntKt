@@ -253,11 +253,10 @@ class UpdateGenerator(
         // ---- Field-level validation (mutable fields only). ----
         for (field in allFields) {
             if (field.immutable) continue
-            val codegenValidators = field.validators.filter { it.spec != null }
-            if (codegenValidators.isEmpty()) continue
+            if (field.validators.isEmpty()) continue
             val prop = toCamelCase(field.name)
             // All update locals are nullable (dirty tracking fallback).
-            emitFieldValidation(builder, prop, field.name, codegenValidators, nullable = true)
+            emitFieldValidation(builder, prop, field.name, field.validators, nullable = true)
         }
 
         val rowBuilder = CodeBlock.builder()
