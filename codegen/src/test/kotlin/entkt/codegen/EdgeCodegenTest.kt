@@ -745,6 +745,55 @@ class EdgeCodegenTest {
         assertEquals(OnDelete.CASCADE, fkCol.onDelete, "Should carry CASCADE from edge")
     }
 
+    // ---------- storageKey + explicit .field() ----------
+
+    @Test
+    fun `explicit field edge with storageKey resolves FK reference correctly`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                long("owner_id").storageKey("owner_fk")
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique().field("owner_id")
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        val columns = columnMetadataFor(child, names)
+        val fkCol = columns.firstOrNull { it.name == "owner_fk" }
+
+        assertNotNull(fkCol, "Should find column by storageKey 'owner_fk'")
+        val refs = assertNotNull(fkCol.references, "Field with storageKey should still get FK reference from edge")
+        assertEquals("parents", refs.first)
+    }
+
+    @Test
+    fun `explicit field edge with storageKey resolves join to physical column`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                long("owner_id").storageKey("owner_fk")
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique().field("owner_id")
+            }
+        }
+        val join = resolveEdgeJoin(
+            child.edges().first(),
+            child,
+        )
+        assertNotNull(join)
+        assertEquals("owner_fk", join.sourceColumn, "Join should use physical column name from storageKey")
+    }
+
     @Test
     fun `SET_NULL rejected on non-nullable explicit field`() {
         val parent = object : EntSchema() {

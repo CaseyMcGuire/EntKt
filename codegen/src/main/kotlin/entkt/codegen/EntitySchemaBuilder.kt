@@ -117,6 +117,7 @@ private fun buildEntitySchema(
     val table = tableNameFor(name)
     val columns = columnMetadataFor(schema, schemaNames)
     val schemaIndexes = schema.indexes() + schema.mixins().flatMap { it.indexes() }
+    val colMap = fieldColumnMap(schema)
 
     return EntitySchema(
         table = table,
@@ -135,7 +136,7 @@ private fun buildEntitySchema(
         edges = buildEdgeMap(schema, schemaNames),
         indexes = schemaIndexes.map { idx ->
             IndexMetadata(
-                columns = idx.fields,
+                columns = idx.fields.map { colMap[it] ?: it },
                 unique = idx.unique,
                 storageKey = idx.storageKey,
                 where = idx.where,

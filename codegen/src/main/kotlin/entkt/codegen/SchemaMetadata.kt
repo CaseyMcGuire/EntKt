@@ -41,6 +41,17 @@ internal fun idStrategyName(schema: EntSchema): String {
 }
 
 /**
+ * Build a map from schema field name to physical column name for all
+ * fields in [schema] (including mixin fields). Used to resolve
+ * `.field("name")` edge references and index columns to their actual
+ * database column names when `storageKey` is set.
+ */
+internal fun fieldColumnMap(schema: EntSchema): Map<String, String> {
+    val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
+    return fields.associate { it.name to it.columnName }
+}
+
+/**
  * One column descriptor as it should appear in the generated
  * `EntitySchema.columns` list. Captured as a plain Kotlin record so
  * codegen can fold it into either the runtime [entkt.runtime.ColumnMetadata]
@@ -94,7 +105,7 @@ internal fun columnMetadataFor(
         )
         for (field in fields) {
             val col = field.columnName
-            val edgeRef = explicitFieldEdges[col]
+            val edgeRef = explicitFieldEdges[field.name]
             val fieldNullable = field.optional || field.nillable
             if (edgeRef?.second == OnDelete.SET_NULL && !fieldNullable) {
                 error(
@@ -160,7 +171,12 @@ internal fun resolveEdgeJoin(
 
     if (edge.unique) {
         // Owning side: the FK sits on this row.
-        val fkColumn = edge.field ?: "${edge.name}_id"
+        val fkColumn = if (edge.field != null) {
+            val f = edge.field!!
+            fieldColumnMap(source)[f] ?: f
+        } else {
+            "${edge.name}_id"
+        }
         return EdgeJoin(sourceColumn = fkColumn, targetColumn = "id")
     }
 
@@ -168,7 +184,12 @@ internal fun resolveEdgeJoin(
     // inverse edge to learn its column name.
     val inverse = findInverseEdge(edge, source) ?: return null
     if (!inverse.unique || inverse.through != null) return null
-    val fkColumn = inverse.field ?: "${inverse.name}_id"
+    val fkColumn = if (inverse.field != null) {
+        val f = inverse.field!!
+        fieldColumnMap(edge.target)[f] ?: f
+    } else {
+        "${inverse.name}_id"
+    }
     return EdgeJoin(sourceColumn = "id", targetColumn = fkColumn)
 }
 
@@ -219,7 +240,12 @@ internal fun resolveM2MEdgeJoin(
         }
         candidates.firstOrNull()
     } ?: return null
-    val sourceFk = sourceEdge.field ?: "${sourceEdge.name}_id"
+    val junctionColumns = fieldColumnMap(junctionSchema)
+    val sourceFk = if (sourceEdge.field != null) {
+        junctionColumns[sourceEdge.field] ?: sourceEdge.field
+    } else {
+        "${sourceEdge.name}_id"
+    }
 
     // Find the junction edge pointing at the target schema.
     // If through.targetEdge is set, match by name; otherwise exclude
@@ -246,7 +272,11 @@ internal fun resolveM2MEdgeJoin(
         }
         candidates.firstOrNull()
     } ?: return null
-    val targetFk = targetEdge.field ?: "${targetEdge.name}_id"
+    val targetFk = if (targetEdge.field != null) {
+        junctionColumns[targetEdge.field] ?: targetEdge.field
+    } else {
+        "${targetEdge.name}_id"
+    }
 
     return EdgeJoin(
         sourceColumn = "id",
@@ -370,13 +400,14 @@ internal fun entitySchemaCodeBlock(
     }
 
     val schemaIndexes = schema.indexes() + schema.mixins().flatMap { it.indexes() }
+    val colMap = fieldColumnMap(schema)
     val indexesLiteral = CodeBlock.builder()
     if (schemaIndexes.isEmpty()) {
         indexesLiteral.add("emptyList()")
     } else {
         indexesLiteral.add("listOf(\n")
         for (idx in schemaIndexes) {
-            val fieldsLiteral = idx.fields.joinToString(", ") { "\"$it\"" }
+            val fieldsLiteral = idx.fields.joinToString(", ") { "\"${colMap[it] ?: it}\"" }
             val cb = CodeBlock.builder()
                 .add("  %T(columns = listOf($fieldsLiteral), unique = %L", INDEX_METADATA, idx.unique)
             if (idx.storageKey != null) cb.add(", storageKey = %S", idx.storageKey)

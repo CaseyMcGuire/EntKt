@@ -370,4 +370,25 @@ class EntityGeneratorTest {
             "ColumnMetadata should NOT use field name when storageKey is set\n$output"
         }
     }
+
+    @Test
+    fun `storageKey overrides column name in index metadata`() {
+        val indexed = object : EntSchema() {
+            override fun fields() = fields {
+                string("display_name").storageKey("full_name")
+                int("score")
+            }
+            override fun indexes() = indexes {
+                index("display_name", "score").unique()
+            }
+        }
+        val output = generator.generate("IndexedStorageKey", indexed).toString()
+
+        assert(output.contains(""""full_name", "score"""")) {
+            "IndexMetadata should use storageKey for indexed columns\n$output"
+        }
+        assert(!output.contains(""""display_name", "score"""")) {
+            "IndexMetadata should NOT use field name when storageKey is set\n$output"
+        }
+    }
 }
