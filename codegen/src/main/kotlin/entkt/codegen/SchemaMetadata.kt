@@ -67,6 +67,8 @@ internal data class ColumnDescriptor(
     val references: Pair<String, String>? = null,
     /** Referential action on delete for FK columns. */
     val onDelete: OnDelete? = null,
+    /** Documentation comment from the schema DSL, if any. */
+    val comment: String? = null,
 )
 
 /**
@@ -121,6 +123,7 @@ internal fun columnMetadataFor(
                     unique = field.unique,
                     references = edgeRef?.let { (table, _) -> table to "id" },
                     onDelete = edgeRef?.second,
+                    comment = field.comment,
                 ),
             )
         }
@@ -304,51 +307,25 @@ internal fun entitySchemaCodeBlock(
         .add("listOf(\n")
         .also { cb ->
             for (col in columns) {
+                val colCb = CodeBlock.builder()
+                    .add("  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L",
+                        COLUMN_METADATA, col.name, FIELD_TYPE, col.type.name,
+                        col.nullable, col.primaryKey, col.unique)
                 if (col.references != null) {
                     val (refTable, refCol) = col.references
                     if (col.onDelete != null) {
-                        cb.add(
-                            "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L, references = %T(table = %S, column = %S, onDelete = %T.%L)),\n",
-                            COLUMN_METADATA,
-                            col.name,
-                            FIELD_TYPE,
-                            col.type.name,
-                            col.nullable,
-                            col.primaryKey,
-                            col.unique,
-                            FOREIGN_KEY_REF,
-                            refTable,
-                            refCol,
-                            ON_DELETE,
-                            col.onDelete.name,
-                        )
+                        colCb.add(", references = %T(table = %S, column = %S, onDelete = %T.%L)",
+                            FOREIGN_KEY_REF, refTable, refCol, ON_DELETE, col.onDelete.name)
                     } else {
-                        cb.add(
-                            "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L, references = %T(table = %S, column = %S)),\n",
-                            COLUMN_METADATA,
-                            col.name,
-                            FIELD_TYPE,
-                            col.type.name,
-                            col.nullable,
-                            col.primaryKey,
-                            col.unique,
-                            FOREIGN_KEY_REF,
-                            refTable,
-                            refCol,
-                        )
+                        colCb.add(", references = %T(table = %S, column = %S)",
+                            FOREIGN_KEY_REF, refTable, refCol)
                     }
-                } else {
-                    cb.add(
-                        "  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L),\n",
-                        COLUMN_METADATA,
-                        col.name,
-                        FIELD_TYPE,
-                        col.type.name,
-                        col.nullable,
-                        col.primaryKey,
-                        col.unique,
-                    )
                 }
+                if (col.comment != null) {
+                    colCb.add(", comment = %S", col.comment)
+                }
+                colCb.add("),\n")
+                cb.add(colCb.build())
             }
         }
         .add(")")
@@ -363,7 +340,7 @@ internal fun entitySchemaCodeBlock(
             } else {
                 resolveEdgeJoin(edge, schema)
             } ?: return@mapNotNull null
-            Triple(edge.name, tableNameFor(targetName), join)
+            EdgeEntry(edge.name, tableNameFor(targetName), join, edge.comment)
         }
     val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames)
     val edgeEntries = forwardEntries + reverseEntries
@@ -372,29 +349,21 @@ internal fun entitySchemaCodeBlock(
         edgesLiteral.add("emptyMap()")
     } else {
         edgesLiteral.add("mapOf(\n")
-        for ((edgeName, targetTable, join) in edgeEntries) {
-            if (join.junctionTable != null) {
-                edgesLiteral.add(
-                    "  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S, junctionTable = %S, junctionSourceColumn = %S, junctionTargetColumn = %S),\n",
-                    edgeName,
-                    EDGE_METADATA,
-                    targetTable,
-                    join.sourceColumn,
-                    join.targetColumn,
-                    join.junctionTable,
-                    join.junctionSourceColumn,
-                    join.junctionTargetColumn,
-                )
-            } else {
-                edgesLiteral.add(
-                    "  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S),\n",
-                    edgeName,
-                    EDGE_METADATA,
-                    targetTable,
-                    join.sourceColumn,
-                    join.targetColumn,
-                )
+        for (entry in edgeEntries) {
+            val edgeCb = CodeBlock.builder()
+                .add("  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S",
+                    entry.name, EDGE_METADATA, entry.targetTable,
+                    entry.join.sourceColumn, entry.join.targetColumn)
+            if (entry.join.junctionTable != null) {
+                edgeCb.add(", junctionTable = %S, junctionSourceColumn = %S, junctionTargetColumn = %S",
+                    entry.join.junctionTable, entry.join.junctionSourceColumn,
+                    entry.join.junctionTargetColumn)
             }
+            if (entry.comment != null) {
+                edgeCb.add(", comment = %S", entry.comment)
+            }
+            edgeCb.add("),\n")
+            edgesLiteral.add(edgeCb.build())
         }
         edgesLiteral.add(")")
     }
@@ -441,10 +410,17 @@ internal fun entitySchemaCodeBlock(
  * `Group.to("users", User).through(...)`, User gets a reverse edge
  * named `"groups"`.
  */
+internal data class EdgeEntry(
+    val name: String,
+    val targetTable: String,
+    val join: EdgeJoin,
+    val comment: String? = null,
+)
+
 internal fun reverseM2MEdgeEntries(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
-): List<Triple<String, String, EdgeJoin>> {
+): List<EdgeEntry> {
     return schemaNames.flatMap { (otherSchema, otherName) ->
         otherSchema.edges()
             .filter { it.through != null && it.target === schema }
@@ -460,7 +436,7 @@ internal fun reverseM2MEdgeEntries(
                 )
                 val reverseName = reverseM2MEdgeName(otherName, edge.name)
                 val targetTable = tableNameFor(otherName)
-                Triple(reverseName, targetTable, reverseJoin)
+                EdgeEntry(reverseName, targetTable, reverseJoin)
             }
     }
 }

@@ -424,4 +424,95 @@ class EntityGeneratorTest {
             "Should not generate toString when no fields are sensitive\n$output"
         }
     }
+
+    @Test
+    fun `field comment emits KDoc on entity property`() {
+        val schema = object : EntSchema() {
+            override fun fields() = fields {
+                string("name").comment("The user's display name")
+            }
+        }
+        val output = generator.generate("Commented", schema).toString()
+
+        assert(output.contains("The user's display name")) {
+            "Should emit field comment as KDoc\n$output"
+        }
+    }
+
+    @Test
+    fun `edge comment emits KDoc on Edges property`() {
+        val target = object : EntSchema() {
+            override fun fields() = fields { string("title") }
+        }
+        val schema = object : EntSchema() {
+            override fun fields() = fields { string("name") }
+            override fun edges() = edges {
+                to("posts", target).comment("All posts authored by this user")
+            }
+        }
+        val schemaNames = mapOf(schema to "Author", target to "Post")
+        val output = generator.generate("Author", schema, schemaNames).toString()
+
+        assert(output.contains("All posts authored by this user")) {
+            "Should emit edge comment as KDoc\n$output"
+        }
+    }
+
+    @Test
+    fun `no KDoc when field has no comment`() {
+        val output = generator.generate("Car", Car).toString()
+
+        // Car.model has no comment — should not have any KDoc markers
+        val modelLine = output.lines().indexOfFirst { "val model:" in it }
+        val prevLine = output.lines().getOrNull(modelLine - 1) ?: ""
+        assert(!prevLine.contains("/**") && !prevLine.contains("*/")) {
+            "Should not emit KDoc for uncommented fields\n$output"
+        }
+    }
+
+    @Test
+    fun `field comment appears in generated SCHEMA ColumnMetadata`() {
+        val schema = object : EntSchema() {
+            override fun fields() = fields {
+                string("name").comment("The user's display name")
+            }
+        }
+        val output = generator.generate("Commented", schema).toString()
+
+        assert(output.contains("""comment = "The user's display name"""")) {
+            "ColumnMetadata should carry field comment\n$output"
+        }
+    }
+
+    @Test
+    fun `edge comment appears in generated SCHEMA EdgeMetadata`() {
+        val target = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("title") }
+        }
+        val schema = object : EntSchema() {
+            override fun fields() = fields { string("name") }
+            override fun edges() = edges {
+                from("author", target).unique().comment("The author of this post")
+            }
+        }
+        val schemaNames = mapOf(schema to "Post", target to "Author")
+        val output = generator.generate("Post", schema, schemaNames).toString()
+
+        assert(output.contains("""comment = "The author of this post"""")) {
+            "EdgeMetadata should carry edge comment\n$output"
+        }
+    }
+
+    @Test
+    fun `no comment field in ColumnMetadata when field has no comment`() {
+        val output = generator.generate("Car", Car).toString()
+
+        // ColumnMetadata for "model" should not have a comment parameter
+        val schemaBlock = output.substringAfter("SCHEMA")
+        val modelMeta = schemaBlock.substringAfter("""name = "model"""").substringBefore("),")
+        assert(!modelMeta.contains("comment =")) {
+            "ColumnMetadata should omit comment when not set\n$output"
+        }
+    }
 }

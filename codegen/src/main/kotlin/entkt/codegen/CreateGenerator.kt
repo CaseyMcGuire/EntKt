@@ -121,6 +121,8 @@ class CreateGenerator(
             .mutable(true)
             .initializer("null")
         if (override) builder.addModifiers(KModifier.OVERRIDE)
+        val comment = field.comment
+        if (comment != null) builder.addKdoc("%L", comment)
         return builder.build()
     }
 

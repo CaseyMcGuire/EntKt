@@ -117,7 +117,7 @@ class UpdateGenerator(
     private fun buildProperty(field: Field): PropertySpec {
         val prop = toCamelCase(field.name)
         val typeName = field.resolvedTypeName().copy(nullable = true)
-        return PropertySpec.builder(prop, typeName)
+        val builder = PropertySpec.builder(prop, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
@@ -128,7 +128,9 @@ class UpdateGenerator(
                     .addStatement("dirtyFields.add(%S)", prop)
                     .build()
             )
-            .build()
+        val comment = field.comment
+        if (comment != null) builder.addKdoc("%L", comment)
+        return builder.build()
     }
 
     private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {

@@ -64,7 +64,7 @@ class EntityGenerator(
         val edgeDescriptors = schema.edges().mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
             val targetClass = ClassName(packageName, targetName)
-            EdgeDescriptor(edge.name, targetClass, edge.unique)
+            EdgeDescriptor(edge.name, targetClass, edge.unique, edge.comment)
         }
         val edgesClass = if (edgeDescriptors.isNotEmpty()) buildEdgesClass(edgeDescriptors) else null
         val edgesClassName = entityClass.nestedClass("Edges")
@@ -219,9 +219,11 @@ class EntityGenerator(
             if (field.optional || field.nillable) it.copy(nullable = true) else it
         }
         val propertyName = toCamelCase(field.name)
-        return PropertySpec.builder(propertyName, typeName)
+        val builder = PropertySpec.builder(propertyName, typeName)
             .initializer(propertyName)
-            .build()
+        val comment = field.comment
+        if (comment != null) builder.addKdoc("%L", comment)
+        return builder.build()
     }
 
     private fun buildEdgeProperty(fk: EdgeFk): PropertySpec {
@@ -317,6 +319,7 @@ internal data class EdgeDescriptor(
     val name: String,
     val targetClass: ClassName,
     val toOne: Boolean,
+    val comment: String? = null,
 )
 
 /**
@@ -339,11 +342,10 @@ private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
                 .defaultValue("null")
                 .build()
         )
-        properties.add(
-            PropertySpec.builder(propName, propType)
-                .initializer(propName)
-                .build()
-        )
+        val propBuilder = PropertySpec.builder(propName, propType)
+            .initializer(propName)
+        if (edge.comment != null) propBuilder.addKdoc("%L", edge.comment)
+        properties.add(propBuilder.build())
     }
 
     return TypeSpec.classBuilder("Edges")

@@ -34,11 +34,11 @@ class MutationGenerator(
 
         for (field in mutableFields) {
             val typeName = field.resolvedTypeName().copy(nullable = true)
-            typeSpec.addProperty(
-                PropertySpec.builder(toCamelCase(field.name), typeName)
-                    .mutable(true)
-                    .build(),
-            )
+            val prop = PropertySpec.builder(toCamelCase(field.name), typeName)
+                .mutable(true)
+            val comment = field.comment
+            if (comment != null) prop.addKdoc("%L", comment)
+            typeSpec.addProperty(prop.build())
         }
 
         for (fk in edgeFks) {

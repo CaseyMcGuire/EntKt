@@ -61,6 +61,8 @@ data class ColumnMetadata(
     val unique: Boolean = false,
     /** Foreign key reference, if this column points at another table's id. */
     val references: ForeignKeyRef? = null,
+    /** Documentation comment from the schema DSL, if any. */
+    val comment: String? = null,
 )
 
 /**
@@ -125,6 +127,8 @@ data class EdgeMetadata(
     val junctionSourceColumn: String? = null,
     /** Column on the junction table that references the target. */
     val junctionTargetColumn: String? = null,
+    /** Documentation comment from the schema DSL, if any. */
+    val comment: String? = null,
 )
 
 /**

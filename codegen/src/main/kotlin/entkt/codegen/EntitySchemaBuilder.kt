@@ -131,6 +131,7 @@ private fun buildEntitySchema(
                 primaryKey = col.primaryKey,
                 unique = col.unique,
                 references = col.references?.let { (t, c) -> ForeignKeyRef(t, c, col.onDelete) },
+                comment = col.comment,
             )
         },
         edges = buildEdgeMap(schema, schemaNames),
@@ -163,17 +164,18 @@ private fun buildEdgeMap(
             junctionTable = join.junctionTable,
             junctionSourceColumn = join.junctionSourceColumn,
             junctionTargetColumn = join.junctionTargetColumn,
+            comment = edge.comment,
         )
     }
 
-    val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames).map { (edgeName, targetTable, join) ->
-        edgeName to EdgeMetadata(
-            targetTable = targetTable,
-            sourceColumn = join.sourceColumn,
-            targetColumn = join.targetColumn,
-            junctionTable = join.junctionTable,
-            junctionSourceColumn = join.junctionSourceColumn,
-            junctionTargetColumn = join.junctionTargetColumn,
+    val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames).map { entry ->
+        entry.name to EdgeMetadata(
+            targetTable = entry.targetTable,
+            sourceColumn = entry.join.sourceColumn,
+            targetColumn = entry.join.targetColumn,
+            junctionTable = entry.join.junctionTable,
+            junctionSourceColumn = entry.join.junctionSourceColumn,
+            junctionTargetColumn = entry.join.junctionTargetColumn,
         )
     }
 
