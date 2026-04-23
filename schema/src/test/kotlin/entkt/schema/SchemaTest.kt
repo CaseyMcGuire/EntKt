@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 object TimeMixin : EntMixin {
     override fun fields() = fields {
         time("created_at").default("now").immutable()
-        time("updated_at").default("now").updateDefault("now")
+        time("updated_at").default("now").updateDefaultNow()
     }
 }
 
@@ -231,7 +231,7 @@ class SchemaTest {
         assertEquals(2, timeFields.size)
         assertEquals("created_at", timeFields[0].name)
         assertEquals("updated_at", timeFields[1].name)
-        assertEquals("now", timeFields[1].updateDefault)
+        assertEquals(UpdateDefault.Now, timeFields[1].updateDefault)
 
         val softDeleteFields = mixins[1].fields()
         assertEquals(1, softDeleteFields.size)
@@ -347,5 +347,15 @@ class SchemaTest {
             .onDelete(OnDelete.SET_NULL)
             .build()
         assertEquals(OnDelete.SET_NULL, edge.onDelete)
+    }
+
+    @Test
+    fun `immutable field with updateDefaultNow is rejected`() {
+        assertFailsWith<IllegalStateException> {
+            TimeFieldBuilder("updated_at")
+                .immutable()
+                .updateDefaultNow()
+                .build()
+        }
     }
 }

@@ -13,6 +13,7 @@ import com.squareup.kotlinpoet.TypeSpec
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
+import entkt.schema.UpdateDefault
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime", "Driver")
@@ -195,6 +196,14 @@ class UpdateGenerator(
             val prop = toCamelCase(field.name)
             if (field.immutable) {
                 builder.addStatement("val %L = entity.%L", prop, prop)
+            } else if (field.updateDefault != null) {
+                builder.addCode(
+                    "val %L = if (%S in dirtyFields) this.%L else %L\n",
+                    prop,
+                    prop,
+                    prop,
+                    updateDefaultCodeBlock(field),
+                )
             } else {
                 builder.addStatement(
                     "val %L = if (%S in dirtyFields) this.%L else entity.%L",
@@ -334,5 +343,12 @@ class UpdateGenerator(
             candidateClass,
         )
         builder.addStatement("client.%L.evaluateUpdatePrivacy(privacy, entity, candidate)", repoPropName)
+    }
+
+    private fun updateDefaultCodeBlock(field: Field): CodeBlock {
+        return when (field.updateDefault!!) {
+            is UpdateDefault.Now ->
+                CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
+        }
     }
 }

@@ -1,6 +1,15 @@
 package entkt.codegen
 
+import entkt.schema.EntSchema
+import entkt.schema.fields
 import kotlin.test.Test
+
+private object UpdateDefaultEntity : EntSchema() {
+    override fun fields() = fields {
+        string("name")
+        time("updated_at").updateDefaultNow()
+    }
+}
 
 class UpdateGeneratorTest {
 
@@ -207,6 +216,27 @@ class UpdateGeneratorTest {
         val rowMapPos = output.indexOf("val values: Map<String, Any?>")
         assert(dirtyPos < validationPos && validationPos < rowMapPos) {
             "Validation should appear after dirty resolution and before row map\n$output"
+        }
+    }
+
+    @Test
+    fun `updateDefault time field falls back to Instant_now instead of entity value`() {
+        val output = generator.generate("UpdateDefaultEntity", UpdateDefaultEntity).toString()
+
+        assert(output.contains("Instant.now()")) {
+            "Should use Instant.now() as fallback for time updateDefault\n$output"
+        }
+        assert(!output.contains("else entity.updatedAt")) {
+            "Should NOT fall back to entity.updatedAt when updateDefault is set\n$output"
+        }
+    }
+
+    @Test
+    fun `fields without updateDefault still fall back to entity value`() {
+        val output = generator.generate("UpdateDefaultEntity", UpdateDefaultEntity).toString()
+
+        assert(output.contains("if (\"name\" in dirtyFields) this.name else entity.name")) {
+            "Fields without updateDefault should fall back to entity value\n$output"
         }
     }
 }

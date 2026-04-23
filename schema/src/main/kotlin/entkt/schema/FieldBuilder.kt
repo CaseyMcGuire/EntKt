@@ -11,10 +11,14 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     private var immutable: Boolean = false
     private var sensitive: Boolean = false
     private var default: Any? = null
-    private var updateDefault: Any? = null
+    private var updateDefault: UpdateDefault? = null
     private var enumValues: List<String>? = null
     private var enumClass: kotlin.reflect.KClass<out Enum<*>>? = null
     protected var validators: MutableList<Validator> = mutableListOf()
+
+    protected fun setUpdateDefault(value: UpdateDefault) {
+        this.updateDefault = value
+    }
     private var comment: String? = null
     private var storageKey: String? = null
 
@@ -26,7 +30,6 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     fun immutable(): T = apply { immutable = true }.let { self() }
     fun sensitive(): T = apply { sensitive = true }.let { self() }
     fun default(value: Any): T = apply { default = value }.let { self() }
-    fun updateDefault(value: Any): T = apply { updateDefault = value }.let { self() }
     fun comment(text: String): T = apply { comment = text }.let { self() }
     fun storageKey(key: String): T = apply { storageKey = key }.let { self() }
     fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
@@ -41,7 +44,11 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
         this.enumClass = klass
     }
 
-    fun build(): Field = Field(
+    fun build(): Field {
+        if (immutable && updateDefault != null) {
+            error("Field '$name' cannot be both immutable and have an updateDefault — immutable fields are never updated")
+        }
+        return Field(
         name = name,
         type = type,
         optional = optional,
@@ -57,4 +64,5 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
         comment = comment,
         storageKey = storageKey,
     )
+    }
 }

@@ -79,7 +79,7 @@ These are available on all field types:
 | `.immutable()` | Omitted from update builder setters |
 | `.sensitive()` | Excluded from string representations |
 | `.default(value)` | Default value for creates |
-| `.updateDefault(value)` | Default value applied on every update |
+| `.updateDefaultNow()` | Set to `Instant.now()` on every update (TIME fields only) |
 | `.comment(text)` | Documentation comment |
 | `.storageKey(name)` | Override the database column name |
 
