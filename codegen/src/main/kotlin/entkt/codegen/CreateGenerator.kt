@@ -7,10 +7,8 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
@@ -24,8 +22,6 @@ private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val PREDICATE = ClassName("entkt.query", "Predicate")
-private val OP = ClassName("entkt.query", "Op")
 
 class CreateGenerator(
     private val packageName: String,
@@ -51,7 +47,6 @@ class CreateGenerator(
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeCreateHookType = hookListType(createClass)
         val afterCreateHookType = hookListType(entityClass)
-        val afterUpdateHookType = hookListType(entityClass)
 
         val idStrategy = idStrategyName(schema)
         val idType = schema.id().type.toTypeName()
@@ -62,11 +57,6 @@ class CreateGenerator(
             .addParameter("beforeSaveHooks", beforeSaveHookType)
             .addParameter("beforeCreateHooks", beforeCreateHookType)
             .addParameter("afterCreateHooks", afterCreateHookType)
-            .addParameter(
-                ParameterSpec.builder("afterUpdateHooks", afterUpdateHookType)
-                    .defaultValue("emptyList()")
-                    .build()
-            )
         if (idStrategy == "EXPLICIT") {
             constructorBuilder.addParameter("id", idType)
         }
@@ -104,12 +94,6 @@ class CreateGenerator(
                     .initializer("afterCreateHooks")
                     .build()
             )
-            .addProperty(
-                PropertySpec.builder("afterUpdateHooks", afterUpdateHookType)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("afterUpdateHooks")
-                    .build()
-            )
             .also { builder ->
                 if (idStrategy == "EXPLICIT") {
                     builder.addProperty(
@@ -124,7 +108,6 @@ class CreateGenerator(
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
-            .addFunction(buildUpsertFunction(schemaName, schema, allFields, edgeFks))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -212,62 +195,9 @@ class CreateGenerator(
     }
 
     /**
-     * `upsert(onConflict)` collects fields the same way as `save()` but
-     * calls `driver.upsert` with the specified conflict columns. On
-     * conflict, the driver updates non-id, non-conflict columns and
-     * returns the persisted row.
-     */
-    private fun buildUpsertFunction(
-        schemaName: String,
-        schema: EntSchema,
-        allFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        val columnClass = ClassName("entkt.query", "Column")
-        val builder = FunSpec.builder("upsert")
-            .returns(entityClass)
-            .addParameter(
-                ParameterSpec.builder(
-                    "onConflict",
-                    columnClass.parameterizedBy(STAR),
-                ).addModifiers(KModifier.VARARG).build(),
-            )
-
-        emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
-        emitUpsertPrivacy(builder, schemaName, allFields, edgeFks)
-        emitCreateValidation(builder, schemaName)
-
-        val immutableNames = allFields.filter { it.immutable }.map { it.name }
-        if (immutableNames.isEmpty()) {
-            builder.addStatement(
-                "val result = driver.upsert(%T.TABLE, values, onConflict.map { it.name })",
-                entityClass,
-            )
-        } else {
-            builder.addStatement(
-                "val result = driver.upsert(%T.TABLE, values, onConflict.map { it.name }, listOf(%L))",
-                entityClass,
-                immutableNames.joinToString(", ") { "\"$it\"" },
-            )
-        }
-        builder.addStatement("val entity = %T.fromRow(result.row)", entityClass)
-        builder.beginControlFlow("if (result.inserted)")
-        builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
-        builder.nextControlFlow("else")
-        builder.addStatement("for (hook in afterUpdateHooks) hook(entity)")
-        builder.endControlFlow()
-        emitLoadPrivacyOnReturn(builder, schemaName, "entity")
-        builder.addStatement("return entity")
-
-        return builder.build()
-    }
-
-    /**
-     * Emit the common body shared by [buildSaveFunction] and
-     * [buildUpsertFunction]: lifecycle hooks, field extraction with
-     * defaults and validation, FK validation, and the `values` map.
-     * After this method, the caller appends the driver call.
+     * Emit the common body shared by save: lifecycle hooks, field
+     * extraction with defaults and validation, FK validation, and the
+     * `values` map. After this method, the caller appends the driver call.
      */
     private fun emitCreateBody(
         builder: FunSpec.Builder,
@@ -392,54 +322,6 @@ class CreateGenerator(
             args.add("${fk.propertyName} = ${fk.propertyName}")
         }
         return args
-    }
-
-    /**
-     * Emit upsert privacy enforcement: look up the existing row by
-     * conflict columns to decide whether this is an insert or update,
-     * then evaluate the appropriate privacy rules before the driver call.
-     */
-    private fun emitUpsertPrivacy(
-        builder: FunSpec.Builder,
-        schemaName: String,
-        allFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ) {
-        val entityClass = ClassName(packageName, schemaName)
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
-        builder.addStatement("val privacy = client.currentPrivacyContext()")
-        val candidateArgs = buildCandidateArgs(allFields, edgeFks)
-        builder.addStatement(
-            "val candidate = %T(${candidateArgs.joinToString(", ")})",
-            candidateClass,
-        )
-        builder.addStatement("require(onConflict.isNotEmpty()) { %S }", "upsert requires at least one conflict column")
-        builder.addStatement(
-            "val conflictPredicates = onConflict.map { %T.Leaf(it.name, %T.EQ, values[it.name]) }",
-            PREDICATE,
-            OP,
-        )
-        builder.addStatement(
-            "val existing = driver.query(%T.TABLE, conflictPredicates, emptyList(), 1, null).firstOrNull()?.let { %T.fromRow(it) }",
-            entityClass,
-            entityClass,
-        )
-        builder.beginControlFlow("if (existing != null)")
-        val immutableFields = allFields.filter { it.immutable }
-        if (immutableFields.isNotEmpty()) {
-            val copyArgs = immutableFields.joinToString(", ") {
-                val prop = toCamelCase(it.name)
-                "$prop = existing.$prop"
-            }
-            builder.addStatement("val updateCandidate = candidate.copy($copyArgs)")
-            builder.addStatement("client.%L.evaluateUpdatePrivacy(privacy, existing, updateCandidate)", repoPropName)
-        } else {
-            builder.addStatement("client.%L.evaluateUpdatePrivacy(privacy, existing, candidate)", repoPropName)
-        }
-        builder.nextControlFlow("else")
-        builder.addStatement("client.%L.evaluateCreatePrivacy(privacy, candidate)", repoPropName)
-        builder.endControlFlow()
     }
 
     /**

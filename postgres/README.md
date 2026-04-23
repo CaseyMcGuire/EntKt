@@ -16,13 +16,10 @@ inferred from nullability). Unique fields and composite indexes emit `UNIQUE`
 constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
 Partial indexes append `WHERE predicate` when declared via `.where()`.
 
-## Insert / update / upsert
+## Insert / update
 
-`INSERT ... RETURNING *`, `UPDATE ... RETURNING *`,
-and `INSERT ... ON CONFLICT ... DO UPDATE SET ... RETURNING *` with fully
-parameterized bindings. Never rewrites the id through `update`. Upsert uses
-PostgreSQL's `xmax` system column to detect insert vs conflict-update, so
-lifecycle hooks fire correctly.
+`INSERT ... RETURNING *` and `UPDATE ... RETURNING *` with fully
+parameterized bindings. Never rewrites the id through `update`.
 
 ## Query
 

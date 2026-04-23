@@ -14,7 +14,7 @@ For each schema the generator emits:
 - **`{Entity}Mutation` interface** — shared interface implemented by both
   Create and Update builders, with `var` properties for all mutable fields.
   Enables shared validators via `onBeforeSave`.
-- **`{Entity}Create` builder** — DSL setters + `.save()` / `.upsert(onConflict)`.
+- **`{Entity}Create` builder** — DSL setters + `.save()`.
   Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
 - **`{Entity}Update` builder** — DSL setters (immutable fields are elided) + `.save()`.
   Implements `{Entity}Mutation`. Exposes `entity` for hooks to inspect current state.
@@ -22,7 +22,7 @@ For each schema the generator emits:
   `.offset(...)`, `.all()`, `.firstOrNull()`, edge traversal methods
   (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
 - **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
-  `.byId(id)`, `.upsert(onConflict) { }`, `.delete(entity)`, `.deleteById(id)`,
+  `.byId(id)`, `.delete(entity)`, `.deleteById(id)`,
   `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)`.
   Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed

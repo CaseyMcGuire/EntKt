@@ -45,24 +45,3 @@ once per item rather than once for the whole bulk call. Providers should
 return a stable viewer for the duration of a request or logical
 operation.
 
-## Upsert Privacy
-
-Generated `upsert()` performs a preflight lookup using the supplied
-conflict columns:
-
-- if a matching row exists, UPDATE privacy is evaluated
-- otherwise CREATE privacy is evaluated
-
-The database still decides the actual insert-or-update branch during
-`driver.upsert(...)`. Concurrent writes can change the conflict state
-between the preflight lookup and the database upsert, so the privacy
-decision may be based on the branch that was expected before the write,
-not the branch that wins under concurrency.
-
-Applications that require serializable authorization for upserts should
-avoid generated `upsert()` for protected entities, or wrap their own
-domain-specific create/update flow in an application-level transaction
-or lock.
-
-`upsert()` also requires explicit conflict columns. Do not call it with
-an empty `onConflict` list.

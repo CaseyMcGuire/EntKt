@@ -9,7 +9,6 @@ import entkt.runtime.Driver
 import entkt.runtime.EdgeMetadata
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
-import entkt.runtime.UpsertResult
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import java.sql.Connection
@@ -88,14 +87,6 @@ class PostgresDriver(
     override fun exists(table: String, predicates: List<Predicate>): Boolean =
         dataSource.connection.use { existsWith(it, table, predicates) }
 
-    override fun upsert(
-        table: String,
-        values: Map<String, Any?>,
-        conflictColumns: List<String>,
-        immutableColumns: List<String>,
-    ): UpsertResult =
-        dataSource.connection.use { upsertWith(it, table, values, conflictColumns, immutableColumns) }
-
     override fun delete(table: String, id: Any): Boolean =
         dataSource.connection.use { deleteWith(it, table, id) }
 
@@ -141,50 +132,6 @@ class PostgresDriver(
             stmt.executeQuery().use { rs ->
                 check(rs.next()) { "INSERT into $table returned no row" }
                 decodeRow(rs, schema.columns)
-            }
-        }
-    }
-
-    private fun upsertWith(
-        conn: Connection,
-        table: String,
-        values: Map<String, Any?>,
-        conflictColumns: List<String>,
-        immutableColumns: List<String> = emptyList(),
-    ): UpsertResult {
-        require(conflictColumns.isNotEmpty()) { "upsert requires at least one conflict column" }
-        val schema = schemaFor(table)
-        val skipId = (schema.idStrategy == IdStrategy.AUTO_INT ||
-            schema.idStrategy == IdStrategy.AUTO_LONG) &&
-            values[schema.idColumn] == null
-
-        val cols = values.keys.filter { !(skipId && it == schema.idColumn) }
-        val placeholders = cols.joinToString(", ") { "?" }
-        val colList = cols.joinToString(", ") { quote(it) }
-        val conflictList = conflictColumns.joinToString(", ") { quote(it) }
-
-        val updateCols = cols.filter { it != schema.idColumn && it !in conflictColumns && it !in immutableColumns }
-        // Always produce a SET clause so RETURNING * works on conflict.
-        // If there's nothing meaningful to update, do a no-op write on
-        // the first conflict column.
-        val setClause = if (updateCols.isEmpty()) {
-            "${quote(conflictColumns.first())} = EXCLUDED.${quote(conflictColumns.first())}"
-        } else {
-            updateCols.joinToString(", ") { "${quote(it)} = EXCLUDED.${quote(it)}" }
-        }
-        // xmax is a PostgreSQL system column: 0 for freshly inserted rows,
-        // non-zero when the row was updated via the ON CONFLICT path.
-        val sql = "INSERT INTO ${quote(table)} ($colList) VALUES ($placeholders)" +
-            " ON CONFLICT ($conflictList) DO UPDATE SET $setClause RETURNING *, (xmax = 0) AS _inserted"
-
-        return conn.prepareStatement(sql).use { stmt ->
-            for ((i, col) in cols.withIndex()) {
-                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
-            }
-            stmt.executeQuery().use { rs ->
-                check(rs.next()) { "UPSERT into $table returned no row" }
-                val inserted = rs.getBoolean("_inserted")
-                UpsertResult(decodeRow(rs, schema.columns), inserted)
             }
         }
     }
@@ -866,15 +813,6 @@ class PostgresDriver(
 
         override fun exists(table: String, predicates: List<Predicate>): Boolean {
             checkOpen(); return existsWith(conn, table, predicates)
-        }
-
-        override fun upsert(
-            table: String,
-            values: Map<String, Any?>,
-            conflictColumns: List<String>,
-            immutableColumns: List<String>,
-        ): UpsertResult {
-            checkOpen(); return upsertWith(conn, table, values, conflictColumns, immutableColumns)
         }
 
         override fun delete(table: String, id: Any): Boolean {

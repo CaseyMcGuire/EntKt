@@ -371,21 +371,12 @@ validation {
 }
 ```
 
-## Bulk Operations and Upsert
+## Bulk Operations
 
 **Bulk methods (`createMany`, `deleteMany`) delegate per item.** Each
 item runs the full validation pipeline independently. Execution stops
 on the first validation failure. Prior items may already be written
 unless the caller wraps the operation in a transaction.
-
-**Upsert runs create validation rules only.** Since upsert uses the
-create builder, create validation rules apply. Update validation
-rules do not run — the database decides insert vs update after
-validation. This means update-only invariants (state transition
-guards, immutable-field checks) are not enforced on the conflict-
-update branch. If an entity has invariants that differ between
-create and update, use explicit create/update paths instead of
-upsert.
 
 ## What Gets Generated
 

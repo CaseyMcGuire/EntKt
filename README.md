@@ -63,12 +63,6 @@ val usersWithPosts = client.users.query {
 }.all()
 usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if withPosts wasn't called)
 
-// Upsert — insert or update on conflict
-client.users.upsert(User.email) {
-    name = "Alice"
-    email = "alice@example.com"
-}
-
 // Delete
 client.users.delete(alice)       // or client.users.deleteById(alice.id)
 

@@ -92,24 +92,6 @@ For an **update**:
 9. `afterUpdate` (receives `User`)
 10. Load privacy on returned entity
 
-For an **upsert**:
-
-1. `beforeSave` (receives `UserMutation`)
-2. `beforeCreate` (receives `UserCreate`)
-3. Field validation
-4. Build `WriteCandidate`
-5. Privacy preflight check
-6. Entity validation create (update validation rules do not run)
-7. `driver.upsert(...)` — the database decides insert vs update
-8. If the row was **inserted**: `afterCreate` (receives `User`)
-9. If the row was **updated** (conflict): `afterUpdate` (receives `User`)
-10. Load privacy on returned entity
-
-Because upsert uses the create builder, `beforeSave` and `beforeCreate` hooks
-always run. The "after" hook is chosen based on what the database actually did.
-Immutable fields (e.g. `created_at`) are included in the insert but excluded
-from the conflict-update set, so they are preserved on subsequent upserts.
-
 For a **delete**:
 
 1. Build `WriteCandidate`

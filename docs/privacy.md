@@ -318,7 +318,7 @@ materializing or privacy-checking entities.
 
 Privacy V1 intentionally keeps enforcement synchronous and row-by-row.
 See [Privacy Limitations](privacy-limitations.md) for aggregate read,
-filtering, pagination, bulk operation, and upsert limitations.
+filtering, pagination, and bulk operation limitations.
 
 ## Error Handling
 

@@ -185,27 +185,6 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo exposes upsert with vararg conflict columns and block`() {
-        val output = generator.generate("Car", Car).toString()
-
-        assert(output.contains("fun upsert(vararg onConflict: Column<*>, block: CarCreate.() -> Unit): Car")) {
-            "Should have upsert method\n$output"
-        }
-        assert(!output.contains("fun upsert(vararg onConflict: Column<*>, block: CarCreate.() -> Unit): Car?")) {
-            "upsert() should return non-nullable Car\n$output"
-        }
-    }
-
-    @Test
-    fun `repo upsert passes afterUpdateHooks to the create builder`() {
-        val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("CarCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, afterUpdateHooks)")) {
-            "upsert should pass afterUpdateHooks to CarCreate\n$output"
-        }
-    }
-
-    @Test
     fun `repo does not expose hook registration methods`() {
         val output = generator.generate("Car", Car).toString()
 
@@ -358,21 +337,6 @@ class RepoGeneratorTest {
 
         assert(output.contains("SessionCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, id = id)")) {
             "create() should pass id to SessionCreate constructor\n$output"
-        }
-    }
-
-    @Test
-    fun `explicit id upsert takes id as first parameter`() {
-        val output = generator.generate("Session", Session).toString()
-
-        assert(output.contains("fun upsert(")) {
-            "Should have upsert method\n$output"
-        }
-        assert(output.contains("id: String") && output.contains("vararg onConflict: Column<*>")) {
-            "upsert() should take id and onConflict for EXPLICIT strategy\n$output"
-        }
-        assert(!output.contains("TODO")) {
-            "upsert should not contain TODO\n$output"
         }
     }
 

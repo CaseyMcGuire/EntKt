@@ -61,9 +61,6 @@ evaluate LOAD privacy on returned entity
 return entity
 ```
 
-For upsert, the same rule applies after the driver reports the inserted or
-updated row.
-
 If returned LOAD privacy denies, `PrivacyDeniedException` is thrown and the
 row remains persisted.
 
@@ -74,7 +71,6 @@ No new public API is required. The behavior changes existing methods:
 ```kotlin
 client.posts.create { ... }.save()
 client.posts.update(post) { ... }.save()
-client.posts.upsert(Post.slug) { ... }
 ```
 
 If callers need a write-only operation, that should be a separate future API,
@@ -86,7 +82,6 @@ Before implementation, add tests for:
 
 - create persists the row but throws if returned LOAD denies
 - update persists the row but throws if returned LOAD denies
-- upsert persists the row but throws if returned LOAD denies
 - after hooks run before returned LOAD privacy
 - `Viewer.System` bypasses returned LOAD privacy
 

@@ -10,12 +10,6 @@ interface Driver {
     fun register(schema: EntitySchema)
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
-    fun upsert(
-        table: String,
-        values: Map<String, Any?>,
-        conflictColumns: List<String>,
-        immutableColumns: List<String> = emptyList(),
-    ): UpsertResult
     fun byId(table: String, id: Any): Map<String, Any?>?
     fun query(
         table: String,
