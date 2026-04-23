@@ -453,10 +453,13 @@ class QueryGenerator(
         body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
         body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement(
-            "var loadedGroups = grouped.mapValues { (_, rows) -> subQuery.loadEdges(rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) }, eagerPrivacyContext) }",
+            "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
             targetClass,
         )
         emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
+        body.addStatement(
+            "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
+        )
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
             edgePropName,
@@ -492,10 +495,11 @@ class QueryGenerator(
             targetClass, PREDICATE, join.targetColumn, OP,
         )
         body.addStatement(
-            "var loaded = subQuery.loadEdges(targetRows.map { %T.fromRow(it) }, eagerPrivacyContext)",
+            "var loaded = targetRows.map { %T.fromRow(it) }",
             targetClass,
         )
         emitEagerPrivacyCheck(body, targetName, "loaded", grouped = false)
+        body.addStatement("loaded = subQuery.loadEdges(loaded, eagerPrivacyContext)")
         body.addStatement("val targetMap = loaded.associateBy { it.id }")
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = entity.%L?.let { targetMap[it] })) }",
@@ -556,11 +560,14 @@ class QueryGenerator(
         body.endControlFlow()
         body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
         body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
-        // Paginate, then loadEdges + privacy — only the returned page is checked.
+        // Paginate, then privacy, then loadEdges — denied targets never trigger nested reads.
         body.addStatement(
-            "var loadedGroups = grouped.mapValues { (_, list) -> subQuery.loadEdges(list.drop(perGroupOffset).take(perGroupLimit), eagerPrivacyContext) }",
+            "var loadedGroups = grouped.mapValues { (_, list) -> list.drop(perGroupOffset).take(perGroupLimit) }",
         )
         emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
+        body.addStatement(
+            "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
+        )
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
             edgePropName,
