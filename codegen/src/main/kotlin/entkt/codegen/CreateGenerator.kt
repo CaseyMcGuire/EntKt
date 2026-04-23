@@ -268,15 +268,16 @@ class CreateGenerator(
 
         for (field in allFields) {
             val prop = toCamelCase(field.name)
+            val col = field.columnName
             if (field.type == FieldType.ENUM && field.enumClass != null) {
                 val nullable = field.optional || field.nillable
                 if (nullable) {
-                    rowBuilder.add("  %S to %L?.name,\n", field.name, prop)
+                    rowBuilder.add("  %S to %L?.name,\n", col, prop)
                 } else {
-                    rowBuilder.add("  %S to %L.name,\n", field.name, prop)
+                    rowBuilder.add("  %S to %L.name,\n", col, prop)
                 }
             } else {
-                rowBuilder.add("  %S to %L,\n", field.name, prop)
+                rowBuilder.add("  %S to %L,\n", col, prop)
             }
         }
         for (fk in edgeFks) {

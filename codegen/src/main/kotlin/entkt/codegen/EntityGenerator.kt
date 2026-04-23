@@ -124,24 +124,25 @@ class EntityGenerator(
 
         for (field in allFields) {
             val prop = toCamelCase(field.name)
+            val col = field.columnName
             val nullable = field.optional || field.nillable
             if (field.type == FieldType.ENUM && field.enumClass != null) {
                 val enumType = field.resolvedTypeName()
                 if (nullable) {
                     body.add(
                         "  %L = (row[%S] as %T?)?.let { %T.valueOf(it) },\n",
-                        prop, field.name, String::class, enumType,
+                        prop, col, String::class, enumType,
                     )
                 } else {
                     body.add(
                         "  %L = %T.valueOf(row[%S] as %T),\n",
-                        prop, enumType, field.name, String::class,
+                        prop, enumType, col, String::class,
                     )
                 }
             } else {
                 val base = field.type.toTypeName()
                 val target = base.copy(nullable = nullable)
-                body.add("  %L = row[%S] as %T,\n", prop, field.name, target)
+                body.add("  %L = row[%S] as %T,\n", prop, col, target)
             }
         }
 
@@ -238,7 +239,7 @@ class EntityGenerator(
             columnClassFor(field.type, nullable)
         }
         return PropertySpec.builder(propertyName, columnType)
-            .initializer("%T(%S)", columnType, field.name)
+            .initializer("%T(%S)", columnType, field.columnName)
             .build()
     }
 
@@ -338,6 +339,9 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
         }
     }
 }
+
+/** The database column name for this field — storageKey if set, else name. */
+internal val Field.columnName: String get() = storageKey ?: name
 
 internal fun toCamelCase(snakeCase: String): String {
     return snakeCase.split("_").mapIndexed { index, part ->

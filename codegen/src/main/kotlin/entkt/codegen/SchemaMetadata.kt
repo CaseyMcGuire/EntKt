@@ -93,7 +93,8 @@ internal fun columnMetadataFor(
             ),
         )
         for (field in fields) {
-            val edgeRef = explicitFieldEdges[field.name]
+            val col = field.columnName
+            val edgeRef = explicitFieldEdges[col]
             val fieldNullable = field.optional || field.nillable
             if (edgeRef?.second == OnDelete.SET_NULL && !fieldNullable) {
                 error(
@@ -103,7 +104,7 @@ internal fun columnMetadataFor(
             }
             add(
                 ColumnDescriptor(
-                    name = field.name,
+                    name = col,
                     type = field.type,
                     nullable = fieldNullable,
                     unique = field.unique,

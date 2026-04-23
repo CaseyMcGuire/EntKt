@@ -262,10 +262,11 @@ class UpdateGenerator(
             .add("val values: Map<String, Any?> = mapOf(\n")
         for (field in allFields) {
             val prop = toCamelCase(field.name)
+            val col = field.columnName
             if (field.type == FieldType.ENUM && field.enumClass != null) {
-                rowBuilder.add("  %S to %L?.name,\n", field.name, prop)
+                rowBuilder.add("  %S to %L?.name,\n", col, prop)
             } else {
-                rowBuilder.add("  %S to %L,\n", field.name, prop)
+                rowBuilder.add("  %S to %L,\n", col, prop)
             }
         }
         for (fk in edgeFks) {

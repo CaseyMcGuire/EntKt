@@ -11,6 +11,13 @@ import kotlin.test.assertEquals
 
 enum class Priority { LOW, MEDIUM, HIGH }
 
+object StorageKeyEntity : EntSchema() {
+    override fun fields() = fields {
+        string("display_name").storageKey("full_name")
+        int("score")
+    }
+}
+
 object Car : EntSchema() {
     override fun fields() = fields {
         string("model")
@@ -319,6 +326,48 @@ class EntityGeneratorTest {
         val fromRowBlock = output.substringAfter("fun fromRow").substringBefore("}")
         assert(!fromRowBlock.contains("edges")) {
             "fromRow should not reference edges — it uses the default\n$fromRowBlock"
+        }
+    }
+
+    @Test
+    fun `storageKey overrides the column name in fromRow`() {
+        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
+
+        assert(output.contains("""row["full_name"]""")) {
+            "fromRow should use storageKey as the row key\n$output"
+        }
+        assert(!output.contains("""row["display_name"]""")) {
+            "fromRow should NOT use the field name when storageKey is set\n$output"
+        }
+    }
+
+    @Test
+    fun `storageKey overrides the column name in column refs`() {
+        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
+
+        assert(output.contains("""StringColumn("full_name")""")) {
+            "Column ref should use storageKey\n$output"
+        }
+    }
+
+    @Test
+    fun `storageKey property name still uses the field name`() {
+        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
+
+        assert(output.contains("val displayName: String")) {
+            "Property name should be derived from field name, not storageKey\n$output"
+        }
+    }
+
+    @Test
+    fun `storageKey overrides column name in ColumnMetadata`() {
+        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
+
+        assert(output.contains("""name = "full_name"""")) {
+            "ColumnMetadata should use storageKey\n$output"
+        }
+        assert(!output.contains("""name = "display_name"""")) {
+            "ColumnMetadata should NOT use field name when storageKey is set\n$output"
         }
     }
 }

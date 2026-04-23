@@ -311,4 +311,15 @@ class CreateGeneratorTest {
         }
     }
 
+    @Test
+    fun `storageKey overrides column name in row map`() {
+        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
+
+        assert(output.contains(""""full_name" to displayName""")) {
+            "Row map should use storageKey as the key\n$output"
+        }
+        assert(!output.contains(""""display_name" to""")) {
+            "Row map should NOT use field name when storageKey is set\n$output"
+        }
+    }
 }
