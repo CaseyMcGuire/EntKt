@@ -34,6 +34,7 @@ object ValidatedEntity : EntSchema() {
         string("name").minLen(3).maxLen(100).notEmpty()
         int("age").positive()
         string("nickname").optional().match(Regex("^[a-z]+$"))
+        string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
     }
 }
 
@@ -284,6 +285,30 @@ class CreateGeneratorTest {
         val rowMapPos = output.indexOf("val values: Map<String, Any?>")
         assert(bindingPos < validationPos && validationPos < rowMapPos) {
             "Validation should appear after binding and before row map\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits regex options when present`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        assert(output.contains("RegexOption.IGNORE_CASE")) {
+            "Should emit RegexOption when regex has flags\n$output"
+        }
+        assert(output.contains("setOf(RegexOption.IGNORE_CASE)")) {
+            "Should wrap options in setOf()\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits plain Regex when no options`() {
+        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+
+        // nickname uses Regex("^[a-z]+$") with no options — should not have setOf()
+        val regexLines = output.lines().filter { it.contains("Regex(") }
+        val nicknameRegex = regexLines.find { it.contains("nickname") }
+        assert(nicknameRegex != null && !nicknameRegex.contains("setOf")) {
+            "Should emit plain Regex() for pattern without options\n$output"
         }
     }
 

@@ -4,7 +4,7 @@ sealed interface ValidatorSpec {
     data class MinLen(val min: Int) : ValidatorSpec
     data class MaxLen(val max: Int) : ValidatorSpec
     data object NotEmpty : ValidatorSpec
-    data class Match(val pattern: String) : ValidatorSpec
+    data class Match(val pattern: String, val options: Set<RegexOption> = emptySet()) : ValidatorSpec
     data class Min(val min: Number) : ValidatorSpec
     data class Max(val max: Number) : ValidatorSpec
     data object Positive : ValidatorSpec
@@ -45,7 +45,7 @@ object Validators {
         name = "match(${pattern.pattern})",
         message = "value must match pattern ${pattern.pattern}",
         check = { (it as? String)?.let { s -> pattern.matches(s) } ?: false },
-        spec = ValidatorSpec.Match(pattern.pattern),
+        spec = ValidatorSpec.Match(pattern.pattern, pattern.options),
     )
 
     fun min(min: Number): Validator = Validator(

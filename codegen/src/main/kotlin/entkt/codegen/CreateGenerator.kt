@@ -420,9 +420,19 @@ private fun emitValidatorCheck(
         is ValidatorSpec.NotEmpty -> builder.addStatement(
             "if (%L.isEmpty()) throw IllegalStateException(%S)", prop, errorMsg,
         )
-        is ValidatorSpec.Match -> builder.addStatement(
-            "if (!Regex(%S).matches(%L)) throw IllegalStateException(%S)", spec.pattern, prop, errorMsg,
-        )
+        is ValidatorSpec.Match -> {
+            if (spec.options.isEmpty()) {
+                builder.addStatement(
+                    "if (!Regex(%S).matches(%L)) throw IllegalStateException(%S)", spec.pattern, prop, errorMsg,
+                )
+            } else {
+                val optionsLiteral = spec.options.joinToString(", ") { "RegexOption.${it.name}" }
+                builder.addStatement(
+                    "if (!Regex(%S, setOf($optionsLiteral)).matches(%L)) throw IllegalStateException(%S)",
+                    spec.pattern, prop, errorMsg,
+                )
+            }
+        }
         is ValidatorSpec.Min -> builder.addStatement(
             "if (%L < %L) throw IllegalStateException(%S)", prop, spec.min, errorMsg,
         )
