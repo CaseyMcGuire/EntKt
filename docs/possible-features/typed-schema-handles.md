@@ -9,8 +9,8 @@ Possible future feature. This is not implemented.
 Replace string-based schema linkage and registry-style schema assembly
 with a Kotlin-first DSL built around:
 
-- delegated property declarations
-- inferred logical names from schema properties
+- plain property declarations
+- explicit SQL field names
 - typed field and edge handles for linkage
 - domain words like `inverse(...)` instead of string-based `ref(...)`
 
@@ -27,16 +27,16 @@ This RFC proposes a Kotlin-first shape instead:
 
 ```kotlin
 object UserSchema : EntSchema<Long>() {
-    val name by string().minLen(1).maxLen(64)
-    val posts by hasMany(PostSchema)
+    val name = string("name").minLen(1).maxLen(64)
+    val posts = hasMany("posts", PostSchema)
 }
 
 object PostSchema : EntSchema<Long>() {
-    val title by string().minLen(1)
-    val authorId by long().storageKey("author_id")
-    val author by belongsTo(UserSchema)
+    val title = string("title").minLen(1)
+    val authorId = long("author_id")
+    val author = belongsTo("author", UserSchema)
         .field(authorId)
-        .inverse(UserSchema::posts)
+        .inverse(UserSchema.posts)
         .required()
 
     override fun indexes() = indexes {
@@ -45,13 +45,13 @@ object PostSchema : EntSchema<Long>() {
 }
 
 object FriendshipSchema : EntSchema<Long>() {
-    val user by belongsTo(UserSchema).required()
-    val friend by belongsTo(UserSchema).required()
+    val user = belongsTo("user", UserSchema).required()
+    val friend = belongsTo("friend", UserSchema).required()
 }
 
 object UserGraphSchema : EntSchema<Long>() {
-    val friends by manyToMany(UserSchema)
-        .through(FriendshipSchema, FriendshipSchema::user, FriendshipSchema::friend)
+    val friends = manyToMany("friends", UserSchema)
+        .through(FriendshipSchema, FriendshipSchema.user, FriendshipSchema.friend)
 }
 ```
 
@@ -78,10 +78,10 @@ That creates a few recurring problems:
 2. Refactoring is brittle.
    Renaming a field or edge does not update string references.
 
-3. Physical storage names leak into logical schema APIs.
-   With `storageKey(...)`, a logical schema field name and the physical
-   column name can differ. Typed handles should refer to the logical
-   declaration, not the DB column name.
+3. SQL field names are repeated across linkage APIs.
+   Even when the schema declares `long("author_id")`, callers still end
+   up repeating `"author_id"` in `index(...)` or `.field(...)` instead
+   of reusing the declaration directly.
 
 4. Ambiguous inverse resolution needs too much fallback logic.
    Typed references should make the intended inverse explicit where the
@@ -110,8 +110,8 @@ That creates a few recurring problems:
 
 - Eliminate string names from linkage-heavy schema APIs.
 - Keep schema code readable.
-- Infer logical schema names from property declarations where possible.
-- Make handles stable under `storageKey(...)`.
+- Keep SQL column naming explicit in field declarations.
+- Avoid schema-level name inference from Kotlin variable names.
 - Reject obvious schema mismatches earlier.
 - Make property-backed declarations the canonical schema style.
 - Prefer domain-language linkage like `inverse(...)` over generic
@@ -122,24 +122,28 @@ That creates a few recurring problems:
 
 ### Canonical Declaration Style
 
-The canonical schema style should use delegated property declarations.
+The canonical schema style should use plain property declarations with
+explicit SQL field names.
 
 ```kotlin
 object PostSchema : EntSchema<Long>() {
-    val title by string().minLen(1)
-    val authorId by long().storageKey("author_id")
-    val author by belongsTo(UserSchema)
+    val title = string("title").minLen(1)
+    val authorId = long("author_id")
+    val author = belongsTo("author", UserSchema)
         .field(authorId)
-        .inverse(UserSchema::posts)
+        .inverse(UserSchema.posts)
         .required()
 }
 ```
 
 In this model:
 
-- `title`, `authorId`, and `author` are normal Kotlin properties
-- the logical schema names come from the property names by default
-- `storageKey(...)` remains the escape hatch for physical DB naming
+- field declarations name the SQL column up front
+- `title`, `authorId`, and `author` are plain Kotlin properties holding
+  stable schema handles
+- Kotlin property names improve readability, but they are not the
+  linkage key and should not drive SQL naming
+- no delegated `by` API is required
 
 ### Field Linkage Uses Field Handles
 
@@ -147,15 +151,18 @@ Field declarations still produce stable typed values that can be used in
 linkage-heavy APIs.
 
 ```kotlin
-val authorId by long().storageKey("author_id")
-val createdAt by time()
+val authorId = long("author_id")
+val createdAt = time("created_at")
 
 index(authorId)
 index(authorId, createdAt)
 
-belongsTo(UserSchema)
+belongsTo("author", UserSchema)
     .field(authorId)
 ```
+
+Because the SQL name is already explicit, field linkage should never
+need to repeat raw strings like `"author_id"`.
 
 ### Edge Linkage Uses Typed Inverse References
 
@@ -163,12 +170,12 @@ Inverse relationships should use typed schema references rather than
 string names.
 
 ```kotlin
-val posts by hasMany(PostSchema)
-val author by belongsTo(UserSchema)
-    .inverse(UserSchema::posts)
+val posts = hasMany("posts", PostSchema)
+val author = belongsTo("author", UserSchema)
+    .inverse(UserSchema.posts)
 
-val profile by hasOne(ProfileSchema)
-    .inverse(ProfileSchema::user)
+val profile = hasOne("profile", ProfileSchema)
+    .inverse(ProfileSchema.user)
 ```
 
 This replaces `.ref("author")` with a typed inverse declaration.
@@ -178,8 +185,8 @@ This replaces `.ref("author")` with a typed inverse declaration.
 Junction disambiguation should also use handles instead of strings.
 
 ```kotlin
-val friends by manyToMany(UserSchema)
-    .through(FriendshipSchema, FriendshipSchema::user, FriendshipSchema::friend)
+val friends = manyToMany("friends", UserSchema)
+    .through(FriendshipSchema, FriendshipSchema.user, FriendshipSchema.friend)
 ```
 
 This replaces:
@@ -193,7 +200,7 @@ manyToMany("groups", Group)
 
 The exact generic shape can be tuned, but the core idea is that handles
 carry both owner-schema and value/target information, while the public
-DSL prefers delegated properties and property-reference linkage.
+DSL prefers plain property declarations and handle-based linkage.
 
 Illustrative shape:
 
@@ -216,18 +223,18 @@ fun <Owner : EntSchema, Target : EntSchema> BelongsToBuilder<Owner, Target>.fiel
 ): BelongsToBuilder<Owner, Target>
 
 fun <Owner : EntSchema, Target : EntSchema> HasManyBuilder<Owner, Target>.inverse(
-    inverse: KProperty0<BelongsToHandle<Target, Owner>>
+    inverse: BelongsToHandle<Target, Owner>
 ): HasManyBuilder<Owner, Target>
 
 fun <Owner : EntSchema, Target : EntSchema> HasOneBuilder<Owner, Target>.inverse(
-    inverse: KProperty0<BelongsToHandle<Target, Owner>>
+    inverse: BelongsToHandle<Target, Owner>
 ): HasOneBuilder<Owner, Target>
 ```
 
 The exact signatures may need variance, a shared `EdgeHandle`
-supertype, or eager-handle overloads, but the owner/target relationship
+supertype, or lazy-handle overloads, but the owner/target relationship
 should be part of the model and the Kotlin-facing API should read like
-property declarations rather than list assembly.
+plain declarations rather than list assembly.
 
 ## Validation Model
 
@@ -255,14 +262,16 @@ Cross-edge consistency still needs schema-time validation:
 Typed handles reduce ambiguity. They do not remove the need for
 structural schema validation.
 
-## Storage Key Semantics
+## Explicit SQL Naming
 
-Handles refer to logical schema declarations, not physical column names.
+This RFC should keep field declarations SQL-first. The explicit string
+passed to a field builder is the physical column name and the source of
+truth for storage naming.
 
 Example:
 
 ```kotlin
-val authorId = long("author_id").storageKey("author_fk")
+val authorId = long("author_id")
 
 belongsTo("author", User).field(authorId)
 index(authorId)
@@ -270,12 +279,14 @@ index(authorId)
 
 In this model:
 
-- `authorId` is the logical schema field handle
-- `storageKey("author_fk")` only affects generated physical metadata
-- callers never need to know whether the DB column is `author_id` or
-  `author_fk`
+- `authorId` is a typed handle to the declared field
+- `"author_id"` is the actual SQL column name
+- linkage uses the handle, not the string
+- schema authors do not rely on camelCase -> snake_case inference from
+  Kotlin property names
 
-This is a major reason to prefer handles over raw strings.
+Because the field declaration already names the SQL column explicitly,
+public field `storageKey(...)` is unnecessary in this design.
 
 ## Schema Declaration Model
 
@@ -307,11 +318,11 @@ Example:
 
 ```kotlin
 object UserSchema : EntSchema {
-    val posts = hasMany("posts", Post).ref { PostSchema.author }
+    val posts = hasMany("posts", Post).inverse { PostSchema.author }
 }
 
 object PostSchema : EntSchema {
-    val author = belongsTo("author", User).ref { UserSchema.posts }
+    val author = belongsTo("author", User).inverse { UserSchema.posts }
 }
 ```
 
@@ -321,7 +332,7 @@ mutually-referential schema declarations.
 Recommendation:
 
 - keep typed handles as the linkage model
-- support lazy typed refs such as `ref { PostSchema.author }`
+- support lazy typed refs such as `inverse { PostSchema.author }`
 - support lazy M2M disambiguation hints such as
   `through(UserGroup, sourceEdge = { UserGroup.user }, targetEdge = { UserGroup.group })`
 
@@ -344,8 +355,8 @@ This RFC then makes the references between those declarations typed.
 Recommended implementation order:
 
 1. finalize relationship kinds and edge builder types
-2. add typed edge handles for `.ref(...)`
-3. add typed field handles for `index(...)` and `.field(...)`
+2. add typed field handles for `index(...)` and `.field(...)`
+3. add typed edge handles for inverse linkage
 4. add typed junction-edge handles for `manyToMany(...).through(...)`
 
 ## Compatibility
@@ -386,6 +397,7 @@ Recommendation:
 Recommendation:
 
 - probably yes for the cleanest design
+- plain property declarations, not delegated `by` properties
 - this is a schema-DSL shape decision, not just a small additive feature
 
 ### 4. Should string overloads remain at all?
@@ -405,6 +417,7 @@ This RFC is successful when:
   handles instead of strings
 - `manyToMany(...).through(..., sourceEdge, targetEdge)` can use typed
   edge handles instead of strings
-- `storageKey(...)` does not leak physical column names into linkage APIs
+- explicit field declarations remain the source of truth for SQL column
+  names
 - obvious schema-linkage mistakes move from stringly codegen failures to
   earlier type/schema validation
