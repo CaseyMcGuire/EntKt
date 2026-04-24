@@ -268,7 +268,7 @@ pin the index with `.storageKey()` to avoid spurious diffs.
 
 ## Mixins
 
-Mixins are reusable groups of fields, edges, and indexes that can be
+Mixins are reusable groups of fields and indexes that can be
 included in multiple schemas:
 
 ```kotlin

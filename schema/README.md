@@ -37,7 +37,7 @@ via junction table), `.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.
 
 ## Mixins
 
-Any `EntMixin` contributing `fields()`, `edges()`, `indexes()`.
+Any `EntMixin` contributing `fields()` and `indexes()`.
 
 ## Indexes
 
