@@ -11,10 +11,13 @@ class IndexBuilder(
     fun storageKey(key: String): IndexBuilder = apply { storageKey = key }
     fun where(clause: String): IndexBuilder = apply { where = clause }
 
-    fun build(): Index = Index(
+    fun build(): Index {
+        require(fields.isNotEmpty()) { "Index must have at least one field" }
+        return Index(
         fields = fields,
         unique = unique,
         storageKey = storageKey,
         where = where,
     )
+    }
 }

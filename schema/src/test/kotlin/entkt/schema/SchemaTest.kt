@@ -359,6 +359,13 @@ class SchemaTest {
     }
 
     @Test
+    fun `empty index is rejected`() {
+        assertFailsWith<IllegalArgumentException> {
+            IndexBuilder(emptyList()).build()
+        }
+    }
+
+    @Test
     fun `typed enum default rejects constant from wrong enum class`() {
         assertFailsWith<IllegalArgumentException> {
             EnumFieldBuilder("priority").apply {
