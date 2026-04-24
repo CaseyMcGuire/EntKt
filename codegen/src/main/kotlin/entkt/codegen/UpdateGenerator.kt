@@ -349,8 +349,12 @@ class UpdateGenerator(
 
     private fun updateDefaultCodeBlock(field: Field): CodeBlock {
         return when (field.updateDefault!!) {
-            is UpdateDefault.Now ->
+            is UpdateDefault.Now -> {
+                require(field.type == FieldType.TIME) {
+                    "Field '${field.name}' has UpdateDefault.Now but type is ${field.type} — updateDefault is only valid on TIME fields"
+                }
                 CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
+            }
         }
     }
 }

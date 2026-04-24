@@ -239,4 +239,16 @@ class UpdateGeneratorTest {
             "Fields without updateDefault should fall back to entity value\n$output"
         }
     }
+
+    @Test
+    fun `updateDefault Now on non-TIME field is rejected`() {
+        val schema = object : EntSchema() {
+            override fun fields() = listOf(
+                entkt.schema.Field(name = "count", type = entkt.schema.FieldType.INT, updateDefault = entkt.schema.UpdateDefault.Now)
+            )
+        }
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            generator.generate("BadUpdate", schema)
+        }
+    }
 }
