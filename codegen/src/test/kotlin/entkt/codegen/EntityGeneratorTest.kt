@@ -412,6 +412,22 @@ class EntityGeneratorTest {
     }
 
     @Test
+    fun `duplicate physical column name via storageKey is rejected`() {
+        val schema = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                string("display_name").storageKey("name")
+            }
+        }
+        val error = kotlin.test.assertFailsWith<IllegalStateException> {
+            generator.generate("DupColumn", schema)
+        }
+        assert(error.message!!.contains("name")) {
+            "Error should mention the conflicting column\n${error.message}"
+        }
+    }
+
+    @Test
     fun `duplicate field name across schema and mixin is rejected`() {
         val mixin = object : EntMixin {
             override fun fields() = fields {
@@ -427,8 +443,32 @@ class EntityGeneratorTest {
         val error = kotlin.test.assertFailsWith<IllegalStateException> {
             generator.generate("DupField", schema)
         }
-        assert(error.message!!.contains("Duplicate field name 'name'")) {
+        assert(error.message!!.contains("name")) {
             "Error should mention the duplicate field\n${error.message}"
+        }
+    }
+
+    @Test
+    fun `field colliding with synthesized edge FK column is rejected`() {
+        val parent = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+            }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                int("owner_id")
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique()
+            }
+        }
+        val schemaNames = mapOf(parent to "Parent", child to "Child")
+        val error = kotlin.test.assertFailsWith<IllegalStateException> {
+            generator.generate("Child", child, schemaNames)
+        }
+        assert(error.message!!.contains("owner_id")) {
+            "Error should mention the colliding column\n${error.message}"
         }
     }
 

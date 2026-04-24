@@ -49,10 +49,15 @@ internal fun idStrategyName(schema: EntSchema): String {
 internal fun fieldColumnMap(schema: EntSchema): Map<String, String> {
     val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
     val map = mutableMapOf<String, String>()
+    val columnToField = mutableMapOf<String, String>()
     for (field in fields) {
         val existing = map.put(field.name, field.columnName)
         if (existing != null) {
             error("Duplicate field name '${field.name}' — field names must be unique across schema fields and mixin fields")
+        }
+        val previousField = columnToField.put(field.columnName, field.name)
+        if (previousField != null) {
+            error("Fields '$previousField' and '${field.name}' both resolve to column '${field.columnName}' — physical column names must be unique")
         }
     }
     return map
@@ -159,6 +164,14 @@ internal fun columnMetadataFor(
                     onDelete = fk.onDelete,
                 ),
             )
+        }
+    }.also { columns ->
+        val seen = mutableMapOf<String, Int>()
+        for ((i, col) in columns.withIndex()) {
+            val prev = seen.put(col.name, i)
+            if (prev != null) {
+                error("Column '${col.name}' appears more than once — physical column names must be unique per entity")
+            }
         }
     }
 }
