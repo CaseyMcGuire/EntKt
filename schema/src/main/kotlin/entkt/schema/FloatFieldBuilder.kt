@@ -6,4 +6,5 @@ class FloatFieldBuilder(name: String) : FieldBuilder<FloatFieldBuilder>(name, Fi
     fun positive(): FloatFieldBuilder = validate(Validators.positive())
     fun negative(): FloatFieldBuilder = validate(Validators.negative())
     fun nonNegative(): FloatFieldBuilder = validate(Validators.nonNegative())
+    fun default(value: Float): FloatFieldBuilder = apply { setDefault(value) }
 }

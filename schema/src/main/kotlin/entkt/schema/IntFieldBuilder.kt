@@ -6,4 +6,5 @@ class IntFieldBuilder(name: String) : FieldBuilder<IntFieldBuilder>(name, FieldT
     fun positive(): IntFieldBuilder = validate(Validators.positive())
     fun negative(): IntFieldBuilder = validate(Validators.negative())
     fun nonNegative(): IntFieldBuilder = validate(Validators.nonNegative())
+    fun default(value: Int): IntFieldBuilder = apply { setDefault(value) }
 }

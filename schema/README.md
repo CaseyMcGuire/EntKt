@@ -16,8 +16,8 @@ Stored as strings in the database.
 ## Field modifiers
 
 `.nullable()`, `.unique()`, `.immutable()`,
-`.sensitive()`, `.comment(...)`, `.storageKey(...)`, `.default(...)`.
-Time fields also support `.updateDefaultNow()` (emit `Instant.now()` on every update).
+`.sensitive()`, `.comment(...)`, `.storageKey(...)`, `.default(value)` (type-safe per field type).
+Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
 **Type-specific validators** (enforced as inline checks in generated `save()` methods):
 - Strings: `.minLen()`, `.maxLen()`, `.notEmpty()`, `.match(regex)`

@@ -12,8 +12,8 @@ import kotlin.test.assertTrue
 
 object TimeMixin : EntMixin {
     override fun fields() = fields {
-        time("created_at").default("now").immutable()
-        time("updated_at").default("now").updateDefaultNow()
+        time("created_at").defaultNow().immutable()
+        time("updated_at").defaultNow().updateDefaultNow()
     }
 }
 
@@ -356,5 +356,26 @@ class SchemaTest {
                 .updateDefaultNow()
                 .build()
         }
+    }
+
+    @Test
+    fun `typed enum default rejects constant from wrong enum class`() {
+        assertFailsWith<IllegalArgumentException> {
+            EnumFieldBuilder("priority").apply {
+                setEnumClass(TaskStatus::class)
+                setEnumValues(TaskStatus.entries.map { it.name })
+                default(OnDelete.CASCADE) // wrong enum class
+            }.build()
+        }
+    }
+
+    @Test
+    fun `typed enum default accepts constant from correct enum class`() {
+        val field = EnumFieldBuilder("priority").apply {
+            setEnumClass(TaskStatus::class)
+            setEnumValues(TaskStatus.entries.map { it.name })
+            default(TaskStatus.TODO)
+        }.build()
+        assertEquals(TaskStatus.TODO, field.default)
     }
 }

@@ -6,4 +6,5 @@ class LongFieldBuilder(name: String) : FieldBuilder<LongFieldBuilder>(name, Fiel
     fun positive(): LongFieldBuilder = validate(Validators.positive())
     fun negative(): LongFieldBuilder = validate(Validators.negative())
     fun nonNegative(): LongFieldBuilder = validate(Validators.nonNegative())
+    fun default(value: Long): LongFieldBuilder = apply { setDefault(value) }
 }

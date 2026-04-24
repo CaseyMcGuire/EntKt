@@ -16,7 +16,7 @@ object Session : EntSchema() {
 object Event : EntSchema() {
     override fun fields() = fields {
         string("title")
-        time("created_at").default("now").immutable()
+        time("created_at").defaultNow().immutable()
     }
 }
 

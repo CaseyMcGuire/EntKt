@@ -5,4 +5,5 @@ class StringFieldBuilder(name: String) : FieldBuilder<StringFieldBuilder>(name, 
     fun maxLen(max: Int): StringFieldBuilder = validate(Validators.maxLen(max))
     fun notEmpty(): StringFieldBuilder = validate(Validators.notEmpty())
     fun match(pattern: Regex): StringFieldBuilder = validate(Validators.match(pattern))
+    fun default(value: String): StringFieldBuilder = apply { setDefault(value) }
 }

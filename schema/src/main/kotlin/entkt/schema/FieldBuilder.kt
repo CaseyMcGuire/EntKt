@@ -28,7 +28,7 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     fun unique(): T = apply { unique = true }.let { self() }
     fun immutable(): T = apply { immutable = true }.let { self() }
     fun sensitive(): T = apply { sensitive = true }.let { self() }
-    fun default(value: Any): T = apply { default = value }.let { self() }
+    protected fun setDefault(value: Any) { default = value }
     fun comment(text: String): T = apply { comment = text }.let { self() }
     fun storageKey(key: String): T = apply { storageKey = key }.let { self() }
     protected fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
@@ -46,6 +46,12 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     fun build(): Field {
         if (immutable && updateDefault != null) {
             error("Field '$name' cannot be both immutable and have an updateDefault — immutable fields are never updated")
+        }
+        if (enumClass != null && default is Enum<*>) {
+            require((default as Enum<*>)::class == enumClass) {
+                "Field '$name' default must be a ${enumClass!!.simpleName} constant, " +
+                    "got ${(default as Enum<*>)::class.simpleName}"
+            }
         }
         return Field(
         name = name,

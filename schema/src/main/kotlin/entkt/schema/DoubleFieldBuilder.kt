@@ -6,4 +6,5 @@ class DoubleFieldBuilder(name: String) : FieldBuilder<DoubleFieldBuilder>(name, 
     fun positive(): DoubleFieldBuilder = validate(Validators.positive())
     fun negative(): DoubleFieldBuilder = validate(Validators.negative())
     fun nonNegative(): DoubleFieldBuilder = validate(Validators.nonNegative())
+    fun default(value: Double): DoubleFieldBuilder = apply { setDefault(value) }
 }
