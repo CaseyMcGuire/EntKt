@@ -48,7 +48,14 @@ internal fun idStrategyName(schema: EntSchema): String {
  */
 internal fun fieldColumnMap(schema: EntSchema): Map<String, String> {
     val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
-    return fields.associate { it.name to it.columnName }
+    val map = mutableMapOf<String, String>()
+    for (field in fields) {
+        val existing = map.put(field.name, field.columnName)
+        if (existing != null) {
+            error("Duplicate field name '${field.name}' — field names must be unique across schema fields and mixin fields")
+        }
+    }
+    return map
 }
 
 /**

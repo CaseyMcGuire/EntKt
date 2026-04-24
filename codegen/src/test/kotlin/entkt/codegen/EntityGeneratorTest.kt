@@ -412,6 +412,27 @@ class EntityGeneratorTest {
     }
 
     @Test
+    fun `duplicate field name across schema and mixin is rejected`() {
+        val mixin = object : EntMixin {
+            override fun fields() = fields {
+                string("name")
+            }
+        }
+        val schema = object : EntSchema() {
+            override fun mixins() = listOf(mixin)
+            override fun fields() = fields {
+                string("name")
+            }
+        }
+        val error = kotlin.test.assertFailsWith<IllegalStateException> {
+            generator.generate("DupField", schema)
+        }
+        assert(error.message!!.contains("Duplicate field name 'name'")) {
+            "Error should mention the duplicate field\n${error.message}"
+        }
+    }
+
+    @Test
     fun `sensitive field is redacted in generated toString`() {
         val schema = object : EntSchema() {
             override fun fields() = fields {
