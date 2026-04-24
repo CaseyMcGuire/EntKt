@@ -1,13 +1,19 @@
 package entkt.schema
 
 class EdgesBuilder {
-    private val edges = mutableListOf<EdgeBuilder>()
+    private val edges = mutableListOf<EdgeBuilderBase>()
 
-    fun to(name: String, target: EntSchema): EdgeBuilder =
-        EdgeBuilder(name, EdgeType.TO, target).also { edges.add(it) }
+    fun belongsTo(name: String, target: EntSchema): BelongsToBuilder =
+        BelongsToBuilder(name, target).also { edges.add(it) }
 
-    fun from(name: String, target: EntSchema): EdgeBuilder =
-        EdgeBuilder(name, EdgeType.FROM, target).also { edges.add(it) }
+    fun hasMany(name: String, target: EntSchema): HasManyBuilder =
+        HasManyBuilder(name, target).also { edges.add(it) }
+
+    fun hasOne(name: String, target: EntSchema): HasOneBuilder =
+        HasOneBuilder(name, target).also { edges.add(it) }
+
+    fun manyToMany(name: String, target: EntSchema): ManyToManyBuilder =
+        ManyToManyBuilder(name, target).also { edges.add(it) }
 
     fun build(): List<Edge> {
         val built = edges.map { it.build() }

@@ -21,8 +21,8 @@ object User : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("posts", Post)
-        to("sent_requests", Friendship)
-        to("received_requests", Friendship)
+        hasMany("posts", Post)
+        hasMany("sent_requests", Friendship)
+        hasMany("received_requests", Friendship)
     }
 }

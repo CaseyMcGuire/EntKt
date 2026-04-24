@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import entkt.schema.Edge
+import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 
 /**
@@ -12,26 +13,40 @@ import entkt.schema.EntSchema
  * matching the parent user query — and `"author"` is the *inverse*
  * edge name on the Post side.
  *
- * Resolution rules (mirrors Ent's behavior):
+ * Resolution rules:
  *
  * 1. If [edge] declares `.ref(name)`, the inverse is the edge on the
- *    target whose own name is `name`.
+ *    target whose own name is `name` and is a valid inverse kind.
  * 2. Otherwise, look at the target's edges for one that points back at
  *    [source] and whose `.ref(...)` names [edge].
- * 3. As a last-resort fallback when there's exactly one edge from the
- *    target back to [source], use that one. Multiple back-edges with no
- *    `.ref(...)` are ambiguous and yield no inverse.
+ * 3. As a last-resort fallback when there's exactly one valid-kind edge
+ *    from the target back to [source], use that one.
  *
- * Throws if an explicit `.ref(...)` doesn't match any edge on the target.
- * Returns null if no inverse can be resolved via rules 2–3 — in which
- * case codegen skips emitting a traversal method for that edge.
+ * Returns null if no inverse can be resolved. Callers decide whether
+ * that is an error: `HasMany` and `HasOne` require an inverse and
+ * should throw; `BelongsTo` can function without one.
+ *
+ * Throws if an explicit `.ref(...)` doesn't match any edge on the
+ * target, or if multiple edges claim the same `.ref()` name.
  */
 internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     val targetEdges = edge.target.edges()
 
+    // Determine which edge kinds are valid inverses:
+    //   HasMany / HasOne → BelongsTo
+    //   BelongsTo → HasMany or HasOne
+    val isValidInverse: (Edge) -> Boolean = when (edge.kind) {
+        is EdgeKind.HasMany, is EdgeKind.HasOne ->
+            { e -> e.kind is EdgeKind.BelongsTo }
+        is EdgeKind.BelongsTo ->
+            { e -> e.kind is EdgeKind.HasMany || e.kind is EdgeKind.HasOne }
+        is EdgeKind.ManyToMany ->
+            error("findInverseEdge should not be called for ManyToMany edges")
+    }
+
     // Rule 1: this edge has a ref, look up by name on the target.
     edge.ref?.let { refName ->
-        return targetEdges.firstOrNull { it.name == refName && it.target === source }
+        return targetEdges.firstOrNull { it.name == refName && it.target === source && isValidInverse(it) }
             ?: error(
                 "Edge '${edge.name}' declares .ref(\"$refName\") but no edge named " +
                     "'$refName' pointing back at the source schema was found on the target"
@@ -39,7 +54,7 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     }
 
     // Rule 2: target has an edge whose ref names us.
-    val refMatches = targetEdges.filter { it.target === source && it.ref == edge.name }
+    val refMatches = targetEdges.filter { it.target === source && it.ref == edge.name && isValidInverse(it) }
     if (refMatches.size > 1) {
         val names = refMatches.joinToString(", ") { "'${it.name}'" }
         error(
@@ -50,7 +65,7 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     }
     refMatches.singleOrNull()?.let { return it }
 
-    // Rule 3: single unambiguous back-edge.
-    val backEdges = targetEdges.filter { it.target === source }
+    // Rule 3: single unambiguous back-edge of valid kind.
+    val backEdges = targetEdges.filter { it.target === source && isValidInverse(it) }
     return backEdges.singleOrNull()
 }

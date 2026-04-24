@@ -14,6 +14,6 @@ object Article : EntSchema() {
     }
 
     override fun edges() = edges {
-        from("author", User).ref("articles").unique().required()
+        belongsTo("author", User).ref("articles").required()
     }
 }

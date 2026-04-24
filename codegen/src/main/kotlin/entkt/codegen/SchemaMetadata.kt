@@ -3,6 +3,7 @@ package entkt.codegen
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import entkt.schema.Edge
+import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
@@ -111,13 +112,14 @@ internal fun columnMetadataFor(
 
     // Edges with .field("col_name") re-use a declared field as their FK
     // column. Build a lookup so the declared field picks up the FK
-    // reference and onDelete action from the edge.
+    // reference, onDelete action, and unique constraint from the edge.
     val fieldsByName = fields.associateBy { it.name }
     val explicitFieldEdges = schema.edges()
-        .filter { it.unique && it.field != null && it.through == null }
+        .filter { it.kind is EdgeKind.BelongsTo && (it.kind as EdgeKind.BelongsTo).field != null }
         .mapNotNull { edge ->
+            val belongsTo = edge.kind as EdgeKind.BelongsTo
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            val f = edge.field!!
+            val f = belongsTo.field!!
             val backingField = fieldsByName[f]
                 ?: error(
                     "Edge '${edge.name}' references .field(\"$f\") but no field " +
@@ -130,7 +132,7 @@ internal fun columnMetadataFor(
                         "${backingField.type} but target entity's id type is $targetIdType",
                 )
             }
-            f to (tableNameFor(targetName) to edge.onDelete)
+            f to ExplicitFieldEdge(tableNameFor(targetName), belongsTo.onDelete, belongsTo.unique)
         }
         .toMap()
 
@@ -147,7 +149,7 @@ internal fun columnMetadataFor(
             val col = field.columnName
             val edgeRef = explicitFieldEdges[field.name]
             val fieldNullable = field.nullable
-            if (edgeRef?.second == OnDelete.SET_NULL && !fieldNullable) {
+            if (edgeRef?.onDelete == OnDelete.SET_NULL && !fieldNullable) {
                 error(
                     "ON DELETE SET_NULL on edge with .field(\"${field.name}\") requires " +
                         "the backing field to be nullable",
@@ -158,9 +160,9 @@ internal fun columnMetadataFor(
                     name = col,
                     type = field.type,
                     nullable = fieldNullable,
-                    unique = field.unique,
-                    references = edgeRef?.let { (table, _) -> table to "id" },
-                    onDelete = edgeRef?.second,
+                    unique = field.unique || (edgeRef?.unique == true),
+                    references = edgeRef?.let { it.targetTable to "id" },
+                    onDelete = edgeRef?.onDelete,
                     comment = field.comment,
                 ),
             )
@@ -172,6 +174,7 @@ internal fun columnMetadataFor(
                     name = fk.columnName,
                     type = fk.idType,
                     nullable = !fk.required,
+                    unique = fk.unique,
                     references = targetTable to "id",
                     onDelete = fk.onDelete,
                 ),
@@ -187,6 +190,17 @@ internal fun columnMetadataFor(
         }
     }
 }
+
+/**
+ * Info carried from a `belongsTo(...).field("col")` edge to the backing
+ * field's [ColumnDescriptor]. Captures the FK reference, ON DELETE action,
+ * and whether the edge declared `.unique()`.
+ */
+private data class ExplicitFieldEdge(
+    val targetTable: String,
+    val onDelete: OnDelete?,
+    val unique: Boolean,
+)
 
 /**
  * Join shape for a single edge: which column on *this* row joins to
@@ -217,125 +231,166 @@ private fun resolveExplicitField(fieldName: String, schema: EntSchema, edgeName:
 }
 
 /**
- * Resolve [edge]'s join columns by asking "is this edge's FK stored on
- * this side or on the target?". The owning side (unique + no
- * `.through(...)`) names the FK column explicitly (`field` overrides the
- * default `${edgeName}_id`); the owned side (to-many) has to find its
- * inverse and read the FK from there.
+ * Resolve [edge]'s join columns based on its [EdgeKind].
  *
- * Returns null for to-many edges whose inverse can't be identified —
- * codegen just skips the entry in the generated edges map.
+ * - **BelongsTo**: the FK sits on this row. `.field(...)` overrides the
+ *   default `${edgeName}_id` column name.
+ * - **HasMany / HasOne**: the FK sits on the target row. Finds the
+ *   inverse `BelongsTo` edge to learn its column name.
+ * - **ManyToMany**: handled by [resolveM2MEdgeJoin]; returns null here.
  */
 internal fun resolveEdgeJoin(
     edge: Edge,
     source: EntSchema,
 ): EdgeJoin? {
-    if (edge.through != null) return null
+    when (val kind = edge.kind) {
+        is EdgeKind.ManyToMany -> return null
 
-    if (edge.unique) {
-        // Owning side: the FK sits on this row.
-        val fkColumn = if (edge.field != null) {
-            val f = edge.field!!
-            resolveExplicitField(f, source, edge.name)
-        } else {
-            "${edge.name}_id"
+        is EdgeKind.BelongsTo -> {
+            // Owning side: the FK sits on this row.
+            val fieldName = kind.field
+            val fkColumn = if (fieldName != null) {
+                resolveExplicitField(fieldName, source, edge.name)
+            } else {
+                "${edge.name}_id"
+            }
+            return EdgeJoin(sourceColumn = fkColumn, targetColumn = "id")
         }
-        return EdgeJoin(sourceColumn = fkColumn, targetColumn = "id")
-    }
 
-    // Owned side: the FK sits on the target row. Find the matching
-    // inverse edge to learn its column name.
-    val inverse = findInverseEdge(edge, source) ?: return null
-    if (!inverse.unique || inverse.through != null) return null
-    val fkColumn = if (inverse.field != null) {
-        val f = inverse.field!!
-        resolveExplicitField(f, edge.target, inverse.name)
-    } else {
-        "${inverse.name}_id"
+        is EdgeKind.HasMany, is EdgeKind.HasOne -> {
+            // Inverse side: the FK sits on the target row. Find the
+            // matching BelongsTo edge to learn its column name.
+            val inverse = findInverseEdge(edge, source)
+                ?: error(
+                    "Edge '${edge.name}' is a ${edge.kind::class.simpleName} edge but no " +
+                        "inverse belongsTo edge was found on the target schema. " +
+                        "The target must declare a belongsTo(...) edge pointing back at the source.",
+                )
+            val inverseBt = inverse.kind as? EdgeKind.BelongsTo
+                ?: error(
+                    "Edge '${edge.name}' resolved to inverse '${inverse.name}' " +
+                        "but it is not a belongsTo edge",
+                )
+            if (edge.kind is EdgeKind.HasOne && !inverseBt.unique) {
+                error(
+                    "hasOne edge '${edge.name}' requires its inverse belongsTo " +
+                        "edge '${inverse.name}' to declare .unique()",
+                )
+            }
+            if (edge.kind is EdgeKind.HasMany && inverseBt.unique) {
+                error(
+                    "hasMany edge '${edge.name}' found inverse belongsTo " +
+                        "edge '${inverse.name}' with .unique() — use hasOne " +
+                        "instead of hasMany for one-to-one relationships",
+                )
+            }
+            val inverseFieldName = inverseBt.field
+            val fkColumn = if (inverseFieldName != null) {
+                resolveExplicitField(inverseFieldName, edge.target, inverse.name)
+            } else {
+                "${inverse.name}_id"
+            }
+            return EdgeJoin(sourceColumn = "id", targetColumn = fkColumn)
+        }
     }
-    return EdgeJoin(sourceColumn = "id", targetColumn = fkColumn)
 }
 
 /**
  * Resolve a many-to-many edge's join through its junction table.
- * The junction schema declares two unique edges with `.field(...)` —
- * one pointing back at [source], one at [edge.target]. We read those
- * FK column names to build the junction join.
+ * The junction schema declares `belongsTo` edges pointing at both
+ * sides. We read those FK column names to build the junction join.
  *
- * When the junction has multiple unique edges to the same schema
- * (e.g. a `ProjectAssignment` with both `user` and `approver` edges
- * to `User`), the [Through.sourceEdge] and [Through.targetEdge] hints
- * disambiguate which junction edges participate in the M2M.
+ * When the junction has multiple `belongsTo` edges to the same schema
+ * (e.g. a `ProjectAssignment` with both `assignee` and `reviewer`
+ * edges to `User`), the [Through.sourceEdge] and [Through.targetEdge]
+ * hints disambiguate which junction edges participate in the M2M.
  */
 internal fun resolveM2MEdgeJoin(
     edge: Edge,
     source: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): EdgeJoin? {
-    val through = edge.through ?: return null
+    val m2m = edge.kind as? EdgeKind.ManyToMany ?: return null
+    val through = m2m.through
     val junctionSchema = through.target
     val junctionName = schemaNames[junctionSchema] ?: return null
     val junctionTable = tableNameFor(junctionName)
 
     val junctionEdges = junctionSchema.edges()
 
-    // Find the junction edge pointing at the source schema.
+    // Find the junction belongsTo edge pointing at the source schema.
     // If through.sourceEdge is set, match by name for disambiguation.
     val sourceEdge = if (through.sourceEdge != null) {
-        junctionEdges.firstOrNull { it.name == through.sourceEdge && it.unique && it.target === source }
+        junctionEdges.firstOrNull { it.name == through.sourceEdge && it.kind is EdgeKind.BelongsTo && it.target === source }
             ?: error(
-                "M2M sourceEdge hint \"${through.sourceEdge}\" does not match any unique edge " +
+                "M2M sourceEdge hint \"${through.sourceEdge}\" does not match any belongsTo edge " +
                     "on junction $junctionName targeting ${schemaNames[source] ?: "source"}. " +
-                    "Available unique edges: ${junctionEdges.filter { it.unique }.map { it.name }}.",
+                    "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
             )
     } else {
-        val candidates = junctionEdges.filter { it.target === source && it.unique }
-        // For non-self-referential edges, multiple candidates are ambiguous.
-        // Self-referential (source === target) with exactly 2 is fine — first
-        // becomes source, second becomes target after exclusion below.
-        if (candidates.size > 1 && source !== edge.target) {
+        val candidates = junctionEdges.filter { it.target === source && it.kind is EdgeKind.BelongsTo }
+        if (candidates.size > 1) {
             val names = candidates.map { it.name }
             error(
-                "Ambiguous M2M: junction $junctionName has ${candidates.size} unique edges " +
+                "Ambiguous M2M: junction $junctionName has ${candidates.size} belongsTo edges " +
                     "targeting ${schemaNames[source] ?: "source"}: $names. " +
                     "Use through(..., sourceEdge = \"...\", targetEdge = \"...\") to disambiguate.",
             )
         }
         candidates.firstOrNull()
-    } ?: return null
-    val sourceFk = if (sourceEdge.field != null) {
-        resolveExplicitField(sourceEdge.field!!, junctionSchema, sourceEdge.name)
+    } ?: error(
+        "M2M edge \"${edge.name}\": junction $junctionName has no belongsTo edge " +
+            "targeting ${schemaNames[source] ?: "source"}. " +
+            "The junction schema must have a belongsTo edge pointing at each side of the M2M relationship.",
+    )
+    val sourceBt = sourceEdge.kind as EdgeKind.BelongsTo
+    val sourceFieldName = sourceBt.field
+    val sourceFk = if (sourceFieldName != null) {
+        resolveExplicitField(sourceFieldName, junctionSchema, sourceEdge.name)
     } else {
         "${sourceEdge.name}_id"
     }
 
-    // Find the junction edge pointing at the target schema.
-    // If through.targetEdge is set, match by name; otherwise exclude
-    // sourceEdge by index so self-referential M2M resolves two distinct edges.
+    // Find the junction belongsTo edge pointing at the target schema.
+    // If through.targetEdge is set, match by name; otherwise search
+    // remaining edges (excluding sourceEdge by index to avoid reuse).
     val targetEdge = if (through.targetEdge != null) {
-        junctionEdges.firstOrNull { it.name == through.targetEdge && it.unique && it.target === edge.target }
+        junctionEdges.firstOrNull { it.name == through.targetEdge && it.kind is EdgeKind.BelongsTo && it.target === edge.target }
             ?: error(
-                "M2M targetEdge hint \"${through.targetEdge}\" does not match any unique edge " +
+                "M2M targetEdge hint \"${through.targetEdge}\" does not match any belongsTo edge " +
                     "on junction $junctionName targeting ${schemaNames[edge.target] ?: "target"}. " +
-                    "Available unique edges: ${junctionEdges.filter { it.unique }.map { it.name }}.",
+                    "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
             )
     } else {
         val sourceIdx = junctionEdges.indexOf(sourceEdge)
         val candidates = junctionEdges
             .filterIndexed { i, _ -> i != sourceIdx }
-            .filter { it.target === edge.target && it.unique }
+            .filter { it.target === edge.target && it.kind is EdgeKind.BelongsTo }
         if (candidates.size > 1) {
             val names = candidates.map { it.name }
             error(
-                "Ambiguous M2M: junction $junctionName has ${candidates.size} unique edges " +
+                "Ambiguous M2M: junction $junctionName has ${candidates.size} belongsTo edges " +
                     "targeting ${schemaNames[edge.target] ?: "target"}: $names. " +
                     "Use through(..., sourceEdge = \"...\", targetEdge = \"...\") to disambiguate.",
             )
         }
         candidates.firstOrNull()
-    } ?: return null
-    val targetFk = if (targetEdge.field != null) {
-        resolveExplicitField(targetEdge.field!!, junctionSchema, targetEdge.name)
+    } ?: error(
+        "M2M edge \"${edge.name}\": junction $junctionName has no belongsTo edge " +
+            "targeting ${schemaNames[edge.target] ?: "target"}. " +
+            "The junction schema must have a belongsTo edge pointing at each side of the M2M relationship.",
+    )
+    if (sourceEdge === targetEdge) {
+        error(
+            "M2M edge \"${edge.name}\": sourceEdge and targetEdge resolved to the same " +
+                "junction edge \"${sourceEdge.name}\" on $junctionName. " +
+                "The two hints must refer to distinct belongsTo edges.",
+        )
+    }
+    val targetBt = targetEdge.kind as EdgeKind.BelongsTo
+    val targetFieldName = targetBt.field
+    val targetFk = if (targetFieldName != null) {
+        resolveExplicitField(targetFieldName, junctionSchema, targetEdge.name)
     } else {
         "${targetEdge.name}_id"
     }
@@ -394,7 +449,7 @@ internal fun entitySchemaCodeBlock(
     val forwardEntries = schema.edges()
         .mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            val join = if (edge.through != null) {
+            val join = if (edge.kind is EdgeKind.ManyToMany) {
                 resolveM2MEdgeJoin(edge, schema, schemaNames)
             } else {
                 resolveEdgeJoin(edge, schema)
@@ -485,7 +540,7 @@ internal fun reverseM2MEdgeEntries(
 ): List<EdgeEntry> {
     return schemaNames.flatMap { (otherSchema, otherName) ->
         otherSchema.edges()
-            .filter { it.through != null && it.target === schema }
+            .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
             .mapNotNull { edge ->
                 val forwardJoin = resolveM2MEdgeJoin(edge, otherSchema, schemaNames)
                     ?: return@mapNotNull null

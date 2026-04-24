@@ -14,6 +14,7 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import entkt.schema.Edge
+import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
@@ -64,7 +65,7 @@ class EntityGenerator(
         val edgeDescriptors = schema.edges().mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
             val targetClass = ClassName(packageName, targetName)
-            EdgeDescriptor(edge.name, targetClass, edge.unique, edge.comment)
+            EdgeDescriptor(edge.name, targetClass, edge.kind is EdgeKind.BelongsTo || edge.kind is EdgeKind.HasOne, edge.comment)
         }
         val edgesClass = if (edgeDescriptors.isNotEmpty()) buildEdgesClass(edgeDescriptors) else null
         val edgesClassName = entityClass.nestedClass("Edges")

@@ -25,6 +25,10 @@ object Car : EntSchema() {
         int("year")
         float("price").optional()
     }
+
+    override fun edges() = edges {
+        belongsTo("user", User)
+    }
 }
 
 object Ticket : EntSchema() {
@@ -59,7 +63,7 @@ object User : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("cars", Car)
+        hasMany("cars", Car)
     }
 
     override fun indexes() = indexes {
@@ -405,7 +409,7 @@ class EntityGeneratorTest {
                 string("title")
             }
             override fun edges() = edges {
-                from("author", parent).unique()
+                belongsTo("author", parent)
             }
             override fun indexes() = indexes {
                 index("author_id")
@@ -486,7 +490,7 @@ class EntityGeneratorTest {
                 int("owner_id")
             }
             override fun edges() = edges {
-                from("owner", parent).unique()
+                belongsTo("owner", parent)
             }
         }
         val schemaNames = mapOf(parent to "Parent", child to "Child")
@@ -547,17 +551,23 @@ class EntityGeneratorTest {
 
     @Test
     fun `edge comment emits KDoc on Edges property`() {
-        val target = object : EntSchema() {
-            override fun fields() = fields { string("title") }
-        }
-        val schema = object : EntSchema() {
-            override fun fields() = fields { string("name") }
-            override fun edges() = edges {
-                to("posts", target).comment("All posts authored by this user")
+        class S {
+            val target: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("title") }
+                override fun edges() = edges {
+                    belongsTo("author", this@S.schema)
+                }
+            }
+            val schema: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    hasMany("posts", this@S.target).comment("All posts authored by this user")
+                }
             }
         }
-        val schemaNames = mapOf(schema to "Author", target to "Post")
-        val output = generator.generate("Author", schema, schemaNames).toString()
+        val s = S()
+        val schemaNames = mapOf(s.schema to "Author", s.target to "Post")
+        val output = generator.generate("Author", s.schema, schemaNames).toString()
 
         assert(output.contains("All posts authored by this user")) {
             "Should emit edge comment as KDoc\n$output"
@@ -599,7 +609,7 @@ class EntityGeneratorTest {
         val schema = object : EntSchema() {
             override fun fields() = fields { string("name") }
             override fun edges() = edges {
-                from("author", target).unique().comment("The author of this post")
+                belongsTo("author", target).comment("The author of this post")
             }
         }
         val schemaNames = mapOf(schema to "Post", target to "Author")

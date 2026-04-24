@@ -138,41 +138,43 @@ Edges define relationships between entities. They are declared inside an
 
 ```kotlin
 override fun edges() = edges {
-    to("posts", Post)                              // one-to-many
-    from("author", User).ref("posts").unique()     // many-to-one (inverse)
+    hasMany("posts", Post)                          // one-to-many
+    belongsTo("author", User).ref("posts")          // many-to-one (inverse)
 }
 ```
 
-### One-to-Many
+### HasMany / HasOne
 
-`to(name, target)` declares the "one" side. No FK column is added to this
-entity -- the FK lives on the target.
+`hasMany(name, target)` declares the "one" side of a one-to-many
+relationship. No FK column is added to this entity — the FK lives on
+the target. `hasOne(name, target)` is similar but for one-to-one
+relationships (the inverse `belongsTo` must have `.unique()`).
 
 ```kotlin
 // User schema
 override fun edges() = edges {
-    to("posts", Post)  // User has many Posts
+    hasMany("posts", Post)  // User has many Posts
 }
 ```
 
-### Many-to-One / One-to-One
+### BelongsTo
 
-`from(name, target)` declares the "many" or "belongs-to" side. This
-synthesizes a FK column (e.g. `author_id`) on the current entity.
+`belongsTo(name, target)` declares the FK-owning side. This synthesizes
+a FK column (e.g. `author_id`) on the current entity.
 
 ```kotlin
 // Post schema
 override fun edges() = edges {
-    from("author", User).ref("posts").unique().required()
+    belongsTo("author", User).ref("posts").required()
 }
 ```
 
 | Modifier | Effect |
 |----------|--------|
 | `.ref(name)` | Names the inverse edge on the target schema |
-| `.unique()` | Makes this a one-to-one relationship |
 | `.required()` | FK column is NOT NULL |
-| `.field(name)` | Override the FK column name |
+| `.unique()` | Adds a UNIQUE constraint on the FK column (for 1:1 relationships) |
+| `.field(name)` | Reuse an existing field as the FK column |
 | `.onDelete(action)` | Set the FK `ON DELETE` action (see below) |
 
 ### ON DELETE Actions
@@ -182,7 +184,7 @@ By default, FK columns use `ON DELETE SET NULL` (nullable) or
 
 ```kotlin
 override fun edges() = edges {
-    from("owner", Owner).unique().required().onDelete(OnDelete.CASCADE)
+    belongsTo("owner", Owner).required().onDelete(OnDelete.CASCADE)
 }
 ```
 
@@ -198,24 +200,25 @@ appropriate `DROP CONSTRAINT` / `ADD CONSTRAINT` ops.
 
 ### Many-to-Many
 
-Use `.through()` to declare an M2M relationship via a junction table:
+Use `manyToMany(...).through()` to declare an M2M relationship via a
+junction table:
 
 ```kotlin
 // User schema
 override fun edges() = edges {
-    to("groups", Group).through("user_groups", UserGroup)
+    manyToMany("groups", Group).through(UserGroup)
 }
 ```
 
 The junction schema (`UserGroup`) is itself an `EntSchema` with two
-`from()` edges pointing at the two sides.
+`belongsTo()` edges pointing at the two sides.
 
 For ambiguous junction tables (where both sides point to the same entity
 type), use `sourceEdge` and `targetEdge` to disambiguate:
 
 ```kotlin
-to("friends", User).through(
-    "friendships", Friendship,
+manyToMany("friends", User).through(
+    Friendship,
     sourceEdge = "user", targetEdge = "friend"
 )
 ```

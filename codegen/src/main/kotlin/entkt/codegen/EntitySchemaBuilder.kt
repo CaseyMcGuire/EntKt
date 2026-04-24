@@ -152,7 +152,7 @@ private fun buildEdgeMap(
 ): Map<String, EdgeMetadata> {
     val forwardEntries = schema.edges().mapNotNull { edge ->
         val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-        val join = if (edge.through != null) {
+        val join = if (edge.kind is entkt.schema.EdgeKind.ManyToMany) {
             resolveM2MEdgeJoin(edge, schema, schemaNames)
         } else {
             resolveEdgeJoin(edge, schema)

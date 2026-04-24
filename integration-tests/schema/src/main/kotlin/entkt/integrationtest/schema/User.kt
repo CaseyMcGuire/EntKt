@@ -14,6 +14,6 @@ object User : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("articles", Article)
+        hasMany("articles", Article)
     }
 }

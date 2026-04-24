@@ -1,7 +1,7 @@
 package entkt.codegen
 
 import entkt.schema.Edge
-import entkt.schema.EdgeType
+import entkt.schema.EdgeKind
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.OnDelete
@@ -23,7 +23,7 @@ object Owner : EntSchema() {
     override fun edges() = edges {
         // The User-side of the Owner ↔ Pet pair: an Owner has many Pets.
         // No FK on Owner — the FK lives on Pet via the inverse `owner` edge.
-        to("pets", Pet)
+        hasMany("pets", Pet)
     }
 }
 
@@ -33,7 +33,7 @@ object Pet : EntSchema() {
     }
 
     override fun edges() = edges {
-        from("owner", Owner).ref("pets").unique()
+        belongsTo("owner", Owner).ref("pets")
     }
 }
 
@@ -43,18 +43,7 @@ object RequiredPet : EntSchema() {
     }
 
     override fun edges() = edges {
-        from("owner", Owner).unique().required()
-    }
-}
-
-object LooseDog : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
-
-    override fun edges() = edges {
-        // Non-unique: no FK on source
-        to("friends", Pet)
+        belongsTo("owner", Owner).required()
     }
 }
 
@@ -66,7 +55,7 @@ object Team : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("members", Pet).through("team_members", TeamMember)
+        manyToMany("members", Pet).through(TeamMember)
     }
 }
 
@@ -78,8 +67,8 @@ object TeamMember : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("team", Team).unique().required().field("team_id")
-        to("member", Pet).unique().required().field("member_id")
+        belongsTo("team", Team).required().field("team_id")
+        belongsTo("member", Pet).required().field("member_id")
     }
 }
 
@@ -91,7 +80,7 @@ object Person : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("friends", Person).through("friendships", Friendship)
+        manyToMany("friends", Person).through(Friendship, sourceEdge = "person", targetEdge = "friend")
     }
 }
 
@@ -103,8 +92,8 @@ object Friendship : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("person", Person).unique().required().field("person_id")
-        to("friend", Person).unique().required().field("friend_id")
+        belongsTo("person", Person).required().field("person_id")
+        belongsTo("friend", Person).required().field("friend_id")
     }
 }
 
@@ -118,8 +107,8 @@ object Project : EntSchema() {
     override fun edges() = edges {
         // The junction has two edges to Pet: "assignee" and "reviewer".
         // sourceEdge/targetEdge disambiguate which FK to use.
-        to("assignees", Pet).through(
-            "projectAssignments", ProjectAssignment,
+        manyToMany("assignees", Pet).through(
+            ProjectAssignment,
             sourceEdge = "project", targetEdge = "assignee",
         )
     }
@@ -134,9 +123,9 @@ object ProjectAssignment : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("project", Project).unique().required().field("project_id")
-        to("assignee", Pet).unique().required().field("assignee_id")
-        to("reviewer", Pet).unique().field("reviewer_id")
+        belongsTo("project", Project).required().field("project_id")
+        belongsTo("assignee", Pet).required().field("assignee_id")
+        belongsTo("reviewer", Pet).field("reviewer_id")
     }
 }
 
@@ -144,7 +133,6 @@ private val schemaNames: Map<EntSchema, String> = mapOf(
     Owner to "Owner",
     Pet to "Pet",
     RequiredPet to "RequiredPet",
-    LooseDog to "LooseDog",
     Team to "Team",
     TeamMember to "TeamMember",
     Person to "Person",
@@ -171,14 +159,6 @@ class EdgeCodegenTest {
         assert(output.contains("val ownerId: Long,") || output.contains("val ownerId: Long\n")) {
             "Should add non-null ownerId FK\n$output"
         }
-    }
-
-    @Test
-    fun `non-unique edges do not produce a FK on the source entity`() {
-        val output = EntityGenerator("com.example.ent")
-            .generate("LooseDog", LooseDog, schemaNames).toString()
-
-        assert(!output.contains("friendsId")) { "Non-unique edge should not add FK\n$output" }
     }
 
     @Test
@@ -392,7 +372,7 @@ class EdgeCodegenTest {
         val child = object : EntSchema() {
             override fun fields() = fields { string("name") }
             override fun edges() = edges {
-                from("parent", parent).ref("typo").unique()
+                belongsTo("parent", parent).ref("typo")
             }
         }
         val names = mapOf(parent to "Parent", child to "Child")
@@ -411,14 +391,14 @@ class EdgeCodegenTest {
             val user: EntSchema = object : EntSchema() {
                 override fun fields() = fields { string("name") }
                 override fun edges() = edges {
-                    to("posts", this@Schemas.post)
+                    hasMany("posts", this@Schemas.post)
                 }
             }
             val post: EntSchema = object : EntSchema() {
                 override fun fields() = fields { string("title") }
                 override fun edges() = edges {
-                    from("author", this@Schemas.user).ref("posts").unique()
-                    from("editor", this@Schemas.user).ref("posts").unique()
+                    belongsTo("author", this@Schemas.user).ref("posts")
+                    belongsTo("editor", this@Schemas.user).ref("posts")
                 }
             }
         }
@@ -657,6 +637,70 @@ class EdgeCodegenTest {
         }
     }
 
+    @Test
+    fun `self-referential M2M without hints fails`() {
+        class Schemas {
+            val person: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    manyToMany("friends", person).through(junction)
+                }
+            }
+            val junction: EntSchema = object : EntSchema() {
+                override fun fields() = fields {
+                    int("person_id")
+                    int("friend_id")
+                }
+                override fun edges() = edges {
+                    belongsTo("person", person).required().field("person_id")
+                    belongsTo("friend", person).required().field("friend_id")
+                }
+            }
+        }
+        val s = Schemas()
+        val names = mapOf(s.person to "Person", s.junction to "Friendship")
+        val error = runCatching {
+            EntityGenerator("com.example.ent").generate("Person", s.person, names)
+        }.exceptionOrNull()
+        assert(error != null) { "Should fail without sourceEdge/targetEdge hints" }
+        assert(error!!.message!!.contains("Ambiguous M2M")) {
+            "Error should mention ambiguity: ${error.message}"
+        }
+    }
+
+    @Test
+    fun `self-referential M2M rejects duplicate sourceEdge and targetEdge hints`() {
+        class Schemas {
+            val person: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    manyToMany("friends", person).through(
+                        junction, sourceEdge = "person", targetEdge = "person",
+                    )
+                }
+            }
+            val junction: EntSchema = object : EntSchema() {
+                override fun fields() = fields {
+                    int("person_id")
+                    int("friend_id")
+                }
+                override fun edges() = edges {
+                    belongsTo("person", person).required().field("person_id")
+                    belongsTo("friend", person).required().field("friend_id")
+                }
+            }
+        }
+        val s = Schemas()
+        val names = mapOf(s.person to "Person", s.junction to "Friendship")
+        val error = runCatching {
+            EntityGenerator("com.example.ent").generate("Person", s.person, names)
+        }.exceptionOrNull()
+        assert(error != null) { "Should fail when sourceEdge == targetEdge" }
+        assert(error!!.message!!.contains("same junction edge")) {
+            "Error should mention duplicate edge: ${error.message}"
+        }
+    }
+
     // ---------- Per-group limit/offset in eager loading ----------
 
     @Test
@@ -711,9 +755,8 @@ class EdgeCodegenTest {
         // side is ambiguous and should fail at codegen time.
         val edge = Edge(
             name = "assignees",
-            type = EdgeType.TO,
             target = Pet,
-            through = Through("projectAssignments", ProjectAssignment),
+            kind = EdgeKind.ManyToMany(Through(ProjectAssignment)),
         )
 
         val error = assertFailsWith<IllegalStateException> {
@@ -733,13 +776,12 @@ class EdgeCodegenTest {
         // error rather than silently dropping the edge.
         val edge = Edge(
             name = "assignees",
-            type = EdgeType.TO,
             target = Pet,
-            through = Through(
-                "projectAssignments", ProjectAssignment,
+            kind = EdgeKind.ManyToMany(Through(
+                ProjectAssignment,
                 sourceEdge = "assignee",  // wrong: points at Pet, not source (Project)
                 targetEdge = "reviewer",
-            ),
+            )),
         )
 
         val error = assertFailsWith<IllegalStateException> {
@@ -756,13 +798,12 @@ class EdgeCodegenTest {
         // error rather than silently dropping the edge.
         val edge = Edge(
             name = "assignees",
-            type = EdgeType.TO,
             target = Pet,
-            through = Through(
-                "projectAssignments", ProjectAssignment,
+            kind = EdgeKind.ManyToMany(Through(
+                ProjectAssignment,
                 sourceEdge = "project",
                 targetEdge = "project",  // wrong: points at Project, not target (Pet)
-            ),
+            )),
         )
 
         val error = assertFailsWith<IllegalStateException> {
@@ -787,7 +828,7 @@ class EdgeCodegenTest {
                 long("owner_id")
             }
             override fun edges() = edges {
-                from("owner", parent).unique().field("owner_id").onDelete(OnDelete.CASCADE)
+                belongsTo("owner", parent).field("owner_id").onDelete(OnDelete.CASCADE)
             }
         }
         val names = mapOf(parent to "Parent", child to "Child")
@@ -798,6 +839,29 @@ class EdgeCodegenTest {
         val refs = assertNotNull(fkCol.references, "Explicit-field edge should produce FK references")
         assertEquals("parents", refs.first, "Should reference parents table")
         assertEquals(OnDelete.CASCADE, fkCol.onDelete, "Should carry CASCADE from edge")
+    }
+
+    @Test
+    fun `unique propagates through explicit field edges`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                long("owner_id")
+            }
+            override fun edges() = edges {
+                belongsTo("owner", parent).unique().field("owner_id")
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        val columns = columnMetadataFor(child, names)
+        val fkCol = columns.firstOrNull { it.name == "owner_id" }
+
+        assertNotNull(fkCol, "Should find owner_id column")
+        assertEquals(true, fkCol.unique, "Edge .unique() should propagate to column")
     }
 
     // ---------- storageKey + explicit .field() ----------
@@ -814,7 +878,7 @@ class EdgeCodegenTest {
                 long("owner_id").storageKey("owner_fk")
             }
             override fun edges() = edges {
-                from("owner", parent).unique().field("owner_id")
+                belongsTo("owner", parent).field("owner_id")
             }
         }
         val names = mapOf(parent to "Parent", child to "Child")
@@ -838,7 +902,7 @@ class EdgeCodegenTest {
                 long("owner_id").storageKey("owner_fk")
             }
             override fun edges() = edges {
-                from("owner", parent).unique().field("owner_id")
+                belongsTo("owner", parent).field("owner_id")
             }
         }
         val join = resolveEdgeJoin(
@@ -861,7 +925,7 @@ class EdgeCodegenTest {
                 long("owner_id") // not optional — non-nullable
             }
             override fun edges() = edges {
-                from("owner", parent).unique().field("owner_id").onDelete(OnDelete.SET_NULL)
+                belongsTo("owner", parent).field("owner_id").onDelete(OnDelete.SET_NULL)
             }
         }
         val names = mapOf(parent to "Parent", child to "Child")
@@ -883,7 +947,7 @@ class EdgeCodegenTest {
                 string("name")
             }
             override fun edges() = edges {
-                from("owner", parent).unique().field("owner_id") // no such field
+                belongsTo("owner", parent).field("owner_id") // no such field
             }
         }
         val names = mapOf(parent to "Parent", child to "Child")
@@ -907,7 +971,7 @@ class EdgeCodegenTest {
                 long("owner_id") // Long field but target uses UUID id
             }
             override fun edges() = edges {
-                from("owner", parent).unique().field("owner_id")
+                belongsTo("owner", parent).field("owner_id")
             }
         }
         val names = mapOf(parent to "Parent", child to "Child")
@@ -916,6 +980,143 @@ class EdgeCodegenTest {
         }
         assert(ex.message!!.contains("type")) {
             "Error should mention type mismatch\n${ex.message}"
+        }
+    }
+
+    // ---------- HasOne / HasMany cardinality validation ----------
+
+    @Test
+    fun `hasMany rejects inverse belongsTo with unique`() {
+        class S {
+            val parent: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    hasMany("children", this@S.child)
+                }
+            }
+            val child: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    belongsTo("parent", this@S.parent).unique()
+                }
+            }
+        }
+        val s = S()
+        val ex = assertFailsWith<IllegalStateException> {
+            resolveEdgeJoin(s.parent.edges().first(), s.parent)
+        }
+        assert(ex.message!!.contains("hasOne")) {
+            "Error should suggest using hasOne\n${ex.message}"
+        }
+    }
+
+    @Test
+    fun `hasOne edge requires inverse belongsTo to have unique`() {
+        class S {
+            val parent: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    hasOne("child", this@S.child)
+                }
+            }
+            val child: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    belongsTo("parent", this@S.parent) // missing .unique()
+                }
+            }
+        }
+        val s = S()
+        val ex = assertFailsWith<IllegalStateException> {
+            resolveEdgeJoin(s.parent.edges().first(), s.parent)
+        }
+        assert(ex.message!!.contains("unique")) {
+            "Error should mention unique requirement\n${ex.message}"
+        }
+    }
+
+    @Test
+    fun `hasOne edge succeeds when inverse belongsTo has unique`() {
+        class S {
+            val parent: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    hasOne("child", this@S.child)
+                }
+            }
+            val child: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    belongsTo("parent", this@S.parent).unique()
+                }
+            }
+        }
+        val s = S()
+        val join = resolveEdgeJoin(s.parent.edges().first(), s.parent)
+        assertNotNull(join)
+        assertEquals("id", join.sourceColumn)
+        assertEquals("parent_id", join.targetColumn)
+    }
+
+    // ---------- HasOne eager loading ----------
+
+    @Test
+    fun `hasOne eager loading queries target by FK not source FK`() {
+        class S {
+            val parent: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    hasOne("profile", this@S.child)
+                }
+            }
+            val child: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("bio") }
+                override fun edges() = edges {
+                    belongsTo("owner", this@S.parent).unique()
+                }
+            }
+        }
+        val s = S()
+        val names = mapOf(s.parent to "Parent", s.child to "Profile")
+        val output = QueryGenerator("com.example.ent")
+            .generate("Parent", s.parent, names).toString().replace("\\s+".toRegex(), " ")
+
+        // HasOne eager loading should query target by FK (owner_id),
+        // group results by owner_id, and map to source via entity.id.
+        assert(output.contains("Predicate.Leaf(\"owner_id\", Op.IN, sourceIds)")) {
+            "Should query target by FK column, not source FK\n$output"
+        }
+        assert(output.contains("groupBy { it[\"owner_id\"] }")) {
+            "Should group loaded rows by FK column\n$output"
+        }
+        assert(output.contains("loadedGroups[entity.id]?.firstOrNull()")) {
+            "Should map source.id to grouped target, collapsing to single entity\n$output"
+        }
+    }
+
+    @Test
+    fun `hasOne Edges property is nullable entity not list`() {
+        class S {
+            val parent: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    hasOne("profile", this@S.child)
+                }
+            }
+            val child: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("bio") }
+                override fun edges() = edges {
+                    belongsTo("owner", this@S.parent).unique()
+                }
+            }
+        }
+        val s = S()
+        val names = mapOf(s.parent to "Parent", s.child to "Profile")
+        val output = EntityGenerator("com.example.ent")
+            .generate("Parent", s.parent, names).toString()
+
+        assert(output.contains("val profile: Profile? = null")) {
+            "HasOne edge should produce nullable entity property, not a list\n$output"
         }
     }
 }

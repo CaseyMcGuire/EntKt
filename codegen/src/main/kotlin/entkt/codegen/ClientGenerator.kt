@@ -457,7 +457,7 @@ private fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
     // Build adjacency: schema → set of schemas it depends on (FK targets)
     val deps = schemas.associate { input ->
         input to input.schema.edges()
-            .filter { edge -> edge.unique && edge.through == null }
+            .filter { edge -> edge.kind is entkt.schema.EdgeKind.BelongsTo }
             .mapNotNull { edge -> bySchema[edge.target] }
             .toSet()
     }

@@ -10,10 +10,10 @@ For the schema DSL reference (modifiers, syntax), see [Schema](schema.md#edges).
 
 | Relationship | Schema DSL | FK lives on | Table created |
 |---|---|---|---|
-| One-to-many | `to("posts", Post)` | Target table | None |
-| Many-to-one | `from("author", User).ref("posts").unique()` | This table | None |
-| One-to-one | `from("profile", Profile).ref("user").unique()` | This table | None |
-| Many-to-many | `to("groups", Group).through("user_groups", UserGroup)` | Junction table | Junction table |
+| One-to-many | `hasMany("posts", Post)` | Target table | None |
+| Many-to-one | `belongsTo("author", User).ref("posts")` | This table | None |
+| One-to-one | `hasOne("profile", Profile)` / `belongsTo("user", User).unique()` | BelongsTo side | None |
+| Many-to-many | `manyToMany("groups", Group).through(UserGroup)` | Junction table | Junction table |
 
 ## One-to-many / many-to-one
 
@@ -22,16 +22,15 @@ A one-to-many relationship is always declared from both sides:
 ```kotlin
 object User : EntSchema() {
     override fun edges() = edges {
-        to("posts", Post)        // "one" side — no column added to users table
+        hasMany("posts", Post)     // "one" side — no column added to users table
     }
 }
 
 object Post : EntSchema() {
     override fun edges() = edges {
-        from("author", User)     // "many" side — adds author_id column to posts table
-            .ref("posts")        // links this edge to User.posts
-            .unique()            // each row has exactly one author
-            .required()          // author_id is NOT NULL
+        belongsTo("author", User)  // "many" side — adds author_id column to posts table
+            .ref("posts")          // links this edge to User.posts
+            .required()            // author_id is NOT NULL
     }
 }
 ```
@@ -46,11 +45,11 @@ object Post : EntSchema() {
 | `author_id` | (matches User's ID type) | NOT NULL, REFERENCES users(id) |
 | ... | | |
 
-The FK column name defaults to `{edge_name}_id` — so `from("author", User)`
+The FK column name defaults to `{edge_name}_id` — so `belongsTo("author", User)`
 creates `author_id`. Override it with `.field()`:
 
 ```kotlin
-from("author", User).ref("posts").unique().required().field("writer_id")
+belongsTo("author", User).ref("posts").required().field("writer_id")
 ```
 
 When you use `.field()`, the FK column reuses an already-declared field
@@ -58,7 +57,7 @@ rather than synthesizing a new one.
 
 ### Generated code
 
-The `from(...).unique()` edge synthesizes a typed FK property on the entity
+The `belongsTo(...)` edge synthesizes a typed FK property on the entity
 and its builders:
 
 ```kotlin
@@ -78,7 +77,7 @@ client.posts.create {
 }.save()
 ```
 
-The `to(...)` side generates a query traversal method and an eager-loading
+The `hasMany(...)` side generates a query traversal method and an eager-loading
 method on the query builder:
 
 ```kotlin
@@ -120,12 +119,12 @@ edges = mapOf(
 ## Many-to-many
 
 M2M relationships use a junction table — a separate `EntSchema` with
-`from()` edges pointing at both sides:
+`belongsTo()` edges pointing at both sides:
 
 ```kotlin
 object User : EntSchema() {
     override fun edges() = edges {
-        to("groups", Group).through("user_groups", UserGroup)
+        manyToMany("groups", Group).through(UserGroup)
     }
 }
 
@@ -135,8 +134,8 @@ object Group : EntSchema() {
 
 object UserGroup : EntSchema() {
     override fun edges() = edges {
-        from("user", User).unique().required()
-        from("group", Group).unique().required()
+        belongsTo("user", User).required()
+        belongsTo("group", Group).required()
     }
 }
 ```
@@ -184,8 +183,8 @@ the junction has two edges to the same schema. Use `sourceEdge` and
 ```kotlin
 object Person : EntSchema() {
     override fun edges() = edges {
-        to("friends", Person).through(
-            "friendships", Friendship,
+        manyToMany("friends", Person).through(
+            Friendship,
             sourceEdge = "user", targetEdge = "friend",
         )
     }
@@ -193,8 +192,8 @@ object Person : EntSchema() {
 
 object Friendship : EntSchema() {
     override fun edges() = edges {
-        from("user", Person).unique().required()
-        from("friend", Person).unique().required()
+        belongsTo("user", Person).required()
+        belongsTo("friend", Person).required()
     }
 }
 ```
@@ -210,8 +209,8 @@ edges to the same target type for different purposes:
 ```kotlin
 object Project : EntSchema() {
     override fun edges() = edges {
-        to("assignees", Pet).through(
-            "projectAssignments", ProjectAssignment,
+        manyToMany("assignees", Pet).through(
+            ProjectAssignment,
             sourceEdge = "project", targetEdge = "assignee",
         )
     }
@@ -219,9 +218,9 @@ object Project : EntSchema() {
 
 object ProjectAssignment : EntSchema() {
     override fun edges() = edges {
-        from("project", Project).unique().required()
-        from("assignee", Pet).unique().required()
-        from("reviewer", Pet).unique()          // different role, same target type
+        belongsTo("project", Project).required()
+        belongsTo("assignee", Pet).required()
+        belongsTo("reviewer", Pet)              // different role, same target type
     }
 }
 ```
@@ -234,9 +233,9 @@ for the DSL reference. The table mapping:
 
 | Edge declaration | FK constraint |
 |---|---|
-| `from("author", User).unique()` (optional) | `REFERENCES users(id) ON DELETE SET NULL` |
-| `from("author", User).unique().required()` | `REFERENCES users(id) ON DELETE RESTRICT` |
-| `from("owner", User).unique().required().onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
+| `belongsTo("author", User)` (optional) | `REFERENCES users(id) ON DELETE SET NULL` |
+| `belongsTo("author", User).required()` | `REFERENCES users(id) ON DELETE RESTRICT` |
+| `belongsTo("owner", User).required().onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
 
 When no explicit `.onDelete()` is set, the default is inferred from
 nullability: `SET NULL` for optional FKs, `RESTRICT` for required FKs.
@@ -249,15 +248,16 @@ runtime.
 When building the runtime `EdgeMetadata`, codegen resolves each edge's
 join columns:
 
-1. **Owning side** (`from(...).unique()`) — the FK sits on this entity's
+1. **BelongsTo** (`belongsTo(...)`) — the FK sits on this entity's
    table. The column name is `{edge_name}_id` (or the `.field()` override).
    Join: `sourceColumn = fk_column, targetColumn = "id"`.
 
-2. **Owned side** (`to(...)`, non-unique) — the FK sits on the target
-   table. Codegen finds the inverse edge on the target via `.ref()` and
-   reads its FK column. Join: `sourceColumn = "id", targetColumn = fk_column`.
+2. **HasMany / HasOne** (`hasMany(...)`, `hasOne(...)`) — the FK sits on the
+   target table. Codegen finds the inverse `belongsTo` edge on the target
+   via `.ref()` and reads its FK column.
+   Join: `sourceColumn = "id", targetColumn = fk_column`.
 
-3. **M2M** (`to(...).through(...)`) — both source and target join on `id`;
-   the junction table provides the bridge columns. The target schema gets
-   a synthetic reverse edge entry so predicates and eager loading work
-   from the target side.
+3. **ManyToMany** (`manyToMany(...).through(...)`) — both source and target
+   join on `id`; the junction table provides the bridge columns. The target
+   schema gets a synthetic reverse edge entry so predicates and eager loading
+   work from the target side.

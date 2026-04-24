@@ -17,6 +17,7 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.schema.Edge
+import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -45,7 +46,7 @@ class QueryGenerator(
 
         val traversalMethods = schema.edges()
             .mapNotNull { edge ->
-                if (edge.through != null) {
+                if (edge.kind is EdgeKind.ManyToMany) {
                     buildM2MTraversal(edge, schema, schemaNames)
                 } else {
                     buildTraversal(edge, schema, schemaNames)
@@ -342,10 +343,10 @@ class QueryGenerator(
     ): EagerEdgeSpec? {
         val targetName = schemaNames[edge.target] ?: return null
         // For non-M2M edges, verify we can resolve the join
-        if (edge.through == null) {
-            resolveEdgeJoin(edge, schema) ?: return null
-        } else {
+        if (edge.kind is EdgeKind.ManyToMany) {
             resolveM2MEdgeJoin(edge, schema, schemaNames) ?: return null
+        } else {
+            resolveEdgeJoin(edge, schema) ?: return null
         }
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val queryClass = ClassName(packageName, "${schema.let { schemaNames[it] }}Query")
@@ -399,14 +400,21 @@ class QueryGenerator(
             val eagerPropName = "eager${toPascalCase(edge.name)}"
             val edgePropName = toCamelCase(edge.name)
 
-            if (edge.through != null) {
-                val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: continue
-                emitM2MEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
-            } else {
-                val join = resolveEdgeJoin(edge, schema) ?: continue
-                if (edge.unique) {
+            when (edge.kind) {
+                is EdgeKind.ManyToMany -> {
+                    val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: continue
+                    emitM2MEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
+                }
+                is EdgeKind.BelongsTo -> {
+                    val join = resolveEdgeJoin(edge, schema) ?: continue
                     emitToOneEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName, schema, schemaNames)
-                } else {
+                }
+                is EdgeKind.HasOne -> {
+                    val join = resolveEdgeJoin(edge, schema) ?: continue
+                    emitHasOneEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
+                }
+                is EdgeKind.HasMany -> {
+                    val join = resolveEdgeJoin(edge, schema) ?: continue
                     emitToManyEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
                 }
             }
@@ -462,6 +470,44 @@ class QueryGenerator(
         )
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
+            edgePropName,
+        )
+        body.endControlFlow()
+    }
+
+    /**
+     * Emit the eager loading block for a hasOne edge.
+     * The FK lives on the target side (like hasMany), but the Edges
+     * property is a single nullable entity (like belongsTo).
+     */
+    private fun emitHasOneEagerBlock(
+        body: CodeBlock.Builder,
+        eagerPropName: String,
+        edgePropName: String,
+        join: EdgeJoin,
+        targetClass: ClassName,
+        targetName: String,
+    ) {
+        body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
+        body.addStatement("val sourceIds = entities.map { it.id }")
+        body.addStatement(
+            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, sourceIds), subQuery.orderFields, null, null)",
+            targetClass, PREDICATE, join.targetColumn, OP,
+        )
+        body.addStatement(
+            "val grouped = targetRows.groupBy { it[%S] }",
+            join.targetColumn,
+        )
+        body.addStatement(
+            "var loadedGroups = grouped.mapValues { (_, rows) -> rows.map { %T.fromRow(it) } }",
+            targetClass,
+        )
+        emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
+        body.addStatement(
+            "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
+        )
+        body.addStatement(
+            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id]?.firstOrNull())) }",
             edgePropName,
         )
         body.endControlFlow()

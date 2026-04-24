@@ -6,7 +6,7 @@ import entkt.schema.edges
 import entkt.schema.fields
 
 /**
- * A blog post that points back at its author. The `from("author", User).unique()`
+ * A blog post that points back at its author. The `belongsTo("author", User)`
  * edge synthesizes an `authorId: UUID?` FK on Post.
  */
 object Post : EntSchema() {
@@ -21,6 +21,6 @@ object Post : EntSchema() {
     }
 
     override fun edges() = edges {
-        from("author", User).ref("posts").unique().required()
+        belongsTo("author", User).ref("posts").required()
     }
 }

@@ -6,7 +6,7 @@ package entkt.schema
  * Used on edge declarations to control the FK `ON DELETE` clause:
  * ```kotlin
  * override fun edges() = edges {
- *     from("owner", Owner).unique().required().onDelete(OnDelete.CASCADE)
+ *     belongsTo("owner", Owner).required().onDelete(OnDelete.CASCADE)
  * }
  * ```
  */

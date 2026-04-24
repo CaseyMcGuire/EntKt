@@ -50,7 +50,7 @@ object User : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("cars", Car)
+        hasMany("cars", Car)
     }
 
     override fun indexes() = indexes {
@@ -66,7 +66,7 @@ object Group : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("users", User).through("user_groups", UserGroup)
+        manyToMany("users", User).through(UserGroup)
     }
 }
 
@@ -76,8 +76,8 @@ object UserGroup : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("user", User).unique().required().field("user_id")
-        to("group", Group).unique().required().field("group_id")
+        belongsTo("user", User).required().field("user_id")
+        belongsTo("group", Group).required().field("group_id")
     }
 }
 
@@ -98,7 +98,7 @@ object Company : EntSchema() {
     }
 
     override fun edges() = edges {
-        to("employees", User)
+        hasMany("employees", User)
     }
 }
 
@@ -145,7 +145,7 @@ class SchemaTest {
 
         val carsEdge = edges[0]
         assertEquals("cars", carsEdge.name)
-        assertEquals(EdgeType.TO, carsEdge.type)
+        assertTrue(carsEdge.kind is EdgeKind.HasMany)
         assertEquals(Car, carsEdge.target)
     }
 
@@ -260,13 +260,14 @@ class SchemaTest {
 
         val userEdge = edges[0]
         assertEquals("user", userEdge.name)
-        assertEquals("user_id", userEdge.field)
-        assertTrue(userEdge.unique)
-        assertTrue(userEdge.required)
+        val userKind = userEdge.kind as EdgeKind.BelongsTo
+        assertEquals("user_id", userKind.field)
+        assertTrue(userKind.required)
 
         val groupEdge = edges[1]
         assertEquals("group", groupEdge.name)
-        assertEquals("group_id", groupEdge.field)
+        val groupKind = groupEdge.kind as EdgeKind.BelongsTo
+        assertEquals("group_id", groupKind.field)
     }
 
     @Test
@@ -294,45 +295,23 @@ class SchemaTest {
         val usersEdge = edges[0]
         assertEquals("users", usersEdge.name)
         assertEquals(User, usersEdge.target)
-        assertNotNull(usersEdge.through)
-        assertEquals("user_groups", usersEdge.through!!.name)
-        assertEquals(UserGroup, usersEdge.through!!.target)
+        val m2m = usersEdge.kind as EdgeKind.ManyToMany
+        assertEquals(UserGroup, m2m.through.target)
     }
 
     @Test
-    fun `onDelete rejected on non-unique edge`() {
-        assertFailsWith<IllegalArgumentException> {
-            EdgeBuilder("cars", EdgeType.TO, Car)
-                .onDelete(OnDelete.CASCADE)
-                .build()
-        }
-    }
-
-    @Test
-    fun `onDelete rejected on through edge`() {
-        assertFailsWith<IllegalArgumentException> {
-            EdgeBuilder("users", EdgeType.TO, User)
-                .unique()
-                .through("user_groups", UserGroup)
-                .onDelete(OnDelete.CASCADE)
-                .build()
-        }
-    }
-
-    @Test
-    fun `onDelete accepted on unique edge without through`() {
-        val edge = EdgeBuilder("owner", EdgeType.TO, User)
-            .unique()
+    fun `onDelete accepted on belongsTo edge`() {
+        val edge = BelongsToBuilder("owner", User)
             .onDelete(OnDelete.CASCADE)
             .build()
-        assertEquals(OnDelete.CASCADE, edge.onDelete)
+        val kind = edge.kind as EdgeKind.BelongsTo
+        assertEquals(OnDelete.CASCADE, kind.onDelete)
     }
 
     @Test
     fun `onDelete SET_NULL rejected on required edge`() {
-        assertFailsWith<IllegalArgumentException> {
-            EdgeBuilder("owner", EdgeType.TO, User)
-                .unique()
+        assertFailsWith<IllegalStateException> {
+            BelongsToBuilder("owner", User)
                 .required()
                 .onDelete(OnDelete.SET_NULL)
                 .build()
@@ -340,12 +319,19 @@ class SchemaTest {
     }
 
     @Test
-    fun `onDelete SET_NULL accepted on non-required unique edge`() {
-        val edge = EdgeBuilder("owner", EdgeType.TO, User)
-            .unique()
+    fun `onDelete SET_NULL accepted on non-required edge`() {
+        val edge = BelongsToBuilder("owner", User)
             .onDelete(OnDelete.SET_NULL)
             .build()
-        assertEquals(OnDelete.SET_NULL, edge.onDelete)
+        val kind = edge.kind as EdgeKind.BelongsTo
+        assertEquals(OnDelete.SET_NULL, kind.onDelete)
+    }
+
+    @Test
+    fun `manyToMany requires through`() {
+        assertFailsWith<IllegalStateException> {
+            ManyToManyBuilder("groups", Group).build()
+        }
     }
 
     @Test
@@ -362,8 +348,8 @@ class SchemaTest {
     fun `duplicate edge names are rejected`() {
         assertFailsWith<IllegalArgumentException> {
             edges {
-                to("posts", Car)
-                to("posts", User)
+                hasMany("posts", Car)
+                hasMany("posts", User)
             }
         }
     }

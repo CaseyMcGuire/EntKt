@@ -75,7 +75,7 @@ class EntktPluginTest {
                     }
 
                     override fun edges() = edges {
-                        from("owner", Owner).unique()
+                        belongsTo("owner", Owner)
                     }
                 }
                 """.trimIndent()

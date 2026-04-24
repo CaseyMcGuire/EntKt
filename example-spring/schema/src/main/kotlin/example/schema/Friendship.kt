@@ -18,8 +18,8 @@ object Friendship : EntSchema() {
     }
 
     override fun edges(): List<entkt.schema.Edge> = edges {
-        from("requester", User).ref("sent_requests").unique().required()
-        from("recipient", User).ref("received_requests").unique().required()
+        belongsTo("requester", User).ref("sent_requests").required()
+        belongsTo("recipient", User).ref("received_requests").required()
     }
 
     override fun indexes(): List<entkt.schema.Index> = indexes {
