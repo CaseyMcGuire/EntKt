@@ -88,11 +88,25 @@ internal fun columnMetadataFor(
     // Edges with .field("col_name") re-use a declared field as their FK
     // column. Build a lookup so the declared field picks up the FK
     // reference and onDelete action from the edge.
+    val fieldsByName = fields.associateBy { it.name }
     val explicitFieldEdges = schema.edges()
         .filter { it.unique && it.field != null && it.through == null }
         .mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            edge.field!! to (tableNameFor(targetName) to edge.onDelete)
+            val f = edge.field!!
+            val backingField = fieldsByName[f]
+                ?: error(
+                    "Edge '${edge.name}' references .field(\"$f\") but no field " +
+                        "with that name exists on the schema",
+                )
+            val targetIdType = edge.target.id().type
+            if (backingField.type != targetIdType) {
+                error(
+                    "Edge '${edge.name}' references .field(\"$f\") of type " +
+                        "${backingField.type} but target entity's id type is $targetIdType",
+                )
+            }
+            f to (tableNameFor(targetName) to edge.onDelete)
         }
         .toMap()
 
@@ -157,6 +171,20 @@ internal data class EdgeJoin(
 )
 
 /**
+ * Look up a field by schema name on [schema], verify it exists, and
+ * return its physical column name (respecting storageKey). Used by
+ * edge join resolution so a typo in `.field("...")` fails early.
+ */
+private fun resolveExplicitField(fieldName: String, schema: EntSchema, edgeName: String): String {
+    val colMap = fieldColumnMap(schema)
+    return colMap[fieldName]
+        ?: error(
+            "Edge '$edgeName' references .field(\"$fieldName\") but no field " +
+                "with that name exists on the schema",
+        )
+}
+
+/**
  * Resolve [edge]'s join columns by asking "is this edge's FK stored on
  * this side or on the target?". The owning side (unique + no
  * `.through(...)`) names the FK column explicitly (`field` overrides the
@@ -176,7 +204,7 @@ internal fun resolveEdgeJoin(
         // Owning side: the FK sits on this row.
         val fkColumn = if (edge.field != null) {
             val f = edge.field!!
-            fieldColumnMap(source)[f] ?: f
+            resolveExplicitField(f, source, edge.name)
         } else {
             "${edge.name}_id"
         }
@@ -189,7 +217,7 @@ internal fun resolveEdgeJoin(
     if (!inverse.unique || inverse.through != null) return null
     val fkColumn = if (inverse.field != null) {
         val f = inverse.field!!
-        fieldColumnMap(edge.target)[f] ?: f
+        resolveExplicitField(f, edge.target, inverse.name)
     } else {
         "${inverse.name}_id"
     }
@@ -243,9 +271,8 @@ internal fun resolveM2MEdgeJoin(
         }
         candidates.firstOrNull()
     } ?: return null
-    val junctionColumns = fieldColumnMap(junctionSchema)
     val sourceFk = if (sourceEdge.field != null) {
-        junctionColumns[sourceEdge.field] ?: sourceEdge.field
+        resolveExplicitField(sourceEdge.field!!, junctionSchema, sourceEdge.name)
     } else {
         "${sourceEdge.name}_id"
     }
@@ -276,7 +303,7 @@ internal fun resolveM2MEdgeJoin(
         candidates.firstOrNull()
     } ?: return null
     val targetFk = if (targetEdge.field != null) {
-        junctionColumns[targetEdge.field] ?: targetEdge.field
+        resolveExplicitField(targetEdge.field!!, junctionSchema, targetEdge.name)
     } else {
         "${targetEdge.name}_id"
     }

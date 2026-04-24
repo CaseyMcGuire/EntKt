@@ -73,6 +73,8 @@ object Team : EntSchema() {
 object TeamMember : EntSchema() {
     override fun fields() = fields {
         time("joined_at")
+        int("team_id")
+        int("member_id")
     }
 
     override fun edges() = edges {
@@ -96,6 +98,8 @@ object Person : EntSchema() {
 object Friendship : EntSchema() {
     override fun fields() = fields {
         time("created_at")
+        int("person_id")
+        int("friend_id")
     }
 
     override fun edges() = edges {
@@ -124,6 +128,9 @@ object Project : EntSchema() {
 object ProjectAssignment : EntSchema() {
     override fun fields() = fields {
         time("assigned_at")
+        int("project_id")
+        int("assignee_id")
+        int("reviewer_id").nullable()
     }
 
     override fun edges() = edges {
@@ -812,6 +819,55 @@ class EdgeCodegenTest {
         val names = mapOf(parent to "Parent", child to "Child")
         assertFailsWith<IllegalStateException> {
             columnMetadataFor(child, names)
+        }
+    }
+
+    // ---------- explicit .field() validation ----------
+
+    @Test
+    fun `explicit field edge rejected when field does not exist`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.long()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique().field("owner_id") // no such field
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        val ex = assertFailsWith<IllegalStateException> {
+            columnMetadataFor(child, names)
+        }
+        assert(ex.message!!.contains("no field with that name")) {
+            "Error should mention missing field\n${ex.message}"
+        }
+    }
+
+    @Test
+    fun `explicit field edge rejected when field type mismatches target id`() {
+        val parent = object : EntSchema() {
+            override fun id() = EntId.uuid()
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+                long("owner_id") // Long field but target uses UUID id
+            }
+            override fun edges() = edges {
+                from("owner", parent).unique().field("owner_id")
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        val ex = assertFailsWith<IllegalStateException> {
+            columnMetadataFor(child, names)
+        }
+        assert(ex.message!!.contains("type")) {
+            "Error should mention type mismatch\n${ex.message}"
         }
     }
 }
