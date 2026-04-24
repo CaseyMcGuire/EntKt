@@ -269,7 +269,7 @@ class CreateGenerator(
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             val col = field.columnName
-            if (field.type == FieldType.ENUM && field.enumClass != null) {
+            if (field.type == FieldType.ENUM) {
                 val nullable = field.nullable
                 if (nullable) {
                     rowBuilder.add("  %S to %L?.name,\n", col, prop)
@@ -293,7 +293,7 @@ class CreateGenerator(
         return when {
             field.type == FieldType.TIME && value == "now" ->
                 CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
-            field.type == FieldType.ENUM && field.enumClass != null -> {
+            field.type == FieldType.ENUM -> {
                 require(value is Enum<*>) {
                     "Typed enum field '${field.name}' must use an enum constant as its default, not a String"
                 }

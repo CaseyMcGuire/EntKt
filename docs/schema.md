@@ -45,8 +45,7 @@ override fun fields() = fields {
     time("created_at").immutable()
     uuid("external_id")
     bytes("data")
-    enum("status").values("DRAFT", "PUBLISHED", "ARCHIVED")
-    enum<Priority>("priority").default(Priority.LOW)  // typed enum
+    enum<Priority>("priority").default(Priority.LOW)
 }
 ```
 
@@ -64,7 +63,6 @@ override fun fields() = fields {
 | `time()` | `TIME` | `Instant` | `timestamptz` |
 | `uuid()` | `UUID` | `UUID` | `uuid` |
 | `bytes()` | `BYTES` | `ByteArray` | `bytea` |
-| `enum()` | `ENUM` | `String` | `text` |
 | `enum<E>()` | `ENUM` | `E` | `text` |
 
 ### Common Modifiers
@@ -104,11 +102,11 @@ double("temperature").negative()
 Validators are enforced as inline checks in the generated `save()` methods.
 They throw `IllegalArgumentException` if the value is invalid.
 
-### Typed Enums
+### Enums
 
-Use the reified `enum<E>()` builder to bind a field to a Kotlin enum class.
+Enum fields require a Kotlin enum class via the reified `enum<E>()` builder.
 The generated entity, create builder, update builder, and query column
-references all use the actual enum type instead of `String`:
+references all use the actual enum type:
 
 ```kotlin
 enum class Priority { LOW, MEDIUM, HIGH }
@@ -128,13 +126,10 @@ With this declaration:
 - Query predicates accept enum values: `Ticket.priority eq Priority.HIGH`
 - The `.default()` method requires a constant from the same enum class —
   passing a value from a different enum (e.g. `OtherEnum.FOO`) is rejected
-  at codegen time
+  at schema construction time
 
 Values are stored as strings in the database (via `.name`) and converted
 back with `valueOf()` when reading rows. The driver layer is unchanged.
-
-The untyped `enum("field").values("A", "B")` form is still supported for
-cases where a Kotlin enum class isn't available.
 
 ## Edges
 

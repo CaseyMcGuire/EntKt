@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 enum class Priority { LOW, MEDIUM, HIGH }
+enum class Category { BUG, FEATURE }
 
 object StorageKeyEntity : EntSchema() {
     override fun fields() = fields {
@@ -30,7 +31,7 @@ object Ticket : EntSchema() {
     override fun fields() = fields {
         string("title")
         enum<Priority>("priority")
-        enum("category").values("BUG", "FEATURE")
+        enum<Category>("category")
     }
 }
 
@@ -307,14 +308,14 @@ class EntityGeneratorTest {
     }
 
     @Test
-    fun `untyped enum still uses String and Column`() {
+    fun `second typed enum also uses enum type and EnumColumn`() {
         val output = generator.generate("Ticket", Ticket).toString()
 
-        assert(output.contains("val category: String")) {
-            "Untyped enum should stay as String\n$output"
+        assert(output.contains("val category: Category")) {
+            "Second typed enum should use the Kotlin enum type\n$output"
         }
-        assert(output.contains("val category: Column<String> = Column<String>(\"category\")")) {
-            "Untyped enum should use Column<String>\n$output"
+        assert(output.contains("val category: EnumColumn<Category> = EnumColumn<Category>(\"category\")")) {
+            "Second typed enum should use EnumColumn\n$output"
         }
     }
 

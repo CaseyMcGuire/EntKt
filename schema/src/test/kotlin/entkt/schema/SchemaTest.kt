@@ -27,7 +27,9 @@ object SoftDeleteMixin : EntMixin {
     }
 }
 
-// Example schemas that demonstrate the API
+// Example enums and schemas that demonstrate the API
+
+enum class Role { ADMIN, USER, MODERATOR }
 
 object Car : EntSchema() {
     override fun fields() = fields {
@@ -42,7 +44,7 @@ object User : EntSchema() {
         string("name").minLen(1).maxLen(100)
         int("age").optional().positive()
         string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
-        enum("role").values("admin", "user", "moderator").default("user")
+        enum<Role>("role").default(Role.USER)
         bool("active").default(true)
         time("created_at").immutable()
     }
@@ -126,8 +128,8 @@ class SchemaTest {
         assertTrue(email.unique)
 
         val role = fields[3]
-        assertEquals(listOf("admin", "user", "moderator"), role.enumValues)
-        assertEquals("user", role.default)
+        assertEquals(Role::class, role.enumClass)
+        assertEquals(Role.USER, role.default)
 
         val active = fields[4]
         assertEquals(true, active.default)
@@ -268,22 +270,20 @@ class SchemaTest {
     }
 
     @Test
-    fun `typed enum populates enumClass and enumValues`() {
+    fun `enum field populates enumClass`() {
         val fields = Task.fields()
         val status = fields[1]
         assertEquals(FieldType.ENUM, status.type)
         assertEquals(TaskStatus::class, status.enumClass)
-        assertEquals(listOf("TODO", "IN_PROGRESS", "DONE"), status.enumValues)
         assertEquals(TaskStatus.TODO, status.default)
     }
 
     @Test
-    fun `untyped enum has null enumClass`() {
+    fun `enum field on User has enumClass set`() {
         val fields = User.fields()
         val role = fields[3]
         assertEquals(FieldType.ENUM, role.type)
-        assertNull(role.enumClass)
-        assertEquals(listOf("admin", "user", "moderator"), role.enumValues)
+        assertEquals(Role::class, role.enumClass)
     }
 
     @Test
@@ -363,7 +363,6 @@ class SchemaTest {
         assertFailsWith<IllegalArgumentException> {
             EnumFieldBuilder("priority").apply {
                 setEnumClass(TaskStatus::class)
-                setEnumValues(TaskStatus.entries.map { it.name })
                 default(OnDelete.CASCADE) // wrong enum class
             }.build()
         }
@@ -373,7 +372,6 @@ class SchemaTest {
     fun `typed enum default accepts constant from correct enum class`() {
         val field = EnumFieldBuilder("priority").apply {
             setEnumClass(TaskStatus::class)
-            setEnumValues(TaskStatus.entries.map { it.name })
             default(TaskStatus.TODO)
         }.build()
         assertEquals(TaskStatus.TODO, field.default)

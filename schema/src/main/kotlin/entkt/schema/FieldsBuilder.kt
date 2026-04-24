@@ -15,12 +15,9 @@ class FieldsBuilder {
     fun time(name: String): TimeFieldBuilder = TimeFieldBuilder(name).also { fields.add(it) }
     fun uuid(name: String): UuidFieldBuilder = UuidFieldBuilder(name).also { fields.add(it) }
     fun bytes(name: String): BytesFieldBuilder = BytesFieldBuilder(name).also { fields.add(it) }
-    fun enum(name: String): EnumFieldBuilder = EnumFieldBuilder(name).also { fields.add(it) }
-    @JvmName("typedEnum")
     inline fun <reified E : Enum<E>> enum(name: String): EnumFieldBuilder =
         EnumFieldBuilder(name).also {
             it.setEnumClass(E::class)
-            it.setEnumValues(enumValues<E>().map { c -> c.name })
             fields.add(it)
         }
 

@@ -264,7 +264,7 @@ class UpdateGenerator(
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             val col = field.columnName
-            if (field.type == FieldType.ENUM && field.enumClass != null) {
+            if (field.type == FieldType.ENUM) {
                 rowBuilder.add("  %S to %L?.name,\n", col, prop)
             } else {
                 rowBuilder.add("  %S to %L,\n", col, prop)

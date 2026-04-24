@@ -21,14 +21,15 @@ fun FieldType.toTypeName(): TypeName = when (this) {
 }
 
 /**
- * Returns the Kotlin type for a field. For typed enum fields (those with
- * [Field.enumClass] set), this returns the actual enum class name instead
- * of `String`.
+ * Returns the Kotlin type for a field. For enum fields, this returns the
+ * actual enum class name instead of `String`.
  */
 fun Field.resolvedTypeName(): TypeName {
-    if (type == FieldType.ENUM && enumClass != null) {
-        val qualifiedName = enumClass!!.qualifiedName
-            ?: error("Enum class ${enumClass!!.simpleName} must have a qualified name")
+    if (type == FieldType.ENUM) {
+        val klass = enumClass
+            ?: error("Enum field '${name}' must have an enumClass — use enum<E>(\"$name\")")
+        val qualifiedName = klass.qualifiedName
+            ?: error("Enum class ${klass.simpleName} must have a qualified name")
         return ClassName.bestGuess(qualifiedName)
     }
     return type.toTypeName()

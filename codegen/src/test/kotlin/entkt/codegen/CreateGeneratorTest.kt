@@ -243,14 +243,11 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `untyped enum save uses value directly`() {
+    fun `second typed enum save also converts to name`() {
         val output = generator.generate("Ticket", Ticket).toString()
 
-        assert(output.contains("\"category\" to category")) {
-            "Untyped enum should be put directly in the row map\n$output"
-        }
-        assert(!output.contains("\"category\" to category.name")) {
-            "Untyped enum should not use .name\n$output"
+        assert(output.contains("\"category\" to category.name")) {
+            "Second typed enum should also use .name in the row map\n$output"
         }
     }
 
