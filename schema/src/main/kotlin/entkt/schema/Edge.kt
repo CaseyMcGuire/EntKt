@@ -9,7 +9,6 @@ data class Edge(
     val field: String? = null,
     val through: Through? = null,
     val comment: String? = null,
-    val storageKey: String? = null,
     val ref: String? = null,
     val onDelete: OnDelete? = null,
 )

@@ -10,7 +10,6 @@ class EdgeBuilder(
     private var field: String? = null
     private var through: Through? = null
     private var comment: String? = null
-    private var storageKey: String? = null
     private var ref: String? = null
     private var onDelete: OnDelete? = null
 
@@ -25,7 +24,6 @@ class EdgeBuilder(
         targetEdge: String,
     ): EdgeBuilder = apply { through = Through(name, target, sourceEdge, targetEdge) }
     fun comment(text: String): EdgeBuilder = apply { comment = text }
-    fun storageKey(key: String): EdgeBuilder = apply { storageKey = key }
     fun ref(name: String): EdgeBuilder = apply { ref = name }
     fun onDelete(action: OnDelete): EdgeBuilder = apply { onDelete = action }
 
@@ -51,7 +49,6 @@ class EdgeBuilder(
             field = field,
             through = through,
             comment = comment,
-            storageKey = storageKey,
             ref = ref,
             onDelete = onDelete,
         )
