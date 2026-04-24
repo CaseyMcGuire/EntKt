@@ -5,8 +5,6 @@ These pages are design notes, not committed API contracts.
 
 ## Privacy And Validation
 
-- [Validation API](validation-api.md)
-- [Mutation Return LOAD Privacy](mutation-return-load-privacy.md)
 - [Privacy / Validation Explain Mode](privacy-validation-explain-mode.md)
 - [Policy Test Helpers](policy-test-helpers.md)
 - [Query Observability Privacy](query-observability-privacy.md)
