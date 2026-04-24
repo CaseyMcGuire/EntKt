@@ -394,6 +394,32 @@ class EntityGeneratorTest {
     }
 
     @Test
+    fun `index can target synthesized edge FK column`() {
+        val parent = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+            }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields {
+                string("title")
+            }
+            override fun edges() = edges {
+                from("author", parent).unique()
+            }
+            override fun indexes() = indexes {
+                index("author_id")
+            }
+        }
+        val schemaNames = mapOf(parent to "Parent", child to "Child")
+        // Should not throw — author_id is a synthesized edge FK column
+        val output = generator.generate("Child", child, schemaNames).toString()
+        assert(output.contains("author_id")) {
+            "Should include author_id in index metadata\n$output"
+        }
+    }
+
+    @Test
     fun `index referencing nonexistent field fails at codegen time`() {
         val schema = object : EntSchema() {
             override fun fields() = fields {

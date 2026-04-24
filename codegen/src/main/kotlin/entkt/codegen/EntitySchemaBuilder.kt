@@ -117,7 +117,7 @@ private fun buildEntitySchema(
     val table = tableNameFor(name)
     val columns = columnMetadataFor(schema, schemaNames)
     val schemaIndexes = schema.indexes() + schema.mixins().flatMap { it.indexes() }
-    val colMap = fieldColumnMap(schema)
+    val idxColMap = indexableColumnMap(schema, schemaNames)
 
     return EntitySchema(
         table = table,
@@ -137,7 +137,7 @@ private fun buildEntitySchema(
         edges = buildEdgeMap(schema, schemaNames),
         indexes = schemaIndexes.map { idx ->
             IndexMetadata(
-                columns = idx.fields.map { colMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema") },
+                columns = idx.fields.map { idxColMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema") },
                 unique = idx.unique,
                 storageKey = idx.storageKey,
                 where = idx.where,

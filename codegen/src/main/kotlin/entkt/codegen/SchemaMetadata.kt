@@ -64,6 +64,18 @@ internal fun fieldColumnMap(schema: EntSchema): Map<String, String> {
 }
 
 /**
+ * Like [fieldColumnMap] but also includes synthesized edge FK columns.
+ * Used for index resolution, where indexes may target edge FK columns.
+ */
+internal fun indexableColumnMap(schema: EntSchema, schemaNames: Map<EntSchema, String>): Map<String, String> {
+    val base = fieldColumnMap(schema).toMutableMap()
+    for (fk in computeEdgeFks(schema, schemaNames)) {
+        base[fk.columnName] = fk.columnName
+    }
+    return base
+}
+
+/**
  * One column descriptor as it should appear in the generated
  * `EntitySchema.columns` list. Captured as a plain Kotlin record so
  * codegen can fold it into either the runtime [entkt.runtime.ColumnMetadata]
@@ -416,7 +428,7 @@ internal fun entitySchemaCodeBlock(
     }
 
     val schemaIndexes = schema.indexes() + schema.mixins().flatMap { it.indexes() }
-    val colMap = fieldColumnMap(schema)
+    val idxColMap = indexableColumnMap(schema, schemaNames)
     val indexesLiteral = CodeBlock.builder()
     if (schemaIndexes.isEmpty()) {
         indexesLiteral.add("emptyList()")
@@ -424,7 +436,7 @@ internal fun entitySchemaCodeBlock(
         indexesLiteral.add("listOf(\n")
         for (idx in schemaIndexes) {
             val fieldsLiteral = idx.fields.joinToString(", ") {
-                val col = colMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema")
+                val col = idxColMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema")
                 "\"$col\""
             }
             val cb = CodeBlock.builder()
