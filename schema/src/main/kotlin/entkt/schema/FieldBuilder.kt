@@ -5,8 +5,7 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     private val name: String,
     private val type: FieldType,
 ) {
-    private var optional: Boolean = false
-    private var nillable: Boolean = false
+    private var nullable: Boolean = false
     private var unique: Boolean = false
     private var immutable: Boolean = false
     private var sensitive: Boolean = false
@@ -24,8 +23,8 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
 
     private fun self(): T = this as T
 
-    fun optional(): T = apply { optional = true }.let { self() }
-    fun nillable(): T = apply { nillable = true }.let { self() }
+    fun nullable(): T = apply { nullable = true }.let { self() }
+    fun optional(): T = nullable()
     fun unique(): T = apply { unique = true }.let { self() }
     fun immutable(): T = apply { immutable = true }.let { self() }
     fun sensitive(): T = apply { sensitive = true }.let { self() }
@@ -51,8 +50,7 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
         return Field(
         name = name,
         type = type,
-        optional = optional,
-        nillable = nillable,
+        nullable = nullable,
         unique = unique,
         immutable = immutable,
         sensitive = sensitive,

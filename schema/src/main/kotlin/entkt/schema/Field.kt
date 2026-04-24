@@ -3,8 +3,7 @@ package entkt.schema
 data class Field(
     val name: String,
     val type: FieldType,
-    val optional: Boolean = false,
-    val nillable: Boolean = false,
+    val nullable: Boolean = false,
     val unique: Boolean = false,
     val immutable: Boolean = false,
     val sensitive: Boolean = false,

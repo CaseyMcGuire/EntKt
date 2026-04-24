@@ -73,8 +73,7 @@ These are available on all field types:
 
 | Modifier | Effect |
 |----------|--------|
-| `.optional()` | Field is nullable in the generated code |
-| `.nillable()` | Field distinguishes between null and absent |
+| `.nullable()` | Field is nullable in the generated code |
 | `.unique()` | Adds a unique constraint |
 | `.immutable()` | Omitted from update builder setters |
 | `.sensitive()` | Excluded from string representations |

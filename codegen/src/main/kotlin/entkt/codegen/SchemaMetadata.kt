@@ -108,11 +108,11 @@ internal fun columnMetadataFor(
         for (field in fields) {
             val col = field.columnName
             val edgeRef = explicitFieldEdges[field.name]
-            val fieldNullable = field.optional || field.nillable
+            val fieldNullable = field.nullable
             if (edgeRef?.second == OnDelete.SET_NULL && !fieldNullable) {
                 error(
                     "ON DELETE SET_NULL on edge with .field(\"${field.name}\") requires " +
-                        "the backing field to be optional or nillable",
+                        "the backing field to be nullable",
                 )
             }
             add(

@@ -129,7 +129,7 @@ class EntityGenerator(
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             val col = field.columnName
-            val nullable = field.optional || field.nillable
+            val nullable = field.nullable
             if (field.type == FieldType.ENUM && field.enumClass != null) {
                 val enumType = field.resolvedTypeName()
                 if (nullable) {
@@ -178,10 +178,10 @@ class EntityGenerator(
 
         for (field in fields) {
             val typeName = field.resolvedTypeName().let {
-                if (field.optional || field.nillable) it.copy(nullable = true) else it
+                if (field.nullable) it.copy(nullable = true) else it
             }
             val param = ParameterSpec.builder(toCamelCase(field.name), typeName)
-            if (field.optional || field.nillable) {
+            if (field.nullable) {
                 param.defaultValue("null")
             }
             builder.addParameter(param.build())
@@ -216,7 +216,7 @@ class EntityGenerator(
 
     private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.resolvedTypeName().let {
-            if (field.optional || field.nillable) it.copy(nullable = true) else it
+            if (field.nullable) it.copy(nullable = true) else it
         }
         val propertyName = toCamelCase(field.name)
         val builder = PropertySpec.builder(propertyName, typeName)
@@ -270,7 +270,7 @@ class EntityGenerator(
 
     private fun buildFieldColumnRef(field: Field): PropertySpec {
         val propertyName = toCamelCase(field.name)
-        val nullable = field.optional || field.nillable
+        val nullable = field.nullable
         val columnType = if (field.type == FieldType.ENUM && field.enumClass != null) {
             val enumTypeName = field.resolvedTypeName()
             val cls = if (nullable) ClassName("entkt.query", "NullableEnumColumn")

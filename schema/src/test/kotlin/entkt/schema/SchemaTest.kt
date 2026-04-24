@@ -19,7 +19,7 @@ object TimeMixin : EntMixin {
 
 object SoftDeleteMixin : EntMixin {
     override fun fields() = fields {
-        time("deleted_at").optional().nillable()
+        time("deleted_at").nullable()
     }
 
     override fun indexes() = indexes {
@@ -110,12 +110,12 @@ class SchemaTest {
         val name = fields[0]
         assertEquals("name", name.name)
         assertEquals(FieldType.STRING, name.type)
-        assertFalse(name.optional)
+        assertFalse(name.nullable)
 
         val age = fields[1]
         assertEquals("age", age.name)
         assertEquals(FieldType.INT, age.type)
-        assertTrue(age.optional)
+        assertTrue(age.nullable)
     }
 
     @Test
@@ -236,8 +236,7 @@ class SchemaTest {
         val softDeleteFields = mixins[1].fields()
         assertEquals(1, softDeleteFields.size)
         assertEquals("deleted_at", softDeleteFields[0].name)
-        assertTrue(softDeleteFields[0].optional)
-        assertTrue(softDeleteFields[0].nillable)
+        assertTrue(softDeleteFields[0].nullable)
     }
 
     @Test

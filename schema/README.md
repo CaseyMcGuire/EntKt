@@ -15,7 +15,7 @@ Stored as strings in the database.
 
 ## Field modifiers
 
-`.optional()`, `.nillable()`, `.unique()`, `.immutable()`,
+`.nullable()`, `.unique()`, `.immutable()`,
 `.sensitive()`, `.comment(...)`, `.storageKey(...)`, `.default(...)`.
 Time fields also support `.updateDefaultNow()` (emit `Instant.now()` on every update).
 

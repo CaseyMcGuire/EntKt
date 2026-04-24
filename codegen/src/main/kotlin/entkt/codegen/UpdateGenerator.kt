@@ -233,7 +233,7 @@ class UpdateGenerator(
         // error instead of letting it NPE during candidate construction.
         for (field in allFields) {
             if (field.immutable) continue
-            if (field.optional || field.nillable) continue
+            if (field.nullable) continue
             val prop = toCamelCase(field.name)
             builder.addStatement(
                 "if (%L == null) throw IllegalStateException(%S)",

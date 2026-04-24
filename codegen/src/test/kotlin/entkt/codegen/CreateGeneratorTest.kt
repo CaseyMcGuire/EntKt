@@ -322,4 +322,21 @@ class CreateGeneratorTest {
             "Row map should NOT use field name when storageKey is set\n$output"
         }
     }
+
+    @Test
+    fun `nullable field with default uses the default when omitted`() {
+        val schema = object : EntSchema() {
+            override fun fields() = fields {
+                string("nickname").nullable().default("anonymous")
+            }
+        }
+        val output = generator.generate("NullableDefault", schema).toString()
+
+        assert(output.contains("""this.nickname ?: "anonymous"""")) {
+            "Should coalesce nullable field to default\n$output"
+        }
+        assert(!output.contains(""""nickname is required"""")) {
+            "Should not validate nullable field as required\n$output"
+        }
+    }
 }

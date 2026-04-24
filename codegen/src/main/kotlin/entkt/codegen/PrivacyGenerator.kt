@@ -204,7 +204,7 @@ class PrivacyGenerator(
 
         for (field in fields) {
             val propName = toCamelCase(field.name)
-            val typeName = field.resolvedTypeName().copy(nullable = field.optional || field.nillable)
+            val typeName = field.resolvedTypeName().copy(nullable = field.nullable)
             ctor.addParameter(propName, typeName)
             props.add(PropertySpec.builder(propName, typeName).initializer(propName).build())
         }

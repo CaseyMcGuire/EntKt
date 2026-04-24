@@ -217,8 +217,7 @@ class CreateGenerator(
         // ---- Validate and bind each property to a local. ----
         for (field in allFields) {
             val prop = toCamelCase(field.name)
-            val required = !field.optional && !field.nillable && field.default == null
-            val hasDefault = !field.optional && !field.nillable && field.default != null
+            val required = !field.nullable && field.default == null
             when {
                 required -> builder.addStatement(
                     "val %L = this.%L ?: throw IllegalStateException(%S)",
@@ -226,7 +225,7 @@ class CreateGenerator(
                     prop,
                     "${field.name} is required",
                 )
-                hasDefault -> builder.addStatement(
+                field.default != null -> builder.addStatement(
                     "val %L = this.%L ?: %L",
                     prop,
                     prop,
@@ -240,7 +239,7 @@ class CreateGenerator(
         for (field in allFields) {
             if (field.validators.isEmpty()) continue
             val prop = toCamelCase(field.name)
-            val nullable = field.optional || field.nillable
+            val nullable = field.nullable
             emitFieldValidation(builder, prop, field.name, field.validators, nullable)
         }
 
@@ -271,7 +270,7 @@ class CreateGenerator(
             val prop = toCamelCase(field.name)
             val col = field.columnName
             if (field.type == FieldType.ENUM && field.enumClass != null) {
-                val nullable = field.optional || field.nillable
+                val nullable = field.nullable
                 if (nullable) {
                     rowBuilder.add("  %S to %L?.name,\n", col, prop)
                 } else {
