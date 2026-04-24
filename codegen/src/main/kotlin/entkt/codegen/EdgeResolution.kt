@@ -22,9 +22,9 @@ import entkt.schema.EntSchema
  *    target back to [source], use that one. Multiple back-edges with no
  *    `.ref(...)` are ambiguous and yield no inverse.
  *
- * Returns null if no inverse can be resolved — in which case codegen
- * skips emitting a traversal method for that edge. Users can opt back
- * in by adding `.ref(...)` on the from-side declaration.
+ * Throws if an explicit `.ref(...)` doesn't match any edge on the target.
+ * Returns null if no inverse can be resolved via rules 2–3 — in which
+ * case codegen skips emitting a traversal method for that edge.
  */
 internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     val targetEdges = edge.target.edges()
@@ -32,11 +32,23 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     // Rule 1: this edge has a ref, look up by name on the target.
     edge.ref?.let { refName ->
         return targetEdges.firstOrNull { it.name == refName && it.target === source }
+            ?: error(
+                "Edge '${edge.name}' declares .ref(\"$refName\") but no edge named " +
+                    "'$refName' pointing back at the source schema was found on the target"
+            )
     }
 
     // Rule 2: target has an edge whose ref names us.
-    targetEdges.firstOrNull { it.target === source && it.ref == edge.name }
-        ?.let { return it }
+    val refMatches = targetEdges.filter { it.target === source && it.ref == edge.name }
+    if (refMatches.size > 1) {
+        val names = refMatches.joinToString(", ") { "'${it.name}'" }
+        error(
+            "Edge '${edge.name}' has ${refMatches.size} inverse edges ($names) that " +
+                "declare .ref(\"${edge.name}\") — this is ambiguous. Use distinct .ref() " +
+                "values or remove duplicates"
+        )
+    }
+    refMatches.singleOrNull()?.let { return it }
 
     // Rule 3: single unambiguous back-edge.
     val backEdges = targetEdges.filter { it.target === source }

@@ -384,6 +384,54 @@ class EdgeCodegenTest {
         }
     }
 
+    @Test
+    fun `bad ref value fails at codegen time`() {
+        val parent = object : EntSchema() {
+            override fun fields() = fields { string("name") }
+        }
+        val child = object : EntSchema() {
+            override fun fields() = fields { string("name") }
+            override fun edges() = edges {
+                from("parent", parent).ref("typo").unique()
+            }
+        }
+        val names = mapOf(parent to "Parent", child to "Child")
+        val error = kotlin.test.assertFailsWith<IllegalStateException> {
+            QueryGenerator("com.example.ent").generate("Child", child, names)
+        }
+        assert(error.message!!.contains("typo")) {
+            "Error should mention the bad ref value\n${error.message}"
+        }
+    }
+
+    @Test
+    fun `ambiguous ref aliases on target fail at codegen time`() {
+        // Use a holder so user and post can reference each other
+        class Schemas {
+            val user: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("name") }
+                override fun edges() = edges {
+                    to("posts", this@Schemas.post)
+                }
+            }
+            val post: EntSchema = object : EntSchema() {
+                override fun fields() = fields { string("title") }
+                override fun edges() = edges {
+                    from("author", this@Schemas.user).ref("posts").unique()
+                    from("editor", this@Schemas.user).ref("posts").unique()
+                }
+            }
+        }
+        val s = Schemas()
+        val names = mapOf(s.user to "User", s.post to "Post")
+        val error = kotlin.test.assertFailsWith<IllegalStateException> {
+            QueryGenerator("com.example.ent").generate("User", s.user, names)
+        }
+        assert(error.message!!.contains("ambiguous")) {
+            "Error should mention ambiguity\n${error.message}"
+        }
+    }
+
     // ---------- M2M edge codegen ----------
 
     @Test
