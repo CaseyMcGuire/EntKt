@@ -359,6 +359,16 @@ class SchemaTest {
     }
 
     @Test
+    fun `duplicate edge names are rejected`() {
+        assertFailsWith<IllegalArgumentException> {
+            edges {
+                to("posts", Car)
+                to("posts", User)
+            }
+        }
+    }
+
+    @Test
     fun `empty index is rejected`() {
         assertFailsWith<IllegalArgumentException> {
             IndexBuilder(emptyList()).build()

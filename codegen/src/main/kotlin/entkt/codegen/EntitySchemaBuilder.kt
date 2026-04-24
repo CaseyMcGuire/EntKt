@@ -179,5 +179,13 @@ private fun buildEdgeMap(
         )
     }
 
-    return (forwardEntries + reverseEntries).toMap()
+    val allEntries = forwardEntries + reverseEntries
+    val map = mutableMapOf<String, EdgeMetadata>()
+    for ((name, meta) in allEntries) {
+        val existing = map.put(name, meta)
+        if (existing != null) {
+            error("Duplicate edge name '$name' — edge names must be unique per entity (including reverse M2M edges)")
+        }
+    }
+    return map
 }
