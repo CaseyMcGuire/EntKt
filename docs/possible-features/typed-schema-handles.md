@@ -407,6 +407,32 @@ Recommendation:
 - only as a short compatibility layer, if needed
 - not as the preferred API
 
+### 5. Should backing-field uniqueness influence relationship cardinality?
+
+This needs to be reconsidered explicitly.
+
+Example:
+
+```kotlin
+val ownerId = long("owner_id").unique()
+val owner = belongsTo(UserSchema).field(ownerId)
+```
+
+There are two coherent interpretations:
+
+- field uniqueness is only a storage / DDL concern
+- field uniqueness should also imply one-to-one relationship semantics
+
+Current design direction in the edge RFC is that relationship
+cardinality should be declared on the edge itself, for example
+`belongsTo(...).unique()`, rather than inferred from the backing field.
+That keeps edge semantics and DDL concerns separate.
+
+But this boundary is subtle, especially when the backing field is the
+only place a unique FK constraint is declared. It should be revisited
+deliberately during implementation rather than emerging accidentally
+from whichever layer validates first.
+
 ## Acceptance Criteria
 
 This RFC is successful when:
