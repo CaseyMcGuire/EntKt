@@ -137,7 +137,7 @@ private fun buildEntitySchema(
         edges = buildEdgeMap(schema, schemaNames),
         indexes = schemaIndexes.map { idx ->
             IndexMetadata(
-                columns = idx.fields.map { colMap[it] ?: it },
+                columns = idx.fields.map { colMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema") },
                 unique = idx.unique,
                 storageKey = idx.storageKey,
                 where = idx.where,

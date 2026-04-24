@@ -403,7 +403,10 @@ internal fun entitySchemaCodeBlock(
     } else {
         indexesLiteral.add("listOf(\n")
         for (idx in schemaIndexes) {
-            val fieldsLiteral = idx.fields.joinToString(", ") { "\"${colMap[it] ?: it}\"" }
+            val fieldsLiteral = idx.fields.joinToString(", ") {
+                val col = colMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema")
+                "\"$col\""
+            }
             val cb = CodeBlock.builder()
                 .add("  %T(columns = listOf($fieldsLiteral), unique = %L", INDEX_METADATA, idx.unique)
             if (idx.storageKey != null) cb.add(", storageKey = %S", idx.storageKey)

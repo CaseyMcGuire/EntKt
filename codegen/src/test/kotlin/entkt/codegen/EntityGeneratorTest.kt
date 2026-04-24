@@ -394,6 +394,24 @@ class EntityGeneratorTest {
     }
 
     @Test
+    fun `index referencing nonexistent field fails at codegen time`() {
+        val schema = object : EntSchema() {
+            override fun fields() = fields {
+                string("name")
+            }
+            override fun indexes() = indexes {
+                index("name", "emial")
+            }
+        }
+        val error = kotlin.test.assertFailsWith<IllegalStateException> {
+            generator.generate("BadIndex", schema)
+        }
+        assert(error.message!!.contains("emial")) {
+            "Error should mention the bad field name\n${error.message}"
+        }
+    }
+
+    @Test
     fun `sensitive field is redacted in generated toString`() {
         val schema = object : EntSchema() {
             override fun fields() = fields {
