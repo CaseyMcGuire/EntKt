@@ -42,7 +42,7 @@ private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
  * Hooks are registered once at construction time and automatically
  * inherited by transactional clients via `copyHooksFrom`.
  */
-class ClientGenerator(
+internal class ClientGenerator(
     private val packageName: String,
 ) {
 

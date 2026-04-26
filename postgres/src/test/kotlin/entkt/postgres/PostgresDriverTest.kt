@@ -553,7 +553,7 @@ class PostgresDriverTest {
             ),
             edges = emptyMap(),
             indexes = listOf(
-                IndexMetadata(columns = listOf("user_id", "group_id"), unique = true),
+                IndexMetadata(columns = listOf("user_id", "group_id"), unique = true, name = "idx_user_group"),
             ),
         )
         val driver = PostgresDriver(dataSource)
@@ -586,7 +586,7 @@ class PostgresDriverTest {
             ),
             edges = emptyMap(),
             indexes = listOf(
-                IndexMetadata(columns = listOf("category", "priority")),
+                IndexMetadata(columns = listOf("category", "priority"), name = "idx_category_priority"),
             ),
         )
         val driver = PostgresDriver(dataSource)

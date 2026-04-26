@@ -1,6 +1,14 @@
 package entkt.codegen
 
+import entkt.schema.EntId
+import entkt.schema.EntSchema
+import kotlin.reflect.KClass
 import kotlin.test.Test
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+}
 
 class PrivacyGeneratorTest {
 
@@ -8,7 +16,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates rule typealiases for all four operations`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<UserLoadPrivacyContext>")) {
             "Should generate load rule typealias\n$output"
@@ -26,7 +36,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates load context with privacy, client, and entity`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserLoadPrivacyContext")) {
             "Should generate load context\n$output"
@@ -44,7 +56,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates create context with privacy, client, and candidate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserCreatePrivacyContext")) {
             "Should generate create context\n$output"
@@ -56,7 +70,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates update context with privacy, client, before entity, and candidate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserUpdatePrivacyContext")) {
             "Should generate update context\n$output"
@@ -68,7 +84,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates delete context with privacy, client, entity, and candidate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserDeletePrivacyContext")) {
             "Should generate delete context\n$output"
@@ -77,7 +95,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates WriteCandidate with all schema fields except id`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserWriteCandidate")) {
             "Should generate WriteCandidate\n$output"
@@ -98,7 +118,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates PrivacyConfig with mutable rule lists and derivation flags`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserPrivacyConfig")) {
             "Should generate PrivacyConfig\n$output"
@@ -116,7 +138,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates PrivacyScope with DSL methods for each operation`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserPrivacyScope")) {
             "Should generate PrivacyScope\n$output"
@@ -137,7 +161,10 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `id-only schema emits constructible WriteCandidate class`() {
-        val idOnly = object : entkt.schema.EntSchema() {}
+        val idOnly = object : EntSchema("empties") {
+            override fun id() = EntId.int()
+        }
+        finalize(idOnly)
         val output = generator.generate("Empty", idOnly).toString()
 
         assert(output.contains("class EmptyWriteCandidate")) {
@@ -153,7 +180,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates PolicyScope with privacy block`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserPolicyScope")) {
             "Should generate PolicyScope\n$output"
@@ -165,7 +194,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `generates PolicyScope with validation block`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("fun validation(block: UserValidationScope.() -> Unit)")) {
             "Should have validation DSL method\n$output"
@@ -174,7 +205,9 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `PolicyScope constructor takes both privacy and validation config`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("privacyConfig: UserPrivacyConfig")) {
             "PolicyScope should take privacyConfig\n$output"

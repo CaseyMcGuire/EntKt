@@ -3,11 +3,9 @@ package entkt.schema
 /**
  * Referential action applied when a referenced row is deleted.
  *
- * Used on edge declarations to control the FK `ON DELETE` clause:
+ * Used on `belongsTo` edge declarations to control the FK `ON DELETE` clause:
  * ```kotlin
- * override fun edges() = edges {
- *     belongsTo("owner", Owner).required().onDelete(OnDelete.CASCADE)
- * }
+ * val owner = belongsTo<Owner>("owner").required().onDelete(OnDelete.CASCADE)
  * ```
  */
 enum class OnDelete {

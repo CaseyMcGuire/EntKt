@@ -64,14 +64,14 @@ A typical project structure:
 
 ```
 my-project/
-  schema/                # EntSchema objects + entkt:schema dependency
+  schema/                # EntSchema classes + entkt:schema dependency
   app/                   # applies id("entkt"), schemas(project(":schema"))
 ```
 
 The plugin registers two tasks:
 
 - **`generateEntkt`** — Scans the `schemas` classpath for `EntSchema`
-  objects, generates entity classes into `build/generated/entkt/`, adds
+  classes, generates entity classes into `build/generated/entkt/`, adds
   them to the `main` source set, and runs automatically before
   `compileKotlin`.
 - **`generateMigrationFile`** — Diffs schemas against the stored snapshot
@@ -82,7 +82,7 @@ The plugin registers two tasks:
 You can also invoke codegen directly via the CLI entry point
 (`entkt.codegen.GenerateMainKt`). See `:example-demo`'s `build.gradle.kts`
 for this approach — it registers a `JavaExec` task that scans the classpath
-for `EntSchema` objects:
+for `EntSchema` classes:
 
 ```kotlin
 val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
@@ -94,20 +94,18 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
 
 ## Defining Your First Schema
 
-Create a Kotlin object that extends `EntSchema`:
+Create a Kotlin class that extends `EntSchema`:
 
 ```kotlin
 import entkt.schema.*
 
-object User : EntSchema() {
+class User : EntSchema("users") {
     override fun id() = EntId.uuid()
 
-    override fun fields() = fields {
-        string("name").minLen(1).maxLen(64)
-        string("email").unique()
-        int("age").optional().min(0).max(150)
-        bool("active").default(true)
-    }
+    val name = string("name").minLen(1).maxLen(64)
+    val email = string("email").unique()
+    val age = int("age").optional().min(0).max(150)
+    val active = bool("active").default(true)
 }
 ```
 

@@ -15,19 +15,18 @@ import entkt.schema.EntSchema
  *
  * Resolution rules:
  *
- * 1. If [edge] declares `.ref(name)`, the inverse is the edge on the
- *    target whose own name is `name` and is a valid inverse kind.
+ * 1. If [edge] has an inverse name (set via `.inverse(...)` on the
+ *    belongsTo side), the inverse is the edge on the target whose own
+ *    name matches and is a valid inverse kind.
  * 2. Otherwise, look at the target's edges for one that points back at
- *    [source] and whose `.ref(...)` names [edge].
- * 3. As a last-resort fallback when there's exactly one valid-kind edge
- *    from the target back to [source], use that one.
+ *    [source] and whose `.inverse(...)` names [edge].
  *
  * Returns null if no inverse can be resolved. Callers decide whether
  * that is an error: `HasMany` and `HasOne` require an inverse and
  * should throw; `BelongsTo` can function without one.
  *
- * Throws if an explicit `.ref(...)` doesn't match any edge on the
- * target, or if multiple edges claim the same `.ref()` name.
+ * Throws if an explicit `.inverse(...)` doesn't match any edge on the
+ * target, or if multiple edges claim the same inverse name.
  */
 internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     val targetEdges = edge.target.edges()
@@ -48,7 +47,7 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     edge.ref?.let { refName ->
         return targetEdges.firstOrNull { it.name == refName && it.target === source && isValidInverse(it) }
             ?: error(
-                "Edge '${edge.name}' declares .ref(\"$refName\") but no edge named " +
+                "Edge '${edge.name}' declares .inverse(\"$refName\") but no edge named " +
                     "'$refName' pointing back at the source schema was found on the target"
             )
     }
@@ -59,13 +58,9 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
         val names = refMatches.joinToString(", ") { "'${it.name}'" }
         error(
             "Edge '${edge.name}' has ${refMatches.size} inverse edges ($names) that " +
-                "declare .ref(\"${edge.name}\") — this is ambiguous. Use distinct .ref() " +
-                "values or remove duplicates"
+                "declare .inverse(\"${edge.name}\") — this is ambiguous. Use distinct " +
+                ".inverse() values or remove duplicates"
         )
     }
-    refMatches.singleOrNull()?.let { return it }
-
-    // Rule 3: single unambiguous back-edge of valid kind.
-    val backEdges = targetEdges.filter { it.target === source && isValidInverse(it) }
-    return backEdges.singleOrNull()
+    return refMatches.singleOrNull()
 }

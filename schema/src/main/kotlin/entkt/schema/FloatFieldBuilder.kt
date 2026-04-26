@@ -1,6 +1,6 @@
 package entkt.schema
 
-class FloatFieldBuilder(name: String) : FieldBuilder<FloatFieldBuilder>(name, FieldType.FLOAT) {
+class FloatFieldBuilder internal constructor(name: String) : FieldBuilder<FloatFieldBuilder, Float>(name, FieldType.FLOAT) {
     fun min(min: Number): FloatFieldBuilder = validate(Validators.min(min))
     fun max(max: Number): FloatFieldBuilder = validate(Validators.max(max))
     fun positive(): FloatFieldBuilder = validate(Validators.positive())

@@ -1,19 +1,32 @@
 package entkt.codegen
 
+import entkt.schema.EntSchema
+import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+}
 
 class ClientGeneratorTest {
 
     private val generator = ClientGenerator("com.example.ent")
 
-    private val schemas = listOf(
-        SchemaInput("Car", Car),
-        SchemaInput("User", User),
-    )
+    private fun buildSchemas(): List<SchemaInput> {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        return listOf(
+            SchemaInput("Car", car),
+            SchemaInput("User", user),
+        )
+    }
 
     @Test
     fun `generates EntClient class`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("class EntClient")) { "Should generate EntClient\n$output" }
@@ -21,6 +34,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient takes a Driver and optional config in its constructor`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("import entkt.runtime.Driver")) { "Should import Driver\n$output" }
@@ -32,6 +46,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient exposes a repo property per schema`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("val cars: CarRepo = CarRepo(driver)")) {
@@ -44,6 +59,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient init block sets client on repos and applies hooks`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("cars.client = this")) {
@@ -65,6 +81,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient is emitted in the configured package`() {
+        val schemas = buildSchemas()
         val file = generator.generate(schemas)
 
         assertEquals("com.example.ent", file.packageName)
@@ -73,6 +90,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient emits withTransaction that creates a transactional client`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("fun <T> withTransaction(block: (EntClient) -> T): T")) {
@@ -85,6 +103,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `withTransaction copies hooks from original repos to transactional repos`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("tx.cars.copyHooksFrom(this.cars)")) {
@@ -97,6 +116,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `generates per-entity hooks DSL class`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("class CarHooks")) { "Should generate CarHooks\n$output" }
@@ -105,6 +125,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `entity hooks class has DSL methods for each lifecycle phase`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("fun beforeSave(hook: (CarMutation) -> Unit)")) {
@@ -132,6 +153,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `generates EntClientHooks with per-entity methods`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("class EntClientHooks")) {
@@ -147,6 +169,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `generates EntClientConfig with hooks method`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("class EntClientConfig")) {
@@ -159,6 +182,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `hooks DSL classes are annotated with EntktDsl`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         // Check that @EntktDsl appears before each hooks class
@@ -171,6 +195,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `generates EntClientPolicies with per-entity registration`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("class EntClientPolicies")) {
@@ -186,6 +211,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClientConfig has policies method`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("fun policies(block: EntClientPolicies.() -> Unit)")) {
@@ -195,6 +221,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClientConfig has privacyContext method`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("fun privacyContext(provider: () -> PrivacyContext)")) {
@@ -204,6 +231,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient has withPrivacyContext method`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("fun <T> withPrivacyContext(context: PrivacyContext, block: (EntClient) -> T): T")) {
@@ -213,6 +241,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `EntClient has internal withFixedPrivacyContextForInternalUse method`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("internal fun withFixedPrivacyContextForInternalUse(context: PrivacyContext): EntClient")) {
@@ -222,6 +251,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `withTransaction copies privacy context, privacy config, and validation config`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("tx.privacyContextProvider = this.privacyContextProvider")) {
@@ -243,6 +273,7 @@ class ClientGeneratorTest {
 
     @Test
     fun `init block applies policies from config`() {
+        val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("cars.applyPrivacy(cfg.policiesConfig.carsPrivacyConfig)")) {

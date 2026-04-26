@@ -18,14 +18,6 @@ internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
 
 /**
- * Convert a generated entity name (`User`, `Post`, `Tag`) to its SQL
- * table name. This mirrors the ClientGenerator's repo property naming
- * so that `client.users` and `User.TABLE` agree.
- */
-internal fun tableNameFor(schemaName: String): String =
-    pluralize(schemaName.replaceFirstChar { it.lowercase() })
-
-/**
  * The [IdStrategy] enum variant that matches this schema's id declaration.
  * UUIDs are minted by the generated `save()`; numeric ids with
  * `autoIncrement` are assigned by the driver; everything else forces the
@@ -43,18 +35,17 @@ internal fun idStrategyName(schema: EntSchema): String {
 
 /**
  * Build a map from schema field name to physical column name for all
- * fields in [schema] (including mixin fields). Used to resolve
- * `.field("name")` edge references and index columns to their actual
- * database column names when `storageKey` is set.
+ * fields in [schema]. Used to resolve `.field(...)` edge references and
+ * index columns to their actual database column names.
  */
 internal fun fieldColumnMap(schema: EntSchema): Map<String, String> {
-    val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
+    val fields = schema.fields()
     val map = mutableMapOf<String, String>()
     val columnToField = mutableMapOf<String, String>()
     for (field in fields) {
         val existing = map.put(field.name, field.columnName)
         if (existing != null) {
-            error("Duplicate field name '${field.name}' — field names must be unique across schema fields and mixin fields")
+            error("Duplicate field name '${field.name}' — field names must be unique per schema")
         }
         val previousField = columnToField.put(field.columnName, field.name)
         if (previousField != null) {
@@ -98,8 +89,8 @@ internal data class ColumnDescriptor(
 
 /**
  * Every column backing the entity, in declaration order: `id` first,
- * then declared and mixin fields, then any synthesized edge FKs. Used
- * to build the `columns` list on the generated [entkt.runtime.EntitySchema]
+ * then declared fields, then any synthesized edge FKs. Used to build
+ * the `columns` list on the generated [entkt.runtime.EntitySchema]
  * constant so SQL drivers can enumerate them — type and all — without
  * reflection.
  */
@@ -107,34 +98,41 @@ internal fun columnMetadataFor(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): List<ColumnDescriptor> {
-    val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
+    val fields = schema.fields()
     val edgeFks = computeEdgeFks(schema, schemaNames)
 
-    // Edges with .field("col_name") re-use a declared field as their FK
+    // Edges with .field(handle) re-use a declared field as their FK
     // column. Build a lookup so the declared field picks up the FK
     // reference, onDelete action, and unique constraint from the edge.
     val fieldsByName = fields.associateBy { it.name }
-    val explicitFieldEdges = schema.edges()
-        .filter { it.kind is EdgeKind.BelongsTo && (it.kind as EdgeKind.BelongsTo).field != null }
-        .mapNotNull { edge ->
-            val belongsTo = edge.kind as EdgeKind.BelongsTo
-            val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            val f = belongsTo.field!!
-            val backingField = fieldsByName[f]
-                ?: error(
-                    "Edge '${edge.name}' references .field(\"$f\") but no field " +
-                        "with that name exists on the schema",
-                )
-            val targetIdType = edge.target.id().type
-            if (backingField.type != targetIdType) {
-                error(
-                    "Edge '${edge.name}' references .field(\"$f\") of type " +
-                        "${backingField.type} but target entity's id type is $targetIdType",
-                )
-            }
-            f to ExplicitFieldEdge(tableNameFor(targetName), belongsTo.onDelete, belongsTo.unique)
+    val explicitFieldEdges = mutableMapOf<String, ExplicitFieldEdge>()
+    for (edge in schema.edges()) {
+        if (edge.kind !is EdgeKind.BelongsTo) continue
+        val belongsTo = edge.kind as EdgeKind.BelongsTo
+        val f = belongsTo.field ?: continue
+        val backingField = fieldsByName[f]
+            ?: error(
+                "Edge '${edge.name}' references .field(\"$f\") but no field " +
+                    "with that name exists on the schema",
+            )
+        val targetIdType = edge.target.id().type
+        if (backingField.type != targetIdType) {
+            error(
+                "Edge '${edge.name}' references .field(\"$f\") of type " +
+                    "${backingField.type} but target entity's id type is $targetIdType",
+            )
         }
-        .toMap()
+        val existing = explicitFieldEdges.put(
+            f,
+            ExplicitFieldEdge(edge.name, edge.target.tableName, belongsTo.onDelete, belongsTo.required, belongsTo.unique),
+        )
+        if (existing != null) {
+            error(
+                "Field '$f' is used as the backing field for both edge '${existing.edgeName}' " +
+                    "and edge '${edge.name}' — each backing field can only be used by one edge",
+            )
+        }
+    }
 
     return buildList {
         add(
@@ -149,11 +147,26 @@ internal fun columnMetadataFor(
             val col = field.columnName
             val edgeRef = explicitFieldEdges[field.name]
             val fieldNullable = field.nullable
-            if (edgeRef?.onDelete == OnDelete.SET_NULL && !fieldNullable) {
-                error(
-                    "ON DELETE SET_NULL on edge with .field(\"${field.name}\") requires " +
-                        "the backing field to be nullable",
-                )
+            if (edgeRef != null) {
+                if (edgeRef.required && fieldNullable) {
+                    error(
+                        "Edge '${edgeRef.edgeName}' is required() but .field(\"${field.name}\") " +
+                            "is nullable — a required edge needs a non-nullable backing field",
+                    )
+                }
+                if (field.unique && !edgeRef.unique) {
+                    error(
+                        "Edge '${edgeRef.edgeName}' is not .unique() but .field(\"${field.name}\") " +
+                            "has a unique constraint — add .unique() to the edge or remove " +
+                            ".unique() from the field",
+                    )
+                }
+                if (edgeRef.onDelete == OnDelete.SET_NULL && !fieldNullable) {
+                    error(
+                        "ON DELETE SET_NULL on edge with .field(\"${field.name}\") requires " +
+                            "the backing field to be nullable",
+                    )
+                }
             }
             add(
                 ColumnDescriptor(
@@ -168,14 +181,13 @@ internal fun columnMetadataFor(
             )
         }
         for (fk in edgeFks) {
-            val targetTable = tableNameFor(fk.targetName)
             add(
                 ColumnDescriptor(
                     name = fk.columnName,
                     type = fk.idType,
                     nullable = !fk.required,
                     unique = fk.unique,
-                    references = targetTable to "id",
+                    references = fk.targetTable to "id",
                     onDelete = fk.onDelete,
                 ),
             )
@@ -192,13 +204,15 @@ internal fun columnMetadataFor(
 }
 
 /**
- * Info carried from a `belongsTo(...).field("col")` edge to the backing
+ * Info carried from a `belongsTo(...).field(handle)` edge to the backing
  * field's [ColumnDescriptor]. Captures the FK reference, ON DELETE action,
  * and whether the edge declared `.unique()`.
  */
 private data class ExplicitFieldEdge(
+    val edgeName: String,
     val targetTable: String,
     val onDelete: OnDelete?,
+    val required: Boolean,
     val unique: Boolean,
 )
 
@@ -218,8 +232,8 @@ internal data class EdgeJoin(
 
 /**
  * Look up a field by schema name on [schema], verify it exists, and
- * return its physical column name (respecting storageKey). Used by
- * edge join resolution so a typo in `.field("...")` fails early.
+ * return its physical column name. Used by
+ * edge join resolution so a typo in `.field(...)` fails early.
  */
 private fun resolveExplicitField(fieldName: String, schema: EntSchema, edgeName: String): String {
     val colMap = fieldColumnMap(schema)
@@ -314,7 +328,7 @@ internal fun resolveM2MEdgeJoin(
     val through = m2m.through
     val junctionSchema = through.target
     val junctionName = schemaNames[junctionSchema] ?: return null
-    val junctionTable = tableNameFor(junctionName)
+    val junctionTable = junctionSchema.tableName
 
     val junctionEdges = junctionSchema.edges()
 
@@ -415,7 +429,7 @@ internal fun entitySchemaCodeBlock(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): CodeBlock {
-    val table = tableNameFor(schemaName)
+    val table = schema.tableName
     val columns = columnMetadataFor(schema, schemaNames)
     val columnsLiteral = CodeBlock.builder()
         .add("listOf(\n")
@@ -448,16 +462,21 @@ internal fun entitySchemaCodeBlock(
     val edgesLiteral = CodeBlock.builder()
     val forwardEntries = schema.edges()
         .mapNotNull { edge ->
-            val targetName = schemaNames[edge.target] ?: return@mapNotNull null
             val join = if (edge.kind is EdgeKind.ManyToMany) {
                 resolveM2MEdgeJoin(edge, schema, schemaNames)
             } else {
                 resolveEdgeJoin(edge, schema)
             } ?: return@mapNotNull null
-            EdgeEntry(edge.name, tableNameFor(targetName), join, edge.comment)
+            EdgeEntry(edge.name, edge.target.tableName, join, edge.comment)
         }
     val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames)
     val edgeEntries = forwardEntries + reverseEntries
+    val seenEdges = mutableSetOf<String>()
+    for (entry in edgeEntries) {
+        require(seenEdges.add(entry.name)) {
+            "Duplicate edge name '${entry.name}' — edge names must be unique per entity (including reverse M2M edges)"
+        }
+    }
 
     if (edgeEntries.isEmpty()) {
         edgesLiteral.add("emptyMap()")
@@ -482,7 +501,7 @@ internal fun entitySchemaCodeBlock(
         edgesLiteral.add(")")
     }
 
-    val schemaIndexes = schema.indexes() + schema.mixins().flatMap { it.indexes() }
+    val schemaIndexes = schema.indexes()
     val idxColMap = indexableColumnMap(schema, schemaNames)
     val indexesLiteral = CodeBlock.builder()
     if (schemaIndexes.isEmpty()) {
@@ -495,8 +514,7 @@ internal fun entitySchemaCodeBlock(
                 "\"$col\""
             }
             val cb = CodeBlock.builder()
-                .add("  %T(columns = listOf($fieldsLiteral), unique = %L", INDEX_METADATA, idx.unique)
-            if (idx.storageKey != null) cb.add(", storageKey = %S", idx.storageKey)
+                .add("  %T(columns = listOf($fieldsLiteral), unique = %L, name = %S", INDEX_METADATA, idx.unique, idx.name)
             if (idx.where != null) cb.add(", where = %S", idx.where)
             cb.add("),\n")
             indexesLiteral.add(cb.build())
@@ -522,10 +540,6 @@ internal fun entitySchemaCodeBlock(
  * `HasEdgeWith` predicates from the target side. Each reverse entry
  * swaps the junction's source and target FK columns so the join walks
  * from [schema] back through the junction to the declaring schema.
- *
- * The reverse edge name is the declaring schema's table name — e.g. for
- * `Group.to("users", User).through(...)`, User gets a reverse edge
- * named `"groups"`.
  */
 internal data class EdgeEntry(
     val name: String,
@@ -538,7 +552,7 @@ internal fun reverseM2MEdgeEntries(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): List<EdgeEntry> {
-    return schemaNames.flatMap { (otherSchema, otherName) ->
+    return schemaNames.flatMap { (otherSchema, _) ->
         otherSchema.edges()
             .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
             .mapNotNull { edge ->
@@ -551,8 +565,8 @@ internal fun reverseM2MEdgeEntries(
                     junctionSourceColumn = forwardJoin.junctionTargetColumn,
                     junctionTargetColumn = forwardJoin.junctionSourceColumn,
                 )
-                val reverseName = reverseM2MEdgeName(otherName, edge.name)
-                val targetTable = tableNameFor(otherName)
+                val reverseName = reverseM2MEdgeName(otherSchema, edge.name)
+                val targetTable = otherSchema.tableName
                 EdgeEntry(reverseName, targetTable, reverseJoin)
             }
     }
@@ -564,5 +578,5 @@ internal fun reverseM2MEdgeEntries(
  * that multiple M2M edges from the same source to the same target each
  * get their own unique reverse entry.
  */
-internal fun reverseM2MEdgeName(sourceName: String, forwardEdgeName: String): String =
-    "${tableNameFor(sourceName)}_$forwardEdgeName"
+internal fun reverseM2MEdgeName(sourceSchema: EntSchema, forwardEdgeName: String): String =
+    "${sourceSchema.tableName}_$forwardEdgeName"

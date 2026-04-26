@@ -16,7 +16,7 @@ interface TypeMapper {
 
     /**
      * Normalize an identifier to the database's limits (e.g. Postgres
-     * truncates to 63 bytes). Called on storageKey/constraintName values
+     * truncates to 63 bytes). Called on name/constraintName values
      * during schema normalization so the desired schema matches what the
      * database actually stores. Default: identity (no limit).
      */

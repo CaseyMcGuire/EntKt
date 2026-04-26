@@ -21,7 +21,7 @@ private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 
 
-class UpdateGenerator(
+internal class UpdateGenerator(
     private val packageName: String,
 ) {
 
@@ -31,9 +31,7 @@ class UpdateGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val className = "${schemaName}Update"
-        val fields = schema.fields()
-        val mixinFields = schema.mixins().flatMap { it.fields() }
-        val allFields = fields + mixinFields
+        val allFields = schema.fields()
         val mutableFields = allFields.filter { !it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
 

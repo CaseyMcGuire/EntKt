@@ -27,7 +27,7 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
  * - `{Entity}{Op}PrivacyContext` — context classes for each operation
  * - `{Entity}{Op}PrivacyRule` — typealiases for each operation's rule type
  */
-class PrivacyGenerator(
+internal class PrivacyGenerator(
     private val packageName: String,
 ) {
 
@@ -43,7 +43,7 @@ class PrivacyGenerator(
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
 
-        val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        val fields = schema.fields()
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val fileBuilder = FileSpec.builder(packageName, "${schemaName}Privacy")

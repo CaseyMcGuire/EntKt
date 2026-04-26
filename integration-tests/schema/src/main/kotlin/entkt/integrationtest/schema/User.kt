@@ -2,18 +2,12 @@ package entkt.integrationtest.schema
 
 import entkt.schema.EntId
 import entkt.schema.EntSchema
-import entkt.schema.edges
-import entkt.schema.fields
 
-object User : EntSchema() {
+class User : EntSchema("users") {
     override fun id() = EntId.long()
 
-    override fun fields() = fields {
-        string("name")
-        string("email").unique()
-    }
+    val name = string("name")
+    val email = string("email").unique()
 
-    override fun edges() = edges {
-        hasMany("articles", Article)
-    }
+    val articles = hasMany<Article>("articles")
 }

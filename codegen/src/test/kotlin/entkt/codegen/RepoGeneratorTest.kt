@@ -1,9 +1,13 @@
 package entkt.codegen
 
-import entkt.schema.EntId
 import entkt.schema.EntSchema
-import entkt.schema.fields
+import kotlin.reflect.KClass
 import kotlin.test.Test
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+}
 
 class RepoGeneratorTest {
 
@@ -11,14 +15,18 @@ class RepoGeneratorTest {
 
     @Test
     fun `generates repo class`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("class CarRepo")) { "Should generate CarRepo\n$output" }
     }
 
     @Test
     fun `repo takes a Driver in its constructor`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("import entkt.runtime.Driver")) { "Should import Driver\n$output" }
         assert(output.contains("driver: Driver")) { "Should take Driver in constructor\n$output" }
@@ -26,7 +34,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo holds the driver as a private property`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("private val driver: Driver")) {
             "Driver should be a private val\n$output"
@@ -35,7 +45,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo exposes query, create, and update`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun query(block: CarQuery.() -> Unit = {}): CarQuery")) {
             "Should have query with optional DSL block\n$output"
@@ -50,7 +62,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo exposes byId taking the schema id type`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // User has UUID id; the byId param type must match.
         assert(output.contains("fun byId(id: UUID): User?")) {
@@ -60,7 +74,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `byId delegates to the driver and hydrates via fromRow`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("driver.byId(Car.TABLE, id)")) {
             "byId should call driver.byId with the entity's TABLE constant\n$output"
@@ -72,7 +88,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo exposes delete taking the entity and deleteById taking the id`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun delete(entity: Car): Boolean")) {
             "Should have delete(entity)\n$output"
@@ -84,7 +102,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `delete calls hooks around driver delete`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("for (hook in beforeDeleteHooks) hook(entity)")) {
             "delete should call beforeDelete hooks\n$output"
@@ -99,7 +119,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `deleteById fetches entity then delegates to delete`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("driver.byId(Car.TABLE, id)")) {
             "deleteById should fetch entity via driver (bypassing LOAD privacy)\n$output"
@@ -111,7 +133,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `deleteById uses the correct id type for UUID schemas`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("fun deleteById(id: UUID): Boolean")) {
             "deleteById should use UUID for User's id type\n$output"
@@ -120,7 +144,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `create passes client and hook lists to the builder`() {
-        val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("CarCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks)")) {
             "create should pass client and hook lists to CarCreate\n$output"
@@ -129,7 +155,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `update passes client and hook lists to the builder`() {
-        val output = generator.generate("Car", Car).toString().replace("\\s+".toRegex(), " ")
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("CarUpdate(driver, client, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
             "update should pass client and hook lists to CarUpdate\n$output"
@@ -138,7 +166,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has lateinit client property`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("internal lateinit var client: EntClient")) {
             "Should have internal lateinit var client\n$output"
@@ -147,7 +177,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo registers the entity schema in its init block`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("driver.register(Car.SCHEMA)")) {
             "Repo should register Car.SCHEMA with the driver on construction\n$output"
@@ -156,7 +188,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has applyHooks that copies from entity hooks config`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun applyHooks(hooks: CarHooks)")) {
             "Should have applyHooks method taking CarHooks\n$output"
@@ -171,7 +205,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has copyHooksFrom that copies all hook lists`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun copyHooksFrom(other: CarRepo)")) {
             "Should have copyHooksFrom method\n$output"
@@ -186,7 +222,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo does not expose hook registration methods`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(!output.contains("fun onBeforeSave")) {
             "Should not have onBeforeSave — hooks are registered via client config DSL\n$output"
@@ -198,7 +236,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo exposes createMany with vararg blocks`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun createMany(vararg blocks: CarCreate.() -> Unit): List<Car>")) {
             "Should have createMany with vararg blocks\n$output"
@@ -207,7 +247,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `createMany delegates to create and save for hook support`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("create(it).save()")) {
             "createMany should delegate to create(block).save() so hooks fire\n$output"
@@ -216,7 +258,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo exposes deleteMany with vararg predicates`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun deleteMany(vararg predicates: Predicate): Int")) {
             "Should have deleteMany with vararg Predicate\n$output"
@@ -225,7 +269,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `deleteMany queries then deletes through hook path`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("if (delete(entity)) count++")) {
             "deleteMany should delegate to delete(entity) for hook support\n$output"
@@ -234,7 +280,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has privacy config property`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("internal val privacyConfig: CarPrivacyConfig")) {
             "Should have internal privacyConfig property\n$output"
@@ -243,7 +291,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has applyPrivacy and copyPrivacyFrom`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun applyPrivacy(config: CarPrivacyConfig)")) {
             "Should have applyPrivacy method\n$output"
@@ -255,7 +305,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has hasPrivacy methods for all operations`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun hasLoadPrivacy(): Boolean")) {
             "Should have hasLoadPrivacy\n$output"
@@ -273,7 +325,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has evaluate methods for load, create, update, and delete privacy`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun evaluateLoadPrivacy(privacy: PrivacyContext, entity: Car)")) {
             "Should have evaluateLoadPrivacy\n$output"
@@ -291,7 +345,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `byId enforces load privacy`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("val privacy = client.currentPrivacyContext()")) {
             "byId should capture privacy context\n$output"
@@ -303,7 +359,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `delete enforces delete privacy`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("val candidate = buildDeleteCandidate(entity)")) {
             "delete should build delete candidate\n$output"
@@ -315,7 +373,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `deleteMany queries driver directly to bypass load privacy`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("driver.query(Car.TABLE, predicates.toList()")) {
             "deleteMany should query driver directly to bypass LOAD privacy\n$output"
@@ -324,7 +384,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `explicit id create takes id as first parameter`() {
-        val output = generator.generate("Session", Session).toString()
+        val session = Session()
+        finalize(session)
+        val output = generator.generate("Session", session).toString()
 
         assert(output.contains("fun create(id: String, block: SessionCreate.() -> Unit): SessionCreate")) {
             "create() should take id as first parameter for EXPLICIT strategy\n$output"
@@ -333,7 +395,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `explicit id create passes id to constructor`() {
-        val output = generator.generate("Session", Session).toString().replace("\\s+".toRegex(), " ")
+        val session = Session()
+        finalize(session)
+        val output = generator.generate("Session", session).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("SessionCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, id = id)")) {
             "create() should pass id to SessionCreate constructor\n$output"
@@ -342,7 +406,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `explicit id repo does not generate createMany`() {
-        val output = generator.generate("Session", Session).toString()
+        val session = Session()
+        finalize(session)
+        val output = generator.generate("Session", session).toString()
 
         assert(!output.contains("fun createMany")) {
             "Should not generate createMany for EXPLICIT id strategy\n$output"
@@ -351,7 +417,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has validation config property`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("internal val validationConfig: CarValidationConfig")) {
             "Should have internal validationConfig property\n$output"
@@ -360,7 +428,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has applyValidation and copyValidationFrom`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun applyValidation(config: CarValidationConfig)")) {
             "Should have applyValidation method\n$output"
@@ -372,7 +442,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `repo has evaluate methods for create, update, and delete validation`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun evaluateCreateValidation(candidate: CarWriteCandidate)")) {
             "Should have evaluateCreateValidation\n$output"
@@ -387,7 +459,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `delete enforces delete validation after privacy`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("evaluateDeleteValidation(entity, candidate)")) {
             "delete should call evaluateDeleteValidation\n$output"
@@ -396,7 +470,9 @@ class RepoGeneratorTest {
 
     @Test
     fun `evaluateCreateValidation uses system-scoped client`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.System))")) {
             "Validation evaluator should use system-scoped client\n$output"

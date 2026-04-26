@@ -1,6 +1,6 @@
 # :schema
 
-Declarative schema DSL — `EntSchema`, field/edge/index/mixin builders, `FieldType`.
+Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType`.
 
 ## Field types
 
@@ -15,8 +15,8 @@ Stored as strings in the database.
 
 ## Field modifiers
 
-`.nullable()`, `.unique()`, `.immutable()`,
-`.sensitive()`, `.comment(...)`, `.storageKey(...)`, `.default(value)` (type-safe per field type).
+`.optional()`, `.unique()`, `.immutable()`,
+`.sensitive()`, `.comment(...)`, `.default(value)` (type-safe per field type).
 Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
 **Type-specific validators** (enforced as inline checks in generated `save()` methods):
@@ -30,15 +30,16 @@ Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instan
 
 ## Edges
 
-`to(name, target)` (one-to-many), `from(name, target)` (inverse,
-synthesizes FK on source). Modifiers: `.unique()`, `.required()`, `.ref(...)`,
-`.field(...)`, `.through(junctionTable, sourceCol, targetCol)` (many-to-many
-via junction table), `.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.
+`belongsTo<Target>(name)` (FK-owning side), `hasMany<Target>(name)` (one-to-many),
+`hasOne<Target>(name)` (one-to-one), `manyToMany<Target>(name)` (via junction).
+Modifiers: `.inverse(Target::edge)`, `.required()`, `.unique()`,
+`.field(handle)`, `.through<Junction>(Junction::src, Junction::tgt)`,
+`.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.
 
-## Mixins
+## Reusable base classes
 
-Any `EntMixin` contributing `fields()` and `indexes()`.
+Abstract schema classes replace mixins — extend a shared base to inherit fields.
 
 ## Indexes
 
-Field list + `.unique()` + `.storageKey()` + `.where(predicate)` (partial indexes).
+`index("name", field1, field2)` + `.unique()` + `.where(predicate)` (partial indexes).

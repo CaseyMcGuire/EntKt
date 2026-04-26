@@ -5,7 +5,7 @@ import java.nio.file.Path
 
 /**
  * Generic entry point for running entkt codegen. Scans the runtime
- * classpath for EntSchema objects — no hardcoded schema list needed.
+ * classpath for EntSchema classes — no hardcoded schema list needed.
  *
  * Usage from a Gradle JavaExec task:
  * ```kotlin
@@ -27,7 +27,7 @@ fun main(args: Array<String>) {
         .split(File.pathSeparator)
         .map { File(it) }
     val schemas = scanForSchemas(classpath)
-    check(schemas.isNotEmpty()) { "No EntSchema objects found on the classpath" }
+    check(schemas.isNotEmpty()) { "No EntSchema classes found on the classpath" }
 
     outputDir.toFile().deleteRecursively()
     outputDir.toFile().mkdirs()

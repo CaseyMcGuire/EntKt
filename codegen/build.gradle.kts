@@ -23,6 +23,7 @@ dependencies {
     implementation(project(":schema"))
     implementation(project(":runtime"))
     implementation(libs.kotlinpoet)
+    implementation(kotlin("reflect"))
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)

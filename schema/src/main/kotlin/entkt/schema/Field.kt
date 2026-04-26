@@ -12,5 +12,4 @@ data class Field(
     val enumClass: kotlin.reflect.KClass<out Enum<*>>? = null,
     val validators: List<Validator> = emptyList(),
     val comment: String? = null,
-    val storageKey: String? = null,
 )

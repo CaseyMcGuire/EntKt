@@ -1,3 +1,3 @@
 package entkt.schema
 
-class UuidFieldBuilder(name: String) : FieldBuilder<UuidFieldBuilder>(name, FieldType.UUID)
+class UuidFieldBuilder internal constructor(name: String) : FieldBuilder<UuidFieldBuilder, java.util.UUID>(name, FieldType.UUID)

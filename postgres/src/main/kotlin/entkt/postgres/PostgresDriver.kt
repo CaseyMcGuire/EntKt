@@ -494,16 +494,7 @@ class PostgresDriver(
 
         val compositeIndexes = schema.indexes.map { idx ->
             val cols = idx.columns.joinToString(", ") { quote(it) }
-            val rawName = idx.storageKey
-                ?: buildString {
-                    append("idx_${schema.table}")
-                    for (col in idx.columns) append("_$col")
-                    if (idx.unique) append("_unique")
-                    if (idx.where != null) {
-                        append("_w")
-                        append(idx.where.hashCode().toUInt().toString(16).take(8))
-                    }
-                }
+            val rawName = idx.name
             val name = typeMapper.normalizeIdentifier(rawName)
             val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
             val whereSuffix = if (idx.where != null) " WHERE ${idx.where}" else ""

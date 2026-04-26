@@ -7,7 +7,7 @@ query builders, and repositories that talk to a pluggable `Driver`.
 ## Guides
 
 - [Getting Started](getting-started.md) -- setup, first schema, running codegen
-- [Schema](schema.md) -- fields, edges, indexes, mixins, ID strategies
+- [Schema](schema.md) -- fields, edges, indexes, ID strategies
 - [Edges](edges.md) -- how edge types map to tables, columns, and generated code
 - [Queries](queries.md) -- predicates, ordering, pagination, edge traversal, eager loading
 - [Hooks](hooks.md) -- lifecycle hooks for create, update, and delete

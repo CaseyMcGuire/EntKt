@@ -1,14 +1,19 @@
 package entkt.codegen
 
+import entkt.schema.EntId
 import entkt.schema.EntSchema
-import entkt.schema.fields
+import kotlin.reflect.KClass
 import kotlin.test.Test
 
-private object UpdateDefaultEntity : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-        time("updated_at").updateDefaultNow()
-    }
+private class UpdateDefaultEntity : EntSchema("update_default_entities") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val updatedAt = time("updated_at").updateDefaultNow()
+}
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
 }
 
 class UpdateGeneratorTest {
@@ -17,7 +22,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `generates update builder with mutable properties for mutable fields`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserUpdate")) { "Should generate UserUpdate class\n$output" }
         assert(output.contains("var name: String?")) { "Should have name var\n$output" }
@@ -26,28 +33,36 @@ class UpdateGeneratorTest {
 
     @Test
     fun `update builder is annotated as DSL scope`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("@EntktDsl")) { "Should be annotated @EntktDsl\n$output" }
     }
 
     @Test
     fun `excludes immutable fields from mutable properties`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("var createdAt")) { "Should not have mutable createdAt\n$output" }
     }
 
     @Test
     fun `save preserves immutable fields from entity`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("createdAt = entity.createdAt")) { "Should preserve immutable createdAt\n$output" }
     }
 
     @Test
     fun `save uses dirty tracking to distinguish unset from explicit null`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("if (\"name\" in dirtyFields) this.name else entity.name")) {
             "Should check dirtyFields for fallback\n$output"
@@ -56,7 +71,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `update builder has dirtyFields set`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("dirtyFields: MutableSet<String> = mutableSetOf()")) {
             "Should have dirtyFields set\n$output"
@@ -65,7 +82,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `mutable property setter tracks dirty state`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("dirtyFields.add(\"name\")")) {
             "Setting name should add to dirtyFields\n$output"
@@ -74,14 +93,18 @@ class UpdateGeneratorTest {
 
     @Test
     fun `takes entity in constructor`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("entity: User")) { "Should take entity parameter\n$output" }
     }
 
     @Test
     fun `implements the mutation interface`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("UserUpdate") && output.contains("UserMutation")) {
             "Should implement UserMutation interface\n$output"
@@ -90,7 +113,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `entity is public for hook access`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // entity should NOT be private — hooks need to inspect current state
         assert(!output.contains("private val entity")) {
@@ -103,7 +128,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `constructor takes client and hook list parameters`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("client: EntClient")) {
             "Should take client\n$output"
@@ -121,7 +148,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `exposes client as public property`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("val client: EntClient")) {
             "Should expose client as public property\n$output"
@@ -133,7 +162,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `save calls before hooks before fallback`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         val hookCall = output.indexOf("beforeSaveHooks")
         val fallback = output.indexOf("in dirtyFields")
@@ -144,7 +175,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `save calls after hooks after update`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("for (hook in afterUpdateHooks) hook(updatedEntity)")) {
             "Should call afterUpdate hooks\n$output"
@@ -153,7 +186,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `save emits validation for mutable validated fields`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         assert(output.contains("name.length < 3")) {
             "Should emit minLen check\n$output"
@@ -168,7 +203,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `save wraps update validation in null check`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         // All update locals are nullable, so validation should be null-guarded
         assert(output.contains("if (name != null)")) {
@@ -181,7 +218,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `save does not validate immutable fields in update`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // createdAt is immutable — should not have validation
         assert(!output.contains("createdAt.length")) {
@@ -191,7 +230,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `typed enum property uses the Kotlin enum type`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("var priority: Priority?")) {
             "Should use the Kotlin enum type on the update property\n$output"
@@ -200,7 +241,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `typed enum save converts to name for the row map`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("\"priority\" to priority?.name")) {
             "Should convert typed enum to ?.name in the row map\n$output"
@@ -209,7 +252,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `validation appears after dirty resolution and before row map`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         val dirtyPos = output.indexOf("in dirtyFields")
         val validationPos = output.indexOf("name.length < 3")
@@ -221,7 +266,9 @@ class UpdateGeneratorTest {
 
     @Test
     fun `updateDefault time field falls back to Instant_now instead of entity value`() {
-        val output = generator.generate("UpdateDefaultEntity", UpdateDefaultEntity).toString()
+        val schema = UpdateDefaultEntity()
+        finalize(schema)
+        val output = generator.generate("UpdateDefaultEntity", schema).toString()
 
         assert(output.contains("Instant.now()")) {
             "Should use Instant.now() as fallback for time updateDefault\n$output"
@@ -233,22 +280,16 @@ class UpdateGeneratorTest {
 
     @Test
     fun `fields without updateDefault still fall back to entity value`() {
-        val output = generator.generate("UpdateDefaultEntity", UpdateDefaultEntity).toString()
+        val schema = UpdateDefaultEntity()
+        finalize(schema)
+        val output = generator.generate("UpdateDefaultEntity", schema).toString()
 
         assert(output.contains("if (\"name\" in dirtyFields) this.name else entity.name")) {
             "Fields without updateDefault should fall back to entity value\n$output"
         }
     }
 
-    @Test
-    fun `updateDefault Now on non-TIME field is rejected`() {
-        val schema = object : EntSchema() {
-            override fun fields() = listOf(
-                entkt.schema.Field(name = "count", type = entkt.schema.FieldType.INT, updateDefault = entkt.schema.UpdateDefault.Now)
-            )
-        }
-        kotlin.test.assertFailsWith<IllegalArgumentException> {
-            generator.generate("BadUpdate", schema)
-        }
-    }
+    // NOTE: The old test `updateDefault Now on non-TIME field is rejected` has been
+    // removed because the typed builder API now prevents this at compile time —
+    // updateDefaultNow() only exists on TimeFieldBuilder.
 }

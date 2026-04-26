@@ -29,7 +29,7 @@ private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val PRIVACY_DENIED = ClassName("entkt.runtime", "PrivacyDeniedException")
 
-class QueryGenerator(
+internal class QueryGenerator(
     private val packageName: String,
 ) {
     private val predicateClass = ClassName("entkt.query", "Predicate")
@@ -687,10 +687,9 @@ class QueryGenerator(
         schemaNames: Map<EntSchema, String>,
     ): FunSpec? {
         val targetName = schemaNames[edge.target] ?: return null
-        val sourceName = schemaNames[source] ?: return null
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
-        val reverseEdgeName = reverseM2MEdgeName(sourceName, edge.name)
+        val reverseEdgeName = reverseM2MEdgeName(source, edge.name)
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)

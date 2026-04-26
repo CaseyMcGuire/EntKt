@@ -25,7 +25,7 @@ private val ANY_NULLABLE = Any::class.asTypeName().copy(nullable = true)
 private val ROW_TYPE = ClassName("kotlin.collections", "Map")
     .parameterizedBy(STRING, ANY_NULLABLE)
 
-class EntityGenerator(
+internal class EntityGenerator(
     private val packageName: String,
 ) {
 
@@ -36,9 +36,7 @@ class EntityGenerator(
     ): FileSpec {
         val className = schemaName
         val idField = buildIdProperty(schema)
-        val fields = schema.fields()
-        val mixinFields = schema.mixins().flatMap { it.fields() }
-        val allFields = fields + mixinFields
+        val allFields = schema.fields()
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val columnRefs = buildList {
@@ -52,7 +50,7 @@ class EntityGenerator(
             .mapNotNull { edge -> buildEdgeRef(edge, schemaNames) }
 
         val entityClass = ClassName(packageName, className)
-        val tableName = tableNameFor(schemaName)
+        val tableName = schema.tableName
         val tableProperty = PropertySpec.builder("TABLE", STRING)
             .initializer("%S", tableName)
             .build()
@@ -119,7 +117,7 @@ class EntityGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
-        val allFields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        val allFields = schema.fields()
         val edgeFks = computeEdgeFks(schema, schemaNames)
         val idType = schema.id().type.toTypeName()
 
@@ -245,7 +243,7 @@ class EntityGenerator(
         edgeFks: List<EdgeFk>,
         hasEdges: Boolean,
     ): FunSpec? {
-        val allFields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        val allFields = schema.fields()
         if (allFields.none { it.sensitive }) return null
 
         val parts = mutableListOf<String>()
@@ -382,8 +380,8 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
     }
 }
 
-/** The database column name for this field — storageKey if set, else name. */
-internal val Field.columnName: String get() = storageKey ?: name
+/** The database column name for this field. */
+internal val Field.columnName: String get() = name
 
 internal fun toCamelCase(snakeCase: String): String {
     return snakeCase.split("_").mapIndexed { index, part ->

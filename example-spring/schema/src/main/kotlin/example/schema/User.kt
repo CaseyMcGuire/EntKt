@@ -1,28 +1,19 @@
 package example.schema
 
 import entkt.schema.EntId
-import entkt.schema.EntSchema
-import entkt.schema.edges
-import entkt.schema.fields
 
 /**
  * A user with a UUID primary key, a unique email, and timestamps.
  */
-object User : EntSchema() {
+class User : TimestampedSchema("users") {
     override fun id() = EntId.uuid()
 
-    override fun mixins() = listOf(TimestampMixin)
+    val name = string("name").minLen(1).maxLen(64)
+    val email = string("email").unique()
+    val age = int("age").optional().min(0).max(150)
+    val active = bool("active").default(true)
 
-    override fun fields() = fields {
-        string("name").minLen(1).maxLen(64)
-        string("email").unique()
-        int("age").optional().min(0).max(150)
-        bool("active").default(true)
-    }
-
-    override fun edges() = edges {
-        hasMany("posts", Post)
-        hasMany("sent_requests", Friendship)
-        hasMany("received_requests", Friendship)
-    }
+    val posts = hasMany<Post>("posts")
+    val sentRequests = hasMany<Friendship>("sent_requests")
+    val receivedRequests = hasMany<Friendship>("received_requests")
 }

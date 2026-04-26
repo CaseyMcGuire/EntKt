@@ -45,7 +45,7 @@ data class NormalizedSchema(
                         NormalizedIndex(
                             columns = listOf(col.name),
                             unique = true,
-                            storageKey = null,
+                            name = null,
                         )
                     }
 
@@ -53,7 +53,7 @@ data class NormalizedSchema(
                     NormalizedIndex(
                         columns = idx.columns,
                         unique = idx.unique,
-                        storageKey = idx.storageKey?.let { typeMapper.normalizeIdentifier(it) },
+                        name = typeMapper.normalizeIdentifier(idx.name),
                         where = idx.where,
                     )
                 }
@@ -131,7 +131,7 @@ data class NormalizedIndex(
     /** Whether this is a UNIQUE index — part of semantic identity. */
     val unique: Boolean,
     /** Explicit name override, or null (name is a rendering detail). */
-    val storageKey: String?,
+    val name: String?,
     /** SQL WHERE clause for partial indexes — part of semantic identity. */
     val where: String? = null,
 )
@@ -150,7 +150,7 @@ data class NormalizedIndex(
  * PostgreSQL type casts, and collapses whitespace so that the
  * deparsed and user-written forms compare equal for typical
  * predicates. For exotic expressions where this isn't enough,
- * use `.storageKey()` to pin the index name and avoid spurious
+ * use an explicit index name to pin the index and avoid spurious
  * diffs.
  */
 fun normalizeWhere(predicate: String?): String? {

@@ -1,26 +1,17 @@
 package example.schema
 
 import entkt.schema.EntId
-import entkt.schema.EntSchema
-import entkt.schema.edges
-import entkt.schema.fields
 
 /**
- * A blog post that points back at its author. The `belongsTo("author", User)`
+ * A blog post that points back at its author. The `belongsTo<User>("author")`
  * edge synthesizes an `authorId: UUID?` FK on Post.
  */
-object Post : EntSchema() {
+class Post : TimestampedSchema("posts") {
     override fun id() = EntId.long()
 
-    override fun mixins() = listOf(TimestampMixin)
+    val title = string("title").minLen(1).maxLen(200)
+    val body = text("body")
+    val published = bool("published").default(false)
 
-    override fun fields() = fields {
-        string("title").minLen(1).maxLen(200)
-        text("body")
-        bool("published").default(false)
-    }
-
-    override fun edges() = edges {
-        belongsTo("author", User).ref("posts").required()
-    }
+    val author = belongsTo<User>("author").inverse(User::posts).required()
 }

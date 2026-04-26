@@ -1,75 +1,102 @@
 package entkt.codegen
 
+import entkt.schema.Edge
+import entkt.schema.EdgeKind
 import entkt.schema.EntId
-import entkt.schema.EntMixin
 import entkt.schema.EntSchema
-import entkt.schema.fields
-import entkt.schema.edges
-import entkt.schema.indexes
+import java.util.UUID
+import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 enum class Priority { LOW, MEDIUM, HIGH }
 enum class Category { BUG, FEATURE }
 
-object StorageKeyEntity : EntSchema() {
-    override fun fields() = fields {
-        string("display_name").storageKey("full_name")
-        int("score")
-    }
+class Car : EntSchema("cars") {
+    override fun id() = EntId.int()
+    val model = string("model")
+    val year = int("year")
+    val price = float("price").optional()
+
+    val user = belongsTo<User>("user").inverse(User::cars)
 }
 
-object Car : EntSchema() {
-    override fun fields() = fields {
-        string("model")
-        int("year")
-        float("price").optional()
-    }
-
-    override fun edges() = edges {
-        belongsTo("user", User)
-    }
+class Ticket : EntSchema("tickets") {
+    override fun id() = EntId.int()
+    val title = string("title")
+    val priority = enum<Priority>("priority")
+    val category = enum<Category>("category")
 }
 
-object Ticket : EntSchema() {
-    override fun fields() = fields {
-        string("title")
-        enum<Priority>("priority")
-        enum<Category>("category")
-    }
-}
-
-object TimeMixin : EntMixin {
-    override fun fields() = fields {
-        time("created_at").immutable()
-        time("updated_at")
-    }
-
-    override fun indexes() = indexes {
-        index("created_at")
-    }
-}
-
-object User : EntSchema() {
+class User : EntSchema("users") {
     override fun id() = EntId.uuid()
 
-    override fun mixins() = listOf(TimeMixin)
+    val createdAt = time("created_at").immutable()
+    val updatedAt = time("updated_at")
+    val name = string("name")
+    val age = int("age").optional()
+    val email = string("email").unique()
+    val active = bool("active").default(true)
 
-    override fun fields() = fields {
-        string("name")
-        int("age").optional()
-        string("email").unique()
-        bool("active").default(true)
-    }
+    val cars = hasMany<Car>("cars")
 
-    override fun edges() = edges {
-        hasMany("cars", Car)
-    }
+    val idxCreatedAt = index("idx_created_at", createdAt)
+    val idxNameEmail = index("idx_name_email", name, email).unique()
+    val idxEmailActive = index("idx_email_active", email).where("active = true")
+}
 
-    override fun indexes() = indexes {
-        index("name", "email").unique()
-        index("email").where("active = true")
-    }
+// Test helper schemas for edge tests that need named file-level classes
+// (reified type params can't reference anonymous/local types from other anonymous objects)
+
+private class IdxParentSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+}
+
+private class IdxChildSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val title = string("title")
+    val author = belongsTo<IdxParentSchema>("author")
+    val byAuthor = index("idx_author", author.fk)
+}
+
+private class CollisionParentSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+}
+
+private class CollisionChildSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val ownerId = int("owner_id")
+    val owner = belongsTo<CollisionParentSchema>("owner")
+}
+
+private class EdgeCommentTargetSchema : EntSchema("authors") {
+    override fun id() = EntId.long()
+    val title = string("title")
+}
+
+private class EdgeCommentSourceSchema : EntSchema("posts") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val author = belongsTo<EdgeCommentTargetSchema>("author").comment("The author of this post")
+}
+
+private class CommentPostSchema : EntSchema("posts") {
+    override fun id() = EntId.int()
+    val title = string("title")
+    val author = belongsTo<CommentAuthorSchema>("author").inverse(CommentAuthorSchema::posts)
+}
+
+private class CommentAuthorSchema : EntSchema("authors") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val posts = hasMany<CommentPostSchema>("posts").comment("All posts authored by this user")
+}
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
 }
 
 class EntityGeneratorTest {
@@ -78,7 +105,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `generates entity data class with fields`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("data class Car")) { "Should generate data class\n$output" }
         assert(output.contains("val id: Int")) { "Should have int id\n$output" }
@@ -89,22 +118,28 @@ class EntityGeneratorTest {
 
     @Test
     fun `generates entity with UUID id`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("val id: UUID")) { "Should have UUID id\n$output" }
     }
 
     @Test
-    fun `generates entity with mixin fields`() {
-        val output = generator.generate("User", User).toString()
+    fun `generates entity with inherited fields`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
-        assert(output.contains("val createdAt: Instant")) { "Should have createdAt from mixin\n$output" }
-        assert(output.contains("val updatedAt: Instant")) { "Should have updatedAt from mixin\n$output" }
+        assert(output.contains("val createdAt: Instant")) { "Should have createdAt\n$output" }
+        assert(output.contains("val updatedAt: Instant")) { "Should have updatedAt\n$output" }
     }
 
     @Test
     fun `converts snake_case fields to camelCase Kotlin properties`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // Kotlin property names use camelCase...
         assert(output.contains("val createdAt: Instant")) { "Should convert created_at to createdAt\n$output" }
@@ -118,20 +153,26 @@ class EntityGeneratorTest {
 
     @Test
     fun `optional fields are nullable with default null`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("val age: Int? = null")) { "Should have nullable age with default null\n$output" }
     }
 
     @Test
     fun `generates correct package`() {
-        val file = generator.generate("Car", Car)
+        val car = Car()
+        finalize(car, User())
+        val file = generator.generate("Car", car)
         assertEquals("com.example.ent", file.packageName)
     }
 
     @Test
     fun `entity companion has no I_O entry points (those live on the repo)`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("companion object")) { "Should still have companion object for column refs\n$output" }
         assert(!output.contains("fun create(")) {
@@ -144,7 +185,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `entity has no instance update method (it lives on the repo)`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(!output.contains("fun update(")) {
             "update() should live on CarRepo, not on the entity instance\n$output"
@@ -153,7 +196,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `emits typed column refs on the companion for each field`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("val model: StringColumn = StringColumn(\"model\")")) {
             "Should have StringColumn for model\n$output"
@@ -168,7 +213,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `emits Column (non-comparable) for bool fields`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("val active: Column<Boolean> = Column<Boolean>(\"active\")")) {
             "Should have Column<Boolean> for active\n$output"
@@ -177,7 +224,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `column refs use snake_case for the column name`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // Property name is camelCase, but the column name carried into
         // the Predicate should be the raw field name.
@@ -188,10 +237,13 @@ class EntityGeneratorTest {
 
     @Test
     fun `emits an EdgeRef on the companion for each declared edge`() {
-        // User has `to("cars", Car)` — needs the schemaNames map so the
+        // User has `hasMany<Car>("cars")` — needs the schemaNames map so the
         // generator can resolve the target's class names.
-        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
-        val output = generator.generate("User", User, schemaNames).toString()
+        val user = User()
+        val car = Car()
+        finalize(user, car)
+        val schemaNames = mapOf<EntSchema, String>(user to "User", car to "Car")
+        val output = generator.generate("User", user, schemaNames).toString()
 
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
@@ -203,7 +255,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `generated SCHEMA includes unique flag on unique columns`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // email is declared .unique() so the generated ColumnMetadata should carry unique = true
         assert(output.contains("unique = true")) {
@@ -212,37 +266,39 @@ class EntityGeneratorTest {
     }
 
     @Test
-    fun `generated SCHEMA includes indexes from the schema and its mixins`() {
-        val output = generator.generate("User", User).toString()
+    fun `generated SCHEMA includes indexes from the schema`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("IndexMetadata")) {
             "Should emit IndexMetadata entries\n$output"
         }
         assert(output.contains("\"name\", \"email\"")) {
-            "Should include the composite unique index from User.indexes()\n$output"
+            "Should include the composite unique index from User\n$output"
         }
-        // created_at index comes from TimeMixin.indexes(), not User — verifies
-        // mixin indexes are merged into the generated schema.
+        // created_at index comes from the schema directly
         assert(output.contains("\"created_at\"")) {
-            "Should include the index declared by TimeMixin\n$output"
+            "Should include the created_at index\n$output"
         }
     }
 
     @Test
     fun `generated SCHEMA includes where clause for partial indexes`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
-        assert(output.contains("""where = "active = true"""")) {
+        assert(Regex("""where\s*=\s*"active = true"""").containsMatchIn(output)) {
             "Should emit where clause for partial index\n$output"
         }
     }
 
     @Test
     fun `does not emit EdgeRef when target is missing from the schema map`() {
-        // Without the schema map the generator can't resolve target
-        // class names — it should silently skip EdgeRef emission rather
-        // than producing a broken `EdgeRef<???, ???>`.
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("EdgeRef")) {
             "Should not emit EdgeRef without schemaNames\n$output"
@@ -251,8 +307,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `entity with edges gets an Edges inner data class`() {
-        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
-        val output = generator.generate("User", User, schemaNames).toString()
+        val user = User()
+        val car = Car()
+        finalize(user, car)
+        val schemaNames = mapOf<EntSchema, String>(user to "User", car to "Car")
+        val output = generator.generate("User", user, schemaNames).toString()
 
         assert(output.contains("data class Edges")) {
             "Should generate inner Edges data class\n$output"
@@ -264,8 +323,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `Edges class has list property for to-many edges`() {
-        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
-        val output = generator.generate("User", User, schemaNames).toString()
+        val user = User()
+        val car = Car()
+        finalize(user, car)
+        val schemaNames = mapOf<EntSchema, String>(user to "User", car to "Car")
+        val output = generator.generate("User", user, schemaNames).toString()
 
         assert(output.contains("val cars: List<Car>? = null")) {
             "To-many edge should produce nullable list property\n$output"
@@ -274,7 +336,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `entity without edges does not get Edges class`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(!output.contains("data class Edges")) {
             "Entity with no edges should not have Edges class\n$output"
@@ -286,7 +350,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `typed enum field emits the Kotlin enum type on the entity`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("val priority: Priority")) {
             "Should use the Kotlin enum type\n$output"
@@ -295,7 +361,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `typed enum column ref uses EnumColumn`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("val priority: EnumColumn<Priority> = EnumColumn<Priority>(\"priority\")")) {
             "Should emit EnumColumn parameterized with the enum class\n$output"
@@ -304,7 +372,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `typed enum fromRow uses valueOf`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("priority = Priority.valueOf(row[\"priority\"] as String)")) {
             "Should convert via valueOf in fromRow\n$output"
@@ -313,7 +383,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `second typed enum also uses enum type and EnumColumn`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("val category: Category")) {
             "Second typed enum should use the Kotlin enum type\n$output"
@@ -325,8 +397,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `fromRow does not reference edges`() {
-        val schemaNames = mapOf<entkt.schema.EntSchema, String>(User to "User", Car to "Car")
-        val output = generator.generate("User", User, schemaNames).toString()
+        val user = User()
+        val car = Car()
+        finalize(user, car)
+        val schemaNames = mapOf<EntSchema, String>(user to "User", car to "Car")
+        val output = generator.generate("User", user, schemaNames).toString()
 
         val fromRowBlock = output.substringAfter("fun fromRow").substringBefore("}")
         assert(!fromRowBlock.contains("edges")) {
@@ -335,165 +410,29 @@ class EntityGeneratorTest {
     }
 
     @Test
-    fun `storageKey overrides the column name in fromRow`() {
-        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
-
-        assert(output.contains("""row["full_name"]""")) {
-            "fromRow should use storageKey as the row key\n$output"
-        }
-        assert(!output.contains("""row["display_name"]""")) {
-            "fromRow should NOT use the field name when storageKey is set\n$output"
-        }
-    }
-
-    @Test
-    fun `storageKey overrides the column name in column refs`() {
-        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
-
-        assert(output.contains("""StringColumn("full_name")""")) {
-            "Column ref should use storageKey\n$output"
-        }
-    }
-
-    @Test
-    fun `storageKey property name still uses the field name`() {
-        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
-
-        assert(output.contains("val displayName: String")) {
-            "Property name should be derived from field name, not storageKey\n$output"
-        }
-    }
-
-    @Test
-    fun `storageKey overrides column name in ColumnMetadata`() {
-        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
-
-        assert(output.contains("""name = "full_name"""")) {
-            "ColumnMetadata should use storageKey\n$output"
-        }
-        assert(!output.contains("""name = "display_name"""")) {
-            "ColumnMetadata should NOT use field name when storageKey is set\n$output"
-        }
-    }
-
-    @Test
-    fun `storageKey overrides column name in index metadata`() {
-        val indexed = object : EntSchema() {
-            override fun fields() = fields {
-                string("display_name").storageKey("full_name")
-                int("score")
-            }
-            override fun indexes() = indexes {
-                index("display_name", "score").unique()
-            }
-        }
-        val output = generator.generate("IndexedStorageKey", indexed).toString()
-
-        assert(output.contains(""""full_name", "score"""")) {
-            "IndexMetadata should use storageKey for indexed columns\n$output"
-        }
-        assert(!output.contains(""""display_name", "score"""")) {
-            "IndexMetadata should NOT use field name when storageKey is set\n$output"
-        }
-    }
-
-    @Test
     fun `index can target synthesized edge FK column`() {
-        val parent = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-            }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("title")
-            }
-            override fun edges() = edges {
-                belongsTo("author", parent)
-            }
-            override fun indexes() = indexes {
-                index("author_id")
-            }
-        }
-        val schemaNames = mapOf(parent to "Parent", child to "Child")
+        val parent = IdxParentSchema()
+        val child = IdxChildSchema()
+        finalize(parent, child)
+        val schemaNames = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
         // Should not throw — author_id is a synthesized edge FK column
         val output = generator.generate("Child", child, schemaNames).toString()
-        assert(output.contains("author_id")) {
-            "Should include author_id in index metadata\n$output"
+        assert(output.contains("IndexMetadata(columns = listOf(\"author_id\")")) {
+            "Should emit IndexMetadata for the .fk index on synthesized FK column\n$output"
         }
     }
 
-    @Test
-    fun `index referencing nonexistent field fails at codegen time`() {
-        val schema = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-            }
-            override fun indexes() = indexes {
-                index("name", "emial")
-            }
-        }
-        val error = kotlin.test.assertFailsWith<IllegalStateException> {
-            generator.generate("BadIndex", schema)
-        }
-        assert(error.message!!.contains("emial")) {
-            "Error should mention the bad field name\n${error.message}"
-        }
-    }
-
-    @Test
-    fun `duplicate physical column name via storageKey is rejected`() {
-        val schema = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                string("display_name").storageKey("name")
-            }
-        }
-        val error = kotlin.test.assertFailsWith<IllegalStateException> {
-            generator.generate("DupColumn", schema)
-        }
-        assert(error.message!!.contains("name")) {
-            "Error should mention the conflicting column\n${error.message}"
-        }
-    }
-
-    @Test
-    fun `duplicate field name across schema and mixin is rejected`() {
-        val mixin = object : EntMixin {
-            override fun fields() = fields {
-                string("name")
-            }
-        }
-        val schema = object : EntSchema() {
-            override fun mixins() = listOf(mixin)
-            override fun fields() = fields {
-                string("name")
-            }
-        }
-        val error = kotlin.test.assertFailsWith<IllegalStateException> {
-            generator.generate("DupField", schema)
-        }
-        assert(error.message!!.contains("name")) {
-            "Error should mention the duplicate field\n${error.message}"
-        }
-    }
+    // NOTE: The old test `index referencing nonexistent field fails at codegen time`
+    // has been removed because the typed-handles API uses FieldHandle references
+    // for indexes, which catches invalid field references at compile time rather
+    // than at codegen time.
 
     @Test
     fun `field colliding with synthesized edge FK column is rejected`() {
-        val parent = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-            }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                int("owner_id")
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent)
-            }
-        }
-        val schemaNames = mapOf(parent to "Parent", child to "Child")
+        val parent = CollisionParentSchema()
+        val child = CollisionChildSchema()
+        finalize(parent, child)
+        val schemaNames = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
         val error = kotlin.test.assertFailsWith<IllegalStateException> {
             generator.generate("Child", child, schemaNames)
         }
@@ -504,12 +443,12 @@ class EntityGeneratorTest {
 
     @Test
     fun `sensitive field is redacted in generated toString`() {
-        val schema = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                string("password").sensitive()
-            }
+        val schema = object : EntSchema("accounts") {
+            override fun id() = EntId.int()
+            val name = string("name")
+            val password = string("password").sensitive()
         }
+        finalize(schema)
         val output = generator.generate("Account", schema).toString()
 
         assert(output.contains("override fun toString(): String")) {
@@ -528,7 +467,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `no toString override when no sensitive fields`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(!output.contains("override fun toString()")) {
             "Should not generate toString when no fields are sensitive\n$output"
@@ -537,11 +478,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `field comment emits KDoc on entity property`() {
-        val schema = object : EntSchema() {
-            override fun fields() = fields {
-                string("name").comment("The user's display name")
-            }
+        val schema = object : EntSchema("commenteds") {
+            override fun id() = EntId.int()
+            val name = string("name").comment("The user's display name")
         }
+        finalize(schema)
         val output = generator.generate("Commented", schema).toString()
 
         assert(output.contains("The user's display name")) {
@@ -551,23 +492,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `edge comment emits KDoc on Edges property`() {
-        class S {
-            val target: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("title") }
-                override fun edges() = edges {
-                    belongsTo("author", this@S.schema)
-                }
-            }
-            val schema: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasMany("posts", this@S.target).comment("All posts authored by this user")
-                }
-            }
-        }
-        val s = S()
-        val schemaNames = mapOf(s.schema to "Author", s.target to "Post")
-        val output = generator.generate("Author", s.schema, schemaNames).toString()
+        val author = CommentAuthorSchema()
+        val post = CommentPostSchema()
+        finalize(author, post)
+        val schemaNames = mapOf<EntSchema, String>(author to "Author", post to "Post")
+        val output = generator.generate("Author", author, schemaNames).toString()
 
         assert(output.contains("All posts authored by this user")) {
             "Should emit edge comment as KDoc\n$output"
@@ -576,7 +505,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `no KDoc when field has no comment`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         // Car.model has no comment — should not have any KDoc markers
         val modelLine = output.lines().indexOfFirst { "val model:" in it }
@@ -588,11 +519,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `field comment appears in generated SCHEMA ColumnMetadata`() {
-        val schema = object : EntSchema() {
-            override fun fields() = fields {
-                string("name").comment("The user's display name")
-            }
+        val schema = object : EntSchema("commenteds") {
+            override fun id() = EntId.int()
+            val name = string("name").comment("The user's display name")
         }
+        finalize(schema)
         val output = generator.generate("Commented", schema).toString()
 
         assert(output.contains("""comment = "The user's display name"""")) {
@@ -602,18 +533,11 @@ class EntityGeneratorTest {
 
     @Test
     fun `edge comment appears in generated SCHEMA EdgeMetadata`() {
-        val target = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("title") }
-        }
-        val schema = object : EntSchema() {
-            override fun fields() = fields { string("name") }
-            override fun edges() = edges {
-                belongsTo("author", target).comment("The author of this post")
-            }
-        }
-        val schemaNames = mapOf(schema to "Post", target to "Author")
-        val output = generator.generate("Post", schema, schemaNames).toString()
+        val target = EdgeCommentTargetSchema()
+        val source = EdgeCommentSourceSchema()
+        finalize(source, target)
+        val schemaNames = mapOf<EntSchema, String>(source to "Post", target to "Author")
+        val output = generator.generate("Post", source, schemaNames).toString()
 
         assert(output.contains("""comment = "The author of this post"""")) {
             "EdgeMetadata should carry edge comment\n$output"
@@ -622,7 +546,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `no comment field in ColumnMetadata when field has no comment`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         // ColumnMetadata for "model" should not have a comment parameter
         val schemaBlock = output.substringAfter("SCHEMA")

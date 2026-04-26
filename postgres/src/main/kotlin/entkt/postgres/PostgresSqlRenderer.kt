@@ -44,7 +44,7 @@ class PostgresSqlRenderer(
             listOf("-- TODO: ALTER TABLE ${quote(op.table)} DROP ${quote(op.columnName)} from PRIMARY KEY (requires DROP + re-CREATE)")
         }
         is MigrationOp.DropIndex -> listOf(
-            "-- TODO: DROP INDEX ${quote(truncateIdentifier(op.storageKey ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
+            "-- TODO: DROP INDEX ${quote(truncateIdentifier(op.name ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
         )
         is MigrationOp.DropForeignKey -> listOf(
             "-- TODO: ALTER TABLE ${quote(op.table)} DROP CONSTRAINT ${quote(truncateIdentifier(op.constraintName ?: "fk_${op.table}_${op.column}"))}",
@@ -83,7 +83,7 @@ class PostgresSqlRenderer(
     ): List<String> {
         val ifNotExists = if (mode == RenderMode.DEV) " IF NOT EXISTS" else ""
         val cols = index.columns.joinToString(", ") { quote(it) }
-        val name = truncateIdentifier(index.storageKey ?: deriveIndexName(table, index.columns, index.unique, index.where))
+        val name = truncateIdentifier(index.name ?: deriveIndexName(table, index.columns, index.unique, index.where))
         val keyword = if (index.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
         val whereSuffix = if (index.where != null) " WHERE ${index.where}" else ""
         return listOf("$keyword$ifNotExists ${quote(name)} ON ${quote(table)} ($cols)$whereSuffix")

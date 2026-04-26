@@ -1,6 +1,13 @@
 package entkt.codegen
 
+import entkt.schema.EntSchema
+import kotlin.reflect.KClass
 import kotlin.test.Test
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+}
 
 class QueryGeneratorTest {
 
@@ -8,21 +15,27 @@ class QueryGeneratorTest {
 
     @Test
     fun `generates query builder class`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("class CarQuery")) { "Should generate CarQuery\n$output" }
     }
 
     @Test
     fun `query builder is annotated as DSL scope`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("@EntktDsl")) { "Should be annotated @EntktDsl\n$output" }
     }
 
     @Test
     fun `generates where that takes a Predicate`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("`where`(predicate: Predicate)")) {
             "Should have where(Predicate)\n$output"
@@ -31,7 +44,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `generates orderBy that takes an OrderField`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun orderBy(`field`: OrderField)")) {
             "Should have orderBy(OrderField)\n$output"
@@ -40,7 +55,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `generates limit and offset`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun limit(n: Int)")) { "Should have limit\n$output" }
         assert(output.contains("fun offset(n: Int)")) { "Should have offset\n$output" }
@@ -48,7 +65,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `does not emit per-field predicate methods`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         // All predicate construction is now done via typed column refs on
         // the entity's companion object — the query class should only
@@ -60,7 +79,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `query implements EdgeQuery`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("import entkt.query.EdgeQuery")) {
             "Should import EdgeQuery\n$output"
@@ -74,7 +95,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `query implements combinedPredicate by ANDing accumulated wheres`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("override fun combinedPredicate(): Predicate?")) {
             "Should override combinedPredicate\n$output"
@@ -89,19 +112,23 @@ class QueryGeneratorTest {
 
     @Test
     fun `does not emit traversal methods for schemas with no edges`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         // Car has no edges in EntityGeneratorTest fixtures, so the
         // generated query should have no `queryX()` methods at all.
-        assert(!output.contains("queryCars")) { "Car has no edges → no traversal\n$output" }
-        assert(!output.contains("queryUsers")) { "Car has no edges → no traversal\n$output" }
+        assert(!output.contains("queryCars")) { "Car has no edges -> no traversal\n$output" }
+        assert(!output.contains("queryUsers")) { "Car has no edges -> no traversal\n$output" }
     }
 
     @Test
     fun `does not emit traversal when schemaNames is empty`() {
-        // User declares `to("cars", Car)`, but without a schemaNames map
-        // we can't resolve the target's class name → no traversal method.
-        val output = generator.generate("User", User).toString()
+        // User declares `hasMany<Car>("cars")`, but without a schemaNames map
+        // we can't resolve the target's class name -> no traversal method.
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("queryCars")) {
             "Without schemaNames, traversal should be skipped\n$output"
@@ -110,7 +137,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `does not emit eager loading methods when schemaNames is empty`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("withCars")) {
             "Without schemaNames, with{Edge} should be skipped\n$output"
@@ -122,7 +151,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `does not emit eager loading methods for schema with no edges`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(!output.contains("loadEdges")) {
             "Schema with no edges should not have loadEdges\n$output"
@@ -131,7 +162,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `generates visibleCount terminal method`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun visibleCount(): Long")) {
             "Should generate visibleCount(): Long\n$output"
@@ -143,7 +176,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `generates rawCount terminal method`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun rawCount(): Long")) {
             "Should generate rawCount(): Long\n$output"
@@ -155,7 +190,9 @@ class QueryGeneratorTest {
 
     @Test
     fun `generates exists terminal method`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun exists(): Boolean")) {
             "Should generate exists(): Boolean\n$output"

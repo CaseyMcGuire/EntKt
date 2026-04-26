@@ -12,31 +12,21 @@ For guides, see the [documentation](docs/index.md).
 
 ```kotlin
 // 1. Declare a schema (compile-time source of truth)
-object User : EntSchema() {
+class User : EntSchema("users") {
     override fun id() = EntId.uuid()
-    override fun mixins() = listOf(TimestampMixin)
-    override fun fields() = fields {
-        string("name").minLen(1).maxLen(64)
-        string("email").unique()
-        int("age").optional().min(0).max(150)
-        bool("active").default(true)
-    }
-    override fun edges() = edges {
-        to("posts", Post)
-    }
+
+    val name = string("name").minLen(1).maxLen(64)
+    val email = string("email").unique()
+    val age = int("age").optional().min(0).max(150)
+    val active = bool("active").default(true)
+
+    val posts = hasMany<Post>("posts")
 }
 ```
 
 ```kotlin
 // 2. Use the generated code
-val client = EntClient(InMemoryDriver()) {  // or PostgresDriver(dataSource)
-    hooks {
-        users {
-            beforeSave { it.updatedAt = Instant.now() }
-            beforeCreate { it.createdAt = Instant.now() }
-        }
-    }
-}
+val client = EntClient(InMemoryDriver())  // or PostgresDriver(dataSource)
 
 val alice = client.users.create {
     name = "Alice"
@@ -66,9 +56,9 @@ usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if wit
 // Delete
 client.users.delete(alice)       // or client.users.deleteById(alice.id)
 
-// Transactions — hooks are automatically inherited
+// Transactions
 client.withTransaction { tx ->
-    tx.users.create { name = "Bob"; email = "bob@example.com" }.save()
+    val bob = tx.users.create { name = "Bob"; email = "bob@example.com" }.save()
     tx.posts.create { title = "Hello"; authorId = bob.id }.save()
 }
 ```
@@ -80,7 +70,7 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 
 | Module | Description |
 |---|---|
-| [`:schema`](schema/README.md) | Declarative schema DSL — `EntSchema`, field/edge/index/mixin builders, `FieldType` |
+| [`:schema`](schema/README.md) | Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType` |
 | [`:runtime`](runtime/README.md) | `Driver` interface, `InMemoryDriver`, `EntitySchema`, query `Predicate` hierarchy |
 | [`:codegen`](codegen/README.md) | KotlinPoet-based generator: entity classes, create/update/query builders, repos, `EntClient` |
 | [`:migrations`](migrations/README.md) | Driver-agnostic schema diffing, migration planning (prod), auto-apply (dev), `MigrationRunner` |

@@ -92,7 +92,7 @@ class NormalizedSchemaTest {
             ),
             edges = emptyMap(),
             indexes = listOf(
-                IndexMetadata(listOf("first_name", "last_name"), unique = true, storageKey = "idx_full_name"),
+                IndexMetadata(listOf("first_name", "last_name"), unique = true, name = "idx_full_name"),
             ),
         )
         val normalized = NormalizedSchema.fromEntitySchemas(listOf(schema), typeMapper)
@@ -100,7 +100,7 @@ class NormalizedSchemaTest {
 
         assertEquals(1, table.indexes.size)
         assertEquals(listOf("first_name", "last_name"), table.indexes[0].columns)
-        assertEquals("idx_full_name", table.indexes[0].storageKey)
+        assertEquals("idx_full_name", table.indexes[0].name)
     }
 
     @Test

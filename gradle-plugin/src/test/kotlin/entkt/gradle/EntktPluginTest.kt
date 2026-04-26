@@ -62,21 +62,17 @@ class EntktPluginTest {
 
                 import entkt.schema.*
 
-                object Owner : EntSchema() {
-                    override fun fields() = fields {
-                        string("name")
-                    }
+                class Owner : EntSchema("owners") {
+                    override fun id() = EntId.int()
+                    val name = string("name")
                 }
 
-                object Pet : EntSchema() {
-                    override fun fields() = fields {
-                        string("name")
-                        int("age").optional()
-                    }
+                class Pet : EntSchema("pets") {
+                    override fun id() = EntId.int()
+                    val name = string("name")
+                    val age = int("age").optional()
 
-                    override fun edges() = edges {
-                        belongsTo("owner", Owner)
-                    }
+                    val owner = belongsTo<Owner>("owner")
                 }
                 """.trimIndent()
             )

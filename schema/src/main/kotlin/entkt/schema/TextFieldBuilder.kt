@@ -1,6 +1,6 @@
 package entkt.schema
 
-class TextFieldBuilder(name: String) : FieldBuilder<TextFieldBuilder>(name, FieldType.TEXT) {
+class TextFieldBuilder internal constructor(name: String) : FieldBuilder<TextFieldBuilder, String>(name, FieldType.TEXT) {
     fun minLen(min: Int): TextFieldBuilder = validate(Validators.minLen(min))
     fun maxLen(max: Int): TextFieldBuilder = validate(Validators.maxLen(max))
     fun notEmpty(): TextFieldBuilder = validate(Validators.notEmpty())

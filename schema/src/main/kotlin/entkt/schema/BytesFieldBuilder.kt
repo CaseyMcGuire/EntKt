@@ -1,3 +1,3 @@
 package entkt.schema
 
-class BytesFieldBuilder(name: String) : FieldBuilder<BytesFieldBuilder>(name, FieldType.BYTES)
+class BytesFieldBuilder internal constructor(name: String) : FieldBuilder<BytesFieldBuilder, ByteArray>(name, FieldType.BYTES)

@@ -1,6 +1,13 @@
 package entkt.codegen
 
+import entkt.schema.EntSchema
+import kotlin.reflect.KClass
 import kotlin.test.Test
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+}
 
 class ValidationGeneratorTest {
 
@@ -8,7 +15,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `generates rule typealiases for three operations`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("typealias UserCreateValidationRule = ValidationRule<UserCreateValidationContext>")) {
             "Should generate create rule typealias\n$output"
@@ -23,7 +32,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `does not generate load typealias`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("LoadValidationRule")) {
             "Should not generate load validation rule\n$output"
@@ -35,7 +46,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `generates create context with client and candidate but no privacy`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserCreateValidationContext")) {
             "Should generate create context\n$output"
@@ -54,7 +67,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `generates update context with client, before, and candidate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserUpdateValidationContext")) {
             "Should generate update context\n$output"
@@ -66,7 +81,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `generates delete context with client, entity, and candidate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("data class UserDeleteValidationContext")) {
             "Should generate delete context\n$output"
@@ -78,7 +95,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `generates ValidationConfig with mutable rule lists and updateDerivesFromCreate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserValidationConfig")) {
             "Should generate ValidationConfig\n$output"
@@ -99,7 +118,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `ValidationConfig does not have deleteDerivesFromCreate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("deleteDerivesFromCreate")) {
             "Should not have deleteDerivesFromCreate\n$output"
@@ -108,7 +129,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `generates ValidationScope with DSL methods`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserValidationScope")) {
             "Should generate ValidationScope\n$output"
@@ -129,7 +152,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `ValidationScope has no load method`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // Check there's no load method on the ValidationScope
         assert(!output.contains("fun load(")) {
@@ -139,7 +164,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `does not generate WriteCandidate`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("WriteCandidate(")) {
             "Should not generate WriteCandidate (reused from privacy)\n$output"
@@ -151,7 +178,9 @@ class ValidationGeneratorTest {
 
     @Test
     fun `does not generate PolicyScope`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         assert(!output.contains("PolicyScope")) {
             "Should not generate PolicyScope (handled by privacy generator)\n$output"

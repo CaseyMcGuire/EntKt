@@ -59,8 +59,8 @@ internal object JsonCodec {
             sb.append(indent).append("  {")
             sb.append("\"columns\": [").append(idx.columns.joinToString(", ") { escStr(it) }).append("]")
             sb.append(", \"unique\": ").append(idx.unique)
-            if (idx.storageKey != null) {
-                sb.append(", \"storageKey\": ").append(escStr(idx.storageKey))
+            if (idx.name != null) {
+                sb.append(", \"name\": ").append(escStr(idx.name))
             }
             if (idx.where != null) {
                 sb.append(", \"where\": ").append(escStr(idx.where))
@@ -204,7 +204,7 @@ internal object JsonCodec {
             expect('{')
             var columns = emptyList<String>()
             var unique = false
-            var storageKey: String? = null
+            var name: String? = null
             var where: String? = null
             skipWs()
             while (peek() != '}') {
@@ -213,7 +213,7 @@ internal object JsonCodec {
                 when (key) {
                     "columns" -> columns = parseArray { readString() }
                     "unique" -> unique = readBool()
-                    "storageKey" -> storageKey = readString()
+                    "name" -> name = readString()
                     "where" -> where = readString()
                     else -> skipValue()
                 }
@@ -221,7 +221,7 @@ internal object JsonCodec {
                 if (peek() == ',') { advance(); skipWs() }
             }
             expect('}')
-            return NormalizedIndex(columns, unique, storageKey, where)
+            return NormalizedIndex(columns, unique, name, where)
         }
 
         private fun parseForeignKey(): NormalizedForeignKey {

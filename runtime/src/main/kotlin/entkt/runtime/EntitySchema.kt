@@ -87,15 +87,15 @@ data class ForeignKeyRef(
  * A composite index on one or more columns. Single-column unique
  * constraints are expressed directly on [ColumnMetadata.unique]; this
  * type covers multi-column and non-unique indexes declared via the
- * schema DSL's `indexes { }` block.
+ * schema DSL's `index(...)` method.
  */
 data class IndexMetadata(
     /** Column names in index order. */
     val columns: List<String>,
     /** Whether this is a UNIQUE index. */
     val unique: Boolean = false,
-    /** Optional explicit name; drivers derive one if null. */
-    val storageKey: String? = null,
+    /** The index name. */
+    val name: String,
     /** Optional SQL WHERE clause for partial indexes (e.g. `"active = true"`). */
     val where: String? = null,
 )

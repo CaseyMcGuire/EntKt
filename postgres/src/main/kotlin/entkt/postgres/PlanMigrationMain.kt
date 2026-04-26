@@ -31,7 +31,7 @@ fun main(args: Array<String>) {
         .split(File.pathSeparator)
         .map { File(it) }
     val schemas = buildEntitySchemas(scanForSchemas(classpath))
-    check(schemas.isNotEmpty()) { "No EntSchema objects found on the classpath" }
+    check(schemas.isNotEmpty()) { "No EntSchema classes found on the classpath" }
 
     val planner = PostgresMigrator.planner()
     val plan = planner.plan(

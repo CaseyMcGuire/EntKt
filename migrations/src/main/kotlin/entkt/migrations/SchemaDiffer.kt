@@ -141,11 +141,11 @@ class SchemaDiffer {
             val currentIdx = currentByKey[key]
             if (currentIdx == null) {
                 autoOps.add(MigrationOp.AddIndex(table, idx))
-            } else if (idx.storageKey != null && idx.storageKey != currentIdx.storageKey) {
+            } else if (idx.name != null && idx.name != currentIdx.name) {
                 // Desired has an explicit name that differs from current
                 // (which may be null/derived or a different explicit name)
                 // — manual drop of the old index + auto add under the new name.
-                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.storageKey, currentIdx.where))
+                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
                 autoOps.add(MigrationOp.AddIndex(table, idx))
             }
         }
@@ -153,7 +153,7 @@ class SchemaDiffer {
         // Dropped indexes
         for ((key, currentIdx) in currentByKey) {
             if (key !in desiredByKey) {
-                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.storageKey, currentIdx.where))
+                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
             }
         }
     }

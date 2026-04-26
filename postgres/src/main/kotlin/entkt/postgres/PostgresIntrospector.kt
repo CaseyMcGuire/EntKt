@@ -179,7 +179,7 @@ class PostgresIntrospector(
                         NormalizedIndex(
                             columns = columns,
                             unique = isUnique,
-                            storageKey = indexName,
+                            name = indexName,
                             where = normalizeWhere(predicate),
                         ),
                     )

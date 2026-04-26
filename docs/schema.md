@@ -1,16 +1,18 @@
 # Schema
 
 Schemas are the source of truth for your data model. Each schema is a
-Kotlin `object` that extends `EntSchema` and declares its ID strategy,
-fields, edges, indexes, and mixins.
+Kotlin `class` that extends `EntSchema` with an explicit table name,
+and declares its fields, edges, and indexes as plain property
+declarations.
 
 ```kotlin
-object User : EntSchema() {
+class User : EntSchema("users") {
     override fun id() = EntId.uuid()
-    override fun mixins() = listOf(TimestampMixin)
-    override fun fields() = fields { ... }
-    override fun edges() = edges { ... }
-    override fun indexes() = indexes { ... }
+
+    val name = string("name").minLen(1).maxLen(64)
+    val email = string("email").unique()
+
+    val posts = hasMany<Post>("posts")
 }
 ```
 
@@ -26,26 +28,27 @@ generated:
 | `EntId.uuid()` | `UUID` | `uuid` | Client-generated on create |
 | `EntId.string()` | `String` | `text` | Caller-provided |
 
-The default is `EntId.int()` if `id()` is not overridden.
+The `id()` method is abstract, so every schema must override it.
 
 ## Fields
 
-Fields are declared inside a `fields { }` block using type-specific
-builder methods:
+Fields are declared as property declarations on the schema class:
 
 ```kotlin
-override fun fields() = fields {
-    string("name").minLen(1).maxLen(64)
-    text("body")
-    bool("active").default(true)
-    int("count").positive()
-    long("big_number")
-    float("score")
-    double("precise_score")
-    time("created_at").immutable()
-    uuid("external_id")
-    bytes("data")
-    enum<Priority>("priority").default(Priority.LOW)
+class Ticket : EntSchema("tickets") {
+    override fun id() = EntId.int()
+
+    val title = string("title").minLen(1).maxLen(200)
+    val body = text("body")
+    val active = bool("active").default(true)
+    val count = int("count").positive()
+    val bigNumber = long("big_number")
+    val score = float("score")
+    val preciseScore = double("precise_score")
+    val createdAt = time("created_at").immutable()
+    val externalId = uuid("external_id")
+    val data = bytes("data")
+    val priority = enum<Priority>("priority").default(Priority.LOW)
 }
 ```
 
@@ -71,7 +74,7 @@ These are available on all field types:
 
 | Modifier | Effect |
 |----------|--------|
-| `.nullable()` | Field is nullable in the generated code |
+| `.optional()` | Field is nullable in the generated code |
 | `.unique()` | Adds a unique constraint |
 | `.immutable()` | Omitted from update builder setters |
 | `.sensitive()` | Excluded from string representations |
@@ -79,7 +82,6 @@ These are available on all field types:
 | `.defaultNow()` | Set to `Instant.now()` on create (TIME fields only) |
 | `.updateDefaultNow()` | Set to `Instant.now()` on every update (TIME fields only) |
 | `.comment(text)` | Documentation comment |
-| `.storageKey(name)` | Override the database column name |
 
 ### Validators
 
@@ -111,11 +113,11 @@ references all use the actual enum type:
 ```kotlin
 enum class Priority { LOW, MEDIUM, HIGH }
 
-object Ticket : EntSchema() {
-    override fun fields() = fields {
-        string("title")
-        enum<Priority>("priority").default(Priority.LOW)
-    }
+class Ticket : EntSchema("tickets") {
+    override fun id() = EntId.int()
+
+    val title = string("title")
+    val priority = enum<Priority>("priority").default(Priority.LOW)
 }
 ```
 
@@ -133,48 +135,57 @@ back with `valueOf()` when reading rows. The driver layer is unchanged.
 
 ## Edges
 
-Edges define relationships between entities. They are declared inside an
-`edges { }` block:
+Edges define relationships between entities. They are declared as
+property declarations on the schema class:
 
 ```kotlin
-override fun edges() = edges {
-    hasMany("posts", Post)                          // one-to-many
-    belongsTo("author", User).ref("posts")          // many-to-one (inverse)
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+
+    val posts = hasMany<Post>("posts")
+}
+
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+
+    val author = belongsTo<User>("author").inverse(User::posts).required()
 }
 ```
 
 ### HasMany / HasOne
 
-`hasMany(name, target)` declares the "one" side of a one-to-many
+`hasMany<Target>(name)` declares the "one" side of a one-to-many
 relationship. No FK column is added to this entity — the FK lives on
-the target. `hasOne(name, target)` is similar but for one-to-one
+the target. `hasOne<Target>(name)` is similar but for one-to-one
 relationships (the inverse `belongsTo` must have `.unique()`).
 
 ```kotlin
-// User schema
-override fun edges() = edges {
-    hasMany("posts", Post)  // User has many Posts
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+
+    val posts = hasMany<Post>("posts")
 }
 ```
 
 ### BelongsTo
 
-`belongsTo(name, target)` declares the FK-owning side. This synthesizes
+`belongsTo<Target>(name)` declares the FK-owning side. This synthesizes
 a FK column (e.g. `author_id`) on the current entity.
 
 ```kotlin
-// Post schema
-override fun edges() = edges {
-    belongsTo("author", User).ref("posts").required()
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+
+    val author = belongsTo<User>("author").inverse(User::posts).required()
 }
 ```
 
 | Modifier | Effect |
 |----------|--------|
-| `.ref(name)` | Names the inverse edge on the target schema |
+| `.inverse(Target::edge)` | Links to the inverse edge on the target schema |
 | `.required()` | FK column is NOT NULL |
 | `.unique()` | Adds a UNIQUE constraint on the FK column (for 1:1 relationships) |
-| `.field(name)` | Reuse an existing field as the FK column |
+| `.field(handle)` | Reuse an existing field declaration as the FK column |
 | `.onDelete(action)` | Set the FK `ON DELETE` action (see below) |
 
 ### ON DELETE Actions
@@ -183,8 +194,10 @@ By default, FK columns use `ON DELETE SET NULL` (nullable) or
 `ON DELETE RESTRICT` (required). Use `.onDelete()` to override:
 
 ```kotlin
-override fun edges() = edges {
-    belongsTo("owner", Owner).required().onDelete(OnDelete.CASCADE)
+class Pet : EntSchema("pets") {
+    override fun id() = EntId.int()
+
+    val owner = belongsTo<Owner>("owner").required().onDelete(OnDelete.CASCADE)
 }
 ```
 
@@ -200,13 +213,14 @@ appropriate `DROP CONSTRAINT` / `ADD CONSTRAINT` ops.
 
 ### Many-to-Many
 
-Use `manyToMany(...).through()` to declare an M2M relationship via a
-junction table:
+Use `manyToMany<Target>(...).through<Junction>(...)` to declare an M2M
+relationship via a junction table:
 
 ```kotlin
-// User schema
-override fun edges() = edges {
-    manyToMany("groups", Group).through(UserGroup)
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+
+    val groups = manyToMany<Group>("groups").through<UserGroup>(UserGroup::user, UserGroup::group)
 }
 ```
 
@@ -214,38 +228,69 @@ The junction schema (`UserGroup`) is itself an `EntSchema` with two
 `belongsTo()` edges pointing at the two sides.
 
 For ambiguous junction tables (where both sides point to the same entity
-type), use `sourceEdge` and `targetEdge` to disambiguate:
+type), the typed property references disambiguate which junction edge
+is source vs target:
 
 ```kotlin
-manyToMany("friends", User).through(
-    Friendship,
-    sourceEdge = "user", targetEdge = "friend"
-)
+class Person : EntSchema("people") {
+    override fun id() = EntId.long()
+
+    val friends = manyToMany<Person>("friends")
+        .through<Friendship>(Friendship::user, Friendship::friend)
+}
+
+class Friendship : EntSchema("friendships") {
+    override fun id() = EntId.long()
+
+    val user = belongsTo<Person>("user").required()
+    val friend = belongsTo<Person>("friend").required()
+}
 ```
 
 ## Indexes
 
-Composite indexes are declared in an `indexes { }` block:
+Indexes are declared as property declarations using field handles.
+For synthesized FK columns, use `.fk` on the edge declaration:
 
 ```kotlin
-override fun indexes() = indexes {
-    index("name", "email").unique()
-    index("created_at")
-    index("status", "priority").storageKey("idx_status_priority")
+class User : EntSchema("users") {
+    override fun id() = EntId.int()
+
+    val name = string("name")
+    val email = string("email")
+    val status = string("status")
+    val priority = int("priority")
+
+    val byNameEmail = index("idx_name_email", name, email).unique()
+    val byStatus = index("idx_status_priority", status, priority)
+}
+
+// FK index using .fk on a belongsTo edge
+class Friendship : EntSchema("friendships") {
+    override fun id() = EntId.int()
+
+    val requester = belongsTo<User>("requester").required()
+    val recipient = belongsTo<User>("recipient").required()
+
+    val idx = index("idx_requester_recipient", requester.fk, recipient.fk).unique()
 }
 ```
 
 Single-column unique constraints are simpler -- just use `.unique()` on the
-field directly. Composite indexes that need a custom database name use
-`.storageKey()`.
+field directly. The index name is the first argument and is required.
 
 ### Partial indexes
 
 Partial (conditional) indexes include only rows matching a `WHERE` predicate:
 
 ```kotlin
-override fun indexes() = indexes {
-    index("email").unique().where("active = true")
+class User : EntSchema("users") {
+    override fun id() = EntId.int()
+
+    val email = string("email")
+    val active = bool("active").default(true)
+
+    val activeEmail = index("idx_active_email", email).unique().where("active = true")
 }
 ```
 
@@ -253,37 +298,30 @@ This generates `CREATE UNIQUE INDEX ... ON users (email) WHERE active = true`.
 Partial indexes are useful for enforcing uniqueness on a subset of rows or
 speeding up queries that always filter by a condition.
 
-When two indexes share the same columns and uniqueness but differ only by
-predicate, entkt derives distinct index names automatically (using a hash
-of the WHERE clause). You can also use `.storageKey()` to set explicit names.
-
 **Predicate normalization:** PostgreSQL's catalog deparses predicates
 differently from the user-written form (adding outer parentheses, type
 casts, etc.). The migration differ normalizes both sides before comparing,
 so `active = true` and `((active)::boolean = true)` are treated as
-equivalent. For very exotic expressions where normalization falls short,
-pin the index with `.storageKey()` to avoid spurious diffs.
+equivalent.
 
-## Mixins
+## Reusable Base Classes
 
-Mixins are reusable groups of fields and indexes that can be
-included in multiple schemas:
+Reusable groups of fields can be shared via abstract schema base classes:
 
 ```kotlin
-object TimestampMixin : EntMixin {
-    override fun fields() = fields {
-        time("created_at").immutable()
-        time("updated_at")
-    }
+abstract class TimestampedSchema(tableName: String) : EntSchema(tableName) {
+    val createdAt = time("created_at").immutable()
+    val updatedAt = time("updated_at")
 }
 
-object User : EntSchema() {
-    override fun mixins() = listOf(TimestampMixin)
-    // ...
+class User : TimestampedSchema("users") {
+    override fun id() = EntId.uuid()
+
+    val name = string("name")
+    // User inherits createdAt and updatedAt
 }
 ```
 
-Mixin fields are merged into the schema's field list during code generation.
-The generated entity class, create builder, and update builder all include
-the mixin fields. Immutable mixin fields (like `created_at` above) are
-omitted from the update builder.
+Base class fields are included in the generated entity class, create
+builder, and update builder. Immutable fields (like `createdAt` above)
+are omitted from the update builder.

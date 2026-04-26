@@ -6,155 +6,284 @@ import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.OnDelete
 import entkt.schema.Through
-import entkt.schema.edges
-import entkt.schema.fields
+import java.util.UUID
+import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
-object Owner : EntSchema() {
+class Owner : EntSchema("owners") {
     override fun id() = EntId.long()
 
-    override fun fields() = fields {
-        string("name")
-    }
+    val name = string("name")
 
-    override fun edges() = edges {
-        // The User-side of the Owner ↔ Pet pair: an Owner has many Pets.
-        // No FK on Owner — the FK lives on Pet via the inverse `owner` edge.
-        hasMany("pets", Pet)
-    }
+    val pets = hasMany<Pet>("pets")
 }
 
-object Pet : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
+class Pet : EntSchema("pets") {
+    override fun id() = EntId.int()
+    val name = string("name")
 
-    override fun edges() = edges {
-        belongsTo("owner", Owner).ref("pets")
-    }
+    val owner = belongsTo<Owner>("owner").inverse(Owner::pets)
 }
 
-object RequiredPet : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
+class RequiredPet : EntSchema("required_pets") {
+    override fun id() = EntId.int()
+    val name = string("name")
 
-    override fun edges() = edges {
-        belongsTo("owner", Owner).required()
-    }
+    val owner = belongsTo<Owner>("owner").required()
 }
 
 // ---------- M2M test schemas ----------
 
-object Team : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
+class Team : EntSchema("teams") {
+    override fun id() = EntId.int()
+    val name = string("name")
 
-    override fun edges() = edges {
-        manyToMany("members", Pet).through(TeamMember)
-    }
+    val members = manyToMany<Pet>("members").through<TeamMember>(TeamMember::team, TeamMember::member)
 }
 
-object TeamMember : EntSchema() {
-    override fun fields() = fields {
-        time("joined_at")
-        int("team_id")
-        int("member_id")
-    }
+class TeamMember : EntSchema("team_members") {
+    override fun id() = EntId.int()
+    val joinedAt = time("joined_at")
+    val teamId = int("team_id")
+    val memberId = int("member_id")
 
-    override fun edges() = edges {
-        belongsTo("team", Team).required().field("team_id")
-        belongsTo("member", Pet).required().field("member_id")
-    }
+    val team = belongsTo<Team>("team").required().field(teamId)
+    val member = belongsTo<Pet>("member").required().field(memberId)
 }
 
 // ---------- Self-referential M2M test schemas ----------
 
-object Person : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
+class Person : EntSchema("persons") {
+    override fun id() = EntId.int()
+    val name = string("name")
 
-    override fun edges() = edges {
-        manyToMany("friends", Person).through(Friendship, sourceEdge = "person", targetEdge = "friend")
-    }
+    val friends = manyToMany<Person>("friends").through<Friendship>(Friendship::person, Friendship::friend)
 }
 
-object Friendship : EntSchema() {
-    override fun fields() = fields {
-        time("created_at")
-        int("person_id")
-        int("friend_id")
-    }
+class Friendship : EntSchema("friendships") {
+    override fun id() = EntId.int()
+    val createdAt = time("created_at")
+    val personId = int("person_id")
+    val friendId = int("friend_id")
 
-    override fun edges() = edges {
-        belongsTo("person", Person).required().field("person_id")
-        belongsTo("friend", Person).required().field("friend_id")
-    }
+    val person = belongsTo<Person>("person").required().field(personId)
+    val friend = belongsTo<Person>("friend").required().field(friendId)
 }
 
 // ---------- Ambiguous junction test schemas ----------
 
-object Project : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
+class Project : EntSchema("projects") {
+    override fun id() = EntId.int()
+    val name = string("name")
 
-    override fun edges() = edges {
-        // The junction has two edges to Pet: "assignee" and "reviewer".
-        // sourceEdge/targetEdge disambiguate which FK to use.
-        manyToMany("assignees", Pet).through(
-            ProjectAssignment,
-            sourceEdge = "project", targetEdge = "assignee",
-        )
-    }
+    val assignees = manyToMany<Pet>("assignees").through<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
 }
 
-object ProjectAssignment : EntSchema() {
-    override fun fields() = fields {
-        time("assigned_at")
-        int("project_id")
-        int("assignee_id")
-        int("reviewer_id").nullable()
-    }
+class ProjectAssignment : EntSchema("project_assignments") {
+    override fun id() = EntId.int()
+    val assignedAt = time("assigned_at")
+    val projectId = int("project_id")
+    val assigneeId = int("assignee_id")
+    val reviewerId = int("reviewer_id").nullable()
 
-    override fun edges() = edges {
-        belongsTo("project", Project).required().field("project_id")
-        belongsTo("assignee", Pet).required().field("assignee_id")
-        belongsTo("reviewer", Pet).field("reviewer_id")
-    }
+    val project = belongsTo<Project>("project").required().field(projectId)
+    val assignee = belongsTo<Pet>("assignee").required().field(assigneeId)
+    val reviewer = belongsTo<Pet>("reviewer").field(reviewerId)
 }
 
-private val schemaNames: Map<EntSchema, String> = mapOf(
-    Owner to "Owner",
-    Pet to "Pet",
-    RequiredPet to "RequiredPet",
-    Team to "Team",
-    TeamMember to "TeamMember",
-    Person to "Person",
-    Friendship to "Friendship",
-    Project to "Project",
-    ProjectAssignment to "ProjectAssignment",
-)
+// ---------- Test schemas for "ambiguous ref" test ----------
+
+private class AmbigPostSchema : EntSchema("posts") {
+    override fun id() = EntId.int()
+    val title = string("title")
+    val author = belongsTo<AmbigUserSchema>("author").inverse(AmbigUserSchema::posts)
+    val editor = belongsTo<AmbigUserSchema>("editor").inverse(AmbigUserSchema::posts)
+}
+
+private class AmbigUserSchema : EntSchema("users") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val posts = hasMany<AmbigPostSchema>("posts")
+}
+
+// ---------- Test schemas for self-ref M2M "same edge" tests ----------
+
+private class SameEdgeJunctionSchema : EntSchema("friendships") {
+    override fun id() = EntId.int()
+    val personId = int("person_id")
+    val friendId = int("friend_id")
+    val person = belongsTo<SameEdgePersonSchema>("person").required().field(personId)
+    val friend = belongsTo<SameEdgePersonSchema>("friend").required().field(friendId)
+}
+
+private class SameEdgePersonSchema : EntSchema("persons") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val friends = manyToMany<SameEdgePersonSchema>("friends")
+        .through<SameEdgeJunctionSchema>(SameEdgeJunctionSchema::person, SameEdgeJunctionSchema::person)
+}
+
+// ---------- Test schemas for onDelete / .field() tests ----------
+
+private class FkParentSchema : EntSchema("parents") {
+    override fun id() = EntId.long()
+    val name = string("name")
+}
+
+private class FkChildCascadeSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id")
+    val owner = belongsTo<FkParentSchema>("owner").field(ownerId).onDelete(OnDelete.CASCADE)
+}
+
+private class FkChildUniqueSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id")
+    val owner = belongsTo<FkParentSchema>("owner").unique().field(ownerId)
+}
+
+private class FkChildSetNullSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id") // non-nullable
+    val owner = belongsTo<FkParentSchema>("owner").field(ownerId).onDelete(OnDelete.SET_NULL)
+}
+
+private class FkChildTypeMismatchParent : EntSchema("parents") {
+    override fun id() = EntId.uuid()
+    val name = string("name")
+}
+
+private class FkChildTypeMismatchSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id") // Long field but target uses UUID id
+    val owner = belongsTo<FkChildTypeMismatchParent>("owner").field(ownerId)
+}
+
+// ---------- HasMany / HasOne cardinality test schemas ----------
+
+private class HasManyChildSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val parent = belongsTo<HasManyParentSchema>("parent").unique().inverse(HasManyParentSchema::children)
+}
+
+private class HasManyParentSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val children = hasMany<HasManyChildSchema>("children")
+}
+
+private class HasOneChildNonUniqueSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val parent = belongsTo<HasOneParentNonUniqueSchema>("parent").inverse(HasOneParentNonUniqueSchema::child) // missing .unique()
+}
+
+private class HasOneParentNonUniqueSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val child = hasOne<HasOneChildNonUniqueSchema>("child")
+}
+
+private class HasOneChildSchema : EntSchema("children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val parent = belongsTo<HasOneParentSchema>("parent").unique().inverse(HasOneParentSchema::child)
+}
+
+private class HasOneParentSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val child = hasOne<HasOneChildSchema>("child")
+}
+
+// ---------- HasOne eager loading test schemas ----------
+
+private class ProfileSchema : EntSchema("profiles") {
+    override fun id() = EntId.int()
+    val bio = string("bio")
+    val owner = belongsTo<HasOneEagerParentSchema>("owner").unique().inverse(HasOneEagerParentSchema::profile)
+}
+
+private class HasOneEagerParentSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val profile = hasOne<ProfileSchema>("profile")
+}
+
+private class ProfileSchema2 : EntSchema("profiles") {
+    override fun id() = EntId.int()
+    val bio = string("bio")
+    val owner = belongsTo<HasOneEdgesParentSchema>("owner").unique().inverse(HasOneEdgesParentSchema::profile)
+}
+
+private class HasOneEdgesParentSchema : EntSchema("parents") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val profile = hasOne<ProfileSchema2>("profile")
+}
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+}
 
 class EdgeCodegenTest {
 
+    private fun createAllSchemas(): Triple<
+        List<EntSchema>,
+        Map<EntSchema, String>,
+        Map<String, EntSchema>
+    > {
+        val owner = Owner()
+        val pet = Pet()
+        val requiredPet = RequiredPet()
+        val team = Team()
+        val teamMember = TeamMember()
+        val person = Person()
+        val friendship = Friendship()
+        val project = Project()
+        val projectAssignment = ProjectAssignment()
+
+        val all: List<EntSchema> = listOf(owner, pet, requiredPet, team, teamMember, person, friendship, project, projectAssignment)
+        finalize(*all.toTypedArray())
+
+        val names: Map<EntSchema, String> = mapOf(
+            owner to "Owner",
+            pet to "Pet",
+            requiredPet to "RequiredPet",
+            team to "Team",
+            teamMember to "TeamMember",
+            person to "Person",
+            friendship to "Friendship",
+            project to "Project",
+            projectAssignment to "ProjectAssignment",
+        )
+        val byName: Map<String, EntSchema> = names.entries.associate { (k, v) -> v to k }
+        return Triple(all, names, byName)
+    }
+
     @Test
     fun `entity gets nullable FK property for optional unique edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("val ownerId: Long?")) { "Should add nullable ownerId FK\n$output" }
     }
 
     @Test
     fun `entity gets non-null FK property for required unique edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("RequiredPet", RequiredPet, schemaNames).toString()
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
         assert(output.contains("val ownerId: Long,") || output.contains("val ownerId: Long\n")) {
             "Should add non-null ownerId FK\n$output"
@@ -163,8 +292,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `create builder gets id and entity properties for unique edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("var ownerId: Long?")) {
             "Should have ownerId: Long? property\n$output"
@@ -179,8 +309,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `create builder save validates required edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
-            .generate("RequiredPet", RequiredPet, schemaNames).toString()
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
         assert(output.contains("\"owner is required\"")) {
             "Should validate required edge in save()\n$output"
@@ -189,8 +320,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `update builder gets id and entity properties for unique edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = UpdateGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("var ownerId: Long?")) {
             "Should have ownerId: Long? property\n$output"
@@ -202,8 +334,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `update builder save uses dirty tracking for edge FK`() {
+        val (_, names, byName) = createAllSchemas()
         val output = UpdateGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("if (\"ownerId\" in dirtyFields) this.ownerId else entity.ownerId")) {
             "Should check dirtyFields for edge FK fallback\n$output"
@@ -212,8 +345,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `update builder edge FK setter tracks dirty state`() {
+        val (_, names, byName) = createAllSchemas()
         val output = UpdateGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("dirtyFields.add(\"ownerId\")")) {
             "Setting ownerId should add to dirtyFields\n$output"
@@ -222,13 +356,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity emits nullable column ref for optional unique edge FK`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
-        // Optional edge -> nullable FK. Long is Comparable so the FK
-        // gets NullableComparableColumn (range queries on IDs are useful
-        // for pagination). Being nullable, it implements [Nullable] so
-        // isNotNull() is callable.
         assert(output.contains("val ownerId: NullableComparableColumn<Long> = NullableComparableColumn<Long>(\"owner_id\")")) {
             "Should emit NullableComparableColumn<Long> for optional edge FK\n$output"
         }
@@ -236,8 +367,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity emits non-null column ref for required unique edge FK`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("RequiredPet", RequiredPet, schemaNames).toString()
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
         assert(output.contains("val ownerId: ComparableColumn<Long> = ComparableColumn<Long>(\"owner_id\")")) {
             "Should emit non-null ComparableColumn<Long> for required edge FK\n$output"
@@ -248,8 +380,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `generated SCHEMA includes ForeignKeyRef for edge FK columns`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("ForeignKeyRef")) {
             "Should emit ForeignKeyRef for the owner_id FK column\n$output"
@@ -264,11 +397,12 @@ class EdgeCodegenTest {
 
     @Test
     fun `non-FK columns do not get ForeignKeyRef`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(!output.contains("ForeignKeyRef")) {
-            "Owner has no FK columns — should not emit ForeignKeyRef\n$output"
+            "Owner has no FK columns -- should not emit ForeignKeyRef\n$output"
         }
     }
 
@@ -276,11 +410,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity emits EdgeRef on the companion for to-many edges`() {
-        // Owner has `to("pets", Pet)`, no FK on Owner — but it should
-        // still get an EdgeRef so callers can write
-        // `Owner.pets.has { ... }` and `client.owners.query{}.queryPets()`.
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
@@ -292,10 +424,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity emits EdgeRef on the companion for from-side unique edges`() {
-        // Pet has `from("owner", Owner).ref("pets").unique()` — both the
-        // FK column ref AND a separate EdgeRef should be emitted.
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("val owner: EdgeRef<Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery(NoopDriver) }")) {
             "Should emit EdgeRef for the owner edge wired to NoopDriver\n$output"
@@ -310,22 +441,16 @@ class EdgeCodegenTest {
 
     @Test
     fun `query gets traversal method for paired to-many edge`() {
-        // Owner has `to("pets", Pet)` paired with Pet's
-        // `from("owner", Owner).ref("pets")` — the inverse on Pet is "owner".
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(output.contains("fun queryPets(): PetQuery")) {
             "Should generate traversal queryPets()\n$output"
         }
-        // The inverse edge on Pet is "owner" — that's the name baked
-        // into the HasEdgeWith node so the runtime knows which FK to
-        // join through.
         assert(output.contains("Predicate.HasEdgeWith(\"owner\", parent)")) {
             "Should reference the inverse edge name in HasEdgeWith\n$output"
         }
-        // Empty parent → still emit HasEdge so optional inverse edges
-        // filter out unrelated rows (no-op for required edges).
         assert(output.contains("Predicate.HasEdge(\"owner\")")) {
             "Should fall back to HasEdge when parent has no wheres\n$output"
         }
@@ -333,10 +458,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `query gets traversal method on the from-side too`() {
-        // Same pair from the other direction: PetQuery.queryOwner() should
-        // exist and reference Owner's "pets" edge as the inverse.
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("fun queryOwner(): OwnerQuery")) {
             "Should generate traversal queryOwner()\n$output"
@@ -348,64 +472,28 @@ class EdgeCodegenTest {
 
     @Test
     fun `does not emit traversal when the inverse edge cannot be resolved`() {
-        // RequiredPet has `from("owner", Owner).unique()` with no .ref(),
-        // and Owner declares `to("pets", Pet)` (not RequiredPet) — there's
-        // no back-edge from Owner to RequiredPet, so PetQuery → Owner
-        // can be resolved via the single-back-edge fallback, but the
-        // OwnerQuery → RequiredPet direction has no inverse and should
-        // skip emitting a traversal. We assert the failing direction.
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
-        // Owner.queryPets exists (paired with Pet, not RequiredPet) but
-        // no `queryRequiredPets()` should appear.
         assert(!output.contains("queryRequiredPets")) {
             "Should not emit traversal when there's no matching back-edge\n$output"
         }
     }
 
-    @Test
-    fun `bad ref value fails at codegen time`() {
-        val parent = object : EntSchema() {
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields { string("name") }
-            override fun edges() = edges {
-                belongsTo("parent", parent).ref("typo")
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
-        val error = kotlin.test.assertFailsWith<IllegalStateException> {
-            QueryGenerator("com.example.ent").generate("Child", child, names)
-        }
-        assert(error.message!!.contains("typo")) {
-            "Error should mention the bad ref value\n${error.message}"
-        }
-    }
+    // NOTE: The old test "bad ref value fails at codegen time" has been removed
+    // because the typed builder API's .inverse() now prevents bad ref values at
+    // compile time. The ref field on BelongsTo edges is set by the framework from
+    // the KProperty1 reference, so a bad ref is no longer possible.
 
     @Test
     fun `ambiguous ref aliases on target fail at codegen time`() {
-        // Use a holder so user and post can reference each other
-        class Schemas {
-            val user: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasMany("posts", this@Schemas.post)
-                }
-            }
-            val post: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("title") }
-                override fun edges() = edges {
-                    belongsTo("author", this@Schemas.user).ref("posts")
-                    belongsTo("editor", this@Schemas.user).ref("posts")
-                }
-            }
-        }
-        val s = Schemas()
-        val names = mapOf(s.user to "User", s.post to "Post")
-        val error = kotlin.test.assertFailsWith<IllegalStateException> {
-            QueryGenerator("com.example.ent").generate("User", s.user, names)
+        val user = AmbigUserSchema()
+        val post = AmbigPostSchema()
+        finalize(user, post)
+        val names = mapOf<EntSchema, String>(user to "User", post to "Post")
+        val error = assertFailsWith<IllegalStateException> {
+            QueryGenerator("com.example.ent").generate("User", user, names)
         }
         assert(error.message!!.contains("ambiguous")) {
             "Error should mention ambiguity\n${error.message}"
@@ -416,8 +504,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity emits EdgeRef for M2M edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString()
+            .generate("Team", byName["Team"]!!, names).toString()
 
         assert(output.contains("val members: EdgeRef<Pet, PetQuery> = EdgeRef(\"members\") { PetQuery(NoopDriver) }")) {
             "Should emit EdgeRef for M2M members edge\n$output"
@@ -426,8 +515,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `M2M edge does not produce FK on source entity`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString()
+            .generate("Team", byName["Team"]!!, names).toString()
 
         assert(!output.contains("membersId")) {
             "M2M edge should not produce an FK property on the source\n$output"
@@ -436,42 +526,41 @@ class EdgeCodegenTest {
 
     @Test
     fun `generated SCHEMA includes junction metadata for M2M edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString()
+            .generate("Team", byName["Team"]!!, names).toString()
 
         assert(output.contains("junctionTable")) {
             "Should include junction metadata in SCHEMA\n$output"
         }
-        assert(output.contains("\"teamMembers\"")) {
+        assert(output.contains("\"team_members\"")) {
             "Junction table should be the TeamMember table name\n$output"
         }
     }
 
     @Test
     fun `target entity gets reverse M2M edge in SCHEMA`() {
-        // Pet is the target of Team's M2M "members" edge — Pet's SCHEMA
-        // should include a reverse "teams" edge with junction metadata.
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("\"teams_members\"")) {
             "Pet SCHEMA should include reverse 'teams_members' M2M edge\n$output"
         }
-        assert(output.contains("junctionTable = \"teamMembers\"")) {
+        assert(output.contains("junctionTable = \"team_members\"")) {
             "Reverse edge should carry junction table metadata\n$output"
         }
     }
 
     @Test
     fun `query gets M2M traversal method`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString()
+            .generate("Team", byName["Team"]!!, names).toString()
 
         assert(output.contains("fun queryMembers(): PetQuery")) {
             "Should generate M2M traversal queryMembers()\n$output"
         }
-        // M2M traversal references the reverse edge name on the target
-        // (Pet's table-name-derived "teams" edge).
         assert(output.contains("Predicate.HasEdgeWith(\"teams_members\", parent)")) {
             "Should reference reverse M2M edge name\n$output"
         }
@@ -484,8 +573,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity Edges class has nullable entity for to-one edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("data class Edges")) {
             "Should generate inner Edges class\n$output"
@@ -497,8 +587,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity Edges class has nullable list for to-many edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(output.contains("val pets: List<Pet>? = null")) {
             "To-many edge should produce nullable list property\n$output"
@@ -507,8 +598,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `entity Edges class has nullable list for M2M edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString()
+            .generate("Team", byName["Team"]!!, names).toString()
 
         assert(output.contains("val members: List<Pet>? = null")) {
             "M2M edge should produce nullable list property\n$output"
@@ -519,8 +611,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `query generates withPets for to-many edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(output.contains("fun withPets(")) {
             "Should generate withPets method\n$output"
@@ -535,8 +628,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `query generates withOwner for to-one edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("fun withOwner(")) {
             "Should generate withOwner method\n$output"
@@ -548,8 +642,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `query generates withMembers for M2M edge`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString()
+            .generate("Team", byName["Team"]!!, names).toString()
 
         assert(output.contains("fun withMembers(")) {
             "Should generate withMembers method\n$output"
@@ -558,8 +653,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `query generates loadEdges for schemas with edges`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(output.contains("fun loadEdges(")) {
             "Should generate loadEdges method\n$output"
@@ -568,8 +664,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `all() delegates to loadEdges for schemas with edges`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(output.contains("loadEdges(results, privacy)")) {
             "all() should delegate to loadEdges after privacy check\n$output"
@@ -578,8 +675,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `to-many eager loading queries target with IN predicate on FK column`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString().replace("\\s+".toRegex(), " ")
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("Predicate.Leaf(\"owner_id\", Op.IN, sourceIds)")) {
             "Should build IN predicate on the FK column\n$output"
@@ -588,8 +686,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `to-one eager loading queries target by id`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Pet", Pet, schemaNames).toString().replace("\\s+".toRegex(), " ")
+            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("Predicate.Leaf(\"id\", Op.IN, fkValues)")) {
             "Should build IN predicate on target id column\n$output"
@@ -598,10 +697,11 @@ class EdgeCodegenTest {
 
     @Test
     fun `M2M eager loading queries junction table then target`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString().replace("\\s+".toRegex(), " ")
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("\"teamMembers\"")) {
+        assert(output.contains("\"team_members\"")) {
             "Should query junction table\n$output"
         }
         assert(output.contains("Predicate.Leaf(\"team_id\", Op.IN, sourceIds)")) {
@@ -613,12 +713,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `self-referential M2M resolves distinct source and target FKs`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Person", Person, schemaNames).toString()
+            .generate("Person", byName["Person"]!!, names).toString()
 
-        // The junction has person_id (source) and friend_id (target).
-        // Both junction edges target Person, so without the fix they'd
-        // both resolve to person_id.
         assert(output.contains("junctionSourceColumn = \"person_id\"")) {
             "Source FK should be person_id\n$output"
         }
@@ -629,8 +727,9 @@ class EdgeCodegenTest {
 
     @Test
     fun `self-referential M2M query uses correct junction FKs`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Person", Person, schemaNames).toString().replace("\\s+".toRegex(), " ")
+            .generate("Person", byName["Person"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("Predicate.Leaf(\"person_id\", Op.IN, sourceIds)")) {
             "Should query junction with source FK person_id\n$output"
@@ -638,66 +737,17 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `self-referential M2M without hints fails`() {
-        class Schemas {
-            val person: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    manyToMany("friends", person).through(junction)
-                }
-            }
-            val junction: EntSchema = object : EntSchema() {
-                override fun fields() = fields {
-                    int("person_id")
-                    int("friend_id")
-                }
-                override fun edges() = edges {
-                    belongsTo("person", person).required().field("person_id")
-                    belongsTo("friend", person).required().field("friend_id")
-                }
-            }
-        }
-        val s = Schemas()
-        val names = mapOf(s.person to "Person", s.junction to "Friendship")
+    fun `self-referential M2M with same source and target edge fails`() {
+        val person = SameEdgePersonSchema()
+        val junction = SameEdgeJunctionSchema()
+        finalize(person, junction)
+        val names = mapOf<EntSchema, String>(person to "Person", junction to "Friendship")
         val error = runCatching {
-            EntityGenerator("com.example.ent").generate("Person", s.person, names)
+            EntityGenerator("com.example.ent").generate("Person", person, names)
         }.exceptionOrNull()
-        assert(error != null) { "Should fail without sourceEdge/targetEdge hints" }
-        assert(error!!.message!!.contains("Ambiguous M2M")) {
-            "Error should mention ambiguity: ${error.message}"
-        }
-    }
-
-    @Test
-    fun `self-referential M2M rejects duplicate sourceEdge and targetEdge hints`() {
-        class Schemas {
-            val person: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    manyToMany("friends", person).through(
-                        junction, sourceEdge = "person", targetEdge = "person",
-                    )
-                }
-            }
-            val junction: EntSchema = object : EntSchema() {
-                override fun fields() = fields {
-                    int("person_id")
-                    int("friend_id")
-                }
-                override fun edges() = edges {
-                    belongsTo("person", person).required().field("person_id")
-                    belongsTo("friend", person).required().field("friend_id")
-                }
-            }
-        }
-        val s = Schemas()
-        val names = mapOf(s.person to "Person", s.junction to "Friendship")
-        val error = runCatching {
-            EntityGenerator("com.example.ent").generate("Person", s.person, names)
-        }.exceptionOrNull()
-        assert(error != null) { "Should fail when sourceEdge == targetEdge" }
+        assert(error != null) { "Should fail when sourceEdge and targetEdge resolve to same junction edge" }
         assert(error!!.message!!.contains("same junction edge")) {
-            "Error should mention duplicate edge: ${error.message}"
+            "Error should mention same junction edge: ${error.message}"
         }
     }
 
@@ -705,14 +755,13 @@ class EdgeCodegenTest {
 
     @Test
     fun `to-many eager loading applies limit per group not globally`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", Owner, schemaNames).toString().replace("\\s+".toRegex(), " ")
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        // The batch query should pass null for limit/offset
         assert(output.contains("subQuery.orderFields, null, null)")) {
             "Batch query should not pass limit/offset to driver\n$output"
         }
-        // Per-group slicing should exist
         assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
             "Should apply limit/offset per group\n$output"
         }
@@ -720,10 +769,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `M2M eager loading applies limit per group not globally`() {
+        val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Team", Team, schemaNames).toString().replace("\\s+".toRegex(), " ")
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        // Target query should pass null for limit/offset
         assert(output.contains("subQuery.orderFields, null, null)")) {
             "Target query should not pass limit/offset to driver\n$output"
         }
@@ -736,10 +785,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `through with sourceEdge and targetEdge picks the correct junction FKs`() {
+        val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Project", Project, schemaNames).toString()
+            .generate("Project", byName["Project"]!!, names).toString()
 
-        // Should use "assignee_id" (from the "assignee" edge), not "reviewer_id"
         assert(output.contains("junctionSourceColumn = \"project_id\"")) {
             "Source FK should be project_id\n$output"
         }
@@ -750,17 +799,18 @@ class EdgeCodegenTest {
 
     @Test
     fun `ambiguous junction without hints fails fast`() {
-        // ProjectAssignment has two unique edges to Pet ("assignee" and
-        // "reviewer"). Without sourceEdge/targetEdge hints, the target
-        // side is ambiguous and should fail at codegen time.
+        val (_, names, byName) = createAllSchemas()
+        val pet = byName["Pet"]!!
+        val projectAssignment = byName["ProjectAssignment"]!!
+        val project = byName["Project"]!!
         val edge = Edge(
             name = "assignees",
-            target = Pet,
-            kind = EdgeKind.ManyToMany(Through(ProjectAssignment)),
+            target = pet,
+            kind = EdgeKind.ManyToMany(Through(projectAssignment)),
         )
 
         val error = assertFailsWith<IllegalStateException> {
-            resolveM2MEdgeJoin(edge, Project, schemaNames)
+            resolveM2MEdgeJoin(edge, project, names)
         }
         assert(error.message!!.contains("Ambiguous M2M")) {
             "Should mention ambiguous M2M: ${error.message}"
@@ -772,20 +822,22 @@ class EdgeCodegenTest {
 
     @Test
     fun `wrong sourceEdge hint fails fast with clear error`() {
-        // sourceEdge "assignee" points at Pet, not Project — should
-        // error rather than silently dropping the edge.
+        val (_, names, byName) = createAllSchemas()
+        val pet = byName["Pet"]!!
+        val projectAssignment = byName["ProjectAssignment"]!!
+        val project = byName["Project"]!!
         val edge = Edge(
             name = "assignees",
-            target = Pet,
+            target = pet,
             kind = EdgeKind.ManyToMany(Through(
-                ProjectAssignment,
-                sourceEdge = "assignee",  // wrong: points at Pet, not source (Project)
+                projectAssignment,
+                sourceEdge = "assignee",
                 targetEdge = "reviewer",
             )),
         )
 
         val error = assertFailsWith<IllegalStateException> {
-            resolveM2MEdgeJoin(edge, Project, schemaNames)
+            resolveM2MEdgeJoin(edge, project, names)
         }
         assert(error.message!!.contains("sourceEdge hint")) {
             "Should mention sourceEdge hint: ${error.message}"
@@ -794,20 +846,22 @@ class EdgeCodegenTest {
 
     @Test
     fun `wrong targetEdge hint fails fast with clear error`() {
-        // targetEdge "project" points at Project, not Pet — should
-        // error rather than silently dropping the edge.
+        val (_, names, byName) = createAllSchemas()
+        val pet = byName["Pet"]!!
+        val projectAssignment = byName["ProjectAssignment"]!!
+        val project = byName["Project"]!!
         val edge = Edge(
             name = "assignees",
-            target = Pet,
+            target = pet,
             kind = EdgeKind.ManyToMany(Through(
-                ProjectAssignment,
+                projectAssignment,
                 sourceEdge = "project",
-                targetEdge = "project",  // wrong: points at Project, not target (Pet)
+                targetEdge = "project",
             )),
         )
 
         val error = assertFailsWith<IllegalStateException> {
-            resolveM2MEdgeJoin(edge, Project, schemaNames)
+            resolveM2MEdgeJoin(edge, project, names)
         }
         assert(error.message!!.contains("targetEdge hint")) {
             "Should mention targetEdge hint: ${error.message}"
@@ -818,20 +872,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `onDelete propagates through explicit field edges`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                long("owner_id")
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).field("owner_id").onDelete(OnDelete.CASCADE)
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
+        val parent = FkParentSchema()
+        val child = FkChildCascadeSchema()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
         val columns = columnMetadataFor(child, names)
         val fkCol = columns.firstOrNull { it.name == "owner_id" }
 
@@ -843,20 +887,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `unique propagates through explicit field edges`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                long("owner_id")
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).unique().field("owner_id")
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
+        val parent = FkParentSchema()
+        val child = FkChildUniqueSchema()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
         val columns = columnMetadataFor(child, names)
         val fkCol = columns.firstOrNull { it.name == "owner_id" }
 
@@ -864,71 +898,12 @@ class EdgeCodegenTest {
         assertEquals(true, fkCol.unique, "Edge .unique() should propagate to column")
     }
 
-    // ---------- storageKey + explicit .field() ----------
-
-    @Test
-    fun `explicit field edge with storageKey resolves FK reference correctly`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                long("owner_id").storageKey("owner_fk")
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).field("owner_id")
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
-        val columns = columnMetadataFor(child, names)
-        val fkCol = columns.firstOrNull { it.name == "owner_fk" }
-
-        assertNotNull(fkCol, "Should find column by storageKey 'owner_fk'")
-        val refs = assertNotNull(fkCol.references, "Field with storageKey should still get FK reference from edge")
-        assertEquals("parents", refs.first)
-    }
-
-    @Test
-    fun `explicit field edge with storageKey resolves join to physical column`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                long("owner_id").storageKey("owner_fk")
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).field("owner_id")
-            }
-        }
-        val join = resolveEdgeJoin(
-            child.edges().first(),
-            child,
-        )
-        assertNotNull(join)
-        assertEquals("owner_fk", join.sourceColumn, "Join should use physical column name from storageKey")
-    }
-
     @Test
     fun `SET_NULL rejected on non-nullable explicit field`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                long("owner_id") // not optional — non-nullable
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).field("owner_id").onDelete(OnDelete.SET_NULL)
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
+        val parent = FkParentSchema()
+        val child = FkChildSetNullSchema()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
         assertFailsWith<IllegalStateException> {
             columnMetadataFor(child, names)
         }
@@ -936,45 +911,17 @@ class EdgeCodegenTest {
 
     // ---------- explicit .field() validation ----------
 
-    @Test
-    fun `explicit field edge rejected when field does not exist`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.long()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).field("owner_id") // no such field
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
-        val ex = assertFailsWith<IllegalStateException> {
-            columnMetadataFor(child, names)
-        }
-        assert(ex.message!!.contains("no field with that name")) {
-            "Error should mention missing field\n${ex.message}"
-        }
-    }
+    // NOTE: The old test "explicit field edge rejected when field does not exist"
+    // has been removed because the typed builder API now prevents this at compile
+    // time — .field(handle) takes a FieldHandle from the same schema, so referencing
+    // a nonexistent field is a compile error.
 
     @Test
     fun `explicit field edge rejected when field type mismatches target id`() {
-        val parent = object : EntSchema() {
-            override fun id() = EntId.uuid()
-            override fun fields() = fields { string("name") }
-        }
-        val child = object : EntSchema() {
-            override fun fields() = fields {
-                string("name")
-                long("owner_id") // Long field but target uses UUID id
-            }
-            override fun edges() = edges {
-                belongsTo("owner", parent).field("owner_id")
-            }
-        }
-        val names = mapOf(parent to "Parent", child to "Child")
+        val parent = FkChildTypeMismatchParent()
+        val child = FkChildTypeMismatchSchema()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
         val ex = assertFailsWith<IllegalStateException> {
             columnMetadataFor(child, names)
         }
@@ -987,48 +934,22 @@ class EdgeCodegenTest {
 
     @Test
     fun `hasMany rejects inverse belongsTo with unique`() {
-        class S {
-            val parent: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasMany("children", this@S.child)
-                }
-            }
-            val child: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    belongsTo("parent", this@S.parent).unique()
-                }
-            }
-        }
-        val s = S()
+        val parent = HasManyParentSchema()
+        val child = HasManyChildSchema()
         val ex = assertFailsWith<IllegalStateException> {
-            resolveEdgeJoin(s.parent.edges().first(), s.parent)
+            finalize(parent, child)
         }
-        assert(ex.message!!.contains("hasOne")) {
-            "Error should suggest using hasOne\n${ex.message}"
+        assert(ex.message!!.contains("hasMany")) {
+            "Error should mention hasMany cardinality mismatch\n${ex.message}"
         }
     }
 
     @Test
     fun `hasOne edge requires inverse belongsTo to have unique`() {
-        class S {
-            val parent: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasOne("child", this@S.child)
-                }
-            }
-            val child: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    belongsTo("parent", this@S.parent) // missing .unique()
-                }
-            }
-        }
-        val s = S()
+        val parent = HasOneParentNonUniqueSchema()
+        val child = HasOneChildNonUniqueSchema()
         val ex = assertFailsWith<IllegalStateException> {
-            resolveEdgeJoin(s.parent.edges().first(), s.parent)
+            finalize(parent, child)
         }
         assert(ex.message!!.contains("unique")) {
             "Error should mention unique requirement\n${ex.message}"
@@ -1037,22 +958,10 @@ class EdgeCodegenTest {
 
     @Test
     fun `hasOne edge succeeds when inverse belongsTo has unique`() {
-        class S {
-            val parent: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasOne("child", this@S.child)
-                }
-            }
-            val child: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    belongsTo("parent", this@S.parent).unique()
-                }
-            }
-        }
-        val s = S()
-        val join = resolveEdgeJoin(s.parent.edges().first(), s.parent)
+        val parent = HasOneParentSchema()
+        val child = HasOneChildSchema()
+        finalize(parent, child)
+        val join = resolveEdgeJoin(parent.edges().first(), parent)
         assertNotNull(join)
         assertEquals("id", join.sourceColumn)
         assertEquals("parent_id", join.targetColumn)
@@ -1062,27 +971,13 @@ class EdgeCodegenTest {
 
     @Test
     fun `hasOne eager loading queries target by FK not source FK`() {
-        class S {
-            val parent: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasOne("profile", this@S.child)
-                }
-            }
-            val child: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("bio") }
-                override fun edges() = edges {
-                    belongsTo("owner", this@S.parent).unique()
-                }
-            }
-        }
-        val s = S()
-        val names = mapOf(s.parent to "Parent", s.child to "Profile")
+        val parent = HasOneEagerParentSchema()
+        val profile = ProfileSchema()
+        finalize(parent, profile)
+        val names = mapOf<EntSchema, String>(parent to "Parent", profile to "Profile")
         val output = QueryGenerator("com.example.ent")
-            .generate("Parent", s.parent, names).toString().replace("\\s+".toRegex(), " ")
+            .generate("Parent", parent, names).toString().replace("\\s+".toRegex(), " ")
 
-        // HasOne eager loading should query target by FK (owner_id),
-        // group results by owner_id, and map to source via entity.id.
         assert(output.contains("Predicate.Leaf(\"owner_id\", Op.IN, sourceIds)")) {
             "Should query target by FK column, not source FK\n$output"
         }
@@ -1096,24 +991,12 @@ class EdgeCodegenTest {
 
     @Test
     fun `hasOne Edges property is nullable entity not list`() {
-        class S {
-            val parent: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("name") }
-                override fun edges() = edges {
-                    hasOne("profile", this@S.child)
-                }
-            }
-            val child: EntSchema = object : EntSchema() {
-                override fun fields() = fields { string("bio") }
-                override fun edges() = edges {
-                    belongsTo("owner", this@S.parent).unique()
-                }
-            }
-        }
-        val s = S()
-        val names = mapOf(s.parent to "Parent", s.child to "Profile")
+        val parent = HasOneEdgesParentSchema()
+        val profile = ProfileSchema2()
+        finalize(parent, profile)
+        val names = mapOf<EntSchema, String>(parent to "Parent", profile to "Profile")
         val output = EntityGenerator("com.example.ent")
-            .generate("Parent", s.parent, names).toString()
+            .generate("Parent", parent, names).toString()
 
         assert(output.contains("val profile: Profile? = null")) {
             "HasOne edge should produce nullable entity property, not a list\n$output"

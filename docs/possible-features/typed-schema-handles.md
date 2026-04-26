@@ -28,24 +28,27 @@ manyToMany("groups", Group).through(UserGroup, sourceEdge = "user", targetEdge =
 This RFC proposes a Kotlin-first shape instead:
 
 ```kotlin
-class User : EntSchema<Long>("users") {
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
     val name = string("name").minLen(1).maxLen(64)
     val posts = hasMany<Post>("posts")
     val friends = manyToMany<User>("friends")
         .through<Friendship>(Friendship::user, Friendship::friend)
 }
 
-class Post : EntSchema<Long>("posts") {
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
     val title = string("title").minLen(1)
     val authorId = long("author_id")
     val author = belongsTo<User>("author")
         .field(authorId)
         .inverse(User::posts)
         .required()
-    val byAuthor = index(authorId)
+    val byAuthor = index("idx_posts_author", authorId)
 }
 
-class Friendship : EntSchema<Long>("friendships") {
+class Friendship : EntSchema("friendships") {
+    override fun id() = EntId.long()
     val user = belongsTo<User>("user").required()
     val friend = belongsTo<User>("friend").required()
 }
@@ -190,7 +193,8 @@ The canonical schema style should use plain property declarations for
 all core schema elements, with explicit SQL field and table names.
 
 ```kotlin
-class Post : EntSchema<Long>("posts") {
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
     val title = string("title").minLen(1)
     val authorId = long("author_id")
     val author = belongsTo<User>("author")
@@ -226,8 +230,12 @@ is explicit in the declaration, not inferred from the Kotlin class
 name.
 
 ```kotlin
-class User : EntSchema<Long>("users")
-class Post : EntSchema<Long>("posts")
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+}
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+}
 ```
 
 This RFC does not leave table naming as an implicit convention.
@@ -244,8 +252,8 @@ linkage-heavy APIs.
 val authorId = long("author_id")
 val createdAt = time("created_at")
 
-index(authorId)
-index(authorId, createdAt)
+index("idx_author", authorId)
+index("idx_author_created", authorId, createdAt)
 
 belongsTo<User>("author")
     .field(authorId)
@@ -302,9 +310,9 @@ DSL prefers plain property declarations, field handles, and
 property-reference-based edge linkage.
 
 The public examples in this RFC intentionally use the clean user-facing
-shape `EntSchema<Long>(...)`. If implementations need internal owner
-keys or hidden typing helpers to enforce declaration ownership, that is
-an implementation detail, not the intended surface syntax.
+shape `EntSchema(...)`. If implementations need internal owner keys or
+hidden typing helpers to enforce declaration ownership, that is an
+implementation detail, not the intended surface syntax.
 
 In this RFC, builder objects are also the public declaration handles.
 That is an intentional simplification:
@@ -334,75 +342,77 @@ interface DeclarationHandle {
 interface FieldHandle<T> : DeclarationHandle
 interface IndexHandle : DeclarationHandle
 
-interface BelongsToHandle<Target : EntSchema<*>> : DeclarationHandle
-interface HasManyHandle<Target : EntSchema<*>> : DeclarationHandle
-interface HasOneHandle<Target : EntSchema<*>> : DeclarationHandle
-interface ManyToManyHandle<Target : EntSchema<*>> : DeclarationHandle
+interface BelongsToHandle<Target : EntSchema> : DeclarationHandle
+interface HasManyHandle<Target : EntSchema> : DeclarationHandle
+interface HasOneHandle<Target : EntSchema> : DeclarationHandle
+interface ManyToManyHandle<Target : EntSchema> : DeclarationHandle
 ```
 
 One possible internal typing sketch looks like this:
 
 ```kotlin
-abstract class EntSchema<ID : Any>(val tableName: String) {
+abstract class EntSchema(val tableName: String) {
+    abstract fun id(): EntId
     internal val schemaKey: SchemaKey
 
     protected fun index(
+        name: String,
         vararg fields: FieldHandle<*>
     ): IndexHandle
 
-    protected inline fun <reified Target : EntSchema<*>> belongsTo(
+    protected inline fun <reified Target : EntSchema> belongsTo(
         name: String,
     ): BelongsToBuilder<Target> = belongsTo(name, Target::class)
 
-    protected fun <Target : EntSchema<*>> belongsTo(
+    protected fun <Target : EntSchema> belongsTo(
         name: String,
         target: KClass<Target>,
     ): BelongsToBuilder<Target>
 
-    protected inline fun <reified Target : EntSchema<*>> hasMany(
+    protected inline fun <reified Target : EntSchema> hasMany(
         name: String,
     ): HasManyBuilder<Target> = hasMany(name, Target::class)
 
-    protected fun <Target : EntSchema<*>> hasMany(
+    protected fun <Target : EntSchema> hasMany(
         name: String,
         target: KClass<Target>,
     ): HasManyBuilder<Target>
 
-    protected inline fun <reified Target : EntSchema<*>> hasOne(
+    protected inline fun <reified Target : EntSchema> hasOne(
         name: String,
     ): HasOneBuilder<Target> = hasOne(name, Target::class)
 
-    protected fun <Target : EntSchema<*>> hasOne(
+    protected fun <Target : EntSchema> hasOne(
         name: String,
         target: KClass<Target>,
     ): HasOneBuilder<Target>
 
-    protected inline fun <reified Target : EntSchema<*>> manyToMany(
+    protected inline fun <reified Target : EntSchema> manyToMany(
         name: String,
     ): ManyToManyBuilder<Target> = manyToMany(name, Target::class)
 
-    protected fun <Target : EntSchema<*>> manyToMany(
+    protected fun <Target : EntSchema> manyToMany(
         name: String,
         target: KClass<Target>,
     ): ManyToManyBuilder<Target>
 }
 
-fun <Target : EntSchema<*>>
+fun <Target : EntSchema>
 BelongsToBuilder<Target>.field(
     field: FieldHandle<*>
 ): BelongsToBuilder<Target>
 
-fun <Target : EntSchema<*>>
+fun <Target : EntSchema>
 BelongsToBuilder<Target>.inverse(
     inverse: KProperty1<Target, HasManyHandle<*>>
 ): BelongsToBuilder<Target>
 
-fun <Target : EntSchema<*>>
+fun <Target : EntSchema>
 BelongsToBuilder<Target>.inverse(
     inverse: KProperty1<Target, HasOneHandle<*>>
 ): BelongsToBuilder<Target>
 
-fun <Target : EntSchema<*>, Junction : EntSchema<*>> ManyToManyBuilder<Target>.through(
+fun <Target : EntSchema, Junction : EntSchema> ManyToManyBuilder<Target>.through(
     sourceEdge: KProperty1<Junction, BelongsToHandle<*>>,
     targetEdge: KProperty1<Junction, BelongsToHandle<Target>>,
 ): ManyToManyBuilder<Target>
@@ -410,11 +420,9 @@ fun <Target : EntSchema<*>, Junction : EntSchema<*>> ManyToManyBuilder<Target>.t
 
 The exact internal signatures may need variance, a shared `EdgeHandle`
 supertype, or a different owner-key representation. The public DSL
-target remains the plain declaration style shown above, not a
-self-typed `EntSchema<Self, ID>` surface. Because the public API keeps
-`EntSchema<ID>`, same-schema owner checks and FK value-type checks are
-schema/codegen validation responsibilities rather than hard compile-time
-guarantees.
+target remains the plain declaration style shown above. Same-schema
+owner checks and FK value-type checks are schema/codegen validation
+responsibilities rather than hard compile-time guarantees.
 
 ## Validation Model
 
@@ -439,8 +447,8 @@ than Kotlin compile-time guarantees. These checks must run during schema
 finalization before generated code, migrations, or runtime metadata are
 emitted:
 
-- `.field(handle)` and `index(handle)` must reject handles declared by a
-  different collected schema instance
+- `.field(handle)` and `index(handle)` resolve by field name within the
+  owning schema; owner-key validation is not enforced
 - `.field(handle)` must reject fields whose value type does not match
   the target schema's ID type
 - `belongsTo(...).inverse(Target::edge)` must reject inverse edges that
@@ -473,11 +481,12 @@ Those declaration sites are the source of truth for storage naming.
 Example:
 
 ```kotlin
-class Post : EntSchema<Long>("posts") {
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
     val authorId = long("author_id")
 
     val author = belongsTo<User>("author").field(authorId)
-    val byAuthor = index(authorId)
+    val byAuthor = index("idx_posts_author", authorId)
 }
 ```
 
@@ -493,8 +502,7 @@ In this model:
 
 Because the field declaration already names the SQL column explicitly,
 and the schema constructor already names the SQL table explicitly,
-public `storageKey(...)`-style persistence overrides are unnecessary in
-this design.
+no separate persistence-name override API is needed.
 
 ## Schema Declaration Model
 
@@ -502,10 +510,11 @@ This RFC fits best with a declaration-oriented schema style where
 fields, edges, and indexes are stable properties on the schema type:
 
 ```kotlin
-class Post : EntSchema<Long>("posts") {
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
     val authorId = long("author_id")
     val author = belongsTo<User>("author").field(authorId)
-    val byAuthor = index(authorId)
+    val byAuthor = index("idx_posts_author", authorId)
 }
 ```
 
@@ -595,11 +604,13 @@ after schema instances have been constructed and collected.
 Example:
 
 ```kotlin
-class User : EntSchema<Long>("users") {
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
     val posts = hasMany<Post>("posts")
 }
 
-class Post : EntSchema<Long>("posts") {
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
     val author = belongsTo<User>("author").inverse(User::posts)
 }
 ```
@@ -650,14 +661,14 @@ This RFC intentionally removes string-based linkage APIs.
 
 The design target is handle-first only:
 
-- `index(authorId)`
+- `index("idx_author", authorId)`
 - `belongsTo<User>("author").field(authorId)`
 - `belongsTo<User>("author").inverse(User::posts)`
 - `manyToMany<Group>("groups").through<UserGroup>(UserGroup::user, UserGroup::group)`
 
 The old string-based forms are not part of this design target:
 
-- `index("author_id")`
+- `index("author_id")` (string field reference instead of handle)
 - `.field("author_id")`
 - `.ref("inverse_edge")`
 - `through(..., sourceEdge = "user", targetEdge = "group")`
@@ -723,6 +734,14 @@ This keeps the model explicit:
 - edge metadata controls relationship semantics
 - when they disagree, the schema fails early instead of inferring or
   silently rewriting relationship shape
+
+## Follow-up: Typed EntId
+
+The `EntSchema` base class requires `override fun id(): EntId`, and
+codegen derives the actual ID type from `id().type`. A future
+improvement could make `EntId` generic (`EntId<Long>`, `EntId<UUID>`)
+so that generated entity classes carry the ID type in their signatures.
+This is deferred to a follow-up.
 
 ## Acceptance Criteria
 

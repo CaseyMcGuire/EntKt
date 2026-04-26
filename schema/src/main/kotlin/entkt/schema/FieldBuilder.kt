@@ -1,10 +1,19 @@
 package entkt.schema
 
 @Suppress("UNCHECKED_CAST")
-abstract class FieldBuilder<T : FieldBuilder<T>>(
-    private val name: String,
+abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructor(
+    override val fieldName: String,
     private val type: FieldType,
-) {
+) : FieldHandle<V> {
+    override val fieldType: FieldType get() = type
+
+    internal var frozen: Boolean = false
+    @PublishedApi internal var declarationOwner: EntSchema? = null
+
+    protected fun checkNotFrozen() {
+        check(!frozen) { "Field '$fieldName' cannot be modified after schema finalization" }
+    }
+
     private var nullable: Boolean = false
     private var unique: Boolean = false
     private var immutable: Boolean = false
@@ -15,22 +24,21 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
     protected var validators: MutableList<Validator> = mutableListOf()
 
     protected fun setUpdateDefault(value: UpdateDefault) {
+        checkNotFrozen()
         this.updateDefault = value
     }
     private var comment: String? = null
-    private var storageKey: String? = null
 
-    private fun self(): T = this as T
+    private fun self(): Self = this as Self
 
-    fun nullable(): T = apply { nullable = true }.let { self() }
-    fun optional(): T = nullable()
-    fun unique(): T = apply { unique = true }.let { self() }
-    fun immutable(): T = apply { immutable = true }.let { self() }
-    fun sensitive(): T = apply { sensitive = true }.let { self() }
-    protected fun setDefault(value: Any) { default = value }
-    fun comment(text: String): T = apply { comment = text }.let { self() }
-    fun storageKey(key: String): T = apply { storageKey = key }.let { self() }
-    protected fun validate(validator: Validator): T = apply { validators.add(validator) }.let { self() }
+    fun nullable(): Self = apply { checkNotFrozen(); nullable = true }.let { self() }
+    fun optional(): Self = nullable()
+    fun unique(): Self = apply { checkNotFrozen(); unique = true }.let { self() }
+    fun immutable(): Self = apply { checkNotFrozen(); immutable = true }.let { self() }
+    fun sensitive(): Self = apply { checkNotFrozen(); sensitive = true }.let { self() }
+    protected fun setDefault(value: Any) { checkNotFrozen(); default = value }
+    fun comment(text: String): Self = apply { checkNotFrozen(); comment = text }.let { self() }
+    protected fun validate(validator: Validator): Self = apply { checkNotFrozen(); validators.add(validator) }.let { self() }
 
     @PublishedApi
     internal fun setEnumClass(klass: kotlin.reflect.KClass<out Enum<*>>) {
@@ -39,27 +47,26 @@ abstract class FieldBuilder<T : FieldBuilder<T>>(
 
     fun build(): Field {
         if (immutable && updateDefault != null) {
-            error("Field '$name' cannot be both immutable and have an updateDefault — immutable fields are never updated")
+            error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")
         }
         if (enumClass != null && default is Enum<*>) {
             require((default as Enum<*>)::class == enumClass) {
-                "Field '$name' default must be a ${enumClass!!.simpleName} constant, " +
+                "Field '$fieldName' default must be a ${enumClass!!.simpleName} constant, " +
                     "got ${(default as Enum<*>)::class.simpleName}"
             }
         }
         return Field(
-        name = name,
-        type = type,
-        nullable = nullable,
-        unique = unique,
-        immutable = immutable,
-        sensitive = sensitive,
-        default = default,
-        updateDefault = updateDefault,
-        enumClass = enumClass,
-        validators = validators,
-        comment = comment,
-        storageKey = storageKey,
-    )
+            name = fieldName,
+            type = type,
+            nullable = nullable,
+            unique = unique,
+            immutable = immutable,
+            sensitive = sensitive,
+            default = default,
+            updateDefault = updateDefault,
+            enumClass = enumClass,
+            validators = validators,
+            comment = comment,
+        )
     }
 }

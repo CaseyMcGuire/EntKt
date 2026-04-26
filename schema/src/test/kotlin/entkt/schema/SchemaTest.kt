@@ -1,112 +1,138 @@
 package entkt.schema
 
+import kotlin.reflect.KClass
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// Example mixins
-
-object TimeMixin : EntMixin {
-    override fun fields() = fields {
-        time("created_at").defaultNow().immutable()
-        time("updated_at").defaultNow().updateDefaultNow()
-    }
-}
-
-object SoftDeleteMixin : EntMixin {
-    override fun fields() = fields {
-        time("deleted_at").nullable()
-    }
-
-    override fun indexes() = indexes {
-        index("deleted_at")
-    }
-}
-
-// Example enums and schemas that demonstrate the API
+// Example enums
 
 enum class Role { ADMIN, USER, MODERATOR }
 
-object Car : EntSchema() {
-    override fun fields() = fields {
-        string("model")
-        int("year")
-        float("price").optional()
-    }
-}
-
-object User : EntSchema() {
-    override fun fields() = fields {
-        string("name").minLen(1).maxLen(100)
-        int("age").optional().positive()
-        string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
-        enum<Role>("role").default(Role.USER)
-        bool("active").default(true)
-        time("created_at").immutable()
-    }
-
-    override fun edges() = edges {
-        hasMany("cars", Car)
-    }
-
-    override fun indexes() = indexes {
-        index("name", "email").unique()
-        index("created_at")
-        index("email").unique().where("active = true")
-    }
-}
-
-object Group : EntSchema() {
-    override fun fields() = fields {
-        string("name")
-    }
-
-    override fun edges() = edges {
-        manyToMany("users", User).through(UserGroup)
-    }
-}
-
-object UserGroup : EntSchema() {
-    override fun fields() = fields {
-        time("joined_at")
-    }
-
-    override fun edges() = edges {
-        belongsTo("user", User).required().field("user_id")
-        belongsTo("group", Group).required().field("group_id")
-    }
-}
-
 enum class TaskStatus { TODO, IN_PROGRESS, DONE }
 
-object Task : EntSchema() {
-    override fun fields() = fields {
-        string("title")
-        enum<TaskStatus>("status").default(TaskStatus.TODO)
-    }
+// Example schemas using the typed-handles API
+
+class Car : EntSchema("cars") {
+    override fun id() = EntId.int()
+    val model = string("model")
+    val year = int("year")
+    val price = float("price").optional()
 }
 
-object Company : EntSchema() {
-    override fun mixins() = listOf(TimeMixin, SoftDeleteMixin)
+class User : EntSchema("users") {
+    override fun id() = EntId.int()
+    val name = string("name").minLen(1).maxLen(100)
+    val age = int("age").optional().positive()
+    val email = string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
+    val role = enum<Role>("role").default(Role.USER)
+    val active = bool("active").default(true)
+    val createdAt = time("created_at").immutable()
 
-    override fun fields() = fields {
-        string("name").unique()
-    }
+    val cars = hasMany<Car>("cars")
 
-    override fun edges() = edges {
-        hasMany("employees", User)
-    }
+    val byNameEmail = index("idx_name_email", name, email).unique()
+    val byCreatedAt = index("idx_created_at", createdAt)
+    val byEmailPartial = index("idx_email_partial", email).unique().where("active = true")
+}
+
+class Group : EntSchema("groups") {
+    override fun id() = EntId.int()
+    val name = string("name")
+
+    val users = manyToMany<User>("users")
+        .through<UserGroup>(UserGroup::user, UserGroup::group)
+}
+
+class UserGroup : EntSchema("user_groups") {
+    override fun id() = EntId.int()
+    val joinedAt = time("joined_at")
+
+    val userId = int("user_id")
+    val groupId = int("group_id")
+
+    val user = belongsTo<User>("user").required().field(userId)
+    val group = belongsTo<Group>("group").required().field(groupId)
+}
+
+class Task : EntSchema("tasks") {
+    override fun id() = EntId.int()
+    val title = string("title")
+    val status = enum<TaskStatus>("status").default(TaskStatus.TODO)
+}
+
+// Mixin replacement: abstract schema with timestamp fields
+abstract class TimestampedSchema(tableName: String) : EntSchema(tableName) {
+    val createdAt = time("created_at").defaultNow().immutable()
+    val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
+    val deletedAt = time("deleted_at").nullable()
+
+    val byDeletedAt = index("idx_deleted_at", deletedAt)
+}
+
+class Company : TimestampedSchema("companies") {
+    override fun id() = EntId.int()
+    val name = string("name").unique()
+
+    val employees = hasMany<User>("employees")
+}
+
+// Schemas for computed-getter detection tests (must be file-level for forward references)
+
+private class ComputedGetterTarget : EntSchema("targets") {
+    override fun id() = EntId.int()
+    val items get() = hasMany<ComputedGetterSource>("items")
+}
+
+private class ComputedGetterSource : EntSchema("sources") {
+    override fun id() = EntId.int()
+    val target = belongsTo<ComputedGetterTarget>("target").inverse(ComputedGetterTarget::items)
+}
+
+private class M2mSide : EntSchema("sides") {
+    override fun id() = EntId.int()
+}
+
+private class ComputedGetterJunction : EntSchema("junctions") {
+    override fun id() = EntId.int()
+    val left get() = belongsTo<M2mSide>("left")
+    val right = belongsTo<M2mSide>("right")
+}
+
+private class ComputedGetterOwner : EntSchema("owners") {
+    override fun id() = EntId.int()
+    val sides = manyToMany<M2mSide>("sides")
+        .through<ComputedGetterJunction>(ComputedGetterJunction::left, ComputedGetterJunction::right)
+}
+
+// Helper to build a finalized schema graph
+private fun buildRegistry(vararg schemas: EntSchema): Map<KClass<out EntSchema>, EntSchema> {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
+    return registry
 }
 
 class SchemaTest {
 
+    // Shared schema instances, finalized once
+    private val car = Car()
+    private val user = User()
+    private val group = Group()
+    private val userGroup = UserGroup()
+    private val task = Task()
+    private val company = Company()
+
+    init {
+        buildRegistry(car, user, group, userGroup, task, company)
+    }
+
     @Test
     fun `fields are defined with correct types`() {
-        val fields = User.fields()
+        val fields = user.fields()
         assertEquals(6, fields.size)
 
         val name = fields[0]
@@ -122,7 +148,7 @@ class SchemaTest {
 
     @Test
     fun `field modifiers are applied`() {
-        val fields = User.fields()
+        val fields = user.fields()
 
         val email = fields[2]
         assertTrue(email.unique)
@@ -140,23 +166,23 @@ class SchemaTest {
 
     @Test
     fun `edges are defined with correct targets`() {
-        val edges = User.edges()
+        val edges = user.edges()
         assertEquals(1, edges.size)
 
         val carsEdge = edges[0]
         assertEquals("cars", carsEdge.name)
         assertTrue(carsEdge.kind is EdgeKind.HasMany)
-        assertEquals(Car, carsEdge.target)
+        assertTrue(carsEdge.target is Car)
     }
 
     @Test
     fun `schema with no edges returns empty list`() {
-        assertEquals(emptyList(), Car.edges())
+        assertEquals(emptyList(), car.edges())
     }
 
     @Test
     fun `validators are attached to fields`() {
-        val fields = User.fields()
+        val fields = user.fields()
 
         val name = fields[0]
         assertEquals(2, name.validators.size)
@@ -191,7 +217,7 @@ class SchemaTest {
 
     @Test
     fun `indexes are defined with correct fields`() {
-        val indexes = User.indexes()
+        val indexes = user.indexes()
         assertEquals(3, indexes.size)
 
         val composite = indexes[0]
@@ -205,7 +231,7 @@ class SchemaTest {
 
     @Test
     fun `partial index has where clause`() {
-        val indexes = User.indexes()
+        val indexes = user.indexes()
         val partial = indexes[2]
         assertEquals(listOf("email"), partial.fields)
         assertTrue(partial.unique)
@@ -214,48 +240,50 @@ class SchemaTest {
 
     @Test
     fun `non-partial indexes have null where`() {
-        val indexes = User.indexes()
+        val indexes = user.indexes()
         assertNull(indexes[0].where)
         assertNull(indexes[1].where)
     }
 
     @Test
     fun `schema with no indexes returns empty list`() {
-        assertEquals(emptyList(), Car.indexes())
+        assertEquals(emptyList(), car.indexes())
     }
 
     @Test
-    fun `mixins contribute fields`() {
-        val mixins = Company.mixins()
-        assertEquals(2, mixins.size)
+    fun `inherited timestamp fields are present`() {
+        val fields = company.fields()
+        // TimestampedSchema contributes 3 fields (created_at, updated_at, deleted_at),
+        // plus Company's own 1 field (name) = 4 total
+        assertEquals(4, fields.size)
 
-        val timeFields = mixins[0].fields()
-        assertEquals(2, timeFields.size)
-        assertEquals("created_at", timeFields[0].name)
-        assertEquals("updated_at", timeFields[1].name)
-        assertEquals(UpdateDefault.Now, timeFields[1].updateDefault)
+        val createdAt = fields[0]
+        assertEquals("created_at", createdAt.name)
+        assertTrue(createdAt.immutable)
 
-        val softDeleteFields = mixins[1].fields()
-        assertEquals(1, softDeleteFields.size)
-        assertEquals("deleted_at", softDeleteFields[0].name)
-        assertTrue(softDeleteFields[0].nullable)
+        val updatedAt = fields[1]
+        assertEquals("updated_at", updatedAt.name)
+        assertEquals(UpdateDefault.Now, updatedAt.updateDefault)
+
+        val deletedAt = fields[2]
+        assertEquals("deleted_at", deletedAt.name)
+        assertTrue(deletedAt.nullable)
+
+        val name = fields[3]
+        assertEquals("name", name.name)
+        assertTrue(name.unique)
     }
 
     @Test
-    fun `mixins contribute indexes`() {
-        val mixinIndexes = Company.mixins().flatMap { it.indexes() }
-        assertEquals(1, mixinIndexes.size)
-        assertEquals(listOf("deleted_at"), mixinIndexes[0].fields)
-    }
-
-    @Test
-    fun `schema with no mixins returns empty list`() {
-        assertEquals(emptyList(), Car.mixins())
+    fun `inherited indexes are present`() {
+        val indexes = company.indexes()
+        assertEquals(1, indexes.size)
+        assertEquals(listOf("deleted_at"), indexes[0].fields)
     }
 
     @Test
     fun `edge field exposes foreign key`() {
-        val edges = UserGroup.edges()
+        val edges = userGroup.edges()
         assertEquals(2, edges.size)
 
         val userEdge = edges[0]
@@ -272,7 +300,7 @@ class SchemaTest {
 
     @Test
     fun `enum field populates enumClass`() {
-        val fields = Task.fields()
+        val fields = task.fields()
         val status = fields[1]
         assertEquals(FieldType.ENUM, status.type)
         assertEquals(TaskStatus::class, status.enumClass)
@@ -281,7 +309,7 @@ class SchemaTest {
 
     @Test
     fun `enum field on User has enumClass set`() {
-        val fields = User.fields()
+        val fields = user.fields()
         val role = fields[3]
         assertEquals(FieldType.ENUM, role.type)
         assertEquals(Role::class, role.enumClass)
@@ -289,40 +317,62 @@ class SchemaTest {
 
     @Test
     fun `edge through defines join table`() {
-        val edges = Group.edges()
+        val edges = group.edges()
         assertEquals(1, edges.size)
 
         val usersEdge = edges[0]
         assertEquals("users", usersEdge.name)
-        assertEquals(User, usersEdge.target)
+        assertTrue(usersEdge.target is User)
         val m2m = usersEdge.kind as EdgeKind.ManyToMany
-        assertEquals(UserGroup, m2m.through.target)
+        assertTrue(m2m.through.target is UserGroup)
     }
 
     @Test
     fun `onDelete accepted on belongsTo edge`() {
-        val edge = BelongsToBuilder("owner", User)
-            .onDelete(OnDelete.CASCADE)
-            .build()
+        class Owner : EntSchema("owners") { override fun id() = EntId.int() }
+        class Pet : EntSchema("pets") {
+            override fun id() = EntId.int()
+            val owner = belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
+        }
+        val ownerSchema = Owner()
+        val petSchema = Pet()
+        buildRegistry(ownerSchema, petSchema)
+
+        val edge = petSchema.edges()[0]
         val kind = edge.kind as EdgeKind.BelongsTo
         assertEquals(OnDelete.CASCADE, kind.onDelete)
     }
 
     @Test
     fun `onDelete SET_NULL rejected on required edge`() {
-        assertFailsWith<IllegalStateException> {
-            BelongsToBuilder("owner", User)
+        class Owner : EntSchema("owners") { override fun id() = EntId.int() }
+        class Pet : EntSchema("pets") {
+            override fun id() = EntId.int()
+            val owner = belongsTo<Owner>("owner")
                 .required()
                 .onDelete(OnDelete.SET_NULL)
-                .build()
+        }
+        val ownerSchema = Owner()
+        val petSchema = Pet()
+        buildRegistry(ownerSchema, petSchema)
+
+        assertFailsWith<IllegalStateException> {
+            petSchema.edges()
         }
     }
 
     @Test
     fun `onDelete SET_NULL accepted on non-required edge`() {
-        val edge = BelongsToBuilder("owner", User)
-            .onDelete(OnDelete.SET_NULL)
-            .build()
+        class Owner : EntSchema("owners") { override fun id() = EntId.int() }
+        class Pet : EntSchema("pets") {
+            override fun id() = EntId.int()
+            val owner = belongsTo<Owner>("owner").onDelete(OnDelete.SET_NULL)
+        }
+        val ownerSchema = Owner()
+        val petSchema = Pet()
+        buildRegistry(ownerSchema, petSchema)
+
+        val edge = petSchema.edges()[0]
         val kind = edge.kind as EdgeKind.BelongsTo
         assertEquals(OnDelete.SET_NULL, kind.onDelete)
     }
@@ -330,7 +380,7 @@ class SchemaTest {
     @Test
     fun `manyToMany requires through`() {
         assertFailsWith<IllegalStateException> {
-            ManyToManyBuilder("groups", Group).build()
+            ManyToManyBuilder<Group>("groups", Group::class).build()
         }
     }
 
@@ -345,20 +395,51 @@ class SchemaTest {
     }
 
     @Test
-    fun `duplicate edge names are rejected`() {
+    fun `empty index is rejected`() {
         assertFailsWith<IllegalArgumentException> {
-            edges {
-                hasMany("posts", Car)
-                hasMany("posts", User)
-            }
+            IndexBuilder("idx_empty", emptyList()).build()
         }
     }
 
     @Test
-    fun `empty index is rejected`() {
-        assertFailsWith<IllegalArgumentException> {
-            IndexBuilder(emptyList()).build()
+    fun `duplicate semantic indexes are rejected`() {
+        class Duped : EntSchema("duped") {
+            override fun id() = EntId.int()
+            val email = string("email")
+            val a = index("idx_a", email)
+            val b = index("idx_b", email)
         }
+        val schema = Duped()
+        buildRegistry(schema)
+        assertFailsWith<IllegalArgumentException> {
+            schema.indexes()
+        }
+    }
+
+    @Test
+    fun `same columns with different uniqueness are allowed`() {
+        class Allowed : EntSchema("allowed") {
+            override fun id() = EntId.int()
+            val email = string("email")
+            val a = index("idx_a", email)
+            val b = index("idx_b", email).unique()
+        }
+        val schema = Allowed()
+        buildRegistry(schema)
+        assertEquals(2, schema.indexes().size)
+    }
+
+    @Test
+    fun `same columns with different where clauses are allowed`() {
+        class Allowed : EntSchema("allowed") {
+            override fun id() = EntId.int()
+            val email = string("email")
+            val a = index("idx_a", email).where("active = true")
+            val b = index("idx_b", email).where("deleted_at IS NULL")
+        }
+        val schema = Allowed()
+        buildRegistry(schema)
+        assertEquals(2, schema.indexes().size)
     }
 
     @Test
@@ -378,5 +459,45 @@ class SchemaTest {
             default(TaskStatus.TODO)
         }.build()
         assertEquals(TaskStatus.TODO, field.default)
+    }
+
+    @Test
+    fun `schema finalize can only be called once`() {
+        class Solo : EntSchema("solos") { override fun id() = EntId.int() }
+        val solo = Solo()
+        buildRegistry(solo)
+
+        assertFailsWith<IllegalStateException> {
+            buildRegistry(solo)
+        }
+    }
+
+    @Test
+    fun `edges cannot be accessed before finalization`() {
+        class Unfinalized : EntSchema("unfinalized") {
+            override fun id() = EntId.int()
+            val something = hasMany<Car>("something")
+        }
+        val schema = Unfinalized()
+
+        assertFailsWith<IllegalStateException> {
+            schema.edges()
+        }
+    }
+
+    @Test
+    fun `computed getter inverse is rejected during finalization`() {
+        val err = assertFailsWith<IllegalStateException> {
+            buildRegistry(ComputedGetterTarget(), ComputedGetterSource())
+        }
+        assertContains(err.message!!, "computed getter")
+    }
+
+    @Test
+    fun `computed getter through is rejected during finalization`() {
+        val err = assertFailsWith<IllegalStateException> {
+            buildRegistry(M2mSide(), ComputedGetterJunction(), ComputedGetterOwner())
+        }
+        assertContains(err.message!!, "computed getter")
     }
 }

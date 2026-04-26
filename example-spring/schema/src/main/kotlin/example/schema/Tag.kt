@@ -1,16 +1,15 @@
 package example.schema
 
+import entkt.schema.EntId
 import entkt.schema.EntSchema
-import entkt.schema.fields
 
 enum class TagCategory { TOPIC, LANGUAGE, AUDIENCE }
 
 /**
  * A tag with an enum category. Tags are independent — no edges.
  */
-object Tag : EntSchema() {
-    override fun fields() = fields {
-        string("name").unique()
-        enum<TagCategory>("category")
-    }
+class Tag : EntSchema("tags") {
+    override fun id() = EntId.int()
+    val name = string("name").unique()
+    val category = enum<TagCategory>("category")
 }

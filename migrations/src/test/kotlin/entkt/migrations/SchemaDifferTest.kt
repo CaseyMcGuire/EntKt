@@ -33,9 +33,9 @@ class SchemaDifferTest {
     private fun idx(
         columns: List<String>,
         unique: Boolean = false,
-        storageKey: String? = null,
+        name: String? = null,
         where: String? = null,
-    ) = NormalizedIndex(columns, unique, storageKey, where)
+    ) = NormalizedIndex(columns, unique, name, where)
 
     private fun fk(
         column: String,
@@ -362,19 +362,19 @@ class SchemaDifferTest {
     }
 
     @Test
-    fun `index storageKey change is manual`() {
+    fun `index name change is manual`() {
         val current = schema(
             table(
                 "users",
                 columns = listOf(col("id", "serial", primaryKey = true), col("email")),
-                indexes = listOf(idx(listOf("email"), unique = true, storageKey = "old_name")),
+                indexes = listOf(idx(listOf("email"), unique = true, name = "old_name")),
             ),
         )
         val desired = schema(
             table(
                 "users",
                 columns = listOf(col("id", "serial", primaryKey = true), col("email")),
-                indexes = listOf(idx(listOf("email"), unique = true, storageKey = "new_name")),
+                indexes = listOf(idx(listOf("email"), unique = true, name = "new_name")),
             ),
         )
         val result = differ.diff(desired, current)
@@ -382,36 +382,36 @@ class SchemaDifferTest {
         // Should produce a manual DropIndex + auto AddIndex
         val dropIdxs = result.manual.filterIsInstance<MigrationOp.DropIndex>()
         assertEquals(1, dropIdxs.size)
-        assertEquals("old_name", dropIdxs[0].storageKey)
+        assertEquals("old_name", dropIdxs[0].name)
         val addIdxs = result.ops.filterIsInstance<MigrationOp.AddIndex>()
         assertEquals(1, addIdxs.size)
-        assertEquals("new_name", addIdxs[0].index.storageKey)
+        assertEquals("new_name", addIdxs[0].index.name)
     }
 
     @Test
-    fun `unnamed index gaining explicit storageKey emits rename`() {
+    fun `unnamed index gaining explicit name emits rename`() {
         val current = schema(
             table(
                 "users",
                 columns = listOf(col("id", "serial", primaryKey = true), col("email")),
-                indexes = listOf(idx(listOf("email"), unique = true, storageKey = null)),
+                indexes = listOf(idx(listOf("email"), unique = true, name = null)),
             ),
         )
         val desired = schema(
             table(
                 "users",
                 columns = listOf(col("id", "serial", primaryKey = true), col("email")),
-                indexes = listOf(idx(listOf("email"), unique = true, storageKey = "custom_email_idx")),
+                indexes = listOf(idx(listOf("email"), unique = true, name = "custom_email_idx")),
             ),
         )
         val result = differ.diff(desired, current)
 
         val dropIdxs = result.manual.filterIsInstance<MigrationOp.DropIndex>()
         assertEquals(1, dropIdxs.size)
-        assertNull(dropIdxs[0].storageKey, "Drop should reference the old derived name")
+        assertNull(dropIdxs[0].name, "Drop should reference the old derived name")
         val addIdxs = result.ops.filterIsInstance<MigrationOp.AddIndex>()
         assertEquals(1, addIdxs.size)
-        assertEquals("custom_email_idx", addIdxs[0].index.storageKey)
+        assertEquals("custom_email_idx", addIdxs[0].index.name)
     }
 
     @Test
@@ -476,7 +476,7 @@ class SchemaDifferTest {
                 ),
                 indexes = listOf(
                     idx(listOf("title")),
-                    idx(listOf("author_id", "title"), unique = true, storageKey = "custom_idx"),
+                    idx(listOf("author_id", "title"), unique = true, name = "custom_idx"),
                 ),
                 foreignKeys = listOf(fk("author_id", "users")),
             ),
@@ -548,13 +548,13 @@ class SchemaDifferTest {
     }
 
     @Test
-    fun `describeOp for DropIndex with storageKey`() {
-        val withKey = describeOp(MigrationOp.DropIndex("users", listOf("email"), unique = true, storageKey = "legacy_idx"))
-        assertTrue(withKey.contains("[legacy_idx]"), "Should include storageKey in brackets")
+    fun `describeOp for DropIndex with name`() {
+        val withKey = describeOp(MigrationOp.DropIndex("users", listOf("email"), unique = true, name = "legacy_idx"))
+        assertTrue(withKey.contains("[legacy_idx]"), "Should include name in brackets")
         assertTrue(withKey.contains("email"))
 
-        val withoutKey = describeOp(MigrationOp.DropIndex("users", listOf("email"), unique = true, storageKey = null))
-        assertFalse(withoutKey.contains("["), "Should not have brackets when storageKey is null")
+        val withoutKey = describeOp(MigrationOp.DropIndex("users", listOf("email"), unique = true, name = null))
+        assertFalse(withoutKey.contains("["), "Should not have brackets when name is null")
     }
 
     @Test
@@ -799,12 +799,12 @@ class SchemaDifferTest {
     // ---- JsonCodec tests ----
 
     @Test
-    fun `JsonCodec handles escaped characters in storageKey`() {
+    fun `JsonCodec handles escaped characters in name`() {
         val original = schema(
             table(
                 "users",
                 columns = listOf(col("id", "serial", primaryKey = true)),
-                indexes = listOf(idx(listOf("id"), unique = false, storageKey = "idx_with\"quotes")),
+                indexes = listOf(idx(listOf("id"), unique = false, name = "idx_with\"quotes")),
                 foreignKeys = listOf(
                     NormalizedForeignKey("id", "other", "id", false, constraintName = "fk\\with_backslash"),
                 ),
@@ -817,7 +817,7 @@ class SchemaDifferTest {
 
         val decoded = NormalizedSchema.fromJson(StringReader(json))
         val decodedTable = decoded.tables["users"]!!
-        assertEquals("idx_with\"quotes", decodedTable.indexes[0].storageKey)
+        assertEquals("idx_with\"quotes", decodedTable.indexes[0].name)
         assertEquals("fk\\with_backslash", decodedTable.foreignKeys[0].constraintName)
     }
 

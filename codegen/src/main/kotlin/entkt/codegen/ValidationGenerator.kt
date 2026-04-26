@@ -26,7 +26,7 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
  * carry a [PrivacyContext] — validation is viewer-agnostic. The
  * [WriteCandidate] is reused from the privacy generator.
  */
-class ValidationGenerator(
+internal class ValidationGenerator(
     private val packageName: String,
 ) {
 

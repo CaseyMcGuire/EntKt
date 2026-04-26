@@ -162,7 +162,7 @@ class PostgresMigratorTest {
 
         // Add a composite index
         val updatedSchema = usersSchema.copy(
-            indexes = listOf(IndexMetadata(listOf("name", "email"), unique = false)),
+            indexes = listOf(IndexMetadata(listOf("name", "email"), unique = false, name = "idx_name_email")),
         )
         val result = migrator.migrate(listOf(updatedSchema))
 
@@ -409,7 +409,7 @@ class PostgresMigratorTest {
         val patched = snapshotText
             .replace(
                 "\"unique\": true}",
-                "\"unique\": true, \"storageKey\": \"legacy_email_idx\"}",
+                "\"unique\": true, \"name\": \"legacy_email_idx\"}",
             )
             .replace(
                 "\"columnNullable\": true}",
@@ -660,17 +660,17 @@ class PostgresMigratorTest {
         assertTrue(nonNullSql[0].contains("ON DELETE RESTRICT"), "Non-null FK should use RESTRICT")
     }
 
-    // ---- Renderer: DropIndex with/without storageKey ----
+    // ---- Renderer: DropIndex with/without name ----
 
     @Test
-    fun `renderer DropIndex uses storageKey when present and derives name when null`() {
+    fun `renderer DropIndex uses name when present and derives name when null`() {
         val renderer = PostgresSqlRenderer()
 
-        val withKey = MigrationOp.DropIndex("users", listOf("email"), unique = true, storageKey = "legacy_email_idx")
+        val withKey = MigrationOp.DropIndex("users", listOf("email"), unique = true, name = "legacy_email_idx")
         val withKeySql = renderer.render(withKey, RenderMode.MIGRATION_FILE)
-        assertTrue(withKeySql[0].contains("legacy_email_idx"), "Should use storageKey")
+        assertTrue(withKeySql[0].contains("legacy_email_idx"), "Should use name")
 
-        val withoutKey = MigrationOp.DropIndex("users", listOf("email"), unique = true, storageKey = null)
+        val withoutKey = MigrationOp.DropIndex("users", listOf("email"), unique = true, name = null)
         val withoutKeySql = renderer.render(withoutKey, RenderMode.MIGRATION_FILE)
         // Should derive a name like idx_users_email_unique
         assertTrue(withoutKeySql[0].contains("idx_users_email_unique"), "Should derive index name")

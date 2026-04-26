@@ -164,7 +164,7 @@ val hasAdmins = client.users.query {
 ## Edge Traversal
 
 Query builders expose methods for traversing edges. Given a `User` with
-a `hasMany("posts", Post)` edge, the generated query builder has:
+a `hasMany<Post>("posts")` edge, the generated query builder has:
 
 ### `queryPosts()` -- follow an edge
 

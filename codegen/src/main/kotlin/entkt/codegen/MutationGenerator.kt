@@ -16,7 +16,7 @@ import entkt.schema.EntSchema
  * and update — validation, timestamp injection, etc. — without
  * duplicating the logic.
  */
-class MutationGenerator(
+internal class MutationGenerator(
     private val packageName: String,
 ) {
 
@@ -26,7 +26,7 @@ class MutationGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val interfaceName = "${schemaName}Mutation"
-        val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        val fields = schema.fields()
         val mutableFields = fields.filter { !it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
 

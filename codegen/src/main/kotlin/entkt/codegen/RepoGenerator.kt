@@ -41,7 +41,7 @@ private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationExcepti
  * construction time, and inherited by transactional repos via
  * [copyHooksFrom].
  */
-class RepoGenerator(
+internal class RepoGenerator(
     private val packageName: String,
 ) {
 
@@ -452,7 +452,7 @@ class RepoGenerator(
         candidateClass: ClassName,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
-        val fields = schema.fields() + schema.mixins().flatMap { it.fields() }
+        val fields = schema.fields()
         val edgeFks = computeEdgeFks(schema, schemaNames)
         val body = CodeBlock.builder()
         body.add("return %T(\n", candidateClass)

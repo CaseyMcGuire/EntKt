@@ -1,6 +1,6 @@
 package entkt.schema
 
-class DoubleFieldBuilder(name: String) : FieldBuilder<DoubleFieldBuilder>(name, FieldType.DOUBLE) {
+class DoubleFieldBuilder internal constructor(name: String) : FieldBuilder<DoubleFieldBuilder, Double>(name, FieldType.DOUBLE) {
     fun min(min: Number): DoubleFieldBuilder = validate(Validators.min(min))
     fun max(max: Number): DoubleFieldBuilder = validate(Validators.max(max))
     fun positive(): DoubleFieldBuilder = validate(Validators.positive())

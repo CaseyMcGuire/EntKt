@@ -2,40 +2,40 @@ package entkt.codegen
 
 import entkt.schema.EntId
 import entkt.schema.EntSchema
-import entkt.schema.fields
+import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
-object Session : EntSchema() {
+class Session : EntSchema("sessions") {
     override fun id() = EntId.string()
-    override fun fields() = fields {
-        string("token")
-    }
+    val token = string("token")
 }
 
-object Event : EntSchema() {
-    override fun fields() = fields {
-        string("title")
-        time("created_at").defaultNow().immutable()
-    }
+class Event : EntSchema("events") {
+    override fun id() = EntId.int()
+    val title = string("title")
+    val createdAt = time("created_at").defaultNow().immutable()
 }
 
 enum class Status { LOW, MEDIUM, HIGH }
 enum class OtherStatus { PENDING, ACCEPTED }
 
-object DefaultedEnumEntity : EntSchema() {
-    override fun fields() = fields {
-        enum<Status>("priority").default(Status.LOW)
-    }
+class DefaultedEnumEntity : EntSchema("defaulted_enum_entities") {
+    override fun id() = EntId.int()
+    val priority = enum<Status>("priority").default(Status.LOW)
 }
 
-object ValidatedEntity : EntSchema() {
-    override fun fields() = fields {
-        string("name").minLen(3).maxLen(100).notEmpty()
-        int("age").positive()
-        string("nickname").optional().match(Regex("^[a-z]+$"))
-        string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
-    }
+class ValidatedEntity : EntSchema("validated_entities") {
+    override fun id() = EntId.int()
+    val name = string("name").minLen(3).maxLen(100).notEmpty()
+    val age = int("age").positive()
+    val nickname = string("nickname").optional().match(Regex("^[a-z]+$"))
+    val code = string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
+}
+
+private fun finalize(vararg schemas: EntSchema) {
+    val registry = schemas.associateBy { it::class }
+    schemas.forEach { it.finalize(registry) }
 }
 
 class CreateGeneratorTest {
@@ -44,7 +44,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `generates create builder with mutable properties for each field`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("class CarCreate")) { "Should generate CarCreate class\n$output" }
         assert(output.contains("var model: String?")) { "Should have model var\n$output" }
@@ -54,14 +56,18 @@ class CreateGeneratorTest {
 
     @Test
     fun `create builder is annotated as DSL scope`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("@EntktDsl")) { "Should be annotated @EntktDsl\n$output" }
     }
 
     @Test
     fun `save validates required fields`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("fun save(): Car")) { "Should have save method returning entity\n$output" }
         assert(!output.contains("fun save(): Car?")) { "save() should return non-nullable Car\n$output" }
@@ -71,22 +77,28 @@ class CreateGeneratorTest {
 
     @Test
     fun `save does not validate optional fields`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(!output.contains(""""price is required"""")) { "Should not validate optional price\n$output" }
     }
 
     @Test
-    fun `includes mixin fields as properties`() {
-        val output = generator.generate("User", User).toString()
+    fun `includes time fields as properties`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
-        assert(output.contains("var createdAt: Instant?")) { "Should have mixin property\n$output" }
-        assert(output.contains("var updatedAt: Instant?")) { "Should have mixin property\n$output" }
+        assert(output.contains("var createdAt: Instant?")) { "Should have createdAt property\n$output" }
+        assert(output.contains("var updatedAt: Instant?")) { "Should have updatedAt property\n$output" }
     }
 
     @Test
     fun `implements the mutation interface`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("CarCreate") && output.contains("CarMutation")) {
             "Should implement CarMutation interface\n$output"
@@ -95,7 +107,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `constructor takes client and hook list parameters`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("client: EntClient")) {
             "Should take client\n$output"
@@ -113,7 +127,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `exposes client as public property`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("val client: EntClient")) {
             "Should expose client as public property\n$output"
@@ -125,7 +141,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save calls before hooks before validation`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         val hookCall = output.indexOf("beforeSaveHooks")
         val validate = output.indexOf("model is required")
@@ -136,7 +154,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save calls after hooks after insert`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         assert(output.contains("for (hook in afterCreateHooks) hook(entity)")) {
             "Should call afterCreate hooks\n$output"
@@ -145,7 +165,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save falls back to default literal for fields with a default`() {
-        val output = generator.generate("User", User).toString()
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
 
         // User.active has .default(true). The constructor param is non-null,
         // so save() must coalesce to the default rather than passing this.active.
@@ -159,7 +181,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save emits Instant_now() for time fields with default now`() {
-        val output = generator.generate("Event", Event).toString()
+        val event = Event()
+        finalize(event)
+        val output = generator.generate("Event", event).toString()
 
         assert(output.contains("Instant.now()")) {
             "Should emit Instant.now() for time default \"now\"\n$output"
@@ -171,7 +195,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save emits validation checks for string validators`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         assert(output.contains("name.length < 3")) {
             "Should emit minLen check\n$output"
@@ -189,7 +215,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save emits validation checks for numeric validators`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         assert(output.contains("age <= 0")) {
             "Should emit positive check\n$output"
@@ -201,7 +229,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save wraps optional field validation in null check`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         // nickname is optional, so validation should be wrapped
         assert(output.contains("if (nickname != null)")) {
@@ -214,7 +244,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save does not emit validation for fields without validators`() {
-        val output = generator.generate("Car", Car).toString()
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
 
         // Car has no validators, so no validation checks
         assert(!output.contains(".length <")) {
@@ -227,7 +259,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `typed enum property uses the Kotlin enum type`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("var priority: Priority?")) {
             "Should use the Kotlin enum type on the builder property\n$output"
@@ -236,7 +270,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `typed enum save converts to name for the row map`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("\"priority\" to priority.name")) {
             "Should convert typed enum to .name in the row map\n$output"
@@ -245,7 +281,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `second typed enum save also converts to name`() {
-        val output = generator.generate("Ticket", Ticket).toString()
+        val ticket = Ticket()
+        finalize(ticket)
+        val output = generator.generate("Ticket", ticket).toString()
 
         assert(output.contains("\"category\" to category.name")) {
             "Second typed enum should also use .name in the row map\n$output"
@@ -254,7 +292,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `typed enum default emits enum constant reference`() {
-        val output = generator.generate("DefaultedEnumEntity", DefaultedEnumEntity).toString()
+        val schema = DefaultedEnumEntity()
+        finalize(schema)
+        val output = generator.generate("DefaultedEnumEntity", schema).toString()
 
         assert(output.contains("this.priority ?: Status.LOW")) {
             "Should coalesce to the enum constant for typed enum default\n$output"
@@ -266,11 +306,11 @@ class CreateGeneratorTest {
 
     @Test
     fun `typed enum default rejects constant from wrong enum class`() {
-        val wrongDefault = object : EntSchema() {
-            override fun fields() = fields {
-                enum<Status>("priority").default(OtherStatus.PENDING)
-            }
+        val wrongDefault = object : EntSchema("wrong_defaults") {
+            override fun id() = EntId.int()
+            val priority = enum<Status>("priority").default(OtherStatus.PENDING)
         }
+        finalize(wrongDefault)
         assertFailsWith<IllegalArgumentException> {
             generator.generate("WrongDefault", wrongDefault)
         }
@@ -278,7 +318,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `validation appears after field binding and before row map`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         val bindingPos = output.indexOf("name is required")
         val validationPos = output.indexOf("name.length < 3")
@@ -290,7 +332,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save emits regex options when present`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         assert(output.contains("RegexOption.IGNORE_CASE")) {
             "Should emit RegexOption when regex has flags\n$output"
@@ -302,7 +346,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `save emits plain Regex when no options`() {
-        val output = generator.generate("ValidatedEntity", ValidatedEntity).toString()
+        val schema = ValidatedEntity()
+        finalize(schema)
+        val output = generator.generate("ValidatedEntity", schema).toString()
 
         // nickname uses Regex("^[a-z]+$") with no options — should not have setOf()
         val regexLines = output.lines().filter { it.contains("Regex(") }
@@ -314,7 +360,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `explicit id strategy adds id as constructor parameter`() {
-        val output = generator.generate("Session", Session).toString()
+        val session = Session()
+        finalize(session)
+        val output = generator.generate("Session", session).toString()
 
         assert(output.contains("id: String")) {
             "Should have id as constructor parameter\n$output"
@@ -326,7 +374,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `explicit id strategy save includes id in values map`() {
-        val output = generator.generate("Session", Session).toString()
+        val session = Session()
+        finalize(session)
+        val output = generator.generate("Session", session).toString()
 
         assert(output.contains(""""id" to id""")) {
             "Should include id in the row values map\n$output"
@@ -334,24 +384,12 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `storageKey overrides column name in row map`() {
-        val output = generator.generate("StorageKeyEntity", StorageKeyEntity).toString()
-
-        assert(output.contains(""""full_name" to displayName""")) {
-            "Row map should use storageKey as the key\n$output"
-        }
-        assert(!output.contains(""""display_name" to""")) {
-            "Row map should NOT use field name when storageKey is set\n$output"
-        }
-    }
-
-    @Test
     fun `nullable field with default uses the default when omitted`() {
-        val schema = object : EntSchema() {
-            override fun fields() = fields {
-                string("nickname").nullable().default("anonymous")
-            }
+        val schema = object : EntSchema("nullable_defaults") {
+            override fun id() = EntId.int()
+            val nickname = string("nickname").nullable().default("anonymous")
         }
+        finalize(schema)
         val output = generator.generate("NullableDefault", schema).toString()
 
         assert(output.contains("""this.nickname ?: "anonymous"""")) {

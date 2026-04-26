@@ -291,7 +291,7 @@ class Migrator(
     /**
      * Carry forward storage-level names from the previous snapshot into
      * the new desired schema before saving. [NormalizedSchema.fromEntitySchemas]
-     * produces `storageKey = null` and `constraintName = null` for most
+     * produces `name = null` and `constraintName = null` for most
      * indexes/FKs, but the previous snapshot may have captured real names
      * from introspection. Without this merge, advancing the snapshot
      * would discard those names, causing future DropIndex/DropForeignKey
@@ -307,10 +307,10 @@ class Migrator(
             data class IndexShape(val columns: List<String>, val unique: Boolean, val where: String?)
             val currentIndexByShape = currentTable.indexes.associateBy { IndexShape(it.columns, it.unique, normalizeWhere(it.where)) }
             val mergedIndexes = desiredTable.indexes.map { idx ->
-                if (idx.storageKey != null) idx
+                if (idx.name != null) idx
                 else {
                     val currentIdx = currentIndexByShape[IndexShape(idx.columns, idx.unique, normalizeWhere(idx.where))]
-                    if (currentIdx?.storageKey != null) idx.copy(storageKey = currentIdx.storageKey)
+                    if (currentIdx?.name != null) idx.copy(name = currentIdx.name)
                     else idx
                 }
             }
@@ -369,7 +369,7 @@ internal fun describeOp(op: MigrationOp): String = when (op) {
     is MigrationOp.DropIndex -> {
         val cols = op.columns.joinToString(", ")
         val u = if (op.unique) " unique" else ""
-        val name = if (op.storageKey != null) " [${op.storageKey}]" else ""
+        val name = if (op.name != null) " [${op.name}]" else ""
         "DropIndex: ${op.table} ($cols)$u$name"
     }
     is MigrationOp.DropForeignKey -> {

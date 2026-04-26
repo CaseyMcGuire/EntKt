@@ -1,6 +1,6 @@
 package entkt.schema
 
-class LongFieldBuilder(name: String) : FieldBuilder<LongFieldBuilder>(name, FieldType.LONG) {
+class LongFieldBuilder internal constructor(name: String) : FieldBuilder<LongFieldBuilder, Long>(name, FieldType.LONG) {
     fun min(min: Number): LongFieldBuilder = validate(Validators.min(min))
     fun max(max: Number): LongFieldBuilder = validate(Validators.max(max))
     fun positive(): LongFieldBuilder = validate(Validators.positive())

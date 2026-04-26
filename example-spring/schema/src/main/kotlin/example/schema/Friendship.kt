@@ -1,9 +1,7 @@
 package example.schema
 
+import entkt.schema.EntId
 import entkt.schema.EntSchema
-import entkt.schema.edges
-import entkt.schema.fields
-import entkt.schema.indexes
 
 enum class FriendshipStatus { PENDING, ACCEPTED }
 
@@ -12,17 +10,12 @@ enum class FriendshipStatus { PENDING, ACCEPTED }
  * (PENDING vs ACCEPTED) so it's a first-class entity, not a
  * transparent M2M join.
  */
-object Friendship : EntSchema() {
-    override fun fields(): List<entkt.schema.Field> = fields {
-        enum<FriendshipStatus>("status")
-    }
+class Friendship : EntSchema("friendships") {
+    override fun id() = EntId.int()
+    val status = enum<FriendshipStatus>("status")
 
-    override fun edges(): List<entkt.schema.Edge> = edges {
-        belongsTo("requester", User).ref("sent_requests").required()
-        belongsTo("recipient", User).ref("received_requests").required()
-    }
+    val requester = belongsTo<User>("requester").inverse(User::sentRequests).required()
+    val recipient = belongsTo<User>("recipient").inverse(User::receivedRequests).required()
 
-    override fun indexes(): List<entkt.schema.Index> = indexes {
-        index("requester_id", "recipient_id").unique()
-    }
+    val idx = index("idx_requester_recipient", requester.fk, recipient.fk).unique()
 }
