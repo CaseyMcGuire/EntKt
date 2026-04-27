@@ -247,6 +247,290 @@ class Friendship : EntSchema("friendships") {
 }
 ```
 
+## Relationship Patterns
+
+The relationship DSL is centered on one rule:
+
+- `belongsTo(...)` owns the foreign key column
+- `hasMany(...)` / `hasOne(...)` are inverse traversal declarations
+- `manyToMany(...).through(...)` points at an explicit junction schema
+
+Quick map:
+
+| Pattern | entkt shape | Physical schema result |
+|---------|-------------|------------------------|
+| `O2O Two Types` | `hasOne` + `belongsTo().unique()` | FK column with `UNIQUE` on the dependent table |
+| `O2O Same Type` | self `hasOne` + self `belongsTo().unique()` | self-referencing FK column with `UNIQUE` |
+| `O2O Bidirectional` | same as O2O, with inverse declared | same table shape as O2O; both traversals exposed |
+| `O2M Two Types` | `hasMany` + `belongsTo()` | FK column on the many-side table |
+| `O2M Same Type` | self `hasMany` + self `belongsTo()` | self-referencing FK column on the child rows |
+| `M2M Two Types` | `manyToMany().through<Junction>(...)` | explicit junction table with two FKs |
+| `M2M Same Type` | self `manyToMany().through<Junction>(...)` | explicit self-junction table with two FKs to the same table |
+| `M2M Bidirectional` | matching `manyToMany().through(...)` on both endpoint schemas | same junction table; both traversals exposed |
+
+### O2O Two Types
+
+```kotlin
+class User : EntSchema("users") {
+    override fun id() = EntId.uuid()
+
+    val profile = hasOne<Profile>("profile")
+}
+
+class Profile : EntSchema("profiles") {
+    override fun id() = EntId.uuid()
+
+    val user = belongsTo<User>("user")
+        .inverse(User::profile)
+        .required()
+        .unique()
+}
+```
+
+Generated table shape:
+
+- `users`
+  - `id UUID PRIMARY KEY`
+- `profiles`
+  - `id UUID PRIMARY KEY`
+  - `user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE RESTRICT`
+
+`belongsTo(...).unique()` is what turns the FK from many-to-one into one-to-one.
+
+### O2O Same Type
+
+```kotlin
+class Employee : EntSchema("employees") {
+    override fun id() = EntId.long()
+
+    val mentee = hasOne<Employee>("mentee")
+    val mentor = belongsTo<Employee>("mentor")
+        .inverse(Employee::mentee)
+        .unique()
+}
+```
+
+Generated table shape:
+
+- `employees`
+  - `id BIGINT PRIMARY KEY`
+  - `mentor_id BIGINT UNIQUE REFERENCES employees(id) ON DELETE SET NULL`
+
+This is the same physical pattern as O2O two types; the FK simply points back
+at the same table.
+
+### O2O Bidirectional
+
+In entkt, bidirectional O2O is not a separate builder shape. The normal O2O
+pattern is already bidirectional as soon as you declare the inverse:
+
+```kotlin
+class User : EntSchema("users") {
+    override fun id() = EntId.uuid()
+
+    val profile = hasOne<Profile>("profile")
+}
+
+class Profile : EntSchema("profiles") {
+    override fun id() = EntId.uuid()
+
+    val user = belongsTo<User>("user")
+        .inverse(User::profile)
+        .unique()
+}
+```
+
+Result:
+
+- `User` can traverse to `profile`
+- `Profile` can traverse to `user`
+- the SQL table shape is the same as `O2O Two Types`
+
+### O2M Two Types
+
+```kotlin
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+
+    val posts = hasMany<Post>("posts")
+}
+
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+
+    val author = belongsTo<User>("author")
+        .inverse(User::posts)
+        .required()
+}
+```
+
+Generated table shape:
+
+- `users`
+  - `id BIGINT PRIMARY KEY`
+- `posts`
+  - `id BIGINT PRIMARY KEY`
+  - `author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT`
+
+`hasMany(...)` adds no local column. The FK lives on `posts` because
+`belongsTo(...)` owns the relationship.
+
+### O2M Same Type
+
+```kotlin
+class Category : EntSchema("categories") {
+    override fun id() = EntId.long()
+
+    val children = hasMany<Category>("children")
+    val parent = belongsTo<Category>("parent")
+        .inverse(Category::children)
+}
+```
+
+Generated table shape:
+
+- `categories`
+  - `id BIGINT PRIMARY KEY`
+  - `parent_id BIGINT REFERENCES categories(id) ON DELETE SET NULL`
+
+This is the same physical pattern as O2M two types, but recursive.
+
+### M2M Two Types
+
+```kotlin
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+
+    val groups = manyToMany<Group>("groups")
+        .through<UserGroup>(UserGroup::user, UserGroup::group)
+}
+
+class Group : EntSchema("groups") {
+    override fun id() = EntId.long()
+}
+
+class UserGroup : EntSchema("user_groups") {
+    override fun id() = EntId.long()
+
+    val user = belongsTo<User>("user").required()
+    val group = belongsTo<Group>("group").required()
+
+    val byUserGroup = index("idx_user_groups_user_group", user.fk, group.fk).unique()
+}
+```
+
+Generated table shape:
+
+- `users`
+  - `id BIGINT PRIMARY KEY`
+- `groups`
+  - `id BIGINT PRIMARY KEY`
+- `user_groups`
+  - `id BIGINT PRIMARY KEY`
+  - `user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT`
+  - `group_id BIGINT NOT NULL REFERENCES groups(id) ON DELETE RESTRICT`
+  - `UNIQUE INDEX idx_user_groups_user_group (user_id, group_id)`
+
+`manyToMany(...)` never creates an implicit join table. The junction is always
+an explicit `EntSchema`.
+
+### M2M Same Type
+
+```kotlin
+class Person : EntSchema("people") {
+    override fun id() = EntId.long()
+
+    val friends = manyToMany<Person>("friends")
+        .through<Friendship>(Friendship::user, Friendship::friend)
+}
+
+class Friendship : EntSchema("friendships") {
+    override fun id() = EntId.long()
+
+    val user = belongsTo<Person>("user").required()
+    val friend = belongsTo<Person>("friend").required()
+
+    val byFriendPair = index("idx_friendships_user_friend", user.fk, friend.fk).unique()
+}
+```
+
+Generated table shape:
+
+- `people`
+  - `id BIGINT PRIMARY KEY`
+- `friendships`
+  - `id BIGINT PRIMARY KEY`
+  - `user_id BIGINT NOT NULL REFERENCES people(id) ON DELETE RESTRICT`
+  - `friend_id BIGINT NOT NULL REFERENCES people(id) ON DELETE RESTRICT`
+
+The property references in `through(...)` disambiguate which junction edge is
+the source and which is the target.
+
+### M2M Bidirectional
+
+```kotlin
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+
+    val groups = manyToMany<Group>("groups")
+        .through<Membership>(Membership::user, Membership::group)
+}
+
+class Group : EntSchema("groups") {
+    override fun id() = EntId.long()
+
+    val users = manyToMany<User>("users")
+        .through<Membership>(Membership::group, Membership::user)
+}
+
+class Membership : EntSchema("memberships") {
+    override fun id() = EntId.long()
+
+    val user = belongsTo<User>("user").required()
+    val group = belongsTo<Group>("group").required()
+}
+```
+
+Result:
+
+- `User` can traverse to `groups`
+- `Group` can traverse to `users`
+- the SQL table shape is still just `users`, `groups`, and `memberships`
+- declaring both sides adds traversal metadata, not extra endpoint columns
+
+## How Table Schema Is Generated
+
+Each `EntSchema` becomes one SQL table plus runtime metadata describing its
+columns, foreign keys, edges, and indexes.
+
+Column generation rules:
+
+- `id()` defines the primary key column type and strategy
+- declared fields become columns in declaration order
+- included mixin fields are inserted where `include(...)` appears
+- `belongsTo(...)` adds a foreign key column unless `.field(handle)` reuses an
+  existing declared field
+- `hasMany(...)`, `hasOne(...)`, and `manyToMany(...)` do not add local columns
+  by themselves
+
+Constraint and index rules:
+
+- `.required()` on `belongsTo(...)` makes the FK `NOT NULL`
+- `.unique()` on `belongsTo(...)` adds a `UNIQUE` constraint on the FK column
+- field-level `.unique()` becomes a single-column unique constraint
+- `index("...", ...)` becomes a named secondary index
+- `index(...).where(...)` becomes a partial index when the driver supports it
+
+Runtime metadata rules:
+
+- outgoing edges are keyed by the local edge name
+- `hasMany(...)` / `hasOne(...)` are traversal-only metadata on the current
+  schema
+- `belongsTo(...)` contributes both traversal metadata and a local FK column
+- `manyToMany(...).through(...)` resolves through the junction schema at
+  finalization time and is emitted as join metadata, not as extra columns on the
+  endpoint tables
+
 ## Indexes
 
 Indexes are declared as property declarations using field handles.
