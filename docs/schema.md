@@ -304,24 +304,26 @@ casts, etc.). The migration differ normalizes both sides before comparing,
 so `active = true` and `((active)::boolean = true)` are treated as
 equivalent.
 
-## Reusable Base Classes
+## Reusable Mixins
 
-Reusable groups of fields can be shared via abstract schema base classes:
+Reusable local field/index bundles can be shared via `EntMixin` and
+`include(...)`:
 
 ```kotlin
-abstract class TimestampedSchema(tableName: String) : EntSchema(tableName) {
+class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
     val createdAt = time("created_at").immutable()
     val updatedAt = time("updated_at")
 }
 
-class User : TimestampedSchema("users") {
+class User : EntSchema("users") {
     override fun id() = EntId.uuid()
 
+    val timestamps = include(::Timestamps)
     val name = string("name")
-    // User inherits createdAt and updatedAt
+    // User includes createdAt and updatedAt
 }
 ```
 
-Base class fields are included in the generated entity class, create
-builder, and update builder. Immutable fields (like `createdAt` above)
-are omitted from the update builder.
+Mixin fields are included in the generated entity class, create builder,
+and update builder. Immutable fields (like `createdAt` above) are omitted
+from the update builder. Relationship edges stay on the host schema.

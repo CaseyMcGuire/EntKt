@@ -66,17 +66,12 @@ class Task : EntSchema("tasks") {
     val status = enum<TaskStatus>("status").default(TaskStatus.TODO)
 }
 
-// Inheritance-based reuse still works alongside mixins.
-abstract class TimestampedSchema(tableName: String) : EntSchema(tableName) {
-    val createdAt = time("created_at").defaultNow().immutable()
-    val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
-    val deletedAt = time("deleted_at").nullable()
-
-    val byDeletedAt = index("idx_deleted_at", deletedAt)
-}
-
-class Company : TimestampedSchema("companies") {
+class Company : EntSchema("companies") {
     override fun id() = EntId.int()
+
+    val timestamps = include(::Timestamps)
+    val softDelete = include { scope -> SoftDelete(scope, "idx_deleted_at") }
+
     val name = string("name").unique()
 
     val employees = hasMany<User>("employees")
@@ -287,7 +282,7 @@ class SchemaTest {
     @Test
     fun `inherited timestamp fields are present`() {
         val fields = company.fields()
-        // TimestampedSchema contributes 3 fields (created_at, updated_at, deleted_at),
+        // Included mixins contribute 3 fields (created_at, updated_at, deleted_at),
         // plus Company's own 1 field (name) = 4 total
         assertEquals(4, fields.size)
 
