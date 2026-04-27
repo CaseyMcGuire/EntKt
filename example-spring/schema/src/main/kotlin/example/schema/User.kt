@@ -1,12 +1,15 @@
 package example.schema
 
 import entkt.schema.EntId
+import entkt.schema.EntSchema
 
 /**
  * A user with a UUID primary key, a unique email, and timestamps.
  */
-class User : TimestampedSchema("users") {
+class User : EntSchema("users") {
     override fun id() = EntId.uuid()
+
+    val timestamps = include(::Timestamps)
 
     val name = string("name").minLen(1).maxLen(64)
     val email = string("email").unique()

@@ -1,6 +1,7 @@
 package entkt.schema
 
 import kotlin.reflect.KClass
+import kotlin.reflect.full.declaredFunctions
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -65,7 +66,7 @@ class Task : EntSchema("tasks") {
     val status = enum<TaskStatus>("status").default(TaskStatus.TODO)
 }
 
-// Mixin replacement: abstract schema with timestamp fields
+// Inheritance-based reuse still works alongside mixins.
 abstract class TimestampedSchema(tableName: String) : EntSchema(tableName) {
     val createdAt = time("created_at").defaultNow().immutable()
     val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
@@ -79,6 +80,39 @@ class Company : TimestampedSchema("companies") {
     val name = string("name").unique()
 
     val employees = hasMany<User>("employees")
+}
+
+class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
+    val createdAt = time("created_at").defaultNow().immutable()
+    val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
+}
+
+class SoftDelete(
+    scope: EntMixin.Scope,
+    private val indexName: String,
+) : EntMixin(scope) {
+    val deletedAt = time("deleted_at").nullable()
+    val byDeletedAt = index(indexName, deletedAt)
+}
+
+class PostWithMixins : EntSchema("posts") {
+    override fun id() = EntId.long()
+
+    val timestamps = include(::Timestamps)
+    val softDelete = include { scope -> SoftDelete(scope, "idx_posts_deleted_at") }
+
+    val title = string("title")
+    val byCreatedAt = index("idx_posts_created_at", timestamps.createdAt)
+}
+
+class NoteWithInitMixin : EntSchema("notes") {
+    override fun id() = EntId.long()
+
+    init {
+        include(::Timestamps)
+    }
+
+    val body = text("body")
 }
 
 // Schemas for computed-getter detection tests (must be file-level for forward references)
@@ -279,6 +313,40 @@ class SchemaTest {
         val indexes = company.indexes()
         assertEquals(1, indexes.size)
         assertEquals(listOf("deleted_at"), indexes[0].fields)
+    }
+
+    @Test
+    fun `included mixins register declarations on the host schema`() {
+        val post = PostWithMixins()
+        buildRegistry(post)
+
+        val fields = post.fields()
+        assertEquals(listOf("created_at", "updated_at", "deleted_at", "title"), fields.map { it.name })
+
+        val indexes = post.indexes()
+        assertEquals(2, indexes.size)
+        assertEquals("idx_posts_deleted_at", indexes[0].name)
+        assertEquals(listOf("deleted_at"), indexes[0].fields)
+        assertEquals("idx_posts_created_at", indexes[1].name)
+        assertEquals(listOf("created_at"), indexes[1].fields)
+    }
+
+    @Test
+    fun `init include preserves declaration order at the call site`() {
+        val note = NoteWithInitMixin()
+        buildRegistry(note)
+
+        val fields = note.fields()
+        assertEquals(listOf("created_at", "updated_at", "body"), fields.map { it.name })
+    }
+
+    @Test
+    fun `EntMixin does not expose edge declaration helpers`() {
+        val names = EntMixin::class.declaredFunctions.map { it.name }.toSet()
+        assertFalse("belongsTo" in names)
+        assertFalse("hasMany" in names)
+        assertFalse("hasOne" in names)
+        assertFalse("manyToMany" in names)
     }
 
     @Test

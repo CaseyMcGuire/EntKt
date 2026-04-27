@@ -36,9 +36,27 @@ Modifiers: `.inverse(Target::edge)`, `.required()`, `.unique()`,
 `.field(handle)`, `.through<Junction>(Junction::src, Junction::tgt)`,
 `.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.
 
-## Reusable base classes
+## Reusable mixins
 
-Abstract schema classes replace mixins — extend a shared base to inherit fields.
+Reusable local field/index bundles can be modeled as `EntMixin`s and included
+into a schema with `include(...)`. Relationship edges stay on the host schema.
+
+```kotlin
+class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
+    val createdAt = time("created_at").immutable()
+    val updatedAt = time("updated_at")
+}
+
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+
+    val timestamps = include(::Timestamps)
+    val title = string("title")
+}
+```
+
+Declarations created inside a mixin register on the including schema in the
+same order that `include(...)` appears.
 
 ## Indexes
 

@@ -90,6 +90,19 @@ abstract class EntSchema(val tableName: String) {
             _fields.add(it)
         }
 
+    @PublishedApi internal fun stringForMixin(name: String): StringFieldBuilder = string(name)
+    @PublishedApi internal fun textForMixin(name: String): TextFieldBuilder = text(name)
+    @PublishedApi internal fun boolForMixin(name: String): BoolFieldBuilder = bool(name)
+    @PublishedApi internal fun intForMixin(name: String): IntFieldBuilder = int(name)
+    @PublishedApi internal fun longForMixin(name: String): LongFieldBuilder = long(name)
+    @PublishedApi internal fun floatForMixin(name: String): FloatFieldBuilder = float(name)
+    @PublishedApi internal fun doubleForMixin(name: String): DoubleFieldBuilder = double(name)
+    @PublishedApi internal fun timeForMixin(name: String): TimeFieldBuilder = time(name)
+    @PublishedApi internal fun uuidForMixin(name: String): UuidFieldBuilder = uuid(name)
+    @PublishedApi internal fun bytesForMixin(name: String): BytesFieldBuilder = bytes(name)
+    @PublishedApi internal inline fun <reified E : Enum<E>> enumForMixin(name: String): EnumFieldBuilder =
+        enum(name, E::class)
+
     // ── Edge builder methods ───────────────────────────────────────
 
     protected inline fun <reified Target : EntSchema> belongsTo(
@@ -152,6 +165,17 @@ abstract class EntSchema(val tableName: String) {
         }
         return IndexBuilder(name, fields.toList()).also { _indexes.add(it) }
     }
+
+    @PublishedApi internal fun indexForMixin(name: String, vararg fields: IndexableColumn): IndexBuilder =
+        index(name, *fields)
+
+    protected fun <M : EntMixin> include(factory: (EntMixin.Scope) -> M): M {
+        checkNotFinalized()
+        return factory(EntMixin.Scope(this))
+    }
+
+    @PublishedApi internal fun <M : EntMixin> includeForMixin(factory: (EntMixin.Scope) -> M): M =
+        include(factory)
 
     // ── Finalization ───────────────────────────────────────────────
 
