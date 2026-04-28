@@ -1,7 +1,8 @@
 package entkt.postgres
 
+import entkt.codegen.SchemaInspector
 import entkt.codegen.buildEntitySchemas
-import entkt.codegen.scanForSchemas
+import entkt.codegen.collectSchemas
 import java.io.File
 import java.nio.file.Path
 
@@ -9,6 +10,10 @@ import java.nio.file.Path
  * Generic entry point for generating migration SQL files. Scans the
  * runtime classpath for EntSchema objects — no hardcoded schema list
  * needed.
+ *
+ * Uses [SchemaInspector.validate] as the shared validation boundary
+ * so that schema errors produce structured diagnostics rather than
+ * raw stacktraces.
  *
  * Usage from a Gradle JavaExec task:
  * ```kotlin
@@ -30,12 +35,35 @@ fun main(args: Array<String>) {
     val classpath = System.getProperty("java.class.path")
         .split(File.pathSeparator)
         .map { File(it) }
-    val schemas = buildEntitySchemas(scanForSchemas(classpath))
-    check(schemas.isNotEmpty()) { "No EntSchema classes found on the classpath" }
+    val schemas = try {
+        collectSchemas(classpath)
+    } catch (e: Exception) {
+        System.err.println("Schema collection failed:")
+        System.err.println("  - ${e.message ?: e}")
+        System.exit(1)
+        return
+    }
+    if (schemas.isEmpty()) {
+        System.err.println("No EntSchema classes found on the classpath")
+        System.exit(1)
+        return
+    }
+
+    val validation = SchemaInspector.validate(schemas)
+    if (!validation.valid) {
+        System.err.println("Schema validation failed:")
+        for (error in validation.errors) {
+            System.err.println("  - $error")
+        }
+        System.exit(1)
+        return
+    }
+
+    val entitySchemas = buildEntitySchemas(schemas)
 
     val planner = PostgresMigrator.planner()
     val plan = planner.plan(
-        schemas = schemas,
+        schemas = entitySchemas,
         outputDir = migrationsDir,
         description = description,
     )

@@ -69,6 +69,26 @@ tasks.register<JavaExec>("generateMigrationFile") {
     args(project.findProperty("description")?.toString() ?: "migration")
 }
 
+tasks.register<JavaExec>("validateEntSchemas") {
+    group = "entkt"
+    description = "Validate entkt schema graph"
+    classpath = codegenRunner
+    mainClass.set("entkt.postgres.InspectMainKt")
+    args("validate")
+}
+
+tasks.register<JavaExec>("explainEntSchemas") {
+    group = "entkt"
+    description = "Print the resolved relational shape of all entkt schemas"
+    classpath = codegenRunner
+    mainClass.set("entkt.postgres.InspectMainKt")
+    val format = project.providers.gradleProperty("format").getOrElse("text")
+    val cliArgs = mutableListOf("explain", "--format=$format")
+    val filter = project.providers.gradleProperty("filter").orNull
+    if (filter != null) cliArgs.add("--filter=$filter")
+    args(cliArgs)
+}
+
 springBoot {
     mainClass.set("example.spring.ApplicationKt")
 }

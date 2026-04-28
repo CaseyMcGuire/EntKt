@@ -66,6 +66,26 @@ class EntktPlugin : Plugin<Project> {
             task.group = "entkt"
         }
 
+        project.tasks.register("validateEntSchemas", JavaExec::class.java) { task ->
+            task.classpath = codegenConfig.plus(schemasConfig)
+            task.mainClass.set("entkt.postgres.InspectMainKt")
+            task.args("validate")
+            task.description = "Validate entkt schema graph (finalization, cross-schema constraints)"
+            task.group = "entkt"
+        }
+
+        project.tasks.register("explainEntSchemas", JavaExec::class.java) { task ->
+            task.classpath = codegenConfig.plus(schemasConfig)
+            task.mainClass.set("entkt.postgres.InspectMainKt")
+            val format = project.providers.gradleProperty("format").getOrElse("text")
+            val cliArgs = mutableListOf("explain", "--format=$format")
+            val filter = project.providers.gradleProperty("filter").orNull
+            if (filter != null) cliArgs.add("--filter=$filter")
+            task.args(cliArgs)
+            task.description = "Print the resolved relational shape of all entkt schemas"
+            task.group = "entkt"
+        }
+
         // Add generated sources to main source set
         val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
         sourceSets.getByName("main").java.srcDir(generateTask.map { generatedDir })

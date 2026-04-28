@@ -68,7 +68,7 @@ my-project/
   app/                   # applies id("entkt"), schemas(project(":schema"))
 ```
 
-The plugin registers two tasks:
+The plugin registers the following tasks:
 
 - **`generateEntkt`** — Scans the `schemas` classpath for `EntSchema`
   classes, generates entity classes into `build/generated/entkt/`, adds
@@ -76,6 +76,12 @@ The plugin registers two tasks:
   `compileKotlin`.
 - **`generateMigrationFile`** — Diffs schemas against the stored snapshot
   and writes a versioned SQL migration file. See [Migrations](migrations.md).
+- **`validateEntSchemas`** — Validates the schema graph (finalization,
+  cross-schema constraints, relation-name uniqueness) and prints
+  structured diagnostics. See [Schema Inspection](#schema-inspection).
+- **`explainEntSchemas`** — Prints the resolved relational shape of all
+  schemas. Supports `-Pformat=text|json|sql` and `-Pfilter=`. See
+  [Schema Inspection](#schema-inspection).
 
 ### Without the plugin
 
@@ -166,3 +172,89 @@ For each schema, the codegen emits:
 | `UserRepo.kt` | Repository with `.create {}`, `.update() {}`, `.query {}`, `.byId()`, `.delete()` |
 | `UserPrivacy.kt` | Privacy contexts, rules, WriteCandidate, and policy scope (see [Privacy](privacy.md)) |
 | `EntClient.kt` | Single entry point holding all repos, constructed with a `Driver` |
+
+## Schema Inspection
+
+The `validateEntSchemas` and `explainEntSchemas` tasks let you inspect
+the resolved relational shape of your schema graph without running
+codegen or connecting to a database.
+
+### Validate
+
+```bash
+./gradlew validateEntSchemas
+```
+
+Runs the full validation pipeline — finalization, cross-schema
+constraints, member-name collisions, relation-name uniqueness — and
+prints structured diagnostics:
+
+```
+Schema validation passed (4 schemas)
+```
+
+On failure, each error is listed:
+
+```
+Schema validation failed:
+  - Schema 'Post': reverse M2M edge 'users_posts' collides with a declared edge of the same name
+```
+
+### Explain
+
+```bash
+./gradlew explainEntSchemas
+```
+
+Prints the resolved shape of every schema — columns, foreign keys,
+edges, and indexes (including synthesized ones):
+
+```
+Schema: Post
+Table: posts
+Id: LONG (AUTO_LONG)
+
+Fields:
+| Name       | Type   | Attributes              |
+|------------|--------|-------------------------|
+| title      | STRING | NOT NULL                |
+| published  | BOOL   | NOT NULL, DEFAULT false |
+
+Foreign Keys:
+| Column    | References | Nullable | On Delete | Source Edge |
+|-----------|------------|----------|-----------|-------------|
+| author_id | users.id   | NOT NULL | RESTRICT  | author      |
+
+Edges:
+| Name   | Kind      | Target | Details                     |
+|--------|-----------|--------|-----------------------------|
+| author | belongsTo | User   | fk=author_id, inverse=posts |
+```
+
+#### Output formats
+
+Use `-Pformat=` to choose the output format:
+
+```bash
+./gradlew explainEntSchemas -Pformat=text    # default, human-readable tables
+./gradlew explainEntSchemas -Pformat=json    # deterministic JSON, suitable for diffing
+./gradlew explainEntSchemas -Pformat=sql     # full DDL (CREATE TABLE, indexes, FKs)
+```
+
+The SQL format renders all CREATE TABLE statements first, then indexes,
+then foreign key constraints, so the output is directly runnable against
+a fresh database.
+
+#### Filtering
+
+Use `-Pfilter=` to show only schemas matching a name or table
+(case-insensitive substring match):
+
+```bash
+./gradlew explainEntSchemas -Pfilter=Post
+./gradlew explainEntSchemas -Pformat=json -Pfilter=user
+```
+
+When `--filter` is combined with `--format=sql`, the output includes a
+warning that it is a partial DDL excerpt and may reference tables not
+shown.

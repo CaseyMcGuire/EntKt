@@ -20,6 +20,19 @@ import kotlin.reflect.full.createInstance
  * codegen or [buildEntitySchemas].
  */
 fun scanForSchemas(classpath: Iterable<File>): List<SchemaInput> {
+    val schemas = collectSchemas(classpath)
+    ensureFinalized(schemas)
+    return schemas
+}
+
+/**
+ * Scan the given classpath entries for [EntSchema] subclasses and
+ * instantiate them, but do **not** finalize or validate. The returned
+ * inputs are unfinalized — callers must run [ensureFinalized] (or pass
+ * them to [SchemaInspector.validate]/[SchemaInspector.explain]) before
+ * accessing edges or generating code.
+ */
+fun collectSchemas(classpath: Iterable<File>): List<SchemaInput> {
     val classLoader = URLClassLoader(
         classpath.map { it.toURI().toURL() }.toTypedArray(),
         EntSchema::class.java.classLoader,
@@ -48,11 +61,9 @@ fun scanForSchemas(classpath: Iterable<File>): List<SchemaInput> {
                 "(missing dependency?) and may include your schemas:$detail",
         )
     }
-
-    // Finalize all schemas and validate (duplicate table names, etc.)
-    ensureFinalized(schemas)
-
-    return schemas
+    // Sort by schema name so output is deterministic regardless of
+    // classpath scan order (directory walk, JAR entry order).
+    return schemas.sortedBy { it.name }
 }
 
 private fun scanDirectory(

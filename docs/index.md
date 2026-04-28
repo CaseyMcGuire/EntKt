@@ -16,6 +16,7 @@ query builders, and repositories that talk to a pluggable `Driver`.
 - [Privacy Limitations](privacy-limitations.md) -- V1 aggregate, filtering, and pagination caveats
 - [Migrations](migrations.md) -- dev-mode auto-apply and prod-mode SQL file generation
 - [Drivers](drivers.md) -- InMemoryDriver, PostgresDriver, writing your own
+- [Schema Inspection](getting-started.md#schema-inspection) -- validate and explain resolved schema shapes
 
 ## Possible Features
 
