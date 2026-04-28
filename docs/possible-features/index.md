@@ -13,6 +13,9 @@ These pages are design notes, not committed API contracts.
 
 ## Query And Mutation APIs
 
+- [Structured Mutation Pipeline](structured-mutation-pipeline.md)
+- [Ephemeral Mutation Inputs](ephemeral-mutation-inputs.md)
+- [Compare-And-Set Mutations](compare-and-set-mutations.md)
 - [Edge Mutation API](edge-mutation-api.md)
 - [Mutation Actions](mutation-actions.md)
 - [Transactional Graph Changesets](transactional-graph-changesets.md)
