@@ -14,6 +14,10 @@ These pages are design notes, not committed API contracts.
 ## Query And Mutation APIs
 
 - [Edge Mutation API](edge-mutation-api.md)
+- [Mutation Actions](mutation-actions.md)
+- [Transactional Graph Changesets](transactional-graph-changesets.md)
+- [Read Result Variants](read-result-variants.md)
+- [Request-Scoped Entity Loading](request-scoped-entity-loading.md)
 - [Cursor Pagination](cursor-pagination.md)
 - [Projection / Select API](projection-select-api.md)
 - [Aggregations](aggregations.md)
@@ -22,6 +26,7 @@ These pages are design notes, not committed API contracts.
 ## Model Behavior
 
 - [Optimistic Locking](optimistic-locking.md)
+- [Edge Groups](edge-groups.md)
 - [Soft Delete](soft-delete.md)
 - [Audit Fields](audit-fields.md)
 - [Custom Field Types And Converters](custom-field-types-converters.md)
