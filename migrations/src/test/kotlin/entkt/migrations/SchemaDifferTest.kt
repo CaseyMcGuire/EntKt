@@ -884,7 +884,7 @@ class SchemaDifferTest {
             override fun canonicalize(rawSqlType: String): String = rawSqlType
         }
         val renderer = object : MigrationSqlRenderer {
-            override fun render(op: MigrationOp, mode: RenderMode): List<String> {
+            override fun render(op: MigrationOp): List<String> {
                 return listOf("-- placeholder")
             }
         }
@@ -948,7 +948,7 @@ class SchemaDifferTest {
             override fun normalizeIdentifier(name: String): String = name
         }
         val renderer = object : MigrationSqlRenderer {
-            override fun render(op: MigrationOp, mode: RenderMode): List<String> {
+            override fun render(op: MigrationOp): List<String> {
                 return listOf("-- placeholder")
             }
         }

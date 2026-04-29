@@ -14,7 +14,7 @@ query builders, and repositories that talk to a pluggable `Driver`.
 - [Privacy](privacy.md) -- per-entity privacy rules for read and write operations
 - [Validation](validation.md) -- entity-level validation rules for data model invariants
 - [Privacy Limitations](privacy-limitations.md) -- V1 aggregate, filtering, and pagination caveats
-- [Migrations](migrations.md) -- dev-mode auto-apply and prod-mode SQL file generation
+- [Migrations](migrations.md) -- migration planning, snapshots, and SQL file generation
 - [Drivers](drivers.md) -- InMemoryDriver, PostgresDriver, writing your own
 - [Schema Inspection](getting-started.md#schema-inspection) -- validate and explain resolved schema shapes
 

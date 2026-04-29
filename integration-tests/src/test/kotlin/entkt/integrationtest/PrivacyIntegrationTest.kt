@@ -11,7 +11,6 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.postgres.PostgresDriver
-import entkt.postgres.PostgresMigrator
 import entkt.runtime.EntityPolicy
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
@@ -141,6 +140,11 @@ class PrivacyIntegrationTest {
         }
     }
 
+    private fun seedSchemas() {
+        val driver = PostgresDriver(dataSource, autoDdl = true)
+        EntClient.SCHEMAS.forEach(driver::register)
+    }
+
     /** Create a fresh driver with migrated tables, truncate between tests. */
     private fun freshClient(
         viewer: Viewer,
@@ -148,8 +152,7 @@ class PrivacyIntegrationTest {
         userPolicy: EntityPolicy<User, UserPolicyScope> = UserPolicy,
     ): EntClient {
         val driver = PostgresDriver(dataSource)
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(EntClient.SCHEMAS)
+        seedSchemas()
 
         // Truncate all managed tables between tests so each test starts with a clean DB.
         // Derived from EntClient.SCHEMAS so new schemas are picked up automatically.
@@ -852,7 +855,7 @@ class PrivacyIntegrationTest {
     @Test
     fun `no policy means no privacy enforcement`() {
         val driver = PostgresDriver(dataSource)
-        PostgresMigrator.create(dataSource).migrate(EntClient.SCHEMAS)
+        seedSchemas()
         dataSource.connection.use { conn ->
             conn.createStatement().use {
                 it.execute("TRUNCATE TABLE \"articles\", \"users\" RESTART IDENTITY CASCADE")

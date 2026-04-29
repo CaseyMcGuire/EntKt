@@ -73,11 +73,11 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 | [`:schema`](schema/README.md) | Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType` |
 | [`:runtime`](runtime/README.md) | `Driver` interface, `InMemoryDriver`, `EntitySchema`, query `Predicate` hierarchy |
 | [`:codegen`](codegen/README.md) | KotlinPoet-based generator: entity classes, create/update/query builders, repos, `EntClient` |
-| [`:migrations`](migrations/README.md) | Driver-agnostic schema diffing, migration planning (prod), auto-apply (dev), `MigrationRunner` |
+| [`:migrations`](migrations/README.md) | Driver-agnostic schema diffing and migration planning |
 | [`:gradle-plugin`](gradle-plugin/README.md) | `entkt` Gradle plugin registering `generateEntkt` and `generateMigrationFile` tasks |
 | [`:postgres`](postgres/README.md) | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
 | `:example-demo` | Executable demo of the full API against `InMemoryDriver` |
-| [`:example-spring`](example-spring/README.md) | Spring Boot REST API example with Postgres, dev-mode migrations, lifecycle hooks, and friendship management |
+| [`:example-spring`](example-spring/README.md) | Spring Boot REST API example with Postgres, Flyway-applied SQL migrations, lifecycle hooks, and friendship management |
 
 ## Roadmap
 

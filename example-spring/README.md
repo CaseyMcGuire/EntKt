@@ -1,7 +1,7 @@
 # entkt Spring Boot Example
 
 A REST API built with Spring Boot and entkt, demonstrating how to wire
-the Postgres driver, migrations (dev + prod), lifecycle hooks, CRUD
+the Postgres driver, Flyway-managed SQL migrations, lifecycle hooks, CRUD
 endpoints, and friendship management (a first-class M2M junction entity).
 
 ## Prerequisites
@@ -21,22 +21,12 @@ Or adjust the connection in `src/main/resources/application.yml`.
 
 ## Migrations
 
-entkt supports two migration modes, selected by Spring profile.
+The example uses one migration path:
 
-### Dev mode (`dev` profile)
-
-Auto-applies schema changes on startup by introspecting the live
-database and diffing against the desired schemas. No migration files
-needed — just change your schema and restart.
-
-```bash
-./gradlew :example-spring:bootRun --args='--spring.profiles.active=dev'
-```
-
-### Prod mode (default)
-
-Applies versioned SQL migration files from `db/migrations/`. Files are
-generated at build time and committed to version control.
+- entkt generates versioned SQL migration files
+- Flyway applies them on startup
+- the application does not execute schema DDL on startup; generated repos
+  only register metadata with the driver
 
 **Generate a migration** after changing your schemas. The `entkt` Gradle
 plugin provides a `generateMigrationFile` task automatically:
@@ -47,11 +37,12 @@ plugin provides a `generateMigrationFile` task automatically:
 ./gradlew generateMigrationFile -Pdescription="add_subtitle"
 ```
 
-This diffs your schemas against `db/schema_snapshot.json` and writes a
-new SQL file to `db/migrations/`. No live database connection is
-required. Commit both the migration file and the updated snapshot.
+This diffs your schemas against the latest committed snapshot in
+`db/migrations/` and writes the next SQL file there. No live database
+connection is required. Commit both the migration file and the updated
+snapshot.
 
-**Run the app** (applies pending migrations on startup):
+**Run the app** (Flyway applies pending migrations on startup):
 
 ```bash
 ./gradlew :example-spring:bootRun
@@ -153,8 +144,9 @@ Friendship hooks (`FriendshipHooks.kt`) enforce:
 
 The `EntClient` is configured as a Spring bean:
 
-1. **Migrations** are profile-driven: `dev` auto-applies via DB
-   introspection, prod applies versioned SQL files from `db/migrations/`.
+1. **Schema application** is handled by Flyway from `db/migrations/`.
+   entkt generates those SQL files; the application does not diff or
+   apply schema changes directly.
 2. **PostgresDriver** is wired with Spring's auto-configured `DataSource`.
 3. **Lifecycle hooks** set `createdAt`/`updatedAt` timestamps automatically.
 4. **Ownership hooks** on posts use a request-scoped `AuthContext`

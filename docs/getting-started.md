@@ -83,6 +83,9 @@ The plugin registers the following tasks:
   schemas. Supports `-Pformat=text|json|sql` and `-Pfilter=`. See
   [Schema Inspection](#schema-inspection).
 
+entkt generates migration SQL but does not apply it. Use Flyway,
+Liquibase, or your deployment system to execute the generated files.
+
 ### Without the plugin
 
 You can also invoke codegen directly via the CLI entry point

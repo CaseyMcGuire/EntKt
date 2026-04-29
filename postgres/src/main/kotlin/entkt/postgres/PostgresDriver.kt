@@ -30,11 +30,11 @@ import javax.sql.DataSource
  * [EntitySchema] registry — every [insert]/[update]/[query] hits the
  * database.
  *
- * The schema registry is populated by [register], which also issues a
- * `CREATE TABLE IF NOT EXISTS` derived from the entity's [ColumnMetadata]
- * list. Driver consumers can opt out of auto-DDL by simply not calling
- * `client.users` etc. before running their own migrations — the second
- * `register` is idempotent and won't try to recreate the table.
+ * The schema registry is populated by [register]. By default this is
+ * metadata-only: it caches the [EntitySchema] needed for query lowering
+ * and persistence, but does not mutate the database. When [autoDdl] is
+ * true, [register] also issues `CREATE TABLE IF NOT EXISTS` and index
+ * DDL derived from the schema.
  *
  * Predicate lowering produces parameterized SQL: leaves become
  * `"col" op ?`, edge predicates become `EXISTS (... )` subqueries
@@ -44,22 +44,27 @@ import javax.sql.DataSource
  */
 class PostgresDriver(
     private val dataSource: DataSource,
+    private val autoDdl: Boolean = false,
 ) : Driver {
 
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
 
     override fun register(schema: EntitySchema) {
         if (schemas.containsKey(schema.table)) return
-        val ddl = createTableSql(schema)
-        val indexDdl = createIndexesSql(schema)
-        dataSource.connection.use { conn ->
-            conn.createStatement().use { stmt ->
-                stmt.execute(ddl)
-                for (sql in indexDdl) stmt.execute(sql)
+
+        if (autoDdl) {
+            val ddl = createTableSql(schema)
+            val indexDdl = createIndexesSql(schema)
+            dataSource.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.execute(ddl)
+                    for (sql in indexDdl) stmt.execute(sql)
+                }
             }
         }
-        // Cache only after all DDL succeeds so a failed register() can
-        // be retried.
+
+        // Cache only after optional DDL succeeds so a failed register()
+        // can be retried.
         schemas.putIfAbsent(schema.table, schema)
     }
 

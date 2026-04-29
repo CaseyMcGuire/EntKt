@@ -1,8 +1,20 @@
 # Migrations
 
-entkt includes a hybrid migration system: **dev mode** auto-applies
-schema changes against a live database, while **prod mode** generates
-reviewable SQL files from a committed snapshot.
+entkt plans migrations and generates versioned SQL files. Applying
+those files is intentionally outside entkt's scope.
+
+Use entkt to:
+
+- diff desired schemas against a committed planning baseline
+- generate reviewed up-only SQL migration files
+- optionally bootstrap planning from a live database when no baseline exists yet
+
+Use your migration runner of choice to apply the SQL:
+
+- Flyway
+- Liquibase
+- deployment-managed SQL execution
+- another in-house migration system
 
 ## Overview
 
@@ -10,72 +22,57 @@ The migration system diffs two `NormalizedSchema` values -- a canonical
 representation of your database schema. These can be derived from:
 
 1. **Entity schemas** -- the desired state from your code
-2. **Live DB introspection** -- what the database actually has (dev mode)
-3. **A JSON snapshot** -- committed to version control (prod mode)
+2. **Live DB introspection** -- an optional bootstrap baseline when no snapshot exists yet
+3. **A JSON snapshot** -- committed to version control alongside migration SQL
 
-This gives one diff algorithm for both modes.
+The key point is that entkt uses these inputs to **plan** SQL. It does
+not apply SQL to a database at runtime.
 
-## Dev Mode
+## Planning Mode
 
-Dev mode introspects your live database, computes the diff, and applies
-safe additive changes in a single transaction.
-
-```kotlin
-val migrator = PostgresMigrator.create(dataSource)
-
-val result = migrator.migrate(
-    schemas = listOf(User.SCHEMA, Post.SCHEMA),
-)
-// result.applied = [CreateTable("users"), AddIndex("users", ["email"]), ...]
-```
-
-Dev mode is all-or-nothing: if any manual (destructive) operations are
-detected, it fails before applying anything.
-
-## Prod Mode
-
-Prod mode diffs your schemas against a committed JSON snapshot and
-generates a versioned SQL file. No live database connection is needed.
+Planning diffs your schemas against the latest committed snapshot in the
+migrations directory and generates a versioned SQL file. No live database
+connection is needed in the normal case.
 
 ```kotlin
 val migrator = PostgresMigrator.planner()
 
 val plan = migrator.plan(
     schemas = listOf(User.SCHEMA, Post.SCHEMA),
-    snapshotPath = Paths.get("db/schema_snapshot.json"),
     outputDir = Paths.get("db/migrations"),
     description = "add_posts_table",
 )
-// plan.filePath = db/migrations/V20260411120000000__add_posts_table.sql
+// plan.filePath = db/migrations/V3__add_posts_table.sql
 ```
 
-After generating a migration, the snapshot is advanced to reflect the new
-desired state.
+The planner reads the highest-numbered `V*.schema.json` file in
+`outputDir` as the baseline, writes `V{N+1}__description.sql`, and
+advances the paired `V{N+1}.schema.json` snapshot.
 
 ### Bootstrapping an Existing Database
 
-If no snapshot exists but a live database is available, `plan()` diffs
-against the live schema. This lets you adopt migrations on a database
-that already has tables without generating redundant `CREATE TABLE`
-statements:
+If no snapshot exists but a live database is available, a bootstrap-aware
+planner can introspect the live schema and use it as the initial
+baseline. This lets you adopt entkt migration planning on a
+database that already has tables without generating redundant
+`CREATE TABLE` statements:
 
 ```kotlin
-val migrator = PostgresMigrator.create(dataSource)  // has introspector
+val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
 
 val plan = migrator.plan(
     schemas = listOf(User.SCHEMA, Post.SCHEMA),
-    snapshotPath = Paths.get("db/schema_snapshot.json"),  // does not exist yet
     outputDir = Paths.get("db/migrations"),
     description = "initial",
 )
-// If DB already matches schemas: no migration file, just creates the snapshot
+// If DB already matches schemas: no SQL file, just creates the first snapshot
 ```
 
 ## Safe vs Manual Operations
 
-V1 auto-applies only safe additive operations:
+V1 auto-generates only safe additive operations:
 
-| Operation | Auto-applied? | Notes |
+| Operation | Auto-generated? | Notes |
 |-----------|:---:|-------|
 | `CreateTable` | Yes | Columns + PK only; indexes and FKs are separate ops |
 | `AddColumn` (nullable) | Yes | |
@@ -91,7 +88,7 @@ V1 auto-applies only safe additive operations:
 | `DropIndex` | No | |
 | `DropForeignKey` | No | |
 
-Manual operations are detected and reported but never auto-applied.
+Manual operations are detected and reported but never auto-generated.
 
 ## Handling Manual Operations
 
@@ -103,7 +100,7 @@ resolved. No migration file is emitted and the snapshot is not advanced.
 
 ```kotlin
 try {
-    migrator.plan(schemas, snapshotPath, outputDir, "changes")
+    migrator.plan(schemas, outputDir, "changes")
 } catch (e: ManualMigrationRequiredException) {
     for (op in e.ops) {
         println("Manual: $op")
@@ -119,7 +116,7 @@ with auto ops and includes a checklist of manual steps at the top:
 
 ```kotlin
 val plan = migrator.plan(
-    schemas, snapshotPath, outputDir, "mixed_changes",
+    schemas, outputDir, "mixed_changes",
     manualMode = ManualMode.ACKNOWLEDGE_AND_ADVANCE,
 )
 ```
@@ -127,7 +124,7 @@ val plan = migrator.plan(
 The generated file looks like:
 
 ```sql
--- entkt migration V20260411130000000
+-- entkt migration V4
 --
 -- !! MANUAL STEPS REQUIRED !!
 -- The following operations were detected but NOT included in this file.
@@ -141,32 +138,22 @@ The generated file looks like:
 ALTER TABLE "posts" ADD COLUMN "subtitle" text;
 ```
 
-The `MigrationRunner` refuses to apply files that still contain the
-`!! MANUAL STEPS REQUIRED !!` marker. You must complete the manual steps
-and remove the marker before deploying.
+When this mode is used, the generated SQL file is intentionally not
+ready for blind application. You must complete the manual steps and then
+apply the finalized SQL with your migration runner.
 
-## Applying Migrations in Production
+## Applying Migrations
 
-The `MigrationRunner` applies versioned SQL files and tracks them in a
-`schema_migrations` table:
+entkt does not apply migrations.
 
-```kotlin
-val runner = PostgresMigrator.runner(dataSource)
-val result = runner.applyPending(Paths.get("db/migrations"))
-// result.applied = ["V20260411120000000", "V20260411130000000"]
-```
+Clients should use a migration runner that matches their operational
+environment. Common choices:
 
-Key behaviors:
+- Flyway
+- Liquibase
+- platform/deployment SQL execution
 
-- Files are sorted by version (timestamp-based, with numeric suffix
-  awareness for collision avoidance)
-- Already-applied migrations are skipped
-- **Checksum verification**: if a previously applied migration file has
-  been modified, the runner throws `ChecksumMismatchException`
-- **CRLF tolerance**: checksums are computed on LF-normalized content,
-  with backwards compatibility for pre-normalization checksums
-- **Manual step guard**: files containing the `!! MANUAL STEPS REQUIRED !!`
-  marker are rejected with `UnresolvedManualStepsException`
+The example Spring app uses Flyway, but that is just one integration path.
 
 ## Schema Snapshots
 
@@ -187,19 +174,18 @@ operations reference the actual database-side names.
 
 ## Migration File Format
 
-Plain SQL, up-only. Named `V{YYYYMMDDHHmmssSSS}__{description}.sql`.
+Plain SQL, up-only. Named `V{N}__{description}.sql`.
 
 - **No `IF NOT EXISTS`** in generated files -- versioned migrations should
   fail loudly on drift
-- Dev mode uses `IF NOT EXISTS` for idempotent application
 - Description is slugified (non-alphanumeric characters replaced with `_`)
-- Version collision protection: if the timestamp already exists in the
-  output directory, a `_001`, `_002`, etc. suffix is appended
+- Versions are sequential (`V1`, `V2`, `V3`, ...), derived from the
+  highest migration version already present in the output directory
 
 ## Gradle Plugin: `generateMigrationFile` Task
 
 If you're using the entkt Gradle plugin, the `generateMigrationFile` task wraps
-the prod-mode planner so you don't need to write any Kotlin to generate
+the migration planner so you don't need to write any Kotlin to generate
 migrations:
 
 ```bash
@@ -230,4 +216,4 @@ If no description is provided, it defaults to `"migration"`.
 4. If manual ops are flagged: write a manual migration, then re-run with
    `ACKNOWLEDGE_AND_ADVANCE`
 5. Commit the migration file and updated snapshot
-6. In production: `runner.applyPending(migrationDir)`
+6. Apply the SQL with Flyway, Liquibase, or your deployment system

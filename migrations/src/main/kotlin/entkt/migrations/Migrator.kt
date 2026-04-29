@@ -6,82 +6,27 @@ import java.security.MessageDigest
 
 /**
  * Marker embedded in migration files generated with
- * [ManualMode.ACKNOWLEDGE_AND_ADVANCE]. The [MigrationRunner] refuses
- * to apply files containing this marker — the user must complete the
- * manual steps and remove it first.
+ * [ManualMode.ACKNOWLEDGE_AND_ADVANCE]. It is intended for human review
+ * and for external migration tooling to notice as needed.
  */
 const val MANUAL_STEPS_MARKER = "!! MANUAL STEPS REQUIRED !!"
 
 /**
- * Orchestrates schema migrations in two modes:
- *
- * - **Dev mode ([migrate]):** introspect live DB, diff against desired
- *   schemas, apply additive ops in a single transaction.
- * - **Prod mode ([plan]):** diff desired schemas against a committed
- *   snapshot, generate a migration SQL file.
+ * Plans versioned schema migrations by diffing desired schemas against
+ * the latest committed snapshot, optionally using live DB introspection
+ * as a bootstrap baseline when no snapshot exists yet.
  */
 class Migrator(
     private val differ: SchemaDiffer,
     private val renderer: MigrationSqlRenderer,
     private val typeMapper: TypeMapper,
-    /** Required for [migrate] (dev mode). Null when only [plan] is needed. */
     private val introspector: DatabaseIntrospector? = null,
-    /** Required for [migrate] (dev mode). Null when only [plan] is needed. */
-    private val executor: MigrationExecutor? = null,
 ) {
 
     /**
-     * Dev mode: introspect live DB, diff against desired schemas.
-     *
-     * Managed surface = desired table names ∪ snapshot table names (if
-     * a `.schema.json` exists in [migrationsDir]). If no snapshot,
-     * managed surface = desired table names only (fresh DB — drops
-     * can't be detected, but there's nothing to drop).
-     *
-     * If [DiffResult.manual] is non-empty, fails BEFORE applying
-     * anything (all-or-nothing). If only auto ops, applies them in a
-     * single transaction. No schema_migrations tracking.
-     *
-     * Requires [introspector] and [executor] to be provided at
-     * construction time.
-     *
-     * @return the ops that were applied, or empty if already up to date.
-     * @throws ManualMigrationRequiredException if manual ops are detected.
-     * @throws IllegalStateException if introspector or executor were not provided.
-     */
-    fun migrate(schemas: List<EntitySchema>, migrationsDir: Path? = null): MigrationResult {
-        val intr = checkNotNull(introspector) { "migrate() requires a DatabaseIntrospector" }
-        val exec = checkNotNull(executor) { "migrate() requires a MigrationExecutor" }
-
-        val desired = NormalizedSchema.fromEntitySchemas(schemas, typeMapper)
-
-        val snapshotTableNames = if (migrationsDir != null) {
-            latestSnapshot(migrationsDir)?.tables?.keys ?: emptySet()
-        } else {
-            emptySet()
-        }
-        val managedTables = desired.tables.keys + snapshotTableNames
-
-        val current = intr.introspect(managedTables)
-        val result = differ.diff(desired, current)
-
-        if (result.manual.isNotEmpty()) {
-            throw ManualMigrationRequiredException(result.manual)
-        }
-
-        if (result.ops.isEmpty()) {
-            return MigrationResult(applied = emptyList(), manual = emptyList())
-        }
-
-        val statements = result.ops.flatMap { renderer.render(it, RenderMode.DEV) }
-        exec.execute(statements)
-
-        return MigrationResult(applied = result.ops, manual = emptyList())
-    }
-
-    /**
-     * Prod mode: diff desired schemas against the latest committed
-     * snapshot in [outputDir] (no live DB needed).
+     * Diff desired schemas against the latest committed snapshot in
+     * [outputDir]. In the normal case this is snapshot-only planning
+     * and no live database connection is needed.
      *
      * Each migration produces a paired SQL file and schema snapshot:
      * `V1__description.sql` + `V1.schema.json`. The planner reads the
@@ -186,7 +131,7 @@ class Migrator(
 
         // SQL statements
         for (op in result.ops) {
-            val statements = renderer.render(op, RenderMode.MIGRATION_FILE)
+            val statements = renderer.render(op)
             for (stmt in statements) {
                 sb.appendLine("$stmt;")
             }
@@ -378,11 +323,6 @@ internal fun describeOp(op: MigrationOp): String = when (op) {
     }
 }
 
-data class MigrationResult(
-    val applied: List<MigrationOp>,
-    val manual: List<MigrationOp>,
-)
-
 data class MigrationPlan(
     val filePath: Path?,
     val ops: List<MigrationOp>,
@@ -420,83 +360,10 @@ class ManualMigrationRequiredException(
     val ops: List<MigrationOp>,
 ) : RuntimeException(
     buildString {
-        appendLine("Manual migration required. The following operations cannot be auto-applied:")
+        appendLine("Manual migration required. The following operations cannot be auto-generated:")
         for (op in ops) {
             appendLine("  - ${describeOp(op)}")
         }
         appendLine("Write a manual migration to resolve these, then re-run with ACKNOWLEDGE_AND_ADVANCE if needed.")
     },
-)
-
-/**
- * Applies versioned migration files and tracks them in
- * `schema_migrations`. Used in prod deployments.
- * Hard-fails on checksum mismatches (edited migration files).
- */
-class MigrationRunner(
-    private val executor: MigrationExecutor,
-) {
-
-    fun applyPending(migrationDir: Path): ApplyResult {
-        val applied = executor.appliedVersions()
-        val files = migrationDir.toFile().listFiles { f -> f.name.endsWith(".sql") }
-            ?.sortedBy { parseVersionNumber(it.name) ?: 0 }
-            ?: emptyList()
-
-        val pending = mutableListOf<String>()
-
-        for (file in files) {
-            val version = file.nameWithoutExtension.substringBefore("__")
-            val rawContent = file.readText()
-            // Normalize line endings so new checksums are stable across
-            // LF and CRLF checkouts of the same file.
-            val content = rawContent.replace("\r\n", "\n")
-            val checksum = sha256(content)
-
-            val existingChecksum = applied[version]
-            if (existingChecksum != null) {
-                // Accept either the normalized or raw checksum so that
-                // migrations applied before CRLF normalization was added
-                // are not rejected.
-                val rawChecksum = if (rawContent !== content) sha256(rawContent) else checksum
-                if (existingChecksum != checksum && existingChecksum != rawChecksum) {
-                    throw ChecksumMismatchException(version, existingChecksum, checksum)
-                }
-                // Already applied with matching checksum — skip
-                continue
-            }
-
-            if (MANUAL_STEPS_MARKER in content) {
-                throw UnresolvedManualStepsException(version, file.name)
-            }
-
-            executor.executeScriptAndRecord(rawContent, version, checksum)
-            pending.add(version)
-        }
-
-        return ApplyResult(applied = pending)
-    }
-}
-
-data class ApplyResult(
-    val applied: List<String>,
-)
-
-class UnresolvedManualStepsException(
-    val version: String,
-    val filename: String,
-) : RuntimeException(
-    "Migration $version ($filename) contains unresolved manual steps. " +
-        "Complete the manual operations listed under '$MANUAL_STEPS_MARKER' " +
-        "and remove the marker before applying.",
-)
-
-class ChecksumMismatchException(
-    val version: String,
-    val expected: String,
-    val actual: String,
-) : RuntimeException(
-    "Migration $version has been modified after it was applied. " +
-        "Expected checksum $expected but found $actual. " +
-        "Do not edit migration files after they have been applied.",
 )

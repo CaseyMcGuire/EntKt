@@ -8,7 +8,6 @@ import entkt.migrations.NormalizedForeignKey
 import entkt.migrations.NormalizedIndex
 import entkt.migrations.NormalizedSchema
 import entkt.migrations.NormalizedTable
-import entkt.migrations.RenderMode
 import entkt.migrations.SchemaDiffer
 import entkt.runtime.ColumnMetadata
 import entkt.runtime.EntitySchema
@@ -74,6 +73,11 @@ class PostgresMigratorTest {
         return hash.joinToString("") { "%02x".format(it) }
     }
 
+    private fun seedSchemas(vararg schemas: EntitySchema) {
+        val driver = PostgresDriver(dataSource, autoDdl = true)
+        schemas.forEach(driver::register)
+    }
+
     // ---- Schema fixtures ----
 
     private val usersSchema = EntitySchema(
@@ -103,110 +107,10 @@ class PostgresMigratorTest {
         edges = emptyMap(),
     )
 
-    // ---- Migrator tests (dev mode) ----
-
-    @Test
-    fun `empty db - creates all tables`() {
-        cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
-        val result = migrator.migrate(listOf(usersSchema, postsSchema))
-
-        assertTrue(result.applied.isNotEmpty())
-        val creates = result.applied.filterIsInstance<MigrationOp.CreateTable>()
-        assertEquals(2, creates.size)
-
-        // Verify tables actually exist
-        val introspector = PostgresIntrospector(dataSource)
-        val schema = introspector.introspect(setOf("mig_users", "mig_posts"))
-        assertNotNull(schema.tables["mig_users"])
-        assertNotNull(schema.tables["mig_posts"])
-    }
-
-    @Test
-    fun `idempotent re-run produces no ops`() {
-        cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema, postsSchema))
-
-        val result = migrator.migrate(listOf(usersSchema, postsSchema))
-        assertTrue(result.applied.isEmpty(), "Second run should produce no ops")
-    }
-
-    @Test
-    fun `add nullable column`() {
-        cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema))
-
-        // Add a nullable bio column
-        val updatedSchema = usersSchema.copy(
-            columns = usersSchema.columns + ColumnMetadata("bio", FieldType.TEXT, nullable = true),
-        )
-        val result = migrator.migrate(listOf(updatedSchema))
-
-        val addCols = result.applied.filterIsInstance<MigrationOp.AddColumn>()
-        assertEquals(1, addCols.size)
-        assertEquals("bio", addCols[0].column.name)
-
-        // Verify column exists
-        val introspected = PostgresIntrospector(dataSource).introspect(setOf("mig_users"))
-        val cols = introspected.tables["mig_users"]!!.columns.map { it.name }
-        assertTrue("bio" in cols)
-    }
-
-    @Test
-    fun `add index`() {
-        cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema))
-
-        // Add a composite index
-        val updatedSchema = usersSchema.copy(
-            indexes = listOf(IndexMetadata(listOf("name", "email"), unique = false, name = "idx_name_email")),
-        )
-        val result = migrator.migrate(listOf(updatedSchema))
-
-        val addIdxs = result.applied.filterIsInstance<MigrationOp.AddIndex>()
-        assertTrue(addIdxs.any { it.index.columns == listOf("name", "email") })
-    }
-
-    @Test
-    fun `non-null column addition detected as manual`() {
-        cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema))
-
-        val updatedSchema = usersSchema.copy(
-            columns = usersSchema.columns + ColumnMetadata("required_field", FieldType.STRING, nullable = false),
-        )
-
-        val ex = assertFailsWith<ManualMigrationRequiredException> {
-            migrator.migrate(listOf(updatedSchema))
-        }
-        assertTrue(ex.ops.any { it is MigrationOp.AddColumn })
-    }
-
-    @Test
-    fun `introspector only sees managed tables`() {
-        cleanDb()
-        // Create an unmanaged table
-        dataSource.connection.use { conn ->
-            conn.createStatement().use { it.execute("CREATE TABLE \"unrelated\" (\"id\" serial PRIMARY KEY)") }
-        }
-
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema))
-
-        // Second run should not try to drop the unrelated table
-        val result = migrator.migrate(listOf(usersSchema))
-        assertTrue(result.applied.isEmpty())
-        assertTrue(result.manual.isEmpty())
-    }
-
     // ---- Renderer tests ----
 
     @Test
-    fun `RenderMode DEV emits IF NOT EXISTS for CREATE TABLE and INDEX`() {
+    fun `renderer emits strict migration DDL`() {
         val renderer = PostgresSqlRenderer()
 
         val createOp = MigrationOp.CreateTable(
@@ -217,27 +121,7 @@ class PostgresMigratorTest {
                 emptyList(),
             ),
         )
-        val createSql = renderer.render(createOp, RenderMode.DEV)
-        assertTrue(createSql[0].contains("IF NOT EXISTS"))
-
-        val indexOp = MigrationOp.AddIndex("test", NormalizedIndex(listOf("name"), true, null))
-        val indexSql = renderer.render(indexOp, RenderMode.DEV)
-        assertTrue(indexSql[0].contains("IF NOT EXISTS"))
-    }
-
-    @Test
-    fun `RenderMode MIGRATION_FILE omits IF NOT EXISTS`() {
-        val renderer = PostgresSqlRenderer()
-
-        val createOp = MigrationOp.CreateTable(
-            NormalizedTable(
-                "test",
-                listOf(NormalizedColumn("id", "serial", false, true)),
-                emptyList(),
-                emptyList(),
-            ),
-        )
-        val createSql = renderer.render(createOp, RenderMode.MIGRATION_FILE)
+        val createSql = renderer.render(createOp)
         assertFalse(createSql[0].contains("IF NOT EXISTS"))
     }
 
@@ -253,7 +137,7 @@ class PostgresMigratorTest {
             listOf(NormalizedIndex(listOf("name"), true, null)),
             listOf(NormalizedForeignKey("name", "other", "id", columnNullable = false)),
         )
-        val sql = renderer.render(MigrationOp.CreateTable(table), RenderMode.MIGRATION_FILE)
+        val sql = renderer.render(MigrationOp.CreateTable(table))
         assertEquals(1, sql.size)
         assertFalse(sql[0].contains("INDEX"), "CREATE TABLE should not inline indexes")
         assertFalse(sql[0].contains("REFERENCES"), "CREATE TABLE should not inline FKs")
@@ -267,8 +151,8 @@ class PostgresMigratorTest {
         cleanDb()
         // Pre-create tables matching the entity schemas (simulating an
         // existing deployment that already has the right schema)
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema, postsSchema))
+        seedSchemas(usersSchema, postsSchema)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
 
         val tmpDir = Files.createTempDirectory("entkt_test_bootstrap")
 
@@ -287,8 +171,8 @@ class PostgresMigratorTest {
     fun `plan bootstrap with live DB detects delta only`() {
         cleanDb()
         // Pre-create only users table
-        val migrator = PostgresMigrator.create(dataSource)
-        migrator.migrate(listOf(usersSchema))
+        seedSchemas(usersSchema)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
 
         val tmpDir = Files.createTempDirectory("entkt_test_bootstrap_delta")
 
@@ -310,7 +194,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan with no manual ops generates file and snapshot`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_migrations")
 
         val plan = migrator.plan(
@@ -337,7 +221,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan with manual ops and FAIL mode throws`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_migrations")
 
         // Create initial migration
@@ -362,7 +246,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan with ACKNOWLEDGE_AND_ADVANCE emits manual checklist`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_migrations")
 
         // Create initial migration
@@ -397,7 +281,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan preserves real index and FK names across snapshots`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_name_preserve")
 
         // Seed the initial migration
@@ -440,7 +324,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan drops old FK constraint name from snapshot when nullability flips`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_fk_recreate")
 
         // Seed initial migration with posts (nullable author_id FK)
@@ -480,7 +364,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan with introspector captures real names from live DB into snapshot`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_introspect_names")
 
         // Create tables via raw DDL with non-standard naming (simulating
@@ -540,68 +424,6 @@ class PostgresMigratorTest {
         tmpDir.toFile().deleteRecursively()
     }
 
-    // ---- MigrationRunner tests ----
-
-    @Test
-    fun `migration runner applies pending files`() {
-        cleanDb()
-        val tmpDir = Files.createTempDirectory("entkt_test_runner")
-
-        // Write a migration file
-        val migrationFile = tmpDir.resolve("V1__create_test.sql").toFile()
-        migrationFile.writeText(
-            """
-            CREATE TABLE "runner_test" (
-                "id" serial PRIMARY KEY,
-                "name" text NOT NULL
-            );
-            """.trimIndent(),
-        )
-
-        val runner = PostgresMigrator.runner(dataSource)
-        val result = runner.applyPending(tmpDir)
-
-        assertEquals(1, result.applied.size)
-        assertEquals("V1", result.applied[0])
-
-        // Verify table exists
-        dataSource.connection.use { conn ->
-            conn.createStatement().use { stmt ->
-                val rs = stmt.executeQuery("SELECT COUNT(*) FROM \"runner_test\"")
-                rs.next()
-                assertEquals(0, rs.getInt(1))
-            }
-        }
-
-        // Re-run — should be idempotent
-        val result2 = runner.applyPending(tmpDir)
-        assertTrue(result2.applied.isEmpty())
-
-        tmpDir.toFile().deleteRecursively()
-    }
-
-    @Test
-    fun `migration runner fails on checksum mismatch`() {
-        cleanDb()
-        val tmpDir = Files.createTempDirectory("entkt_test_checksum")
-
-        val file = tmpDir.resolve("V1__test.sql").toFile()
-        file.writeText("CREATE TABLE \"checksum_test\" (\"id\" serial PRIMARY KEY);")
-
-        val runner = PostgresMigrator.runner(dataSource)
-        runner.applyPending(tmpDir)
-
-        // Modify the file after application
-        file.writeText("CREATE TABLE \"checksum_test\" (\"id\" serial PRIMARY KEY, \"extra\" text);")
-
-        val ex = assertFailsWith<entkt.migrations.ChecksumMismatchException> {
-            runner.applyPending(tmpDir)
-        }
-        assertTrue(ex.message!!.contains("modified"))
-
-        tmpDir.toFile().deleteRecursively()
-    }
-
     // ---- PostgresTypeMapper tests ----
 
     @Test
@@ -649,14 +471,14 @@ class PostgresMigratorTest {
             "posts",
             NormalizedForeignKey("author_id", "users", "id", columnNullable = true),
         )
-        val nullableSql = renderer.render(nullableFk, RenderMode.MIGRATION_FILE)
+        val nullableSql = renderer.render(nullableFk)
         assertTrue(nullableSql[0].contains("ON DELETE SET NULL"), "Nullable FK should use SET NULL")
 
         val nonNullFk = MigrationOp.AddForeignKey(
             "posts",
             NormalizedForeignKey("author_id", "users", "id", columnNullable = false),
         )
-        val nonNullSql = renderer.render(nonNullFk, RenderMode.MIGRATION_FILE)
+        val nonNullSql = renderer.render(nonNullFk)
         assertTrue(nonNullSql[0].contains("ON DELETE RESTRICT"), "Non-null FK should use RESTRICT")
     }
 
@@ -667,11 +489,11 @@ class PostgresMigratorTest {
         val renderer = PostgresSqlRenderer()
 
         val withKey = MigrationOp.DropIndex("users", listOf("email"), unique = true, name = "legacy_email_idx")
-        val withKeySql = renderer.render(withKey, RenderMode.MIGRATION_FILE)
+        val withKeySql = renderer.render(withKey)
         assertTrue(withKeySql[0].contains("legacy_email_idx"), "Should use name")
 
         val withoutKey = MigrationOp.DropIndex("users", listOf("email"), unique = true, name = null)
-        val withoutKeySql = renderer.render(withoutKey, RenderMode.MIGRATION_FILE)
+        val withoutKeySql = renderer.render(withoutKey)
         // Should derive a name like idx_users_email_unique
         assertTrue(withoutKeySql[0].contains("idx_users_email_unique"), "Should derive index name")
     }
@@ -681,7 +503,7 @@ class PostgresMigratorTest {
     @Test
     fun `plan generates sequential versions V1 V2 V3`() {
         cleanDb()
-        val migrator = PostgresMigrator.create(dataSource)
+        val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
         val tmpDir = Files.createTempDirectory("entkt_test_sequential")
 
         // V1
@@ -702,45 +524,6 @@ class PostgresMigratorTest {
         // Both files should exist
         val sqlFiles = tmpDir.toFile().listFiles { f -> f.name.endsWith(".sql") }!!
         assertEquals(2, sqlFiles.size)
-
-        tmpDir.toFile().deleteRecursively()
-    }
-
-    // ---- CRLF checksum backwards compatibility ----
-
-    @Test
-    fun `migration runner accepts pre-CRLF checksum for existing migrations`() {
-        cleanDb()
-        val tmpDir = Files.createTempDirectory("entkt_test_crlf")
-
-        // Write a file with CRLF line endings
-        val crlfContent = "CREATE TABLE \"crlf_test\" (\r\n  \"id\" serial PRIMARY KEY\r\n);"
-        val migrationFile = tmpDir.resolve("V1__crlf.sql").toFile()
-        migrationFile.writeText(crlfContent)
-
-        // First apply — the runner normalizes to LF for the stored checksum
-        val runner = PostgresMigrator.runner(dataSource)
-        val result1 = runner.applyPending(tmpDir)
-        assertEquals(1, result1.applied.size)
-
-        // Verify the stored checksum is based on the LF-normalized content
-        val storedVersions = PostgresMigrationExecutor(dataSource).appliedVersions()
-        val storedChecksum = storedVersions["V1"]!!
-
-        // LF-normalized checksum
-        val lfContent = crlfContent.replace("\r\n", "\n")
-        val lfChecksum = sha256(lfContent)
-        assertEquals(lfChecksum, storedChecksum, "Stored checksum should be LF-normalized")
-
-        // Re-run should succeed (same CRLF file, same normalized checksum)
-        val result2 = runner.applyPending(tmpDir)
-        assertTrue(result2.applied.isEmpty(), "Already applied, should skip")
-
-        // Now simulate a checkout that converted CRLF→LF — file content changed
-        // but the normalized checksum matches, so no error
-        migrationFile.writeText(lfContent)
-        val result3 = runner.applyPending(tmpDir)
-        assertTrue(result3.applied.isEmpty(), "LF version should also pass checksum")
 
         tmpDir.toFile().deleteRecursively()
     }
@@ -776,35 +559,4 @@ class PostgresMigratorTest {
         assertEquals("integer", colsByName["count"]!!.sqlType, "integer column should remain integer")
     }
 
-    @Test
-    fun `migration runner refuses files with unresolved manual steps`() {
-        cleanDb()
-        val tmpDir = Files.createTempDirectory("entkt_test_manual_marker")
-
-        val file = tmpDir.resolve("V1__mixed.sql").toFile()
-        file.writeText(
-            """
-            -- entkt migration V1
-            --
-            -- !! MANUAL STEPS REQUIRED !!
-            -- [ ] DropColumn: posts.legacy_field
-            --
-            -- Auto-applied operations follow.
-
-            ALTER TABLE "mig_users" ADD COLUMN "bio" text;
-            """.trimIndent(),
-        )
-
-        val runner = PostgresMigrator.runner(dataSource)
-        val ex = assertFailsWith<entkt.migrations.UnresolvedManualStepsException> {
-            runner.applyPending(tmpDir)
-        }
-        assertTrue(ex.message!!.contains("manual steps"))
-
-        // Verify nothing was applied
-        val applied = runner.applyPending(tmpDir.parent.resolve("empty_dir_that_does_not_exist"))
-        assertTrue(applied.applied.isEmpty())
-
-        tmpDir.toFile().deleteRecursively()
-    }
 }

@@ -5,8 +5,10 @@ introspection, and migration rendering.
 
 ## DDL
 
-`register()` issues `CREATE TABLE IF NOT EXISTS` from
-`EntitySchema.columns`. Type mapping: `STRING`/`TEXT`/`ENUM` -> `text`,
+By default, `register()` is metadata-only. When you explicitly opt in
+with `PostgresDriver(dataSource, autoDdl = true)`, it issues
+`CREATE TABLE IF NOT EXISTS` from `EntitySchema.columns`. Type mapping:
+`STRING`/`TEXT`/`ENUM` -> `text`,
 `BOOL` -> `boolean`, `INT` -> `integer`, `LONG` -> `bigint`, `FLOAT` -> `real`,
 `DOUBLE` -> `double precision`, `TIME` -> `timestamptz`, `UUID` -> `uuid`,
 `BYTES` -> `bytea`. Primary keys for `AUTO_INT`/`AUTO_LONG` become

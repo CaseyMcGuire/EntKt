@@ -1,26 +1,16 @@
 # :migrations
 
-Driver-agnostic schema diffing, migration planning (prod), and auto-apply (dev).
+Driver-agnostic schema diffing and migration planning.
 
-## Dev mode
+entkt plans migrations and emits reviewed SQL. It does **not** apply
+migrations at runtime; clients are expected to use Flyway, Liquibase,
+their deployment system, or another SQL migration runner.
 
-Introspects the live database, diffs against the desired schemas, and applies
-additive operations in a single transaction. No migration files or version
-tracking — the DB is brought directly in sync with your schemas.
+## Planning mode
 
-```kotlin
-val migrator = PostgresMigrator.create(dataSource)
-migrator.migrate(EntClient.SCHEMAS)
-```
-
-If destructive changes (column drops, type changes) are detected,
-`migrate()` throws `ManualMigrationRequiredException` before applying
-anything.
-
-## Prod mode
-
-Diffs desired schemas against a committed `.schema.json` snapshot and
-generates a versioned SQL migration file. Run via the Gradle task:
+Diffs desired schemas against the latest committed `.schema.json`
+snapshot in the migrations directory and generates a versioned SQL
+migration file. Run via the Gradle task:
 
 ```bash
 ./gradlew generateMigrationFile -Pdescription="add user email"
@@ -29,12 +19,15 @@ generates a versioned SQL migration file. Run via the Gradle task:
 The generated file contains auto-applicable DDL statements. Destructive
 operations are written as comments requiring manual review.
 
-## MigrationRunner
+## Optional bootstrap introspection
 
-Applies versioned migration files to a live database, tracking applied
-versions in a `schema_migrations` table.
+If no snapshot exists yet, a planner wired to a live database can
+introspect the current schema and use that as the initial baseline:
 
 ```kotlin
-val runner = PostgresMigrator.runner(dataSource)
-runner.run(migrationsDir)
+val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
+val plan = migrator.plan(EntClient.SCHEMAS, outputDir = Paths.get("db/migrations"))
 ```
+
+This is for migration generation only. Applying the resulting SQL is
+still the client's responsibility.

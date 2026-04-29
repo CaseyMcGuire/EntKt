@@ -4,27 +4,18 @@ import entkt.migrations.MigrationOp
 import entkt.migrations.MigrationSqlRenderer
 import entkt.migrations.NormalizedColumn
 import entkt.migrations.NormalizedTable
-import entkt.migrations.RenderMode
 
 /**
  * Renders [MigrationOp] values to PostgreSQL DDL statements.
- *
- * In [RenderMode.DEV], emits `IF NOT EXISTS` for `CREATE TABLE` and
- * `CREATE INDEX` where Postgres supports it. FK/constraint idempotency
- * in dev mode is handled upstream by the differ (if the FK already
- * exists in the introspected schema, no AddForeignKey op is emitted).
- *
- * In [RenderMode.MIGRATION_FILE], no `IF NOT EXISTS` — fail loudly on
- * drift.
  */
 class PostgresSqlRenderer(
     private val typeMapper: PostgresTypeMapper = PostgresTypeMapper(),
 ) : MigrationSqlRenderer {
 
-    override fun render(op: MigrationOp, mode: RenderMode): List<String> = when (op) {
-        is MigrationOp.CreateTable -> renderCreateTable(op.table, mode)
+    override fun render(op: MigrationOp): List<String> = when (op) {
+        is MigrationOp.CreateTable -> renderCreateTable(op.table)
         is MigrationOp.AddColumn -> renderAddColumn(op.table, op.column)
-        is MigrationOp.AddIndex -> renderAddIndex(op.table, op.index, mode)
+        is MigrationOp.AddIndex -> renderAddIndex(op.table, op.index)
         is MigrationOp.AddForeignKey -> renderAddForeignKey(op.table, op.fk)
         // Manual ops — render as comments describing what needs to be done
         is MigrationOp.DropTable -> listOf("-- TODO: DROP TABLE ${quote(op.tableName)}")
@@ -52,12 +43,11 @@ class PostgresSqlRenderer(
     }
 
     /** Emits CREATE TABLE with columns + PK only. No indexes or FKs. */
-    private fun renderCreateTable(table: NormalizedTable, mode: RenderMode): List<String> {
-        val ifNotExists = if (mode == RenderMode.DEV) " IF NOT EXISTS" else ""
+    private fun renderCreateTable(table: NormalizedTable): List<String> {
         val cols = table.columns.joinToString(",\n  ") { col ->
             renderColumnDdl(col)
         }
-        return listOf("CREATE TABLE$ifNotExists ${quote(table.name)} (\n  $cols\n)")
+        return listOf("CREATE TABLE ${quote(table.name)} (\n  $cols\n)")
     }
 
     private fun renderColumnDdl(col: NormalizedColumn): String {
@@ -79,14 +69,12 @@ class PostgresSqlRenderer(
     private fun renderAddIndex(
         table: String,
         index: entkt.migrations.NormalizedIndex,
-        mode: RenderMode,
     ): List<String> {
-        val ifNotExists = if (mode == RenderMode.DEV) " IF NOT EXISTS" else ""
         val cols = index.columns.joinToString(", ") { quote(it) }
         val name = truncateIdentifier(index.name ?: deriveIndexName(table, index.columns, index.unique, index.where))
         val keyword = if (index.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
         val whereSuffix = if (index.where != null) " WHERE ${index.where}" else ""
-        return listOf("$keyword$ifNotExists ${quote(name)} ON ${quote(table)} ($cols)$whereSuffix")
+        return listOf("$keyword ${quote(name)} ON ${quote(table)} ($cols)$whereSuffix")
     }
 
     private fun renderAddForeignKey(

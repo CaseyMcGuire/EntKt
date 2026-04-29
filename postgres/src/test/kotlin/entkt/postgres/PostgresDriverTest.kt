@@ -148,7 +148,7 @@ class PostgresDriverTest {
     }
 
     private fun fresh(): PostgresDriver {
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(USER_SCHEMA)
         driver.register(POST_SCHEMA)
         dataSource.connection.use { conn ->
@@ -402,7 +402,7 @@ class PostgresDriverTest {
             edges = emptyMap(),
         )
 
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(schema)
         dataSource.connection.use { conn ->
             conn.createStatement().use {
@@ -436,7 +436,7 @@ class PostgresDriverTest {
 
     @Test
     fun `unregistered table is rejected loudly`() {
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         assertFailsWith<IllegalStateException> {
             driver.insert("nope", emptyMap())
         }
@@ -525,7 +525,7 @@ class PostgresDriverTest {
             ),
             edges = emptyMap(),
         )
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(schema)
         dataSource.connection.use { conn ->
             conn.createStatement().use {
@@ -556,7 +556,7 @@ class PostgresDriverTest {
                 IndexMetadata(columns = listOf("user_id", "group_id"), unique = true, name = "idx_user_group"),
             ),
         )
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(schema)
         dataSource.connection.use { conn ->
             conn.createStatement().use {
@@ -589,7 +589,7 @@ class PostgresDriverTest {
                 IndexMetadata(columns = listOf("category", "priority"), name = "idx_category_priority"),
             ),
         )
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         // Should not throw — idempotent index creation.
         driver.register(schema)
         driver.register(schema)
@@ -622,7 +622,7 @@ class PostgresDriverTest {
             ),
             edges = emptyMap(),
         )
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(parentSchema)
         driver.register(childSchema)
         dataSource.connection.use { conn ->
@@ -670,7 +670,7 @@ class PostgresDriverTest {
             ),
             edges = emptyMap(),
         )
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(parentSchema)
         driver.register(childSchema)
         dataSource.connection.use { conn ->
@@ -690,7 +690,7 @@ class PostgresDriverTest {
 
     @Test
     fun `register inside transaction delegates to root driver`() {
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         // register() inside withTransaction should run DDL outside
         // the transaction — the table should exist even if we roll back.
         assertFailsWith<IllegalStateException> {
@@ -715,7 +715,7 @@ class PostgresDriverTest {
     // ---------- M2M edge predicates ----------
 
     private fun freshM2M(): PostgresDriver {
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         driver.register(M2M_USER_SCHEMA)
         driver.register(M2M_GROUP_SCHEMA)
         driver.register(M2M_USER_GROUP_SCHEMA)
@@ -1044,7 +1044,7 @@ class PostgresDriverTest {
     )
 
     private fun freshCascade(childSchema: EntitySchema): PostgresDriver {
-        val driver = PostgresDriver(dataSource)
+        val driver = PostgresDriver(dataSource, autoDdl = true)
         // Register all child schemas so their tables exist, then truncate everything
         driver.register(CASCADE_PARENT_SCHEMA)
         driver.register(CASCADE_CHILD_SCHEMA)
@@ -1114,7 +1114,7 @@ class PostgresDriverTest {
             ),
             edges = emptyMap(),
         )
-        val pgDriver = PostgresDriver(dataSource)
+        val pgDriver = PostgresDriver(dataSource, autoDdl = true)
         assertFailsWith<IllegalArgumentException> {
             pgDriver.register(badSchema)
         }

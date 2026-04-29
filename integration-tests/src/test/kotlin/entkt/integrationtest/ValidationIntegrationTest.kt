@@ -12,7 +12,6 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.postgres.PostgresDriver
-import entkt.postgres.PostgresMigrator
 import entkt.runtime.EntityPolicy
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
@@ -175,13 +174,18 @@ class ValidationIntegrationTest {
         }
     }
 
+    private fun seedSchemas() {
+        val driver = PostgresDriver(dataSource, autoDdl = true)
+        EntClient.SCHEMAS.forEach(driver::register)
+    }
+
     private fun freshClient(
         viewer: Viewer = Viewer.System,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ValidatedArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUserPolicy,
     ): EntClient {
         val driver = PostgresDriver(dataSource)
-        PostgresMigrator.create(dataSource).migrate(EntClient.SCHEMAS)
+        seedSchemas()
 
         val tables = EntClient.SCHEMAS.joinToString(", ") { "\"${it.table}\"" }
         dataSource.connection.use { conn ->
@@ -499,7 +503,7 @@ class ValidationIntegrationTest {
     @Test
     fun `no validation policy means no validation enforcement`() {
         val driver = PostgresDriver(dataSource)
-        PostgresMigrator.create(dataSource).migrate(EntClient.SCHEMAS)
+        seedSchemas()
         dataSource.connection.use { conn ->
             conn.createStatement().use {
                 it.execute("TRUNCATE TABLE \"articles\", \"users\" RESTART IDENTITY CASCADE")

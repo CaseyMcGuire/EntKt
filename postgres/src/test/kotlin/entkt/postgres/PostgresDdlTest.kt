@@ -4,7 +4,6 @@ import entkt.codegen.SchemaInput
 import entkt.codegen.buildEntitySchemas
 import entkt.migrations.MigrationOp
 import entkt.migrations.NormalizedSchema
-import entkt.migrations.RenderMode
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.OnDelete
@@ -112,14 +111,12 @@ class PostgresDdlTest {
         val normalized = NormalizedSchema.fromEntitySchemas(entitySchemas, typeMapper)
         return entitySchemas.flatMap { es ->
             val table = normalized.tables[es.table]!!
-            val createTable = renderer.render(
-                MigrationOp.CreateTable(table), RenderMode.MIGRATION_FILE,
-            )
+            val createTable = renderer.render(MigrationOp.CreateTable(table))
             val createIndexes = table.indexes.flatMap { idx ->
-                renderer.render(MigrationOp.AddIndex(table.name, idx), RenderMode.MIGRATION_FILE)
+                renderer.render(MigrationOp.AddIndex(table.name, idx))
             }
             val addFks = table.foreignKeys.flatMap { fk ->
-                renderer.render(MigrationOp.AddForeignKey(table.name, fk), RenderMode.MIGRATION_FILE)
+                renderer.render(MigrationOp.AddForeignKey(table.name, fk))
             }
             createTable + createIndexes + addFks
         }

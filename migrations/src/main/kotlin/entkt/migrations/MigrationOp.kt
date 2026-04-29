@@ -3,12 +3,13 @@ package entkt.migrations
 /**
  * A single schema change detected by [SchemaDiffer]. Additive ops
  * (v1: [CreateTable], [AddColumn], [AddIndex], [AddForeignKey]) can be
- * auto-applied. Destructive or complex ops are detected but classified
- * as manual — the user must write the DDL themselves.
+ * auto-generated into migration files. Destructive or complex ops are
+ * detected but classified as manual — the user must write the DDL
+ * themselves.
  */
 sealed interface MigrationOp {
 
-    // ---- Auto-applied in v1 ----
+    // ---- Auto-generated in v1 ----
 
     /** Emits CREATE TABLE with columns + PK only. Indexes and FKs are separate ops. */
     data class CreateTable(val table: NormalizedTable) : MigrationOp
@@ -23,7 +24,7 @@ sealed interface MigrationOp {
      */
     data class AddForeignKey(val table: String, val fk: NormalizedForeignKey) : MigrationOp
 
-    // ---- Detected but not auto-applied in v1 ----
+    // ---- Detected but not auto-generated in v1 ----
 
     data class DropTable(val tableName: String) : MigrationOp
 
@@ -48,11 +49,11 @@ sealed interface MigrationOp {
 }
 
 /**
- * Result of [SchemaDiffer.diff]: additive ops safe to auto-apply, plus
+ * Result of [SchemaDiffer.diff]: additive ops safe to generate, plus
  * destructive ops that require manual migration.
  */
 data class DiffResult(
-    /** Additive ops safe to apply, in dependency order. */
+    /** Additive ops safe to generate, in dependency order. */
     val ops: List<MigrationOp>,
     /** Destructive ops requiring manual migration. */
     val manual: List<MigrationOp>,

@@ -7,7 +7,6 @@ import entkt.codegen.buildEntitySchemas
 import entkt.codegen.collectSchemas
 import entkt.migrations.MigrationOp
 import entkt.migrations.NormalizedSchema
-import entkt.migrations.RenderMode
 import java.io.File
 
 /**
@@ -119,21 +118,21 @@ private fun renderSql(graph: ExplainedSchemaGraph, schemas: List<SchemaInput>, f
     for ((name, table) in tables) {
         println("-- Schema: $name")
         println()
-        for (stmt in renderer.render(MigrationOp.CreateTable(table), RenderMode.MIGRATION_FILE)) {
+        for (stmt in renderer.render(MigrationOp.CreateTable(table))) {
             println("$stmt;")
         }
         println()
     }
     for ((_, table) in tables) {
         for (idx in table.indexes) {
-            for (stmt in renderer.render(MigrationOp.AddIndex(table.name, idx), RenderMode.MIGRATION_FILE)) {
+            for (stmt in renderer.render(MigrationOp.AddIndex(table.name, idx))) {
                 println("$stmt;")
             }
         }
     }
     for ((_, table) in tables) {
         for (fk in table.foreignKeys) {
-            for (stmt in renderer.render(MigrationOp.AddForeignKey(table.name, fk), RenderMode.MIGRATION_FILE)) {
+            for (stmt in renderer.render(MigrationOp.AddForeignKey(table.name, fk))) {
                 println("$stmt;")
             }
         }

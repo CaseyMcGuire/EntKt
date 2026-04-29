@@ -85,6 +85,10 @@ val client = EntClient(PostgresDriver(dataSource))
 
 ### DDL
 
+By default, `register()` is metadata-only. It caches the schema needed
+for persistence and query lowering, but does not mutate the database.
+
+When you explicitly opt in with `PostgresDriver(dataSource, autoDdl = true)`,
 `register()` issues `CREATE TABLE IF NOT EXISTS` with:
 
 - Column definitions with appropriate Postgres types
@@ -189,9 +193,9 @@ contract:
 3. `query()` must evaluate all `Predicate` types (including edge predicates)
 5. `withTransaction()` must roll back on exception
 
-For the migration system, you'll also need:
+For migration planning, you'll also need:
 
 - A `TypeMapper` implementation (maps `FieldType` to your SQL types)
-- A `DatabaseIntrospector` (for dev-mode introspection)
+- A `DatabaseIntrospector` (for optional bootstrap introspection when no
+  snapshot exists yet)
 - A `MigrationSqlRenderer` (renders `MigrationOp` to your SQL dialect)
-- A `MigrationExecutor` (executes SQL and tracks applied versions)

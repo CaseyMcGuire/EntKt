@@ -38,41 +38,9 @@ interface DatabaseIntrospector {
     fun introspect(managedTableNames: Set<String>): NormalizedSchema
 }
 
-/** Controls how [MigrationSqlRenderer] emits DDL. */
-enum class RenderMode {
-    /** Dev mode: emit IF NOT EXISTS where supported, idempotent. */
-    DEV,
-    /** Prod migration file: no IF NOT EXISTS, fail loudly on drift. */
-    MIGRATION_FILE,
-}
-
 /** Renders [MigrationOp] values to SQL DDL strings. */
 interface MigrationSqlRenderer {
-    fun render(op: MigrationOp, mode: RenderMode = RenderMode.MIGRATION_FILE): List<String>
-}
-
-/** Executes raw SQL statements against a database (for applying migrations). */
-interface MigrationExecutor {
-    /** Execute a list of SQL statements in a single transaction. */
-    fun execute(statements: List<String>)
-
-    /**
-     * Execute SQL statements and record the migration version atomically
-     * in a single transaction. If the process crashes after DDL succeeds
-     * but before the version is recorded, the next run would re-apply the
-     * migration — so both must commit together.
-     */
-    fun executeAndRecord(statements: List<String>, version: String, checksum: String)
-
-    /**
-     * Execute a raw SQL script (may contain multiple statements,
-     * PL/pgSQL blocks, etc.) and record the migration version
-     * atomically. The executor sends the script whole — no splitting.
-     */
-    fun executeScriptAndRecord(script: String, version: String, checksum: String)
-
-    /** Get the set of already-applied migration versions with their checksums. */
-    fun appliedVersions(): Map<String, String>
+    fun render(op: MigrationOp): List<String>
 }
 
 /**

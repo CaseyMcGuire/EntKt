@@ -70,7 +70,7 @@ fun main(args: Array<String>) {
 
     if (plan.filePath != null) {
         println("Generated migration: ${plan.filePath}")
-        println("  ${plan.ops.size} auto-applied operation(s)")
+        println("  ${plan.ops.size} auto-generated operation(s)")
         if (plan.manual.isNotEmpty()) {
             println("  ${plan.manual.size} manual operation(s) — see file header")
         }
