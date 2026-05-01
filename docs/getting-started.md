@@ -74,8 +74,6 @@ The plugin registers the following tasks:
   classes, generates entity classes into `build/generated/entkt/`, adds
   them to the `main` source set, and runs automatically before
   `compileKotlin`.
-- **`generateMigrationFile`** — Diffs schemas against the stored snapshot
-  and writes a versioned SQL migration file. See [Migrations](migrations.md).
 - **`validateEntSchemas`** — Validates the schema graph (finalization,
   cross-schema constraints, relation-name uniqueness) and prints
   structured diagnostics. See [Schema Inspection](#schema-inspection).

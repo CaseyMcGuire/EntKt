@@ -8,6 +8,7 @@ endpoints, and friendship management (a first-class M2M junction entity).
 
 - JDK 17+
 - A running PostgreSQL instance
+- Docker (for migration generation)
 
 ## Setup
 
@@ -23,24 +24,27 @@ Or adjust the connection in `src/main/resources/application.yml`.
 
 The example uses one migration path:
 
-- entkt generates versioned SQL migration files
+- entkt generates versioned SQL migration files via the Flyway shadow
+  workflow
 - Flyway applies them on startup
 - the application does not execute schema DDL on startup; generated repos
   only register metadata with the driver
 
-**Generate a migration** after changing your schemas. The `entkt` Gradle
-plugin provides a `generateMigrationFile` task automatically:
+**Generate a migration** after changing your schemas:
 
 ```bash
-./gradlew generateMigrationFile
-# or with a description:
-./gradlew generateMigrationFile -Pdescription="add_subtitle"
+./gradlew generateFlywayMigration -Pdescription="add_subtitle"
 ```
 
-This diffs your schemas against the latest committed snapshot in
-`db/migrations/` and writes the next SQL file there. No live database
-connection is required. Commit both the migration file and the updated
-snapshot.
+This starts a temporary Docker-backed Postgres container, replays
+existing Flyway migrations into it, diffs the result against your entkt
+schemas, and writes the next versioned SQL file to `db/migrations/`.
+
+**Validate for drift** (useful in CI):
+
+```bash
+./gradlew validateFlywayMigrations
+```
 
 **Run the app** (Flyway applies pending migrations on startup):
 

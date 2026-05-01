@@ -485,7 +485,7 @@ Tooling entry points:
 
 Consolidation:
 
-- [x] `GenerateMain` and `PlanMigrationMain` use `collectSchemas()` +
+- [x] `GenerateMain` and `FlywayMain` use `collectSchemas()` +
   `SchemaInspector.validate()` as the shared validation boundary,
   producing structured diagnostics instead of raw stacktraces
 - [ ] use explained graph output for snapshot/golden tests (deferred)

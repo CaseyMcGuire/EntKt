@@ -227,6 +227,28 @@ abstract class EntSchema(val tableName: String) {
         val built = _indexes.map { it.build() }
         val seenNames = mutableSetOf<String>()
         val seenShapes = mutableSetOf<Triple<List<String>, Boolean, String?>>()
+
+        // Pre-populate shapes from synthesized unique indexes so that
+        // explicit indexes that duplicate a field.unique() or
+        // belongsTo().unique() constraint are caught here rather than
+        // producing duplicate indexes at migration time.
+        for (field in _fields) {
+            val f = field.build()
+            if (f.unique) {
+                seenShapes.add(Triple(listOf(f.name), true, null))
+            }
+        }
+        for (edge in _edges) {
+            if (edge is BelongsToBuilder<*>) {
+                val e = edge.build()
+                val bt = e.kind as EdgeKind.BelongsTo
+                if (bt.unique) {
+                    val fkCol = bt.field ?: "${e.name}_id"
+                    seenShapes.add(Triple(listOf(fkCol), true, null))
+                }
+            }
+        }
+
         for (index in built) {
             require(seenNames.add(index.name)) {
                 "Duplicate index name '${index.name}' — index names must be unique per schema"

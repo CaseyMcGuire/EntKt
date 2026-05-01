@@ -2,15 +2,16 @@ package entkt.gradle
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.artifacts.Configuration
+import org.gradle.api.file.FileCollection
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.SourceSetContainer
+import java.util.jar.JarFile
 
 class EntktPlugin : Plugin<Project> {
 
     override fun apply(project: Project) {
         val extension = project.extensions.create("entkt", EntktExtension::class.java)
-
-        extension.migrationsDirectory.convention(project.layout.projectDirectory.dir("db/migrations"))
 
         val schemasConfig = project.configurations.create("schemas") {
             it.isCanBeConsumed = false
@@ -32,15 +33,6 @@ class EntktPlugin : Plugin<Project> {
             it.isCanBeResolved = true
         }
 
-        // Auto-add codegen dependencies at the same version as the plugin.
-        val entktVersion = loadPluginVersion()
-        project.afterEvaluate {
-            if (codegenConfig.dependencies.isEmpty()) {
-                codegenConfig.dependencies.add(project.dependencies.create("io.entkt:codegen:$entktVersion"))
-                codegenConfig.dependencies.add(project.dependencies.create("io.entkt:postgres:$entktVersion"))
-            }
-        }
-
         val generatedDir = project.layout.buildDirectory.dir("generated/entkt")
 
         val generateTask = project.tasks.register("generateEntkt", JavaExec::class.java) { task ->
@@ -53,17 +45,7 @@ class EntktPlugin : Plugin<Project> {
             task.outputs.dir(generatedDir)
             task.description = "Generate entkt entity classes from schemas"
             task.group = "entkt"
-        }
-
-        project.tasks.register("generateMigrationFile", JavaExec::class.java) { task ->
-            task.classpath = codegenConfig.plus(schemasConfig)
-            task.mainClass.set("entkt.postgres.PlanMigrationMainKt")
-            task.args(
-                extension.migrationsDirectory.get().asFile.absolutePath,
-                project.providers.gradleProperty("description").getOrElse("migration"),
-            )
-            task.description = "Generate a versioned migration SQL file by diffing schemas against the snapshot"
-            task.group = "entkt"
+            task.doFirst { requireCodegenDeps(codegenConfig) }
         }
 
         project.tasks.register("validateEntSchemas", JavaExec::class.java) { task ->
@@ -72,6 +54,7 @@ class EntktPlugin : Plugin<Project> {
             task.args("validate")
             task.description = "Validate entkt schema graph (finalization, cross-schema constraints)"
             task.group = "entkt"
+            task.doFirst { requireCodegenDeps(codegenConfig) }
         }
 
         project.tasks.register("explainEntSchemas", JavaExec::class.java) { task ->
@@ -84,6 +67,7 @@ class EntktPlugin : Plugin<Project> {
             task.args(cliArgs)
             task.description = "Print the resolved relational shape of all entkt schemas"
             task.group = "entkt"
+            task.doFirst { requireCodegenDeps(codegenConfig) }
         }
 
         // Add generated sources to main source set
@@ -98,9 +82,40 @@ class EntktPlugin : Plugin<Project> {
         }
     }
 
-    private fun loadPluginVersion(): String {
-        val props = java.util.Properties()
-        EntktPlugin::class.java.getResourceAsStream("/entkt-plugin.properties")?.use { props.load(it) }
-        return props.getProperty("version") ?: "0.1.0-SNAPSHOT"
+    companion object {
+        internal fun requireCodegenDeps(config: Configuration) {
+            if (config.isEmpty) {
+                error(
+                    "The entktCodegen configuration is empty. " +
+                        "Add tool dependencies, for example:\n" +
+                        "  entktCodegen(\"io.entkt:codegen:\$version\")\n" +
+                        "  entktCodegen(\"io.entkt:postgres:\$version\")"
+                )
+            }
+        }
+
+        internal fun requireClassOnClasspath(
+            classpath: FileCollection,
+            className: String,
+            dependencyHint: String,
+        ) {
+            val classEntry = className.replace('.', '/') + ".class"
+            val found = classpath.files.any { file ->
+                when {
+                    file.isDirectory -> file.resolve(classEntry).exists()
+                    file.extension == "jar" && file.exists() ->
+                        JarFile(file).use { it.getJarEntry(classEntry) != null }
+                    else -> false
+                }
+            }
+            if (!found) {
+                error(
+                    "$className not found on the entktCodegen classpath. " +
+                        "Add the required dependency, for example:\n" +
+                        "  $dependencyHint"
+                )
+            }
+        }
     }
+
 }

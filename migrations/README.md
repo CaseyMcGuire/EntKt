@@ -1,33 +1,17 @@
 # :migrations
 
-Driver-agnostic schema diffing and migration planning.
+Driver-agnostic schema diffing and migration operation models.
 
 entkt plans migrations and emits reviewed SQL. It does **not** apply
 migrations at runtime; clients are expected to use Flyway, Liquibase,
 their deployment system, or another SQL migration runner.
 
-## Planning mode
+## Key components
 
-Diffs desired schemas against the latest committed `.schema.json`
-snapshot in the migrations directory and generates a versioned SQL
-migration file. Run via the Gradle task:
+- `NormalizedSchema` — canonical representation of database schema
+- `SchemaDiffer` — diffs desired vs current schemas into migration ops
+- `MigrationOp` — sealed class hierarchy of migration operations
+- `ManualMode` — controls behavior when destructive ops are detected
 
-```bash
-./gradlew generateMigrationFile -Pdescription="add user email"
-```
-
-The generated file contains auto-applicable DDL statements. Destructive
-operations are written as comments requiring manual review.
-
-## Optional bootstrap introspection
-
-If no snapshot exists yet, a planner wired to a live database can
-introspect the current schema and use that as the initial baseline:
-
-```kotlin
-val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
-val plan = migrator.plan(EntClient.SCHEMAS, outputDir = Paths.get("db/migrations"))
-```
-
-This is for migration generation only. Applying the resulting SQL is
-still the client's responsibility.
+The `:flyway` module uses these components to implement the
+[Flyway shadow migration workflow](../docs/migrations.md#flyway-shadow-migration-workflow).

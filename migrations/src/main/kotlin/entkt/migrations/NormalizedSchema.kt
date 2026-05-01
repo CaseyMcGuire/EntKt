@@ -3,9 +3,6 @@ package entkt.migrations
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
 import entkt.schema.OnDelete
-import java.io.Reader
-import java.io.Writer
-import java.nio.file.Path
 
 /**
  * Canonical, driver-agnostic representation of a database schema.
@@ -80,33 +77,6 @@ data class NormalizedSchema(
             return NormalizedSchema(tables)
         }
 
-        /**
-         * Deserialize from a JSON snapshot. The format is a simple
-         * hand-rolled JSON to avoid pulling in a JSON library dependency.
-         */
-        fun fromJson(path: Path): NormalizedSchema =
-            fromJson(path.toFile().reader())
-
-        fun fromJson(reader: Reader): NormalizedSchema {
-            val text = reader.use { it.readText() }
-            return JsonCodec.decode(text)
-        }
-    }
-
-    /**
-     * Serialize to a JSON snapshot with deterministic ordering:
-     * tables sorted by name, columns in declaration order, indexes
-     * sorted by (columns, unique), FKs sorted by column name.
-     *
-     * @param parentChecksum SHA-256 of the previous snapshot's content,
-     *   or null for the first snapshot in the chain.
-     */
-    fun toJson(path: Path, parentChecksum: String? = null) {
-        path.toFile().writer().use { toJson(it, parentChecksum) }
-    }
-
-    fun toJson(writer: Writer, parentChecksum: String? = null) {
-        writer.write(JsonCodec.encode(this, parentChecksum))
     }
 }
 

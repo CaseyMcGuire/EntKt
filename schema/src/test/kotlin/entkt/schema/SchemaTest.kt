@@ -506,6 +506,32 @@ class SchemaTest {
     }
 
     @Test
+    fun `explicit unique index duplicating field unique is rejected`() {
+        class Duped : EntSchema("duped") {
+            override fun id() = EntId.int()
+            val email = string("email").unique()
+            val idx = index("idx_email", email).unique()
+        }
+        val schema = Duped()
+        buildRegistry(schema)
+        assertFailsWith<IllegalArgumentException> {
+            schema.indexes()
+        }
+    }
+
+    @Test
+    fun `non-unique index on unique field is allowed`() {
+        class Allowed : EntSchema("allowed") {
+            override fun id() = EntId.int()
+            val email = string("email").unique()
+            val idx = index("idx_email", email) // not unique — different shape
+        }
+        val schema = Allowed()
+        buildRegistry(schema)
+        assertEquals(1, schema.indexes().size)
+    }
+
+    @Test
     fun `typed enum default rejects constant from wrong enum class`() {
         assertFailsWith<IllegalArgumentException> {
             EnumFieldBuilder("priority").apply {

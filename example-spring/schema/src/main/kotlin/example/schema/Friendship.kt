@@ -17,5 +17,5 @@ class Friendship : EntSchema("friendships") {
     val requester = belongsTo<User>("requester").inverse(User::sentRequests).required()
     val recipient = belongsTo<User>("recipient").inverse(User::receivedRequests).required()
 
-    val idx = index("idx_requester_recipient", requester.fk, recipient.fk).unique()
+    val idx = index("idx_friendships_requester_id_recipient_id_unique", requester.fk, recipient.fk).unique()
 }

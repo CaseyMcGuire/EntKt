@@ -33,6 +33,7 @@ dependencies {
     codegenRunner(project(":example-spring:schema"))
     codegenRunner(project(":codegen"))
     codegenRunner(project(":postgres"))
+    codegenRunner(project(":flyway"))
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation(libs.testcontainers.postgresql)
@@ -62,13 +63,22 @@ tasks.named("compileKotlin") {
     dependsOn(generateEntkt)
 }
 
-tasks.register<JavaExec>("generateMigrationFile") {
+tasks.register<JavaExec>("generateFlywayMigration") {
     group = "entkt"
-    description = "Generates a versioned migration SQL file by diffing schemas against the snapshot"
+    description = "Generate next Flyway migration by diffing shadow DB against schemas"
     classpath = codegenRunner
-    mainClass.set("entkt.postgres.PlanMigrationMainKt")
-    args(project.projectDir.resolve("db/migrations").absolutePath)
-    args(project.findProperty("description")?.toString() ?: "migration")
+    mainClass.set("entkt.flyway.FlywayMainKt")
+    args("generate", project.projectDir.resolve("db/migrations").absolutePath)
+    args("--description=${project.findProperty("description") ?: "migration"}")
+    args("--manual-mode=${project.findProperty("manualMode") ?: "FAIL"}")
+}
+
+tasks.register<JavaExec>("validateFlywayMigrations") {
+    group = "entkt"
+    description = "Check for schema drift between Flyway migrations and entkt schemas"
+    classpath = codegenRunner
+    mainClass.set("entkt.flyway.FlywayMainKt")
+    args("validate", project.projectDir.resolve("db/migrations").absolutePath)
 }
 
 tasks.register<JavaExec>("validateEntSchemas") {

@@ -152,8 +152,8 @@ private fun tryLoadSchema(
  * using the same logic as the codegen emitter but producing runtime
  * objects instead of KotlinPoet code.
  *
- * This is used by the Gradle plugin's `generateMigrationFile` task so it can
- * compute schema diffs without needing the compiled generated code.
+ * This is used by the Flyway migration workflow so it can compute
+ * schema diffs without needing the compiled generated code.
  */
 fun buildEntitySchemas(inputs: List<SchemaInput>): List<EntitySchema> {
     ensureFinalized(inputs)

@@ -1,7 +1,11 @@
+@file:JvmName("MigrationsKt")
+
 package entkt.migrations
 
 import entkt.runtime.IdStrategy
 import entkt.schema.FieldType
+
+const val MANUAL_STEPS_MARKER = "!! MANUAL STEPS REQUIRED !!"
 
 /**
  * Maps [FieldType] values to driver-specific SQL type strings, and
@@ -45,15 +49,69 @@ interface MigrationSqlRenderer {
 
 /**
  * Controls behavior when [SchemaDiffer] detects manual (destructive)
- * operations during [Migrator.plan].
+ * operations during migration generation.
  */
 enum class ManualMode {
     /** Fail if manual ops are detected. Safe default. */
     FAIL,
     /**
-     * Acknowledge manual ops and advance the snapshot anyway.
-     * The migration file includes a `-- !! MANUAL STEPS REQUIRED !!`
-     * header with a structured checklist of unresolved ops.
+     * Acknowledge manual ops and advance anyway. The migration file
+     * includes a checklist of unresolved ops and a guard statement
+     * that prevents the runner from applying it until manual steps
+     * are completed.
      */
     ACKNOWLEDGE_AND_ADVANCE,
 }
+
+/** Human-readable description of a migration operation. */
+fun describeOp(op: MigrationOp): String = when (op) {
+    is MigrationOp.CreateTable -> "CreateTable: ${op.table.name}"
+    is MigrationOp.AddColumn -> "AddColumn: ${op.table}.${op.column.name} (${op.column.sqlType}${if (op.column.nullable) "" else " NOT NULL"})"
+    is MigrationOp.AddIndex -> {
+        val cols = op.index.columns.joinToString(", ")
+        val u = if (op.index.unique) " unique" else ""
+        val w = if (op.index.where != null) " WHERE ${op.index.where}" else ""
+        "AddIndex: ${op.table} ($cols)$u$w"
+    }
+    is MigrationOp.AddForeignKey -> "AddForeignKey: ${op.table}.${op.fk.column} -> ${op.fk.targetTable}.${op.fk.targetColumn}"
+    is MigrationOp.DropTable -> "DropTable: ${op.tableName}"
+    is MigrationOp.DropColumn -> "DropColumn: ${op.table}.${op.columnName}"
+    is MigrationOp.AlterColumnType -> "AlterColumnType: ${op.table}.${op.columnName} (${op.oldType} -> ${op.newType})"
+    is MigrationOp.SetColumnNotNull -> "SetColumnNotNull: ${op.table}.${op.columnName}"
+    is MigrationOp.DropColumnNotNull -> "DropColumnNotNull: ${op.table}.${op.columnName}"
+    is MigrationOp.AlterPrimaryKey -> {
+        val action = if (op.added) "add to" else "remove from"
+        "AlterPrimaryKey: $action ${op.table}.${op.columnName}"
+    }
+    is MigrationOp.DropIndex -> {
+        val cols = op.columns.joinToString(", ")
+        val u = if (op.unique) " unique" else ""
+        val name = if (op.name != null) " [${op.name}]" else ""
+        "DropIndex: ${op.table} ($cols)$u$name"
+    }
+    is MigrationOp.DropForeignKey -> {
+        val name = if (op.constraintName != null) " [${op.constraintName}]" else ""
+        "DropForeignKey: ${op.table}.${op.column}$name"
+    }
+}
+
+/**
+ * Extract the integer version number from a filename like `V3__foo.sql`.
+ * Returns null if the name doesn't match.
+ */
+fun parseVersionNumber(filename: String): Int? {
+    val match = Regex("^V(\\d+)").find(filename) ?: return null
+    return match.groupValues[1].toIntOrNull()
+}
+
+class ManualMigrationRequiredException(
+    val ops: List<MigrationOp>,
+) : RuntimeException(
+    buildString {
+        appendLine("Manual migration required. The following operations cannot be auto-generated:")
+        for (op in ops) {
+            appendLine("  - ${describeOp(op)}")
+        }
+        appendLine("Write a manual migration to resolve these, then re-run with ACKNOWLEDGE_AND_ADVANCE if needed.")
+    },
+)

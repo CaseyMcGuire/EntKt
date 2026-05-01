@@ -39,6 +39,10 @@ gradlePlugin {
             id = "entkt"
             implementationClass = "entkt.gradle.EntktPlugin"
         }
+        create("entkt-flyway") {
+            id = "entkt.flyway"
+            implementationClass = "entkt.gradle.EntktFlywayPlugin"
+        }
     }
 }
 

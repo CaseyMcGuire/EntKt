@@ -37,6 +37,7 @@ These pages are design notes, not committed API contracts.
 ## Codegen And Tooling
 
 - [Structured Error Model](structured-error-model.md)
+- [Flyway Shadow Migration Workflow](flyway-shadow-migration-workflow.md)
 - [Codegen Plugin Hooks](codegen-plugin-hooks.md)
 - [OpenAPI / JSON Schema Generation](openapi-json-schema-generation.md)
 - [GraphQL Kotlin Type Generation](graphql-kotlin-generation.md)

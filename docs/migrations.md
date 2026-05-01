@@ -1,76 +1,16 @@
 # Migrations
 
-entkt plans migrations and generates versioned SQL files. Applying
-those files is intentionally outside entkt's scope.
+entkt generates versioned SQL migration files. Applying those files is
+intentionally outside entkt's scope -- use Flyway, Liquibase, or your
+deployment system.
 
-Use entkt to:
-
-- diff desired schemas against a committed planning baseline
-- generate reviewed up-only SQL migration files
-- optionally bootstrap planning from a live database when no baseline exists yet
-
-Use your migration runner of choice to apply the SQL:
-
-- Flyway
-- Liquibase
-- deployment-managed SQL execution
-- another in-house migration system
-
-## Overview
-
-The migration system diffs two `NormalizedSchema` values -- a canonical
-representation of your database schema. These can be derived from:
-
-1. **Entity schemas** -- the desired state from your code
-2. **Live DB introspection** -- an optional bootstrap baseline when no snapshot exists yet
-3. **A JSON snapshot** -- committed to version control alongside migration SQL
-
-The key point is that entkt uses these inputs to **plan** SQL. It does
-not apply SQL to a database at runtime.
-
-## Planning Mode
-
-Planning diffs your schemas against the latest committed snapshot in the
-migrations directory and generates a versioned SQL file. No live database
-connection is needed in the normal case.
-
-```kotlin
-val migrator = PostgresMigrator.planner()
-
-val plan = migrator.plan(
-    schemas = listOf(User.SCHEMA, Post.SCHEMA),
-    outputDir = Paths.get("db/migrations"),
-    description = "add_posts_table",
-)
-// plan.filePath = db/migrations/V3__add_posts_table.sql
-```
-
-The planner reads the highest-numbered `V*.schema.json` file in
-`outputDir` as the baseline, writes `V{N+1}__description.sql`, and
-advances the paired `V{N+1}.schema.json` snapshot.
-
-### Bootstrapping an Existing Database
-
-If no snapshot exists but a live database is available, a bootstrap-aware
-planner can introspect the live schema and use it as the initial
-baseline. This lets you adopt entkt migration planning on a
-database that already has tables without generating redundant
-`CREATE TABLE` statements:
-
-```kotlin
-val migrator = PostgresMigrator.plannerWithIntrospection(dataSource)
-
-val plan = migrator.plan(
-    schemas = listOf(User.SCHEMA, Post.SCHEMA),
-    outputDir = Paths.get("db/migrations"),
-    description = "initial",
-)
-// If DB already matches schemas: no SQL file, just creates the first snapshot
-```
+The Flyway shadow workflow diffs a disposable Docker-backed Postgres
+database against your schemas to generate the next migration file.
+Your committed Flyway migration directory is the authoritative baseline.
 
 ## Safe vs Manual Operations
 
-V1 auto-generates only safe additive operations:
+entkt auto-generates only safe additive operations:
 
 | Operation | Auto-generated? | Notes |
 |-----------|:---:|-------|
@@ -90,87 +30,17 @@ V1 auto-generates only safe additive operations:
 
 Manual operations are detected and reported but never auto-generated.
 
-## Handling Manual Operations
-
 ### FAIL Mode (default)
 
-If manual ops are detected, `plan()` throws
-`ManualMigrationRequiredException` with a list of what needs to be
-resolved. No migration file is emitted and the snapshot is not advanced.
-
-```kotlin
-try {
-    migrator.plan(schemas, outputDir, "changes")
-} catch (e: ManualMigrationRequiredException) {
-    for (op in e.ops) {
-        println("Manual: $op")
-    }
-}
-```
+If manual ops are detected, generation throws
+`ManualMigrationRequiredException`. No migration file is written.
 
 ### ACKNOWLEDGE_AND_ADVANCE Mode
 
-When you need to make progress despite manual ops, use
-`ManualMode.ACKNOWLEDGE_AND_ADVANCE`. This generates the migration file
-with auto ops and includes a checklist of manual steps at the top:
-
-```kotlin
-val plan = migrator.plan(
-    schemas, outputDir, "mixed_changes",
-    manualMode = ManualMode.ACKNOWLEDGE_AND_ADVANCE,
-)
-```
-
-The generated file looks like:
-
-```sql
--- entkt migration V4
---
--- !! MANUAL STEPS REQUIRED !!
--- The following operations were detected but NOT included in this file.
--- You must handle them separately before applying this migration.
---
--- [ ] DropColumn: posts.legacy_field
--- [ ] AlterColumnType: users.age (integer -> bigint)
---
--- Auto-applied operations follow.
-
-ALTER TABLE "posts" ADD COLUMN "subtitle" text;
-```
-
-When this mode is used, the generated SQL file is intentionally not
-ready for blind application. You must complete the manual steps and then
-apply the finalized SQL with your migration runner.
-
-## Applying Migrations
-
-entkt does not apply migrations.
-
-Clients should use a migration runner that matches their operational
-environment. Common choices:
-
-- Flyway
-- Liquibase
-- platform/deployment SQL execution
-
-The example Spring app uses Flyway, but that is just one integration path.
-
-## Schema Snapshots
-
-The snapshot is a JSON serialization of `NormalizedSchema`, committed to
-version control alongside your migration files. It records:
-
-- All table definitions (columns, types, nullability, primary keys)
-- Indexes with their storage-level names (from introspection)
-- Foreign keys with their constraint names (from introspection)
-
-Deterministic ordering (tables by name, columns in declaration order,
-indexes and FKs sorted) prevents snapshot churn across commits.
-
-When a snapshot is advanced, storage-level names (real index names, FK
-constraint names) are preserved from the previous snapshot and/or live
-introspection. This ensures that future `DropIndex` and `DropForeignKey`
-operations reference the actual database-side names.
+Generates the migration file with auto ops and includes a checklist of
+manual steps. In the Flyway workflow, a `RAISE EXCEPTION` guard
+prevents Flyway from applying the file until the manual steps are
+completed.
 
 ## Migration File Format
 
@@ -182,38 +52,155 @@ Plain SQL, up-only. Named `V{N}__{description}.sql`.
 - Versions are sequential (`V1`, `V2`, `V3`, ...), derived from the
   highest migration version already present in the output directory
 
-## Gradle Plugin: `generateMigrationFile` Task
+## Flyway Shadow Migration Workflow
 
-If you're using the entkt Gradle plugin, the `generateMigrationFile` task wraps
-the migration planner so you don't need to write any Kotlin to generate
-migrations:
+The `:flyway` module generates Flyway migrations by starting a
+disposable Docker-backed Postgres container, replaying your existing
+Flyway migrations into it, introspecting the result, and diffing that
+against your entkt schemas.
 
-```bash
-./gradlew generateMigrationFile -Pdescription="add users table"
-```
+Your committed Flyway migration directory is the authoritative baseline
+-- no `.schema.json` snapshots needed.
 
-The task scans the `schemas` classpath for `EntSchema` objects, diffs
-against the stored snapshot, and writes a versioned SQL file.
+### Prerequisites
 
-Migrations are written to `db/migrations/` by default. You can change
-this in the `entkt` extension:
+- Docker must be running (the workflow starts a temporary Postgres
+  container for each invocation)
+
+### Setup
+
+Apply the `entkt.flyway` plugin (it auto-applies the base `entkt`
+plugin). It registers `generateFlywayMigration` and
+`validateFlywayMigrations` tasks:
 
 ```kotlin
+plugins {
+    id("entkt.flyway")
+}
+
 entkt {
     packageName.set("com.example.ent")
-    migrationsDirectory.set(layout.projectDirectory.dir("src/main/resources/db/migrations"))
+}
+
+entktFlyway {
+    migrationsDirectory.set(layout.projectDirectory.dir("db/migrations"))
+}
+
+dependencies {
+    schemas(project(":schema"))
+
+    entktCodegen("io.entkt:codegen:0.1.0-SNAPSHOT")
+    entktCodegen("io.entkt:postgres:0.1.0-SNAPSHOT")
+    entktCodegen("io.entkt:flyway:0.1.0-SNAPSHOT")
+
+    implementation("io.entkt:runtime:0.1.0-SNAPSHOT")
+    implementation("io.entkt:postgres:0.1.0-SNAPSHOT")
+    implementation("io.entkt:migrations:0.1.0-SNAPSHOT")
 }
 ```
 
-If no description is provided, it defaults to `"migration"`.
+The plugin forwards Gradle properties `-Pdescription` and `-PmanualMode`
+to the CLI automatically.
 
-## Typical Workflow
+### Generating a Migration
+
+```bash
+./gradlew generateFlywayMigration -Pdescription="add_posts_table"
+```
+
+This will:
+
+1. Start a temporary Postgres container
+2. Apply all existing Flyway migrations from `db/migrations/`
+3. Introspect the resulting database schema
+4. Diff it against your entkt schema definitions
+5. Write the next versioned migration file (e.g. `V3__add_posts_table.sql`)
+6. Destroy the container
+
+If your schemas already match the migrated database, no file is written.
+
+### Validating for Drift
+
+```bash
+./gradlew validateFlywayMigrations
+```
+
+Reports whether your entkt schemas have drifted from what your committed
+Flyway migrations produce. Useful in CI to ensure migrations stay in
+sync with schema changes. Exits with a non-zero status if drift is
+detected.
+
+### Manual Operations
+
+By default (`ManualMode.FAIL`), generation fails when manual ops are
+detected:
+
+```bash
+# Fails with ManualMigrationRequiredException
+./gradlew generateFlywayMigration -Pdescription="drop_legacy_field"
+```
+
+To generate a migration file anyway, pass `ACKNOWLEDGE_AND_ADVANCE`:
+
+```bash
+./gradlew generateFlywayMigration \
+  -Pdescription="drop_legacy_field" \
+  -PmanualMode=ACKNOWLEDGE_AND_ADVANCE
+```
+
+The generated file will include a checklist of manual steps and a
+`RAISE EXCEPTION` guard that prevents Flyway from applying it until you
+replace the guard with your manual migration SQL:
+
+```sql
+-- entkt migration V4
+--
+-- !! MANUAL STEPS REQUIRED !!
+-- The following operations require manual SQL. Replace the failing
+-- statement below with your manual migration SQL before applying.
+--
+-- [ ] DropColumn: posts.legacy_field
+--
+
+-- Remove this statement once you have added your manual migration SQL above.
+DO $$BEGIN RAISE EXCEPTION 'entkt: manual migration steps have not been completed'; END$$;
+```
+
+### CLI Options
+
+```
+Usage: FlywayMain <validate|generate|verify> <migrationsDir> [options]
+
+Options:
+  --image=<image>         Postgres Docker image (default: postgres:16-alpine)
+  --db=<name>             Database name (default: entkt_shadow)
+  --user=<user>           Database user (default: postgres)
+  --password=<pass>       Database password (default: postgres)
+  --exclude-tables=<t1,t2,...>  Tables to exclude from management
+  --description=<desc>    Migration description (default: "migration")
+  --manual-mode=<mode>    FAIL or ACKNOWLEDGE_AND_ADVANCE (default: FAIL)
+```
+
+Docker settings can also be set via environment variables:
+`ENTKT_FLYWAY_POSTGRES_IMAGE`, `ENTKT_FLYWAY_POSTGRES_DB`,
+`ENTKT_FLYWAY_POSTGRES_USER`, `ENTKT_FLYWAY_POSTGRES_PASSWORD`.
+
+### Excluding Tables
+
+If your database has tables not managed by entkt (e.g. created by other
+systems), exclude them so they don't appear as drift. Pass the
+`--exclude-tables` flag via environment variables or by customizing the
+task args in your build script.
+
+The Flyway history table (`flyway_schema_history`) is always excluded
+automatically.
+
+### Typical Flyway Workflow
 
 1. Modify your `EntSchema` definitions
-2. Run `./gradlew generateMigrationFile -Pdescription="describe your change"` to
-   generate a migration file
+2. Run `./gradlew generateFlywayMigration -Pdescription="describe your change"`
 3. Review the generated SQL
-4. If manual ops are flagged: write a manual migration, then re-run with
-   `ACKNOWLEDGE_AND_ADVANCE`
-5. Commit the migration file and updated snapshot
-6. Apply the SQL with Flyway, Liquibase, or your deployment system
+4. If manual ops are flagged, re-run with `-PmanualMode=ACKNOWLEDGE_AND_ADVANCE`,
+   then replace the `RAISE EXCEPTION` guard with your manual migration SQL
+5. Commit the migration file
+6. Apply with Flyway (`flyway migrate`)
