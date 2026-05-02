@@ -204,4 +204,42 @@ class QueryGeneratorTest {
             "exists() should evaluate LOAD privacy\n$output"
         }
     }
+
+    @Test
+    fun `generates explain terminal method`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        assert(output.contains("fun explain(): QueryPlan")) {
+            "Should generate explain(): QueryPlan\n$output"
+        }
+        assert(output.contains("driver.explainQuery(Car.TABLE, predicates, orderFields,")) {
+            "explain() should delegate to driver.explainQuery\n$output"
+        }
+    }
+
+    @Test
+    fun `explain includes eager edge subqueries`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val output = generator.generate("User", user, mapOf(user to "User", car to "Car")).toString()
+
+        assert(output.contains("eagerCars?.let { subQuery ->")) {
+            "explain() should iterate eager edges\n$output"
+        }
+        assert(output.contains("driver.explainQuery(Car.TABLE,")) {
+            "explain() should use null limit/offset for eager edges\n$output"
+        }
+        assert(output.contains("edges[\"cars\"]")) {
+            "explain() should store edge subquery under edge name\n$output"
+        }
+        assert(output.contains("QueryExplanation.EXPLAIN_PLACEHOLDER")) {
+            "eager explain should use EXPLAIN_PLACEHOLDER for IN predicates, not emptyList()\n$output"
+        }
+        assert(!output.contains("emptyList<Any>()")) {
+            "eager explain should not use emptyList<Any>() — it causes the driver to render IN as FALSE\n$output"
+        }
+    }
 }
