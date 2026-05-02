@@ -12,4 +12,7 @@ class Tag : EntSchema("tags") {
     override fun id() = EntId.int()
     val name = string("name").unique()
     val category = enum<TagCategory>("category")
+
+    val posts = manyToMany<Post>("posts")
+        .through<PostTag>(PostTag::tag, PostTag::post)
 }

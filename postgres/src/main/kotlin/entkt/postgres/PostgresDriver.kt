@@ -9,6 +9,7 @@ import entkt.runtime.Driver
 import entkt.runtime.EdgeMetadata
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
+import entkt.runtime.QueryExplanation
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import java.sql.Connection
@@ -85,6 +86,25 @@ class PostgresDriver(
         offset: Int?,
     ): List<Map<String, Any?>> =
         dataSource.connection.use { queryWith(it, table, predicates, orderBy, limit, offset) }
+
+    override fun explainQuery(
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): QueryExplanation {
+        val prepared = buildSelectSql(table, predicates, orderBy, limit, offset)
+        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
+    }
+
+    override fun explainCount(
+        table: String,
+        predicates: List<Predicate>,
+    ): QueryExplanation {
+        val prepared = buildCountSql(table, predicates)
+        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
+    }
 
     override fun count(table: String, predicates: List<Predicate>): Long =
         dataSource.connection.use { countWith(it, table, predicates) }
@@ -180,14 +200,15 @@ class PostgresDriver(
         }
     }
 
-    private fun queryWith(
-        conn: Connection,
+    private data class PreparedSql(val sql: String, val params: List<Param>)
+
+    private fun buildSelectSql(
         table: String,
         predicates: List<Predicate>,
         orderBy: List<OrderField>,
         limit: Int?,
         offset: Int?,
-    ): List<Map<String, Any?>> {
+    ): PreparedSql {
         val schema = schemaFor(table)
         val builder = SqlBuilder()
         val baseAlias = "t0"
@@ -215,8 +236,22 @@ class PostgresDriver(
         if (limit != null) sql.append(" LIMIT ").append(limit)
         if (offset != null) sql.append(" OFFSET ").append(offset)
 
-        return conn.prepareStatement(sql.toString()).use { stmt ->
-            for ((i, p) in builder.params.withIndex()) {
+        return PreparedSql(sql.toString(), builder.params.toList())
+    }
+
+    private fun queryWith(
+        conn: Connection,
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): List<Map<String, Any?>> {
+        val schema = schemaFor(table)
+        val prepared = buildSelectSql(table, predicates, orderBy, limit, offset)
+
+        return conn.prepareStatement(prepared.sql).use { stmt ->
+            for ((i, p) in prepared.params.withIndex()) {
                 bind(stmt, i + 1, p.type, p.value)
             }
             stmt.executeQuery().use { rs ->
@@ -227,11 +262,7 @@ class PostgresDriver(
         }
     }
 
-    private fun countWith(
-        conn: Connection,
-        table: String,
-        predicates: List<Predicate>,
-    ): Long {
+    private fun buildCountSql(table: String, predicates: List<Predicate>): PreparedSql {
         val schema = schemaFor(table)
         val builder = SqlBuilder()
         val baseAlias = "t0"
@@ -246,8 +277,18 @@ class PostgresDriver(
             sql.append(" WHERE ").append(whereSql)
         }
 
-        return conn.prepareStatement(sql.toString()).use { stmt ->
-            for ((i, p) in builder.params.withIndex()) {
+        return PreparedSql(sql.toString(), builder.params)
+    }
+
+    private fun countWith(
+        conn: Connection,
+        table: String,
+        predicates: List<Predicate>,
+    ): Long {
+        val prepared = buildCountSql(table, predicates)
+
+        return conn.prepareStatement(prepared.sql).use { stmt ->
+            for ((i, p) in prepared.params.withIndex()) {
                 bind(stmt, i + 1, p.type, p.value)
             }
             stmt.executeQuery().use { rs ->
@@ -809,6 +850,20 @@ class PostgresDriver(
 
         override fun exists(table: String, predicates: List<Predicate>): Boolean {
             checkOpen(); return existsWith(conn, table, predicates)
+        }
+
+        override fun explainQuery(
+            table: String,
+            predicates: List<Predicate>,
+            orderBy: List<OrderField>,
+            limit: Int?,
+            offset: Int?,
+        ): QueryExplanation {
+            checkOpen(); return root.explainQuery(table, predicates, orderBy, limit, offset)
+        }
+
+        override fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation {
+            checkOpen(); return root.explainCount(table, predicates)
         }
 
         override fun delete(table: String, id: Any): Boolean {

@@ -28,6 +28,7 @@ private val OP = ClassName("entkt.query", "Op")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val PRIVACY_DENIED = ClassName("entkt.runtime", "PrivacyDeniedException")
+private val QUERY_EXPLANATION = ClassName("entkt.runtime", "QueryExplanation")
 
 internal class QueryGenerator(
     private val packageName: String,
@@ -135,6 +136,7 @@ internal class QueryGenerator(
             .addFunction(buildVisibleCount(schemaName, entityClass))
             .addFunction(buildRawCount(schemaName, entityClass))
             .addFunction(buildExists(schemaName, entityClass))
+            .addFunctions(buildExplainMethods(entityClass, schema, schemaNames))
             .addFunctions(traversalMethods)
             .build()
 
@@ -271,6 +273,162 @@ internal class QueryGenerator(
             .build()
     }
 
+    /**
+     * Generate per-terminal explain methods plus a private helper
+     * that builds the [QueryPlan] tree. Each public method mirrors
+     * the execution shape of its corresponding terminal:
+     *
+     * - `explain()` → models `all()`: configured limit/offset + eager edges
+     * - `explainFirst()` → models `firstOrNull()`: limit 1 + eager edges
+     * - `explainExists()` → models `exists()`: limit 1, no eager edges
+     * - `explainVisibleCount()` → models `visibleCount()`: configured limit/offset, no eager edges
+     * - `explainRawCount()` → models `rawCount()`: COUNT query, no eager edges
+     */
+    private fun buildExplainMethods(
+        entityClass: ClassName,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): List<FunSpec> {
+        val queryPlan = ClassName("entkt.runtime", "QueryPlan")
+        val resolvableEdges = resolveExplainableEdges(schema, schemaNames)
+        val hasEager = resolvableEdges.isNotEmpty()
+
+        val methods = mutableListOf<FunSpec>()
+
+        // explain() → models all()
+        methods += FunSpec.builder("explain")
+            .addKdoc("Return a [QueryPlan] describing the query shapes [all] would execute.\n" +
+                "Eager edge subplans show structure, not multiplicity — nested\n" +
+                "eager loads may execute once per parent group at runtime.")
+            .returns(queryPlan)
+            .addStatement("return buildQueryPlan(queryLimit, queryOffset, true)")
+            .build()
+
+        // explainFirst() → models firstOrNull()
+        methods += FunSpec.builder("explainFirst")
+            .addKdoc("Return a [QueryPlan] describing the query shapes [firstOrNull] would execute.")
+            .returns(queryPlan)
+            .addStatement("return buildQueryPlan(1, queryOffset, true)")
+            .build()
+
+        // explainExists() → models exists()
+        methods += FunSpec.builder("explainExists")
+            .addKdoc("Return a [QueryPlan] describing the query shape [exists] would execute.")
+            .returns(queryPlan)
+            .addStatement("return buildQueryPlan(1, queryOffset, false)")
+            .build()
+
+        // explainVisibleCount() → models visibleCount()
+        methods += FunSpec.builder("explainVisibleCount")
+            .addKdoc("Return a [QueryPlan] describing the query shape [visibleCount] would execute.")
+            .returns(queryPlan)
+            .addStatement("return buildQueryPlan(queryLimit, queryOffset, false)")
+            .build()
+
+        // explainRawCount() → models rawCount()
+        methods += FunSpec.builder("explainRawCount")
+            .addKdoc("Return a [QueryPlan] describing the query [rawCount] would execute.")
+            .returns(queryPlan)
+            .addStatement("return %T(driver.explainCount(%T.TABLE, predicates))", queryPlan, entityClass)
+            .build()
+
+        // Private buildQueryPlan helper
+        val helper = FunSpec.builder("buildQueryPlan")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("limit", INT.copy(nullable = true))
+            .addParameter("offset", INT.copy(nullable = true))
+            .addParameter("includeEager", BOOLEAN)
+            .returns(queryPlan)
+            .addStatement(
+                "val root = driver.explainQuery(%T.TABLE, predicates, orderFields, limit, offset)",
+                entityClass,
+            )
+
+        if (!hasEager) {
+            helper.addStatement("return %T(root)", queryPlan)
+        } else {
+            helper.addStatement("if (!includeEager) return %T(root)", queryPlan)
+            helper.addStatement("val edges = mutableMapOf<String, %T>()", queryPlan)
+            for (info in resolvableEdges) {
+                helper.addCode(buildEagerExplainBlock(info, queryPlan))
+            }
+            helper.addStatement("return %T(root, eagerQueries = edges)", queryPlan)
+        }
+        methods += helper.build()
+
+        return methods
+    }
+
+    private data class ExplainableEdge(
+        val edge: Edge,
+        val targetClass: ClassName,
+        val eagerPropName: String,
+        val join: EdgeJoin,
+    )
+
+    private fun resolveExplainableEdges(
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): List<ExplainableEdge> {
+        return schema.edges().mapNotNull { edge ->
+            val targetName = schemaNames[edge.target] ?: return@mapNotNull null
+            val targetClass = ClassName(packageName, targetName)
+            val eagerPropName = "eager${toPascalCase(edge.name)}"
+            when (edge.kind) {
+                is EdgeKind.ManyToMany -> {
+                    val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: return@mapNotNull null
+                    ExplainableEdge(edge, targetClass, eagerPropName, join)
+                }
+                else -> {
+                    val join = resolveEdgeJoin(edge, schema) ?: return@mapNotNull null
+                    ExplainableEdge(edge, targetClass, eagerPropName, join)
+                }
+            }
+        }
+    }
+
+    /**
+     * Emit the explain block for a single eager edge. Mirrors the
+     * runtime behavior in [buildLoadEdges]:
+     * - Adds the IN predicate on the correct column (with a
+     *   placeholder value so the driver renders the column name)
+     * - Uses null limit/offset (runtime fetches all, paginates in memory)
+     * - M2M edges include the junction table query with its own IN predicate
+     * - Nested eager loads are pulled from the subquery's own explain()
+     */
+    private fun buildEagerExplainBlock(info: ExplainableEdge, queryPlan: ClassName): CodeBlock {
+        // Use a non-empty placeholder so the driver renders the actual
+        // column name in the SQL (e.g. "author_id" IN (?)) instead of
+        // collapsing an empty IN to FALSE which hides the join shape.
+        val body = CodeBlock.builder()
+        body.beginControlFlow("%L?.let { subQuery ->", info.eagerPropName)
+        body.addStatement("val nested = subQuery.explain()")
+
+        if (info.edge.kind is EdgeKind.ManyToMany) {
+            // M2M: junction table query with IN on source FK column,
+            // then target table query with IN on id
+            body.addStatement(
+                "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
+                info.join.junctionTable, PREDICATE, info.join.junctionSourceColumn, OP, QUERY_EXPLANATION,
+            )
+            body.addStatement(
+                "edges[%S] = %T(driver.explainQuery(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER), subQuery.orderFields, null, null), junctionExplain, nested.eagerQueries)",
+                info.edge.name, queryPlan, info.targetClass, PREDICATE, "id", OP, QUERY_EXPLANATION,
+            )
+        } else {
+            // Direct edge: single query with IN on the join column
+            // hasMany/hasOne: IN on targetColumn (FK on target side)
+            // belongsTo: IN on targetColumn ("id" on target side)
+            body.addStatement(
+                "edges[%S] = %T(driver.explainQuery(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER), subQuery.orderFields, null, null), eagerQueries = nested.eagerQueries)",
+                info.edge.name, queryPlan, info.targetClass, PREDICATE, info.join.targetColumn, OP, QUERY_EXPLANATION,
+            )
+        }
+
+        body.endControlFlow()
+        return body.build()
+    }
+
     private fun buildRequireClient(schemaName: String): FunSpec {
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         return FunSpec.builder("requireClient")
@@ -328,6 +486,7 @@ internal class QueryGenerator(
      * eagerly-loadable edge.
      */
     private data class EagerEdgeSpec(
+        val edgeName: String,
         val property: PropertySpec,
         val withMethod: FunSpec,
     )
@@ -377,7 +536,7 @@ internal class QueryGenerator(
             .addStatement("return this")
             .build()
 
-        return EagerEdgeSpec(property, withMethod)
+        return EagerEdgeSpec(edge.name, property, withMethod)
     }
 
     /**

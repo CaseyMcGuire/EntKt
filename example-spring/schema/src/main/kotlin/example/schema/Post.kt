@@ -17,4 +17,5 @@ class Post : EntSchema("posts") {
     val published = bool("published").default(false)
 
     val author = belongsTo<User>("author").inverse(User::posts).required()
+    val tags = manyToMany<Tag>("tags").through<PostTag>(PostTag::post, PostTag::tag)
 }

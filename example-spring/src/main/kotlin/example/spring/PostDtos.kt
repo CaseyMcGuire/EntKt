@@ -16,6 +16,8 @@ data class UpdatePostRequest(
     val published: Boolean? = null,
 )
 
+data class AddTagRequest(val tagId: Int)
+
 data class PostResponse(
     val id: Long,
     val title: String,

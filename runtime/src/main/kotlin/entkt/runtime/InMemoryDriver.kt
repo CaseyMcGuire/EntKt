@@ -178,6 +178,22 @@ class InMemoryDriver : Driver {
         }
     }
 
+    override fun explainQuery(
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): QueryExplanation {
+        schemas[table] ?: error("Unregistered table: $table")
+        return InMemoryQueryExplanation(table, predicates, orderBy, limit, offset)
+    }
+
+    override fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation {
+        schemas[table] ?: error("Unregistered table: $table")
+        return InMemoryCountExplanation(table, predicates)
+    }
+
     override fun deleteMany(table: String, predicates: List<Predicate>): Int {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
@@ -534,6 +550,20 @@ private class InMemoryTransactionalDriver(
         checkOpen(); return root.updateMany(table, values, predicates)
     }
 
+    override fun explainQuery(
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): QueryExplanation {
+        checkOpen(); return root.explainQuery(table, predicates, orderBy, limit, offset)
+    }
+
+    override fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation {
+        checkOpen(); return root.explainCount(table, predicates)
+    }
+
     override fun deleteMany(table: String, predicates: List<Predicate>): Int {
         checkOpen(); return root.deleteMany(table, predicates)
     }
@@ -542,5 +572,38 @@ private class InMemoryTransactionalDriver(
         checkOpen()
         // Nested: reuse the same transaction.
         return block(this)
+    }
+}
+
+/**
+ * Explanation returned by [InMemoryDriver.explainQuery]. Since
+ * InMemoryDriver doesn't produce SQL, this exposes the raw query
+ * parameters the driver would evaluate in memory.
+ */
+data class InMemoryQueryExplanation(
+    val table: String,
+    val predicates: List<Predicate>,
+    val orderBy: List<OrderField>,
+    val limit: Int?,
+    val offset: Int?,
+) : QueryExplanation {
+    override fun describe(): String = buildString {
+        append("InMemory($table")
+        if (predicates.isNotEmpty()) append(", predicates=$predicates")
+        if (orderBy.isNotEmpty()) append(", orderBy=$orderBy")
+        if (limit != null) append(", limit=$limit")
+        if (offset != null) append(", offset=$offset")
+        append(")")
+    }
+}
+
+data class InMemoryCountExplanation(
+    val table: String,
+    val predicates: List<Predicate>,
+) : QueryExplanation {
+    override fun describe(): String = buildString {
+        append("InMemoryCount($table")
+        if (predicates.isNotEmpty()) append(", predicates=$predicates")
+        append(")")
     }
 }

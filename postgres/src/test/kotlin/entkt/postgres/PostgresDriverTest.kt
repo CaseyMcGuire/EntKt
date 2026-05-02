@@ -1119,4 +1119,47 @@ class PostgresDriverTest {
             pgDriver.register(badSchema)
         }
     }
+
+    // ---------- explainQuery ----------
+
+    @Test
+    fun `explainQuery returns SQL and args without executing`() {
+        val driver = fresh()
+        val explanation = driver.explainQuery(
+            "users",
+            listOf(Predicate.Leaf("name", Op.EQ, "alice"), Predicate.Leaf("age", Op.GT, 25)),
+            listOf(OrderField("name", OrderDirection.ASC)),
+            10,
+            5,
+        )
+        val pg = explanation as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"users\" AS t0 WHERE (t0.\"name\" = ? AND t0.\"age\" > ?) ORDER BY t0.\"name\" ASC LIMIT 10 OFFSET 5",
+            pg.sql,
+        )
+        assertEquals(listOf("alice", 25), pg.args)
+    }
+
+    @Test
+    fun `explainQuery with no predicates produces unconditional SELECT`() {
+        val driver = fresh()
+        val pg = driver.explainQuery("users", emptyList(), emptyList(), null, null) as PostgresQueryExplanation
+        assertEquals("SELECT t0.* FROM \"users\" AS t0", pg.sql)
+        assertTrue(pg.args.isEmpty())
+    }
+
+    @Test
+    fun `explainQuery with edge predicate produces EXISTS subquery`() {
+        val driver = fresh()
+        val pg = driver.explainQuery(
+            "users",
+            listOf(Predicate.HasEdgeWith("posts", Predicate.Leaf("published", Op.EQ, true))),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertTrue(pg.sql.contains("EXISTS"))
+        assertTrue(pg.sql.contains("\"posts\""))
+        assertEquals(listOf(true), pg.args)
+    }
 }
