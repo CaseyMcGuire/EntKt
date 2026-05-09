@@ -4,6 +4,7 @@
 - Do not change unrelated files.
 - Ask before adding dependencies, changing architecture, or expanding scope.
 - If you think a broader fix is necessary, explain the tradeoff before editing.
+- Don't worry about breaking changes. This is a greenfield project that isn't yet used in production. 
 
 ## Execution
 - For any task larger than a small bugfix, propose a plan first.
