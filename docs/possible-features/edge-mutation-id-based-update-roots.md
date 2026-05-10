@@ -91,8 +91,9 @@ result before hooks, privacy, validation, or writes run.
 
 If the builder-requested patch is empty when `save()` starts, generated code
 should report `NoChanges` before loading the owner row or running hooks, privacy,
-validation, or driver reads/writes. A syntactically empty update is not a hook
-extension point and must not reveal whether the owner row exists.
+validation, transaction requirement checks, or driver reads/writes. A
+syntactically empty update is not a hook extension point, is not a write attempt,
+and must not reveal whether the owner row exists.
 
 Under `ReadCurrent`, the current-row read is not locked, so another writer can
 change the row between rule evaluation and the update write. Rules that require
@@ -207,10 +208,13 @@ data class PostUpdatePatch(
 )
 ```
 
-`FieldPatch.Unset` means the field or FK was untouched and should not be
-written. `FieldPatch.Set(value)` means the mutation explicitly writes that value.
-For nullable fields and nullable FKs, `FieldPatch.Set(null)` means the caller or
-a hook explicitly clears the value.
+`FieldPatch.Unset` means the field or FK is absent from that patch.
+`FieldPatch.Set(value)` means the field or FK is present as a write entry in that
+patch. In `requestedPatch`, `Set(value)` means the builder or a hook explicitly
+requested that value. In `effectivePatch`, `Set(value)` means the value will be
+written to the database; it may come from the requested patch or from framework
+update defaults. For nullable fields and nullable FKs, `FieldPatch.Set(null)`
+means the patch explicitly clears the value.
 
 Update privacy and validation contexts should expose the loaded current row, the
 requested patch, and the effective patch after framework update defaults have
@@ -240,6 +244,8 @@ update defaults, field-shape checks, validation, the driver update, `afterUpdate
 hooks, and returned LOAD privacy. They are not missing-row results and should
 not return the loaded current entity. They are authorization-checked but not
 validation-checked because no state transition is persisted.
+If UPDATE privacy denies, generated code reports privacy denial rather than
+`NoChanges`.
 
 For hook-cleared empty updates, UPDATE privacy receives the final post-hook
 requested patch and effective patch. Both contain `FieldPatch.Unset` for every
@@ -309,6 +315,10 @@ update derivation. If EntKt can detect that rule shape statically, schema or
 client validation should reject it. Otherwise, this remains a documented
 rule-authoring constraint.
 
+Most create-only assumptions cannot be detected statically when rules are
+arbitrary functions. V1 should document this as a rule-authoring constraint and
+only reject cases with explicit metadata or incompatible generated rule types.
+
 ## Future Optimistic Locking
 
 V1 should not model optimistic locking without an explicit version-field schema
@@ -331,6 +341,12 @@ the driver update path does not return a full row, generated code may perform a
 follow-up read. It must not synthesize returned untouched values from update
 input.
 
+If the driver reports a successful update but a required follow-up hydration read
+cannot load the owner row, generated code should report a driver/runtime
+consistency error rather than `NotFound`. The normal `NotFound` result is
+reserved for the generated current-row load or driver update operation reporting
+that no owner row matched.
+
 Under `ReadCurrent`, a follow-up read is not serialized with other writers
 unless the caller has already chosen a transaction-scoped client and a later RFC
 adds stronger consistency semantics.
@@ -346,6 +362,38 @@ existing generated write pipeline order.
 `afterUpdate` hooks are trusted application/framework code and may observe the
 persisted entity before returned LOAD privacy runs. They are not a
 caller-visible read path and must not be used as a substitute for LOAD privacy.
+
+If returned LOAD privacy denies after `afterUpdate`, the save reports the privacy
+failure after the write and after-hook execution. In a transaction-scoped client,
+normal exception rollback rules apply. Outside a transaction, the write has
+already occurred.
+
+## Generated Save Algorithm
+
+For `ReadCurrent` updates, generated `save()` should run these phases in order:
+
+1. If the builder-requested patch is empty, return or report `NoChanges` before
+   owner-row loads, hooks, transaction requirement checks, privacy, validation, or
+   driver reads/writes.
+2. Load the current owner row internally, bypassing LOAD privacy.
+3. If the owner row is missing, return or report `NotFound`.
+4. Run `beforeUpdate` hooks with `before`, a requested patch snapshot, and the
+   hook-facing mutation view.
+5. If hooks clear the requested patch, build an unchanged candidate, run UPDATE
+   privacy, and return or report `NoChanges`.
+6. Apply update defaults to produce the effective patch.
+7. Run field-shape checks and required edge checks on effective patch values.
+8. Build the full after-state candidate from `before + effectivePatch`.
+9. Run UPDATE privacy.
+10. Run update validation.
+11. Driver update writes only effective patch fields.
+12. If the driver update returns missing, return or report `NotFound`.
+13. Hydrate the persisted row from the update result or a follow-up read.
+14. If required follow-up hydration cannot load the owner row after a successful
+    driver update, report a driver/runtime consistency error.
+15. Run `afterUpdate`.
+16. Run returned LOAD privacy.
+17. Return the entity.
 
 ## Result Semantics
 
@@ -437,7 +485,8 @@ Before implementation, add tests for:
 - `saveOrNull()` returns `null` for missing owner rows, but not for privacy,
   validation, constraint, transaction, capability, or driver failures
 - syntactically empty updates report `NoChanges` before loading the owner row or
-  running hooks, privacy, validation, or driver reads/writes
+  running hooks, privacy, validation, transaction requirement checks, or driver
+  reads/writes
 - syntactically empty updates with missing ids report `NoChanges`, so
   `saveOrNull()` throws instead of returning `null`
 - hook-cleared empty updates on existing rows report `NoChanges`, not `null` or
@@ -447,6 +496,8 @@ Before implementation, add tests for:
 - hook-cleared empty updates run UPDATE privacy with an unchanged after-state
   candidate, but do not run validation, `afterUpdate` hooks, or returned LOAD
   privacy
+- hook-cleared empty updates report privacy denial instead of `NoChanges` when
+  UPDATE privacy denies
 - hook-cleared empty update privacy contexts expose final empty requested and
   effective patches, with `FieldPatch.Unset` for every field and FK
 - hook-cleared empty updates under `ReadCurrent` return `NoChanges` even if the
@@ -478,8 +529,8 @@ Before implementation, add tests for:
 - derived create rules receive a create-context adapter with the update
   after-state candidate and no `before` or `patch`
 - create-only rules are rejected from update derivation when EntKt can detect the
-  rule shape statically; otherwise they are documented as invalid authoring
-  patterns
+  rule shape statically through explicit metadata or incompatible generated rule
+  types; otherwise they are documented as invalid authoring patterns
 - `beforeUpdate` hooks receive a hook context with the loaded `before` row, a
   read-only patch view, and a restricted writable mutation view
 - `beforeUpdate` hook `patch` is a snapshot at hook entry; same-hook mutation
@@ -496,10 +547,15 @@ Before implementation, add tests for:
   values
 - returned entity follow-up reads use the same transaction-scoped driver/client
   when the update is called through a transaction-scoped client
+- follow-up hydration failure after a successful driver update reports a
+  driver/runtime consistency error, not `NotFound`
 - `afterUpdate` hooks run after the returned owner row is hydrated and before
   returned LOAD privacy
 - `afterUpdate` hooks may observe the persisted entity before returned LOAD
   privacy runs and are not a caller-visible read path
+- returned LOAD privacy denial after `afterUpdate` reports privacy failure after
+  the write and after-hook execution; transaction-scoped saves roll back according
+  to normal transaction exception rules
 - `ReadCurrent` does not lock the current-row read
 - under `ReadCurrent`, concurrent changes to untouched fields
   may appear in the returned row even though privacy and validation evaluated a
