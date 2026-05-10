@@ -26,9 +26,8 @@ ID-based update roots, many-to-many schema modeling, link-table helpers, and
 multi-write transaction semantics are covered by separate RFCs.
 
 This RFC assumes the [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
-contract. Update roots identify owner rows by id. If `update(entity)` exists
-during migration, it is ID-only sugar for `update(entity.id)` and does not
-provide current-state fallback values.
+contract. Update roots identify owner rows by id, and generated repos should not
+expose `update(entity)` owner-row overloads.
 
 ## Motivation
 
@@ -153,13 +152,14 @@ Required edge checks should continue to happen during generated save preparation
 before privacy, validation, or database writes. For create, a required
 relationship must have a final non-null FK after builder and hook writes. For
 update, untouched relationships are not part of the mutation: they are not
-required to be reassigned, are not marked dirty, are not included in the write
-candidate as changed FK values, and are not written back. Required edge checks
-apply to create-time required FKs and to update FKs explicitly written by the
-builder or hooks. A nullable relationship is cleared only when the builder or
-hooks explicitly set the entity setter method or resolved FK property to `null`.
-If final save preparation finds a null FK for a required relationship that is
-part of the mutation, save preparation rejects it.
+required to be reassigned, are not marked dirty, are not included in the update
+patch as changed FK values, and are not written back. The full after-state
+candidate uses the current owner row loaded by the update root as its fallback
+base. Required edge checks apply to create-time required FKs and to update FKs
+explicitly written by the builder or hooks. A nullable relationship is cleared
+only when the builder or hooks explicitly set the entity setter method or
+resolved FK property to `null`. If final save preparation finds a null FK for a
+required relationship that is part of the mutation, save preparation rejects it.
 
 Required edge checks are treated like generated field shape checks: they validate
 the local mutation payload and generated schema constraints, not database-visible
@@ -232,11 +232,11 @@ Resolved FK getter behavior should be explicit:
   assignment returns `null`
 - on update builders for required relationships, reading the FK returns the
   pending FK if the relationship was changed; reading an untouched FK must throw
-  because update roots do not provide current-state fallback values
+  because update builders do not have current-state values before `save()`
 - on update builders for nullable relationships, reading the FK returns the
   pending non-null FK or explicit pending null if the relationship was changed;
   reading an untouched FK must throw because `null` is a valid clear value and
-  cannot also represent untouched current state
+  cannot also represent untouched current state on the builder
 - writing the FK always marks that relationship pending/dirty
 
 Documentation and examples should present entity setter methods as the ergonomic
@@ -370,13 +370,16 @@ happened to be assigned earlier in the builder lifecycle.
 
 Hook-facing to-one mutation views expose pending FK values, not current database
 state and not whether the builder left the relationship untouched or explicitly
-set it to null. If hooks need mutation-intent visibility later, that should be
-added as a separate structured mutation-intent API.
+set it to null. Update hooks may receive the current owner row through the
+ID-based update root's loaded `before` state, but resolved FK getters on the
+mutation view still expose only pending patch values. If hooks need richer
+mutation-intent visibility later, that should be added as a separate structured
+mutation-intent API.
 
 For update hooks, reading an untouched relationship FK must throw rather than
-pretending to expose current database state. Hooks that need current relationship
-state must query or reload it explicitly, or use a future current-state mutation
-path.
+pretending the mutation FK getter is a current-state getter. Hooks that need
+current relationship state should read the loaded update `before` entity or query
+explicitly when they need data outside that owner row.
 
 Hook-facing resolved FK properties are typed according to relationship
 nullability. Required relationship FKs expose non-null setters and defensively
@@ -471,16 +474,19 @@ To-one edge mutations should be resolved before candidate construction:
    id writes have already updated the pending FK state
 2. generic start-of-save preflight runs, as defined by
    [Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md)
-3. before hooks run and observe normalized pending FK values for relationships
-   changed by the builder
-4. hook FK writes can modify the same pending FK state with last-write-wins
+3. for updates, the update root loads the current owner row, optionally with the
+   requested consistency mode from [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
+4. before hooks run and observe normalized pending FK values for relationships
+   changed by the builder; update hooks can also inspect the loaded `before` row
+5. hook FK writes can modify the same pending FK state with last-write-wins
    semantics
-5. final scalar/FK values are computed and generated field-shape checks plus
+6. final scalar/FK values are computed and generated field-shape checks plus
    required edge checks run
-6. the write candidate includes final FK values for changed relationships
-7. privacy and validation run in the caller's client scope
-8. the owner row is inserted or updated
-9. after hooks and return LOAD privacy run
+7. the update patch includes final FK values for changed relationships, and the
+   full after-state candidate applies that patch to the loaded `before` row
+8. privacy and validation run in the caller's client scope
+9. the owner row is inserted or updated
+10. after hooks and return LOAD privacy run
 
 Before hooks observe the pending FK state before generated field defaults are
 applied. Field-backed FK defaults are applied during final-value computation
@@ -515,16 +521,16 @@ saved.authorId == alice.id
 ## Candidate And Rule Visibility
 
 Create candidates remain full write candidates. Under ID-based update roots,
-update candidates are patch/delta candidates, not full post-update entity
-snapshots. They contain only fields and FKs explicitly changed by the builder or
-hooks. Untouched update relationships are not current-state inputs and should not
-appear as changed FK candidate values.
+update builders and hooks produce an explicit update patch. The patch contains
+only fields and FKs explicitly changed by the builder or hooks. Untouched update
+relationships are not marked dirty and should not appear as changed FK patch
+values.
 
-Update privacy and validation contexts should use a generated
-`{Entity}UpdateCandidate` or equivalent patch type. Rules that need current
-database state must query it explicitly or use a future current-state update
-path. To-one edge mutations need no additional candidate model because they lower
-to FK values inside the create/update candidate shapes.
+Update privacy and validation contexts should receive the loaded update `before`
+row, the explicit update patch, and a full after-state candidate built by
+applying the patch to the loaded row. To-one edge mutations need no additional
+candidate model because they lower to FK values inside the create/update patch
+and candidate shapes.
 
 Privacy contexts keep the caller's privacy context. Validation contexts keep the
 existing System-scoped LOAD-privacy bypass. Transaction-scoped context behavior
