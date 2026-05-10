@@ -174,9 +174,15 @@ and `primaryAuthor` becomes `setPrimaryAuthor(...)`. Generated Kotlin API names
 come from the Kotlin declaration name, not the storage/runtime edge string. For
 example, `val primaryAuthor = belongsTo<User>("primary_author")` generates
 `setPrimaryAuthor(...)` and, for implicit FKs, `primaryAuthorId`. Codegen must
-reject schemas where the generated method name collides with an existing field,
-edge, generated method, Kotlin member, or JVM signature. In V1, callers should
-rename the declaration property when a method-name collision would occur.
+capture and use the Kotlin schema declaration property name for generated
+relationship APIs. In V1, declaration property names used for generated
+relationship APIs must be valid lowerCamelCase Kotlin identifiers. Codegen
+rejects names that require separator or case munging, such as `primary_author`;
+callers should use `val primaryAuthor = belongsTo<User>("primary_author")`
+instead. Codegen must reject schemas where the generated method name collides
+with an existing field, edge, generated method, Kotlin member, or JVM signature.
+In V1, callers should rename the declaration property when a method-name
+collision would occur.
 
 Required create builders may use nullable internal staging state to represent
 "not assigned yet", but `null` should not be part of the public assignment API
@@ -195,7 +201,7 @@ pending relationship state.
 Resolved FK getter behavior should be explicit:
 
 - on create builders for required relationships, reading the FK before assignment
-  may throw because there is no valid FK value yet
+  must throw because there is no valid FK value yet
 - on create builders for nullable relationships, reading the FK before
   assignment returns `null`
 - on update builders for required relationships, reading the FK returns the
@@ -257,6 +263,11 @@ For implicit FKs, the id-only path is the generated `{edge}Id` property. For
 `belongsTo(...).field(handle)` edges, the id-only path is the user-declared
 field property backing that edge. The implementation must not create a second
 FK path.
+
+In V1, a declared backing field may back at most one
+`belongsTo(...).field(handle)` edge. Codegen rejects schemas where multiple
+`belongsTo` edges reuse the same field handle. Alias relationships over the same
+FK require a separate future design.
 
 For field-backed edges, hook-facing mutation views, write candidates, privacy,
 and validation expose the user-declared backing field, such as `writerId`. They
@@ -327,10 +338,27 @@ current FK. For example, in `update(post) { title = "x" }`, a before hook reads
 `authorId == post.authorId` unless the builder changed `authorId` or called
 `setAuthor(...)`.
 
+Hook-facing resolved FK properties are typed according to relationship
+nullability. Required relationship FKs expose non-null setters and defensively
+reject Java/platform nulls; nullable relationship FKs expose nullable setters.
+Required create hooks may set an unset required FK through the non-null setter,
+but cannot intentionally set it to null. Final save preparation still rejects
+required FKs that remain unset/null after hooks.
+
 Hooks may clear nullable relationships by setting the hook-facing resolved FK
 property to null. Hooks may not leave required relationships null: required edge
 checks run after hooks and reject a final null FK before privacy, validation, or
 database writes.
+
+### Hook-Facing API Shape
+
+Codegen should generate hook-facing mutation interfaces separately from the
+public create/update builders. Hook callbacks receive these restricted
+interfaces, not the concrete public builders. The interfaces expose mutable
+scalar fields and resolved FK fields according to field and relationship
+mutability, but they do not expose relationship entity setter methods, readable
+relationship entity properties, or link-table edge mutators. Create and update
+hook interfaces may differ when immutable fields are create-only.
 
 ## Generated Builder Shape
 
@@ -451,6 +479,8 @@ Before implementation, add tests for:
   nullability and backing field nullability
 - `belongsTo(...).field(handle)` rejects backing field types that do not match
   the target schema id type
+- `belongsTo(...).field(handle)` rejects multiple edges that reuse the same
+  backing field
 - field-backed relationships inherit backing field immutability
 - immutable field-backed relationships can be set on create but cannot be updated
 - field defaults on field-backed FKs apply before required edge checks without
@@ -477,7 +507,7 @@ Before implementation, add tests for:
   validation, or database writes
 - direct FK writes clear any cached entity reference
 - create FK getters follow required-vs-nullable unset behavior: required unset
-  may throw, while nullable unset returns null
+  throws, while nullable unset returns null
 - update FK getters return the pending FK when changed, otherwise the input
   entity's existing FK
 - `setAuthor(alice)` does not evaluate target LOAD privacy and does not return
@@ -488,6 +518,8 @@ Before implementation, add tests for:
   through the hook-facing scalar/FK mutation view
 - hook-facing to-one mutation views expose resolved FK fields only, not
   relationship entity setter methods or readable relationship entity properties
+- hook callbacks receive restricted hook-facing mutation interfaces, not the
+  concrete public create/update builders
 - field-backed to-one edges expose the user-declared backing field in hooks,
   candidates, privacy, and validation, without a synthetic `{edge}Id` alias
 - to-one write candidates expose final FK values and do not require target
