@@ -48,35 +48,13 @@ client.posts.update(post.id) {
 }.save()
 ```
 
-Updates may request stronger consistency for the generated current-row read:
+This RFC defines the independently implementable `ReadCurrent` update model. It
+loads the current row for hooks, privacy, validation, and candidate construction,
+then writes the changed fields. It does not serialize that read with the eventual
+write.
 
-```kotlin
-client.posts.update(post.id, consistency = UpdateConsistency.Pessimistic) {
-    title = "New title"
-}.save()
-```
-
-V1 should expose only two consistency modes:
-
-```kotlin
-enum class UpdateConsistency {
-    ReadCurrent,
-    Pessimistic,
-}
-```
-
-`UpdateConsistency.ReadCurrent` is the default. It loads the current row for
-hooks, privacy, validation, and candidate construction, then writes the changed
-fields. It does not serialize that read with the eventual write.
-
-`UpdateConsistency.Pessimistic` requires a transaction-scoped client and a driver
-row-lock capability. Generated code uses the transaction/locking RFC's
-`readRowForUpdate(table, id)` capability to lock and return the current owner row
-before hooks, privacy, validation, and driver writes. If the save is not
-transaction-scoped, or if the driver cannot lock and read the owner row,
-generated code must fail before hooks, privacy, validation, or driver reads/writes.
-If `readRowForUpdate` returns `null`, generated code returns the missing-row
-result before hooks or rules run.
+Stronger update consistency modes, such as pessimistic owner-row locking, belong
+in the transaction/locking RFC and build on top of this ID-based update root.
 
 Entity arguments elsewhere also remain ID-only. For example, `setAuthor(alice)`
 uses `alice.id`; it does not treat `alice` as loaded target state or evaluate
@@ -111,17 +89,39 @@ privacy, validation, and database writes. That loaded row is the update `before`
 state. If the row no longer exists, the save returns the normal missing-row
 result before hooks, privacy, validation, or writes run.
 
-With `UpdateConsistency.ReadCurrent`, the current-row read is not locked, so
-another writer can change the row between rule evaluation and the update write.
-Rules that require the checked current state to remain stable until the write
-should use `UpdateConsistency.Pessimistic`.
+Under `ReadCurrent`, the current-row read is not locked, so another writer can
+change the row between rule evaluation and the update write. Rules that require
+the checked current state to remain stable until the write should use a stronger
+consistency mode from the transaction/locking RFC.
 
-With `UpdateConsistency.Pessimistic`, the current owner row is locked before it
-is exposed to hooks or rules, and the generated update write runs while the lock
-is held by the caller's explicit transaction.
+The after-state candidate is built from the current row read before the write.
+Because that read is not serialized with the write, untouched fields in the
+persisted returned row may differ from the candidate if another writer changes
+them before the update completes. Rules that require the checked candidate to
+remain stable until write completion should use a stronger consistency mode from
+the transaction/locking RFC.
+
+The owner row can also disappear after the generated current-row read but before
+the driver update. If `driver.update(...)` returns the missing-row result after
+hooks, privacy, and validation have already run, generated code should return
+the normal missing-row result and should not run `afterUpdate` or returned LOAD
+privacy because there is no persisted updated entity to return.
 
 This RFC intentionally removes `update(entity)` instead of turning it into a
 hidden current-state channel or ambiguous compatibility path.
+
+## Internal Current-Row Load Privacy
+
+The generated current-row load used by `update(id)` is an internal write-path
+load. It bypasses LOAD privacy and is not exposed directly to the caller. UPDATE
+privacy is enforced after hooks and candidate construction. Returned LOAD privacy
+still runs on the persisted returned entity before the entity is returned to
+application code.
+
+Before hooks are trusted application/framework code, not an authorization
+boundary. They may observe the internal `before` row before UPDATE privacy runs
+and should avoid external side effects that assume the mutation will be
+authorized or committed.
 
 ## Update Hook Context
 
@@ -138,14 +138,15 @@ data class PostUpdateHookContext(
 ```
 
 `before` is the owner row loaded by generated code. It is never a caller-passed
-entity object. With `UpdateConsistency.ReadCurrent`, it is an unlocked snapshot
-read before the hook. With `UpdateConsistency.Pessimistic`, it is the locked
-owner row.
+entity object. Under `ReadCurrent`, it is an unlocked snapshot read before the
+hook.
 
-`patch` is a read-only view of pending changes accumulated before the hook.
-`mutation` is the restricted writable update mutation view. Writing to
-`mutation` updates the pending patch. Multiple hooks run sequentially, so later
-hooks observe earlier hook writes through their patch and mutation views.
+`patch` is a read-only snapshot of the requested patch accumulated before the
+hook. It is not a live view. Writes through `mutation` do not change the `patch`
+value visible inside the same hook. After each hook returns, generated code
+merges mutation writes into the requested patch before constructing the next hook
+context. Multiple hooks run sequentially, so later hooks observe earlier hook
+writes through their own requested patch snapshots and mutation views.
 
 The hook `client` uses the same scope as the save, including transaction-scoped
 behavior when the update is called through a transaction-scoped client.
@@ -153,9 +154,11 @@ behavior when the update is called through a transaction-scoped client.
 ## Patch And Candidate Shape
 
 Under ID-based update roots, generated builders and hooks produce an explicit
-update patch. The patch contains only fields and FKs changed by the builder or
-hooks. Generated code applies that patch to the loaded `before` row to build a
-full after-state candidate for privacy and validation.
+requested patch. The requested patch contains only fields and FKs changed by the
+builder or hooks. For non-empty updates, generated code then applies framework
+update defaults to produce the effective patch. Generated code applies the
+effective patch to the loaded `before` row to build a full after-state candidate
+for privacy and validation.
 
 Generated update patches should use an explicit tri-state wrapper so nullable
 values are not ambiguous:
@@ -182,9 +185,10 @@ written. `FieldPatch.Set(value)` means the mutation explicitly writes that value
 For nullable fields and nullable FKs, `FieldPatch.Set(null)` means the caller or
 a hook explicitly clears the value.
 
-Update privacy and validation contexts should expose both the loaded current row
-and the generated patch. They should also expose a full after-state write
-candidate built by applying the patch to the current row:
+Update privacy and validation contexts should expose the loaded current row and
+the effective patch, after framework update defaults have been applied. They
+should also expose a full after-state write candidate built by applying the
+effective patch to the current row:
 
 ```kotlin
 data class PostUpdatePrivacyContext(
@@ -197,16 +201,15 @@ data class PostUpdatePrivacyContext(
 ```
 
 `candidate` represents the writable owner-row values after the mutation. The
-database update should still write only patch/dirty fields plus generated update
-defaults, not every value copied from `before`.
+database update should still write only effective patch/dirty fields, not every
+value copied from `before`.
 
 Generated update defaults apply only to real updates. After before hooks run, if
-the patch contains no changed fields or FKs, generated code should treat the save
-as an empty update. Empty updates skip update defaults, field-shape checks, write
-privacy, validation, the driver update, and `afterUpdate` hooks. They still run
-returned LOAD privacy before returning the loaded current entity. This makes an
-empty update a true no-op without turning the update API into a LOAD privacy
-bypass.
+the requested patch contains no changed fields or FKs, generated code should
+reject the save as an empty update. Empty updates skip update defaults,
+field-shape checks, write privacy, validation, the driver update, `afterUpdate`
+hooks, and returned LOAD privacy. They are not missing-row results and should not
+return the loaded current entity.
 
 For non-empty updates, generated update defaults, such as `updateDefaultNow()`,
 are framework-added patch values. They are applied after before hooks and before
@@ -216,9 +219,10 @@ builder did not assign that field. If the builder or hooks already set the
 update-default field, that explicit value wins and the generated update default
 is not applied.
 
-Create candidates remain full write candidates. Update patches are the explicit
-mutation input; update candidates are full after-state snapshots derived from the
-loaded current row plus that patch.
+Create candidates remain full write candidates. Requested patches are the
+explicit mutation input. Effective patches are the database write set after
+framework update defaults. Update candidates are full after-state snapshots
+derived from the loaded current row plus the effective patch.
 
 ## Rule Derivation
 
@@ -227,9 +231,11 @@ candidate, candidate-only create rules may still be derived for updates.
 Generated derivation should adapt the update context into the existing create
 context using the update context's full after-state candidate.
 
-Derived create rules do not receive patch information. Rules that need to know
-which fields changed, compare `before` to `candidate`, or inspect update intent
-should be written as explicit update rules that use `before` and `patch`.
+The derived create rule receives a create-context adapter containing the update
+after-state candidate and the same client and privacy context. It does not
+receive `before` or `patch`. Rules that need to know which fields changed,
+compare `before` to `candidate`, inspect update intent, or rely on create-only
+assumptions should be written as explicit update rules.
 
 ## Future Optimistic Locking
 
@@ -253,14 +259,13 @@ the driver update path does not return a full row, generated code may perform a
 follow-up read. It must not synthesize returned untouched values from update
 input.
 
-With `UpdateConsistency.ReadCurrent`, a follow-up read is not serialized with
-other writers unless the caller has already chosen a transaction-scoped client.
-With `UpdateConsistency.Pessimistic`, generated code should read the returned
-owner row while the owner lock is still held.
+Under `ReadCurrent`, a follow-up read is not serialized with other writers
+unless the caller has already chosen a transaction-scoped client and a later RFC
+adds stronger consistency semantics.
 
 If the update runs on a transaction-scoped client, any follow-up read used to
 hydrate the returned entity must use the same transaction-scoped driver/client,
-regardless of `UpdateConsistency`.
+so it observes the same transaction scope as the write.
 
 After hooks run after the driver update successfully returns or hydrates the
 persisted owner row, and before returned LOAD privacy. This preserves the
@@ -270,8 +275,16 @@ existing generated write pipeline order.
 
 `saveOrNull()` should follow Kotlin's `*OrNull` convention narrowly: it returns
 `null` for expected absence, not for arbitrary failures. For `update(id)`, that
-expected absence is a missing owner row. Generated code must detect the missing
-row before hooks, privacy, validation, or driver writes run.
+expected absence is a missing owner row.
+
+The missing-row result applies in two cases:
+
+- the generated current-row load finds no owner row; hooks, privacy, validation,
+  and writes do not run
+- under `ReadCurrent`, the driver update returns no row because
+  the owner was deleted after the current-row load; hooks, privacy, and
+  validation may already have run, but `afterUpdate` and returned LOAD privacy do
+  not run
 
 For missing owner rows:
 
@@ -286,8 +299,14 @@ driver/database failures. Those errors should throw on throwing paths or be
 reported as structured errors by `saveOrError()`.
 
 An empty or no-op update is not a missing row. If the owner row exists and the
-mutation is otherwise valid, `saveOrNull()` should return the current/persisted
-entity rather than `null`.
+final patch is still empty after before hooks, generated code should report a
+no-changes result:
+
+- `saveOrThrow()` throws `NoChangesException` or EntKt's standard no-changes
+  exception
+- `saveOrNull()` does not return `null`; it throws because the row exists and the
+  failure is not expected absence
+- `saveOrError()` returns `EntError.NoChanges`
 
 ## Relationship To Other RFCs
 
@@ -296,15 +315,16 @@ defines to-one setter and FK semantics. This RFC defines the owner-row update
 root those setters run inside.
 
 [Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md)
-defines transaction-scoped client behavior, row-lock capabilities, and runtime
-transaction guardrails used by `UpdateConsistency.Pessimistic`.
+may extend this baseline with stronger update consistency modes, such as
+pessimistic owner-row locking, and defines transaction-scoped client behavior,
+row-lock capabilities, and runtime transaction guardrails.
 
 ## Rollout Plan
 
 1. Add ID-based update examples to new docs and RFCs.
 2. Generate `update(id)` as the primary update root.
 3. Remove the generated `update(entity)` overload.
-4. Add `UpdateConsistency.ReadCurrent` and `UpdateConsistency.Pessimistic`.
+4. Document the baseline `ReadCurrent` update model.
 5. Update hooks, privacy, validation, and candidate docs so current owner state
    comes from generated loads, not caller-passed owner entities.
 
@@ -314,32 +334,48 @@ Before implementation, add tests for:
 
 - `update(id)` is the primary generated update API
 - generated repos do not expose an `update(entity)` overload
-- update saves load the current owner row before update hooks, privacy,
-  validation, and writes, and return the missing-row result before those steps
-  when the row does not exist
+- update saves return the missing-row result before hooks, privacy, validation,
+  or writes when the current-row load finds no owner row
+- under `ReadCurrent`, a missing-row result from the driver
+  update can occur after hooks, privacy, and validation have already run, but
+  before `afterUpdate` or returned LOAD privacy
 - missing owner rows map to `saveOrThrow()` throwing the standard missing-row
   exception, `saveOrNull()` returning `null`, and `saveOrError()` returning
   `EntError.NotFound`
 - `saveOrNull()` returns `null` for missing owner rows, but not for privacy,
   validation, constraint, transaction, capability, or driver failures
-- empty/no-op updates on existing rows return the current/persisted entity rather
-  than `null`
+- empty/no-op updates on existing rows report `NoChanges`, not `null` or the
+  loaded current entity
 - empty/no-op updates do not apply update defaults, such as `updatedAt`, and do
   not issue driver updates
-- empty/no-op updates do not run write privacy, validation, or `afterUpdate`
-  hooks, but do run returned LOAD privacy before returning the loaded entity
-- non-empty updates apply update defaults to the patch unless the caller or hooks
-  already set those fields
+- empty/no-op updates do not run write privacy, validation, `afterUpdate` hooks,
+  or returned LOAD privacy
+- empty/no-op updates map to `saveOrThrow()` throwing the standard no-changes
+  exception, `saveOrNull()` throwing, and `saveOrError()` returning
+  `EntError.NoChanges`
+- non-empty updates apply update defaults to the requested patch to produce the
+  effective patch unless the caller or hooks already set those fields
 - non-empty update defaults are included in the database write set and
   after-state candidate when the builder changes another field
 - explicit builder or hook assignment to an update-default field suppresses the
   generated update default
-- update privacy and validation receive the loaded `before` row, the explicit
+- update privacy and validation receive the loaded `before` row, the effective
   update patch, and a full after-state candidate
+- hook contexts expose requested patch snapshots, while privacy, validation,
+  driver writes, and candidate construction use the effective patch after update
+  defaults
+- the internal current-row load bypasses LOAD privacy, UPDATE privacy still runs
+  before writes, and returned LOAD privacy runs before returning the entity
+- `beforeUpdate` hooks may observe the internal `before` row before UPDATE
+  privacy runs and are not an authorization boundary
 - update derivation from create rules uses the full after-state candidate, while
   rules that need patch or `before` state are explicit update rules
+- derived create rules receive a create-context adapter with the update
+  after-state candidate and no `before` or `patch`
 - `beforeUpdate` hooks receive a hook context with the loaded `before` row, a
   read-only patch view, and a restricted writable mutation view
+- `beforeUpdate` hook `patch` is a snapshot at hook entry; same-hook mutation
+  writes do not change `patch`, while later hooks see those writes
 - nullable update patch fields distinguish untouched values from explicit
   `null` writes with `FieldPatch.Unset` and `FieldPatch.Set(null)`
 - scalar-only updates do not write untouched FK or scalar values
@@ -349,6 +385,10 @@ Before implementation, add tests for:
   when the update is called through a transaction-scoped client
 - `afterUpdate` hooks run after the returned owner row is hydrated and before
   returned LOAD privacy
-- `UpdateConsistency.ReadCurrent` does not lock the current-row read
-- `UpdateConsistency.Pessimistic` requires a transaction-scoped client and row
-  lock support, and fails before hooks or driver reads/writes when unavailable
+- `ReadCurrent` does not lock the current-row read
+- under `ReadCurrent`, concurrent changes to untouched fields
+  may appear in the returned row even though privacy and validation evaluated a
+  candidate built from the earlier current-row read
+- under `ReadCurrent`, if the owner row is deleted after the
+  current-row read but before the driver update, the save returns the missing-row
+  result and does not run `afterUpdate` or returned LOAD privacy

@@ -17,6 +17,13 @@ scope they are called from. Link-table M2M helpers are the exception at the API
 level: they require callers to use a transaction-scoped client because they issue
 multiple driver calls and need owner-edge serialization.
 
+This RFC assumes [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
+and extends that baseline with `UpdateConsistency.Pessimistic`. Generated update
+saves are rooted by id, not `update(entity)`. For pessimistic updates, the owner
+row is locked and read before update hooks, privacy, validation, and writes.
+Link-table M2M helpers reuse that owner-row lock/read instead of defining a
+separate update root pipeline.
+
 ## Generated Save Transaction Model
 
 Generated saves are transaction-neutral by default: they execute in the client
@@ -147,11 +154,12 @@ a transaction-scoped client:
    M2M operation is pending, generated code requires a transaction-scoped client
    and throws `TransactionRequiredException` before hooks or driver reads/writes
    when the save is not transaction-scoped
-2. before hooks receive the normal scalar/FK mutation surface plus a read-only
-   pending edge operation view
-3. the pending edge operation log is captured
-4. generated code serializes the owner-edge relationship and reads the current
+2. generated code serializes the owner-edge relationship and reads the current
    owner row before current junction rows are read or junction rows are mutated
+3. before hooks receive the normal scalar/FK mutation surface plus a read-only
+   pending edge operation view and the locked current owner row as update
+   `before` state
+4. the pending edge operation log is captured
 5. final scalar/FK values are computed using the locked current owner row as the
    fallback base for fields not changed by the builder or hooks. Field validation
    and required edge checks run on those final values
@@ -180,33 +188,19 @@ junction inserts/deletes/replacements, after hooks, or returned LOAD privacy
 throw, the owner update and junction database writes must roll back.
 
 Database rollback does not undo external side effects performed by before or
-after hooks. Before hooks may run before a missing-owner update returns `null`,
-and after hooks may run before the caller's explicit transaction exits. Hooks
-that send messages, write caches, or call external services should be idempotent
-or use an outbox/after-commit pattern if those side effects must only happen
-after the transaction commits. A dedicated after-commit hook can be considered
+after hooks. Before hooks for pessimistic update saves run after the owner row is
+locked and read, but before write privacy and validation authorize the mutation.
+After hooks may run before the caller's explicit transaction exits. Hooks that
+send messages, write caches, or call external services should be idempotent or
+use an outbox/after-commit pattern if those side effects must only happen after
+the transaction commits. A dedicated after-commit hook can be considered
 separately.
 
-For update saves with pending link-table M2M operations, the entity passed to
-`update(entity)` supplies the owner id and initial builder state only. Privacy
-and validation must use the locked current owner row as the update `before`
-entity. Non-dirty scalar/FK fields must also fall back to the locked current
-owner row, not the possibly stale entity originally passed to `update(entity)`.
-Scalar/to-one-only updates keep the existing behavior unless a later RFC changes
-all updates to refresh or lock before save.
-
-Before hooks intentionally run before any owner-row lock/read, matching scalar
-and to-one save ordering. For link-table M2M updates, hook-facing mutation state
-is initialized from the input entity and pending builder changes, not from the
-locked current database row. Hooks should shape the requested mutation, such as
-timestamps or derived fields, rather than authorize current stored state.
-Because hook-facing scalar/FK values may come from the stale entity passed to
-`update(entity)`, a hook that reads a scalar/FK value and writes a derived value
-can mark stale input data dirty and overwrite newer database state. Before hooks
-should avoid read-modify-write logic that assumes current database values.
-Current-state invariants must live in privacy or validation, which run after the
-locked current owner row is read. If the owner row no longer exists, before hooks
-may already have run before `save()` returns `null`.
+For update saves with pending link-table M2M operations, the generated update
+root is the owner id. The locked current owner row is the update `before` state
+for hooks, privacy, and validation, and the fallback base for scalar/FK fields
+the caller did not change. Link-table M2M helpers must not define a separate
+hook-before-current-row-load update model.
 
 For edge-only updates with no scalar/FK changes, generated code must not issue a
 no-op owner update. Instead, it returns the current owner row read inside the
@@ -296,9 +290,7 @@ and generated code should not issue a no-op owner update; it should return the
 owner row read inside the transaction after the lock, with edges unloaded.
 
 For link-table M2M updates, the locked owner row is also the update `before`
-state and the fallback base for scalar/FK fields the caller did not change. The
-input entity passed to `update(entity)` must not be used as the privacy/
-validation `before` state after the lock has been taken.
+state and the fallback base for scalar/FK fields the caller did not change.
 
 Drivers may implement `readRowForUpdate` with an equivalent internal strategy,
 such as an advisory lock keyed by table and id plus an owner existence check and
@@ -357,12 +349,11 @@ Before implementation, add tests for:
   validation, driver reads, or driver writes
 - link-table M2M update returns `null` without reading or mutating junction rows
   when the owner row cannot be locked because it no longer exists
-- link-table M2M updates use the locked current owner row, not a stale input
-  entity passed to `update(entity)`, as the privacy/validation `before` state and
-  fallback base for non-dirty scalar/FK fields
-- link-table M2M before hooks run before owner-row lock/read, observe the
-  hook-facing mutation state initialized from the input entity and pending
-  builder changes, and do not observe locked current DB state
+- link-table M2M updates use the locked current owner row as the hook,
+  privacy/validation `before` state and fallback base for non-dirty scalar/FK
+  fields
+- link-table M2M before hooks run after owner-row lock/read and observe the
+  locked current owner row through the ID-based update hook context
 - edge-only link-table M2M updates run before hooks, owner write privacy checks,
   validation, after hooks, and return LOAD privacy once
 - link-table M2M saves roll back owner updates and junction database writes when
