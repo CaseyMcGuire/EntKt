@@ -60,20 +60,23 @@ V1 should expose only two consistency modes:
 
 ```kotlin
 enum class UpdateConsistency {
-    None,
+    ReadCurrent,
     Pessimistic,
 }
 ```
 
-`UpdateConsistency.None` is the default. It loads the current row for hooks,
-privacy, validation, and candidate construction, then writes the changed fields.
-It does not serialize that read with the eventual write.
+`UpdateConsistency.ReadCurrent` is the default. It loads the current row for
+hooks, privacy, validation, and candidate construction, then writes the changed
+fields. It does not serialize that read with the eventual write.
 
 `UpdateConsistency.Pessimistic` requires a transaction-scoped client and a driver
-row-lock capability. Generated code locks and reads the owner row before hooks,
-privacy, validation, and driver writes. If the save is not transaction-scoped, or
-if the driver cannot lock the owner row, generated code must fail before hooks,
-privacy, validation, or driver reads/writes.
+row-lock capability. Generated code uses the transaction/locking RFC's
+`readRowForUpdate(table, id)` capability to lock and return the current owner row
+before hooks, privacy, validation, and driver writes. If the save is not
+transaction-scoped, or if the driver cannot lock and read the owner row,
+generated code must fail before hooks, privacy, validation, or driver reads/writes.
+If `readRowForUpdate` returns `null`, generated code returns the missing-row
+result before hooks or rules run.
 
 Entity arguments elsewhere also remain ID-only. For example, `setAuthor(alice)`
 uses `alice.id`; it does not treat `alice` as loaded target state or evaluate
@@ -108,10 +111,10 @@ privacy, validation, and database writes. That loaded row is the update `before`
 state. If the row no longer exists, the save returns the normal missing-row
 result before hooks, privacy, validation, or writes run.
 
-With `UpdateConsistency.None`, the current-row read is not locked, so another
-writer can change the row between rule evaluation and the update write. Rules
-that require the checked current state to remain stable until the write should
-use `UpdateConsistency.Pessimistic`.
+With `UpdateConsistency.ReadCurrent`, the current-row read is not locked, so
+another writer can change the row between rule evaluation and the update write.
+Rules that require the checked current state to remain stable until the write
+should use `UpdateConsistency.Pessimistic`.
 
 With `UpdateConsistency.Pessimistic`, the current owner row is locked before it
 is exposed to hooks or rules, and the generated update write runs while the lock
@@ -119,6 +122,33 @@ is held by the caller's explicit transaction.
 
 This RFC intentionally removes `update(entity)` instead of turning it into a
 hidden current-state channel or ambiguous compatibility path.
+
+## Update Hook Context
+
+`beforeUpdate` hooks should receive a context object that separates current state
+from writable mutation state:
+
+```kotlin
+data class PostUpdateHookContext(
+    val client: EntClient,
+    val before: Post,
+    val patch: PostUpdatePatch,
+    val mutation: PostUpdateMutation,
+)
+```
+
+`before` is the owner row loaded by generated code. It is never a caller-passed
+entity object. With `UpdateConsistency.ReadCurrent`, it is an unlocked snapshot
+read before the hook. With `UpdateConsistency.Pessimistic`, it is the locked
+owner row.
+
+`patch` is a read-only view of pending changes accumulated before the hook.
+`mutation` is the restricted writable update mutation view. Writing to
+`mutation` updates the pending patch. Multiple hooks run sequentially, so later
+hooks observe earlier hook writes through their patch and mutation views.
+
+The hook `client` uses the same scope as the save, including transaction-scoped
+behavior when the update is called through a transaction-scoped client.
 
 ## Patch And Candidate Shape
 
@@ -170,9 +200,36 @@ data class PostUpdatePrivacyContext(
 database update should still write only patch/dirty fields plus generated update
 defaults, not every value copied from `before`.
 
+Generated update defaults apply only to real updates. After before hooks run, if
+the patch contains no changed fields or FKs, generated code should treat the save
+as an empty update. Empty updates skip update defaults, field-shape checks, write
+privacy, validation, the driver update, and `afterUpdate` hooks. They still run
+returned LOAD privacy before returning the loaded current entity. This makes an
+empty update a true no-op without turning the update API into a LOAD privacy
+bypass.
+
+For non-empty updates, generated update defaults, such as `updateDefaultNow()`,
+are framework-added patch values. They are applied after before hooks and before
+field-shape checks, required edge checks, and candidate construction. They are
+included in the database write set and the after-state candidate even if the
+builder did not assign that field. If the builder or hooks already set the
+update-default field, that explicit value wins and the generated update default
+is not applied.
+
 Create candidates remain full write candidates. Update patches are the explicit
 mutation input; update candidates are full after-state snapshots derived from the
 loaded current row plus that patch.
+
+## Rule Derivation
+
+Because update privacy and validation contexts expose a full after-state
+candidate, candidate-only create rules may still be derived for updates.
+Generated derivation should adapt the update context into the existing create
+context using the update context's full after-state candidate.
+
+Derived create rules do not receive patch information. Rules that need to know
+which fields changed, compare `before` to `candidate`, or inspect update intent
+should be written as explicit update rules that use `before` and `patch`.
 
 ## Future Optimistic Locking
 
@@ -196,10 +253,41 @@ the driver update path does not return a full row, generated code may perform a
 follow-up read. It must not synthesize returned untouched values from update
 input.
 
-With `UpdateConsistency.None`, a follow-up read is not serialized with other
-writers unless the caller has already chosen a transaction-scoped client. With
-`UpdateConsistency.Pessimistic`, generated code should read the returned owner
-row while the owner lock is still held.
+With `UpdateConsistency.ReadCurrent`, a follow-up read is not serialized with
+other writers unless the caller has already chosen a transaction-scoped client.
+With `UpdateConsistency.Pessimistic`, generated code should read the returned
+owner row while the owner lock is still held.
+
+If the update runs on a transaction-scoped client, any follow-up read used to
+hydrate the returned entity must use the same transaction-scoped driver/client,
+regardless of `UpdateConsistency`.
+
+After hooks run after the driver update successfully returns or hydrates the
+persisted owner row, and before returned LOAD privacy. This preserves the
+existing generated write pipeline order.
+
+## Result Semantics
+
+`saveOrNull()` should follow Kotlin's `*OrNull` convention narrowly: it returns
+`null` for expected absence, not for arbitrary failures. For `update(id)`, that
+expected absence is a missing owner row. Generated code must detect the missing
+row before hooks, privacy, validation, or driver writes run.
+
+For missing owner rows:
+
+- `saveOrThrow()` throws `NotFoundException` or EntKt's standard missing-row
+  exception
+- `saveOrNull()` returns `null`
+- `saveOrError()` returns `EntError.NotFound`
+
+`saveOrNull()` should not swallow privacy denial, validation failure, constraint
+violations, transaction requirement failures, unsupported driver capabilities, or
+driver/database failures. Those errors should throw on throwing paths or be
+reported as structured errors by `saveOrError()`.
+
+An empty or no-op update is not a missing row. If the owner row exists and the
+mutation is otherwise valid, `saveOrNull()` should return the current/persisted
+entity rather than `null`.
 
 ## Relationship To Other RFCs
 
@@ -216,7 +304,7 @@ transaction guardrails used by `UpdateConsistency.Pessimistic`.
 1. Add ID-based update examples to new docs and RFCs.
 2. Generate `update(id)` as the primary update root.
 3. Remove the generated `update(entity)` overload.
-4. Add `UpdateConsistency.None` and `UpdateConsistency.Pessimistic`.
+4. Add `UpdateConsistency.ReadCurrent` and `UpdateConsistency.Pessimistic`.
 5. Update hooks, privacy, validation, and candidate docs so current owner state
    comes from generated loads, not caller-passed owner entities.
 
@@ -229,13 +317,38 @@ Before implementation, add tests for:
 - update saves load the current owner row before update hooks, privacy,
   validation, and writes, and return the missing-row result before those steps
   when the row does not exist
+- missing owner rows map to `saveOrThrow()` throwing the standard missing-row
+  exception, `saveOrNull()` returning `null`, and `saveOrError()` returning
+  `EntError.NotFound`
+- `saveOrNull()` returns `null` for missing owner rows, but not for privacy,
+  validation, constraint, transaction, capability, or driver failures
+- empty/no-op updates on existing rows return the current/persisted entity rather
+  than `null`
+- empty/no-op updates do not apply update defaults, such as `updatedAt`, and do
+  not issue driver updates
+- empty/no-op updates do not run write privacy, validation, or `afterUpdate`
+  hooks, but do run returned LOAD privacy before returning the loaded entity
+- non-empty updates apply update defaults to the patch unless the caller or hooks
+  already set those fields
+- non-empty update defaults are included in the database write set and
+  after-state candidate when the builder changes another field
+- explicit builder or hook assignment to an update-default field suppresses the
+  generated update default
 - update privacy and validation receive the loaded `before` row, the explicit
   update patch, and a full after-state candidate
+- update derivation from create rules uses the full after-state candidate, while
+  rules that need patch or `before` state are explicit update rules
+- `beforeUpdate` hooks receive a hook context with the loaded `before` row, a
+  read-only patch view, and a restricted writable mutation view
 - nullable update patch fields distinguish untouched values from explicit
   `null` writes with `FieldPatch.Unset` and `FieldPatch.Set(null)`
 - scalar-only updates do not write untouched FK or scalar values
 - returned update entities reflect the persisted row, not synthesized fallback
   values
-- `UpdateConsistency.None` does not lock the current-row read
+- returned entity follow-up reads use the same transaction-scoped driver/client
+  when the update is called through a transaction-scoped client
+- `afterUpdate` hooks run after the returned owner row is hydrated and before
+  returned LOAD privacy
+- `UpdateConsistency.ReadCurrent` does not lock the current-row read
 - `UpdateConsistency.Pessimistic` requires a transaction-scoped client and row
   lock support, and fails before hooks or driver reads/writes when unavailable

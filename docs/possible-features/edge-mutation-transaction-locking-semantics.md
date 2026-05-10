@@ -246,16 +246,18 @@ transaction state signal and a low-level row-lock operation:
 ```kotlin
 interface Driver {
     val inTransaction: Boolean
-    val supportsRowLockForUpdate: Boolean
-    fun lockRowForUpdate(table: String, id: Any): Boolean
+    val supportsReadRowForUpdate: Boolean
+    fun readRowForUpdate(table: String, id: Any): Row?
 }
 ```
 
-`lockRowForUpdate(table, id)` is an internal driver capability used by generated
-code. It is intentionally table/id based to match the existing raw `Driver`
-contract. Application code should not call it as the edge mutation API; the typed
-application-facing API remains on generated builders, such as `tags.add(...)`,
-`tags.remove(...)`, and `tags.set(...)`.
+`readRowForUpdate(table, id)` is an internal driver capability used by generated
+code. It locks and returns the current row in one logical operation, equivalent
+to `SELECT ... FOR UPDATE` on drivers that support that shape. `null` means the
+owner row does not exist. The method is intentionally table/id based to match the
+existing raw `Driver` contract. Application code should not call it as the edge
+mutation API; the typed application-facing API remains on generated builders,
+such as `tags.add(...)`, `tags.remove(...)`, and `tags.set(...)`.
 
 Generated code checks transaction state and row-lock support at the start of
 `save()`, before hooks or driver reads/writes:
@@ -264,20 +266,17 @@ Generated code checks transaction state and row-lock support at the start of
 if (hasLinkTableM2MMutation && !driver.inTransaction) {
     throw TransactionRequiredException("link-table edge mutation requires a transaction")
 }
-if (hasLinkTableM2MMutation && !driver.supportsRowLockForUpdate) {
+if (hasLinkTableM2MMutation && !driver.supportsReadRowForUpdate) {
     throw UnsupportedOperationException("link-table edge mutation requires row locking")
 }
 ```
 
-After that guard has passed, generated code takes the row lock and reads the
-current owner row before reading current junction rows or mutating the junction
-table:
+After that guard has passed, generated code locks and reads the current owner row
+before reading current junction rows or mutating the junction table:
 
 ```kotlin
 if (hasLinkTableM2MMutation) {
-    val ownerExists = driver.lockRowForUpdate(Post.TABLE, post.id)
-    if (!ownerExists) return null
-    lockedOwnerRow = driver.byId(Post.TABLE, post.id) ?: return null
+    lockedOwnerRow = driver.readRowForUpdate(Post.TABLE, post.id) ?: return null
 }
 
 val before = Post.fromRow(lockedOwnerRow)
@@ -289,22 +288,22 @@ val edgeChanges = normalize(currentLinks, pendingEdgeOps)
 // optional owner update, junction writes
 ```
 
-If the owner row cannot be locked because it no longer exists, generated update
-saves should return `null` without reading or mutating junction rows, matching
-the existing `driver.update(...) ?: return null` behavior. For edge-only updates
-with no scalar/FK changes, this lock result is the owner existence check and
-generated code should not issue a no-op owner update; it should return the owner
-row read inside the transaction after the lock, with edges unloaded.
+If the owner row cannot be locked and read because it no longer exists, generated
+update saves should return `null` without reading or mutating junction rows,
+matching the existing `driver.update(...) ?: return null` behavior. For edge-only
+updates with no scalar/FK changes, this locked row is the owner existence check
+and generated code should not issue a no-op owner update; it should return the
+owner row read inside the transaction after the lock, with edges unloaded.
 
 For link-table M2M updates, the locked owner row is also the update `before`
 state and the fallback base for scalar/FK fields the caller did not change. The
 input entity passed to `update(entity)` must not be used as the privacy/
 validation `before` state after the lock has been taken.
 
-Drivers may implement `lockRowForUpdate` with an equivalent internal strategy,
-such as an advisory lock keyed by table and id plus an owner existence check, if
-it provides the same owner-edge serialization semantics inside the active
-transaction.
+Drivers may implement `readRowForUpdate` with an equivalent internal strategy,
+such as an advisory lock keyed by table and id plus an owner existence check and
+row read, if it provides the same owner-edge serialization semantics inside the
+active transaction.
 
 Serializable transactions with retry may be modeled by a later, more abstract
 driver capability. Drivers that cannot provide V1 row-lock semantics must reject
@@ -337,6 +336,8 @@ Before implementation, add tests for:
   contexts backed by the transaction-scoped driver, while preserving the caller
   privacy context for privacy and System-scoped LOAD-privacy bypass for
   validation
+- saves called through a transaction-scoped client use the transaction-scoped
+  driver/client for any follow-up read needed to hydrate the returned entity
 - `TransactionRequirement.RequiredForMultiWrite` rejects qualifying multi-write
   saves outside a transaction at the start of `save()`, before hooks, privacy,
   validation, driver reads, or driver writes

@@ -370,11 +370,11 @@ happened to be assigned earlier in the builder lifecycle.
 
 Hook-facing to-one mutation views expose pending FK values, not current database
 state and not whether the builder left the relationship untouched or explicitly
-set it to null. Update hooks may receive the current owner row through the
-ID-based update root's loaded `before` state, but resolved FK getters on the
-mutation view still expose only pending patch values. If hooks need richer
-mutation-intent visibility later, that should be added as a separate structured
-mutation-intent API.
+set it to null. `beforeUpdate` hooks receive the update hook context defined by
+[ID-Based Update Roots](edge-mutation-id-based-update-roots.md), which includes
+the loaded `before` entity. Resolved FK getters on the mutation view still expose
+only pending patch values. If hooks need richer mutation-intent visibility later,
+that should be added as a separate structured mutation-intent API.
 
 For update hooks, reading an untouched relationship FK must throw rather than
 pretending the mutation FK getter is a current-state getter. Hooks that need
@@ -413,8 +413,9 @@ create and update hooks. That common interface exposes only fields and FKs that
 are writable in both create and update hook contexts. Create-only values,
 including immutable fields and immutable field-backed FKs, are not exposed on
 `beforeSave`; use `beforeCreate` for those. `beforeCreate` receives a restricted
-create hook interface, and `beforeUpdate` receives a restricted update hook
-interface.
+create hook interface, and `beforeUpdate` receives the update hook context
+defined by [ID-Based Update Roots](edge-mutation-id-based-update-roots.md), whose
+`mutation` property is the restricted update hook interface.
 
 ## Generated Builder Shape
 
