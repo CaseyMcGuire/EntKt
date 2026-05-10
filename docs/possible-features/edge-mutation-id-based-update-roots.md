@@ -85,6 +85,18 @@ first-class API for that use case.
 This RFC intentionally avoids making `update(entity)` a hidden current-state
 channel.
 
+## Update Candidate Shape
+
+Under ID-based update roots, update candidates are patch/delta candidates, not
+full post-update entity snapshots. They contain only fields and FKs explicitly
+changed by the builder or hooks.
+
+This changes the existing full `WriteCandidate` model for update operations.
+Create candidates remain full write candidates. Update privacy and validation
+contexts should use a generated `{Entity}UpdateCandidate` or equivalent patch
+type. Rules that need current database state must query it explicitly or use a
+future current-state update path.
+
 ## Returned Entity State
 
 The returned entity should still reflect the persisted row after the update. If
@@ -117,6 +129,8 @@ Before implementation, add tests for:
 - `update(entity)`, if present during migration, uses only `entity.id`
 - `update(entity)` does not expose other entity fields as current-state fallback
   values to hooks, privacy, validation, or candidates
+- update privacy and validation receive patch/delta update candidates, not full
+  post-update entity snapshots
 - scalar-only updates do not write untouched stale FK or scalar values from a
   caller-passed entity
 - returned update entities reflect the persisted row, not stale fields from a

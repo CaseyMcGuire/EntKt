@@ -514,10 +514,17 @@ saved.authorId == alice.id
 
 ## Candidate And Rule Visibility
 
-`WriteCandidate` should continue to expose scalar fields and changed FK values.
-Untouched update relationships are not current-state inputs and should not appear
-as changed FK candidate values. To-one edge mutations need no additional
-candidate model because they lower to FK values.
+Create candidates remain full write candidates. Under ID-based update roots,
+update candidates are patch/delta candidates, not full post-update entity
+snapshots. They contain only fields and FKs explicitly changed by the builder or
+hooks. Untouched update relationships are not current-state inputs and should not
+appear as changed FK candidate values.
+
+Update privacy and validation contexts should use a generated
+`{Entity}UpdateCandidate` or equivalent patch type. Rules that need current
+database state must query it explicitly or use a future current-state update
+path. To-one edge mutations need no additional candidate model because they lower
+to FK values inside the create/update candidate shapes.
 
 Privacy contexts keep the caller's privacy context. Validation contexts keep the
 existing System-scoped LOAD-privacy bypass. Transaction-scoped context behavior
@@ -611,5 +618,6 @@ Before implementation, add tests for:
   while setting it before required edge validation succeeds
 - field-backed to-one edges expose the user-declared backing field in hooks,
   candidates, privacy, and validation, without a synthetic `{edge}Id` alias
-- to-one write candidates expose final changed FK values and do not require target
-  entity loads
+- create candidates expose full FK values while update candidates expose only
+  changed FK patches
+- to-one update candidates do not require target entity loads
