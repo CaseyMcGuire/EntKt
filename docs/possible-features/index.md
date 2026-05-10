@@ -18,6 +18,7 @@ These pages are design notes, not committed API contracts.
 - [Compare-And-Set Mutations](compare-and-set-mutations.md)
 - [Edge Mutation API Overview](edge-mutation-api.md)
 - [To-One Assignment And Nullability](edge-mutation-to-one-assignment-nullability.md)
+- [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
 - [Many-To-Many Schema Modeling](edge-mutation-m2m-schema-modeling.md)
 - [Link-Table M2M Mutation Helpers](edge-mutation-link-table-helpers.md)
 - [Transaction And Locking Semantics For Edge Mutations](edge-mutation-transaction-locking-semantics.md)
