@@ -109,8 +109,8 @@ only when:
   payload columns are not safe in V1, even when nullable or defaulted, because
   generated create builders, not low-level `Driver.insert`, apply field defaults
 - both junction `belongsTo` edges are non-null. Under the long-term schema model,
-  this is the default; junction edges marked `.nullable()` / `.optional()` are not
-  safe for direct link-table helpers
+  this is the default; junction edges marked `.nullable()` are not safe for
+  direct link-table helpers
 - its id strategy can be satisfied without caller input, such as auto numeric
   ids or client-generated UUIDs. Junction schemas with explicit caller-provided
   ids, such as `EntId.string()`, are not safe for direct helpers unless a later
