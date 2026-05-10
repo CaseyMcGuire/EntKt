@@ -162,6 +162,19 @@ writes through their own requested patch snapshots and mutation views.
 the builder or an earlier hook explicitly set those fields. Framework update
 defaults are added only after all before hooks complete.
 
+Hook-facing update mutation views must expose generated
+`unset{Field}()` / `unset{EdgeFk}()` methods for every mutable scalar and FK patch
+entry. These methods remove the entry from the requested patch, which allows a
+hook to clear a builder-requested change. Setting a nullable field or FK to
+`null` means `FieldPatch.Set(null)`, not `FieldPatch.Unset`.
+
+Hook writes and unsets are applied sequentially. Within a single hook, calls are
+applied in call order. Across hooks, later hooks observe earlier hook writes and
+unsets in their requested patch snapshots. If a later hook sets a field or FK
+after an earlier hook unset it, the entry is present in the requested patch with
+that value. If a later hook unsets a field or FK after an earlier hook set it,
+the entry is removed from the requested patch.
+
 The hook `client` uses the same scope as the save, including transaction-scoped
 behavior when the update is called through a transaction-scoped client.
 
@@ -228,6 +241,17 @@ hooks, and returned LOAD privacy. They are not missing-row results and should
 not return the loaded current entity. They are authorization-checked but not
 validation-checked because no state transition is persisted.
 
+For hook-cleared empty updates, UPDATE privacy receives the final post-hook
+requested patch and effective patch. Both contain `FieldPatch.Unset` for every
+field and FK. `before` is the loaded current row, and `candidate` is equal to
+`before`'s writable state.
+
+For hook-cleared empty updates under `ReadCurrent`, `NoChanges` only proves the
+owner row existed at the generated current-row read. Because no driver update is
+issued, generated code does not detect a concurrent delete that happens after
+that read. Callers that need stronger existence stability should use a stronger
+consistency mode from the transaction/locking RFC.
+
 For non-empty updates, generated update defaults, such as `updateDefaultNow()`,
 are framework-added patch values. They are applied after before hooks and before
 field-shape checks, required edge checks, and candidate construction. They are
@@ -241,6 +265,24 @@ assign a field or FK to the same value already present on the loaded owner row,
 that assignment remains in the requested and effective patches and is treated as
 a real update. `NoChanges` is reserved for updates with no requested or effective
 patch entries, not for value-equal writes.
+
+```kotlin
+val before = client.posts.byIdOrThrow(postId)
+
+client.posts.update(before.id) {
+    title = before.title
+}.save()
+```
+
+This remains a real update because `title` is present in the requested patch. It
+runs update defaults, field-shape checks, privacy, validation, driver update,
+`afterUpdate`, returned LOAD privacy, and returned entity hydration.
+
+Driver update success must be based on matching the owner row, not on whether the
+database reports changed values. A state-equal update must return or hydrate the
+persisted row and must not be treated as missing, empty, or `NoChanges`. SQL
+drivers should use `RETURNING`, a matched-row check, or equivalent behavior
+rather than changed-row counts.
 
 Create candidates remain full write candidates. Requested patches are the
 explicit mutation input from builders and hooks. Effective patches are the
@@ -301,6 +343,10 @@ After hooks run after the driver update successfully returns or hydrates the
 persisted owner row, and before returned LOAD privacy. This preserves the
 existing generated write pipeline order.
 
+`afterUpdate` hooks are trusted application/framework code and may observe the
+persisted entity before returned LOAD privacy runs. They are not a
+caller-visible read path and must not be used as a substitute for LOAD privacy.
+
 ## Result Semantics
 
 `saveOrNull()` should follow Kotlin's `*OrNull` convention narrowly: it returns
@@ -347,8 +393,8 @@ empty updates are classified by request shape, not database state, to avoid
 existence leaks.
 
 - `saveOrThrow()` throws `EntNoChangesException`
-- `saveOrNull()` does not return `null`; it throws because the row exists and the
-  failure is not expected absence
+- `saveOrNull()` does not return `null`; it throws because `NoChanges` is not
+  expected absence
 - `saveOrError()` returns `EntError.NoChanges` with the update id
 
 `NoChanges` is a mutation-result error, not a validation failure. The mutation
@@ -401,11 +447,17 @@ Before implementation, add tests for:
 - hook-cleared empty updates run UPDATE privacy with an unchanged after-state
   candidate, but do not run validation, `afterUpdate` hooks, or returned LOAD
   privacy
+- hook-cleared empty update privacy contexts expose final empty requested and
+  effective patches, with `FieldPatch.Unset` for every field and FK
+- hook-cleared empty updates under `ReadCurrent` return `NoChanges` even if the
+  owner row is deleted after the generated current-row read
 - empty updates map to `saveOrThrow()` throwing `EntNoChangesException`,
   `saveOrNull()` throwing, and `saveOrError()` returning `EntError.NoChanges`
   with the update id
 - state-equal writes remain in the requested and effective patches and are
   treated as real updates, not `NoChanges`
+- state-equal driver updates return or hydrate the persisted row even if the
+  underlying database reports zero changed values
 - non-empty updates apply update defaults to the requested patch to produce the
   effective patch unless the caller or hooks already set those fields
 - non-empty update defaults are included in the database write set and
@@ -432,8 +484,13 @@ Before implementation, add tests for:
   read-only patch view, and a restricted writable mutation view
 - `beforeUpdate` hook `patch` is a snapshot at hook entry; same-hook mutation
   writes do not change `patch`, while later hooks see those writes
+- before hooks can remove a pending patch entry with the generated unset API
+- hook writes and unsets resolve in call order within a hook and in hook order
+  across hooks, with later operations winning
 - nullable update patch fields distinguish untouched values from explicit
   `null` writes with `FieldPatch.Unset` and `FieldPatch.Set(null)`
+- setting a nullable field or FK to `null` remains `FieldPatch.Set(null)`, not
+  unset
 - scalar-only updates do not write untouched FK or scalar values
 - returned update entities reflect the persisted row, not synthesized fallback
   values
@@ -441,6 +498,8 @@ Before implementation, add tests for:
   when the update is called through a transaction-scoped client
 - `afterUpdate` hooks run after the returned owner row is hydrated and before
   returned LOAD privacy
+- `afterUpdate` hooks may observe the persisted entity before returned LOAD
+  privacy runs and are not a caller-visible read path
 - `ReadCurrent` does not lock the current-row read
 - under `ReadCurrent`, concurrent changes to untouched fields
   may appear in the returned row even though privacy and validation evaluated a
