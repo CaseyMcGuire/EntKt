@@ -89,6 +89,11 @@ privacy, validation, and database writes. That loaded row is the update `before`
 state. If the row no longer exists, the save returns the normal missing-row
 result before hooks, privacy, validation, or writes run.
 
+If the builder-requested patch is empty when `save()` starts, generated code
+should report `NoChanges` before loading the owner row or running hooks, privacy,
+validation, or driver reads/writes. A syntactically empty update is not a hook
+extension point and must not reveal whether the owner row exists.
+
 Under `ReadCurrent`, the current-row read is not locked, so another writer can
 change the row between rule evaluation and the update write. Rules that require
 the checked current state to remain stable until the write should use a stronger
@@ -100,6 +105,12 @@ persisted returned row may differ from the candidate if another writer changes
 them before the update completes. Rules that require the checked candidate to
 remain stable until write completion should use a stronger consistency mode from
 the transaction/locking RFC.
+
+If another writer changes a field that is also present in the effective patch
+between the generated current-row read and the driver update, the generated
+update overwrites that field under `ReadCurrent`. V1 does not treat this as a
+conflict. Callers that need lost-update prevention should use a stronger
+consistency mode from the transaction/locking RFC.
 
 The owner row can also disappear after the generated current-row read but before
 the driver update. If `driver.update(...)` returns the missing-row result after
@@ -147,6 +158,9 @@ value visible inside the same hook. After each hook returns, generated code
 merges mutation writes into the requested patch before constructing the next hook
 context. Multiple hooks run sequentially, so later hooks observe earlier hook
 writes through their own requested patch snapshots and mutation views.
+`beforeUpdate` hooks never see framework update-default fields in `patch` unless
+the builder or an earlier hook explicitly set those fields. Framework update
+defaults are added only after all before hooks complete.
 
 The hook `client` uses the same scope as the save, including transaction-scoped
 behavior when the update is called through a transaction-scoped client.
@@ -185,17 +199,18 @@ written. `FieldPatch.Set(value)` means the mutation explicitly writes that value
 For nullable fields and nullable FKs, `FieldPatch.Set(null)` means the caller or
 a hook explicitly clears the value.
 
-Update privacy and validation contexts should expose the loaded current row and
-the effective patch, after framework update defaults have been applied. They
-should also expose a full after-state write candidate built by applying the
-effective patch to the current row:
+Update privacy and validation contexts should expose the loaded current row, the
+requested patch, and the effective patch after framework update defaults have
+been applied. They should also expose a full after-state write candidate built by
+applying the effective patch to the current row:
 
 ```kotlin
 data class PostUpdatePrivacyContext(
     val privacy: PrivacyContext,
     val client: EntClient,
     val before: Post,
-    val patch: PostUpdatePatch,
+    val requestedPatch: PostUpdatePatch,
+    val effectivePatch: PostUpdatePatch,
     val candidate: PostWriteCandidate,
 )
 ```
@@ -204,12 +219,14 @@ data class PostUpdatePrivacyContext(
 database update should still write only effective patch/dirty fields, not every
 value copied from `before`.
 
-Generated update defaults apply only to real updates. After before hooks run, if
-the requested patch contains no changed fields or FKs, generated code should
-reject the save as an empty update. Empty updates skip update defaults,
-field-shape checks, write privacy, validation, the driver update, `afterUpdate`
-hooks, and returned LOAD privacy. They are not missing-row results and should not
-return the loaded current entity.
+Generated update defaults apply only to real updates. If the builder-requested
+patch is non-empty, before hooks may still clear all pending changes. In that
+case, generated code should build an unchanged after-state candidate and run
+UPDATE privacy before reporting `NoChanges`. Hook-cleared empty updates skip
+update defaults, field-shape checks, validation, the driver update, `afterUpdate`
+hooks, and returned LOAD privacy. They are not missing-row results and should
+not return the loaded current entity. They are authorization-checked but not
+validation-checked because no state transition is persisted.
 
 For non-empty updates, generated update defaults, such as `updateDefaultNow()`,
 are framework-added patch values. They are applied after before hooks and before
@@ -219,10 +236,18 @@ builder did not assign that field. If the builder or hooks already set the
 update-default field, that explicit value wins and the generated update default
 is not applied.
 
+Generated code does not prune state-equal writes in V1. If the builder or hooks
+assign a field or FK to the same value already present on the loaded owner row,
+that assignment remains in the requested and effective patches and is treated as
+a real update. `NoChanges` is reserved for updates with no requested or effective
+patch entries, not for value-equal writes.
+
 Create candidates remain full write candidates. Requested patches are the
-explicit mutation input. Effective patches are the database write set after
-framework update defaults. Update candidates are full after-state snapshots
-derived from the loaded current row plus the effective patch.
+explicit mutation input from builders and hooks. Effective patches are the
+database write set after framework update defaults. Update candidates are full
+after-state snapshots derived from the loaded current row plus the effective
+patch. Rules that need to distinguish caller or hook intent from framework-added
+defaults should compare `requestedPatch` and `effectivePatch`.
 
 ## Rule Derivation
 
@@ -236,6 +261,11 @@ after-state candidate and the same client and privacy context. It does not
 receive `before` or `patch`. Rules that need to know which fields changed,
 compare `before` to `candidate`, inspect update intent, or rely on create-only
 assumptions should be written as explicit update rules.
+
+A create rule that depends on create-only context must not be registered through
+update derivation. If EntKt can detect that rule shape statically, schema or
+client validation should reject it. Otherwise, this remains a documented
+rule-authoring constraint.
 
 ## Future Optimistic Locking
 
@@ -288,8 +318,7 @@ The missing-row result applies in two cases:
 
 For missing owner rows:
 
-- `saveOrThrow()` throws `NotFoundException` or EntKt's standard missing-row
-  exception
+- `saveOrThrow()` throws `EntNotFoundException`
 - `saveOrNull()` returns `null`
 - `saveOrError()` returns `EntError.NotFound`
 
@@ -298,15 +327,32 @@ violations, transaction requirement failures, unsupported driver capabilities, o
 driver/database failures. Those errors should throw on throwing paths or be
 reported as structured errors by `saveOrError()`.
 
-An empty or no-op update is not a missing row. If the owner row exists and the
-final patch is still empty after before hooks, generated code should report a
-no-changes result:
+An empty update is not a missing row. If the builder-requested patch is empty
+when `save()` starts, generated code should report `NoChanges` before loading the
+owner row. If the builder-requested patch is non-empty but the final patch is
+empty after before hooks, generated code should run UPDATE privacy with an
+unchanged after-state candidate before reporting `NoChanges`.
 
-- `saveOrThrow()` throws `NoChangesException` or EntKt's standard no-changes
-  exception
+| Case | Loads owner row? | Runs before hooks? | Runs UPDATE privacy? | Result |
+|---|---:|---:|---:|---|
+| Builder patch empty at `save()` start | No | No | No | `NoChanges` |
+| Builder patch non-empty, final patch empty after hooks | Yes | Yes | Yes | `NoChanges` |
+| Owner missing on current-row load | Yes | No | No | `NotFound` |
+| Owner deleted before driver update under `ReadCurrent` | Yes | Yes | Yes | `NotFound` |
+
+For syntactically empty updates, `NoChanges` is reported before owner-row
+existence is checked. This means `saveOrNull()` throws `EntNoChangesException`
+rather than returning `null`, even if the id does not exist. This is intentional:
+empty updates are classified by request shape, not database state, to avoid
+existence leaks.
+
+- `saveOrThrow()` throws `EntNoChangesException`
 - `saveOrNull()` does not return `null`; it throws because the row exists and the
   failure is not expected absence
-- `saveOrError()` returns `EntError.NoChanges`
+- `saveOrError()` returns `EntError.NoChanges` with the update id
+
+`NoChanges` is a mutation-result error, not a validation failure. The mutation
+payload is valid, but no state transition will be persisted.
 
 ## Relationship To Other RFCs
 
@@ -339,28 +385,35 @@ Before implementation, add tests for:
 - under `ReadCurrent`, a missing-row result from the driver
   update can occur after hooks, privacy, and validation have already run, but
   before `afterUpdate` or returned LOAD privacy
-- missing owner rows map to `saveOrThrow()` throwing the standard missing-row
-  exception, `saveOrNull()` returning `null`, and `saveOrError()` returning
+- missing owner rows map to `saveOrThrow()` throwing `EntNotFoundException`,
+  `saveOrNull()` returning `null`, and `saveOrError()` returning
   `EntError.NotFound`
 - `saveOrNull()` returns `null` for missing owner rows, but not for privacy,
   validation, constraint, transaction, capability, or driver failures
-- empty/no-op updates on existing rows report `NoChanges`, not `null` or the
-  loaded current entity
-- empty/no-op updates do not apply update defaults, such as `updatedAt`, and do
+- syntactically empty updates report `NoChanges` before loading the owner row or
+  running hooks, privacy, validation, or driver reads/writes
+- syntactically empty updates with missing ids report `NoChanges`, so
+  `saveOrNull()` throws instead of returning `null`
+- hook-cleared empty updates on existing rows report `NoChanges`, not `null` or
+  the loaded current entity
+- empty updates do not apply update defaults, such as `updatedAt`, and do
   not issue driver updates
-- empty/no-op updates do not run write privacy, validation, `afterUpdate` hooks,
-  or returned LOAD privacy
-- empty/no-op updates map to `saveOrThrow()` throwing the standard no-changes
-  exception, `saveOrNull()` throwing, and `saveOrError()` returning
-  `EntError.NoChanges`
+- hook-cleared empty updates run UPDATE privacy with an unchanged after-state
+  candidate, but do not run validation, `afterUpdate` hooks, or returned LOAD
+  privacy
+- empty updates map to `saveOrThrow()` throwing `EntNoChangesException`,
+  `saveOrNull()` throwing, and `saveOrError()` returning `EntError.NoChanges`
+  with the update id
+- state-equal writes remain in the requested and effective patches and are
+  treated as real updates, not `NoChanges`
 - non-empty updates apply update defaults to the requested patch to produce the
   effective patch unless the caller or hooks already set those fields
 - non-empty update defaults are included in the database write set and
   after-state candidate when the builder changes another field
 - explicit builder or hook assignment to an update-default field suppresses the
   generated update default
-- update privacy and validation receive the loaded `before` row, the effective
-  update patch, and a full after-state candidate
+- update privacy and validation receive the loaded `before` row, the requested
+  patch, the effective patch, and a full after-state candidate
 - hook contexts expose requested patch snapshots, while privacy, validation,
   driver writes, and candidate construction use the effective patch after update
   defaults
@@ -372,6 +425,9 @@ Before implementation, add tests for:
   rules that need patch or `before` state are explicit update rules
 - derived create rules receive a create-context adapter with the update
   after-state candidate and no `before` or `patch`
+- create-only rules are rejected from update derivation when EntKt can detect the
+  rule shape statically; otherwise they are documented as invalid authoring
+  patterns
 - `beforeUpdate` hooks receive a hook context with the loaded `before` row, a
   read-only patch view, and a restricted writable mutation view
 - `beforeUpdate` hook `patch` is a snapshot at hook entry; same-hook mutation
@@ -389,6 +445,8 @@ Before implementation, add tests for:
 - under `ReadCurrent`, concurrent changes to untouched fields
   may appear in the returned row even though privacy and validation evaluated a
   candidate built from the earlier current-row read
+- under `ReadCurrent`, concurrent changes to fields present in the effective
+  patch are overwritten by the generated update and are not treated as conflicts
 - under `ReadCurrent`, if the owner row is deleted after the
   current-row read but before the driver update, the save returns the missing-row
   result and does not run `afterUpdate` or returned LOAD privacy

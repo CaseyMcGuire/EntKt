@@ -241,6 +241,13 @@ sealed interface EntError {
         override val message: String = "entity not found",
     ) : EntError
 
+    data class NoChanges(
+        override val entity: String,
+        override val operation: EntOperation,
+        val id: Any? = null,
+        override val message: String = "no changes to save",
+    ) : EntError
+
     data class PrivacyDenied(
         override val entity: String,
         override val operation: EntOperation,
@@ -308,6 +315,10 @@ sealed class EntException(
 
 class EntNotFoundException(
     override val error: EntError.NotFound,
+) : EntException(error)
+
+class EntNoChangesException(
+    override val error: EntError.NoChanges,
 ) : EntException(error)
 
 class EntPrivacyDeniedException(
