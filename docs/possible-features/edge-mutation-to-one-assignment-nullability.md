@@ -113,10 +113,12 @@ authorization.
 
 The relationship nullability model should be required by default. A
 `belongsTo<Target>(...)` edge should produce a non-null FK unless the schema
-marks the relationship with `.nullable()`. The long-term public model should be
-non-null by default and nullable only when explicitly requested. The old
-`.required()` modifier and any `.optional()` alias should be removed from the API
-or rejected by codegen; they should not remain as compatibility sugar.
+marks the relationship with `.nullable()`. The public model should be non-null
+by default and nullable only when explicitly requested. The DSL-wide decision to
+use `.nullable()` and remove `.optional()` is covered in
+[Schema Nullability Terminology](schema-nullability-terminology.md). Under that
+contract, relationship `.required()` should also be removed or rejected because
+`belongsTo(...)` is required by default.
 
 Nullable to-one edges, declared with `.nullable()`, can be cleared by assigning
 `null` through the generated setter method:
@@ -143,8 +145,9 @@ update, both required and nullable relationship fields use the input entity's
 current FK as the fallback when the mutation does not touch the relationship, so
 `update(post) { title = "x" }` does not require assigning the relationship again.
 A nullable relationship is cleared only when the builder or hooks explicitly set
-the entity setter method or resolved FK property to `null`. If an update changes
-a required relationship to null, save preparation rejects it.
+the entity setter method or resolved FK property to `null`. If final save
+preparation finds a null FK for a required relationship, save preparation rejects
+it.
 
 Required edge checks are treated like generated field shape checks: they validate
 the local mutation payload and generated schema constraints, not database-visible
@@ -159,6 +162,13 @@ FK types, such as `setAuthor(user)` and `authorId: UUID`. Nullable to-one edges
 should expose nullable entity setter methods and nullable FK types, such as
 `setAuthor(null)` and `authorId: UUID?`.
 
+Generated entity setter method names should be `set` plus the edge name in
+UpperCamelCase: `author` becomes `setAuthor(...)`, and `primaryAuthor` becomes
+`setPrimaryAuthor(...)`. Codegen must reject schemas where the generated method
+name collides with an existing field, edge, generated method, Kotlin member, or
+JVM signature. In V1, callers should rename the edge when a method-name
+collision would occur.
+
 Required create builders may use nullable internal staging state to represent
 "not assigned yet", but `null` should not be part of the public assignment API
 for required edges.
@@ -166,6 +176,19 @@ for required edges.
 Entity setter methods are write-only commands on mutation builders. The resolved
 FK property, such as `authorId`, is the readable/writable source of truth for
 pending relationship state.
+
+Resolved FK getter behavior should be explicit:
+
+- on create builders for required relationships, reading the FK before assignment
+  may throw because there is no valid FK value yet
+- on create builders for nullable relationships, reading the FK before
+  assignment returns `null`
+- on update builders for required relationships, reading the FK returns the
+  pending FK if changed, otherwise the input entity's existing FK
+- on update builders for nullable relationships, reading the FK returns the
+  pending non-null FK, explicit pending null, or the input entity's existing FK
+  when the relationship is untouched
+- writing the FK always marks that relationship pending/dirty
 
 Documentation and examples should present entity setter methods as the ergonomic
 to-one API and FK assignment as the ID-only variant. They should not introduce
@@ -215,6 +238,11 @@ For implicit FKs, the id-only path is the generated `{edge}Id` property. For
 field property backing that edge. The implementation must not create a second
 FK path.
 
+For field-backed edges, hook-facing mutation views, write candidates, privacy,
+and validation expose the user-declared backing field, such as `writerId`. They
+do not expose a generated `authorId` property or relationship entity property
+for that edge.
+
 For implicit FK edges, codegen must reject schemas where the generated FK
 property name, such as `authorId`, collides with an existing field, edge,
 generated method, or Kotlin member name. Callers should use
@@ -256,6 +284,11 @@ Hook FK writes also follow last-write-wins before candidate construction. Hook,
 privacy, and validation code should treat the final FK value and `WriteCandidate`
 as the source of truth, not any cached entity reference that happened to be
 assigned earlier in the builder lifecycle.
+
+For update hooks, an untouched relationship FK reads as the input entity's
+current FK. For example, in `update(post) { title = "x" }`, a before hook reads
+`authorId == post.authorId` unless the builder changed `authorId` or called
+`setAuthor(...)`.
 
 Hooks may clear nullable relationships by setting the hook-facing resolved FK
 property to null. Hooks may not leave required relationships null: required edge
@@ -355,7 +388,8 @@ is covered in [Transaction And Locking Semantics](edge-mutation-transaction-lock
    resolved FK state.
 2. Change relationship nullability to required by default for `belongsTo(...)`,
    with `.nullable()` as the explicit nullable relationship
-   marker. Remove or reject the old `.required()` modifier.
+   marker. Follow the DSL-wide terminology contract from
+   [Schema Nullability Terminology](schema-nullability-terminology.md).
 3. Add tests proving required/nullable to-one semantics and hook/privacy/
    validation visibility.
 
@@ -371,6 +405,9 @@ Before implementation, add tests for:
   nullability and backing field nullability
 - `belongsTo(...).field(handle)` rejects backing field types that do not match
   the target schema id type
+- generated entity setter method names follow `set` plus UpperCamelCase edge
+  name and reject collisions with fields, edges, generated methods, Kotlin
+  members, or JVM signatures
 - implicit FK edges reject generated `{edge}Id` Kotlin member collisions and
   require `belongsTo(...).field(handle)` when callers need an explicit backing
   field name
@@ -381,16 +418,22 @@ Before implementation, add tests for:
 - unset required to-one create rejects during generated save preparation
 - hooks can set a required FK that the builder left unset before required edge
   validation runs
+- hooks can set nullable FK values through the hook-facing resolved FK property
 - hooks can clear a nullable FK by setting it to null
 - hooks setting a required FK to null are rejected before privacy, validation, or
   database writes
 - direct FK writes clear any cached entity reference
-- reading the resolved FK property returns the pending FK value
+- create FK getters follow required-vs-nullable unset behavior: required unset
+  may throw, while nullable unset returns null
+- update FK getters return the pending FK when changed, otherwise the input
+  entity's existing FK
 - `setAuthor(alice)` does not evaluate target LOAD privacy and does not return
   `alice` as a loaded edge
 - hooks observe the final FK value after builder writes and can mutate FK values
   through the hook-facing scalar/FK mutation view
 - hook-facing to-one mutation views expose resolved FK fields only, not
   relationship entity setter methods or readable relationship entity properties
+- field-backed to-one edges expose the user-declared backing field in hooks,
+  candidates, privacy, and validation, without a synthetic `{edge}Id` alias
 - to-one write candidates expose final FK values and do not require target
   entity loads

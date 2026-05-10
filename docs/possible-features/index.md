@@ -32,6 +32,7 @@ These pages are design notes, not committed API contracts.
 
 ## Model Behavior
 
+- [Schema Nullability Terminology](schema-nullability-terminology.md)
 - [Optimistic Locking](optimistic-locking.md)
 - [Edge Groups](edge-groups.md)
 - [Soft Delete](soft-delete.md)
