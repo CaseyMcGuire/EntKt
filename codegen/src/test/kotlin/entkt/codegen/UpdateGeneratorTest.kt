@@ -177,24 +177,9 @@ class UpdateGeneratorTest {
         // (User has no edge FKs; check via Pet which has ownerId.)
     }
 
-    @Test
-    fun `edge FK property getter throws on untouched read`() {
-        // Use a schema that has an edge FK property — Car has none, but
-        // gradle-plugin's Pet schema does. Simulate via a local schema
-        // similar to the EdgeCodegenTest fixtures by reusing a known
-        // schema with edge FKs.
-        val car = Car()
-        val user = User()
-        finalize(user, car)
-        // Car has no FK edges in its current shape; skip with a clear
-        // assertion that the getter pattern would apply if FKs existed.
-        // (EdgeCodegenTest covers the FK-bearing schema separately.)
-        val output = generator.generate("User", user).toString()
-            .replace("\\s+".toRegex(), " ")
-        assert(output.contains("get() { if (")) {
-            "Throw-on-untouched getter pattern must be present in generated update properties\n$output"
-        }
-    }
+    // Edge FK property getter throw-on-untouched is asserted in
+    // EdgeCodegenTest.`update builder edge FK getter throws on untouched read`,
+    // which uses Pet.ownerId — User has no edge FK to test against.
 
     @Test
     fun `mutable property setter tracks dirty state`() {

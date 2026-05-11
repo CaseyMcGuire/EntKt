@@ -351,31 +351,50 @@ internal class UpdateGenerator(
 
     /**
      * `save()` writes the builder's changes to the driver and returns
-     * the refreshed entity — or null when the row has been deleted out
-     * from under us.
+     * the refreshed entity — or `null` when the row has been deleted
+     * out from under us. `saveOrNull()` is an explicit alias;
+     * `saveOrThrow()` lifts the missing-row case into
+     * `EntNotFoundException`; `saveOrError()` returns
+     * `EntResult<Entity>` for callers that want a structured outcome.
      *
-     * The current owner row is loaded internally at the start of
-     * `save()` (bypassing LOAD privacy). If the row no longer exists,
-     * `save()` returns `null` before any hook, privacy, validation, or
-     * driver write runs. Hooks see the loaded row through the [entity]
-     * property.
+     * **Empty patches throw NoChanges.** A syntactically empty
+     * `update(id) { }` throws `EntNoChangesException` *before* the
+     * owner-row load — request shape, not database state, classifies
+     * the no-op (avoids leaking whether the id exists). A hook-cleared
+     * empty patch (where hooks called `unsetX()` for every dirty
+     * entry) runs UPDATE privacy on the unchanged candidate and then
+     * throws `EntNoChangesException`; update defaults, validation,
+     * the driver write, `afterUpdate`, and returned LOAD privacy are
+     * all skipped because no state transition is persisted.
      *
-     * After before hooks, the builder's `dirtyFields` are lowered into
-     * a `${schemaName}UpdatePatch` (the requested patch). Update
-     * defaults (e.g. `updatedAt = updateDefaultNow()`) are then applied
-     * to produce the effective patch, which is the actual database
-     * write set: only fields and FKs in the effective patch are sent
-     * to `driver.update(...)`. Untouched columns are not written back.
+     * **Internal current-row load.** Otherwise `save()` loads the
+     * current owner row via `driver.byId(id)` (bypassing LOAD
+     * privacy) before any hook runs. If the row no longer exists,
+     * `save()` returns `null` before hooks, privacy, validation, or
+     * the driver write. The loaded row is the privacy/validation
+     * `before` and the fallback for untouched fields in the
+     * after-state candidate.
      *
-     * Privacy and validation rules see the loaded `before`, the
-     * requested patch, the effective patch, and a full after-state
-     * write candidate built by folding the effective patch onto
-     * `before`.
+     * **Patch lowering.** The builder's `dirtyFields` are lowered into
+     * a `${schemaName}UpdatePatch` (the requested patch). The same
+     * helper builds a fresh per-hook snapshot before each
+     * `beforeUpdate` invocation, then once more after the hook loop
+     * for the canonical patch. Required-field/FK null checks run
+     * after the hook loop so a hook can repair an explicit
+     * `name = null` via `unsetName()` or by reassigning a value.
      *
-     * If the effective patch is empty (no dirty fields and no update
-     * defaults applied), `save()` returns the loaded entity without
-     * issuing a database write. A future phase replaces that with a
-     * structured `NoChanges` error.
+     * **Defaults and write set.** Update defaults (e.g.
+     * `updatedAt = updateDefaultNow()`) are applied to the canonical
+     * requested patch to produce the effective patch — but only on
+     * non-empty saves; the hook-cleared empty path skips defaults so
+     * a default-only "real" update isn't synthesized. Only the
+     * effective patch's `Set` entries are sent to `driver.update(...)`;
+     * untouched columns are not round-tripped.
+     *
+     * **Rule visibility.** Privacy and validation rules see the loaded
+     * `before`, the requested patch, the effective patch, and a full
+     * after-state write candidate built by folding the effective
+     * patch onto `before`.
      */
     private fun buildSaveFunction(
         schemaName: String,

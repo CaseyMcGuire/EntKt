@@ -364,6 +364,26 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `update builder edge FK getter throws on untouched read`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = UpdateGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Reading an untouched edge FK on the update builder must throw
+        // (per RFC) — a default-null getter would conflate Unset and
+        // explicit Set(null) for nullable FKs. Hooks should read
+        // pending state from `ctx.patch.ownerId` instead.
+        assert(
+            output.contains(
+                "get() { if (\"ownerId\" !in dirtyFields) throw IllegalStateException(\"ownerId is not set in this update; read ctx.patch.ownerId instead\") return field }",
+            ),
+        ) {
+            "Edge FK getter must throw when the property is not in dirtyFields\n$output"
+        }
+    }
+
+    @Test
     fun `entity emits nullable column ref for optional unique edge FK`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
