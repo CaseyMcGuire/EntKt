@@ -145,6 +145,22 @@ internal class UpdateGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
+            // Reading an untouched update field must throw (per RFC). The
+            // builder has no current-state value before save(); for nullable
+            // fields, a default-null getter would also collapse Unset and
+            // explicit Set(null) into the same observable value. Hooks that
+            // need to inspect pending state should read from `ctx.patch`,
+            // which has explicit Unset / Set / Set(null) semantics.
+            .getter(
+                FunSpec.getterBuilder()
+                    .addStatement(
+                        "if (%S !in dirtyFields) throw IllegalStateException(%S)",
+                        prop,
+                        "$prop is not set in this update; read ctx.patch.$prop instead",
+                    )
+                    .addStatement("return field")
+                    .build()
+            )
             .setter(
                 FunSpec.setterBuilder()
                     .addParameter("value", typeName)
@@ -163,6 +179,16 @@ internal class UpdateGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
+            .getter(
+                FunSpec.getterBuilder()
+                    .addStatement(
+                        "if (%S !in dirtyFields) throw IllegalStateException(%S)",
+                        fk.propertyName,
+                        "${fk.propertyName} is not set in this update; read ctx.patch.${fk.propertyName} instead",
+                    )
+                    .addStatement("return field")
+                    .build()
+            )
             .setter(
                 FunSpec.setterBuilder()
                     .addParameter("value", typeName)

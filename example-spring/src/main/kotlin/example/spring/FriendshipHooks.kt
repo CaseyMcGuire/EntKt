@@ -1,5 +1,6 @@
 package example.spring
 
+import entkt.runtime.orElse
 import example.ent.Friendship
 import example.ent.FriendshipCreate
 import example.ent.FriendshipHooks
@@ -40,7 +41,10 @@ class FriendshipHooksConfig {
 
     fun enforceStatusTransition(ctx: FriendshipUpdateHookContext) {
         val oldStatus = ctx.before.status
-        val newStatus = ctx.mutation.status ?: oldStatus
+        // Read pending state from the patch (explicit Set / Unset),
+        // not from the mutation getter — the latter throws on untouched
+        // fields per the id-based update root contract.
+        val newStatus = ctx.patch.status.orElse(oldStatus)
         if (oldStatus != newStatus) {
             require(oldStatus == FriendshipStatus.PENDING && newStatus == FriendshipStatus.ACCEPTED) {
                 "Can only transition from PENDING to ACCEPTED"
