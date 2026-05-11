@@ -90,11 +90,60 @@ property getters on `ctx.mutation` *throw* on untouched fields,
 because a default-null getter would conflate `Unset` and explicit
 `Set(null)`. Use `mutation` for writing, `patch` for reading.
 
-`unset{Field}()` is update-specific (it removes from the patch's
-`dirtyFields`). It lives on the update hook view, not on the shared
-`Mutation` interface that `beforeSave` receives. If a `beforeSave`
-hook needs to clear a pending update entry, that work belongs in a
-`beforeUpdate` hook instead.
+`unset{Field}()` is hook-only and update-specific. It removes the
+entry from the patch entirely, distinct from `mutation.foo = null`
+(an explicit clear that survives as `FieldPatch.Set(null)` for
+nullable fields). The methods live on a private adapter that hooks
+reach through `ctx.mutation`; they are not callable from the public
+update DSL block:
+
+```kotlin
+client.users.update(id) {
+    name = "x"
+    unsetName()        // ✗ won't compile — unset is hook-only
+}
+```
+
+`unset{Field}()` is also absent from the shared `Mutation` interface
+that `beforeSave` receives — creates have no patch model to remove
+from. If a `beforeSave` hook needs to clear a pending update entry,
+move that work to a `beforeUpdate` hook.
+
+### Repairing invalid input in hooks
+
+A `beforeUpdate` hook can fix a builder assignment that would
+otherwise fail. For example, if the caller assigned `null` to a
+required field:
+
+```kotlin
+client.users.update(id) {
+    name = null         // required field, would fail if left like this
+}.save()
+```
+
+A `beforeUpdate` hook can repair it before the post-hook required-not-null
+check runs:
+
+```kotlin
+users {
+    beforeUpdate { ctx ->
+        // ctx.mutation.name is observable as null (the field IS in
+        // dirtyFields, the getter only throws on untouched).
+        if (ctx.mutation.name == null) {
+            ctx.mutation.unsetName()        // remove from patch, OR
+            // ctx.mutation.name = "Anonymous"  // assign a real value
+        }
+    }
+}
+```
+
+`ctx.patch.name` shows `FieldPatch.Unset` in this scenario rather
+than the null — `FieldPatch<String>` for a required field can't
+represent `Set(null)` by construction. The actual null is observable
+through `ctx.mutation.name`. If no hook repairs the assignment, the
+post-hook required-not-null check throws
+`IllegalStateException("name is required")` before privacy,
+validation, or the driver write runs.
 
 ## Execution Order
 
