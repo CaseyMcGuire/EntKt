@@ -87,6 +87,64 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `lenient required-null snapshot — Unset hides invalid null, mutation getter exposes it, _checkRequiredNotNull is the safety net`() {
+        // This pins an intentional design tradeoff so it isn't quietly
+        // regressed:
+        //
+        //   client.users.update(id) { name = null }   // required field
+        //
+        // produces dirtyFields = ["name"], this.name = null. The patch
+        // model `FieldPatch<String>` for a required field can't carry
+        // Set(null), so _buildRequestedPatch() lowers this case as
+        // FieldPatch.Unset — making `ctx.patch.name` ambiguous between
+        // "untouched" and "dirty + null". The actual null is observable
+        // through `ctx.mutation.name` (the throw-on-untouched getter
+        // gates on `!in dirtyFields`, not on the value), so a hook can
+        // detect and repair via `unsetName()` or `mutation.name = "x"`.
+        // If unrepaired, `_checkRequiredNotNull()` throws after the
+        // hook loop and before the canonical patch / privacy / write.
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // (1) Lenient snapshot: required field dirty+null lowers to Unset.
+        assert(
+            output.contains(
+                "name = if (\"name\" in dirtyFields && this.name != null) FieldPatch.Set(this.name!!) else FieldPatch.Unset",
+            ),
+        ) {
+            "Required-field snapshot must guard with `&& this.name != null` so dirty+null falls through to Unset\n$output"
+        }
+
+        // (2) Mutation getter throws only on `!in dirtyFields`, NOT on
+        //     null value. So dirty+null is observable as null, not a throw.
+        assert(
+            output.contains(
+                "get() { if (\"name\" !in dirtyFields) throw IllegalStateException",
+            ),
+        ) {
+            "Throw-on-untouched getter must gate on dirtyFields, not on value, so dirty+null reads as null\n$output"
+        }
+
+        // (3) Safety net: _checkRequiredNotNull throws for unrepaired
+        //     dirty+null required fields after the hook loop.
+        val checkFnIdx = output.indexOf("private fun _checkRequiredNotNull()")
+        val checkFnEnd = output.indexOf("public fun save", checkFnIdx)
+        assert(checkFnIdx != -1 && checkFnEnd != -1) {
+            "Expected generated _checkRequiredNotNull\n$output"
+        }
+        val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
+        assert(
+            checkFnBody.contains(
+                "if (\"name\" in dirtyFields && this.name == null) throw IllegalStateException(\"name is required\")",
+            ),
+        ) {
+            "_checkRequiredNotNull must throw for dirty+null required field as the safety net\n$checkFnBody"
+        }
+    }
+
+    @Test
     fun `required-null check runs after beforeUpdate hooks so a hook can repair`() {
         val user = User()
         finalize(user, Car())
