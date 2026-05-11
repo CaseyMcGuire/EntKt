@@ -173,6 +173,12 @@ data class PostUpdateValidationContext(
 read the patches; validators that check invariants on the *full after-state*
 should read `candidate`.
 
+By the time validation runs, the post-hook required-not-null check has
+already fired, so a dirty + null required field would have thrown
+`IllegalStateException` before reaching validation. Validators can treat
+`FieldPatch.Set(value)` for required fields as having a non-null value
+and `FieldPatch.Unset` as "not in this update".
+
 ### DeleteValidationContext
 
 ```kotlin

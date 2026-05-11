@@ -233,6 +233,12 @@ use `candidate` for the *full after-state* including unchanged fields. Compare
 `requestedPatch` vs `effectivePatch` to distinguish caller intent from
 framework-added defaults.
 
+By the time rules see the patches, the post-hook required-not-null check
+has already run, so a dirty + null required field would have thrown
+`IllegalStateException` before privacy fires. Rules can treat
+`FieldPatch.Set(value)` for required fields as having a non-null value
+and `FieldPatch.Unset` as "not in this update".
+
 ### DeletePrivacyContext
 
 ```kotlin

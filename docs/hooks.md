@@ -63,7 +63,11 @@ three fields:
   `FieldPatch<T>` (`Unset` or `Set(value)`). The snapshot is taken
   at hook entry; writes through `mutation` during this hook do not
   change the snapshot, but the next hook (and the canonical patch
-  built after the loop) sees them through fresh state.
+  built after the loop) sees them through fresh state. One caveat:
+  an explicit `name = null` for a *required* field shows as
+  `FieldPatch.Unset` in `patch` (the type can't carry `Set(null)`
+  for a non-nullable `T`); the bad value is observable via
+  `ctx.mutation.name` — see "Repairing invalid input in hooks" below.
 - **`mutation`** — a restricted writable view (`${Entity}UpdateMutationView`).
   Hooks call `mutation.foo = "x"` to set a value, `mutation.foo = null`
   to explicitly clear a nullable field, or `mutation.unsetFoo()` to
