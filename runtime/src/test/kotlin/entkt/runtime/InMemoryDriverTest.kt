@@ -158,6 +158,30 @@ class InMemoryDriverTest {
     }
 
     @Test
+    fun `update hydrates the row even when all values equal current state`() {
+        val driver = fresh()
+        val inserted = driver.insert(
+            "users",
+            mapOf<String, Any?>("name" to "Alice", "age" to 30, "active" to true),
+        )
+
+        // State-equal write: the values map matches the existing row.
+        // Generated update saves classify this as a real update (not
+        // NoChanges); the driver must hydrate the persisted row, not
+        // return null based on changed-row count.
+        val hydrated = driver.update(
+            "users",
+            inserted["id"]!!,
+            mapOf<String, Any?>("name" to "Alice", "age" to 30, "active" to true),
+        )
+
+        assertNotNull(hydrated, "state-equal update must hydrate the row, not return null")
+        assertEquals("Alice", hydrated["name"])
+        assertEquals(30, hydrated["age"])
+        assertEquals(true, hydrated["active"])
+    }
+
+    @Test
     fun `query filters with leaf predicates`() {
         val driver = fresh()
         driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
