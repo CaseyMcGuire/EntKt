@@ -128,7 +128,9 @@ internal class UpdateGenerator(
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(mutableFields, edgeFks))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks))
+            .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
+            .addFunction(buildSaveOrErrorFunction(schemaName))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -605,6 +607,22 @@ internal class UpdateGenerator(
     }
 
     /**
+     * Explicit `OrNull` alias for the canonical [save] entry point. Per
+     * the result-variants RFC, `saveOrNull()` returns `null` for
+     * expected absence (missing owner row) and throws for everything
+     * else — including [EntNoChangesException] for syntactically empty
+     * updates, which is classified by request shape rather than
+     * database state.
+     */
+    private fun buildSaveOrNullFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        return FunSpec.builder("saveOrNull")
+            .returns(entityClass.copy(nullable = true))
+            .addStatement("return save()")
+            .build()
+    }
+
+    /**
      * Non-null variant: throws [EntNotFoundException] when the owner row
      * has vanished (the `OrNull` `save()` returns `null` for that case
      * — `saveOrThrow()` lifts it into a structured failure). For
@@ -621,6 +639,34 @@ internal class UpdateGenerator(
                 ENT_ERROR,
                 schemaName,
                 ENT_OPERATION,
+            )
+            .build()
+    }
+
+    /**
+     * Structured-result variant: returns [EntResult.Ok] on success or
+     * [EntResult.Err] for any [EntException] thrown by the save path.
+     * Currently maps `NotFound` and `NoChanges` (the only EntError
+     * variants this feature emits) into structured errors. Other
+     * failures — privacy denial, validation, constraint violations,
+     * driver/transaction errors — still propagate as their existing
+     * exception types pending the broader result-variants RFC.
+     */
+    private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        val resultClass = ClassName("entkt.runtime", "EntResult")
+        val entExceptionClass = ClassName("entkt.runtime", "EntException")
+        val resultType = resultClass.parameterizedBy(entityClass)
+        return FunSpec.builder("saveOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  %T.Ok(saveOrThrow())\n", resultClass)
+                    .add("} catch (e: %T) {\n", entExceptionClass)
+                    .add("  %T.Err(e.error)\n", resultClass)
+                    .add("}\n")
+                    .build(),
             )
             .build()
     }

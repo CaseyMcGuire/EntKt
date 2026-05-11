@@ -338,6 +338,32 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `generates the full save result-variant trio`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // saveOrNull is an explicit alias for save() — the canonical name
+        // per the result-variants RFC's *OrNull convention.
+        assert(output.contains("public fun saveOrNull(): User? = save()")) {
+            "Should generate saveOrNull() as an explicit alias for save()\n$output"
+        }
+        // saveOrError wraps EntException (NotFound, NoChanges) into a
+        // structured EntResult; other exceptions still propagate per
+        // the result-variants RFC's deferred surface.
+        assert(output.contains("public fun saveOrError(): EntResult<User>")) {
+            "Should generate saveOrError(): EntResult<User>\n$output"
+        }
+        assert(output.contains("EntResult.Ok(saveOrThrow())")) {
+            "saveOrError should call saveOrThrow and wrap the success in Ok\n$output"
+        }
+        assert(output.contains("catch (e: EntException) { EntResult.Err(e.error) }")) {
+            "saveOrError should catch EntException and unwrap to Err(EntError)\n$output"
+        }
+    }
+
+    @Test
     fun `saveOrThrow throws EntNotFoundException for missing rows`() {
         val user = User()
         finalize(user, Car())
