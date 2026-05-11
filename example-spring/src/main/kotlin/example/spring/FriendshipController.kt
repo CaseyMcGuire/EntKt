@@ -34,7 +34,7 @@ class FriendshipController(private val client: EntClient) {
     fun accept(@PathVariable id: Int): FriendshipResponse {
         val friendship = client.friendships.byId(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val updated = client.friendships.update(friendship) {
+        val updated = client.friendships.update(friendship.id) {
             status = FriendshipStatus.ACCEPTED
         }.saveOrThrow()
         return updated.toResponse()

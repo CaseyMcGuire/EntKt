@@ -54,7 +54,7 @@ class PostController(private val client: EntClient) {
     fun update(@PathVariable id: Long, @RequestBody req: UpdatePostRequest): PostResponse {
         val post = client.posts.byId(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val updated = client.posts.update(post) {
+        val updated = client.posts.update(post.id) {
             req.title?.let { title = it }
             req.body?.let { body = it }
             req.published?.let { published = it }

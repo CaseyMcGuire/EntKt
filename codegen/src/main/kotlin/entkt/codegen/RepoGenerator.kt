@@ -32,7 +32,7 @@ private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationExcepti
 /**
  * Emits a per-schema repository class. The repo is the only entry point
  * for I/O — it owns the [Driver] and exposes `query`, `create`,
- * `update(entity)`, and `byId` accessors. Its `init` block registers the
+ * `update(id)`, and `byId` accessors. Its `init` block registers the
  * entity's [entkt.runtime.EntitySchema] so the driver knows the table
  * layout before any other call lands, and every builder it hands back is
  * constructed with the same driver reference.
@@ -149,11 +149,11 @@ internal class RepoGenerator(
             .addFunction(buildRepoCreate(schema, entityClass, createClass, createLambda))
             .addFunction(
                 FunSpec.builder("update")
-                    .addParameter("entity", entityClass)
+                    .addParameter("id", idType)
                     .addParameter("block", updateLambda)
                     .returns(updateClass)
                     .addStatement(
-                        "return %T(driver, client, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
+                        "return %T(driver, client, id, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
                         updateClass,
                     )
                     .build()

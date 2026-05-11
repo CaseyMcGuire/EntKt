@@ -169,8 +169,8 @@ class EntktPluginTest {
                 "Repo should expose create(block)",
             )
             assertTrue(
-                repoContent.contains("fun update(entity: Pet, block: PetUpdate.() -> Unit): PetUpdate"),
-                "Repo should expose update(entity, block)",
+                repoContent.contains("fun update(id: Int, block: PetUpdate.() -> Unit): PetUpdate"),
+                "Repo should expose update(id, block)",
             )
             assertTrue(
                 repoContent.contains("fun query(block: PetQuery.() -> Unit = {}): PetQuery"),

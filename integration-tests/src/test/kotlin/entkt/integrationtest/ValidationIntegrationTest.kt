@@ -291,7 +291,7 @@ class ValidationIntegrationTest {
         }.save()
 
         val ex = assertFailsWith<ValidationException> {
-            client.articles.update(article) { published = false }.save()
+            client.articles.update(article.id) { published = false }.save()
         }
         assertTrue(ex.message!!.contains("cannot unpublish"))
     }
@@ -307,7 +307,7 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.save()
 
-        val updated = client.articles.update(article) { published = true }.save()!!
+        val updated = client.articles.update(article.id) { published = true }.save()!!
         assertTrue(updated.published)
     }
 
@@ -400,7 +400,7 @@ class ValidationIntegrationTest {
         }.save()
 
         assertFailsWith<ValidationException> {
-            client.articles.update(article) { published = false }.save()
+            client.articles.update(article.id) { published = false }.save()
         }
     }
 
@@ -438,7 +438,7 @@ class ValidationIntegrationTest {
 
         // Update title to something that fails create validation (DRAFT: prefix + published)
         val ex = assertFailsWith<ValidationException> {
-            client.articles.update(article) {
+            client.articles.update(article.id) {
                 title = "DRAFT: Now Published"
                 published = true
             }.save()
@@ -458,7 +458,7 @@ class ValidationIntegrationTest {
         }.save()
 
         val ex = assertFailsWith<ValidationException> {
-            client.articles.update(article) { title = "AB" }.save()
+            client.articles.update(article.id) { title = "AB" }.save()
         }
         assertTrue(ex.violations.any { it.message.contains("at least 3") })
     }

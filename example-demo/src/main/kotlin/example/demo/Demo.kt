@@ -59,8 +59,8 @@ fun main() {
     println()
 
     // ---------- Update via the repo ----------
-    banner("client.users.update(alice) { ... }.save()")
-    val olderAlice = client.users.update(alice) {
+    banner("client.users.update(alice.id) { ... }.save()")
+    val olderAlice = client.users.update(alice.id) {
         age = 31
         updatedAt = Instant.now()
     }.save()

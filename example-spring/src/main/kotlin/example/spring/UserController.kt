@@ -67,7 +67,7 @@ class UserController(private val client: EntClient) {
     fun update(@PathVariable id: UUID, @RequestBody req: UpdateUserRequest): UserResponse {
         val user = client.users.byId(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val updated = client.users.update(user) {
+        val updated = client.users.update(user.id) {
             req.name?.let { name = it }
             req.email?.let { email = it }
             req.age?.let { age = it }

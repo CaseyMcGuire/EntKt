@@ -627,7 +627,7 @@ class PrivacyIntegrationTest {
             assertNotNull(article)
 
             val ex = assertFailsWith<PrivacyDeniedException> {
-                scoped.articles.update(article) { title = "Hacked" }.save()
+                scoped.articles.update(article.id) { title = "Hacked" }.save()
             }
             assertEquals(PrivacyOperation.UPDATE, ex.operation)
             assertEquals("only the author can update", ex.reason)
@@ -655,7 +655,7 @@ class PrivacyIntegrationTest {
                 where(Article.published eq true)
             }.firstOrNull()!!
 
-            val updated = scoped.articles.update(article) { title = "Updated Title" }.save()!!
+            val updated = scoped.articles.update(article.id) { title = "Updated Title" }.save()!!
             assertEquals("Updated Title", updated.title)
         }
     }
@@ -676,7 +676,7 @@ class PrivacyIntegrationTest {
         // Anonymous update should fail — RequireAuth create rule denies anonymous
         assertFailsWith<PrivacyDeniedException> {
             client.withPrivacyContext(PrivacyContext(Viewer.Anonymous)) { anon ->
-                anon.articles.update(article) { title = "Anon Update" }.save()
+                anon.articles.update(article.id) { title = "Anon Update" }.save()
             }
         }
     }

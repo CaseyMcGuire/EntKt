@@ -92,12 +92,28 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `takes entity in constructor`() {
+    fun `takes id in constructor`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("entity: User")) { "Should take entity parameter\n$output" }
+        assert(output.contains("id: UUID")) { "Should take id parameter\n$output" }
+    }
+
+    @Test
+    fun `loads current row internally before hooks`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+
+        // The internal current-row load short-circuits with null for missing rows
+        // before any hook, privacy, or validation runs.
+        val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
+        val hookPos = output.indexOf("for (hook in beforeSaveHooks)")
+        assert(loadPos != -1) { "save() should load the current row via driver.byId(...)\n$output" }
+        assert(hookPos != -1 && loadPos < hookPos) {
+            "Internal current-row load should happen before before-hooks\n$output"
+        }
     }
 
     @Test
@@ -118,11 +134,12 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
 
         // entity should NOT be private — hooks need to inspect current state
-        assert(!output.contains("private val entity")) {
+        assert(!output.contains("private val entity") && !output.contains("private lateinit var entity")) {
             "entity should be public so hooks can access current state\n$output"
         }
-        assert(output.contains("val entity: User")) {
-            "Should have public entity property\n$output"
+        // Now lateinit because the row is loaded inside save(), not passed in.
+        assert(output.contains("lateinit var entity: User")) {
+            "Should have public lateinit entity property populated by save()\n$output"
         }
     }
 

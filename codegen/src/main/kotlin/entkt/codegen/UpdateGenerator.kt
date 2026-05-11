@@ -39,6 +39,7 @@ internal class UpdateGenerator(
         val updateClass = ClassName(packageName, className)
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
+        val idType = schema.id().type.toTypeName()
 
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeUpdateHookType = hookListType(updateClass)
@@ -51,7 +52,7 @@ internal class UpdateGenerator(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
                     .addParameter("client", clientClass)
-                    .addParameter("entity", entityClass)
+                    .addParameter("id", idType)
                     .addParameter("beforeSaveHooks", beforeSaveHookType)
                     .addParameter("beforeUpdateHooks", beforeUpdateHookType)
                     .addParameter("afterUpdateHooks", afterUpdateHookType)
@@ -69,8 +70,14 @@ internal class UpdateGenerator(
                     .build()
             )
             .addProperty(
+                PropertySpec.builder("id", idType)
+                    .initializer("id")
+                    .build()
+            )
+            .addProperty(
                 PropertySpec.builder("entity", entityClass)
-                    .initializer("entity")
+                    .addModifiers(KModifier.LATEINIT)
+                    .mutable(true)
                     .build()
             )
             .addProperty(
@@ -172,12 +179,18 @@ internal class UpdateGenerator(
      * `save()` writes the builder's changes to the driver and returns
      * the refreshed entity — or null when the row has been deleted out
      * from under us. Each mutable field checks [dirtyFields] to decide
-     * whether to use the builder's value or fall back to the entity's
-     * current value — this lets callers explicitly set nullable fields
-     * to null. Immutables are sourced straight from the entity (they
-     * can't change) and included in the map so the fallback behavior
-     * stays obvious — the driver's merge semantics make it a no-op
-     * write.
+     * whether to use the builder's value or fall back to the loaded
+     * row's current value — this lets callers explicitly set nullable
+     * fields to null. Immutables are sourced straight from the loaded
+     * row (they can't change) and included in the map so the fallback
+     * behavior stays obvious — the driver's merge semantics make it a
+     * no-op write.
+     *
+     * The current owner row is loaded internally at the start of
+     * `save()` (bypassing LOAD privacy). If the row no longer exists,
+     * `save()` returns `null` before any hook, privacy, validation, or
+     * driver write runs. Hooks see the loaded row through the [entity]
+     * property.
      */
     private fun buildSaveFunction(
         schemaName: String,
@@ -187,6 +200,14 @@ internal class UpdateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val builder = FunSpec.builder("save")
             .returns(entityClass.copy(nullable = true))
+
+        // ---- Internal current-row load (bypasses LOAD privacy). ----
+        // Missing rows short-circuit before hooks/privacy/validation run.
+        builder.addStatement(
+            "val row0 = driver.byId(%T.TABLE, id) ?: return null",
+            entityClass,
+        )
+        builder.addStatement("entity = %T.fromRow(row0)", entityClass)
 
         // ---- Lifecycle hooks (before fallback so hooks can set fields). ----
         builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
@@ -277,7 +298,7 @@ internal class UpdateGenerator(
         emitUpdatePrivacy(builder, schemaName, allFields, edgeFks)
         emitUpdateValidation(builder, schemaName)
         builder.addStatement(
-            "val row = driver.update(%T.TABLE, entity.id, values) ?: return null",
+            "val row = driver.update(%T.TABLE, id, values) ?: return null",
             entityClass,
         )
         builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)

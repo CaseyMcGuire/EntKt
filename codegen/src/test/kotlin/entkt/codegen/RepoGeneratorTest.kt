@@ -55,8 +55,8 @@ class RepoGeneratorTest {
         assert(output.contains("fun create(block: CarCreate.() -> Unit): CarCreate")) {
             "Should have create taking DSL block\n$output"
         }
-        assert(output.contains("fun update(entity: Car, block: CarUpdate.() -> Unit): CarUpdate")) {
-            "Should have update(entity, block) — entity comes through the repo, not the instance\n$output"
+        assert(output.contains("fun update(id: Int, block: CarUpdate.() -> Unit): CarUpdate")) {
+            "Should have update(id, block) — update is rooted by id, not by a caller-passed entity\n$output"
         }
     }
 
@@ -159,7 +159,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarUpdate(driver, client, entity, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
+        assert(output.contains("CarUpdate(driver, client, id, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
             "update should pass client and hook lists to CarUpdate\n$output"
         }
     }
