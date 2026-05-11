@@ -87,9 +87,15 @@ internal class UpdateGenerator(
                     .initializer("id")
                     .build()
             )
+            // Internal state: populated by save() from the byId(id) load.
+            // Hooks read the loaded `before` through the hook context
+            // (ctx.before), not by poking at the builder. Keeping this
+            // public would let direct callers either crash on
+            // uninitialized access or observe a stale (pre-update) row
+            // after save() completes.
             .addProperty(
                 PropertySpec.builder("entity", entityClass)
-                    .addModifiers(KModifier.LATEINIT)
+                    .addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
                     .mutable(true)
                     .build()
             )

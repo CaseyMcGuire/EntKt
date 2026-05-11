@@ -436,18 +436,19 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `entity is public for hook access`() {
+    fun `entity is private internal state`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        // entity should NOT be private — hooks need to inspect current state
-        assert(!output.contains("private val entity") && !output.contains("private lateinit var entity")) {
-            "entity should be public so hooks can access current state\n$output"
-        }
-        // Now lateinit because the row is loaded inside save(), not passed in.
-        assert(output.contains("lateinit var entity: User")) {
-            "Should have public lateinit entity property populated by save()\n$output"
+        // Phase 4 moved hook access to ctx.before / ctx.mutation, so
+        // the `entity` lateinit is now purely internal state populated
+        // by save() and read by candidate construction. Keeping it
+        // public would let direct callers either crash on uninitialized
+        // access or observe a stale (pre-update) row after save().
+        assert(output.contains("private lateinit var entity: User")) {
+            "entity should be a private lateinit var (internal state populated by save())\n$output"
         }
     }
 
