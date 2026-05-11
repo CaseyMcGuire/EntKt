@@ -199,21 +199,64 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // After hooks, if the effective patch is empty, generated code
-        // builds the unchanged candidate, runs UPDATE privacy on it
-        // (real authorization decision against `before`), then throws
-        // NoChanges. Validation/driver/after-hooks/load-privacy are skipped.
-        val emptyCheck = output.indexOf("if (values.isEmpty())")
-        assert(emptyCheck != -1) { "Should detect hook-cleared empty effective patch\n$output" }
+        // After hooks, if the requested patch is empty (dirtyFields was
+        // cleared), generated code builds the unchanged candidate, runs
+        // UPDATE privacy on it (real authorization decision against
+        // `before`), then throws NoChanges. Validation/driver/after-hooks/
+        // load-privacy are skipped.
+        val emptyCheck = output.indexOf("val requestedPatch = _buildRequestedPatch() if (dirtyFields.isEmpty())")
+        assert(emptyCheck != -1) {
+            "Hook-cleared check must run after _buildRequestedPatch and before update defaults\n$output"
+        }
 
         // The privacy call inside the empty branch uses the unchanged
         // candidate (built from `before`) with empty patches.
-        val emptyBlock = output.substring(emptyCheck, (emptyCheck + 600).coerceAtMost(output.length))
+        val emptyBlock = output.substring(emptyCheck, (emptyCheck + 700).coerceAtMost(output.length))
+        assert(emptyBlock.contains("val effectivePatch = requestedPatch")) {
+            "Hook-cleared branch must use requested as effective (skip update defaults)\n$output"
+        }
         assert(emptyBlock.contains("evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)")) {
-            "Empty path should run UPDATE privacy on the unchanged candidate\n$output"
+            "Hook-cleared branch should run UPDATE privacy on the unchanged candidate\n$output"
         }
         assert(emptyBlock.contains("throw EntNoChangesException")) {
-            "Empty path should throw EntNoChangesException after UPDATE privacy\n$output"
+            "Hook-cleared branch should throw EntNoChangesException after UPDATE privacy\n$output"
+        }
+    }
+
+    @Test
+    fun `hook-cleared empty patch skips update defaults even when schema has them`() {
+        // Regression for the bug where updatedAt = updateDefaultNow() turned
+        // every hook-cleared update into a real write: the post-defaults
+        // values map was non-empty (it carried the synthetic updatedAt),
+        // bypassing the NoChanges branch and writing to the database.
+        val schema = UpdateDefaultEntity()
+        finalize(schema)
+        val output = generator.generate("UpdateDefaultEntity", schema).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The hook-cleared branch must run BEFORE emitEffectivePatchConstruction
+        // so the updateDefault never gets applied.
+        val emptyCheckPos = output.indexOf("if (dirtyFields.isEmpty())")
+        val effectivePatchPos = output.indexOf(
+            "val effectivePatch = UpdateDefaultEntityUpdatePatch(",
+        )
+        val driverUpdatePos = output.indexOf("driver.update(UpdateDefaultEntity.TABLE")
+        assert(emptyCheckPos != -1 && effectivePatchPos != -1 && driverUpdatePos != -1) {
+            "Expected hook-cleared check, effective patch construction, and driver write\n$output"
+        }
+        // The TOP empty-check is at index 0-ish; we want the SECOND occurrence
+        // (after the byId load + hook loop) to come before the effective patch
+        // construction. Find it via the canonical preceding marker.
+        val postHookEmptyPos = output.indexOf(
+            "val requestedPatch = _buildRequestedPatch() if (dirtyFields.isEmpty())",
+        )
+        assert(postHookEmptyPos != -1) { "Expected post-hook empty check\n$output" }
+        assert(postHookEmptyPos < effectivePatchPos) {
+            "Hook-cleared check must run before update-default application " +
+                "(otherwise updatedAt = Set(now) sneaks into values and the write happens)\n$output"
+        }
+        assert(postHookEmptyPos < driverUpdatePos) {
+            "Hook-cleared check must short-circuit before the driver write\n$output"
         }
     }
 

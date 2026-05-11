@@ -359,6 +359,36 @@ internal class UpdateGenerator(
         // ---- Build the canonical requested patch after all before hooks. ----
         builder.addStatement("val requestedPatch = _buildRequestedPatch()")
 
+        // ---- Hook-cleared empty path (must run BEFORE update defaults). ----
+        // Per the RFC, "hook-cleared empty updates skip update defaults".
+        // dirtyFields.isEmpty() here ⇔ requested patch is all Unset.
+        // Build an unchanged effective patch (= requested, all Unset),
+        // run UPDATE privacy on the unchanged after-state candidate
+        // (a real authorization decision against the loaded `before`),
+        // then throw NoChanges. Validation, driver write, after-hooks,
+        // and returned LOAD privacy are skipped.
+        builder.beginControlFlow("if (dirtyFields.isEmpty())")
+        builder.addStatement("val effectivePatch = requestedPatch")
+        builder.addStatement("val privacy = client.currentPrivacyContext()")
+        emitCandidateConstruction(
+            builder,
+            candidateClass = candidateClass,
+            allFields = allFields,
+            edgeFks = edgeFks,
+        )
+        builder.addStatement(
+            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
+            repoPropName,
+        )
+        builder.addStatement(
+            "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
+            ENT_NO_CHANGES_EXCEPTION,
+            ENT_ERROR,
+            schemaName,
+            ENT_OPERATION,
+        )
+        builder.endControlFlow()
+
         // ---- Apply update defaults to compute the effective patch. ----
         emitEffectivePatchConstruction(
             builder,
@@ -403,7 +433,10 @@ internal class UpdateGenerator(
             )
         }
 
-        // ---- Build privacy context (used by both empty and non-empty paths). ----
+        // ---- Privacy + validation. ----
+        // The hook-cleared empty branch above already handled the
+        // requested-empty-after-hooks case, so reaching here means the
+        // requested patch had at least one Set entry.
         builder.addStatement("val privacy = client.currentPrivacyContext()")
         emitCandidateConstruction(
             builder,
@@ -411,30 +444,6 @@ internal class UpdateGenerator(
             allFields = allFields,
             edgeFks = edgeFks,
         )
-
-        // ---- Hook-cleared empty path. ----
-        // Builder requested changes, but hooks unset all of them and the
-        // schema has no update defaults. Per the RFC: run UPDATE
-        // privacy on the unchanged candidate (since it's a real
-        // authorization decision against the loaded `before`), then
-        // throw NoChanges. Validation, driver write, after-hooks, and
-        // returned LOAD privacy are skipped because no state transition
-        // is persisted.
-        builder.beginControlFlow("if (values.isEmpty())")
-        builder.addStatement(
-            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
-            repoPropName,
-        )
-        builder.addStatement(
-            "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
-            ENT_NO_CHANGES_EXCEPTION,
-            ENT_ERROR,
-            schemaName,
-            ENT_OPERATION,
-        )
-        builder.endControlFlow()
-
-        // ---- Privacy + validation. ----
         builder.addStatement(
             "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
             repoPropName,
