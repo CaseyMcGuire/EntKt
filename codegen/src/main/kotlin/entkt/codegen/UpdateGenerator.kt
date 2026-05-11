@@ -121,6 +121,7 @@ internal class UpdateGenerator(
             .addFunctions(mutableFields.map { buildUnsetFunction(toCamelCase(it.name)) })
             .addFunctions(edgeFks.map { buildUnsetFunction(it.propertyName) })
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
+            .addFunction(buildCheckRequiredNotNullFunction(mutableFields, edgeFks))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks))
             .addFunction(buildSaveOrThrowFunction(schemaName))
             .build()
@@ -208,10 +209,16 @@ internal class UpdateGenerator(
      * snapshot, and (b) once after all hooks to capture the canonical
      * requested patch fed into update defaults / privacy / validation.
      *
-     * Required-field/FK null checks live inside this helper so they
-     * fire whenever a snapshot is constructed: a hook that explicitly
-     * sets a required field to `null` triggers the same domain error
-     * as a builder that does so.
+     * The helper is **lenient**: a required field/FK that's been
+     * explicitly assigned `null` is represented as `Unset` in the patch
+     * rather than throwing. The patch type is `FieldPatch<T>` for
+     * required fields (T is non-nullable), so `Set(null)` is not even
+     * representable. Hooks that want to inspect the underlying state
+     * can read `ctx.mutation.foo` directly. The required-null check
+     * fires once after all hooks have run, before the canonical patch
+     * is built — this matches the RFC's "field-shape checks after
+     * hooks" ordering and lets a hook repair a null assignment via
+     * `mutation.unsetFoo()` or by reassigning `mutation.foo`.
      */
     private fun buildBuildRequestedPatchFunction(
         schemaName: String,
@@ -223,7 +230,60 @@ internal class UpdateGenerator(
             .addModifiers(KModifier.PRIVATE)
             .returns(patchClass)
 
-        // Required-field null checks (only fire when explicitly assigned).
+        val code = CodeBlock.builder()
+        code.add("return %T(\n", patchClass)
+        for (field in mutableFields) {
+            val prop = toCamelCase(field.name)
+            if (field.nullable) {
+                // Nullable: Set(this.foo) — Set(null) is an explicit clear.
+                code.add(
+                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
+                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
+                )
+            } else {
+                // Required: skip the Set entry if the value is null. The
+                // post-hook required-null check (called from save()
+                // before the canonical patch is built) catches unrepaired
+                // nulls.
+                code.add(
+                    "  %L = if (%S in dirtyFields && this.%L != null) %T.Set(this.%L!!) else %T.Unset,\n",
+                    prop, prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
+                )
+            }
+        }
+        for (fk in edgeFks) {
+            if (fk.required) {
+                code.add(
+                    "  %L = if (%S in dirtyFields && this.%L != null) %T.Set(this.%L!!) else %T.Unset,\n",
+                    fk.propertyName, fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
+                )
+            } else {
+                code.add(
+                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
+                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
+                )
+            }
+        }
+        code.add(")\n")
+        builder.addCode(code.build())
+        return builder.build()
+    }
+
+    /**
+     * Generate a private `_checkRequiredNotNull()` member that throws
+     * `IllegalStateException` for any required field or required edge FK
+     * that has been assigned `null` and not repaired. Called from
+     * `save()` after all `beforeUpdate` hooks complete, before the
+     * canonical requested patch is built. A hook can clear the bad
+     * assignment via `mutation.unsetFoo()` (removes the entry from
+     * `dirtyFields`) or by reassigning a non-null value.
+     */
+    private fun buildCheckRequiredNotNullFunction(
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): FunSpec {
+        val builder = FunSpec.builder("_checkRequiredNotNull")
+            .addModifiers(KModifier.PRIVATE)
         for (field in mutableFields) {
             if (field.nullable) continue
             val prop = toCamelCase(field.name)
@@ -239,38 +299,6 @@ internal class UpdateGenerator(
                 fk.propertyName, fk.propertyName, "${fk.edgeName} is required",
             )
         }
-
-        val code = CodeBlock.builder()
-        code.add("return %T(\n", patchClass)
-        for (field in mutableFields) {
-            val prop = toCamelCase(field.name)
-            if (field.nullable) {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
-                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
-                )
-            } else {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L!!) else %T.Unset,\n",
-                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
-                )
-            }
-        }
-        for (fk in edgeFks) {
-            if (fk.required) {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L!!) else %T.Unset,\n",
-                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
-                )
-            } else {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
-                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
-                )
-            }
-        }
-        code.add(")\n")
-        builder.addCode(code.build())
         return builder.build()
     }
 
@@ -355,6 +383,14 @@ internal class UpdateGenerator(
         )
         builder.addStatement("hook(ctx)")
         builder.endControlFlow()
+
+        // ---- Required-null check (after hooks, before canonical patch). ----
+        // Per the RFC's pipeline ordering, field-shape and required-edge
+        // checks run after beforeUpdate hooks. A hook can repair an
+        // explicit `name = null` assignment via `mutation.unsetName()`
+        // (removes from dirtyFields) or by reassigning a value;
+        // unrepaired assignments throw here.
+        builder.addStatement("_checkRequiredNotNull()")
 
         // ---- Build the canonical requested patch after all before hooks. ----
         builder.addStatement("val requestedPatch = _buildRequestedPatch()")

@@ -63,14 +63,16 @@ class UpdateGeneratorTest {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        // Required field: Set(this.name!!) with non-null value, Unset otherwise.
+        // Required field: Set(this.name!!) when non-null, Unset when
+        // the value is null (so a hook can repair `update(id) { name = null }`).
         assert(
             output.contains(
-                "name = if (\"name\" in dirtyFields) FieldPatch.Set(this.name!!) else FieldPatch.Unset",
+                "name = if (\"name\" in dirtyFields && this.name != null) FieldPatch.Set(this.name!!) else FieldPatch.Unset",
             ),
         ) {
-            "Required field should lower to FieldPatch.Set(value!!) / Unset\n$output"
+            "Required field should lower leniently — null assignments fall through to Unset\n$output"
         }
         // Nullable field: Set(this.age) — Set(null) is an explicit clear.
         assert(
@@ -81,6 +83,63 @@ class UpdateGeneratorTest {
         // Candidate folds the effective patch over the loaded `before`.
         assert(output.contains("name = effectivePatch.name.orElse(entity.name)")) {
             "Candidate should fold effective patch over entity via orElse(...)\n$output"
+        }
+    }
+
+    @Test
+    fun `required-null check runs after beforeUpdate hooks so a hook can repair`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The hook loop must complete before _checkRequiredNotNull() fires,
+        // so a hook that calls mutation.unsetName() or mutation.name = "x"
+        // can repair an explicit `name = null` builder assignment. Anchor
+        // the check on the call site (preceded by the hook loop's closing
+        // brace) rather than the function declaration.
+        val hookLoop = output.indexOf("for (hook in beforeUpdateHooks)")
+        val checkCallSite = output.indexOf("hook(ctx) } _checkRequiredNotNull()")
+        val canonicalPatchPos = output.indexOf("val requestedPatch = _buildRequestedPatch()")
+        assert(hookLoop != -1 && checkCallSite != -1 && canonicalPatchPos != -1) {
+            "Expected hook loop, required-null check call site, and canonical patch construction\n$output"
+        }
+        assert(hookLoop < checkCallSite) {
+            "_checkRequiredNotNull() must be called after the beforeUpdate hook loop\n$output"
+        }
+        assert(checkCallSite < canonicalPatchPos) {
+            "_checkRequiredNotNull() must be called before the canonical requestedPatch is built\n$output"
+        }
+
+        // The lenient snapshot helper must NOT throw on dirty+null required
+        // fields — that's what lets the hook see the broken state and fix it.
+        // Detect any throw inside _buildRequestedPatch's body; the lenient
+        // version emits no throws there.
+        val patchFnIdx = output.indexOf("private fun _buildRequestedPatch(): UserUpdatePatch")
+        assert(patchFnIdx != -1) { "Expected generated _buildRequestedPatch\n$output" }
+        // Find the function body by looking for the next "private fun" or end of class.
+        val nextFnIdx = output.indexOf("private fun ", patchFnIdx + 1)
+            .let { if (it == -1) output.length else it }
+        val patchFnBody = output.substring(patchFnIdx, nextFnIdx)
+        assert(!patchFnBody.contains("throw IllegalStateException")) {
+            "_buildRequestedPatch() should be lenient (no throw on dirty+null required fields)\n$patchFnBody"
+        }
+
+        // The dedicated check must throw when an unrepaired null persists
+        // post-hooks. Required-field order in the function body depends on
+        // schema declaration order, so just check the body contains the
+        // expected per-field throws.
+        val checkFnIdx = output.indexOf("private fun _checkRequiredNotNull()")
+        assert(checkFnIdx != -1) { "Expected generated _checkRequiredNotNull\n$output" }
+        val checkFnEnd = output.indexOf("public fun save", checkFnIdx)
+        assert(checkFnEnd != -1) { "Couldn't find end of _checkRequiredNotNull body\n$output" }
+        val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
+        assert(
+            checkFnBody.contains(
+                "if (\"name\" in dirtyFields && this.name == null) throw IllegalStateException(\"name is required\")",
+            ),
+        ) {
+            "_checkRequiredNotNull() should throw IllegalStateException for unrepaired null `name`\n$checkFnBody"
         }
     }
 
