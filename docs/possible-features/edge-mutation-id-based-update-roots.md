@@ -2,7 +2,12 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Implemented. The `update(id)` API, internal current-row load, `FieldPatch`
+patch model, `EntError`/`EntException` foundation (`NotFound`, `NoChanges`),
+restructured `beforeUpdate` hook context with `unset{Field}()` and
+hook-cleared empty handling, and driver state-equal hydration are all live.
+Pessimistic update consistency and the broader result-variants surface
+remain future work in their own RFCs.
 
 Split out from [Edge Mutation API](edge-mutation-api.md).
 
