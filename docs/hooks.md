@@ -29,7 +29,7 @@ val client = EntClient(driver) {
 | `beforeSave` | `UserMutation` | Before both create and update, before validation | Timestamps, computed fields |
 | `beforeCreate` | `UserCreate` | Create only, after `beforeSave` | Set creation-only defaults |
 | `afterCreate` | `User` | After successful insert | Logging, notifications |
-| `beforeUpdate` | `UserUpdate` | Update only, after `beforeSave` | Audit trails |
+| `beforeUpdate` | `UserUpdateHookContext` | Update only, after `beforeSave` | Audit trails, normalize patch |
 | `afterUpdate` | `User` | After successful update | Cache invalidation |
 | `beforeDelete` | `User` | Before driver delete | Cleanup, cascading side effects |
 | `afterDelete` | `User` | After successful delete | Logging, cascading cleanup |
@@ -49,20 +49,52 @@ users {
 }
 ```
 
-## Inspecting Current State in Updates
+## The Update Hook Context
 
-The `beforeUpdate` hook receives `UserUpdate`, which exposes the
-current entity state via `.entity`:
+The `beforeUpdate` hook receives a `${Entity}UpdateHookContext` with
+three fields:
+
+- **`before`** — the loaded current owner row. `update(id)` performs
+  an internal `byId` load before any hook runs (bypassing LOAD
+  privacy), so `before` is always present and reflects database state
+  at the moment of the load.
+- **`patch`** — a snapshot of the requested patch as accumulated *up
+  to this hook*. It's a `${Entity}UpdatePatch` whose fields are
+  `FieldPatch<T>` (`Unset` or `Set(value)`). The snapshot is taken
+  at hook entry; writes through `mutation` during this hook do not
+  change the snapshot, but the next hook (and the canonical patch
+  built after the loop) sees them through fresh state.
+- **`mutation`** — a restricted writable view (`${Entity}UpdateMutationView`).
+  Hooks call `mutation.foo = "x"` to set a value, `mutation.foo = null`
+  to explicitly clear a nullable field, or `mutation.unsetFoo()` to
+  remove the entry from the patch entirely. The view does not expose
+  `save()`, the loaded `before` row, the owner `id`, or other
+  internal builder state.
 
 ```kotlin
+import entkt.runtime.orElse  // folds FieldPatch.Unset → fallback, Set → value
+
 users {
-    beforeUpdate { update ->
-        if (update.name != update.entity.name) {
-            println("Name changed from ${update.entity.name} to ${update.name}")
+    beforeUpdate { ctx ->
+        val current = ctx.before.name
+        val pending = ctx.patch.name.orElse(current)
+        if (pending != current) {
+            println("Name changing from $current to $pending")
         }
     }
 }
 ```
+
+Reading pending state always goes through `ctx.patch` — the
+property getters on `ctx.mutation` *throw* on untouched fields,
+because a default-null getter would conflate `Unset` and explicit
+`Set(null)`. Use `mutation` for writing, `patch` for reading.
+
+`unset{Field}()` is update-specific (it removes from the patch's
+`dirtyFields`). It lives on the update hook view, not on the shared
+`Mutation` interface that `beforeSave` receives. If a `beforeSave`
+hook needs to clear a pending update entry, that work belongs in a
+`beforeUpdate` hook instead.
 
 ## Execution Order
 
@@ -81,16 +113,39 @@ For a **create** operation, the full execution order is:
 
 For an **update**:
 
-1. `beforeSave` (receives `UserMutation`)
-2. `beforeUpdate` (receives `UserUpdate`)
-3. Compute final values (dirty tracking)
-4. Field validation
-5. Build `WriteCandidate`
-6. Privacy update check
-7. Entity validation update
-8. `driver.update(...)`
-9. `afterUpdate` (receives `User`)
-10. Load privacy on returned entity
+ 1. **Syntactically empty check.** If `update(id) { }` was called with
+    no field assignments, `save()` throws `EntNoChangesException`
+    *before* loading the owner row — request shape, not database state,
+    classifies the no-op (avoids leaking whether the id exists)
+ 2. **Internal current-row load** via `driver.byId(id)` (bypasses LOAD
+    privacy). Missing row → `save()` returns `null` (or `saveOrThrow()`
+    throws `EntNotFoundException`)
+ 3. `beforeSave` (receives `UserMutation`)
+ 4. `beforeUpdate` (receives `UserUpdateHookContext` — each hook gets a
+    fresh `patch` snapshot built from the current dirty state; hooks
+    may write through `ctx.mutation` or call `unsetFoo()` to remove
+    entries)
+ 5. **Required-not-null check** on dirty fields (after hooks, so a
+    hook can repair an explicit `name = null` via `unsetName()` or by
+    reassigning a value)
+ 6. Build the canonical requested patch
+ 7. **Hook-cleared empty path:** if all dirty fields were unset by
+    hooks, run UPDATE privacy on the unchanged candidate, then throw
+    `EntNoChangesException` (skip update defaults, validation, the
+    driver write, `afterUpdate`, and returned LOAD privacy)
+ 8. Apply update defaults (e.g. `updatedAt = updateDefaultNow()`) to
+    produce the effective patch
+ 9. Field validators run on the effective patch's `Set` entries
+10. Build the database write set from the effective patch — only
+    `Set` entries are sent to `driver.update`; untouched columns are
+    not round-tripped
+11. Build the full after-state `WriteCandidate` by folding the
+    effective patch over `before`
+12. Privacy update check
+13. Entity validation update
+14. `driver.update(...)` — returns the persisted row
+15. `afterUpdate` (receives the persisted `User`)
+16. Load privacy on returned entity
 
 For a **delete**:
 
