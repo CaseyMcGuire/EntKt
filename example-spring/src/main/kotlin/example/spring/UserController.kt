@@ -65,14 +65,15 @@ class UserController(private val client: EntClient) {
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: UUID, @RequestBody req: UpdateUserRequest): UserResponse {
-        val user = client.users.byId(id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val updated = client.users.update(user.id) {
+        // No pre-load: `update(id)` does its own internal byId before
+        // hooks/privacy/validation. A missing row makes save() return
+        // null, which we map to 404 here.
+        val updated = client.users.update(id) {
             req.name?.let { name = it }
             req.email?.let { email = it }
             req.age?.let { age = it }
             req.active?.let { active = it }
-        }.saveOrThrow()
+        }.save() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return updated.toResponse()
     }
 

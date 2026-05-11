@@ -32,11 +32,11 @@ class FriendshipController(private val client: EntClient) {
 
     @PostMapping("/friendships/{id}/accept")
     fun accept(@PathVariable id: Int): FriendshipResponse {
-        val friendship = client.friendships.byId(id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val updated = client.friendships.update(friendship.id) {
+        // No pre-load: `update(id)` does its own internal byId.
+        // Missing-row → save() returns null → 404.
+        val updated = client.friendships.update(id) {
             status = FriendshipStatus.ACCEPTED
-        }.saveOrThrow()
+        }.save() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return updated.toResponse()
     }
 

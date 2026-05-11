@@ -161,10 +161,17 @@ data class PostCreateValidationContext(
 ```kotlin
 data class PostUpdateValidationContext(
     val client: EntClient,
-    val before: Post,
-    val candidate: PostWriteCandidate,
+    val before: Post,                    // current state of the entity (loaded by save())
+    val requestedPatch: PostUpdatePatch, // caller/hook intent — FieldPatch entries
+    val effectivePatch: PostUpdatePatch, // after framework update defaults
+    val candidate: PostWriteCandidate,   // full after-state = before + effectivePatch
 )
 ```
+
+`requestedPatch` and `effectivePatch` carry per-field `FieldPatch<T>` entries
+(`Unset` or `Set(value)`). Validators that want to know *what changed* should
+read the patches; validators that check invariants on the *full after-state*
+should read `candidate`.
 
 ### DeleteValidationContext
 
@@ -265,18 +272,40 @@ all checks.
 ### Update
 
 ```
-1.  beforeSave hooks
-2.  beforeUpdate hooks
-3.  compute final values (dirty tracking)
-4.  field validation (mutable fields only)
-5.  build WriteCandidate
-6.  privacy update
-7.  validation update          ← NEW
-8.  driver.update()
-9.  hydrate entity from row
-10. afterUpdate hooks
-11. load privacy on returned entity
-12. return entity
+ 1. syntactically empty patch → throw EntNoChangesException (before
+    the owner-row load — request shape, not database state, so we
+    don't leak whether the id exists)
+ 2. internal current-row load via driver.byId(id), bypassing LOAD
+    privacy; missing row → save() returns null (saveOrThrow throws
+    EntNotFoundException)
+ 3. beforeSave hooks (receive UserMutation)
+ 4. beforeUpdate hooks (receive UserUpdateHookContext with a fresh
+    `patch` snapshot per hook; hooks may write through ctx.mutation
+    or call ctx.mutation.unsetFoo() to remove entries)
+ 5. required-not-null check on dirty fields (after hooks, so a hook
+    can repair an explicit `name = null` via unset or reassignment)
+ 6. build the canonical requested patch
+ 7. hook-cleared empty path: if all dirty fields were unset by hooks,
+    run UPDATE privacy on the unchanged candidate, then throw
+    EntNoChangesException (skip defaults, validation, driver write,
+    afterUpdate, returned LOAD privacy)
+ 8. apply update defaults (e.g. updatedAt = updateDefaultNow()) to
+    produce the effective patch
+ 9. field validation on the effective patch's Set entries (mutable
+    fields only)
+10. build the database write set from the effective patch — only Set
+    entries are sent to driver.update; untouched columns are not
+    round-tripped
+11. build the full after-state WriteCandidate by folding the effective
+    patch over `before`
+12. privacy update          ← receives (before, requestedPatch,
+    effectivePatch, candidate)
+13. validation update       ← NEW; same context shape as privacy
+14. driver.update()
+15. hydrate entity from row
+16. afterUpdate hooks
+17. load privacy on returned entity
+18. return entity
 ```
 
 ### Delete

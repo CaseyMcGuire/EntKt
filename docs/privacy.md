@@ -220,10 +220,18 @@ data class UserCreatePrivacyContext(
 data class UserUpdatePrivacyContext(
     val privacy: PrivacyContext,
     val client: EntClient,
-    val before: User,                   // current state of the entity
-    val candidate: UserWriteCandidate,  // the values after update
+    val before: User,                   // current state of the entity (loaded by save())
+    val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
+    val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
+    val candidate: UserWriteCandidate,  // full after-state = before + effectivePatch
 )
 ```
+
+`requestedPatch` and `effectivePatch` carry per-field `FieldPatch<T>` entries
+(`Unset` or `Set(value)`). Use them when a rule needs to know *what changed*;
+use `candidate` for the *full after-state* including unchanged fields. Compare
+`requestedPatch` vs `effectivePatch` to distinguish caller intent from
+framework-added defaults.
 
 ### DeletePrivacyContext
 

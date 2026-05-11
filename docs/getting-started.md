@@ -148,7 +148,7 @@ fun main() {
     }.all()
 
     // Update
-    val updated = client.users.update(alice) {
+    val updated = client.users.update(alice.id) {
         age = 31
     }.save()
 

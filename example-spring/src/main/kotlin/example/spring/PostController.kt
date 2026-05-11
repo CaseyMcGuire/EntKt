@@ -52,13 +52,13 @@ class PostController(private val client: EntClient) {
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: Long, @RequestBody req: UpdatePostRequest): PostResponse {
-        val post = client.posts.byId(id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val updated = client.posts.update(post.id) {
+        // No pre-load: `update(id)` does its own internal byId.
+        // Missing-row → save() returns null → 404.
+        val updated = client.posts.update(id) {
             req.title?.let { title = it }
             req.body?.let { body = it }
             req.published?.let { published = it }
-        }.saveOrThrow()
+        }.save() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return updated.toResponse()
     }
 

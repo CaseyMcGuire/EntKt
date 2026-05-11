@@ -16,12 +16,15 @@ For each schema the generator emits:
   Enables shared validators via `onBeforeSave`.
 - **`{Entity}Create` builder** — DSL setters + `.save()`.
   Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
-- **`{Entity}Update` builder** — DSL setters (immutable fields are elided) + `.save()`.
-  Implements `{Entity}Mutation`. Exposes `entity` for hooks to inspect current state.
+- **`{Entity}Update` builder** — DSL setters (immutable fields are elided) plus
+  `.save()` / `.saveOrNull()` / `.saveOrThrow()` / `.saveOrError()`. Implements
+  `{Entity}Mutation`. The current owner row is loaded internally at the start
+  of `save()` (bypassing LOAD privacy); hooks receive a `{Entity}UpdateHookContext`
+  with `before`, `patch`, and a restricted `mutation` view.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
   `.offset(...)`, `.all()`, `.firstOrNull()`, edge traversal methods
   (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
-- **`{Entity}Repo`** — `.create { }`, `.update(entity) { }`, `.query { }`,
+- **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
   `.byId(id)`, `.delete(entity)`, `.deleteById(id)`,
   `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)`.
   Registers the entity's `EntitySchema` with the driver on construction.
