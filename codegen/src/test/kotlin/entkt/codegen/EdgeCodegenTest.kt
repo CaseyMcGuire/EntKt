@@ -333,13 +333,22 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `update builder save uses dirty tracking for edge FK`() {
+    fun `update builder save lowers edge FK dirty tracking to FieldPatch`() {
         val (_, names, byName) = createAllSchemas()
         val output = UpdateGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("if (\"ownerId\" in dirtyFields) this.ownerId else entity.ownerId")) {
-            "Should check dirtyFields for edge FK fallback\n$output"
+        // Optional edge FK: Set(this.ownerId) — Set(null) is an explicit clear.
+        assert(
+            output.contains(
+                "ownerId = if (\"ownerId\" in dirtyFields) FieldPatch.Set(this.ownerId) else FieldPatch.Unset",
+            ),
+        ) {
+            "Optional edge FK should lower to FieldPatch.Set(value) / Unset\n$output"
+        }
+        // Candidate folds effective patch over the loaded entity.
+        assert(output.contains("ownerId = effectivePatch.ownerId.orElse(entity.ownerId)")) {
+            "Candidate should fold effective patch over entity for edge FKs via orElse(...)\n$output"
         }
     }
 

@@ -38,6 +38,7 @@ internal class ValidationGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val clientClass = ClassName(packageName, "EntClient")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val configClass = ClassName(packageName, "${schemaName}ValidationConfig")
         val scopeClass = ClassName(packageName, "${schemaName}ValidationScope")
 
@@ -65,7 +66,7 @@ internal class ValidationGenerator(
 
         // Operation context data classes
         fileBuilder.addType(buildCreateContext(entityClass, clientClass, candidateClass, createCtx))
-        fileBuilder.addType(buildUpdateContext(entityClass, clientClass, candidateClass, updateCtx))
+        fileBuilder.addType(buildUpdateContext(entityClass, clientClass, candidateClass, patchClass, updateCtx))
         fileBuilder.addType(buildDeleteContext(entityClass, clientClass, candidateClass, deleteCtx))
 
         // ValidationConfig
@@ -113,6 +114,7 @@ internal class ValidationGenerator(
         entityClass: ClassName,
         clientClass: ClassName,
         candidateClass: ClassName,
+        patchClass: ClassName,
         ctxClass: ClassName,
     ): TypeSpec = TypeSpec.classBuilder(ctxClass)
         .addModifiers(KModifier.DATA)
@@ -120,11 +122,15 @@ internal class ValidationGenerator(
             FunSpec.constructorBuilder()
                 .addParameter("client", clientClass)
                 .addParameter("before", entityClass)
+                .addParameter("requestedPatch", patchClass)
+                .addParameter("effectivePatch", patchClass)
                 .addParameter("candidate", candidateClass)
                 .build(),
         )
         .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
+        .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
+        .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
         .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
         .build()
 

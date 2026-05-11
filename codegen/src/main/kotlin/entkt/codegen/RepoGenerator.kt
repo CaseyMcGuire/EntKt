@@ -372,17 +372,23 @@ internal class RepoGenerator(
     ): FunSpec {
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdatePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
+        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         return FunSpec.builder("evaluateUpdatePrivacy")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("before", entityClass)
+            .addParameter("requestedPatch", patchClass)
+            .addParameter("effectivePatch", patchClass)
             .addParameter("candidate", candidateClass)
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.System) return", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !privacyConfig.updateDerivesFromCreate) return")
                 .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
-                .addStatement("val ctx = %T(privacy, privacyClient, before, candidate)", updateCtxClass)
+                .addStatement(
+                    "val ctx = %T(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate)",
+                    updateCtxClass,
+                )
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
                 .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
@@ -596,15 +602,21 @@ internal class RepoGenerator(
     ): FunSpec {
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdateValidationContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
+        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         return FunSpec.builder("evaluateUpdateValidation")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("before", entityClass)
+            .addParameter("requestedPatch", patchClass)
+            .addParameter("effectivePatch", patchClass)
             .addParameter("candidate", candidateClass)
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return")
                 .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.System))", PRIVACY_CONTEXT, VIEWER)
-                .addStatement("val updateCtx = %T(validationClient, before, candidate)", updateCtxClass)
+                .addStatement(
+                    "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate)",
+                    updateCtxClass,
+                )
                 .addStatement("val violations = mutableListOf<%T.Invalid>()", VALIDATION_DECISION)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.validate(updateCtx))")

@@ -4,6 +4,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeAliasSpec
@@ -16,6 +17,7 @@ private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val PRIVACY_RULE = ClassName("entkt.runtime", "PrivacyRule")
 private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
 
 /**
  * Emits per-entity privacy infrastructure:
@@ -42,6 +44,7 @@ internal class PrivacyGenerator(
         val privacyScopeClass = ClassName(packageName, "${schemaName}PrivacyScope")
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
 
         val fields = schema.fields()
         val edgeFks = computeEdgeFks(schema, schemaNames)
@@ -76,11 +79,16 @@ internal class PrivacyGenerator(
         // Operation context data classes
         fileBuilder.addType(buildLoadContext(schemaName, entityClass, clientClass, loadCtx))
         fileBuilder.addType(buildCreateContext(schemaName, clientClass, candidateClass, createCtx))
-        fileBuilder.addType(buildUpdateContext(schemaName, entityClass, clientClass, candidateClass, updateCtx))
+        fileBuilder.addType(
+            buildUpdateContext(schemaName, entityClass, clientClass, candidateClass, patchClass, updateCtx),
+        )
         fileBuilder.addType(buildDeleteContext(schemaName, entityClass, clientClass, candidateClass, deleteCtx))
 
         // WriteCandidate
         fileBuilder.addType(buildWriteCandidate(schemaName, candidateClass, fields, edgeFks))
+
+        // UpdatePatch
+        fileBuilder.addType(buildUpdatePatch(patchClass, fields, edgeFks))
 
         // PrivacyConfig
         fileBuilder.addType(
@@ -154,6 +162,7 @@ internal class PrivacyGenerator(
         entityClass: ClassName,
         clientClass: ClassName,
         candidateClass: ClassName,
+        patchClass: ClassName,
         ctxClass: ClassName,
     ): TypeSpec = TypeSpec.classBuilder(ctxClass)
         .addModifiers(KModifier.DATA)
@@ -162,12 +171,16 @@ internal class PrivacyGenerator(
                 .addParameter("privacy", PRIVACY_CONTEXT)
                 .addParameter("client", clientClass)
                 .addParameter("before", entityClass)
+                .addParameter("requestedPatch", patchClass)
+                .addParameter("effectivePatch", patchClass)
                 .addParameter("candidate", candidateClass)
                 .build(),
         )
         .addProperty(PropertySpec.builder("privacy", PRIVACY_CONTEXT).initializer("privacy").build())
         .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
+        .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
+        .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
         .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
         .build()
 
@@ -218,6 +231,54 @@ internal class PrivacyGenerator(
             return TypeSpec.classBuilder(candidateClass).build()
         }
         return TypeSpec.classBuilder(candidateClass)
+            .addModifiers(KModifier.DATA)
+            .primaryConstructor(ctor.build())
+            .addProperties(props)
+            .build()
+    }
+
+    /**
+     * Per-entity update patch type. Each mutable field and edge FK is a
+     * `FieldPatch<T>` defaulting to `Unset`. Immutable fields are excluded
+     * because the generated update path never writes them. Privacy and
+     * validation rules see both the requested patch (caller/hook intent)
+     * and the effective patch (after framework update defaults).
+     */
+    private fun buildUpdatePatch(
+        patchClass: ClassName,
+        fields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): TypeSpec {
+        val ctor = FunSpec.constructorBuilder()
+        val props = mutableListOf<PropertySpec>()
+
+        for (field in fields) {
+            if (field.immutable) continue
+            val propName = toCamelCase(field.name)
+            val valueType = field.resolvedTypeName().copy(nullable = field.nullable)
+            val patchType = FIELD_PATCH.parameterizedBy(valueType)
+            ctor.addParameter(
+                ParameterSpec.builder(propName, patchType)
+                    .defaultValue("%T.Unset", FIELD_PATCH)
+                    .build(),
+            )
+            props.add(PropertySpec.builder(propName, patchType).initializer(propName).build())
+        }
+        for (fk in edgeFks) {
+            val valueType = fk.idType.toTypeName().copy(nullable = !fk.required)
+            val patchType = FIELD_PATCH.parameterizedBy(valueType)
+            ctor.addParameter(
+                ParameterSpec.builder(fk.propertyName, patchType)
+                    .defaultValue("%T.Unset", FIELD_PATCH)
+                    .build(),
+            )
+            props.add(PropertySpec.builder(fk.propertyName, patchType).initializer(fk.propertyName).build())
+        }
+
+        if (props.isEmpty()) {
+            return TypeSpec.classBuilder(patchClass).build()
+        }
+        return TypeSpec.classBuilder(patchClass)
             .addModifiers(KModifier.DATA)
             .primaryConstructor(ctor.build())
             .addProperties(props)

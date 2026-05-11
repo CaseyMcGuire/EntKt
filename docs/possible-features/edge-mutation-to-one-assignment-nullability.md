@@ -120,10 +120,10 @@ validation rule checked target existence earlier.
 
 ## Relationship Nullability
 
-The relationship nullability model should be required by default. A
-`belongsTo<Target>(...)` edge should produce a non-null FK unless the schema
-marks the relationship with `.nullable()`. The public model should be non-null
-by default and nullable only when explicitly requested. The DSL-wide decision to
+The relationship nullability model is required by default. A
+`belongsTo<Target>(...)` edge must produce a non-null FK unless the schema marks
+the relationship with `.nullable()`. The public model should be non-null by
+default and nullable only when explicitly requested. The DSL-wide decision to
 use `.nullable()` and remove `.optional()` is covered in
 [Schema Nullability Terminology](schema-nullability-terminology.md). Under that
 contract, `.nullable()` is the only relationship nullability modifier.
@@ -161,6 +161,12 @@ only when the builder or hooks explicitly set the entity setter method or
 resolved FK property to `null`. If final save preparation finds a null FK for a
 required relationship that is part of the mutation, save preparation rejects it.
 
+For updates, required edge checks inspect only effective patch entries for
+required relationship FKs. If a required FK is `FieldPatch.Unset`, no required
+edge check runs for that relationship because the update does not touch it. If a
+required FK is `FieldPatch.Set(null)`, generated save preparation rejects it
+before privacy, validation, or database writes.
+
 Required edge checks are treated like generated field shape checks: they validate
 the local mutation payload and generated schema constraints, not database-visible
 domain invariants. Owner privacy and configured validation still run after final
@@ -168,10 +174,10 @@ candidate construction.
 
 ## Public Types
 
-Generated edge mutators should be typed according to schema nullability.
-Required to-one edges should expose non-null entity setter methods and non-null
+Generated edge mutators must be typed according to schema nullability.
+Required to-one edges must expose non-null entity setter methods and non-null
 FK types, such as `setAuthor(user)` and `authorId: UUID`. Nullable to-one edges
-should expose nullable entity setter methods and nullable FK types, such as
+must expose nullable entity setter methods and nullable FK types, such as
 `setAuthor(null)` and `authorId: UUID?`.
 
 Generated entity setter method names should be `set` plus the Kotlin schema
@@ -336,10 +342,14 @@ relationship. Hook-facing update mutation views also must not expose the
 immutable backing FK as mutable. Implicit FK-backed relationships are mutable by
 default unless a future edge-level immutability modifier defines otherwise.
 
-Field defaults on field-backed FK fields apply like scalar defaults. Required
-edge checks see the final defaulted FK value. Defaults do not load or validate
-the target row; target existence remains enforced by database FK constraints
-unless a validation rule checks it earlier.
+Create defaults on field-backed FK fields apply like scalar create defaults
+during create final-value computation. Required edge checks see the final
+defaulted FK value. Create defaults do not apply to untouched update
+relationships. If a backing FK field has an update default, it follows the
+ID-based update-root update-default rules and becomes a framework-added effective
+patch value. Defaults do not load or validate the target row; target existence
+remains enforced by database FK constraints unless a validation rule checks it
+earlier.
 
 ## Mixed Entity-Setter And FK Writes
 
@@ -375,6 +385,12 @@ set it to null. `beforeUpdate` hooks receive the update hook context defined by
 the loaded `before` entity. Resolved FK getters on the mutation view still expose
 only pending patch values. If hooks need richer mutation-intent visibility later,
 that should be added as a separate structured mutation-intent API.
+
+For update hook-facing mutation views, each mutable relationship FK also exposes
+`unset{FkProperty}()` according to the ID-based update-root patch contract.
+Calling `unsetAuthorId()` removes the relationship FK from the requested patch.
+Setting `authorId = null` on a nullable relationship means `FieldPatch.Set(null)`
+and clears the relationship; it does not unset the patch entry.
 
 For update hooks, reading an untouched relationship FK must throw rather than
 pretending the mutation FK getter is a current-state getter. Hooks that need
@@ -416,6 +432,11 @@ including immutable fields and immutable field-backed FKs, are not exposed on
 create hook interface, and `beforeUpdate` receives the update hook context
 defined by [ID-Based Update Roots](edge-mutation-id-based-update-roots.md), whose
 `mutation` property is the restricted update hook interface.
+
+On the common `beforeSave` mutation interface, update-side getters follow update
+patch semantics. Reading an unset update scalar or FK field throws rather than
+returning current database state. Hook authors who need current owner state in an
+update should use the `beforeUpdate` context's loaded `before` entity.
 
 ## Generated Builder Shape
 
@@ -469,33 +490,41 @@ the cached entity and the resolved FK. Calling the nullable entity setter with
 
 ## Save Pipeline
 
-To-one edge mutations should be resolved before candidate construction:
+To-one edge mutations lower to owner-row FK writes. They should be resolved
+before candidate construction and do not introduce a second relationship-write
+phase for `belongsTo` edges.
 
-1. the create/update builder block has already run before `save()`, so entity or
-   id writes have already updated the pending FK state
-2. generic start-of-save preflight runs, as defined by
-   [Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md)
-3. for updates, the update root loads the current owner row, optionally with the
-   requested consistency mode from [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
-4. before hooks run and observe normalized pending FK values for relationships
-   changed by the builder; update hooks can also inspect the loaded `before` row
-5. hook FK writes can modify the same pending FK state with last-write-wins
-   semantics
-6. final scalar/FK values are computed and generated field-shape checks plus
+Create saves follow the normal generated create pipeline:
+
+1. the create builder block has already run before `save()`, so entity setter
+   methods and FK writes have updated pending FK state
+2. before hooks run and may mutate hook-facing resolved FK properties
+3. generated field defaults and field-backed FK defaults are applied
+4. final scalar/FK values are computed, and generated field-shape checks plus
    required edge checks run
-7. the update patch includes final FK values for changed relationships, and the
-   full after-state candidate applies that patch to the loaded `before` row
-8. privacy and validation run in the caller's client scope
-9. the owner row is inserted or updated
-10. after hooks and return LOAD privacy run
+5. the full create candidate includes final FK values
+6. privacy and validation run in the caller's client scope
+7. the owner row is inserted
+8. after hooks and returned LOAD privacy run according to the generated write
+   pipeline
+
+For updates, the high-level save pipeline is defined by
+[ID-Based Update Roots](edge-mutation-id-based-update-roots.md). This RFC
+contributes the to-one-specific steps inside that pipeline:
+
+- builder `set{Edge}(entity)` calls and FK writes update the requested patch
+- untouched relationship FKs remain absent from the requested patch
+- hook-facing FK writes update the requested patch
+- nullable FK `null` writes become `FieldPatch.Set(null)`, not unset
+- required edge checks run on changed required FKs in the effective patch
+- the full after-state candidate is built by applying the effective patch to the
+  loaded `before` row
 
 Before hooks observe the pending FK state before generated field defaults are
 applied. Field-backed FK defaults are applied during final-value computation
 after before hooks and before required edge checks. Hooks that need to derive
 from defaulted values should use a future structured mutation phase, not V1
 before hooks.
-
-This avoids a second relationship-write phase for `belongsTo` edges.
 
 ## Returned Entity State
 
@@ -570,14 +599,19 @@ Before implementation, add tests for:
   `belongsTo(...).field(handle)` edges
 - field-backed relationships inherit backing field immutability
 - immutable field-backed relationships can be set on create but cannot be updated
-- field defaults on field-backed FKs apply before required edge checks without
+- create defaults on field-backed FKs apply before required edge checks without
   loading or validating the target row
+- create defaults on field-backed FKs do not apply to untouched update
+  relationships; backing FK update defaults follow ID-based update-root
+  update-default rules
 - before hooks observe pre-default FK state; field-backed FK defaults apply after
   before hooks during final-value computation
 - generated entity setter method names follow `set` plus the Kotlin schema
   declaration property name in UpperCamelCase, not the storage/runtime edge
   string, and reject collisions with fields, edges, generated methods, Kotlin
   members, or JVM signatures
+- edge declaration property names whose generated setter method names collide are
+  rejected
 - schema collection fails if codegen cannot map a registered `belongsTo` builder
   to exactly one stable Kotlin declaration property name
 - computed getter edge declarations are rejected when they create new builders
@@ -587,6 +621,8 @@ Before implementation, add tests for:
   field name
 - field-backed edges derive entity setter names from the edge declaration
   property and FK property names from the backing field declaration property
+- field-backed edges check entity setter method names and backing FK property
+  names independently for collisions
 - nullable to-one `null` assignment clears the FK
 - nullable to-one update distinguishes unset from explicit null: unset leaves the
   FK out of the update write set, while explicit null clears it
@@ -599,8 +635,14 @@ Before implementation, add tests for:
   validation runs
 - hooks can set nullable FK values through the hook-facing resolved FK property
 - hooks can clear a nullable FK by setting it to null
+- update hooks can remove a pending to-one FK patch entry with
+  `unset{FkProperty}()`, while assigning `null` to a nullable FK remains
+  `FieldPatch.Set(null)` and clears the relationship
 - required FKs left unset/null after hooks are rejected before privacy,
   validation, or database writes
+- update required edge checks inspect only effective patch entries; required FK
+  `FieldPatch.Unset` skips the check, while `FieldPatch.Set(null)` is rejected
+  before privacy, validation, or database writes
 - direct FK writes clear any cached entity reference
 - create FK getters follow required-vs-nullable unset behavior: required unset
   throws, while nullable unset returns null
@@ -621,6 +663,8 @@ Before implementation, add tests for:
   concrete public create/update builders
 - `beforeSave` receives a common restricted mutation interface that excludes
   create-only immutable fields and immutable field-backed FKs
+- update-side getters on the common `beforeSave` mutation interface throw for
+  unset update scalar/FK fields instead of returning current database state
 - reading an unset required FK from a create hook-facing mutation view throws,
   while setting it before required edge validation succeeds
 - field-backed to-one edges expose the user-declared backing field in hooks,
