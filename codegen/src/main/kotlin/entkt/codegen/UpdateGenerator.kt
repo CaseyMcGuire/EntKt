@@ -22,6 +22,10 @@ private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
 private val FIELD_PATCH_OR_ELSE = MemberName("entkt.runtime", "orElse")
+private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
+private val ENT_NOT_FOUND_EXCEPTION = ClassName("entkt.runtime", "EntNotFoundException")
+private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime", "EntNoChangesException")
 
 
 internal class UpdateGenerator(
@@ -219,6 +223,20 @@ internal class UpdateGenerator(
 
         val builder = FunSpec.builder("save")
             .returns(entityClass.copy(nullable = true))
+
+        // ---- Syntactically empty patch: NoChanges before owner-row load. ----
+        // Reporting NoChanges before the load avoids existence-leaking
+        // `update(missingId) {}` calls. saveOrNull throws here too —
+        // NoChanges is not "expected absence" per the result-variants RFC.
+        builder.beginControlFlow("if (dirtyFields.isEmpty())")
+        builder.addStatement(
+            "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
+            ENT_NO_CHANGES_EXCEPTION,
+            ENT_ERROR,
+            schemaName,
+            ENT_OPERATION,
+        )
+        builder.endControlFlow()
 
         // ---- Internal current-row load (bypasses LOAD privacy). ----
         // Missing rows short-circuit before hooks/privacy/validation run.
@@ -492,17 +510,22 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Non-null variant: throws when the row has vanished. Useful from
-     * callers that already know the entity exists (e.g. re-saving the
-     * result of a recent query) and don't want to deal with the `?`.
+     * Non-null variant: throws [EntNotFoundException] when the owner row
+     * has vanished (the `OrNull` `save()` returns `null` for that case
+     * — `saveOrThrow()` lifts it into a structured failure). For
+     * syntactically empty updates the underlying `save()` already
+     * throws [EntNoChangesException], which propagates here unchanged.
      */
     private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         return FunSpec.builder("saveOrThrow")
             .returns(entityClass)
             .addStatement(
-                "return save() ?: throw IllegalStateException(%S)",
-                "$schemaName row not found",
+                "return save() ?: throw %T(%T.NotFound(%S, %T.UPDATE, id))",
+                ENT_NOT_FOUND_EXCEPTION,
+                ENT_ERROR,
+                schemaName,
+                ENT_OPERATION,
             )
             .build()
     }

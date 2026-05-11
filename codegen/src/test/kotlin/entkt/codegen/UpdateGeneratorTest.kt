@@ -132,6 +132,44 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `syntactically empty update throws NoChanges before owner-row load`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The dirtyFields-empty check must run before the byId load to
+        // avoid leaking owner-row existence on `update(missingId) {}`.
+        val emptyCheckPos = output.indexOf("if (dirtyFields.isEmpty())")
+        val throwPos = output.indexOf("throw EntNoChangesException(EntError.NoChanges(\"User\", EntOperation.UPDATE, id))")
+        val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
+        assert(emptyCheckPos != -1) { "save() should check dirtyFields.isEmpty() at the top\n$output" }
+        assert(throwPos != -1) { "save() should throw EntNoChangesException for syntactically empty patches\n$output" }
+        assert(emptyCheckPos < loadPos) {
+            "Empty-patch check must run before driver.byId to avoid existence leaks\n$output"
+        }
+    }
+
+    @Test
+    fun `saveOrThrow throws EntNotFoundException for missing rows`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // saveOrThrow turns the OrNull `null` (from the internal byId
+        // returning no row) into a structured EntNotFoundException.
+        // KotlinPoet may emit either an expression body or a block body.
+        assert(
+            output.contains(
+                "save() ?: throw EntNotFoundException(EntError.NotFound(\"User\", EntOperation.UPDATE, id))",
+            ),
+        ) {
+            "saveOrThrow should throw EntNotFoundException carrying EntError.NotFound\n$output"
+        }
+    }
+
+    @Test
     fun `implements the mutation interface`() {
         val user = User()
         finalize(user, Car())

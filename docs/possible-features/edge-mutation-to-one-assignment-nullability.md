@@ -510,7 +510,10 @@ Create saves follow the normal generated create pipeline:
 
 For updates, the high-level save pipeline is defined by
 [ID-Based Update Roots](edge-mutation-id-based-update-roots.md). This RFC
-contributes the to-one-specific steps inside that pipeline:
+contributes the to-one-specific steps inside that pipeline. Update-specific
+cases such as syntactically empty updates, hook-cleared empty updates, missing
+owner rows, update defaults, `NoChanges`, and returned entity hydration are
+governed by the ID-Based Update Roots RFC.
 
 - builder `set{Edge}(entity)` calls and FK writes update the requested patch
 - untouched relationship FKs remain absent from the requested patch
@@ -551,16 +554,17 @@ saved.authorId == alice.id
 ## Candidate And Rule Visibility
 
 Create candidates remain full write candidates. Under ID-based update roots,
-update builders and hooks produce an explicit update patch. The patch contains
-only fields and FKs explicitly changed by the builder or hooks. Untouched update
-relationships are not marked dirty and should not appear as changed FK patch
-values.
+update builders and hooks produce a requested update patch. The requested patch
+contains only fields and FKs explicitly changed by the builder or hooks.
+Untouched update relationships are not marked dirty and should not appear as
+changed FK patch values.
 
 Update privacy and validation contexts should receive the loaded update `before`
-row, the explicit update patch, and a full after-state candidate built by
-applying the patch to the loaded row. To-one edge mutations need no additional
-candidate model because they lower to FK values inside the create/update patch
-and candidate shapes.
+row, the requested update patch, the effective update patch, and a full
+after-state candidate built by applying the effective patch to the loaded row.
+To-one edge mutations need no additional candidate model because they lower to FK
+values inside the create candidate, requested update patch, effective update
+patch, and after-state candidate.
 
 Privacy contexts keep the caller's privacy context. Validation contexts keep the
 existing System-scoped LOAD-privacy bypass. Transaction-scoped context behavior

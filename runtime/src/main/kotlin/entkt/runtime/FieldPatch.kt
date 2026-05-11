@@ -14,9 +14,9 @@ package entkt.runtime
  * effective patch (after framework update defaults). The driver write
  * set is the effective patch's `Set` entries only.
  */
-public sealed interface FieldPatch<out T> {
-    public data object Unset : FieldPatch<Nothing>
-    public data class Set<T>(val value: T) : FieldPatch<T>
+sealed interface FieldPatch<out T> {
+    data object Unset : FieldPatch<Nothing>
+    data class Set<T>(val value: T) : FieldPatch<T>
 }
 
 /**
@@ -26,7 +26,7 @@ public sealed interface FieldPatch<out T> {
  * this to build the after-state candidate by folding the effective
  * patch onto the loaded `before` row.
  */
-public fun <T> FieldPatch<T>.orElse(fallback: T): T = when (this) {
+fun <T> FieldPatch<T>.orElse(fallback: T): T = when (this) {
     is FieldPatch.Set -> value
     FieldPatch.Unset -> fallback
 }
