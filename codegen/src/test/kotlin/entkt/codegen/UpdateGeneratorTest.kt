@@ -245,14 +245,15 @@ class UpdateGeneratorTest {
 
         // Each iteration of the beforeUpdate loop builds a fresh
         // snapshot via _buildRequestedPatch() and wraps it in a hook
-        // context. Writes through `mutation` mutate the underlying
-        // builder; the next iteration sees them via a fresh snapshot.
+        // context. The hook receives the private `_mutationView`
+        // adapter (not the builder itself), so it can't reach save(),
+        // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client, entity, snapshot, this) hook(ctx) }",
+                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client, entity, snapshot, _mutationView) hook(ctx) }",
             ),
         ) {
-            "beforeUpdate hooks should receive a per-call snapshot in a UserUpdateHookContext\n$output"
+            "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
         }
         // The canonical requestedPatch for privacy/validation is rebuilt
         // after all hooks finish.
@@ -262,37 +263,51 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `unset methods clear builder-requested entries`() {
+    fun `unset lives on the private hook-facing view, not the public builder`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Hooks reach unset via the mutation view to remove a pending
-        // patch entry — distinct from Set(null) for nullable fields.
-        // The methods are overrides because UserUpdate implements
-        // UserUpdateMutationView, which declares them abstract.
-        assert(output.contains("override fun unsetName() { dirtyFields.remove(\"name\") }")) {
-            "Should generate unsetName() that removes from dirtyFields\n$output"
+        // The builder must NOT have unset{Field}() at the class level —
+        // that would make `client.users.update(id) { unsetName() }` a
+        // valid DSL pattern, contradicting the RFC's "hook-facing"
+        // framing. The unset methods live on the private _mutationView
+        // adapter so only hooks can reach them via ctx.mutation.
+        assert(
+            output.contains(
+                "private val _mutationView: UserUpdateMutationView = object : UserUpdateMutationView",
+            ),
+        ) {
+            "Should generate a private _mutationView adapter implementing UserUpdateMutationView\n$output"
         }
-        assert(output.contains("override fun unsetAge() { dirtyFields.remove(\"age\") }")) {
-            "Should generate unsetAge() that removes from dirtyFields\n$output"
+        assert(
+            output.contains("override fun unsetName() { this@UserUpdate.dirtyFields.remove(\"name\") }"),
+        ) {
+            "unsetName() override should live on the adapter and target the outer builder's dirtyFields\n$output"
+        }
+        assert(
+            output.contains("override fun unsetAge() { this@UserUpdate.dirtyFields.remove(\"age\") }"),
+        ) {
+            "unsetAge() override should live on the adapter and target the outer builder's dirtyFields\n$output"
         }
     }
 
     @Test
-    fun `update builder implements the restricted UpdateMutationView`() {
+    fun `update builder does not directly implement UpdateMutationView`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The builder satisfies the hook-facing view (and transitively
-        // the shared Mutation interface). The hook context's `mutation`
-        // slot is typed as the view, so hooks can't reach save() / id /
-        // entity / private patch helpers through it.
-        assert(output.contains("public class UserUpdate") && output.contains(": UserUpdateMutationView")) {
-            "UserUpdate should implement UserUpdateMutationView\n$output"
+        // SchemaUpdate implements the shared Mutation interface but
+        // not the hook-facing view — that view is satisfied by the
+        // private adapter so unset{Field}() never leaks onto the DSL.
+        assert(output.contains("public class UserUpdate") && output.contains(") : UserMutation {")) {
+            "UserUpdate should implement only UserMutation at the class level\n$output"
+        }
+        assert(!output.contains("public class UserUpdate") || !output.contains(") : UserUpdateMutationView {")) {
+            "UserUpdate must not implement UserUpdateMutationView directly\n$output"
         }
     }
 

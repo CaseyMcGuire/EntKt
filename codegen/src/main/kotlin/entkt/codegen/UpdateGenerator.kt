@@ -54,13 +54,19 @@ internal class UpdateGenerator(
         val beforeUpdateHookType = hookListType(updateHookCtxClass)
         val afterUpdateHookType = hookListType(entityClass)
 
-        // The Update builder implements UpdateMutationView (which itself
-        // extends Mutation), so it satisfies both the `mutation` view
-        // typed slot in the hook context and the shared Mutation
-        // interface used by beforeSave hooks.
+        // The Update builder implements only the shared Mutation
+        // interface, not UpdateMutationView. The view (and its
+        // `unset{Field}()` methods) lives behind a private inner
+        // adapter so it can't be reached from the public DSL block:
+        //   client.posts.update(id) {
+        //     title = "x"
+        //     unsetTitle()  // <-- intentionally won't compile
+        //   }
+        // Hooks reach unset through `ctx.mutation`, which is typed as
+        // the view and constructed from the private adapter.
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
-            .addSuperinterface(updateMutationViewClass)
+            .addSuperinterface(mutationClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -129,8 +135,15 @@ internal class UpdateGenerator(
             .addProperties(mutableFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
-            .addFunctions(mutableFields.map { buildUnsetFunction(toCamelCase(it.name)) })
-            .addFunctions(edgeFks.map { buildUnsetFunction(it.propertyName) })
+            .addProperty(
+                buildMutationViewProperty(
+                    schemaName = schemaName,
+                    updateMutationViewClass = updateMutationViewClass,
+                    mutationClass = mutationClass,
+                    mutableFields = mutableFields,
+                    edgeFks = edgeFks,
+                ),
+            )
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(mutableFields, edgeFks))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks))
@@ -241,11 +254,76 @@ internal class UpdateGenerator(
      * sufficient because patch construction reads `dirtyFields` to
      * decide `Set` vs `Unset`.
      */
-    private fun buildUnsetFunction(prop: String): FunSpec {
+    /**
+     * Build the private `_mutationView` adapter that hooks see as
+     * `ctx.mutation`. The adapter implements [updateMutationViewClass]
+     * by forwarding each [mutationClass] field/FK property to the
+     * outer builder (so reads go through the throw-on-untouched
+     * getter and writes flow through the dirty-tracking setter) and
+     * declaring `unset{Field}()` overrides directly against the
+     * outer's `dirtyFields`. Keeping the view behind a private
+     * property keeps `unset` off the public DSL surface.
+     */
+    private fun buildMutationViewProperty(
+        schemaName: String,
+        updateMutationViewClass: ClassName,
+        mutationClass: ClassName,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): PropertySpec {
+        val updateClassName = "${schemaName}Update"
+        val adapter = TypeSpec.anonymousClassBuilder()
+            .addSuperinterface(updateMutationViewClass)
+        // Forward each Mutation field/FK property to the outer builder.
+        for (field in mutableFields) {
+            val propName = toCamelCase(field.name)
+            val typeName = field.resolvedTypeName().copy(nullable = true)
+            adapter.addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
+        }
+        for (fk in edgeFks) {
+            val typeName = fk.idType.toTypeName().copy(nullable = true)
+            adapter.addProperty(buildAdapterForwarderProperty(updateClassName, fk.propertyName, typeName))
+        }
+        // unset{Field}() overrides — the whole point of the view.
+        for (field in mutableFields) {
+            adapter.addFunction(buildAdapterUnsetFunction(updateClassName, toCamelCase(field.name)))
+        }
+        for (fk in edgeFks) {
+            adapter.addFunction(buildAdapterUnsetFunction(updateClassName, fk.propertyName))
+        }
+        return PropertySpec.builder("_mutationView", updateMutationViewClass)
+            .addModifiers(KModifier.PRIVATE)
+            .initializer("%L", adapter.build())
+            .build()
+    }
+
+    private fun buildAdapterForwarderProperty(
+        updateClassName: String,
+        prop: String,
+        typeName: com.squareup.kotlinpoet.TypeName,
+    ): PropertySpec {
+        return PropertySpec.builder(prop, typeName)
+            .addModifiers(KModifier.OVERRIDE)
+            .mutable(true)
+            .getter(
+                FunSpec.getterBuilder()
+                    .addStatement("return this@%L.%L", updateClassName, prop)
+                    .build(),
+            )
+            .setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", typeName)
+                    .addStatement("this@%L.%L = value", updateClassName, prop)
+                    .build(),
+            )
+            .build()
+    }
+
+    private fun buildAdapterUnsetFunction(updateClassName: String, prop: String): FunSpec {
         val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
         return FunSpec.builder(name)
             .addModifiers(KModifier.OVERRIDE)
-            .addStatement("dirtyFields.remove(%S)", prop)
+            .addStatement("this@%L.dirtyFields.remove(%S)", updateClassName, prop)
             .build()
     }
 
@@ -444,7 +522,7 @@ internal class UpdateGenerator(
         builder.beginControlFlow("for (hook in beforeUpdateHooks)")
         builder.addStatement("val snapshot = _buildRequestedPatch()")
         builder.addStatement(
-            "val ctx = %T(client, entity, snapshot, this)",
+            "val ctx = %T(client, entity, snapshot, _mutationView)",
             updateHookCtxClass,
         )
         builder.addStatement("hook(ctx)")
