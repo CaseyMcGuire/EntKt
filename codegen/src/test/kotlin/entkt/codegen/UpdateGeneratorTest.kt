@@ -473,16 +473,18 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `exposes client as public property`() {
+    fun `client is private — hooks read ctx_client and DSL callers already hold it`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("val client: EntClient")) {
-            "Should expose client as public property\n$output"
-        }
-        assert(!output.contains("private val client")) {
-            "client should not be private\n$output"
+        // Update hooks receive ctx.client via the hook context, and
+        // the DSL caller necessarily already has `client` in scope
+        // (they called `client.users.update(id) { ... }`). Exposing
+        // a public client on the update builder added zero capability
+        // and surface area we don't want.
+        assert(output.contains("private val client: EntClient")) {
+            "client should be private on the update builder\n$output"
         }
     }
 

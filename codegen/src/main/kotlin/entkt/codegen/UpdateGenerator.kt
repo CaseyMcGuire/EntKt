@@ -83,11 +83,22 @@ internal class UpdateGenerator(
                     .initializer("driver")
                     .build()
             )
+            // `client` is private on the update builder. Hooks reach
+            // EntClient via the hook context (`ctx.client`), and DSL
+            // callers already have it in scope (they called
+            // `client.posts.update(id, …)` to get here). CreateGenerator
+            // still emits a public `client` because create hooks
+            // currently receive the builder directly and need
+            // `m.client.X.query(...)` for cross-entity lookups; that
+            // asymmetry will go away when create gets a hook context.
             .addProperty(
                 PropertySpec.builder("client", clientClass)
+                    .addModifiers(KModifier.PRIVATE)
                     .initializer("client")
                     .build()
             )
+            // `id` stays public — it's read-only caller input, harmless
+            // to expose, and convenient for diagnostics.
             .addProperty(
                 PropertySpec.builder("id", idType)
                     .initializer("id")
