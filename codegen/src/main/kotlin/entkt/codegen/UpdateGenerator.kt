@@ -151,6 +151,13 @@ internal class UpdateGenerator(
             // explicit Set(null) into the same observable value. Hooks that
             // need to inspect pending state should read from `ctx.patch`,
             // which has explicit Unset / Set / Set(null) semantics.
+            //
+            // Note: this means a `beforeSave` hook that reads `m.title`
+            // works on creates (returns the staged value) but throws on
+            // updates with untouched fields. `beforeSave` is the shared
+            // write-only surface; for phase-specific reads use
+            // `beforeCreate` (`m.title` returns staged) or `beforeUpdate`
+            // (`ctx.patch.title` returns FieldPatch state).
             .getter(
                 FunSpec.getterBuilder()
                     .addStatement(

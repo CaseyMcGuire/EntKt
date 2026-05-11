@@ -17,13 +17,37 @@ import entkt.schema.EntSchema
  * and update — validation, timestamp injection, etc. — without
  * duplicating the logic.
  *
+ * **Conceptually write-only.** The `Mutation` interface is intentionally
+ * the *shared writable surface* for `beforeSave` hooks. It has no
+ * patch-model operations (`unset{Field}()`, reading pending-state)
+ * because those are update-specific — creates don't have a `dirtyFields`
+ * patch to unset from. Reading property getters is allowed by the
+ * Kotlin type system (declared `var`) but the read semantics differ
+ * between Create and Update implementations:
+ *
+ * - On Create, `m.title` returns the staged value (or `null` if nothing
+ *   has been assigned).
+ * - On Update, `m.title` **throws** when the field is not in
+ *   `dirtyFields`, because a default-null getter would conflate
+ *   `Unset` and explicit `Set(null)` (see the id-based update roots
+ *   RFC). Hooks that need to inspect pending update state should use
+ *   `beforeUpdate` and read `ctx.patch.title`, which has explicit
+ *   `FieldPatch.Unset` / `Set` / `Set(null)` semantics.
+ *
+ * In short: use `beforeSave` when you only need to **write**
+ * field/FK values that apply uniformly to create and update. Use
+ * `beforeCreate` / `beforeUpdate` for phase-specific reads, patch
+ * inspection, or `unset{Field}()`.
+ *
  * Also generates a `${SchemaName}UpdateMutationView` interface that
  * extends the shared `Mutation` interface with `unset{Field}()` methods.
  * This is the restricted, hook-facing view used inside
  * `${SchemaName}UpdateHookContext.mutation` — narrowing to writable
  * field/FK setters plus unset semantics, hiding `save()`, the loaded
  * `entity` lateinit, the owner `id`, and the private patch helpers
- * that live on the full update builder.
+ * that live on the full update builder. `unset` lives only on this
+ * view (not on `Mutation`) because the patch model it removes from is
+ * update-specific.
  */
 internal class MutationGenerator(
     private val packageName: String,
