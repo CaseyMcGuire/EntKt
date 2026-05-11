@@ -45,6 +45,7 @@ internal class UpdateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val updateClass = ClassName(packageName, className)
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+        val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val idType = schema.id().type.toTypeName()
@@ -53,9 +54,13 @@ internal class UpdateGenerator(
         val beforeUpdateHookType = hookListType(updateHookCtxClass)
         val afterUpdateHookType = hookListType(entityClass)
 
+        // The Update builder implements UpdateMutationView (which itself
+        // extends Mutation), so it satisfies both the `mutation` view
+        // typed slot in the hook context and the shared Mutation
+        // interface used by beforeSave hooks.
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
-            .addSuperinterface(mutationClass)
+            .addSuperinterface(updateMutationViewClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -198,6 +203,7 @@ internal class UpdateGenerator(
     private fun buildUnsetFunction(prop: String): FunSpec {
         val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
         return FunSpec.builder(name)
+            .addModifiers(KModifier.OVERRIDE)
             .addStatement("dirtyFields.remove(%S)", prop)
             .build()
     }

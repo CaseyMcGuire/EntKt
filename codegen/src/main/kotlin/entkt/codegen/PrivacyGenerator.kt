@@ -45,7 +45,7 @@ internal class PrivacyGenerator(
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
-        val updateBuilderClass = ClassName(packageName, "${schemaName}Update")
+        val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
 
         val fields = schema.fields()
@@ -99,7 +99,7 @@ internal class PrivacyGenerator(
                 clientClass = clientClass,
                 entityClass = entityClass,
                 patchClass = patchClass,
-                mutationClass = updateBuilderClass,
+                mutationClass = updateMutationViewClass,
             ),
         )
 
@@ -253,14 +253,16 @@ internal class PrivacyGenerator(
     /**
      * Hook context for `beforeUpdate` hooks. Carries the loaded `before`
      * row, a snapshot of the requested patch accumulated up to this
-     * hook, and the writable mutation builder. Per the RFC, `patch` is
-     * a snapshot — writes through `mutation` do not change `patch`
-     * within the same hook; later hooks see those writes through their
-     * own snapshots.
+     * hook, and a restricted writable mutation view. Per the RFC,
+     * `patch` is a snapshot — writes through `mutation` do not change
+     * `patch` within the same hook; later hooks see those writes
+     * through their own snapshots.
      *
-     * For Phase 4 the `mutation` field's type is the existing
-     * `${schemaName}Update` builder; a future restricted-view interface
-     * may narrow what hooks can call.
+     * `mutation` is typed as `${schemaName}UpdateMutationView`, which
+     * exposes only the field/FK setters and `unset{Field}()` methods.
+     * The full update builder's `save()`, the loaded `entity` lateinit,
+     * the owner `id`, and the private patch helpers are not visible to
+     * hooks — that prevents reentrancy and other out-of-contract use.
      */
     private fun buildUpdateHookContext(
         ctxClass: ClassName,

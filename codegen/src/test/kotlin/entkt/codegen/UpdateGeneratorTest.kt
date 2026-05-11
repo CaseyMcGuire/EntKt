@@ -243,11 +243,29 @@ class UpdateGeneratorTest {
 
         // Hooks reach unset via the mutation view to remove a pending
         // patch entry — distinct from Set(null) for nullable fields.
-        assert(output.contains("public fun unsetName() { dirtyFields.remove(\"name\") }")) {
+        // The methods are overrides because UserUpdate implements
+        // UserUpdateMutationView, which declares them abstract.
+        assert(output.contains("override fun unsetName() { dirtyFields.remove(\"name\") }")) {
             "Should generate unsetName() that removes from dirtyFields\n$output"
         }
-        assert(output.contains("public fun unsetAge() { dirtyFields.remove(\"age\") }")) {
+        assert(output.contains("override fun unsetAge() { dirtyFields.remove(\"age\") }")) {
             "Should generate unsetAge() that removes from dirtyFields\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder implements the restricted UpdateMutationView`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The builder satisfies the hook-facing view (and transitively
+        // the shared Mutation interface). The hook context's `mutation`
+        // slot is typed as the view, so hooks can't reach save() / id /
+        // entity / private patch helpers through it.
+        assert(output.contains("public class UserUpdate") && output.contains(": UserUpdateMutationView")) {
+            "UserUpdate should implement UserUpdateMutationView\n$output"
         }
     }
 
