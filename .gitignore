@@ -12,3 +12,9 @@ build
 .claude/worktrees
 
 .gradle-cache
+
+# macOS metadata — gitignore patterns are case-sensitive (even on
+# HFS+/APFS), so the actual `.DS_Store` filename has to match exactly.
+# `**/` makes the pattern apply to subdirectories too.
+.DS_Store
+**/.DS_Store
