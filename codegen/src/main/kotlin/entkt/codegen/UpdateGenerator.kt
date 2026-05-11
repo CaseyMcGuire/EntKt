@@ -237,9 +237,21 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Assigning a target entity here also writes its id into the
-     * underlying FK property. e.g. `author = alice` sets
-     * `authorId = alice.id`.
+     * Property-style edge assignment on the update builder: assigning a
+     * target entity also writes its id into the underlying FK property.
+     * E.g. `author = alice` sets `authorId = alice.id`.
+     *
+     * This surface is the to-one assignment RFC's concern, not the
+     * id-based update roots RFC's. The to-one RFC
+     * (`docs/possible-features/edge-mutation-to-one-assignment-nullability.md`,
+     * still "Possible future feature") replaces this `var author: Target?`
+     * property with a write-only `fun setAuthor(value: Target)` /
+     * `fun setAuthor(value: Target?)` method pair, drops the readable
+     * relationship property entirely, and tightens the underlying FK
+     * surface to match. Until that RFC lands, this property remains as
+     * the property-style API; the hook-facing `UpdateMutationView`
+     * already excludes it (only Mutation field/FK setters and
+     * `unset{Field}()` are exposed to hooks).
      */
     private fun buildEdgeEntityProperty(fk: EdgeFk): PropertySpec {
         val targetClass = ClassName(packageName, fk.targetName).copy(nullable = true)
