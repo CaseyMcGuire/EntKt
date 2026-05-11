@@ -7,6 +7,7 @@ class Article : EntSchema("articles") {
     override fun id() = EntId.long()
 
     val title = string("title")
+    val notes = string("notes").nullable()
     val published = bool("published").default(false)
 
     val author = belongsTo<User>("author").inverse(User::articles).required()
