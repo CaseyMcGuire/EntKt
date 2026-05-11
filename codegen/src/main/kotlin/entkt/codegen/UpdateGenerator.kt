@@ -83,22 +83,14 @@ internal class UpdateGenerator(
                     .initializer("driver")
                     .build()
             )
-            // `client` is private on the update builder. Hooks reach
-            // EntClient via the hook context (`ctx.client`), and DSL
-            // callers already have it in scope (they called
-            // `client.posts.update(id, …)` to get here). CreateGenerator
-            // still emits a public `client` because create hooks
-            // currently receive the builder directly and need
-            // `m.client.X.query(...)` for cross-entity lookups; that
-            // asymmetry will go away when create gets a hook context.
+            // `client` is private. Hooks reach EntClient via
+            // `ctx.client`; DSL callers already hold it in scope.
             .addProperty(
                 PropertySpec.builder("client", clientClass)
                     .addModifiers(KModifier.PRIVATE)
                     .initializer("client")
                     .build()
             )
-            // `id` stays public — it's read-only caller input, harmless
-            // to expose, and convenient for diagnostics.
             .addProperty(
                 PropertySpec.builder("id", idType)
                     .initializer("id")
@@ -237,21 +229,11 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Property-style edge assignment on the update builder: assigning a
-     * target entity also writes its id into the underlying FK property.
-     * E.g. `author = alice` sets `authorId = alice.id`.
-     *
-     * This surface is the to-one assignment RFC's concern, not the
-     * id-based update roots RFC's. The to-one RFC
-     * (`docs/possible-features/edge-mutation-to-one-assignment-nullability.md`,
-     * still "Possible future feature") replaces this `var author: Target?`
-     * property with a write-only `fun setAuthor(value: Target)` /
-     * `fun setAuthor(value: Target?)` method pair, drops the readable
-     * relationship property entirely, and tightens the underlying FK
-     * surface to match. Until that RFC lands, this property remains as
-     * the property-style API; the hook-facing `UpdateMutationView`
-     * already excludes it (only Mutation field/FK setters and
-     * `unset{Field}()` are exposed to hooks).
+     * Property-style edge assignment on the update builder: assigning
+     * a target entity also writes its id into the underlying FK
+     * property. E.g. `author = alice` sets `authorId = alice.id`. The
+     * hook-facing `UpdateMutationView` does not include this property,
+     * so it's only reachable from the public update DSL block.
      */
     private fun buildEdgeEntityProperty(fk: EdgeFk): PropertySpec {
         val targetClass = ClassName(packageName, fk.targetName).copy(nullable = true)
@@ -804,17 +786,19 @@ internal class UpdateGenerator(
 
     /**
      * Structured-result variant: returns [EntResult.Ok] on success or
-     * [EntResult.Err] for any [EntException] thrown by the save path.
-     * Currently maps `NotFound` and `NoChanges` (the only EntError
-     * variants this feature emits) into structured errors. Other
-     * failures — privacy denial, validation, constraint violations,
-     * driver/transaction errors — still propagate as their existing
-     * exception types pending the broader result-variants RFC.
+     * [EntResult.Err] for any recognized failure thrown by the save
+     * path. Wraps `NotFound` / `NoChanges` (carried by [EntException])
+     * plus the existing [PrivacyDeniedException] and
+     * [ValidationException] into their matching [EntError] variants.
+     * Constraint violations and driver/transaction errors still
+     * propagate as their underlying exception types.
      */
     private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val resultClass = ClassName("entkt.runtime", "EntResult")
         val entExceptionClass = ClassName("entkt.runtime", "EntException")
+        val privacyDeniedClass = ClassName("entkt.runtime", "PrivacyDeniedException")
+        val validationClass = ClassName("entkt.runtime", "ValidationException")
         val resultType = resultClass.parameterizedBy(entityClass)
         return FunSpec.builder("saveOrError")
             .returns(resultType)
@@ -824,6 +808,20 @@ internal class UpdateGenerator(
                     .add("  %T.Ok(saveOrThrow())\n", resultClass)
                     .add("} catch (e: %T) {\n", entExceptionClass)
                     .add("  %T.Err(e.error)\n", resultClass)
+                    .add("} catch (e: %T) {\n", privacyDeniedClass)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        resultClass,
+                        ENT_ERROR,
+                        ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", validationClass)
+                    .add(
+                        "  %T.Err(%T.ValidationFailed(e.entity, %T.UPDATE, e.violations))\n",
+                        resultClass,
+                        ENT_ERROR,
+                        ENT_OPERATION,
+                    )
                     .add("}\n")
                     .build(),
             )

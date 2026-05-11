@@ -403,6 +403,26 @@ class UpdateGeneratorTest {
         assert(output.contains("catch (e: EntException) { EntResult.Err(e.error) }")) {
             "saveOrError should catch EntException and unwrap to Err(EntError)\n$output"
         }
+        // PrivacyDeniedException → EntError.PrivacyDenied (operation
+        // converted from PrivacyOperation by name, since EntOperation
+        // mirrors it 1:1).
+        assert(
+            output.contains(
+                "catch (e: PrivacyDeniedException) { EntResult.Err(EntError.PrivacyDenied(e.entity, EntOperation.valueOf(e.operation.name), e.reason)) }",
+            ),
+        ) {
+            "saveOrError should wrap PrivacyDeniedException into EntError.PrivacyDenied\n$output"
+        }
+        // ValidationException → EntError.ValidationFailed (operation
+        // is hardcoded UPDATE since ValidationException doesn't carry
+        // its own operation field and this is the update generator).
+        assert(
+            output.contains(
+                "catch (e: ValidationException) { EntResult.Err(EntError.ValidationFailed(e.entity, EntOperation.UPDATE, e.violations)) }",
+            ),
+        ) {
+            "saveOrError should wrap ValidationException into EntError.ValidationFailed\n$output"
+        }
     }
 
     @Test

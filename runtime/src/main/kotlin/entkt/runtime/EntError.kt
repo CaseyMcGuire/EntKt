@@ -1,10 +1,11 @@
 package entkt.runtime
 
 /**
- * Operations that can produce an [EntError]. Currently used by mutation
- * paths; LOAD will be added as the result-variant API expands.
+ * Operations that can produce an [EntError]. Mirrors [PrivacyOperation]
+ * so the two enums map 1:1 by name.
  */
 enum class EntOperation {
+    LOAD,
     CREATE,
     UPDATE,
     DELETE,
@@ -13,9 +14,7 @@ enum class EntOperation {
 /**
  * A structured failure produced by a generated mutation. Each variant
  * carries the entity name (e.g. `"Post"`), the operation that failed,
- * and a human-readable message. Variants are introduced as the
- * generated save paths produce them; this minimal pair backs the
- * id-based update root semantics.
+ * and a human-readable message.
  */
 sealed interface EntError {
     val entity: String
@@ -45,5 +44,29 @@ sealed interface EntError {
         override val operation: EntOperation,
         val id: Any? = null,
         override val message: String = "$entity update for id=$id has no changes",
+    ) : EntError
+
+    /**
+     * Privacy denied the operation. Generated `saveOrError()` wraps
+     * the existing [PrivacyDeniedException] into this variant so
+     * callers can branch on outcome rather than catch exceptions.
+     */
+    data class PrivacyDenied(
+        override val entity: String,
+        override val operation: EntOperation,
+        val reason: String,
+        override val message: String = "$operation denied on $entity: $reason",
+    ) : EntError
+
+    /**
+     * Validation rejected the mutation. Generated `saveOrError()`
+     * wraps the existing [ValidationException] into this variant.
+     */
+    data class ValidationFailed(
+        override val entity: String,
+        override val operation: EntOperation,
+        val violations: List<ValidationDecision.Invalid>,
+        override val message: String =
+            "Validation failed on $entity: ${violations.joinToString("; ") { it.message }}",
     ) : EntError
 }
