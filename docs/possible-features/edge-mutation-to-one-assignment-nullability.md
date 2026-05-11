@@ -180,6 +180,14 @@ FK types, such as `setAuthor(user)` and `authorId: UUID`. Nullable to-one edges
 must expose nullable entity setter methods and nullable FK types, such as
 `setAuthor(null)` and `authorId: UUID?`.
 
+```kotlin
+// required relationship
+fun setAuthor(value: User)
+
+// nullable relationship
+fun setAuthor(value: User?)
+```
+
 Generated entity setter method names should be `set` plus the Kotlin schema
 declaration property name in UpperCamelCase: `author` becomes `setAuthor(...)`,
 and `primaryAuthor` becomes `setPrimaryAuthor(...)`. Generated Kotlin API names
@@ -248,6 +256,13 @@ Resolved FK getter behavior should be explicit:
 Documentation and examples should present entity setter methods as the ergonomic
 to-one API and FK assignment as the ID-only variant. They should not introduce
 relationship assignment properties on mutation builders.
+
+Generated entity setter methods and resolved FK properties must include KDoc
+explaining the relationship-write semantics. Entity setter methods use only the
+target id, do not load the target row, and do not evaluate target LOAD privacy.
+Resolved FK properties are the ID-only write path and have the same no-load,
+no-target-LOAD-privacy behavior. Relationship-write authorization belongs in
+owner write privacy or validation.
 
 ## Explicit Backing Fields
 
@@ -334,6 +349,9 @@ For field-backed relationships, relationship uniqueness is declared on the
 unique FK constraint. Codegen rejects a unique backing field used by a non-unique
 `belongsTo(...).field(handle)` edge, because scalar field uniqueness must not
 silently upgrade relationship cardinality.
+Relationship cardinality is read from the edge declaration, not inferred from
+the backing field, so generated edge metadata and database constraints must
+agree.
 
 The backing field also controls relationship mutability. If the backing field is
 immutable, create builders may expose the entity setter method and resolved FK
@@ -588,6 +606,9 @@ Before implementation, add tests for:
 
 - required to-one entity setter method sets the FK
 - to-one id assignment sets the FK without loading the target entity
+- generated entity setter and resolved FK KDoc documents that to-one writes use
+  only target ids, do not load target rows, and do not evaluate target LOAD
+  privacy
 - `belongsTo(...)` is required/non-null by default, while `.nullable()` makes a
   to-one edge nullable
 - `belongsTo(...).field(handle)` rejects mismatches between relationship

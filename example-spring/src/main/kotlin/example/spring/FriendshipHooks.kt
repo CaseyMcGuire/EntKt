@@ -3,7 +3,7 @@ package example.spring
 import example.ent.Friendship
 import example.ent.FriendshipCreate
 import example.ent.FriendshipHooks
-import example.ent.FriendshipUpdate
+import example.ent.FriendshipUpdateHookContext
 import example.schema.FriendshipStatus
 import org.springframework.stereotype.Component
 
@@ -38,9 +38,9 @@ class FriendshipHooksConfig {
         require(existing.isEmpty()) { "Friend request already exists" }
     }
 
-    fun enforceStatusTransition(m: FriendshipUpdate) {
-        val oldStatus = m.entity.status
-        val newStatus = m.status ?: oldStatus
+    fun enforceStatusTransition(ctx: FriendshipUpdateHookContext) {
+        val oldStatus = ctx.before.status
+        val newStatus = ctx.mutation.status ?: oldStatus
         if (oldStatus != newStatus) {
             require(oldStatus == FriendshipStatus.PENDING && newStatus == FriendshipStatus.ACCEPTED) {
                 "Can only transition from PENDING to ACCEPTED"

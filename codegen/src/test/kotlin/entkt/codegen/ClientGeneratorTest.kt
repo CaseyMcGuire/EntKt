@@ -137,8 +137,8 @@ class ClientGeneratorTest {
         assert(output.contains("fun afterCreate(hook: (Car) -> Unit)")) {
             "Should have afterCreate\n$output"
         }
-        assert(output.contains("fun beforeUpdate(hook: (CarUpdate) -> Unit)")) {
-            "Should have beforeUpdate\n$output"
+        assert(output.contains("fun beforeUpdate(hook: (CarUpdateHookContext) -> Unit)")) {
+            "beforeUpdate now takes a CarUpdateHookContext (Phase 4)\n$output"
         }
         assert(output.contains("fun afterUpdate(hook: (Car) -> Unit)")) {
             "Should have afterUpdate\n$output"

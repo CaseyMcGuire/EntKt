@@ -45,6 +45,8 @@ internal class PrivacyGenerator(
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
+        val updateBuilderClass = ClassName(packageName, "${schemaName}Update")
+        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
 
         val fields = schema.fields()
         val edgeFks = computeEdgeFks(schema, schemaNames)
@@ -89,6 +91,17 @@ internal class PrivacyGenerator(
 
         // UpdatePatch
         fileBuilder.addType(buildUpdatePatch(patchClass, fields, edgeFks))
+
+        // UpdateHookContext (received by beforeUpdate hooks)
+        fileBuilder.addType(
+            buildUpdateHookContext(
+                ctxClass = updateHookCtxClass,
+                clientClass = clientClass,
+                entityClass = entityClass,
+                patchClass = patchClass,
+                mutationClass = updateBuilderClass,
+            ),
+        )
 
         // PrivacyConfig
         fileBuilder.addType(
@@ -236,6 +249,40 @@ internal class PrivacyGenerator(
             .addProperties(props)
             .build()
     }
+
+    /**
+     * Hook context for `beforeUpdate` hooks. Carries the loaded `before`
+     * row, a snapshot of the requested patch accumulated up to this
+     * hook, and the writable mutation builder. Per the RFC, `patch` is
+     * a snapshot — writes through `mutation` do not change `patch`
+     * within the same hook; later hooks see those writes through their
+     * own snapshots.
+     *
+     * For Phase 4 the `mutation` field's type is the existing
+     * `${schemaName}Update` builder; a future restricted-view interface
+     * may narrow what hooks can call.
+     */
+    private fun buildUpdateHookContext(
+        ctxClass: ClassName,
+        clientClass: ClassName,
+        entityClass: ClassName,
+        patchClass: ClassName,
+        mutationClass: ClassName,
+    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
+        .addModifiers(KModifier.DATA)
+        .primaryConstructor(
+            FunSpec.constructorBuilder()
+                .addParameter("client", clientClass)
+                .addParameter("before", entityClass)
+                .addParameter("patch", patchClass)
+                .addParameter("mutation", mutationClass)
+                .build(),
+        )
+        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
+        .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
+        .addProperty(PropertySpec.builder("patch", patchClass).initializer("patch").build())
+        .addProperty(PropertySpec.builder("mutation", mutationClass).initializer("mutation").build())
+        .build()
 
     /**
      * Per-entity update patch type. Each mutable field and edge FK is a

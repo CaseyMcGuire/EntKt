@@ -137,14 +137,14 @@ internal class ClientGenerator(
         val className = "${schemaName}Hooks"
         val entityClass = ClassName(packageName, schemaName)
         val createClass = ClassName(packageName, "${schemaName}Create")
-        val updateClass = ClassName(packageName, "${schemaName}Update")
+        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
 
         val hookDefs = listOf(
             HookDef("beforeSave", mutationClass),
             HookDef("beforeCreate", createClass),
             HookDef("afterCreate", entityClass),
-            HookDef("beforeUpdate", updateClass),
+            HookDef("beforeUpdate", updateHookCtxClass),
             HookDef("afterUpdate", entityClass),
             HookDef("beforeDelete", entityClass),
             HookDef("afterDelete", entityClass),

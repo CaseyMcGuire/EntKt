@@ -80,10 +80,11 @@ internal class RepoGenerator(
         )
 
         // Hook list types
+        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val beforeSaveHookLambda = LambdaTypeName.get(parameters = arrayOf(mutationClass), returnType = UNIT)
         val beforeCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(createClass), returnType = UNIT)
         val afterCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
-        val beforeUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(updateClass), returnType = UNIT)
+        val beforeUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(updateHookCtxClass), returnType = UNIT)
         val afterUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
         val beforeDeleteHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
         val afterDeleteHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)

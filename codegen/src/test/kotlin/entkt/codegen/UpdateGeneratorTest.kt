@@ -151,6 +151,73 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `beforeUpdate hooks receive a UserUpdateHookContext snapshot per call`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Each iteration of the beforeUpdate loop builds a fresh
+        // snapshot via _buildRequestedPatch() and wraps it in a hook
+        // context. Writes through `mutation` mutate the underlying
+        // builder; the next iteration sees them via a fresh snapshot.
+        assert(
+            output.contains(
+                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client, entity, snapshot, this) hook(ctx) }",
+            ),
+        ) {
+            "beforeUpdate hooks should receive a per-call snapshot in a UserUpdateHookContext\n$output"
+        }
+        // The canonical requestedPatch for privacy/validation is rebuilt
+        // after all hooks finish.
+        assert(output.contains("val requestedPatch = _buildRequestedPatch()")) {
+            "Canonical requestedPatch should be rebuilt after all before hooks\n$output"
+        }
+    }
+
+    @Test
+    fun `unset methods clear builder-requested entries`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Hooks reach unset via the mutation view to remove a pending
+        // patch entry — distinct from Set(null) for nullable fields.
+        assert(output.contains("public fun unsetName() { dirtyFields.remove(\"name\") }")) {
+            "Should generate unsetName() that removes from dirtyFields\n$output"
+        }
+        assert(output.contains("public fun unsetAge() { dirtyFields.remove(\"age\") }")) {
+            "Should generate unsetAge() that removes from dirtyFields\n$output"
+        }
+    }
+
+    @Test
+    fun `hook-cleared empty patch runs UPDATE privacy then throws NoChanges`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // After hooks, if the effective patch is empty, generated code
+        // builds the unchanged candidate, runs UPDATE privacy on it
+        // (real authorization decision against `before`), then throws
+        // NoChanges. Validation/driver/after-hooks/load-privacy are skipped.
+        val emptyCheck = output.indexOf("if (values.isEmpty())")
+        assert(emptyCheck != -1) { "Should detect hook-cleared empty effective patch\n$output" }
+
+        // The privacy call inside the empty branch uses the unchanged
+        // candidate (built from `before`) with empty patches.
+        val emptyBlock = output.substring(emptyCheck, (emptyCheck + 600).coerceAtMost(output.length))
+        assert(emptyBlock.contains("evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)")) {
+            "Empty path should run UPDATE privacy on the unchanged candidate\n$output"
+        }
+        assert(emptyBlock.contains("throw EntNoChangesException")) {
+            "Empty path should throw EntNoChangesException after UPDATE privacy\n$output"
+        }
+    }
+
+    @Test
     fun `saveOrThrow throws EntNotFoundException for missing rows`() {
         val user = User()
         finalize(user, Car())
@@ -208,8 +275,8 @@ class UpdateGeneratorTest {
         assert(output.contains("beforeSaveHooks: List<(UserMutation) -> Unit>")) {
             "Should take beforeSaveHooks\n$output"
         }
-        assert(output.contains("beforeUpdateHooks: List<(UserUpdate) -> Unit>")) {
-            "Should take beforeUpdateHooks\n$output"
+        assert(output.contains("beforeUpdateHooks: List<(UserUpdateHookContext) -> Unit>")) {
+            "beforeUpdate hooks now take a UserUpdateHookContext (Phase 4)\n$output"
         }
         assert(output.contains("afterUpdateHooks: List<(User) -> Unit>")) {
             "Should take afterUpdateHooks\n$output"

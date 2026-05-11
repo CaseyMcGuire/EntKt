@@ -46,10 +46,11 @@ internal class UpdateGenerator(
         val updateClass = ClassName(packageName, className)
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
+        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val idType = schema.id().type.toTypeName()
 
         val beforeSaveHookType = hookListType(mutationClass)
-        val beforeUpdateHookType = hookListType(updateClass)
+        val beforeUpdateHookType = hookListType(updateHookCtxClass)
         val afterUpdateHookType = hookListType(entityClass)
 
         val typeSpec = TypeSpec.classBuilder(className)
@@ -117,6 +118,9 @@ internal class UpdateGenerator(
             .addProperties(mutableFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
             .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
+            .addFunctions(mutableFields.map { buildUnsetFunction(toCamelCase(it.name)) })
+            .addFunctions(edgeFks.map { buildUnsetFunction(it.propertyName) })
+            .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks))
             .addFunction(buildSaveOrThrowFunction(schemaName))
             .build()
@@ -183,6 +187,94 @@ internal class UpdateGenerator(
     }
 
     /**
+     * Generate `unset{Prop}()` on the update builder. Hooks call this
+     * through the hook-facing mutation view to remove an entry from the
+     * requested patch — distinct from `Set(null)`, which is an explicit
+     * clear for nullable fields/FKs. Removing from `dirtyFields` is
+     * sufficient because patch construction reads `dirtyFields` to
+     * decide `Set` vs `Unset`.
+     */
+    private fun buildUnsetFunction(prop: String): FunSpec {
+        val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
+        return FunSpec.builder(name)
+            .addStatement("dirtyFields.remove(%S)", prop)
+            .build()
+    }
+
+    /**
+     * Generate a private `_buildRequestedPatch()` member that constructs
+     * the requested patch from the current `dirtyFields` snapshot. Used
+     * (a) before each beforeUpdate hook to capture the per-hook patch
+     * snapshot, and (b) once after all hooks to capture the canonical
+     * requested patch fed into update defaults / privacy / validation.
+     *
+     * Required-field/FK null checks live inside this helper so they
+     * fire whenever a snapshot is constructed: a hook that explicitly
+     * sets a required field to `null` triggers the same domain error
+     * as a builder that does so.
+     */
+    private fun buildBuildRequestedPatchFunction(
+        schemaName: String,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): FunSpec {
+        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
+        val builder = FunSpec.builder("_buildRequestedPatch")
+            .addModifiers(KModifier.PRIVATE)
+            .returns(patchClass)
+
+        // Required-field null checks (only fire when explicitly assigned).
+        for (field in mutableFields) {
+            if (field.nullable) continue
+            val prop = toCamelCase(field.name)
+            builder.addStatement(
+                "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
+                prop, prop, "${field.name} is required",
+            )
+        }
+        for (fk in edgeFks) {
+            if (!fk.required) continue
+            builder.addStatement(
+                "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
+                fk.propertyName, fk.propertyName, "${fk.edgeName} is required",
+            )
+        }
+
+        val code = CodeBlock.builder()
+        code.add("return %T(\n", patchClass)
+        for (field in mutableFields) {
+            val prop = toCamelCase(field.name)
+            if (field.nullable) {
+                code.add(
+                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
+                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
+                )
+            } else {
+                code.add(
+                    "  %L = if (%S in dirtyFields) %T.Set(this.%L!!) else %T.Unset,\n",
+                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
+                )
+            }
+        }
+        for (fk in edgeFks) {
+            if (fk.required) {
+                code.add(
+                    "  %L = if (%S in dirtyFields) %T.Set(this.%L!!) else %T.Unset,\n",
+                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
+                )
+            } else {
+                code.add(
+                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
+                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
+                )
+            }
+        }
+        code.add(")\n")
+        builder.addCode(code.build())
+        return builder.build()
+    }
+
+    /**
      * `save()` writes the builder's changes to the driver and returns
      * the refreshed entity — or null when the row has been deleted out
      * from under us.
@@ -218,6 +310,7 @@ internal class UpdateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val mutableFields = allFields.filter { !it.immutable }
 
@@ -246,45 +339,25 @@ internal class UpdateGenerator(
         )
         builder.addStatement("entity = %T.fromRow(row0)", entityClass)
 
-        // ---- Lifecycle hooks. ----
-        // Hooks may set or clear fields on the builder; the requested
-        // patch is captured *after* before hooks run so hook writes are
-        // included.
+        // ---- beforeSave hooks (shared with create — receive Mutation interface). ----
         builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
-        builder.addStatement("for (hook in beforeUpdateHooks) hook(this)")
 
-        // ---- Required-field/FK null checks for explicitly-cleared writes. ----
-        // For required fields, `(dirty + this.foo == null)` means a
-        // hook or the builder explicitly assigned null — fail with a
-        // domain error before patch construction.
-        for (field in mutableFields) {
-            if (field.nullable) continue
-            val prop = toCamelCase(field.name)
-            builder.addStatement(
-                "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
-                prop,
-                prop,
-                "${field.name} is required",
-            )
-        }
-        for (fk in edgeFks) {
-            if (!fk.required) continue
-            builder.addStatement(
-                "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
-                fk.propertyName,
-                fk.propertyName,
-                "${fk.edgeName} is required",
-            )
-        }
-
-        // ---- Build the requested patch from dirty tracking. ----
-        emitPatchConstruction(
-            builder,
-            valName = "requestedPatch",
-            patchClass = patchClass,
-            mutableFields = mutableFields,
-            edgeFks = edgeFks,
+        // ---- beforeUpdate hooks (receive a per-hook context with snapshot). ----
+        // `patch` in the context is a snapshot built *before* the hook
+        // runs. Within a hook, writes through the mutation view do not
+        // change `patch`. After each hook returns, the next iteration
+        // builds a fresh snapshot from the current dirty state.
+        builder.beginControlFlow("for (hook in beforeUpdateHooks)")
+        builder.addStatement("val snapshot = _buildRequestedPatch()")
+        builder.addStatement(
+            "val ctx = %T(client, entity, snapshot, this)",
+            updateHookCtxClass,
         )
+        builder.addStatement("hook(ctx)")
+        builder.endControlFlow()
+
+        // ---- Build the canonical requested patch after all before hooks. ----
+        builder.addStatement("val requestedPatch = _buildRequestedPatch()")
 
         // ---- Apply update defaults to compute the effective patch. ----
         emitEffectivePatchConstruction(
@@ -305,7 +378,6 @@ internal class UpdateGenerator(
         for (field in mutableFields) {
             val prop = toCamelCase(field.name)
             val col = field.columnName
-            val nameSuffix = if (field.type == FieldType.ENUM) ".name" else ""
             // .name for enums needs a null-aware call when the enum is nullable.
             if (field.type == FieldType.ENUM && field.nullable) {
                 builder.addCode(
@@ -314,8 +386,8 @@ internal class UpdateGenerator(
                 )
             } else if (field.type == FieldType.ENUM) {
                 builder.addCode(
-                    "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value%L }\n",
-                    prop, FIELD_PATCH, col, nameSuffix,
+                    "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value.name }\n",
+                    prop, FIELD_PATCH, col,
                 )
             } else {
                 builder.addCode(
@@ -331,15 +403,7 @@ internal class UpdateGenerator(
             )
         }
 
-        // ---- Empty-effective-patch fast path. ----
-        // No fields changed and no update defaults applied: return the
-        // loaded `before` without issuing a driver write. Phase 3 will
-        // replace this with a structured `NoChanges` error.
-        builder.beginControlFlow("if (values.isEmpty())")
-        builder.addStatement("return entity")
-        builder.endControlFlow()
-
-        // ---- Build the full after-state candidate. ----
+        // ---- Build privacy context (used by both empty and non-empty paths). ----
         builder.addStatement("val privacy = client.currentPrivacyContext()")
         emitCandidateConstruction(
             builder,
@@ -347,6 +411,28 @@ internal class UpdateGenerator(
             allFields = allFields,
             edgeFks = edgeFks,
         )
+
+        // ---- Hook-cleared empty path. ----
+        // Builder requested changes, but hooks unset all of them and the
+        // schema has no update defaults. Per the RFC: run UPDATE
+        // privacy on the unchanged candidate (since it's a real
+        // authorization decision against the loaded `before`), then
+        // throw NoChanges. Validation, driver write, after-hooks, and
+        // returned LOAD privacy are skipped because no state transition
+        // is persisted.
+        builder.beginControlFlow("if (values.isEmpty())")
+        builder.addStatement(
+            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
+            repoPropName,
+        )
+        builder.addStatement(
+            "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
+            ENT_NO_CHANGES_EXCEPTION,
+            ENT_ERROR,
+            schemaName,
+            ENT_OPERATION,
+        )
+        builder.endControlFlow()
 
         // ---- Privacy + validation. ----
         builder.addStatement(
@@ -371,48 +457,6 @@ internal class UpdateGenerator(
         return builder.build()
     }
 
-    /** Build `requestedPatch` by lowering `dirtyFields` to `FieldPatch` entries. */
-    private fun emitPatchConstruction(
-        builder: FunSpec.Builder,
-        valName: String,
-        patchClass: ClassName,
-        mutableFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ) {
-        val code = CodeBlock.builder()
-        code.add("val %L = %T(\n", valName, patchClass)
-        for (field in mutableFields) {
-            val prop = toCamelCase(field.name)
-            // Required fields: `!!` is safe because the dirty+null check
-            // already ran. Nullable fields: `Set(this.foo)` permits Set(null).
-            if (field.nullable) {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
-                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
-                )
-            } else {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L!!) else %T.Unset,\n",
-                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
-                )
-            }
-        }
-        for (fk in edgeFks) {
-            if (fk.required) {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L!!) else %T.Unset,\n",
-                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
-                )
-            } else {
-                code.add(
-                    "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
-                    fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
-                )
-            }
-        }
-        code.add(")\n")
-        builder.addCode(code.build())
-    }
 
     /**
      * Apply framework update defaults to produce `effectivePatch`. Fields
