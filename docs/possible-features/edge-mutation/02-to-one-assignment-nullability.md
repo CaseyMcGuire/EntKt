@@ -157,9 +157,14 @@ required to be reassigned, are not marked dirty, are not included in the update
 patch as changed FK values, and are not written back. The full after-state
 candidate uses the current owner row loaded by the update root as its fallback
 base. Required edge checks apply to create-time required FKs and to update FKs
-explicitly written by the builder or hooks. A nullable relationship is cleared
-only when the builder or hooks explicitly set the entity setter method or
-resolved FK property to `null`. If final save preparation finds a null FK for a
+explicitly written by the builder or hooks. A nullable relationship is cleared only when one of these explicit
+writes happens: the builder calls the entity setter method with `null`
+(`setAuthor(null)`), the builder assigns `null` to the resolved FK
+property (`authorId = null`), or a hook assigns `null` to the FK
+property on the hook-facing mutation view (`ctx.mutation.authorId = null`).
+The hook-facing view is FK-only and does not expose
+`setAuthor(...)`, so hooks clear relationships through the FK
+property exclusively. If final save preparation finds a null FK for a
 required relationship that is part of the mutation, save preparation rejects it.
 
 For updates, the patch type of a required FK is `FieldPatch<TargetIdType>`
