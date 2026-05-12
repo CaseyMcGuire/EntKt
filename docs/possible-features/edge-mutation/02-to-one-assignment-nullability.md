@@ -481,12 +481,35 @@ default unless a future edge-level immutability modifier defines otherwise.
 
 Create defaults on field-backed FK fields apply like scalar create defaults
 during create final-value computation. Required edge checks see the final
-defaulted FK value. Create defaults do not apply to untouched update
-relationships. If a backing FK field has an update default, it follows the
-ID-based update-root update-default rules and becomes a framework-added effective
-patch value. Defaults do not load or validate the target row; target existence
-remains enforced by database FK constraints unless a validation rule checks it
-earlier.
+defaulted FK value.
+
+For nullable field-backed FKs, the rule is **explicit null wins**:
+
+- If the caller does not touch the relationship (unset), the create
+  default fires and the persisted FK is the default value.
+- If the caller explicitly assigns `null` (`setAuthor(null)` or
+  `authorId = null`), the default is suppressed and the persisted FK
+  is `null`. The explicit assignment is treated as the caller's
+  intentional choice, the same way it is for scalar fields with
+  defaults elsewhere in the schema DSL.
+
+This requires the create builder to distinguish "untouched" from
+"explicitly assigned `null`" for nullable field-backed FKs — typically
+via the same dirty-tracking shape the update path uses (an internal
+"assigned" flag set by the public setter method and FK property
+setter, separate from the underlying value).
+
+Required field-backed FKs cannot accept an explicit `null` assignment
+(the setters defensively reject null at entry — see Public Types), so
+"explicit null vs unset" does not arise for them; unset triggers the
+default and required edge checks see the defaulted value.
+
+Create defaults do not apply to untouched update relationships. If a
+backing FK field has an update default, it follows the ID-based
+update-root update-default rules and becomes a framework-added effective
+patch value. Defaults do not load or validate the target row; target
+existence remains enforced by database FK constraints unless a
+validation rule checks it earlier.
 
 ## Mixed Entity-Setter And FK Writes
 
