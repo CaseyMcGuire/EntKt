@@ -661,7 +661,11 @@ Create saves follow the normal generated create pipeline:
 4. final scalar/FK values are computed, and generated field-shape checks plus
    required edge checks run
 5. the full create candidate includes final FK values
-6. privacy and validation run in the caller's client scope
+6. privacy runs in the caller's client scope (keeps the caller's
+   privacy context); validation runs with the System-scoped
+   LOAD-privacy bypass so validator reads through `ctx.client` are
+   not filtered by the caller's LOAD privacy (see "Candidate And
+   Rule Visibility" below for the shared rule)
 7. the owner row is inserted
 8. after hooks and returned LOAD privacy run according to the generated write
    pipeline
