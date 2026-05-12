@@ -4,7 +4,7 @@
 
 Possible future feature. This is not implemented.
 
-Split out from [Edge Mutation API](edge-mutation-api.md).
+Split out from [Edge Mutation API](00-overview.md).
 
 ## Summary
 
@@ -20,9 +20,9 @@ privacy/validation candidate shape, target loading semantics, edge-only update
 return state, and create-time deferral.
 
 The schema marker and link-table eligibility rules live in
-[Many-To-Many Schema Modeling](edge-mutation-m2m-schema-modeling.md). Transaction
+[Many-To-Many Schema Modeling](03-m2m-schema-modeling.md). Transaction
 and locking requirements live in
-[Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md).
+[Transaction And Locking Semantics](04-transaction-locking-semantics.md).
 
 ## Proposed API
 
@@ -286,7 +286,7 @@ V1 should keep privacy and validation owner-centric:
   repo
 - `throughLink(...)` write-orientation edges get direct M2M helpers only when the
   junction schema satisfies the helper-eligible static shape constraints from
-  [Many-To-Many Schema Modeling](edge-mutation-m2m-schema-modeling.md)
+  [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
 - synthesized reverse orientations remain traversal-only in V1, and explicit
   reverse `throughLink(...)` declarations are rejected
 - `throughEntity(...)` edges do not get direct M2M helpers; their write rules
@@ -333,7 +333,7 @@ explicit query with eager loading after `save()`.
    junction-table `add/remove/set` and `addId/removeId/setIds` on the single
    explicit `throughLink(...)` declaration only.
 3. Require the transaction and owner-edge serialization semantics from
-   [Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md).
+   [Transaction And Locking Semantics](04-transaction-locking-semantics.md).
 4. Consider create-time many-to-many helpers once owner id availability and
    junction write ordering are specified for multi-write creates.
 

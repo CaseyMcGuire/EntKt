@@ -4,7 +4,7 @@
 
 Possible future feature. This is not implemented.
 
-Split out from [Edge Mutation API](edge-mutation-api.md).
+Split out from [Edge Mutation API](00-overview.md).
 
 ## Summary
 
@@ -25,7 +25,7 @@ This RFC covers:
 ID-based update roots, many-to-many schema modeling, link-table helpers, and
 multi-write transaction semantics are covered by separate RFCs.
 
-This RFC assumes the [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
+This RFC assumes the [ID-Based Update Roots](01-id-based-update-roots.md)
 contract. Update roots identify owner rows by id, and generated repos should not
 expose `update(entity)` owner-row overloads.
 
@@ -54,7 +54,7 @@ The ID-only path should remain available when the caller already has the target
 id and does not want to load a full entity.
 
 Examples use `.save()` as shorthand for the current generated save operation. If
-the [Result Variants](entkt-result-variants-rfc.md) RFC is adopted, examples
+the [Result Variants](../entkt-result-variants-rfc.md) RFC is adopted, examples
 should use `saveOrThrow()` for the throwing path or `saveOrError()` for
 structured errors. `saveOrNull()` must not swallow privacy, validation,
 constraint, transaction, or driver failures.
@@ -125,7 +125,7 @@ The relationship nullability model is required by default. A
 the relationship with `.nullable()`. The public model should be non-null by
 default and nullable only when explicitly requested. The DSL-wide decision to
 use `.nullable()` and remove `.optional()` is covered in
-[Schema Nullability Terminology](schema-nullability-terminology.md). Under that
+[Schema Nullability Terminology](../schema-nullability-terminology.md). Under that
 contract, `.nullable()` is the only relationship nullability modifier.
 Relationship `.required()` and `.optional()` are invalid. If those methods still
 exist during migration, schema validation rejects their use.
@@ -399,7 +399,7 @@ happened to be assigned earlier in the builder lifecycle.
 Hook-facing to-one mutation views expose pending FK values, not current database
 state and not whether the builder left the relationship untouched or explicitly
 set it to null. `beforeUpdate` hooks receive the update hook context defined by
-[ID-Based Update Roots](edge-mutation-id-based-update-roots.md), which includes
+[ID-Based Update Roots](01-id-based-update-roots.md), which includes
 the loaded `before` entity. Resolved FK getters on the mutation view still expose
 only pending patch values. If hooks need richer mutation-intent visibility later,
 that should be added as a separate structured mutation-intent API.
@@ -448,7 +448,7 @@ are writable in both create and update hook contexts. Create-only values,
 including immutable fields and immutable field-backed FKs, are not exposed on
 `beforeSave`; use `beforeCreate` for those. `beforeCreate` receives a restricted
 create hook interface, and `beforeUpdate` receives the update hook context
-defined by [ID-Based Update Roots](edge-mutation-id-based-update-roots.md), whose
+defined by [ID-Based Update Roots](01-id-based-update-roots.md), whose
 `mutation` property is the restricted update hook interface.
 
 On the common `beforeSave` mutation interface, update-side getters follow update
@@ -527,7 +527,7 @@ Create saves follow the normal generated create pipeline:
    pipeline
 
 For updates, the high-level save pipeline is defined by
-[ID-Based Update Roots](edge-mutation-id-based-update-roots.md). This RFC
+[ID-Based Update Roots](01-id-based-update-roots.md). This RFC
 contributes the to-one-specific steps inside that pipeline. Update-specific
 cases such as syntactically empty updates, hook-cleared empty updates, missing
 owner rows, update defaults, `NoChanges`, and returned entity hydration are
@@ -586,7 +586,7 @@ patch, and after-state candidate.
 
 Privacy contexts keep the caller's privacy context. Validation contexts keep the
 existing System-scoped LOAD-privacy bypass. Transaction-scoped context behavior
-is covered in [Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md).
+is covered in [Transaction And Locking Semantics](04-transaction-locking-semantics.md).
 
 ## Rollout Plan
 
@@ -596,7 +596,7 @@ is covered in [Transaction And Locking Semantics](edge-mutation-transaction-lock
 2. Change relationship nullability to required by default for `belongsTo(...)`,
    with `.nullable()` as the explicit nullable relationship
    marker. Follow the DSL-wide terminology contract from
-   [Schema Nullability Terminology](schema-nullability-terminology.md).
+   [Schema Nullability Terminology](../schema-nullability-terminology.md).
 3. Add tests proving required/nullable to-one semantics and hook/privacy/
    validation visibility.
 

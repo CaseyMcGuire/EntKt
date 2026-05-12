@@ -9,7 +9,7 @@ hook-cleared empty handling, and driver state-equal hydration are all live.
 Pessimistic update consistency and the broader result-variants surface
 remain future work in their own RFCs.
 
-Split out from [Edge Mutation API](edge-mutation-api.md).
+Split out from [Edge Mutation API](00-overview.md).
 
 ## Summary
 
@@ -455,11 +455,11 @@ payload is valid, but no state transition will be persisted.
 
 ## Relationship To Other RFCs
 
-[To-One Assignment And Nullability](edge-mutation-to-one-assignment-nullability.md)
+[To-One Assignment And Nullability](02-to-one-assignment-nullability.md)
 defines to-one setter and FK semantics. This RFC defines the owner-row update
 root those setters run inside.
 
-[Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md)
+[Transaction And Locking Semantics](04-transaction-locking-semantics.md)
 may extend this baseline with stronger update consistency modes, such as
 pessimistic owner-row locking, and defines transaction-scoped client behavior,
 row-lock capabilities, and runtime transaction guardrails.

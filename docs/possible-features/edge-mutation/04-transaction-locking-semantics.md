@@ -4,7 +4,7 @@
 
 Possible future feature. This is not implemented.
 
-Split out from [Edge Mutation API](edge-mutation-api.md).
+Split out from [Edge Mutation API](00-overview.md).
 
 ## Summary
 
@@ -17,7 +17,7 @@ scope they are called from. Link-table M2M helpers are the exception at the API
 level: they require callers to use a transaction-scoped client because they issue
 multiple driver calls and need owner-edge serialization.
 
-This RFC assumes [ID-Based Update Roots](edge-mutation-id-based-update-roots.md)
+This RFC assumes [ID-Based Update Roots](01-id-based-update-roots.md)
 and extends that baseline with `UpdateConsistency.Pessimistic`. Generated update
 saves are rooted by id, not `update(entity)`. For pessimistic updates, the owner
 row is locked and read before update hooks, privacy, validation, and writes.

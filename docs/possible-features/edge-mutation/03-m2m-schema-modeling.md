@@ -4,7 +4,7 @@
 
 Possible future feature. This is not implemented.
 
-Split out from [Edge Mutation API](edge-mutation-api.md).
+Split out from [Edge Mutation API](00-overview.md).
 
 ## Summary
 
@@ -139,12 +139,12 @@ not run junction repo hooks, privacy, or validation.
 
 ## Relationship To Other RFCs
 
-- [To-One Assignment And Nullability](edge-mutation-to-one-assignment-nullability.md)
+- [To-One Assignment And Nullability](02-to-one-assignment-nullability.md)
   defines required-by-default `belongsTo(...)`, which this RFC relies on for
   non-null junction FK semantics.
-- [Link-Table M2M Mutation Helpers](edge-mutation-link-table-helpers.md) defines
+- [Link-Table M2M Mutation Helpers](05-link-table-helpers.md) defines
   the generated helper APIs for safe `throughLink(...)` edges.
-- [Transaction And Locking Semantics](edge-mutation-transaction-locking-semantics.md)
+- [Transaction And Locking Semantics](04-transaction-locking-semantics.md)
   defines the transaction and serialization requirements those helpers need.
 
 ## Rollout Plan
