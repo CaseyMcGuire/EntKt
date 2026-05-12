@@ -643,9 +643,11 @@ For required FKs the patch type is `FieldPatch<TargetIdType>` and only
 and is rejected before the canonical patch is built (see "Relationship
 Nullability" above).
 
-Hooks that need current relationship state should read the loaded
-update `before` entity or query explicitly when they need data outside
-that owner row.
+Hooks that need the current FK value should read it from the loaded
+`before` row (`ctx.before.authorId`). The relationship edges on
+`ctx.before` are unloaded, so the target row itself is not directly
+accessible; hooks that need the target entity must query it
+explicitly via `ctx.client.users.byId(ctx.before.authorId)`.
 
 Hook-facing resolved FK properties are typed according to relationship
 nullability. Required relationship FKs expose non-null setters and defensively
