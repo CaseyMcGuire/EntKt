@@ -374,12 +374,15 @@ There is no readable `author` property on the public mutation builder
 either: relationship entity reads are not part of the public surface,
 only the FK property (`authorId`) is readable. Hooks observe pending
 relationship state through `ctx.patch.authorId` and current state
-through `ctx.before.author`. The hook-facing mutation view is
-narrower than the public builder DSL: it is FK-only, exposing
-`authorId = ...` (and `unsetAuthorId()` per the patch contract), and
-does not include `setAuthor(...)`. Hooks that want to assign a
-relationship by entity write the entity id into the FK property
-directly: `ctx.mutation.authorId = alice.id`.
+through `ctx.before.authorId` — the internal byId load returns the
+owner row with unloaded edges, so the target entity is not available
+on `ctx.before` itself; hooks that need the target row must query it
+explicitly via `ctx.client.users.byId(ctx.before.authorId)`. The
+hook-facing mutation view is narrower than the public builder DSL: it
+is FK-only, exposing `authorId = ...` (and `unsetAuthorId()` per the
+patch contract), and does not include `setAuthor(...)`. Hooks that
+want to assign a relationship by entity write the entity id into the
+FK property directly: `ctx.mutation.authorId = alice.id`.
 
 Generated entity setter methods and resolved FK properties must include KDoc
 explaining the relationship-write semantics. Entity setter methods use only the
