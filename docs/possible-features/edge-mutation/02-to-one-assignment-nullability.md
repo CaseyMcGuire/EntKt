@@ -292,10 +292,36 @@ Required create builders may use nullable internal staging state to represent
 for required edges.
 
 Generated required entity setter methods and required FK setters must
-defensively reject null at runtime, even though their Kotlin signatures are
-non-null. This protects Java/platform callers and reflective invocation from
-leaving required relationships null. Save preparation still performs the final
-required FK check as a backstop.
+defensively reject null **at setter entry**, even though their Kotlin
+signatures are non-null. The check fires before any state is mutated;
+it does not rely on save preparation to catch the null. This protects
+Java/platform callers and reflective invocation that can bypass
+Kotlin's non-null type contract.
+
+```kotlin
+// Required relationship — both forms reject null at the call site.
+fun setAuthor(value: User) {
+    requireNotNull(value) { "author is required" }
+    authorId = value.id  // delegates to the required-FK setter below
+}
+
+override var authorId: UUID
+    get() = /* throw-on-untouched */
+    set(value) {
+        @Suppress("SENSELESS_COMPARISON")  // Kotlin sees value as non-null
+        requireNotNull(value) { "authorId is required" }
+        field = value
+        dirtyFields.add("authorId")
+    }
+```
+
+Save preparation's `_checkRequiredNotNull()` remains as a final
+backstop for the case where the builder is reached through paths
+that do not go through these setters (for example, hooks that
+manipulate `dirtyFields` directly through generated APIs that don't
+re-enter the setter). For normal call sites — Kotlin, Java, or
+reflection — the setter rejects before the value reaches the
+builder's internal state.
 
 Entity setter methods are write-only commands on mutation builders. The resolved
 FK property, such as `authorId`, is the readable/writable source of truth for
