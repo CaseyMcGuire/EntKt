@@ -214,23 +214,62 @@ collision would occur.
 
 ## Declaration Property Name Capture
 
-Generated Kotlin API names are derived from the Kotlin declaration property name.
-Schema collection must map each registered edge builder to exactly one Kotlin
-member property declared on the schema class.
+Generated Kotlin API names are derived from the Kotlin declaration property
+name. Schema collection must map each registered edge builder to **exactly
+one** Kotlin member property declared on the schema class instance being
+inspected.
 
-A declaration is valid only when:
+### Eligible property shape
 
-- the property is a stable Kotlin `val`
-- reading the property returns the same builder instance that was self-registered
-  during schema initialization
-- the declaration property name is lowerCamelCase
-- no two registered declarations map to the same Kotlin property name
-- computed getters that create new declarations during property inspection are
-  rejected
+A property is eligible to name a registered edge builder only when **all**
+of the following hold:
 
-If codegen cannot map a registered edge to exactly one declaration property,
-schema validation fails with a diagnostic directing the caller to use a normal
-`val edgeName = belongsTo<Target>("edge_name")` declaration.
+- It is a public, non-`private`, non-`protected` Kotlin `val` declared
+  directly on the schema class (or `object`) instance — not inherited as
+  an abstract member from a superclass and not introduced by an
+  interface default.
+- It has no property delegate (`by lazy`, `by Delegates.observable`, or
+  any custom `getValue` provider). Delegated reads can return new
+  instances per access and cannot guarantee identity stability with the
+  self-registered builder.
+- Its getter has **no side effects** and **does not allocate**: two
+  back-to-back reads of the same property must return the same instance
+  (`===`). Computed getters that build a fresh `belongsTo<…>(…)` per
+  read are rejected.
+- The declaration property name is `lowerCamelCase`. Names that would
+  require separator munging (e.g. `primary_author`) fail capture; the
+  caller renames to a lowerCamelCase declaration (e.g. `primaryAuthor`).
+
+### Mapping rules
+
+- Each registered edge builder must be reachable through **exactly one**
+  eligible declaration property on the schema instance. If two eligible
+  properties resolve to the same registered builder via identity (`===`),
+  schema validation fails — the second `val` is treated as an alias and
+  is not allowed.
+- No two registered declarations may map to the same property name.
+  Shadowing through inheritance or interface defaults is rejected at
+  schema validation time, not silently resolved.
+- A registered builder that is **not** reachable via any eligible
+  property (e.g. it lives in a private field, a delegated property, or
+  an inherited abstract slot) fails capture and the caller is directed
+  to rewrite the declaration as a normal
+  `val edgeName = belongsTo<Target>("edge_name")` form.
+
+### Diagnostics
+
+When capture fails, schema validation emits a diagnostic naming both
+the offending property (or the orphaned builder) and the rule that
+rejected it:
+
+- *"Edge builder at … is reachable only through a private/delegated/
+  inherited member; declare it as a public val on the schema class."*
+- *"Edge builder at … is reachable through both `<A>` and `<B>`; a
+  registered builder must map to exactly one property."*
+- *"Property `<name>` on `<Schema>` returns a freshly-allocated builder
+  on each read; declare it as `val <name> = belongsTo<…>(…)`."*
+- *"Property name `<name>` requires separator munging; rename the
+  declaration to lowerCamelCase."*
 
 Required create builders may use nullable internal staging state to represent
 "not assigned yet", but `null` should not be part of the public assignment API
