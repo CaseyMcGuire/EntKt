@@ -237,13 +237,28 @@ of the following hold:
   any custom `getValue` provider). Delegated reads can return new
   instances per access and cannot guarantee identity stability with the
   self-registered builder.
-- Its getter has **no side effects** and **does not allocate**: two
-  back-to-back reads of the same property must return the same instance
-  (`===`). Computed getters that build a fresh `belongsTo<…>(…)` per
-  read are rejected.
+- Two back-to-back reads of the property return the same builder
+  instance (`===`). A computed getter that builds a fresh
+  `belongsTo<…>(…)` per read fails this check because the second read
+  produces a different instance.
+- Reading the property does not register additional edge builders on
+  the schema. Schema inspection counts registered declarations before
+  and after the read; a getter that calls `belongsTo<…>(…)` (or any
+  other edge-registering helper) during inspection raises the count
+  and is rejected.
 - The declaration property name is `lowerCamelCase`. Names that would
   require separator munging (e.g. `primary_author`) fail capture; the
   caller renames to a lowerCamelCase declaration (e.g. `primaryAuthor`).
+
+Schema inspection enforces eligibility through these *observable*
+invariants — identity stability across reads, non-mutation of the
+registered declaration count, and the structural checks above
+(public/non-delegated/declared-directly/lowerCamelCase). Arbitrary
+side effects in a getter that don't disturb those invariants (e.g.
+logging, incrementing a counter unrelated to declaration registration)
+are not detectable from inspection and remain unsupported behavior:
+they may produce surprising results but won't be diagnosed at schema
+validation time.
 
 ### Mapping rules
 
