@@ -457,7 +457,29 @@ FK path.
 
 For field-backed edges, the entity setter method name is derived from the edge
 declaration property name, while the FK property name is the backing field
-declaration property name.
+declaration property name. The backing field name is authoritative — it is
+**not** a synthesized `{edge}Id` suffix. If the backing field is named
+without an `Id` suffix, the generated FK property has no `Id` suffix
+either:
+
+```kotlin
+class Post : EntSchema("posts") {
+    val writer = uuid("writer_id")                                // backing field name has no Id suffix
+    val author = belongsTo<User>("author").field(writer)
+}
+```
+
+Generates:
+
+```kotlin
+client.posts.update(post.id) {
+    setAuthor(alice)      // entity setter — name from the edge declaration ("author")
+    writer = alice.id     // FK property — name from the backing field declaration ("writer")
+}.save()
+```
+
+Not `writerId = alice.id` and not `authorId = alice.id`. There is no
+synthesized `Id`-suffixed FK property for a field-backed edge.
 
 In V1, a declared backing field may back at most one
 `belongsTo(...).field(handle)` edge. Codegen rejects schemas where multiple
