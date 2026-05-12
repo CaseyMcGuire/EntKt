@@ -54,7 +54,7 @@ The ID-only path should remain available when the caller already has the target
 id and does not want to load a full entity.
 
 Examples use `.save()` as shorthand for the current generated save operation. If
-the [Result Variants](../entkt-result-variants-rfc.md) RFC is adopted, examples
+the [Result Variants](../tooling/entkt-result-variants-rfc.md) RFC is adopted, examples
 should use `saveOrThrow()` for the throwing path or `saveOrError()` for
 structured errors. `saveOrNull()` must not swallow privacy, validation,
 constraint, transaction, or driver failures.
@@ -128,7 +128,7 @@ The relationship nullability model is required by default. A
 `belongsTo<Target>(...)` edge produces a non-null FK unless the schema marks the
 relationship with `.nullable()`. `.nullable()` is the only relationship
 nullability modifier — see
-[Schema Nullability Terminology](../schema-nullability-terminology.md) for the
+[Schema Nullability Terminology](../schema/schema-nullability-terminology.md) for the
 DSL-wide contract.
 
 Nullable to-one edges, declared with `.nullable()`, can be cleared by assigning
@@ -369,8 +369,12 @@ There is no readable `author` property on the public mutation builder
 either: relationship entity reads are not part of the public surface,
 only the FK property (`authorId`) is readable. Hooks observe pending
 relationship state through `ctx.patch.authorId` and current state
-through `ctx.before.author`; the writable mutation view exposes
-`setAuthor(...)` and `authorId = ...`, nothing else relationship-shaped.
+through `ctx.before.author`. The hook-facing mutation view is
+narrower than the public builder DSL: it is FK-only, exposing
+`authorId = ...` (and `unsetAuthorId()` per the patch contract), and
+does not include `setAuthor(...)`. Hooks that want to assign a
+relationship by entity write the entity id into the FK property
+directly: `ctx.mutation.authorId = alice.id`.
 
 Generated entity setter methods and resolved FK properties must include KDoc
 explaining the relationship-write semantics. Entity setter methods use only the
@@ -732,7 +736,7 @@ is covered in [Transaction And Locking Semantics](04-transaction-locking-semanti
 2. Change relationship nullability to required by default for `belongsTo(...)`,
    with `.nullable()` as the explicit nullable relationship
    marker. Follow the DSL-wide terminology contract from
-   [Schema Nullability Terminology](../schema-nullability-terminology.md).
+   [Schema Nullability Terminology](../schema/schema-nullability-terminology.md).
 3. Add tests proving required/nullable to-one semantics and hook/privacy/
    validation visibility.
 

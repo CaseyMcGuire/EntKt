@@ -5,49 +5,55 @@ These pages are design notes, not committed API contracts.
 
 ## Privacy And Validation
 
-- [Privacy / Validation Explain Mode](privacy-validation-explain-mode.md)
-- [Policy Test Helpers](policy-test-helpers.md)
-- [Query Observability Privacy](query-observability-privacy.md)
-- [Edge-Derived LOAD Privacy](edge-derived-load-privacy.md)
-- [Preflighted Bulk Operations](preflighted-bulk-operations.md)
+- [Privacy / Validation Explain Mode](privacy-validation/privacy-validation-explain-mode.md)
+- [Policy Test Helpers](privacy-validation/policy-test-helpers.md)
+- [Query Observability Privacy](privacy-validation/query-observability-privacy.md)
+- [Edge-Derived LOAD Privacy](privacy-validation/edge-derived-load-privacy.md)
+- [Preflighted Bulk Operations](privacy-validation/preflighted-bulk-operations.md)
 
-## Query And Mutation APIs
+## Mutation APIs
 
-- [Structured Mutation Pipeline](structured-mutation-pipeline.md)
-- [Ephemeral Mutation Inputs](ephemeral-mutation-inputs.md)
-- [Compare-And-Set Mutations](compare-and-set-mutations.md)
+- [Structured Mutation Pipeline](mutation/structured-mutation-pipeline.md)
+- [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
+- [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
 - [ID-Based Update Roots](edge-mutation/01-id-based-update-roots.md)
 - [To-One Assignment And Nullability](edge-mutation/02-to-one-assignment-nullability.md)
 - [Many-To-Many Schema Modeling](edge-mutation/03-m2m-schema-modeling.md)
 - [Transaction And Locking Semantics For Edge Mutations](edge-mutation/04-transaction-locking-semantics.md)
 - [Link-Table M2M Mutation Helpers](edge-mutation/05-link-table-helpers.md)
-- [Mutation Actions](mutation-actions.md)
-- [Transactional Graph Changesets](transactional-graph-changesets.md)
-- [Read Result Variants](read-result-variants.md)
-- [Request-Scoped Entity Loading](request-scoped-entity-loading.md)
-- [Cursor Pagination](cursor-pagination.md)
-- [Projection / Select API](projection-select-api.md)
-- [Aggregations](aggregations.md)
-- [Indexed Query Helpers](indexed-query-helpers.md)
+- [Mutation Actions](mutation/mutation-actions.md)
+- [Transactional Graph Changesets](mutation/transactional-graph-changesets.md)
+
+## Query APIs
+
+- [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
+- [Cursor Pagination](query/cursor-pagination.md)
+- [Projection / Select API](query/projection-select-api.md)
+- [Aggregations](query/aggregations.md)
+- [Indexed Query Helpers](query/indexed-query-helpers.md)
 
 ## Model Behavior
 
-- [Schema Nullability Terminology](schema-nullability-terminology.md)
-- [Optimistic Locking](optimistic-locking.md)
-- [Edge Groups](edge-groups.md)
-- [Soft Delete](soft-delete.md)
-- [Audit Fields](audit-fields.md)
-- [Custom Field Types And Converters](custom-field-types-converters.md)
+- [Schema Nullability Terminology](schema/schema-nullability-terminology.md)
+- [Typed Schema Handles](schema/typed-schema-handles.md)
+- [Schema Validation Explain](schema/schema-validation-explain.md)
+- [Optimistic Locking](schema/optimistic-locking.md)
+- [Edge Groups](schema/edge-groups.md)
+- [Soft Delete](schema/soft-delete.md)
+- [Audit Fields](schema/audit-fields.md)
+- [Custom Field Types And Converters](schema/custom-field-types-converters.md)
+- [Schema Printer](schema/schema-printer.md)
 
-## Codegen And Tooling
+## Results, Codegen, And Tooling
 
-- [Structured Error Model](structured-error-model.md)
-- [Flyway Shadow Migration Workflow](flyway-shadow-migration-workflow.md)
-- [Codegen Plugin Hooks](codegen-plugin-hooks.md)
-- [OpenAPI / JSON Schema Generation](openapi-json-schema-generation.md)
-- [GraphQL Kotlin Type Generation](graphql-kotlin-generation.md)
-- [Schema Printer](schema-printer.md)
-- [Generated Test Fixtures](generated-test-fixtures.md)
-- [In-Memory Generated Integration Tests](in-memory-generated-integration-tests.md)
-- [Gradle Developer Experience](gradle-dx.md)
+- [Structured Error Model](tooling/structured-error-model.md)
+- [EntKt Result Variants](tooling/entkt-result-variants-rfc.md)
+- [Read Result Variants](tooling/read-result-variants.md)
+- [Flyway Shadow Migration Workflow](tooling/flyway-shadow-migration-workflow.md)
+- [Codegen Plugin Hooks](tooling/codegen-plugin-hooks.md)
+- [OpenAPI / JSON Schema Generation](tooling/openapi-json-schema-generation.md)
+- [GraphQL Kotlin Type Generation](tooling/graphql-kotlin-generation.md)
+- [Generated Test Fixtures](tooling/generated-test-fixtures.md)
+- [In-Memory Generated Integration Tests](tooling/in-memory-generated-integration-tests.md)
+- [Gradle Developer Experience](tooling/gradle-dx.md)
