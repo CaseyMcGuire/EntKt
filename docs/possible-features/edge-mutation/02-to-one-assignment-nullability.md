@@ -134,6 +134,39 @@ contract, `.nullable()` is the only relationship nullability modifier.
 Relationship `.required()` and `.optional()` are invalid. If those methods still
 exist during migration, schema validation rejects their use.
 
+### Migration from the pre-RFC DSL
+
+This is a breaking schema-DSL change. Existing schemas that used the
+old nullability vocabulary must be rewritten:
+
+| Before                                       | After                                |
+|----------------------------------------------|--------------------------------------|
+| `belongsTo<User>("author").required()`       | `belongsTo<User>("author")`          |
+| `belongsTo<User>("editor").optional()`       | `belongsTo<User>("editor").nullable()` |
+| `belongsTo<User>("editor")` (was nullable)   | `belongsTo<User>("editor").nullable()` |
+| `string("bio").optional()`                   | `string("bio").nullable()`           |
+
+Key rules:
+
+- Drop every `.required()` on a `belongsTo(...)` — required is now the
+  default, and the call site no longer compiles.
+- Rewrite every `.optional()` (on a relationship *or* a scalar field)
+  to `.nullable()` — `.optional()` is removed from the DSL.
+- Edges that were previously nullable-by-default (no `.required()` call,
+  no `.optional()` call) flip semantics — they become required under
+  the new default and need an explicit `.nullable()` to preserve their
+  old behavior. Schema validation rejects the old `.required()`/`.optional()`
+  methods with a diagnostic pointing at the new contract, but it cannot
+  detect the silent "previously-nullable-now-required" case without a
+  per-schema migration step.
+
+Cross-RFC scope: this migration is owned by the
+[Schema Nullability Terminology](../schema-nullability-terminology.md)
+RFC; this RFC depends on it landing for the required-by-default
+relationship model to be coherent. Until both ship, `belongsTo(...)`
+keeps the existing nullable-by-default semantics and `.required()`
+remains the way to mark a relationship as required.
+
 Nullable to-one edges, declared with `.nullable()`, can be cleared by assigning
 `null` through the generated setter method:
 
