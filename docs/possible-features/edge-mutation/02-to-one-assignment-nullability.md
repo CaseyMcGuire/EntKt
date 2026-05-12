@@ -807,6 +807,27 @@ Before implementation, add tests for:
   declaration property name in UpperCamelCase, not the storage/runtime edge
   string, and reject collisions with fields, edges, generated methods, Kotlin
   members, or JVM signatures
+- the generated update/create builder exposes `setAuthor(...)` and the
+  resolved FK property (`authorId`) for relationship writes, and does
+  **not** expose a writable `author` property — codegen assertion: the
+  generated `${Entity}Update` / `${Entity}Create` class contains
+  `public fun setAuthor(`/`public fun set<Edge>(` and does not contain a
+  `var author:` declaration for any `belongsTo` edge
+- the old property-style relationship assignment `author = alice` /
+  `author = null` does not compile against the generated builder —
+  compile-fail assertion: a Kotlin source snippet that writes
+  `client.posts.update(id) { author = alice }` fails to type-check with
+  an "unresolved reference: author" error, while
+  `setAuthor(alice)` and `authorId = alice.id` type-check on the same
+  builder
+- the generated builder does not expose a readable relationship entity
+  property — codegen assertion: no `public val author:` or
+  `public var author:` declaration appears in the generated
+  `${Entity}Update` / `${Entity}Create` for any `belongsTo` edge
+- the hook-facing `${Entity}UpdateMutationView` interface does not
+  declare `setAuthor(...)` — codegen assertion: the generated interface
+  body contains the FK setter (`authorId`) and `unsetAuthorId()` but no
+  `setAuthor` member
 - edge declaration property names whose generated setter method names collide are
   rejected
 - schema collection fails if codegen cannot map a registered `belongsTo` builder
