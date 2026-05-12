@@ -113,10 +113,14 @@ relationship-write authorization, it must encode that rule in owner write privac
 or validation. EntKt does not treat target LOAD privacy as relationship-write
 authorization.
 
-If the database rejects the FK because the target id does not exist, the throwing
-path surfaces a constraint exception and `saveOrError()` surfaces
+If the database rejects the FK because the target id does not exist, the
+throwing path surfaces a constraint exception and `saveOrError()` surfaces
 `EntError.ConstraintViolation`, not `ValidationFailed`, unless a custom
-validation rule checked target existence earlier.
+validation rule checked target existence earlier. (`EntError.ConstraintViolation`
+is defined by the [Result Variants RFC](../tooling/entkt-result-variants-rfc.md);
+this RFC depends on that variant landing for `saveOrError()` to surface it.
+Until then, database constraint exceptions propagate as their underlying
+exception types from `saveOrError()`.)
 
 ## Relationship Nullability
 
@@ -710,8 +714,11 @@ Before implementation, add tests for:
   `alice` as a loaded edge
 - returned update entities reflect the persisted row, not synthesized update
   input values
-- missing target FK writes surface database constraint errors, or
-  `EntError.ConstraintViolation` under `saveOrError()`
+- missing target FK writes surface database constraint errors; under
+  `saveOrError()` they surface as `EntError.ConstraintViolation` once the
+  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md) defines
+  that variant and generated `saveOrError()` catches constraint exceptions
+  (deferred to that RFC; until then the underlying exception propagates)
 - hooks observe final pending FK values after builder writes and can mutate
   changed FK values through the hook-facing scalar/FK mutation view
 - update hooks throw when reading untouched relationship FKs instead of exposing
