@@ -512,12 +512,24 @@ Required field-backed FKs cannot accept an explicit `null` assignment
 "explicit null vs unset" does not arise for them; unset triggers the
 default and required edge checks see the defaulted value.
 
-Create defaults do not apply to untouched update relationships. If a
-backing FK field has an update default, it follows the ID-based
-update-root update-default rules and becomes a framework-added effective
-patch value. Defaults do not load or validate the target row; target
-existence remains enforced by database FK constraints unless a
-validation rule checks it earlier.
+Create defaults do not apply to untouched update relationships.
+**Update defaults are not allowed on relationship backing FK fields.**
+The generic ID-based update-default rule applies framework defaults to
+every non-empty update, which would silently rewrite an untouched
+relationship — for example, `update(post.id) { title = "x" }` would
+add `writerId` to the effective patch via its update default and
+change the relationship even though the caller did not touch it. That
+conflicts with the rule that untouched relationships stay absent from
+the update patch and are not written back. Codegen rejects an
+`updateDefault(...)` modifier on a field used as a `belongsTo(...).field(handle)`
+backing FK, and on the synthesized backing field for an implicit-FK
+relationship. Schema validation emits a diagnostic directing the
+caller to express the intent as an `afterUpdate` or `beforeUpdate`
+hook on the owner entity instead.
+
+Defaults do not load or validate the target row; target existence
+remains enforced by database FK constraints unless a validation rule
+checks it earlier.
 
 ## Mixed Entity-Setter And FK Writes
 
@@ -802,8 +814,12 @@ Before implementation, add tests for:
 - create defaults on field-backed FKs apply before required edge checks without
   loading or validating the target row
 - create defaults on field-backed FKs do not apply to untouched update
-  relationships; backing FK update defaults follow ID-based update-root
-  update-default rules
+  relationships
+- codegen rejects `updateDefault(...)` on a field used as a
+  `belongsTo(...).field(handle)` backing FK, and on the synthesized
+  backing field for an implicit-FK relationship — schema validation
+  emits a diagnostic directing the caller to express the intent as
+  a hook on the owner entity
 - before hooks observe pre-default FK state; field-backed FK defaults apply after
   before hooks during final-value computation
 - generated entity setter method names follow `set` plus the Kotlin schema
