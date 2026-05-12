@@ -320,6 +320,32 @@ Documentation and examples should present entity setter methods as the ergonomic
 to-one API and FK assignment as the ID-only variant. They should not introduce
 relationship assignment properties on mutation builders.
 
+Concretely, after this RFC implements, the only relationship-write forms
+that compile on a generated mutation builder are the entity setter method
+and the resolved FK property. The old property-style assignment is
+removed from the generated surface:
+
+```kotlin
+// required relationship — these compile
+setAuthor(alice)
+authorId = alice.id
+
+// nullable relationship — these compile
+setAuthor(null)
+authorId = null
+
+// removed by this RFC — must not compile on the generated builder
+author = alice
+author = null
+```
+
+There is no readable `author` property on the public mutation builder
+either: relationship entity reads are not part of the public surface,
+only the FK property (`authorId`) is readable. Hooks observe pending
+relationship state through `ctx.patch.authorId` and current state
+through `ctx.before.author`; the writable mutation view exposes
+`setAuthor(...)` and `authorId = ...`, nothing else relationship-shaped.
+
 Generated entity setter methods and resolved FK properties must include KDoc
 explaining the relationship-write semantics. Entity setter methods use only the
 target id, do not load the target row, and do not evaluate target LOAD privacy.
