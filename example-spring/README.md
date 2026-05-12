@@ -54,7 +54,7 @@ schemas, and writes the next versioned SQL file to `db/migrations/`.
 
 If the planner detects destructive changes (dropped columns, type
 changes, etc.), it fails and tells you what manual DDL to write. See
-the [migrations docs](../docs/migrations.md) for the full workflow.
+the [migrations docs](../docs/09-migrations.md) for the full workflow.
 
 ## Endpoints
 

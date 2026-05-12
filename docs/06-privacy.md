@@ -109,7 +109,7 @@ If no provider is configured, the default is `Viewer.Anonymous`.
 ### Policies
 
 Policies group rules for entity operations — both privacy and
-[validation](validation.md). Implement `EntityPolicy` and register it
+[validation](07-validation.md). Implement `EntityPolicy` and register it
 in the client config:
 
 ```kotlin
@@ -331,7 +331,7 @@ materializing or privacy-checking entities.
 ## Limitations
 
 Privacy V1 intentionally keeps enforcement synchronous and row-by-row.
-See [Privacy Limitations](privacy-limitations.md) for aggregate read,
+See [Privacy Limitations](08-privacy-limitations.md) for aggregate read,
 filtering, pagination, and bulk operation limitations.
 
 ## Error Handling

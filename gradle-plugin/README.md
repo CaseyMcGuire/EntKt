@@ -87,7 +87,7 @@ circular dependency (`compileKotlin` -> `generateEntkt` -> `compileKotlin`).
 The flyway plugin auto-applies the base `entkt` plugin, so you don't
 need to apply both explicitly.
 
-See [migrations docs](../docs/migrations.md) for the full workflow.
+See [migrations docs](../docs/09-migrations.md) for the full workflow.
 
 ## Architecture
 

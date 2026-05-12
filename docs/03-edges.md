@@ -4,7 +4,7 @@ Edges define relationships between entities. This page explains how each
 edge type maps to database tables and columns, and what code is generated
 for each.
 
-For the schema DSL reference (modifiers, syntax), see [Schema](schema.md#edges).
+For the schema DSL reference (modifiers, syntax), see [Schema](02-schema.md#edges).
 
 ## Edge types at a glance
 
@@ -222,7 +222,7 @@ class ProjectAssignment : EntSchema("project_assignments") {
 ## ON DELETE actions
 
 FK columns carry a referential action that controls what happens when the
-referenced row is deleted. See [Schema — ON DELETE Actions](schema.md#on-delete-actions)
+referenced row is deleted. See [Schema — ON DELETE Actions](02-schema.md#on-delete-actions)
 for the DSL reference. The table mapping:
 
 | Edge declaration | FK constraint |

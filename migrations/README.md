@@ -14,4 +14,4 @@ their deployment system, or another SQL migration runner.
 - `ManualMode` — controls behavior when destructive ops are detected
 
 The `:flyway` module uses these components to implement the
-[Flyway shadow migration workflow](../docs/migrations.md#flyway-shadow-migration-workflow).
+[Flyway shadow migration workflow](../docs/09-migrations.md#flyway-shadow-migration-workflow).

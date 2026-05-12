@@ -42,7 +42,7 @@ interface Driver {
 
 These three bulk methods are low-level driver operations that do **not**
 fire lifecycle hooks. The generated repo methods (`createMany`,
-`deleteMany`) wrap them with hook support — see [Hooks](hooks.md).
+`deleteMany`) wrap them with hook support — see [Hooks](05-hooks.md).
 - `withTransaction()` runs a block in a transaction. The block receives a
   transaction-scoped driver. If it completes normally, the transaction
   commits. If it throws, the transaction rolls back.

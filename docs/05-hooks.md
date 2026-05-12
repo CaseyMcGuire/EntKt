@@ -159,7 +159,7 @@ For a **create** operation, the full execution order is:
 4. Field validation (generated from schema validators)
 5. Build `WriteCandidate`
 6. Privacy create check
-7. Entity validation create (see [Validation](validation.md))
+7. Entity validation create (see [Validation](07-validation.md))
 8. `driver.insert(...)`
 9. `afterCreate` (receives `User`)
 10. Load privacy on returned entity
@@ -211,8 +211,8 @@ For a **delete**:
 
 Hooks are for side effects (setting timestamps, logging, notifications),
 not for authorization or invariant enforcement. Use
-[privacy](privacy.md) for authorization and
-[validation](validation.md) for data model invariants.
+[privacy](06-privacy.md) for authorization and
+[validation](07-validation.md) for data model invariants.
 
 ## Hooks and Transactions
 

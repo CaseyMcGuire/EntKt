@@ -6,17 +6,17 @@ query builders, and repositories that talk to a pluggable `Driver`.
 
 ## Guides
 
-- [Getting Started](getting-started.md) -- setup, first schema, running codegen
-- [Schema](schema.md) -- fields, edges, indexes, ID strategies
-- [Edges](edges.md) -- how edge types map to tables, columns, and generated code
-- [Queries](queries.md) -- predicates, ordering, pagination, edge traversal, eager loading
-- [Hooks](hooks.md) -- lifecycle hooks for create, update, and delete
-- [Privacy](privacy.md) -- per-entity privacy rules for read and write operations
-- [Validation](validation.md) -- entity-level validation rules for data model invariants
-- [Privacy Limitations](privacy-limitations.md) -- V1 aggregate, filtering, and pagination caveats
-- [Migrations](migrations.md) -- migration planning, snapshots, and SQL file generation
-- [Drivers](drivers.md) -- InMemoryDriver, PostgresDriver, writing your own
-- [Schema Inspection](getting-started.md#schema-inspection) -- validate and explain resolved schema shapes
+- [Getting Started](01-getting-started.md) -- setup, first schema, running codegen
+- [Schema](02-schema.md) -- fields, edges, indexes, ID strategies
+- [Edges](03-edges.md) -- how edge types map to tables, columns, and generated code
+- [Queries](04-queries.md) -- predicates, ordering, pagination, edge traversal, eager loading
+- [Hooks](05-hooks.md) -- lifecycle hooks for create, update, and delete
+- [Privacy](06-privacy.md) -- per-entity privacy rules for read and write operations
+- [Validation](07-validation.md) -- entity-level validation rules for data model invariants
+- [Privacy Limitations](08-privacy-limitations.md) -- V1 aggregate, filtering, and pagination caveats
+- [Migrations](09-migrations.md) -- migration planning, snapshots, and SQL file generation
+- [Drivers](10-drivers.md) -- InMemoryDriver, PostgresDriver, writing your own
+- [Schema Inspection](01-getting-started.md#schema-inspection) -- validate and explain resolved schema shapes
 
 ## Possible Features
 
