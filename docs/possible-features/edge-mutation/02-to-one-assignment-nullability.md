@@ -271,6 +271,22 @@ rejected it:
 - *"Property name `<name>` requires separator munging; rename the
   declaration to lowerCamelCase."*
 
+### Scope
+
+This RFC requires declaration-name capture for **edge** API generation
+(entity setter method names, implicit FK property names) and for
+**field-backed FK** API generation (the user-declared field that backs
+a `belongsTo(...).field(handle)` edge). It does not redefine the
+naming model for scalar field properties in general.
+
+The current convention aligns Kotlin declaration names with storage
+column names (e.g. `val writerId = uuid("writer_id")`), and the
+implementation continues to derive generated scalar property names
+that way. A broader change to derive all scalar generated property
+names from Kotlin declaration names regardless of the storage string
+is out of scope here and belongs in a separate schema-naming RFC if
+ever adopted.
+
 Required create builders may use nullable internal staging state to represent
 "not assigned yet", but `null` should not be part of the public assignment API
 for required edges.
