@@ -735,6 +735,9 @@ Before implementation, add tests for:
   while setting it before required edge validation succeeds
 - field-backed to-one edges expose the user-declared backing field in hooks,
   candidates, privacy, and validation, without a synthetic `{edge}Id` alias
-- create candidates expose full FK values while update candidates expose only
-  changed FK patches
+- update requested/effective patches expose only changed FK values
+  (`FieldPatch.Set` / `FieldPatch.Unset` per FK), not the full owner row
+- create candidates and update after-state candidates both expose full
+  FK values for every field (update after-state is built by folding the
+  effective patch over the loaded `before`)
 - to-one update candidates do not require target entity loads
