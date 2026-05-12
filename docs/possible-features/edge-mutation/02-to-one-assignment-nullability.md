@@ -336,12 +336,18 @@ override var authorId: UUID
 ```
 
 Save preparation's `_checkRequiredNotNull()` remains as a final
-backstop for the case where the builder is reached through paths
-that do not go through these setters (for example, hooks that
-manipulate `dirtyFields` directly through generated APIs that don't
-re-enter the setter). For normal call sites — Kotlin, Java, or
-reflection — the setter rejects before the value reaches the
-builder's internal state.
+backstop for paths that mutate builder state without re-entering
+these setters. Such paths are internal — they are not part of the
+hook API — and include things like reflection that writes the
+backing field directly (skipping the property setter), or a future
+generated bulk-write helper that bypasses the per-property entry
+checks. The hook-facing `${Entity}UpdateMutationView` does not
+expose `dirtyFields` or any other way to mutate state outside the
+generated FK setter and `unset{FkProperty}()`, so hooks always go
+through the entry check. For normal call sites — Kotlin, Java, or
+reflection through the property setter — the setter rejects before
+the value reaches the builder's internal state; the backstop only
+fires for paths that skip the property surface entirely.
 
 Entity setter methods are write-only commands on mutation builders. The resolved
 FK property, such as `authorId`, is the readable/writable source of truth for
