@@ -541,8 +541,14 @@ For nullable field-backed FKs, the rule is **explicit null wins**:
 - If the caller explicitly assigns `null` (`setAuthor(null)` or
   `authorId = null`), the default is suppressed and the persisted FK
   is `null`. The explicit assignment is treated as the caller's
-  intentional choice, the same way it is for scalar fields with
-  defaults elsewhere in the schema DSL.
+  intentional choice.
+
+This rule is relationship-specific in this RFC. Whether scalar
+fields with create defaults follow the same explicit-null-wins
+contract is not defined here and is not assumed; that would require
+nullable scalar create builders to distinguish "untouched" from
+"explicitly assigned `null`" via assigned-flag tracking, which is
+outside this RFC's scope.
 
 This requires the create builder to distinguish "untouched" from
 "explicitly assigned `null`" for nullable field-backed FKs — typically
