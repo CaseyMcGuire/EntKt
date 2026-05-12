@@ -688,6 +688,23 @@ patch semantics. Reading an unset update scalar or FK field throws rather than
 returning current database state. Hook authors who need current owner state in an
 update should use the `beforeUpdate` context's loaded `before` entity.
 
+`beforeSave` hooks must be written against the **shared setter-only**
+pattern: they should *write* field/FK values (e.g. `m.updatedAt = Instant.now()`)
+but should not *read* them. A read like `m.title` works for create (the
+create builder's getter returns the staged value or `null`) but throws
+on update when the field is untouched — and a generic `beforeSave`
+hook has no way to tell which phase it's running in.
+
+The RFC does not include a phase tag on the `beforeSave` mutation
+interface. Hooks that genuinely need different behavior for create
+vs update should split into a `beforeCreate` hook (richer create
+builder, value-style reads work) and a `beforeUpdate` hook (full
+`UpdateHookContext` with `before`, `patch`, and restricted `mutation`
+view). Keeping `beforeSave` write-only is the simplest contract: it
+is the right place for cross-cutting writes like timestamp injection,
+denormalized counters, and other set-and-forget mutations that apply
+uniformly to both create and update.
+
 ## Generated Builder Shape
 
 For each mutable FK-owning to-one edge, generated create/update builders expose
