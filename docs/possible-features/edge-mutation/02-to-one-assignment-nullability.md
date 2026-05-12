@@ -403,24 +403,45 @@ should treat the final pending FK value and `WriteCandidate` as the source of
 truth for changed relationship fields, not any cached entity reference that
 happened to be assigned earlier in the builder lifecycle.
 
-Hook-facing to-one mutation views expose pending FK values, not current database
-state and not whether the builder left the relationship untouched or explicitly
-set it to null. `beforeUpdate` hooks receive the update hook context defined by
-[ID-Based Update Roots](01-id-based-update-roots.md), which includes
-the loaded `before` entity. Resolved FK getters on the mutation view still expose
-only pending patch values. If hooks need richer mutation-intent visibility later,
-that should be added as a separate structured mutation-intent API.
+Hook-facing to-one mutation views are **value-oriented**: a resolved FK
+getter returns the pending value when one exists and throws when the
+relationship is untouched. `beforeUpdate` hooks receive the update hook
+context defined by [ID-Based Update Roots](01-id-based-update-roots.md),
+which includes the loaded `before` entity for current-database-state
+reads.
 
-For update hook-facing mutation views, each mutable relationship FK also exposes
-`unset{FkProperty}()` according to the ID-based update-root patch contract.
-Calling `unsetAuthorId()` removes the relationship FK from the requested patch.
-Setting `authorId = null` on a nullable relationship means `FieldPatch.Set(null)`
-and clears the relationship; it does not unset the patch entry.
+The **intent classification** — untouched vs explicit `null` vs explicit
+non-null value — lives in `ctx.patch`, not in the mutation getter. For a
+nullable FK, `ctx.patch.authorId` is one of:
 
-For update hooks, reading an untouched relationship FK must throw rather than
-pretending the mutation FK getter is a current-state getter. Hooks that need
-current relationship state should read the loaded update `before` entity or query
-explicitly when they need data outside that owner row.
+- `FieldPatch.Unset` — the relationship was not touched.
+- `FieldPatch.Set(null)` — the relationship was explicitly cleared.
+- `FieldPatch.Set(id)` — the relationship was set to a non-null target.
+
+A hook that needs to distinguish "the caller didn't touch authorId"
+from "the caller explicitly set authorId to null" should read
+`ctx.patch.authorId`, not `ctx.mutation.authorId`. The mutation getter
+collapses the first case into a thrown `IllegalStateException` and the
+second into a `null` return — useful for value-style code that wants a
+nullable Kotlin value with throw-on-untouched as a fail-fast, but not a
+substitute for the patch as an intent API.
+
+For update hook-facing mutation views, each mutable relationship FK
+also exposes `unset{FkProperty}()` according to the ID-based update-root
+patch contract. Calling `unsetAuthorId()` removes the relationship FK
+from the requested patch (`FieldPatch.Unset`). Setting `authorId = null`
+on a nullable relationship means `FieldPatch.Set(null)` and clears the
+relationship; it does not unset the patch entry.
+
+For required FKs the patch type is `FieldPatch<TargetIdType>` and only
+`Unset` and `Set(non-null id)` are representable; an explicit
+`authorId = null` on a required FK lives in builder/staging dirty state
+and is rejected before the canonical patch is built (see "Relationship
+Nullability" above).
+
+Hooks that need current relationship state should read the loaded
+update `before` entity or query explicitly when they need data outside
+that owner row.
 
 Hook-facing resolved FK properties are typed according to relationship
 nullability. Required relationship FKs expose non-null setters and defensively
