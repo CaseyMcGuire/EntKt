@@ -161,11 +161,18 @@ only when the builder or hooks explicitly set the entity setter method or
 resolved FK property to `null`. If final save preparation finds a null FK for a
 required relationship that is part of the mutation, save preparation rejects it.
 
-For updates, required edge checks inspect only effective patch entries for
-required relationship FKs. If a required FK is `FieldPatch.Unset`, no required
-edge check runs for that relationship because the update does not touch it. If a
-required FK is `FieldPatch.Set(null)`, generated save preparation rejects it
-before privacy, validation, or database writes.
+For updates, the patch type of a required FK is `FieldPatch<TargetIdType>`
+with a non-nullable `T`, so `FieldPatch.Set(null)` is not a representable
+state for required relationships — only `Unset` and `Set(non-null id)` are.
+The "explicit `authorId = null` on a required FK" case lives in the
+builder/staging layer, not in the patch: it appears as `dirtyFields`
+containing the FK property with a `null` underlying value. Generated save
+preparation rejects that staging state before the canonical requested
+patch is built (and therefore before privacy, validation, or database
+writes). At the patch layer, `Unset` means "the update does not touch this
+FK" and no required edge check runs for it; reaching the patch with a
+`Set(non-null id)` entry has already passed the required check by
+construction.
 
 Required edge checks are treated like generated field shape checks: they validate
 the local mutation payload and generated schema constraints, not database-visible
@@ -665,8 +672,14 @@ Before implementation, add tests for:
   `FieldPatch.Set(null)` and clears the relationship
 - required FKs left unset/null after hooks are rejected before privacy,
   validation, or database writes
-- update required edge checks inspect only effective patch entries; required FK
-  `FieldPatch.Unset` skips the check, while `FieldPatch.Set(null)` is rejected
+- update required edge checks inspect only effective patch entries; required
+  FK `FieldPatch.Unset` skips the check (the update does not touch the FK)
+  and a `Set(non-null id)` entry has already passed the check by
+  construction. The `FieldPatch.Set(null)` state is not representable for
+  required FKs (patch type is `FieldPatch<TargetIdType>` with non-nullable
+  `T`); an explicit `authorId = null` on a required FK is caught earlier as
+  builder/staging dirty state (dirtyFields + null underlying value) and
+  rejected before the canonical requested patch is built — which is also
   before privacy, validation, or database writes
 - direct FK writes clear any cached entity reference
 - create FK getters follow required-vs-nullable unset behavior: required unset
