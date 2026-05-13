@@ -17,4 +17,4 @@ build
 # HFS+/APFS), so the actual `.DS_Store` filename has to match exactly.
 # `**/` makes the pattern apply to subdirectories too.
 .DS_Store
-**/.DS_Store
+**/.DS_Store.claude/
