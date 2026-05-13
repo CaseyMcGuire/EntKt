@@ -601,10 +601,15 @@ on a nullable relationship means `FieldPatch.Set(null)` and clears the
 relationship; it does not unset the patch entry.
 
 For required FKs the patch type is `FieldPatch<TargetIdType>` and only
-`Unset` and `Set(non-null id)` are representable; an explicit
-`authorId = null` on a required FK lives in builder/staging dirty state
-and is rejected before the canonical patch is built (see "Relationship
-Nullability" above).
+`Unset` and `Set(non-null id)` are representable. Normal DSL and hook
+writes can't produce a dirty+null required FK either: the generated
+required FK setter rejects null at entry, and both `update(id) { authorId = ... }`
+and `ctx.mutation.authorId = ...` go through that setter.
+`_checkRequiredNotNull()` runs as an internal backstop only for
+setter-bypassing paths (reflection writing the backing field, a
+future internal bulk-write helper); it is not a check on user-facing
+mutation forms. See "Relationship Nullability" above for the full
+treatment.
 
 Hooks that need the current FK value should read it from the loaded
 `before` row (`ctx.before.authorId`). The relationship edges on
