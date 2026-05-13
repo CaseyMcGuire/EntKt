@@ -566,6 +566,19 @@ This requires the create builder to distinguish "untouched" from
 same dirty-tracking shape the update path uses (an internal "assigned" flag set
 by the FK property setter, separate from the underlying value).
 
+**Caveat for create hooks reading a nullable FK.** Create FK getters
+return `null` for an untouched nullable FK (see Resolved FK Getter
+Behavior). A create hook that reads a nullable FK and writes the
+same value back — for example `m.writerId = m.writerId` — converts
+the staged state from "untouched" to "explicitly assigned `null`",
+suppressing the create default. This is the right behavior under
+the explicit-null-wins rule: the hook ran a setter, so the
+"assigned" flag flips. Hook authors who want to read a nullable FK
+without affecting default-application should not assign the value
+back unconditionally; gate the write on a real change
+(`if (newValue != null) m.writerId = newValue`), or skip the read
+entirely if the hook isn't actually computing a new value.
+
 Required field-backed FKs cannot accept an explicit `null` assignment
 (the setters defensively reject null at entry — see Public Types), so
 "explicit null vs unset" does not arise for them; unset triggers the
