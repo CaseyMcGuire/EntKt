@@ -582,11 +582,19 @@ same value back — for example `m.writerId = m.writerId` — converts
 the staged state from "untouched" to "explicitly assigned `null`",
 suppressing the create default. This is the right behavior under
 the explicit-null-wins rule: the hook ran a setter, so the
-"assigned" flag flips. Hook authors who want to read a nullable FK
-without affecting default-application should not assign the value
-back unconditionally; gate the write on a real change
-(`if (newValue != null) m.writerId = newValue`), or skip the read
-entirely if the hook isn't actually computing a new value.
+"assigned" flag flips.
+
+Hook authors should treat the resolved FK setter as expressing intent.
+Only write to it when the hook *intentionally* wants to set the FK to a
+specific value or *intentionally* wants to clear it; both `null` and
+non-null are legitimate intents and either suppresses the default by
+design. If the hook is not deciding the FK's value, do not write to
+it — and in particular do not read the property just to write the same
+value back. Non-null gating like
+`if (newValue != null) m.writerId = newValue` is **not** a safe general
+pattern: it silently drops legitimate clears when the hook genuinely
+wants to assign `null`. The right discriminator is hook intent, not
+value-shape.
 
 Required field-backed FKs cannot accept an explicit `null` assignment
 (the setters defensively reject null at entry — see Public Types), so
