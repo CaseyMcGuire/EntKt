@@ -63,7 +63,7 @@ fun main() {
     val olderAlice = client.users.update(alice.id) {
         age = 31
         updatedAt = Instant.now()
-    }.save()
+    }.save() ?: error("alice missing during update")
     println("Updated: $olderAlice")
     println()
 
@@ -94,12 +94,12 @@ fun main() {
     println()
 
     // ---------- Create posts linked to users ----------
-    banner("client.posts.create { ... author = alice ... }.save()")
+    banner("client.posts.create { ... authorId = alice.id ... }.save()")
     val helloPost = client.posts.create {
         title = "Hello from Alice"
         body = "First post!"
         published = true
-        author = olderAlice
+        authorId = olderAlice.id
         createdAt = Instant.now()
         updatedAt = Instant.now()
     }.save()
@@ -109,7 +109,7 @@ fun main() {
         title = "Draft"
         body = "WIP"
         published = false
-        author = bob
+        authorId = bob.id
         createdAt = Instant.now()
         updatedAt = Instant.now()
     }.save()

@@ -142,7 +142,7 @@ class EntktPluginTest {
 
             val createContent = generatedDir.resolve("PetCreate.kt").readText()
             assertTrue(createContent.contains("@EntktDsl"), "Should be annotated @EntktDsl")
-            assertTrue(createContent.contains("var owner: Owner?"), "Should have owner convenience property")
+            assertTrue(!createContent.contains("var owner: Owner?"), "Must not synthesize owner entity setter")
             assertTrue(createContent.contains("var ownerId: Int?"), "Should have ownerId FK property")
 
             val queryContent = generatedDir.resolve("PetQuery.kt").readText()

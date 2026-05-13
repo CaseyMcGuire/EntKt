@@ -137,7 +137,6 @@ internal class UpdateGenerator(
             )
             .addProperties(mutableFields.map { buildProperty(it) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
-            .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
             .addProperty(
                 buildMutationViewProperty(
                     schemaName = schemaName,
@@ -223,29 +222,6 @@ internal class UpdateGenerator(
                     .addParameter("value", typeName)
                     .addStatement("field = value")
                     .addStatement("dirtyFields.add(%S)", fk.propertyName)
-                    .build()
-            )
-            .build()
-    }
-
-    /**
-     * Property-style edge assignment on the update builder: assigning
-     * a target entity also writes its id into the underlying FK
-     * property. E.g. `author = alice` sets `authorId = alice.id`. The
-     * hook-facing `UpdateMutationView` does not include this property,
-     * so it's only reachable from the public update DSL block.
-     */
-    private fun buildEdgeEntityProperty(fk: EdgeFk): PropertySpec {
-        val targetClass = ClassName(packageName, fk.targetName).copy(nullable = true)
-        val edgeProp = toCamelCase(fk.edgeName)
-        return PropertySpec.builder(edgeProp, targetClass)
-            .mutable(true)
-            .initializer("null")
-            .setter(
-                FunSpec.setterBuilder()
-                    .addParameter("value", targetClass)
-                    .addStatement("field = value")
-                    .addStatement("%L = value?.id", fk.propertyName)
                     .build()
             )
             .build()

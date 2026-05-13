@@ -23,8 +23,8 @@ class FriendshipController(private val client: EntClient) {
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Recipient not found")
 
         val friendship = client.friendships.create {
-            this.requester = requester
-            this.recipient = recipient
+            this.requesterId = requester.id
+            this.recipientId = recipient.id
             status = FriendshipStatus.PENDING
         }.save()
         return friendship.toResponse()

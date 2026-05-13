@@ -45,7 +45,7 @@ class PostController(private val client: EntClient) {
             title = req.title
             body = req.body
             published = req.published
-            this.author = author
+            this.authorId = author.id
         }.save()
         return post.toResponse()
     }
@@ -93,8 +93,8 @@ class PostController(private val client: EntClient) {
         }.exists()
         if (!alreadyLinked) {
             client.postTags.create {
-                this.post = post
-                this.tag = tag
+                this.postId = post.id
+                this.tagId = tag.id
             }.save()
         }
         return tag.toResponse()

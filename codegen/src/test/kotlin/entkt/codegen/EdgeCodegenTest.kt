@@ -291,7 +291,7 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder gets id and entity properties for unique edge`() {
+    fun `create builder gets FK property without entity setter for unique edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
@@ -299,11 +299,11 @@ class EdgeCodegenTest {
         assert(output.contains("var ownerId: Long?")) {
             "Should have ownerId: Long? property\n$output"
         }
-        assert(output.contains("var owner: Owner?")) {
-            "Should have owner: Owner? convenience property\n$output"
+        assert(!output.contains("var owner: Owner?")) {
+            "Must not have owner: Owner? entity setter (removed in to-one FK RFC)\n$output"
         }
-        assert(output.contains("ownerId = value?.id")) {
-            "owner setter should write value.id to ownerId\n$output"
+        assert(!output.contains("ownerId = value?.id")) {
+            "Must not synthesize an owner-setter body that writes ownerId\n$output"
         }
     }
 
@@ -319,7 +319,7 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `update builder gets id and entity properties for unique edge`() {
+    fun `update builder gets FK property without entity setter for unique edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = UpdateGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
@@ -327,8 +327,8 @@ class EdgeCodegenTest {
         assert(output.contains("var ownerId: Long?")) {
             "Should have ownerId: Long? property\n$output"
         }
-        assert(output.contains("var owner: Owner?")) {
-            "Should have owner: Owner? convenience property\n$output"
+        assert(!output.contains("var owner: Owner?")) {
+            "Must not have owner: Owner? entity setter (removed in to-one FK RFC)\n$output"
         }
     }
 

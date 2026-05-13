@@ -104,7 +104,6 @@ internal class CreateGenerator(
             .addProperties(mutableFields.map { buildProperty(it, override = true) })
             .addProperties(allFields.filter { it.immutable }.map { buildProperty(it, override = false) })
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
-            .addProperties(edgeFks.map { buildEdgeEntityProperty(it) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
             .build()
 
@@ -131,27 +130,6 @@ internal class CreateGenerator(
             .initializer("null")
         if (override) builder.addModifiers(KModifier.OVERRIDE)
         return builder.build()
-    }
-
-    /**
-     * Convenience property mirroring the edge name: assigning a target
-     * entity here also writes its id into the underlying FK property.
-     * e.g. `author = alice` sets `authorId = alice.id`.
-     */
-    private fun buildEdgeEntityProperty(fk: EdgeFk): PropertySpec {
-        val targetClass = ClassName(packageName, fk.targetName).copy(nullable = true)
-        val edgeProp = toCamelCase(fk.edgeName)
-        return PropertySpec.builder(edgeProp, targetClass)
-            .mutable(true)
-            .initializer("null")
-            .setter(
-                FunSpec.setterBuilder()
-                    .addParameter("value", targetClass)
-                    .addStatement("field = value")
-                    .addStatement("%L = value?.id", fk.propertyName)
-                    .build()
-            )
-            .build()
     }
 
     /**
