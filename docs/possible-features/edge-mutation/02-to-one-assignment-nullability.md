@@ -2,7 +2,11 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Partially implemented. The required-by-default nullability model,
+removal of entity-setter properties from generated builders, defensive
+null check on required FK setters, and unassigned-read throw on Create
+required FK getters are in place. Deferred work is listed under
+"Deferred Scope" at the end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).
 
@@ -1118,3 +1122,45 @@ Before implementation, add tests for:
   FK values for every field (update after-state is built by folding the
   effective patch over the loaded `before`)
 - to-one update candidates do not require target entity loads
+
+## Deferred Scope
+
+The current implementation lands the core API and contract pieces of
+this RFC. The following sections remain as follow-up work and are not
+required to use the new nullability model in practice:
+
+- **Non-null Kotlin types on required FK builder properties.**
+  Generated `${Entity}Create` and `${Entity}Update` builders currently
+  expose required FKs as `var authorId: UUID?` (matching the scalar
+  pattern that uses nullable types as staging state). The RFC's stronger
+  rule — required FKs typed as `var authorId: UUID` — needs a private
+  nullable backing field with a custom getter/setter and matching
+  property types on the `${Entity}Mutation` and `${Entity}UpdateMutationView`
+  interfaces. The setter null-rejection and post-hook backstop already
+  catch the unsafe states; the remaining work is purely about
+  Kotlin-source ergonomics.
+- **Field-backed FK API derived from the captured backing field
+  declaration name.** `belongsTo(...).field(handle)` still works as the
+  storage-level FK declaration, but the generated FK API name comes from
+  the field's column name (via `toCamelCase`), not from the Kotlin
+  declaration `val` name. The RFC's authoritative-declaration-name
+  capture rules (`Declaration Property Name Capture` and `Explicit
+  Backing Fields`) require reflection-driven property-name capture, plus
+  diagnostics for ineligible properties (delegated, private, inherited,
+  computed-getter, etc.).
+- **Schema-level rejection rules for field-backed FKs.** The RFC
+  specifies that codegen should reject mismatches between relationship
+  nullability and backing field nullability, mismatched id types, unique
+  backing fields on non-unique edges, and `updateDefault(...)` on a
+  field used as a `belongsTo(...).field(handle)` backing FK. These
+  diagnostics are not yet implemented.
+- **Collision detection.** Codegen does not yet reject schemas where a
+  relationship FK's generated API name (FK property or
+  `unset{FkProperty}()`) collides with another declared or generated
+  identifier. The unified collision rule in "Explicit Backing Fields"
+  remains a specification target.
+- **Hook-facing FK getter behavior on Create.** Reading an unassigned
+  required FK now throws on Create builders, matching the RFC. The
+  RFC's note about hook-facing create interfaces having distinct
+  read-behavior wrappers is not yet implemented; create hooks currently
+  read the builder directly.
