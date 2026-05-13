@@ -117,8 +117,8 @@ class CreateGeneratorTest {
         assert(output.contains("beforeSaveHooks: List<(CarMutation) -> Unit>")) {
             "Should take beforeSaveHooks\n$output"
         }
-        assert(output.contains("beforeCreateHooks: List<(CarCreate) -> Unit>")) {
-            "Should take beforeCreateHooks\n$output"
+        assert(output.contains("beforeCreateHooks: List<(CarCreateHookContext) -> Unit>")) {
+            "beforeCreateHooks should be typed against CarCreateHookContext\n$output"
         }
         assert(output.contains("afterCreateHooks: List<(Car) -> Unit>")) {
             "Should take afterCreateHooks\n$output"

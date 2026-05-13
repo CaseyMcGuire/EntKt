@@ -9,6 +9,7 @@ import entkt.schema.Through
 import java.util.UUID
 import kotlin.reflect.KClass
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
@@ -260,6 +261,34 @@ private class NullableFkWithDefaultChild : EntSchema("nullable_default_children"
     val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
 }
 
+// ---------- Schemas for field-backed nullability mismatch tests ----------
+
+private class NullabilityMismatchParent : EntSchema("nullability_parents") {
+    override fun id() = EntId.long()
+}
+
+/**
+ * Required relationship backed by a nullable field. Per RFC,
+ * codegen should reject this — a required edge can't be backed by a
+ * nullable column.
+ */
+private class RequiredEdgeNullableFieldChild : EntSchema("required_edge_nullable_field") {
+    override fun id() = EntId.int()
+    val ownerId = long("owner_id").nullable()
+    val owner = belongsTo<NullabilityMismatchParent>("owner").field(ownerId)
+}
+
+/**
+ * Nullable relationship backed by a non-null field. Per RFC,
+ * codegen should reject this — a nullable edge can't be backed by a
+ * NOT NULL column.
+ */
+private class NullableEdgeNonNullFieldChild : EntSchema("nullable_edge_nonnull_field") {
+    override fun id() = EntId.int()
+    val ownerId = long("owner_id")
+    val owner = belongsTo<NullabilityMismatchParent>("owner").field(ownerId).nullable()
+}
+
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
     schemas.forEach { it.finalize(registry) }
@@ -426,6 +455,34 @@ class EdgeCodegenTest {
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
         }
+    }
+
+    @Test
+    fun `codegen rejects required edge backed by nullable field`() {
+        val parent = NullabilityMismatchParent()
+        val child = RequiredEdgeNullableFieldChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
+        val err = assertFailsWith<IllegalStateException> {
+            columnMetadataFor(child, names)
+        }
+        assertContains(err.message!!, "is required but")
+        assertContains(err.message!!, "is nullable")
+    }
+
+    @Test
+    fun `codegen rejects nullable edge backed by non-null field`() {
+        val parent = NullabilityMismatchParent()
+        val child = NullableEdgeNonNullFieldChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "Parent", child to "Child")
+        val err = assertFailsWith<IllegalStateException> {
+            columnMetadataFor(child, names)
+        }
+        // Symmetric to the required+nullable case: a nullable edge
+        // must have a nullable backing column (per RFC).
+        assertContains(err.message!!, "is nullable but")
+        assertContains(err.message!!, "is non-null")
     }
 
     @Test

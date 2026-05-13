@@ -131,8 +131,8 @@ class ClientGeneratorTest {
         assert(output.contains("fun beforeSave(hook: (CarMutation) -> Unit)")) {
             "Should have beforeSave\n$output"
         }
-        assert(output.contains("fun beforeCreate(hook: (CarCreate) -> Unit)")) {
-            "Should have beforeCreate\n$output"
+        assert(output.contains("fun beforeCreate(hook: (CarCreateHookContext) -> Unit)")) {
+            "beforeCreate hook should be typed against CarCreateHookContext (restricted view + client)\n$output"
         }
         assert(output.contains("fun afterCreate(hook: (Car) -> Unit)")) {
             "Should have afterCreate\n$output"

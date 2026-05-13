@@ -155,8 +155,15 @@ internal fun columnMetadataFor(
             if (edgeRef != null) {
                 if (edgeRef.required && fieldNullable) {
                     error(
-                        "Edge '${edgeRef.edgeName}' is required() but .field(\"${field.name}\") " +
+                        "Edge '${edgeRef.edgeName}' is required but .field(\"${field.name}\") " +
                             "is nullable — a required edge needs a non-nullable backing field",
+                    )
+                }
+                if (!edgeRef.required && !fieldNullable) {
+                    error(
+                        "Edge '${edgeRef.edgeName}' is nullable but .field(\"${field.name}\") " +
+                            "is non-null — a nullable edge needs a nullable backing field " +
+                            "(add .nullable() to the field declaration)",
                     )
                 }
                 if (field.unique && !edgeRef.unique) {
