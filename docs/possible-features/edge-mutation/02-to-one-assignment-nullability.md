@@ -202,6 +202,22 @@ a collision would occur.
 
 ## Declaration Property Name Capture
 
+Even without entity setter methods like `setAuthor(...)`, implicit FK
+properties still need a Kotlin source name for their generated API,
+and that name comes from the edge declaration — *not* the storage
+edge string. For example:
+
+```kotlin
+val primaryAuthor = belongsTo<User>("primary_author")
+```
+
+generates an implicit FK property named `primaryAuthorId`, not
+`primary_authorId` and not `primaryAuthor_id`. The storage column
+(`primary_author`) can use any separator convention the database
+prefers; the Kotlin API uses the declaration property name plus
+`Id`. This lets Kotlin API names diverge from storage names when
+needed without forcing snake_case into Kotlin.
+
 Generated Kotlin API names are derived from the Kotlin declaration property
 name. Schema collection must map each registered edge builder to **exactly
 one** Kotlin member property declared on the schema class instance being
