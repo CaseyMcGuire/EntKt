@@ -376,8 +376,17 @@ call sites — Kotlin, Java, or reflection through the property setter — the s
 rejects before the value reaches the builder's internal state; the backstop only
 fires for paths that skip the property surface entirely.
 
-The resolved FK property, such as `authorId`, is the public readable/writable
-source of truth for pending relationship state.
+The resolved FK property, such as `authorId`, is the readable/writable
+source of truth for pending relationship state **on the public
+create/update builders**, with the per-phase getter semantics
+documented in "Resolved FK Getter Behavior" below. The
+hook-facing mutation views narrow this further: `beforeUpdate` hooks
+get a value-oriented view (the getter throws on untouched, see
+"FK Writes And Hook Visibility"), and `beforeSave` hooks are
+write-oriented — they should treat the resolved FK property as a
+setter target only and read pending state through `ctx.patch` on the
+update side or skip the read entirely on the create side, since a
+generic `beforeSave` hook cannot tell which phase it is running in.
 
 Resolved FK getter behavior should be explicit:
 
