@@ -93,7 +93,7 @@ internal class MutationGenerator(
             val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
             val prop = PropertySpec.builder(fk.propertyName, typeName)
                 .mutable(true)
-            if (fk.comment != null) prop.addKdoc("%L", fk.comment)
+                .addKdoc("%L", fkPropertyKdoc(fk))
             mutationInterface.addProperty(prop.build())
         }
 
@@ -117,7 +117,7 @@ internal class MutationGenerator(
             val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
             val prop = PropertySpec.builder(fk.propertyName, typeName)
                 .mutable(true)
-            if (fk.comment != null) prop.addKdoc("%L", fk.comment)
+                .addKdoc("%L", fkPropertyKdoc(fk))
             createView.addProperty(prop.build())
         }
 

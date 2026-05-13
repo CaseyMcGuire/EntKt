@@ -535,6 +535,40 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `every generated FK property carries the baseline relationship-write KDoc`() {
+        // RFC: "Generated resolved FK properties must include KDoc
+        // explaining the relationship-write semantics. FK properties
+        // write only target ids, do not load the target row, and do not
+        // evaluate target LOAD privacy."
+        val (_, names, byName) = createAllSchemas()
+        val baseline = "id-only surface: target rows are not auto-loaded"
+
+        val entityOutput = EntityGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        assert(entityOutput.contains(baseline)) {
+            "Entity FK property should carry the baseline KDoc\n$entityOutput"
+        }
+
+        val createOutput = CreateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        assert(createOutput.contains(baseline)) {
+            "Create builder FK property should carry the baseline KDoc\n$createOutput"
+        }
+
+        val updateOutput = UpdateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        assert(updateOutput.contains(baseline)) {
+            "Update builder FK property should carry the baseline KDoc\n$updateOutput"
+        }
+
+        val mutationOutput = MutationGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        assert(mutationOutput.contains(baseline)) {
+            "Mutation interface FK property should carry the baseline KDoc\n$mutationOutput"
+        }
+    }
+
+    @Test
     fun `field-backed FK comment propagates as KDoc on entity Create Update and Mutation`() {
         val parent = CommentedFkParent()
         val child = CommentedFkChild()

@@ -230,10 +230,10 @@ internal class EntityGenerator(
 
     private fun buildEdgeProperty(fk: EdgeFk): PropertySpec {
         val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-        val builder = PropertySpec.builder(fk.propertyName, typeName)
+        return PropertySpec.builder(fk.propertyName, typeName)
             .initializer(fk.propertyName)
-        if (fk.comment != null) builder.addKdoc("%L", fk.comment)
-        return builder.build()
+            .addKdoc("%L", fkPropertyKdoc(fk))
+            .build()
     }
 
     /**

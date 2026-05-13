@@ -265,7 +265,7 @@ internal class UpdateGenerator(
                         .addStatement("dirtyFields.add(%S)", fk.propertyName)
                         .build(),
                 )
-            if (fk.comment != null) requiredBuilder.addKdoc("%L", fk.comment)
+            requiredBuilder.addKdoc("%L", fkPropertyKdoc(fk))
             return requiredBuilder.build()
         }
         val typeName = fk.idType.toTypeName().copy(nullable = true)
@@ -290,7 +290,7 @@ internal class UpdateGenerator(
                     .addStatement("dirtyFields.add(%S)", fk.propertyName)
                     .build()
             )
-        if (fk.comment != null) nullableBuilder.addKdoc("%L", fk.comment)
+        nullableBuilder.addKdoc("%L", fkPropertyKdoc(fk))
         return nullableBuilder.build()
     }
 

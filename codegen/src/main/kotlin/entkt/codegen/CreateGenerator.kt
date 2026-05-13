@@ -188,7 +188,7 @@ internal class CreateGenerator(
                         .build(),
                 )
             if (override) builder.addModifiers(KModifier.OVERRIDE)
-            if (fk.comment != null) builder.addKdoc("%L", fk.comment)
+            builder.addKdoc("%L", fkPropertyKdoc(fk))
             return builder.build()
         }
         val typeName = fk.idType.toTypeName().copy(nullable = true)
@@ -196,7 +196,7 @@ internal class CreateGenerator(
             .mutable(true)
             .initializer("null")
         if (override) builder.addModifiers(KModifier.OVERRIDE)
-        if (fk.comment != null) builder.addKdoc("%L", fk.comment)
+        builder.addKdoc("%L", fkPropertyKdoc(fk))
         // Nullable + default: the setter flips the assigned flag so the
         // save body can distinguish "untouched (default fires)" from
         // "explicitly assigned null (default suppressed)". Without a

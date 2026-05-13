@@ -29,12 +29,16 @@ getters still throw `IllegalStateException` for hook/property reads,
 which are usage errors rather than save-prep validation), sensitive
 field-backed FK redaction in the generated entity `toString()` (a
 `belongsTo(...).field(handle)` whose backing column is `.sensitive()`
-now prints `propName=***` instead of the value), and FK comments
+now prints `propName=***` instead of the value), FK comments
 propagated to KDoc on every generated FK surface (entity, Create /
 Update builders, Mutation / CreateMutationView / UpdateMutationView
 interfaces) — sourced from the backing field's `.comment(...)` for
 field-backed edges and from the edge's `.comment(...)` for implicit
-edges — are in place. Deferred work is listed under "Deferred Scope" at the
+edges — and an RFC-mandated baseline KDoc emitted on every generated
+FK property (documenting "id-only surface: target rows are not
+auto-loaded, target LOAD privacy is not evaluated, relationship-write
+authorization belongs in owner write privacy or validation") with the
+user-supplied comment appearing above it when present, are in place. Deferred work is listed under "Deferred Scope" at the
 end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).
