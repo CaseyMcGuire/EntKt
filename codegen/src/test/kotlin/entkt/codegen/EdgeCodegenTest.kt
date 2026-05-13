@@ -261,6 +261,32 @@ private class NullableFkWithDefaultChild : EntSchema("nullable_default_children"
     val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
 }
 
+// ---------- Schema for FK comment propagation ----------
+
+private class CommentedFkParent : EntSchema("commented_parents") {
+    override fun id() = EntId.long()
+}
+
+/**
+ * Backing field carries a `.comment(...)`. The generated FK property
+ * KDoc on the entity / Create / Update / Mutation surfaces should
+ * pick that up, matching what scalar fields with `.comment(...)` get.
+ */
+private class CommentedFkChild : EntSchema("commented_children") {
+    override fun id() = EntId.int()
+    val ownerId = long("owner_id").comment("FK to the owning user")
+    val owner = belongsTo<CommentedFkParent>("owner").field(ownerId)
+}
+
+/**
+ * Implicit FK whose edge carries a `.comment(...)`. Generated FK
+ * properties should pick up the edge's comment as KDoc.
+ */
+private class ImplicitCommentedFkChild : EntSchema("implicit_commented_children") {
+    override fun id() = EntId.int()
+    val owner = belongsTo<CommentedFkParent>("owner").comment("Owner of this row")
+}
+
 // ---------- Schema for sensitive field-backed FK redaction ----------
 
 private class SensitiveFkParent : EntSchema("sensitive_parents") {
@@ -505,6 +531,48 @@ class EdgeCodegenTest {
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `field-backed FK comment propagates as KDoc on entity Create Update and Mutation`() {
+        val parent = CommentedFkParent()
+        val child = CommentedFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "CommentedFkParent", child to "CommentedFkChild")
+
+        val entityOutput = EntityGenerator("com.example.ent").generate("CommentedFkChild", child, names).toString()
+        assert(entityOutput.contains("FK to the owning user")) {
+            "Entity FK property should pick up the backing field's comment as KDoc\n$entityOutput"
+        }
+
+        val createOutput = CreateGenerator("com.example.ent").generate("CommentedFkChild", child, names).toString()
+        assert(createOutput.contains("FK to the owning user")) {
+            "Create builder FK property should pick up the backing field's comment as KDoc\n$createOutput"
+        }
+
+        val updateOutput = UpdateGenerator("com.example.ent").generate("CommentedFkChild", child, names).toString()
+        assert(updateOutput.contains("FK to the owning user")) {
+            "Update builder FK property should pick up the backing field's comment as KDoc\n$updateOutput"
+        }
+
+        val mutationOutput = MutationGenerator("com.example.ent").generate("CommentedFkChild", child, names).toString()
+        assert(mutationOutput.contains("FK to the owning user")) {
+            "Mutation interface FK property should pick up the backing field's comment as KDoc\n$mutationOutput"
+        }
+    }
+
+    @Test
+    fun `implicit FK comment propagates from edge to KDoc`() {
+        val parent = CommentedFkParent()
+        val child = ImplicitCommentedFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "CommentedFkParent", child to "ImplicitCommentedFkChild")
+
+        val entityOutput = EntityGenerator("com.example.ent")
+            .generate("ImplicitCommentedFkChild", child, names).toString()
+        assert(entityOutput.contains("Owner of this row")) {
+            "Implicit FK should pick up the edge's .comment(...) as KDoc\n$entityOutput"
         }
     }
 

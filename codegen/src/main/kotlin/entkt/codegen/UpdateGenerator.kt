@@ -232,7 +232,7 @@ internal class UpdateGenerator(
             //     field directly)
             val nonNullType = fk.idType.toTypeName().copy(nullable = false)
             val stagingName = stagingFieldName(fk.propertyName)
-            return PropertySpec.builder(fk.propertyName, nonNullType)
+            val requiredBuilder = PropertySpec.builder(fk.propertyName, nonNullType)
                 .addModifiers(KModifier.OVERRIDE)
                 .mutable(true)
                 .getter(
@@ -265,10 +265,11 @@ internal class UpdateGenerator(
                         .addStatement("dirtyFields.add(%S)", fk.propertyName)
                         .build(),
                 )
-                .build()
+            if (fk.comment != null) requiredBuilder.addKdoc("%L", fk.comment)
+            return requiredBuilder.build()
         }
         val typeName = fk.idType.toTypeName().copy(nullable = true)
-        return PropertySpec.builder(fk.propertyName, typeName)
+        val nullableBuilder = PropertySpec.builder(fk.propertyName, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
@@ -289,7 +290,8 @@ internal class UpdateGenerator(
                     .addStatement("dirtyFields.add(%S)", fk.propertyName)
                     .build()
             )
-            .build()
+        if (fk.comment != null) nullableBuilder.addKdoc("%L", fk.comment)
+        return nullableBuilder.build()
     }
 
     private fun buildRequiredFkStagingProperty(fk: EdgeFk): PropertySpec {

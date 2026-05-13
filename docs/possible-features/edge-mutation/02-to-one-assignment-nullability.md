@@ -23,10 +23,15 @@ effective-patch validation), generated local validation failures
 mapping to `EntError.ValidationFailed` (every emitted validator and
 `_checkRequiredNotNull` now throws `ValidationException` so
 `saveOrError()` returns a structured `Err(ValidationFailed)` instead
-of letting an `IllegalStateException` escape), and sensitive
+of letting an `IllegalStateException` escape), sensitive
 field-backed FK redaction in the generated entity `toString()` (a
 `belongsTo(...).field(handle)` whose backing column is `.sensitive()`
-now prints `propName=***` instead of the value) are in place. Deferred work is listed under "Deferred Scope" at the
+now prints `propName=***` instead of the value), and FK comments
+propagated to KDoc on every generated FK surface (entity, Create /
+Update builders, Mutation / CreateMutationView / UpdateMutationView
+interfaces) — sourced from the backing field's `.comment(...)` for
+field-backed edges and from the edge's `.comment(...)` for implicit
+edges — are in place. Deferred work is listed under "Deferred Scope" at the
 end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).

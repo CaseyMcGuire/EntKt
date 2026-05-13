@@ -65,6 +65,14 @@ data class EdgeFk(
      * always `false` for them.
      */
     val sensitive: Boolean = false,
+    /**
+     * KDoc applied to every generated FK property (entity, create/update
+     * builders, mutation interface). For field-backed edges this is the
+     * backing field's `.comment(...)` if set, falling back to the edge's
+     * own `.comment(...)`. For implicit edges this is the edge's
+     * `.comment(...)`.
+     */
+    val comment: String? = null,
 )
 
 /**
@@ -119,6 +127,7 @@ fun computeEdgeFks(
                     immutable = backingField?.immutable == true,
                     validators = backingField?.validators ?: emptyList(),
                     sensitive = backingField?.sensitive == true,
+                    comment = backingField?.comment ?: edge.comment,
                 )
             } else {
                 EdgeFk(
@@ -131,6 +140,7 @@ fun computeEdgeFks(
                     required = belongsTo.required,
                     unique = belongsTo.unique,
                     onDelete = belongsTo.onDelete,
+                    comment = edge.comment,
                 )
             }
         }

@@ -91,11 +91,10 @@ internal class MutationGenerator(
 
         for (fk in mutableEdgeFks) {
             val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            mutationInterface.addProperty(
-                PropertySpec.builder(fk.propertyName, typeName)
-                    .mutable(true)
-                    .build(),
-            )
+            val prop = PropertySpec.builder(fk.propertyName, typeName)
+                .mutable(true)
+            if (fk.comment != null) prop.addKdoc("%L", fk.comment)
+            mutationInterface.addProperty(prop.build())
         }
 
         // The restricted hook-facing view passed to `beforeCreate`.
@@ -116,11 +115,10 @@ internal class MutationGenerator(
         }
         for (fk in immutableEdgeFks) {
             val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            createView.addProperty(
-                PropertySpec.builder(fk.propertyName, typeName)
-                    .mutable(true)
-                    .build(),
-            )
+            val prop = PropertySpec.builder(fk.propertyName, typeName)
+                .mutable(true)
+            if (fk.comment != null) prop.addKdoc("%L", fk.comment)
+            createView.addProperty(prop.build())
         }
 
         // The restricted hook-facing view passed to `beforeUpdate`
