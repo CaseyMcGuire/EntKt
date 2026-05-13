@@ -13,10 +13,13 @@ as implicit FKs), create-default application with explicit-null-wins
 for nullable field-backed FKs, a restricted `CreateMutationView` +
 `CreateHookContext` for `beforeCreate` hooks (hiding `save()`,
 `driver`, hook lists, and the private staging/assigned fields off the
-hook surface), and immutability-aware update surface for field-backed
+hook surface), immutability-aware update surface for field-backed
 FKs (`.immutable()` backing field → no setter on `${Entity}Update`, no
-slot on `${Entity}UpdatePatch`, no `unset` on `${Entity}UpdateMutationView`)
-are in place. Deferred work is listed under "Deferred Scope" at the
+slot on `${Entity}UpdatePatch`, no `unset` on `${Entity}UpdateMutationView`),
+and backing-field validators carried into the FK code path (so a
+`belongsTo(...).field(handle)` whose backing column has `.positive()`,
+`.min(...)`, etc. runs those checks during both create save and update
+effective-patch validation) are in place. Deferred work is listed under "Deferred Scope" at the
 end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).

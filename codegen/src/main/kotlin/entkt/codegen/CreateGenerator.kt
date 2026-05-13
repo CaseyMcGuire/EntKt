@@ -349,6 +349,18 @@ internal class CreateGenerator(
                 // getter; nullable FKs stay nullable.
                 else -> builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
             }
+            // Field-level validators carried from the backing field of
+            // a field-backed edge run on the resolved FK value, the
+            // same way scalar field validators do above.
+            if (fk.validators.isNotEmpty()) {
+                emitFieldValidation(
+                    builder,
+                    prop = fk.propertyName,
+                    fieldName = fk.columnName,
+                    validators = fk.validators,
+                    nullable = !fk.required,
+                )
+            }
         }
 
         // ---- Build the row map. ----

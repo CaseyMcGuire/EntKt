@@ -261,6 +261,22 @@ private class NullableFkWithDefaultChild : EntSchema("nullable_default_children"
     val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
 }
 
+// ---------- Schema for field-backed FK validator propagation ----------
+
+private class ValidatedFkParent : EntSchema("validated_parents") {
+    override fun id() = EntId.long()
+}
+
+/**
+ * Backing field carries a `.positive()` validator. The relationship
+ * code path must invoke the same validator on both create and update.
+ */
+private class ValidatedFkChild : EntSchema("validated_children") {
+    override fun id() = EntId.int()
+    val ownerId = long("owner_id").positive()
+    val owner = belongsTo<ValidatedFkParent>("owner").field(ownerId)
+}
+
 // ---------- Schema for immutable field-backed FK tests ----------
 
 private class ImmutableFkParent : EntSchema("immutable_parents") {
@@ -472,6 +488,44 @@ class EdgeCodegenTest {
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `create runs backing-field validators on field-backed FK value`() {
+        val parent = ValidatedFkParent()
+        val child = ValidatedFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "ValidatedFkParent", child to "ValidatedFkChild")
+        val output = CreateGenerator("com.example.ent")
+            .generate("ValidatedFkChild", child, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The `.positive()` check (`if (prop <= 0) throw ...`) should
+        // appear in the save body keyed off the FK property name, with
+        // the backing column name in the error message.
+        assert(output.contains("if (ownerId <= 0) throw IllegalStateException(\"owner_id:")) {
+            "Create should emit the .positive() validator on the FK value\n$output"
+        }
+    }
+
+    @Test
+    fun `update runs backing-field validators on FK patch Set entries`() {
+        val parent = ValidatedFkParent()
+        val child = ValidatedFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "ValidatedFkParent", child to "ValidatedFkChild")
+        val output = UpdateGenerator("com.example.ent")
+            .generate("ValidatedFkChild", child, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The validator must run inside an `if (effectivePatch.ownerId is FieldPatch.Set)`
+        // block so Unset entries are not validated.
+        assert(output.contains("ownerId_eff = effectivePatch.ownerId")) {
+            "Update should bind the FK's effectivePatch entry to a local for validation\n$output"
+        }
+        assert(output.contains("if (ownerId_v <= 0) throw IllegalStateException(\"owner_id:")) {
+            "Update should emit the .positive() validator on the patched FK value\n$output"
         }
     }
 

@@ -651,6 +651,12 @@ internal class UpdateGenerator(
             if (field.validators.isEmpty()) continue
             emitPatchEntryValidation(builder, field)
         }
+        for (fk in edgeFks) {
+            if (fk.validators.isEmpty()) continue
+            // Backing-field validators apply to the FK on update too —
+            // run them on Set entries of the effective patch.
+            emitFkPatchEntryValidation(builder, fk)
+        }
 
         // ---- Build the database write set from the effective patch. ----
         builder.addStatement("val values = mutableMapOf<String, Any?>()")
@@ -772,6 +778,29 @@ internal class UpdateGenerator(
         } else {
             builder.addStatement("val %L_v = %L.value", prop, localName)
             emitFieldValidation(builder, "${prop}_v", field.name, field.validators, nullable = false)
+        }
+        builder.endControlFlow()
+    }
+
+    /**
+     * Apply backing-field validators to a Set entry of the effective
+     * patch for an FK. Mirrors [emitPatchEntryValidation] for scalars,
+     * keyed off [EdgeFk.required] (whose nullability follows the
+     * relationship) rather than scalar `field.nullable`.
+     */
+    private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, fk: EdgeFk) {
+        val prop = fk.propertyName
+        val localName = "${prop}_eff"
+        builder.addStatement("val %L = effectivePatch.%L", localName, prop)
+        builder.beginControlFlow("if (%L is %T.Set)", localName, FIELD_PATCH)
+        if (!fk.required) {
+            builder.addStatement("val %L_v = %L.value", prop, localName)
+            builder.beginControlFlow("if (%L_v != null)", prop)
+            emitFieldValidation(builder, "${prop}_v", fk.columnName, fk.validators, nullable = false)
+            builder.endControlFlow()
+        } else {
+            builder.addStatement("val %L_v = %L.value", prop, localName)
+            emitFieldValidation(builder, "${prop}_v", fk.columnName, fk.validators, nullable = false)
         }
         builder.endControlFlow()
     }
