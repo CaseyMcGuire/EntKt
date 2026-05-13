@@ -6,11 +6,13 @@ Partially implemented. The required-by-default nullability model,
 removal of entity-setter properties from generated builders, non-null
 Kotlin types on required FK builder properties (with private nullable
 staging + custom getter/setter), defensive null check on required FK
-setters, unassigned-read throw on Create required FK getters, and
-unified relationship-FK semantics for field-backed FKs
+setters, unassigned-read throw on Create required FK getters, unified
+relationship-FK semantics for field-backed FKs
 (`belongsTo(...).field(handle)` now flows through the same code path
-as implicit FKs) are in place. Deferred work is listed under
-"Deferred Scope" at the end of this document.
+as implicit FKs), and create-default application with
+explicit-null-wins for nullable field-backed FKs are in place.
+Deferred work is listed under "Deferred Scope" at the end of this
+document.
 
 Split out from [Edge Mutation API](00-overview.md).
 

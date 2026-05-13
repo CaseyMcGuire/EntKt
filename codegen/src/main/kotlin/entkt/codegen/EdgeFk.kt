@@ -33,6 +33,14 @@ data class EdgeFk(
      * [scalarFields] to get the filtered view.
      */
     val isFieldBacked: Boolean = false,
+    /**
+     * Create-time default for the FK value, carried from the backing
+     * field's `.default(...)` modifier. Implicit FKs have no DSL surface
+     * for defaults so this is always `null` for them. Applied to the
+     * create save path with explicit-null-wins semantics for nullable
+     * FKs (see [assignedFieldName]).
+     */
+    val default: Any? = null,
 )
 
 /**
@@ -44,6 +52,14 @@ data class EdgeFk(
 internal fun stagingFieldName(propertyName: String): String = "_${propertyName}Staging"
 
 /**
+ * Private "has the caller explicitly assigned this FK property?" flag
+ * used by the nullable-FK-with-default path. Lets the create save body
+ * distinguish "untouched (apply default)" from "explicitly set to null
+ * (suppress default)" per the RFC's explicit-null-wins rule.
+ */
+internal fun assignedFieldName(propertyName: String): String = "_${propertyName}Assigned"
+
+/**
  * Compute the FK surfaces for a schema's `belongsTo` edges — implicit
  * and field-backed alike. Other edge kinds keep their FK on the
  * opposite side or in a junction table.
@@ -52,6 +68,10 @@ fun computeEdgeFks(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): List<EdgeFk> {
+    // Look up backing fields by name so field-backed FKs can carry the
+    // backing field's `.default(...)` value into the EdgeFk metadata.
+    // Implicit edges have no DSL surface for defaults.
+    val fieldsByName: Map<String, Field> by lazy { schema.fields().associateBy { it.name } }
     return schema.edges()
         .filter { it.kind is EdgeKind.BelongsTo }
         .mapNotNull { edge ->
@@ -59,6 +79,7 @@ fun computeEdgeFks(
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
             val backingColumn = belongsTo.field
             if (backingColumn != null) {
+                val backingField = fieldsByName[backingColumn]
                 EdgeFk(
                     edgeName = edge.name,
                     propertyName = toCamelCase(backingColumn),
@@ -70,6 +91,7 @@ fun computeEdgeFks(
                     unique = belongsTo.unique,
                     onDelete = belongsTo.onDelete,
                     isFieldBacked = true,
+                    default = backingField?.default,
                 )
             } else {
                 EdgeFk(

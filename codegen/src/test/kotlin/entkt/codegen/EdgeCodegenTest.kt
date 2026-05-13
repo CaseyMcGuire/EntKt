@@ -230,6 +230,36 @@ private class HasOneEdgesParentSchema : EntSchema("parents") {
     val profile = hasOne<ProfileSchema2>("profile")
 }
 
+// ---------- Schemas for field-backed FK + default ----------
+
+private class DefaultedFkParent : EntSchema("defaulted_parents") {
+    override fun id() = EntId.long()
+    val name = string("name")
+}
+
+/**
+ * Required field-backed FK whose backing field carries a default.
+ * Per RFC: unset → default fires; required-FK can never be assigned null.
+ */
+private class RequiredFkWithDefaultChild : EntSchema("required_default_children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id").default(42L)
+    val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId)
+}
+
+/**
+ * Nullable field-backed FK whose backing field carries a default.
+ * Per RFC: untouched → default fires; explicit null → suppresses
+ * default (explicit-null-wins).
+ */
+private class NullableFkWithDefaultChild : EntSchema("nullable_default_children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id").nullable().default(42L)
+    val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
+}
+
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
     schemas.forEach { it.finalize(registry) }
@@ -395,6 +425,47 @@ class EdgeCodegenTest {
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `create applies default to required field-backed FK when unset`() {
+        val parent = DefaultedFkParent()
+        val child = RequiredFkWithDefaultChild()
+        finalize(parent, child)
+        val names = mapOf(parent to "DefaultedFkParent", child to "RequiredFkWithDefaultChild")
+        val output = CreateGenerator("com.example.ent")
+            .generate("RequiredFkWithDefaultChild", child, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Save body reads staging directly so unset falls back to the
+        // default instead of throwing via the public non-null getter.
+        assert(output.contains("val ownerId = this._ownerIdStaging ?: 42")) {
+            "Required field-backed FK should read staging-or-default in save\n$output"
+        }
+    }
+
+    @Test
+    fun `create applies explicit-null-wins for nullable field-backed FK with default`() {
+        val parent = DefaultedFkParent()
+        val child = NullableFkWithDefaultChild()
+        finalize(parent, child)
+        val names = mapOf(parent to "DefaultedFkParent", child to "NullableFkWithDefaultChild")
+        val output = CreateGenerator("com.example.ent")
+            .generate("NullableFkWithDefaultChild", child, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Generator emits an "assigned" tracking flag and a setter that
+        // flips it. Save body uses the flag to distinguish untouched
+        // (default fires) from explicit null (default suppressed).
+        assert(output.contains("private var _ownerIdAssigned: Boolean = false")) {
+            "Nullable field-backed FK with default should track an assigned flag\n$output"
+        }
+        assert(output.contains("_ownerIdAssigned = true")) {
+            "Setter should flip the assigned flag on every write (including null)\n$output"
+        }
+        assert(output.contains("val ownerId = if (this._ownerIdAssigned) this.ownerId else 42")) {
+            "Save body should consult the assigned flag, not value-shape\n$output"
         }
     }
 

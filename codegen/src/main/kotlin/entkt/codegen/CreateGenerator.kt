@@ -111,6 +111,12 @@ internal class CreateGenerator(
                     if (fk.required) {
                         builder.addProperty(buildRequiredFkStagingProperty(fk))
                     }
+                    // Nullable FK with a default needs an "assigned" flag
+                    // so explicit-null assignment can suppress the default
+                    // (RFC: explicit-null-wins for nullable field-backed FKs).
+                    if (!fk.required && fk.default != null) {
+                        builder.addProperty(buildAssignedFlag(fk))
+                    }
                 }
             }
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
@@ -179,6 +185,20 @@ internal class CreateGenerator(
             .mutable(true)
             .initializer("null")
         if (override) builder.addModifiers(KModifier.OVERRIDE)
+        // Nullable + default: the setter flips the assigned flag so the
+        // save body can distinguish "untouched (default fires)" from
+        // "explicitly assigned null (default suppressed)". Without a
+        // default, the default getter/setter are fine — there is no
+        // explicit-null-vs-untouched distinction to draw on create.
+        if (fk.default != null) {
+            builder.setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", typeName)
+                    .addStatement("field = value")
+                    .addStatement("%L = true", assignedFieldName(fk.propertyName))
+                    .build(),
+            )
+        }
         return builder.build()
     }
 
@@ -188,6 +208,14 @@ internal class CreateGenerator(
             .addModifiers(KModifier.PRIVATE)
             .mutable(true)
             .initializer("null")
+            .build()
+    }
+
+    private fun buildAssignedFlag(fk: EdgeFk): PropertySpec {
+        return PropertySpec.builder(assignedFieldName(fk.propertyName), Boolean::class)
+            .addModifiers(KModifier.PRIVATE)
+            .mutable(true)
+            .initializer("false")
             .build()
     }
 
@@ -279,10 +307,30 @@ internal class CreateGenerator(
         }
 
         for (fk in edgeFks) {
-            // Required FKs are typed non-null on the public property and
-            // their throw-on-unassigned getter fires before reaching this
-            // line if no value was assigned. Nullable FKs stay nullable.
-            builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
+            when {
+                // Required + default: read staging directly so an unset
+                // value falls back to the default instead of throwing
+                // via the public non-null getter.
+                fk.required && fk.default != null -> builder.addStatement(
+                    "val %L = this.%L ?: %L",
+                    fk.propertyName,
+                    stagingFieldName(fk.propertyName),
+                    fkDefaultCodeBlock(fk),
+                )
+                // Nullable + default: explicit-null-wins (per RFC). The
+                // setter flips `_<prop>Assigned`, so any explicit write
+                // — including `null` — suppresses the default.
+                !fk.required && fk.default != null -> builder.addStatement(
+                    "val %L = if (this.%L) this.%L else %L",
+                    fk.propertyName,
+                    assignedFieldName(fk.propertyName),
+                    fk.propertyName,
+                    fkDefaultCodeBlock(fk),
+                )
+                // No default: required FKs throw on unassigned via the
+                // getter; nullable FKs stay nullable.
+                else -> builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
+            }
         }
 
         // ---- Build the row map. ----
@@ -315,6 +363,15 @@ internal class CreateGenerator(
         rowBuilder.add(")\n")
 
         builder.addCode(rowBuilder.build())
+    }
+
+    private fun fkDefaultCodeBlock(fk: EdgeFk): CodeBlock {
+        // Field-backed FK defaults come from the backing field's
+        // `.default(...)`. Only Int/Long are reachable today (UUID and
+        // bytes have no DSL default), and both fit through the literal
+        // branch of `kotlinLiteral`.
+        val value = fk.default!!
+        return CodeBlock.of("%L", kotlinLiteral(value))
     }
 
     private fun defaultCodeBlock(field: Field): CodeBlock {
