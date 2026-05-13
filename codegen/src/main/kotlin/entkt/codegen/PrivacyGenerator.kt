@@ -48,7 +48,10 @@ internal class PrivacyGenerator(
         val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
 
-        val fields = schema.fields()
+        // Backing FK columns flow through `edgeFks` for write candidates
+        // and update patches so their type/nullability come from the
+        // relationship, not the scalar field declaration.
+        val fields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val fileBuilder = FileSpec.builder(packageName, "${schemaName}Privacy")

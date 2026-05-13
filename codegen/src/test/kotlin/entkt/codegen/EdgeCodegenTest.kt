@@ -399,6 +399,50 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `create builder applies required-FK semantics to field-backed FKs`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("TeamMember", byName["TeamMember"]!!, names).toString()
+
+        // TeamMember has `val teamId = int("team_id"); val team =
+        // belongsTo<Team>("team").field(teamId)`. Per the RFC, a
+        // required field-backed FK must get the same setter/getter
+        // behavior as an implicit FK: non-null public type, private
+        // nullable staging, throw on unassigned read, requireNotNull
+        // at setter entry. It must NOT get scalar-staging semantics.
+        assert(output.contains("override var teamId: Int\n")) {
+            "Field-backed required FK should be non-null typed on Create builder\n$output"
+        }
+        assert(output.contains("private var _teamIdStaging: Int?")) {
+            "Field-backed required FK should have a private staging field\n$output"
+        }
+        assert(output.contains("requireNotNull(value) { \"team is required\" }")) {
+            "Field-backed required FK should requireNotNull at setter entry\n$output"
+        }
+        assert(!output.contains("override var teamId: Int? = null\n")) {
+            "Field-backed required FK must not fall back to scalar nullable staging\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder applies required-FK semantics to field-backed FKs`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = UpdateGenerator("com.example.ent")
+            .generate("TeamMember", byName["TeamMember"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("override var teamId: Int ")) {
+            "Field-backed required FK should be non-null typed on Update builder\n$output"
+        }
+        assert(output.contains("private var _teamIdStaging: Int?")) {
+            "Field-backed required FK should have a private staging field on Update\n$output"
+        }
+        assert(output.contains("requireNotNull(value) { \"team is required\" }")) {
+            "Field-backed required FK should requireNotNull at setter entry on Update\n$output"
+        }
+    }
+
+    @Test
     fun `create builder required FK property is non-null typed`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")

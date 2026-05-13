@@ -127,7 +127,11 @@ private fun validateMemberNames(
             "beforeUpdateHooks" to "update builder",
             "afterUpdateHooks" to "update builder",
         )
-        for (field in input.schema.fields()) {
+        // Field-backed FKs are emitted via the edgeFks code path now, so
+        // skip the backing column in the scalar field validation. The
+        // edgeFks loop below claims that property name attributed to its
+        // owning edge.
+        for (field in scalarFields(input.schema)) {
             val prop = toCamelCase(field.name)
             val prev = memberSources.put(prop, "field '${field.name}'")
             if (prev != null) {
@@ -148,10 +152,15 @@ private fun validateMemberNames(
             }
         }
         for (fk in computeEdgeFks(input.schema, schemaNames)) {
-            val prev = memberSources.put(fk.propertyName, "synthesized FK for edge '${fk.edgeName}'")
+            val attribution = if (fk.isFieldBacked) {
+                "field-backed FK for edge '${fk.edgeName}'"
+            } else {
+                "synthesized FK for edge '${fk.edgeName}'"
+            }
+            val prev = memberSources.put(fk.propertyName, attribution)
             if (prev != null) {
                 error(
-                    "Schema '${input.name}': $prev and synthesized FK for edge '${fk.edgeName}' " +
+                    "Schema '${input.name}': $prev and $attribution " +
                         "both generate property '${fk.propertyName}'",
                 )
             }

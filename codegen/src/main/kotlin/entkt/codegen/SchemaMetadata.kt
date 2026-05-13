@@ -99,7 +99,12 @@ internal fun columnMetadataFor(
     schemaNames: Map<EntSchema, String>,
 ): List<ColumnDescriptor> {
     val fields = schema.fields()
-    val edgeFks = computeEdgeFks(schema, schemaNames)
+    // Column metadata is storage-oriented: backing FK columns come from
+    // the declared field (which carries the comment, default, validators)
+    // with edge metadata layered on via `explicitFieldEdges`. Drop
+    // field-backed entries from the FK list here so the same column
+    // isn't emitted twice.
+    val edgeFks = computeEdgeFks(schema, schemaNames).filterNot { it.isFieldBacked }
 
     // Edges with .field(handle) re-use a declared field as their FK
     // column. Build a lookup so the declared field picks up the FK

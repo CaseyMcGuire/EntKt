@@ -2,14 +2,19 @@ package entkt.codegen
 
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
+import entkt.schema.Field
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
 /**
- * A synthetic foreign-key field derived from a `belongsTo` edge that
- * doesn't already expose its FK via `.field(...)`. The property mirrors
- * the edge name with an "Id" suffix and its type matches the target's
- * id type.
+ * A foreign-key surface derived from a `belongsTo` edge. For implicit
+ * edges the column and property are synthesized from the edge name
+ * (`edge_name_id` / `edgeNameId`). For field-backed edges
+ * (`belongsTo(...).field(handle)`) the column comes from the
+ * user-declared field, and the property is the camelCased column name.
+ * True declaration-name capture (using the Kotlin `val` name when it
+ * diverges from the column name) is still deferred — see the RFC's
+ * Deferred Scope section.
  */
 data class EdgeFk(
     val edgeName: String,
@@ -21,6 +26,13 @@ data class EdgeFk(
     val required: Boolean,
     val unique: Boolean = false,
     val onDelete: OnDelete? = null,
+    /**
+     * `true` when the FK column was declared as an explicit scalar
+     * field via `belongsTo(...).field(handle)`. The same column must
+     * not also be emitted through the scalar field code path — use
+     * [scalarFields] to get the filtered view.
+     */
+    val isFieldBacked: Boolean = false,
 )
 
 /**
@@ -32,30 +44,60 @@ data class EdgeFk(
 internal fun stagingFieldName(propertyName: String): String = "_${propertyName}Staging"
 
 /**
- * Compute implicit FK properties for a schema's `belongsTo` edges.
- * Other edge kinds keep their FK on the opposite side or in a junction
- * table. Edges with an explicit `.field(...)` are skipped — the FK is
- * already declared as a regular field.
+ * Compute the FK surfaces for a schema's `belongsTo` edges — implicit
+ * and field-backed alike. Other edge kinds keep their FK on the
+ * opposite side or in a junction table.
  */
 fun computeEdgeFks(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): List<EdgeFk> {
     return schema.edges()
-        .filter { it.kind is EdgeKind.BelongsTo && (it.kind as EdgeKind.BelongsTo).field == null }
+        .filter { it.kind is EdgeKind.BelongsTo }
         .mapNotNull { edge ->
             val belongsTo = edge.kind as EdgeKind.BelongsTo
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            EdgeFk(
-                edgeName = edge.name,
-                propertyName = "${toCamelCase(edge.name)}Id",
-                columnName = "${edge.name}_id",
-                targetName = targetName,
-                targetTable = edge.target.tableName,
-                idType = edge.target.id().type,
-                required = belongsTo.required,
-                unique = belongsTo.unique,
-                onDelete = belongsTo.onDelete,
-            )
+            val backingColumn = belongsTo.field
+            if (backingColumn != null) {
+                EdgeFk(
+                    edgeName = edge.name,
+                    propertyName = toCamelCase(backingColumn),
+                    columnName = backingColumn,
+                    targetName = targetName,
+                    targetTable = edge.target.tableName,
+                    idType = edge.target.id().type,
+                    required = belongsTo.required,
+                    unique = belongsTo.unique,
+                    onDelete = belongsTo.onDelete,
+                    isFieldBacked = true,
+                )
+            } else {
+                EdgeFk(
+                    edgeName = edge.name,
+                    propertyName = "${toCamelCase(edge.name)}Id",
+                    columnName = "${edge.name}_id",
+                    targetName = targetName,
+                    targetTable = edge.target.tableName,
+                    idType = edge.target.id().type,
+                    required = belongsTo.required,
+                    unique = belongsTo.unique,
+                    onDelete = belongsTo.onDelete,
+                )
+            }
         }
+}
+
+/**
+ * Scalar fields excluding any column that backs a
+ * `belongsTo(...).field(handle)` edge. The backing column is emitted
+ * via [computeEdgeFks] instead so it picks up relationship-FK
+ * semantics (non-null type on required FKs, throw-on-unassigned getter,
+ * setter null-reject, dirty tracking, patch lowering).
+ */
+fun scalarFields(schema: EntSchema): List<Field> {
+    val backingColumns = schema.edges()
+        .mapNotNull { (it.kind as? EdgeKind.BelongsTo)?.field }
+        .toSet()
+    if (backingColumns.isEmpty()) return schema.fields()
+    return schema.fields().filterNot { it.name in backingColumns }
 }

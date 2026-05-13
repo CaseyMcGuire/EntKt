@@ -36,7 +36,10 @@ internal class EntityGenerator(
     ): FileSpec {
         val className = schemaName
         val idField = buildIdProperty(schema)
-        val allFields = schema.fields()
+        // Backing FK columns flow through `edgeFks` so the relationship's
+        // nullability and unique flags drive the generated property, not
+        // the scalar field declaration.
+        val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val columnRefs = buildList {
@@ -117,7 +120,7 @@ internal class EntityGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
-        val allFields = schema.fields()
+        val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
         val idType = schema.id().type.toTypeName()
 
@@ -243,7 +246,7 @@ internal class EntityGenerator(
         edgeFks: List<EdgeFk>,
         hasEdges: Boolean,
     ): FunSpec? {
-        val allFields = schema.fields()
+        val allFields = scalarFields(schema)
         if (allFields.none { it.sensitive }) return null
 
         val parts = mutableListOf<String>()

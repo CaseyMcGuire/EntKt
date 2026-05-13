@@ -60,7 +60,9 @@ internal class MutationGenerator(
     ): FileSpec {
         val interfaceName = "${schemaName}Mutation"
         val viewName = "${schemaName}UpdateMutationView"
-        val fields = schema.fields()
+        // Backing FK columns flow through `edgeFks` so the interface
+        // exposes them with relationship nullability (required → non-null).
+        val fields = scalarFields(schema)
         val mutableFields = fields.filter { !it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
 

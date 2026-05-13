@@ -459,7 +459,7 @@ internal class RepoGenerator(
         candidateClass: ClassName,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
-        val fields = schema.fields()
+        val fields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
         val body = CodeBlock.builder()
         body.add("return %T(\n", candidateClass)

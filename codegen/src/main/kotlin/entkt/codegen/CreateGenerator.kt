@@ -33,7 +33,10 @@ internal class CreateGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val className = "${schemaName}Create"
-        val allFields = schema.fields()
+        // Backing FK columns are emitted via `edgeFks` so they pick up
+        // relationship-FK semantics (non-null type, throw-on-unassigned,
+        // setter null-reject). Don't double-emit them as scalar fields.
+        val allFields = scalarFields(schema)
         val mutableFields = allFields.filter { !it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
