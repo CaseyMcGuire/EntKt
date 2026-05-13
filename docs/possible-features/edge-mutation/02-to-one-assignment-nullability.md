@@ -943,6 +943,9 @@ Before implementation, add tests for:
 - scalar-only updates do not write untouched FK values back to the database
 - unset required to-one create rejects during generated save preparation
 - required FK setters defensively reject Java/platform null calls
+  **before** mutating the staged value or marking the FK dirty — the
+  throw fires at setter entry and the builder is left in its
+  pre-call state, with `dirtyFields` unchanged
 - hooks can set a required FK that the builder left unset before required edge
   validation runs
 - hooks can set nullable FK values through the hook-facing resolved FK property
