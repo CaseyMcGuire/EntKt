@@ -514,19 +514,27 @@ Required field-backed FKs cannot accept an explicit `null` assignment
 default and required edge checks see the defaulted value.
 
 Create defaults do not apply to untouched update relationships.
-**Update defaults are not allowed on relationship backing FK fields.**
-The generic ID-based update-default rule applies framework defaults to
-every non-empty update, which would silently rewrite an untouched
+**Update defaults are not allowed on relationship FKs.** The generic
+ID-based update-default rule applies framework defaults to every
+non-empty update, which would silently rewrite an untouched
 relationship — for example, `update(post.id) { title = "x" }` would
 add `writerId` to the effective patch via its update default and
-change the relationship even though the caller did not touch it. That
-conflicts with the rule that untouched relationships stay absent from
-the update patch and are not written back. Codegen rejects an
-`updateDefault(...)` modifier on a field used as a `belongsTo(...).field(handle)`
-backing FK, and on the synthesized backing field for an implicit-FK
-relationship. Schema validation emits a diagnostic directing the
-caller to express the intent as an `afterUpdate` or `beforeUpdate`
-hook on the owner entity instead.
+change the relationship even though the caller did not touch it.
+That conflicts with the rule that untouched relationships stay
+absent from the update patch and are not written back.
+
+Concretely:
+
+- For **field-backed** edges (`belongsTo(...).field(handle)`), codegen
+  rejects an `updateDefault(...)` modifier on the user-declared
+  backing field. Schema validation emits a diagnostic directing the
+  caller to express the intent as a `beforeUpdate` or `afterUpdate`
+  hook on the owner entity instead.
+- For **implicit FK** edges, there is no user-declared field surface
+  where `updateDefault(...)` could be attached — implicit FKs are
+  synthesized by codegen, not declared by the schema author — so the
+  feature simply does not exist for them. No rejection is needed at
+  the schema level; there is no DSL form to reject.
 
 Defaults do not load or validate the target row; target existence
 remains enforced by database FK constraints unless a validation rule
@@ -820,10 +828,13 @@ Before implementation, add tests for:
 - create defaults on field-backed FKs do not apply to untouched update
   relationships
 - codegen rejects `updateDefault(...)` on a field used as a
-  `belongsTo(...).field(handle)` backing FK, and on the synthesized
-  backing field for an implicit-FK relationship — schema validation
+  `belongsTo(...).field(handle)` backing FK — schema validation
   emits a diagnostic directing the caller to express the intent as
   a hook on the owner entity
+- implicit FK relationships do not support update defaults at all
+  (no user-declared field surface exists where the modifier could be
+  attached); no schema rejection is required because there is no DSL
+  form to express it
 - before hooks observe pre-default FK state; field-backed FK defaults apply after
   before hooks during final-value computation
 - generated implicit FK property names use the Kotlin schema declaration property
