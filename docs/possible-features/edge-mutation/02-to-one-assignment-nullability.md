@@ -862,7 +862,11 @@ Before implementation, add tests for:
 - nullable to-one `null` assignment clears the FK
 - nullable to-one update distinguishes unset from explicit null: unset leaves the
   FK out of the update write set, while explicit null clears it
-- nullable to-one create allows unset and explicit null, both producing a null FK
+- nullable to-one create, when no create default applies to the backing FK,
+  allows unset and explicit null and both produce a null persisted FK
+- nullable field-backed FK create with a default applied: unset triggers
+  the default (persisted FK is the default value) while explicit null
+  suppresses the default (persisted FK is null) — explicit-null-wins
 - scalar-only updates do not write untouched FK values back to the database
 - unset required to-one create rejects during generated save preparation
 - required FK setters defensively reject Java/platform null calls
