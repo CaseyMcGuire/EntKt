@@ -75,13 +75,13 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
      * Use this to reference the FK in `index(...)` declarations:
      *
      * ```kotlin
-     * val author = belongsTo<User>("author").required()
+     * val author = belongsTo<User>("author")
      * val byAuthor = index(author.fk)
      * ```
      */
     val fk: IndexableColumn = FkColumn(this)
 
-    private var required: Boolean = false
+    private var required: Boolean = true
     private var unique: Boolean = false
     @PublishedApi internal var explicitFieldHandle: FieldHandle<*>? = null
     private var onDelete: OnDelete? = null
@@ -92,7 +92,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
     private var resolvedTarget: EntSchema? = null
     private var resolvedRef: String? = null
 
-    fun required(): BelongsToBuilder<Target> = apply { checkNotFrozen(); required = true }
+    fun nullable(): BelongsToBuilder<Target> = apply { checkNotFrozen(); required = false }
     fun unique(): BelongsToBuilder<Target> = apply { checkNotFrozen(); unique = true }
     fun field(handle: FieldHandle<*>): BelongsToBuilder<Target> = apply {
         checkNotFrozen()

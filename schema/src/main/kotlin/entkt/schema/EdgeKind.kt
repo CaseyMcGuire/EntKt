@@ -2,7 +2,7 @@ package entkt.schema
 
 sealed interface EdgeKind {
     data class BelongsTo(
-        val required: Boolean = false,
+        val required: Boolean = true,
         val unique: Boolean = false,
         val field: String? = null,
         val onDelete: OnDelete? = null,

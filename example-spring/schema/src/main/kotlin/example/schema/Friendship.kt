@@ -14,8 +14,8 @@ class Friendship : EntSchema("friendships") {
     override fun id() = EntId.int()
     val status = enum<FriendshipStatus>("status")
 
-    val requester = belongsTo<User>("requester").inverse(User::sentRequests).required()
-    val recipient = belongsTo<User>("recipient").inverse(User::receivedRequests).required()
+    val requester = belongsTo<User>("requester").inverse(User::sentRequests)
+    val recipient = belongsTo<User>("recipient").inverse(User::receivedRequests)
 
     val idx = index("idx_friendships_requester_id_recipient_id_unique", requester.fk, recipient.fk).unique()
 }

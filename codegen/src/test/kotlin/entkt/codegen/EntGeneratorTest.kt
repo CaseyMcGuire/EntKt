@@ -32,8 +32,8 @@ private class M2mMembershipSchema : EntSchema("memberships") {
     override fun id() = EntId.int()
     val groupId = int("group_id")
     val personId = int("person_id")
-    val group = belongsTo<M2mGroupSchema>("group").required().field(groupId)
-    val person = belongsTo<M2mPersonSchema>("person").required().field(personId)
+    val group = belongsTo<M2mGroupSchema>("group").field(groupId)
+    val person = belongsTo<M2mPersonSchema>("person").field(personId)
 }
 
 class EntGeneratorTest {

@@ -33,14 +33,14 @@ private class InspPost : EntSchema("posts") {
     override fun id() = EntId.long()
     val title = string("title")
     val published = bool("published").default(false)
-    val author = belongsTo<InspAuthor>("author").inverse(InspAuthor::posts).required()
+    val author = belongsTo<InspAuthor>("author").inverse(InspAuthor::posts)
 }
 
 private class InspProfile : EntSchema("profiles") {
     override fun id() = EntId.uuid()
     val bio = text("bio").optional()
     val user = belongsTo<InspProfileUser>("user")
-        .inverse(InspProfileUser::profile).required().unique()
+        .inverse(InspProfileUser::profile).unique()
 }
 
 private class InspProfileUser : EntSchema("profile_users") {
@@ -65,8 +65,8 @@ private class InspArticleTag : EntSchema("article_tags") {
     override fun id() = EntId.int()
     val articleId = int("article_id")
     val tagId = int("tag_id")
-    val article = belongsTo<InspArticle>("article").required().field(articleId)
-    val tag = belongsTo<InspTag>("tag").required().field(tagId)
+    val article = belongsTo<InspArticle>("article").field(articleId)
+    val tag = belongsTo<InspTag>("tag").field(tagId)
 }
 
 private class InspTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
@@ -93,7 +93,7 @@ private class InspAccount : EntSchema("accounts") {
     override fun id() = EntId.int()
     val holderId = int("holder_id") // field itself is NOT .unique()
     val holder = belongsTo<InspAccountHolder>("holder")
-        .inverse(InspAccountHolder::account).required().unique().field(holderId)
+        .inverse(InspAccountHolder::account).unique().field(holderId)
 }
 
 // Schemas for reverse M2M edge name collision test.
@@ -108,8 +108,8 @@ private class InspColJunction : EntSchema("col_owner_items") {
     override fun id() = EntId.int()
     val ownerId = int("owner_id")
     val itemId = int("item_id")
-    val owner = belongsTo<InspColOwner>("owner").required().field(ownerId)
-    val item = belongsTo<InspColItem>("item").required().field(itemId)
+    val owner = belongsTo<InspColOwner>("owner").field(ownerId)
+    val item = belongsTo<InspColItem>("item").field(itemId)
 }
 
 private class InspColOwner : EntSchema("col_owners") {
@@ -129,16 +129,16 @@ private class InspDupM2MJunctionA : EntSchema("dup_junc_a") {
     override fun id() = EntId.int()
     val srcId = int("src_id")
     val tgtId = int("tgt_id")
-    val src = belongsTo<InspDupM2MSourceA>("src").required().field(srcId)
-    val tgt = belongsTo<InspDupM2MTarget>("tgt").required().field(tgtId)
+    val src = belongsTo<InspDupM2MSourceA>("src").field(srcId)
+    val tgt = belongsTo<InspDupM2MTarget>("tgt").field(tgtId)
 }
 
 private class InspDupM2MJunctionB : EntSchema("dup_junc_b") {
     override fun id() = EntId.int()
     val srcId = int("src_id")
     val tgtId = int("tgt_id")
-    val src = belongsTo<InspDupM2MSourceB>("src").required().field(srcId)
-    val tgt = belongsTo<InspDupM2MTarget>("tgt").required().field(tgtId)
+    val src = belongsTo<InspDupM2MSourceB>("src").field(srcId)
+    val tgt = belongsTo<InspDupM2MTarget>("tgt").field(tgtId)
 }
 
 // table "dup_foo_bar", edge "baz" → reverse name "dup_foo_bar_baz"
@@ -164,7 +164,6 @@ private class InspCascadeChild : EntSchema("cascade_children") {
     override fun id() = EntId.int()
     val parent = belongsTo<InspCascadeParent>("parent")
         .inverse(InspCascadeParent::children)
-        .required()
         .onDelete(OnDelete.CASCADE)
 }
 
@@ -398,7 +397,7 @@ class SchemaInspectorTest {
         class Target : EntSchema("targets") { override fun id() = EntId.int() }
         class Source : EntSchema("sources") {
             override fun id() = EntId.int()
-            val target = belongsTo<Target>("target") // not required → nullable FK
+            val target = belongsTo<Target>("target").nullable()
         }
         val graph = SchemaInspector.explain(listOf(
             SchemaInput("Target", Target()),

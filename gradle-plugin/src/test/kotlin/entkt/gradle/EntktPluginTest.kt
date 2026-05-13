@@ -72,7 +72,7 @@ class EntktPluginTest {
                     val name = string("name")
                     val age = int("age").optional()
 
-                    val owner = belongsTo<Owner>("owner")
+                    val owner = belongsTo<Owner>("owner").nullable()
                 }
                 """.trimIndent()
             )

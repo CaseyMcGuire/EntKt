@@ -5,7 +5,7 @@ import entkt.schema.EntSchema
 
 /**
  * A blog post that points back at its author. The `belongsTo<User>("author")`
- * edge synthesizes an `authorId: UUID?` FK on Post.
+ * edge synthesizes an `authorId: UUID` FK on Post.
  */
 class Post : EntSchema("posts") {
     override fun id() = EntId.long()
@@ -16,6 +16,6 @@ class Post : EntSchema("posts") {
     val body = text("body")
     val published = bool("published").default(false)
 
-    val author = belongsTo<User>("author").inverse(User::posts).required()
+    val author = belongsTo<User>("author").inverse(User::posts)
     val tags = manyToMany<Tag>("tags").through<PostTag>(PostTag::post, PostTag::tag)
 }

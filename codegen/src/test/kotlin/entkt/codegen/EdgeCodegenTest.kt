@@ -25,14 +25,14 @@ class Pet : EntSchema("pets") {
     override fun id() = EntId.int()
     val name = string("name")
 
-    val owner = belongsTo<Owner>("owner").inverse(Owner::pets)
+    val owner = belongsTo<Owner>("owner").inverse(Owner::pets).nullable()
 }
 
 class RequiredPet : EntSchema("required_pets") {
     override fun id() = EntId.int()
     val name = string("name")
 
-    val owner = belongsTo<Owner>("owner").required()
+    val owner = belongsTo<Owner>("owner")
 }
 
 // ---------- M2M test schemas ----------
@@ -50,8 +50,8 @@ class TeamMember : EntSchema("team_members") {
     val teamId = int("team_id")
     val memberId = int("member_id")
 
-    val team = belongsTo<Team>("team").required().field(teamId)
-    val member = belongsTo<Pet>("member").required().field(memberId)
+    val team = belongsTo<Team>("team").field(teamId)
+    val member = belongsTo<Pet>("member").field(memberId)
 }
 
 // ---------- Self-referential M2M test schemas ----------
@@ -69,8 +69,8 @@ class Friendship : EntSchema("friendships") {
     val personId = int("person_id")
     val friendId = int("friend_id")
 
-    val person = belongsTo<Person>("person").required().field(personId)
-    val friend = belongsTo<Person>("friend").required().field(friendId)
+    val person = belongsTo<Person>("person").field(personId)
+    val friend = belongsTo<Person>("friend").field(friendId)
 }
 
 // ---------- Ambiguous junction test schemas ----------
@@ -89,8 +89,8 @@ class ProjectAssignment : EntSchema("project_assignments") {
     val assigneeId = int("assignee_id")
     val reviewerId = int("reviewer_id").nullable()
 
-    val project = belongsTo<Project>("project").required().field(projectId)
-    val assignee = belongsTo<Pet>("assignee").required().field(assigneeId)
+    val project = belongsTo<Project>("project").field(projectId)
+    val assignee = belongsTo<Pet>("assignee").field(assigneeId)
     val reviewer = belongsTo<Pet>("reviewer").field(reviewerId)
 }
 
@@ -115,8 +115,8 @@ private class SameEdgeJunctionSchema : EntSchema("friendships") {
     override fun id() = EntId.int()
     val personId = int("person_id")
     val friendId = int("friend_id")
-    val person = belongsTo<SameEdgePersonSchema>("person").required().field(personId)
-    val friend = belongsTo<SameEdgePersonSchema>("friend").required().field(friendId)
+    val person = belongsTo<SameEdgePersonSchema>("person").field(personId)
+    val friend = belongsTo<SameEdgePersonSchema>("friend").field(friendId)
 }
 
 private class SameEdgePersonSchema : EntSchema("persons") {

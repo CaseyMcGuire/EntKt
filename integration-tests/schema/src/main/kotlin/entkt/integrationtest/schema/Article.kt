@@ -10,5 +10,5 @@ class Article : EntSchema("articles") {
     val notes = string("notes").nullable()
     val published = bool("published").default(false)
 
-    val author = belongsTo<User>("author").inverse(User::articles).required()
+    val author = belongsTo<User>("author").inverse(User::articles)
 }

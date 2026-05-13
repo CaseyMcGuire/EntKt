@@ -22,7 +22,6 @@ private class O2oProfile : EntSchema("o2o_profiles") {
     override fun id() = EntId.uuid()
     val user = belongsTo<O2oUser>("user")
         .inverse(O2oUser::profile)
-        .required()
         .unique()
 }
 
@@ -36,7 +35,6 @@ private class O2mPost : EntSchema("o2m_posts") {
     override fun id() = EntId.long()
     val author = belongsTo<O2mUser>("author")
         .inverse(O2mUser::posts)
-        .required()
 }
 
 // M2M Two Types
@@ -52,8 +50,8 @@ private class M2mGroup : EntSchema("m2m_groups") {
 
 private class M2mUserGroup : EntSchema("m2m_user_groups") {
     override fun id() = EntId.long()
-    val user = belongsTo<M2mUser>("user").required()
-    val group = belongsTo<M2mGroup>("group").required()
+    val user = belongsTo<M2mUser>("user")
+    val group = belongsTo<M2mGroup>("group")
     val byUserGroup = index("idx_m2m_user_groups_user_group", user.fk, group.fk).unique()
 }
 
@@ -66,8 +64,8 @@ private class M2mPerson : EntSchema("m2m_people") {
 
 private class M2mFriendship : EntSchema("m2m_friendships") {
     override fun id() = EntId.long()
-    val user = belongsTo<M2mPerson>("user").required()
-    val friend = belongsTo<M2mPerson>("friend").required()
+    val user = belongsTo<M2mPerson>("user")
+    val friend = belongsTo<M2mPerson>("friend")
     val byFriendPair = index("idx_m2m_friendships_user_friend", user.fk, friend.fk).unique()
 }
 
@@ -86,8 +84,8 @@ private class M2mBiGroup : EntSchema("m2m_bi_groups") {
 
 private class M2mBiMembership : EntSchema("m2m_bi_memberships") {
     override fun id() = EntId.long()
-    val user = belongsTo<M2mBiUser>("user").required()
-    val group = belongsTo<M2mBiGroup>("group").required()
+    val user = belongsTo<M2mBiUser>("user")
+    val group = belongsTo<M2mBiGroup>("group")
 }
 
 /**
@@ -258,7 +256,7 @@ class PostgresDdlTest {
         class Posts : EntSchema("posts") {
             override fun id() = EntId.int()
             val title = string("title")
-            val author = belongsTo<Users>("author")
+            val author = belongsTo<Users>("author").nullable()
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -289,7 +287,7 @@ class PostgresDdlTest {
         }
         class Posts : EntSchema("posts") {
             override fun id() = EntId.int()
-            val author = belongsTo<Users>("author").required()
+            val author = belongsTo<Users>("author")
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -319,7 +317,7 @@ class PostgresDdlTest {
         }
         class Posts : EntSchema("posts") {
             override fun id() = EntId.int()
-            val author = belongsTo<Users>("author").required().onDelete(OnDelete.CASCADE)
+            val author = belongsTo<Users>("author").onDelete(OnDelete.CASCADE)
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -455,8 +453,8 @@ class PostgresDdlTest {
         }
         class UserGroups : EntSchema("user_groups") {
             override fun id() = EntId.int()
-            val user = belongsTo<Users>("user").required().onDelete(OnDelete.CASCADE)
-            val group = belongsTo<Groups>("group").required().onDelete(OnDelete.CASCADE)
+            val user = belongsTo<Users>("user").onDelete(OnDelete.CASCADE)
+            val group = belongsTo<Groups>("group").onDelete(OnDelete.CASCADE)
             val byUserGroup = index("idx_user_groups_unique", user.fk, group.fk).unique()
         }
 
@@ -521,6 +519,7 @@ class PostgresDdlTest {
             val mentor = belongsTo<Employee>("mentor")
                 .inverse(Employee::mentee)
                 .unique()
+                .nullable()
         }
 
         val ddl = renderDdl(Employee())
@@ -568,6 +567,7 @@ class PostgresDdlTest {
             val children = hasMany<Category>("children")
             val parent = belongsTo<Category>("parent")
                 .inverse(Category::children)
+                .nullable()
         }
 
         val ddl = renderDdl(Category())

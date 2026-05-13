@@ -56,8 +56,8 @@ class UserGroup : EntSchema("user_groups") {
     val userId = int("user_id")
     val groupId = int("group_id")
 
-    val user = belongsTo<User>("user").required().field(userId)
-    val group = belongsTo<Group>("group").required().field(groupId)
+    val user = belongsTo<User>("user").field(userId)
+    val group = belongsTo<Group>("group").field(groupId)
 }
 
 class Task : EntSchema("tasks") {
@@ -412,7 +412,6 @@ class SchemaTest {
         class Pet : EntSchema("pets") {
             override fun id() = EntId.int()
             val owner = belongsTo<Owner>("owner")
-                .required()
                 .onDelete(OnDelete.SET_NULL)
         }
         val ownerSchema = Owner()
@@ -429,7 +428,7 @@ class SchemaTest {
         class Owner : EntSchema("owners") { override fun id() = EntId.int() }
         class Pet : EntSchema("pets") {
             override fun id() = EntId.int()
-            val owner = belongsTo<Owner>("owner").onDelete(OnDelete.SET_NULL)
+            val owner = belongsTo<Owner>("owner").nullable().onDelete(OnDelete.SET_NULL)
         }
         val ownerSchema = Owner()
         val petSchema = Pet()

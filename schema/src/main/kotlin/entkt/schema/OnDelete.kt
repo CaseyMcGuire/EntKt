@@ -5,7 +5,7 @@ package entkt.schema
  *
  * Used on `belongsTo` edge declarations to control the FK `ON DELETE` clause:
  * ```kotlin
- * val owner = belongsTo<Owner>("owner").required().onDelete(OnDelete.CASCADE)
+ * val owner = belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
  * ```
  */
 enum class OnDelete {
