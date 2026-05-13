@@ -247,7 +247,10 @@ internal class EntityGenerator(
         hasEdges: Boolean,
     ): FunSpec? {
         val allFields = scalarFields(schema)
-        if (allFields.none { it.sensitive }) return null
+        // Generate a custom toString if *any* scalar field or
+        // field-backed FK carries `.sensitive()`. Implicit FKs can't be
+        // sensitive (no DSL surface for it).
+        if (allFields.none { it.sensitive } && edgeFks.none { it.sensitive }) return null
 
         val parts = mutableListOf<String>()
         parts.add("id=\$id")
@@ -256,7 +259,7 @@ internal class EntityGenerator(
             parts.add(if (field.sensitive) "$prop=***" else "$prop=\$$prop")
         }
         for (fk in edgeFks) {
-            parts.add("${fk.propertyName}=\$${fk.propertyName}")
+            parts.add(if (fk.sensitive) "${fk.propertyName}=***" else "${fk.propertyName}=\$${fk.propertyName}")
         }
         if (hasEdges) {
             parts.add("edges=\$edges")

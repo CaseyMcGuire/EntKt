@@ -57,6 +57,14 @@ data class EdgeFk(
      * same way it does for scalar fields.
      */
     val validators: List<Validator> = emptyList(),
+    /**
+     * `true` when the backing field is `.sensitive()`. The generated
+     * entity `toString()` redacts the FK value as `***` for sensitive
+     * field-backed FKs, matching the existing scalar-field behavior.
+     * Implicit FKs have no DSL surface for `.sensitive()` so this is
+     * always `false` for them.
+     */
+    val sensitive: Boolean = false,
 )
 
 /**
@@ -110,6 +118,7 @@ fun computeEdgeFks(
                     default = backingField?.default,
                     immutable = backingField?.immutable == true,
                     validators = backingField?.validators ?: emptyList(),
+                    sensitive = backingField?.sensitive == true,
                 )
             } else {
                 EdgeFk(

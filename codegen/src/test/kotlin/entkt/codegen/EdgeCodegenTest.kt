@@ -261,6 +261,23 @@ private class NullableFkWithDefaultChild : EntSchema("nullable_default_children"
     val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
 }
 
+// ---------- Schema for sensitive field-backed FK redaction ----------
+
+private class SensitiveFkParent : EntSchema("sensitive_parents") {
+    override fun id() = EntId.long()
+}
+
+/**
+ * Backing field is `.sensitive()`. The generated entity `toString()`
+ * must redact the FK as `***` instead of printing the value.
+ */
+private class SensitiveFkChild : EntSchema("sensitive_children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id").sensitive()
+    val owner = belongsTo<SensitiveFkParent>("owner").field(ownerId)
+}
+
 // ---------- Schema for field-backed FK validator propagation ----------
 
 private class ValidatedFkParent : EntSchema("validated_parents") {
@@ -488,6 +505,29 @@ class EdgeCodegenTest {
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `entity toString redacts sensitive field-backed FK values`() {
+        val parent = SensitiveFkParent()
+        val child = SensitiveFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "SensitiveFkParent", child to "SensitiveFkChild")
+        val output = EntityGenerator("com.example.ent")
+            .generate("SensitiveFkChild", child, names).toString()
+
+        // A custom toString must be emitted (since at least one field
+        // or FK is sensitive). The FK value must be `***`, not the
+        // raw `${ownerId}`.
+        assert(output.contains("override fun toString()")) {
+            "EntityGenerator should emit a custom toString when any field/FK is sensitive\n$output"
+        }
+        assert(output.contains("ownerId=***")) {
+            "Sensitive field-backed FK should be redacted as `ownerId=***` in toString\n$output"
+        }
+        assert(!output.contains("ownerId=\${ownerId}") && !output.contains("ownerId=\$ownerId")) {
+            "Sensitive FK must not leak via the unredacted interpolation\n$output"
         }
     }
 

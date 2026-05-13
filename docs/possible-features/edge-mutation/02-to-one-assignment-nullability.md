@@ -19,11 +19,14 @@ slot on `${Entity}UpdatePatch`, no `unset` on `${Entity}UpdateMutationView`),
 backing-field validators carried into the FK code path (so a
 `belongsTo(...).field(handle)` whose backing column has `.positive()`,
 `.min(...)`, etc. runs those checks during both create save and update
-effective-patch validation), and generated local validation failures
+effective-patch validation), generated local validation failures
 mapping to `EntError.ValidationFailed` (every emitted validator and
 `_checkRequiredNotNull` now throws `ValidationException` so
 `saveOrError()` returns a structured `Err(ValidationFailed)` instead
-of letting an `IllegalStateException` escape) are in place. Deferred work is listed under "Deferred Scope" at the
+of letting an `IllegalStateException` escape), and sensitive
+field-backed FK redaction in the generated entity `toString()` (a
+`belongsTo(...).field(handle)` whose backing column is `.sensitive()`
+now prints `propName=***` instead of the value) are in place. Deferred work is listed under "Deferred Scope" at the
 end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).
