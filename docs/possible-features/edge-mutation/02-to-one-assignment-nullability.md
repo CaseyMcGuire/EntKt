@@ -488,13 +488,19 @@ Create defaults on field-backed FK fields apply like scalar create defaults
 during create final-value computation. Required edge checks see the final
 defaulted FK value.
 
-For nullable field-backed FKs, the rule is **explicit null wins**:
+For nullable field-backed FKs, the rule is **explicit null wins**.
+The FK property name comes from the backing field declaration (e.g.
+`writer` for `val writer = uuid("writer_id")`, `writerId` for
+`val writerId = uuid("writer_id")`), not from the implicit `{edge}Id`
+pattern — see "Explicit Backing Fields" above for the naming rule:
 
 - If the caller does not touch the relationship (unset), the create
   default fires and the persisted FK is the default value.
-- If the caller explicitly assigns `null` (`authorId = null`), the default is
-  suppressed and the persisted FK is `null`. The explicit assignment is treated
-  as the caller's intentional choice.
+- If the caller explicitly assigns `null` to the backing FK property
+  (e.g. `writerId = null` or `writer = null`, whichever the schema
+  declared), the default is suppressed and the persisted FK is `null`.
+  The explicit assignment is treated as the caller's intentional
+  choice.
 
 This rule is relationship-specific in this RFC. Whether scalar
 fields with create defaults follow the same explicit-null-wins
