@@ -562,10 +562,10 @@ run is the value hooks initially observe for relationships changed by the
 builder. Hooks mutate a hook-facing scalar/FK mutation view, not the public
 builder. For to-one relationships, that hook-facing view is FK-only: it exposes
 the resolved FK property, such as `authorId`, or the user-declared backing field
-for `belongsTo(...).field(handle)` edges. It does not expose relationship entity
-readable relationship entity properties; relationship entity setter methods
-are not part of the generated API at all. Hooks assign a relationship by
-writing the target id into the resolved FK property. Hook FK writes also
+for `belongsTo(...).field(handle)` edges. It does not expose readable
+relationship entity properties; relationship entity setter methods are not
+part of the generated API at all. Hooks assign a relationship by writing
+the target id into the resolved FK property. Hook FK writes also
 follow last-write-wins before candidate construction. Hook, privacy,
 and validation code should treat the final pending FK value and `WriteCandidate`
 as the source of truth for changed relationship fields.
