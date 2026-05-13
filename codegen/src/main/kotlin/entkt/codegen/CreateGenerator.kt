@@ -356,8 +356,23 @@ internal class CreateGenerator(
                     fk.propertyName,
                     fkDefaultCodeBlock(fk),
                 )
-                // No default: required FKs throw on unassigned via the
-                // getter; nullable FKs stay nullable.
+                // Required + no default: read staging directly so the
+                // missing-input throw is a ValidationException (mapped
+                // to EntError.ValidationFailed by saveOrError) rather
+                // than the property getter's IllegalStateException
+                // (which stays in place for hook/property reads, where
+                // an early read is a usage error).
+                fk.required -> builder.addStatement(
+                    "val %L = this.%L ?: throw %T(%S, listOf(%T(%S, field = %S)))",
+                    fk.propertyName,
+                    stagingFieldName(fk.propertyName),
+                    VALIDATION_EXCEPTION,
+                    schemaName,
+                    VALIDATION_INVALID,
+                    "${fk.edgeName} is required",
+                    fk.columnName,
+                )
+                // Nullable + no default: pass through, may be null.
                 else -> builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
             }
             // Field-level validators carried from the backing field of

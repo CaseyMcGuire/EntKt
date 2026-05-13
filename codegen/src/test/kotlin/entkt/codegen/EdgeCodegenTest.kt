@@ -859,6 +859,32 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `create save throws ValidationException for missing required FK`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // RequiredPet has `val owner = belongsTo<Owner>("owner")` (no
+        // .field(...), no default). The save body must read the
+        // staging field directly so the missing-input failure is a
+        // ValidationException (saveOrError → EntError.ValidationFailed),
+        // not the property getter's IllegalStateException.
+        assert(
+            output.contains(
+                "val ownerId = this._ownerIdStaging ?: throw ValidationException(\"RequiredPet\", listOf(ValidationDecision.Invalid(\"owner is required\", field = \"owner_id\")))",
+            ),
+        ) {
+            "Required FK without default should throw ValidationException from save body\n$output"
+        }
+        // The property getter still throws ISE for hook/property reads
+        // (early-read is a usage error, not a save-prep validation).
+        assert(output.contains("get() = _ownerIdStaging ?: throw IllegalStateException(\"owner is required\")")) {
+            "Required FK getter should still throw IllegalStateException for hook reads\n$output"
+        }
+    }
+
+    @Test
     fun `create builder required FK property is non-null typed`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")

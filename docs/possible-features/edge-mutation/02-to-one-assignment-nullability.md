@@ -20,10 +20,13 @@ backing-field validators carried into the FK code path (so a
 `belongsTo(...).field(handle)` whose backing column has `.positive()`,
 `.min(...)`, etc. runs those checks during both create save and update
 effective-patch validation), generated local validation failures
-mapping to `EntError.ValidationFailed` (every emitted validator and
-`_checkRequiredNotNull` now throws `ValidationException` so
-`saveOrError()` returns a structured `Err(ValidationFailed)` instead
-of letting an `IllegalStateException` escape), sensitive
+mapping to `EntError.ValidationFailed` (every emitted validator,
+`_checkRequiredNotNull`, the create-side required-scalar binding, and
+the create-side required-FK binding now throw `ValidationException`
+so `saveOrError()` returns a structured `Err(ValidationFailed)`
+instead of letting an `IllegalStateException` escape; property
+getters still throw `IllegalStateException` for hook/property reads,
+which are usage errors rather than save-prep validation), sensitive
 field-backed FK redaction in the generated entity `toString()` (a
 `belongsTo(...).field(handle)` whose backing column is `.sensitive()`
 now prints `propName=***` instead of the value), and FK comments
