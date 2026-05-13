@@ -673,9 +673,19 @@ Hook-facing resolved FK properties are typed according to relationship
 nullability. Required relationship FKs expose non-null setters and defensively
 reject Java/platform nulls; nullable relationship FKs expose nullable setters.
 Required create hooks may set an unset required FK through the non-null setter,
-but cannot intentionally set it to null. Final save preparation still rejects
-required create FKs and changed required update FKs that remain unset/null after
-hooks.
+but cannot intentionally set it to null. Final save preparation still rejects:
+
+- **create**-time required FKs whose final value is still null after
+  before hooks (`_checkRequiredNotNull()` for the create path), and
+- **internal corruption paths** that produce dirty+null state for a
+  required FK on update by bypassing the FK setter (reflection,
+  future internal bulk-write helpers).
+
+It does **not** reject a hook calling `unsetAuthorId()` on a required
+FK that was dirty — that legitimately leaves the patch in
+`FieldPatch.Unset`, which means "the update does not touch this FK"
+and skips the required check by construction. Removing a pending
+required-FK change is a valid hook operation.
 
 Hook-facing create interfaces use the same resolved FK getter behavior as create
 builders: reading an unset required FK must throw, while reading an unset
@@ -954,8 +964,14 @@ Before implementation, add tests for:
 - update hooks can remove a pending to-one FK patch entry with
   `unset{FkProperty}()`, while assigning `null` to a nullable FK remains
   `FieldPatch.Set(null)` and clears the relationship
-- required FKs left unset/null after hooks are rejected before privacy,
-  validation, or database writes
+- create-time required FKs whose final value is still null after
+  before hooks are rejected before privacy, validation, or database
+  writes
+- on update, a hook calling `unset{FkProperty}()` on a required FK
+  is allowed — the resulting `FieldPatch.Unset` means the update
+  does not touch the FK, and the required check skips it; only
+  setter-bypassing dirty+null states (reflection, internal bulk
+  writes) are caught by `_checkRequiredNotNull()`
 - update required edge checks inspect only effective patch entries; required
   FK `FieldPatch.Unset` skips the check (the update does not touch the FK)
   and a `Set(non-null id)` entry has already passed the check by
