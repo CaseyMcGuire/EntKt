@@ -8,7 +8,7 @@ import java.time.Instant
 class PostHooksConfig {
     fun apply(hooks: PostHooks) {
         hooks.beforeSave { it.updatedAt = Instant.now() }
-        hooks.beforeCreate { it.createdAt = Instant.now() }
+        hooks.beforeCreate { it.mutation.createdAt = Instant.now() }
         // Ownership checks moved to PostPolicy privacy rules
     }
 }

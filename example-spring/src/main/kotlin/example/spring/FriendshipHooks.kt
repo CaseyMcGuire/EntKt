@@ -2,7 +2,7 @@ package example.spring
 
 import entkt.runtime.orElse
 import example.ent.Friendship
-import example.ent.FriendshipCreate
+import example.ent.FriendshipCreateHookContext
 import example.ent.FriendshipHooks
 import example.ent.FriendshipUpdateHookContext
 import example.schema.FriendshipStatus
@@ -17,16 +17,16 @@ class FriendshipHooksConfig {
         hooks.beforeUpdate(::enforceStatusTransition)
     }
 
-    fun requireValidParticipants(m: FriendshipCreate) {
+    fun requireValidParticipants(ctx: FriendshipCreateHookContext) {
         // Required FK getters throw on unassigned reads, so no explicit
         // null guard is needed here.
-        require(m.requesterId != m.recipientId) { "Cannot friend yourself" }
+        require(ctx.mutation.requesterId != ctx.mutation.recipientId) { "Cannot friend yourself" }
     }
 
-    fun forbidDuplicateRequest(m: FriendshipCreate) {
-        val requesterId = m.requesterId
-        val recipientId = m.recipientId
-        val existing = m.client.friendships.query {
+    fun forbidDuplicateRequest(ctx: FriendshipCreateHookContext) {
+        val requesterId = ctx.mutation.requesterId
+        val recipientId = ctx.mutation.recipientId
+        val existing = ctx.client.friendships.query {
             where(
                 ((Friendship.requesterId eq requesterId) and (Friendship.recipientId eq recipientId))
                     or ((Friendship.requesterId eq recipientId) and (Friendship.recipientId eq requesterId)),

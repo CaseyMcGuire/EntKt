@@ -57,6 +57,7 @@ internal class RepoGenerator(
         val updateClass = ClassName(packageName, "${schemaName}Update")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
         val privacyConfigClass = ClassName(packageName, "${schemaName}PrivacyConfig")
         val validationConfigClass = ClassName(packageName, "${schemaName}ValidationConfig")
@@ -82,7 +83,9 @@ internal class RepoGenerator(
         // Hook list types
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val beforeSaveHookLambda = LambdaTypeName.get(parameters = arrayOf(mutationClass), returnType = UNIT)
-        val beforeCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(createClass), returnType = UNIT)
+        // beforeCreate hooks receive the restricted CreateHookContext
+        // (view + client), not the concrete Create builder.
+        val beforeCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(createHookCtxClass), returnType = UNIT)
         val afterCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
         val beforeUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(updateHookCtxClass), returnType = UNIT)
         val afterUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)

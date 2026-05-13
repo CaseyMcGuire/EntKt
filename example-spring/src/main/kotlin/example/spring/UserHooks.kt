@@ -8,6 +8,6 @@ import java.time.Instant
 class UserHooksConfig {
     fun apply(hooks: UserHooks) {
         hooks.beforeSave { it.updatedAt = Instant.now() }
-        hooks.beforeCreate { it.createdAt = Instant.now() }
+        hooks.beforeCreate { it.mutation.createdAt = Instant.now() }
     }
 }

@@ -47,6 +47,8 @@ internal class PrivacyGenerator(
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
+        val createMutationViewClass = ClassName(packageName, "${schemaName}CreateMutationView")
+        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
 
         // Backing FK columns flow through `edgeFks` for write candidates
         // and update patches so their type/nullability come from the
@@ -103,6 +105,18 @@ internal class PrivacyGenerator(
                 entityClass = entityClass,
                 patchClass = patchClass,
                 mutationClass = updateMutationViewClass,
+            ),
+        )
+
+        // CreateHookContext (received by beforeCreate hooks). Mirrors
+        // the update side: a restricted writable view plus `client` so
+        // hooks can query the DB. The view hides the concrete builder's
+        // save()/driver/hook-list surface.
+        fileBuilder.addType(
+            buildCreateHookContext(
+                ctxClass = createHookCtxClass,
+                clientClass = clientClass,
+                mutationClass = createMutationViewClass,
             ),
         )
 
@@ -286,6 +300,28 @@ internal class PrivacyGenerator(
         .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
         .addProperty(PropertySpec.builder("patch", patchClass).initializer("patch").build())
+        .addProperty(PropertySpec.builder("mutation", mutationClass).initializer("mutation").build())
+        .build()
+
+    /**
+     * Hook context for `beforeCreate` hooks. Carries the restricted
+     * writable [mutationClass] view plus the [clientClass] reference for
+     * DB queries. Creates have no `before` row and no patch model, so
+     * the context is narrower than [buildUpdateHookContext].
+     */
+    private fun buildCreateHookContext(
+        ctxClass: ClassName,
+        clientClass: ClassName,
+        mutationClass: ClassName,
+    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
+        .addModifiers(KModifier.DATA)
+        .primaryConstructor(
+            FunSpec.constructorBuilder()
+                .addParameter("client", clientClass)
+                .addParameter("mutation", mutationClass)
+                .build(),
+        )
+        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("mutation", mutationClass).initializer("mutation").build())
         .build()
 

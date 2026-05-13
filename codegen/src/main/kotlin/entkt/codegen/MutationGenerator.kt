@@ -39,15 +39,19 @@ import entkt.schema.EntSchema
  * `beforeCreate` / `beforeUpdate` for phase-specific reads, patch
  * inspection, or `unset{Field}()`.
  *
- * Also generates a `${SchemaName}UpdateMutationView` interface that
- * extends the shared `Mutation` interface with `unset{Field}()` methods.
- * This is the restricted, hook-facing view used inside
- * `${SchemaName}UpdateHookContext.mutation` — narrowing to writable
- * field/FK setters plus unset semantics, hiding `save()`, the loaded
- * `entity` lateinit, the owner `id`, and the private patch helpers
- * that live on the full update builder. `unset` lives only on this
- * view (not on `Mutation`) because the patch model it removes from is
- * update-specific.
+ * Also generates two restricted hook-facing views that extend the
+ * shared `Mutation` interface:
+ *
+ * - `${SchemaName}CreateMutationView` — passed to `beforeCreate` hooks.
+ *   Adds immutable scalar fields (writable on create only). Hides the
+ *   concrete-builder surface (`save()`, `client`, `driver`, hook lists,
+ *   private staging fields) so hooks can't re-enter the save pipeline.
+ *
+ * - `${SchemaName}UpdateMutationView` — passed to `beforeUpdate` hooks
+ *   via `ctx.mutation`. Adds `unset{Field}()` patch operations.
+ *
+ * The Update view's `unset` methods live only on the update side because
+ * the patch model they remove from is update-specific.
  */
 internal class MutationGenerator(
     private val packageName: String,
@@ -59,11 +63,13 @@ internal class MutationGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val interfaceName = "${schemaName}Mutation"
-        val viewName = "${schemaName}UpdateMutationView"
+        val createViewName = "${schemaName}CreateMutationView"
+        val updateViewName = "${schemaName}UpdateMutationView"
         // Backing FK columns flow through `edgeFks` so the interface
         // exposes them with relationship nullability (required → non-null).
         val fields = scalarFields(schema)
         val mutableFields = fields.filter { !it.immutable }
+        val immutableFields = fields.filter { it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val mutationInterface = TypeSpec.interfaceBuilder(interfaceName)
@@ -86,22 +92,38 @@ internal class MutationGenerator(
             )
         }
 
-        // The restricted hook-facing view extends Mutation and adds
-        // unset semantics. Hooks see only this interface through
-        // `ctx.mutation`, which prevents calling `save()`, touching the
-        // `entity` lateinit, or otherwise reentering the save pipeline.
-        val viewInterface = TypeSpec.interfaceBuilder(viewName)
+        // The restricted hook-facing view passed to `beforeCreate`.
+        // Extends `Mutation` and adds immutable scalar fields, which are
+        // create-only writable. Hides `save()`, `client`, `driver`, the
+        // hook lists, the staging/assigned private fields, and any other
+        // concrete-builder surface that hooks must not reach.
+        val createView = TypeSpec.interfaceBuilder(createViewName)
+            .addSuperinterface(ClassName(packageName, interfaceName))
+        for (field in immutableFields) {
+            val typeName = field.resolvedTypeName().copy(nullable = true)
+            val prop = PropertySpec.builder(toCamelCase(field.name), typeName)
+                .mutable(true)
+            val comment = field.comment
+            if (comment != null) prop.addKdoc("%L", comment)
+            createView.addProperty(prop.build())
+        }
+
+        // The restricted hook-facing view passed to `beforeUpdate`
+        // (via `ctx.mutation`). Extends `Mutation` and adds unset
+        // semantics for the patch model.
+        val updateView = TypeSpec.interfaceBuilder(updateViewName)
             .addSuperinterface(ClassName(packageName, interfaceName))
         for (field in mutableFields) {
-            viewInterface.addFunction(unsetSpec(toCamelCase(field.name)))
+            updateView.addFunction(unsetSpec(toCamelCase(field.name)))
         }
         for (fk in edgeFks) {
-            viewInterface.addFunction(unsetSpec(fk.propertyName))
+            updateView.addFunction(unsetSpec(fk.propertyName))
         }
 
         return FileSpec.builder(packageName, interfaceName)
             .addType(mutationInterface.build())
-            .addType(viewInterface.build())
+            .addType(createView.build())
+            .addType(updateView.build())
             .build()
     }
 

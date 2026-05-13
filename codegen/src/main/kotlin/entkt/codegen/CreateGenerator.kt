@@ -41,12 +41,17 @@ internal class CreateGenerator(
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val entityClass = ClassName(packageName, schemaName)
-        val createClass = ClassName(packageName, className)
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+        val createMutationViewClass = ClassName(packageName, "${schemaName}CreateMutationView")
+        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
 
         val beforeSaveHookType = hookListType(mutationClass)
-        val beforeCreateHookType = hookListType(createClass)
+        // beforeCreate hooks receive the restricted CreateHookContext —
+        // a `mutation` view (no save()/driver/hook-list/staging surface)
+        // plus `client` for DB queries. Mirrors the update side's
+        // UpdateHookContext.
+        val beforeCreateHookType = hookListType(createHookCtxClass)
         val afterCreateHookType = hookListType(entityClass)
 
         val idStrategy = idStrategyName(schema)
@@ -62,9 +67,11 @@ internal class CreateGenerator(
             constructorBuilder.addParameter("id", idType)
         }
 
+        // `CreateMutationView` transitively requires `Mutation`, so the
+        // single addSuperinterface here gives Create both contracts.
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
-            .addSuperinterface(mutationClass)
+            .addSuperinterface(createMutationViewClass)
             .primaryConstructor(constructorBuilder.build())
             .addProperty(
                 PropertySpec.builder("driver", DRIVER)
@@ -104,8 +111,11 @@ internal class CreateGenerator(
                     )
                 }
             }
-            .addProperties(mutableFields.map { buildProperty(it, override = true) })
-            .addProperties(allFields.filter { it.immutable }.map { buildProperty(it, override = false) })
+            // Immutable scalar fields are declared on `CreateMutationView`
+            // (they're create-only writable), so both mutable and immutable
+            // scalars override the same view contract.
+            .addProperties(mutableFields.map { buildProperty(it) })
+            .addProperties(allFields.filter { it.immutable }.map { buildProperty(it) })
             .also { builder ->
                 for (fk in edgeFks) {
                     if (fk.required) {
@@ -128,12 +138,12 @@ internal class CreateGenerator(
             .build()
     }
 
-    private fun buildProperty(field: Field, override: Boolean): PropertySpec {
+    private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.resolvedTypeName().copy(nullable = true)
         val builder = PropertySpec.builder(toCamelCase(field.name), typeName)
+            .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
-        if (override) builder.addModifiers(KModifier.OVERRIDE)
         val comment = field.comment
         if (comment != null) builder.addKdoc("%L", comment)
         return builder.build()
@@ -275,7 +285,15 @@ internal class CreateGenerator(
 
         // ---- Lifecycle hooks (before validation so hooks can set fields). ----
         builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
-        builder.addStatement("for (hook in beforeCreateHooks) hook(this)")
+        // beforeCreate hooks receive a CreateHookContext wrapping the
+        // restricted view and the client. `this` satisfies the view
+        // contract, so it can be passed as the mutation directly.
+        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
+        builder.addStatement(
+            "val createCtx = %T(client, this)",
+            createHookCtxClass,
+        )
+        builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")
 
         // ---- Validate and bind each property to a local. ----
         for (field in allFields) {

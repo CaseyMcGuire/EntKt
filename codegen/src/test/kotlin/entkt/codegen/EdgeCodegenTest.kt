@@ -429,6 +429,41 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `create builder accepts beforeCreate hooks typed against CreateHookContext`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Per RFC: beforeCreate hooks receive a restricted CreateHookContext
+        // (mutation view + client), not the concrete Create builder. The
+        // save body constructs the context and passes it to each hook so
+        // the hook can't reach `save()`, `driver`, hook lists, or the
+        // private staging/assigned fields on the concrete builder.
+        assert(output.contains("beforeCreateHooks: List<(PetCreateHookContext) -> Unit>")) {
+            "beforeCreateHooks list should be typed against PetCreateHookContext\n$output"
+        }
+        assert(output.contains("val createCtx = PetCreateHookContext(client, this)")) {
+            "save() should construct a CreateHookContext\n$output"
+        }
+        assert(output.contains("for (hook in beforeCreateHooks) hook(createCtx)")) {
+            "save() should iterate beforeCreate hooks with the context\n$output"
+        }
+    }
+
+    @Test
+    fun `MutationGenerator emits CreateMutationView extending Mutation`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = MutationGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("public interface PetCreateMutationView : PetMutation")) {
+            "CreateMutationView should extend Mutation\n$output"
+        }
+    }
+
+    @Test
     fun `create applies default to required field-backed FK when unset`() {
         val parent = DefaultedFkParent()
         val child = RequiredFkWithDefaultChild()

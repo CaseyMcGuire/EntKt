@@ -136,13 +136,16 @@ internal class ClientGenerator(
         val schemaName = input.name
         val className = "${schemaName}Hooks"
         val entityClass = ClassName(packageName, schemaName)
-        val createClass = ClassName(packageName, "${schemaName}Create")
+        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
 
         val hookDefs = listOf(
             HookDef("beforeSave", mutationClass),
-            HookDef("beforeCreate", createClass),
+            // beforeCreate hooks see a CreateHookContext (restricted
+            // `mutation` view + `client`), not the concrete Create
+            // builder. Same shape as the update-side context.
+            HookDef("beforeCreate", createHookCtxClass),
             HookDef("afterCreate", entityClass),
             HookDef("beforeUpdate", updateHookCtxClass),
             HookDef("afterUpdate", entityClass),

@@ -9,10 +9,12 @@ staging + custom getter/setter), defensive null check on required FK
 setters, unassigned-read throw on Create required FK getters, unified
 relationship-FK semantics for field-backed FKs
 (`belongsTo(...).field(handle)` now flows through the same code path
-as implicit FKs), and create-default application with
-explicit-null-wins for nullable field-backed FKs are in place.
-Deferred work is listed under "Deferred Scope" at the end of this
-document.
+as implicit FKs), create-default application with explicit-null-wins
+for nullable field-backed FKs, and a restricted `CreateMutationView` +
+`CreateHookContext` for `beforeCreate` hooks (hiding `save()`,
+`driver`, hook lists, and the private staging/assigned fields off the
+hook surface) are in place. Deferred work is listed under "Deferred
+Scope" at the end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).
 
