@@ -19,13 +19,13 @@ entity object:
 ```kotlin
 client.posts.update(postId) {
     title = "New title"
-    setAuthor(alice)
+    authorId = alice.id
 }.save()
 ```
 
 Generated code should remove the old `update(entity)` overload. Owner entities
-may be passed to relationship setters as ID carriers, but owner-row updates
-should be rooted only by ID.
+and relationship targets should both be represented by IDs in mutation builders.
+Owner-row updates should be rooted only by ID.
 
 ## Motivation
 
@@ -61,9 +61,9 @@ write.
 Stronger update consistency modes, such as pessimistic owner-row locking, belong
 in the transaction/locking RFC and build on top of this ID-based update root.
 
-Entity arguments elsewhere also remain ID-only. For example, `setAuthor(alice)`
-uses `alice.id`; it does not treat `alice` as loaded target state or evaluate
-target LOAD privacy.
+Relationship writes elsewhere also remain ID-only. For example,
+`authorId = alice.id` writes the target id; it does not treat `alice` as loaded
+target state or evaluate target LOAD privacy.
 
 ## Removed API
 
@@ -455,7 +455,7 @@ payload is valid, but no state transition will be persisted.
 
 ## Relationship To Other RFCs
 
-[To-One Assignment And Nullability](02-to-one-assignment-nullability.md)
+[To-One FK Assignment And Nullability](02-to-one-assignment-nullability.md)
 defines to-one setter and FK semantics. This RFC defines the owner-row update
 root those setters run inside.
 

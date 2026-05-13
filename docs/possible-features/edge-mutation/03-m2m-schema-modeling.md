@@ -139,7 +139,7 @@ not run junction repo hooks, privacy, or validation.
 
 ## Relationship To Other RFCs
 
-- [To-One Assignment And Nullability](02-to-one-assignment-nullability.md)
+- [To-One FK Assignment And Nullability](02-to-one-assignment-nullability.md)
   defines required-by-default `belongsTo(...)`, which this RFC relies on for
   non-null junction FK semantics.
 - [Link-Table M2M Mutation Helpers](05-link-table-helpers.md) defines
