@@ -1,4 +1,4 @@
-# RFC: To-One Assignment And Nullability
+# RFC: To-One FK Mutation And Nullability
 
 ## Status
 
@@ -8,18 +8,18 @@ Split out from [Edge Mutation API](00-overview.md).
 
 ## Summary
 
-Define the first, smallest edge mutation step: FK-owning `belongsTo` edges can
-be written by entity setter method or by id, and relationship nullability becomes
-required by default.
+FK-owning `belongsTo` edges are mutated only through their resolved FK
+property. The generated API does not expose relationship entity setter
+methods such as `setAuthor(user)` or relationship assignment properties
+such as `author = user`. Relationship nullability is required by default
+and nullable only with `.nullable()`.
 
 This RFC covers:
 
-- `setAuthor(alice)`
 - `authorId = aliceId`
 - required-by-default `belongsTo(...)`
 - `.nullable()`
 - field-backed FK nullability matching
-- mixed entity-setter/FK writes
 - hook, candidate, privacy, and validation visibility for to-one writes
 
 ID-based update roots, many-to-many schema modeling, link-table helpers, and
@@ -31,27 +31,20 @@ expose `update(entity)` owner-row overloads.
 
 ## Motivation
 
-entkt already generates typed edge metadata and eager-loading APIs. Mutation
-APIs still tend to expose storage details:
-
-```kotlin
-client.posts.create {
-    authorId = user.id
-}.save()
-```
-
-For FK-owning to-one edges, applications should be able to express the
-relationship directly:
+entkt already generates typed edge metadata and eager-loading APIs. To-one
+mutation APIs should make the write path explicit: generated writes operate on
+owner-row FK values, not loaded target entities.
 
 ```kotlin
 client.posts.create {
     title = "Hello"
-    setAuthor(user)
+    authorId = user.id
 }.save()
 ```
 
-The ID-only path should remain available when the caller already has the target
-id and does not want to load a full entity.
+This keeps create and update semantics aligned with ID-based update roots:
+mutation builders accept scalar values and FK ids. Loaded entity objects remain
+read/query state, not mutation input.
 
 Examples use `.save()` as shorthand for the current generated save operation. If
 the [Result Variants](../tooling/entkt-result-variants-rfc.md) RFC is adopted, examples
@@ -71,24 +64,22 @@ constraint, transaction, or driver failures.
 
 ## Proposed API
 
-For FK-owning to-one edges, a generated setter method is the ergonomic entity
-API:
+For FK-owning to-one edges, the generated FK property is the public write API:
 
 ```kotlin
 client.posts.create {
     title = "Hello"
-    setAuthor(alice)
+    authorId = alice.id
 }.save()
 ```
 
 ```kotlin
 client.posts.update(post.id) {
-    setAuthor(bob)
+    authorId = bob.id
 }.save()
 ```
 
-The same relationship can be written by id when the caller already has the
-target id:
+The caller may also write an id value directly when it already has one:
 
 ```kotlin
 client.posts.create {
@@ -103,15 +94,13 @@ client.posts.update(post.id) {
 }.save()
 ```
 
-Passing an entity never requires reloading it; the builder uses the entity id.
-Passing an id never loads the target entity automatically. Target existence is
-enforced by database constraints unless a validation rule explicitly checks it.
-Target LOAD privacy is not evaluated just because a target entity or id appears
-in an edge mutation. If an application requires "a caller may assign only targets
-they can see", "targets must belong to the same tenant", or similar
-relationship-write authorization, it must encode that rule in owner write privacy
-or validation. EntKt does not treat target LOAD privacy as relationship-write
-authorization.
+Writing a target id never loads the target entity automatically. Target existence
+is enforced by database constraints unless a validation rule explicitly checks
+it. Target LOAD privacy is not evaluated just because a target id appears in an
+edge mutation. If an application requires "a caller may assign only targets they
+can see", "targets must belong to the same tenant", or similar relationship-write
+authorization, it must encode that rule in owner write privacy or validation.
+EntKt does not treat target LOAD privacy as relationship-write authorization.
 
 If the database rejects the FK because the target id does not exist, the
 throwing path surfaces a constraint exception and `saveOrError()` surfaces
@@ -132,16 +121,7 @@ nullability modifier — see
 DSL-wide contract.
 
 Nullable to-one edges, declared with `.nullable()`, can be cleared by assigning
-`null` through the generated setter method:
-
-```kotlin
-client.posts.update(post.id) {
-    setAuthor(null)
-}.save()
-```
-
-For nullable to-one edges, assigning `null` to the resolved FK property also
-clears the edge:
+`null` through the resolved FK property:
 
 ```kotlin
 client.posts.update(post.id) {
@@ -157,28 +137,33 @@ required to be reassigned, are not marked dirty, are not included in the update
 patch as changed FK values, and are not written back. The full after-state
 candidate uses the current owner row loaded by the update root as its fallback
 base. Required edge checks apply to create-time required FKs and to update FKs
-explicitly written by the builder or hooks. A nullable relationship is cleared only when one of these explicit
-writes happens: the builder calls the entity setter method with `null`
-(`setAuthor(null)`), the builder assigns `null` to the resolved FK
-property (`authorId = null`), or a hook assigns `null` to the FK
-property on the hook-facing mutation view (`ctx.mutation.authorId = null`).
-The hook-facing view is FK-only and does not expose
-`setAuthor(...)`, so hooks clear relationships through the FK
-property exclusively. If final save preparation finds a null FK for a
-required relationship that is part of the mutation, save preparation rejects it.
+explicitly written by the builder or hooks. A nullable relationship is cleared
+only when one of these explicit writes happens: the builder assigns `null` to the
+resolved FK property (`authorId = null`), or a hook assigns `null` to the FK
+property on the hook-facing mutation view (`ctx.mutation.authorId = null`). If
+final save preparation finds a null FK for a required relationship that is part
+of the mutation, save preparation rejects it.
 
 For updates, the patch type of a required FK is `FieldPatch<TargetIdType>`
 with a non-nullable `T`, so `FieldPatch.Set(null)` is not a representable
 state for required relationships — only `Unset` and `Set(non-null id)` are.
-The "explicit `authorId = null` on a required FK" case lives in the
-builder/staging layer, not in the patch: it appears as `dirtyFields`
-containing the FK property with a `null` underlying value. Generated save
-preparation rejects that staging state before the canonical requested
-patch is built (and therefore before privacy, validation, or database
-writes). At the patch layer, `Unset` means "the update does not touch this
-FK" and no required edge check runs for it; reaching the patch with a
-`Set(non-null id)` entry has already passed the required check by
-construction.
+Normal write paths cannot produce a dirty+null required FK either:
+the generated required FK setter rejects null at entry (see "Public
+Types"), and both DSL callers and `beforeUpdate` hooks go through that
+setter — DSL callers via `update(id) { authorId = ... }`, hooks via
+`ctx.mutation.authorId = ...`. There is no other public surface that
+writes to the FK's backing state. At the patch layer, `Unset` means
+"the update does not touch this FK" and no required edge check runs
+for it; a `Set(non-null id)` entry has already passed the entry
+check by construction.
+
+Generated save preparation's `_checkRequiredNotNull()` runs as a
+backstop only for paths that bypass the setter entirely — for example
+reflection that writes the backing field directly, or a future
+internal/generated bulk-write helper that doesn't re-enter the
+property setter. Those paths are not part of the public API; the
+backstop is an internal corruption guard, not a check on user-facing
+mutation forms.
 
 Required edge checks are treated like generated field shape checks: they validate
 the local mutation payload and generated schema constraints, not database-visible
@@ -187,35 +172,33 @@ candidate construction.
 
 ## Public Types
 
-Generated edge mutators must be typed according to schema nullability.
-Required to-one edges must expose non-null entity setter methods and non-null
-FK types, such as `setAuthor(user)` and `authorId: UUID`. Nullable to-one edges
-must expose nullable entity setter methods and nullable FK types, such as
-`setAuthor(null)` and `authorId: UUID?`.
+Generated to-one FK properties must be typed according to schema nullability.
+Required to-one edges must expose non-null FK types, such as `authorId: UUID`.
+Nullable to-one edges must expose nullable FK types, such as `authorId: UUID?`.
 
 ```kotlin
 // required relationship
-fun setAuthor(value: User)
+var authorId: UUID
 
 // nullable relationship
-fun setAuthor(value: User?)
+var authorId: UUID?
 ```
 
-Generated entity setter method names should be `set` plus the Kotlin schema
-declaration property name in UpperCamelCase: `author` becomes `setAuthor(...)`,
-and `primaryAuthor` becomes `setPrimaryAuthor(...)`. Generated Kotlin API names
-come from the Kotlin declaration name, not the storage/runtime edge string. For
-example, `val primaryAuthor = belongsTo<User>("primary_author")` generates
-`setPrimaryAuthor(...)` and, for implicit FKs, `primaryAuthorId`. Codegen must
-capture and use the Kotlin schema declaration property name for generated
-relationship APIs. In V1, declaration property names used for generated
-relationship APIs must be valid lowerCamelCase Kotlin identifiers. Codegen
-rejects names that require separator or case munging, such as `primary_author`;
-callers should use `val primaryAuthor = belongsTo<User>("primary_author")`
-instead. Codegen must reject schemas where the generated method name collides
-with an existing field, edge, generated method, Kotlin member, or JVM signature.
-In V1, callers should rename the declaration property when a method-name
-collision would occur.
+Implicit FK property names use the Kotlin schema declaration property name plus
+`Id`: `author` becomes `authorId`, and `primaryAuthor` becomes
+`primaryAuthorId`. Generated Kotlin API names come from the Kotlin declaration
+name, not the storage/runtime edge string. For example,
+`val primaryAuthor = belongsTo<User>("primary_author")` generates
+`primaryAuthorId` as the implicit FK property. Codegen must capture and use the
+Kotlin schema declaration property name for implicit FK APIs. In V1, declaration
+property names used for generated relationship APIs must be valid lowerCamelCase
+Kotlin identifiers. Codegen rejects names that require separator or case munging,
+such as `primary_author`; callers should use
+`val primaryAuthor = belongsTo<User>("primary_author")` instead. Codegen must
+reject schemas where the generated FK property name collides with an existing
+field, edge, generated method, Kotlin member, or JVM signature. In V1, callers
+should rename the declaration property or use `belongsTo(...).field(handle)` when
+a collision would occur.
 
 ## Declaration Property Name Capture
 
@@ -294,10 +277,9 @@ rejected it:
 ### Scope
 
 This RFC requires declaration-name capture for **edge** API generation
-(entity setter method names, implicit FK property names) and for
-**field-backed FK** API generation (the user-declared field that backs
-a `belongsTo(...).field(handle)` edge). It does not redefine the
-naming model for scalar field properties in general.
+(implicit FK property names) and for **field-backed FK** API generation (the
+user-declared field that backs a `belongsTo(...).field(handle)` edge). It does
+not redefine the naming model for scalar field properties in general.
 
 The current convention aligns Kotlin declaration names with storage
 column names (e.g. `val writerId = uuid("writer_id")`), and the
@@ -311,20 +293,14 @@ Required create builders may use nullable internal staging state to represent
 "not assigned yet", but `null` should not be part of the public assignment API
 for required edges.
 
-Generated required entity setter methods and required FK setters must
-defensively reject null **at setter entry**, even though their Kotlin
-signatures are non-null. The check fires before any state is mutated;
-it does not rely on save preparation to catch the null. This protects
-Java/platform callers and reflective invocation that can bypass
+Generated required FK setters must defensively reject null **at setter entry**,
+even though their Kotlin signatures are non-null. The check fires before any
+state is mutated; it does not rely on save preparation to catch the null. This
+protects Java/platform callers and reflective invocation that can bypass
 Kotlin's non-null type contract.
 
 ```kotlin
-// Required relationship — both forms reject null at the call site.
-fun setAuthor(value: User) {
-    requireNotNull(value) { "author is required" }
-    authorId = value.id  // delegates to the required-FK setter below
-}
-
+// Required relationship — rejects null at the call site.
 override var authorId: UUID
     get() = /* throw-on-untouched */
     set(value) {
@@ -341,17 +317,15 @@ these setters. Such paths are internal — they are not part of the
 hook API — and include things like reflection that writes the
 backing field directly (skipping the property setter), or a future
 generated bulk-write helper that bypasses the per-property entry
-checks. The hook-facing `${Entity}UpdateMutationView` does not
-expose `dirtyFields` or any other way to mutate state outside the
-generated FK setter and `unset{FkProperty}()`, so hooks always go
-through the entry check. For normal call sites — Kotlin, Java, or
-reflection through the property setter — the setter rejects before
-the value reaches the builder's internal state; the backstop only
+checks. The hook-facing `${Entity}UpdateMutationView` does not expose
+`dirtyFields` or any other way to mutate state outside the generated FK setter
+and `unset{FkProperty}()`, so hooks always go through the entry check. For normal
+call sites — Kotlin, Java, or reflection through the property setter — the setter
+rejects before the value reaches the builder's internal state; the backstop only
 fires for paths that skip the property surface entirely.
 
-Entity setter methods are write-only commands on mutation builders. The resolved
-FK property, such as `authorId`, is the readable/writable source of truth for
-pending relationship state.
+The resolved FK property, such as `authorId`, is the public readable/writable
+source of truth for pending relationship state.
 
 Resolved FK getter behavior should be explicit:
 
@@ -368,71 +342,60 @@ Resolved FK getter behavior should be explicit:
   cannot also represent untouched current state on the builder
 - writing the FK always marks that relationship pending/dirty
 
-Documentation and examples should present entity setter methods as the ergonomic
-to-one API and FK assignment as the ID-only variant. They should not introduce
-relationship assignment properties on mutation builders.
+Documentation and examples should present FK assignment as the to-one mutation
+API. They should not introduce relationship entity setter methods or relationship
+assignment properties on mutation builders.
 
-Concretely, after this RFC implements, the only relationship-write forms
-that compile on a generated mutation builder are the entity setter method
-and the resolved FK property. The old property-style assignment is
-removed from the generated surface:
+Concretely, after this RFC implements, the only relationship-write form that
+compiles on a generated mutation builder is the resolved FK property. Entity
+object assignment APIs are not generated:
 
 ```kotlin
-// required relationship — these compile
-setAuthor(alice)
+// required relationship — this compiles
 authorId = alice.id
 
-// nullable relationship — these compile
-setAuthor(null)
+// nullable relationship — this compiles
 authorId = null
 
 // removed by this RFC — must not compile on the generated builder
 author = alice
 author = null
+setAuthor(alice)
+setAuthor(null)
 ```
 
 There is no readable `author` property on the public mutation builder
 either: relationship entity reads are not part of the public surface,
-only the FK property (`authorId`) is readable. Hooks observe pending
-relationship state through `ctx.patch.authorId` and current state
-through `ctx.before.authorId` — the internal byId load returns the
-owner row with unloaded edges, so the target entity is not available
-on `ctx.before` itself; hooks that need the target row must query it
-explicitly via `ctx.client.users.byId(ctx.before.authorId)`. The
-hook-facing mutation view is narrower than the public builder DSL: it
-is FK-only, exposing `authorId = ...` (and `unsetAuthorId()` per the
-patch contract), and does not include `setAuthor(...)`. Hooks that
-want to assign a relationship by entity write the entity id into the
-FK property directly: `ctx.mutation.authorId = alice.id`.
+only the FK property (`authorId`) is readable. Hooks observe pending relationship
+state through `ctx.patch.authorId` and current state through
+`ctx.before.authorId` — the internal byId load returns the owner row with
+unloaded edges, so the target entity is not available on `ctx.before` itself;
+hooks that need the target row must query it explicitly via
+`ctx.client.users.byId(ctx.before.authorId)`. The hook-facing mutation view is
+FK-only, exposing `authorId = ...` (and `unsetAuthorId()` per the patch
+contract). Hooks assign relationships by writing the target id into the FK
+property directly: `ctx.mutation.authorId = alice.id`.
 
-Generated entity setter methods and resolved FK properties must include KDoc
-explaining the relationship-write semantics. Entity setter methods use only the
-target id, do not load the target row, and do not evaluate target LOAD privacy.
-Resolved FK properties are the ID-only write path and have the same no-load,
-no-target-LOAD-privacy behavior. Relationship-write authorization belongs in
-owner write privacy or validation.
+Generated resolved FK properties must include KDoc explaining the
+relationship-write semantics. FK properties write only target ids, do not load
+the target row, and do not evaluate target LOAD privacy. Relationship-write
+authorization belongs in owner write privacy or validation.
 
 ## Explicit Backing Fields
 
-Generated create/update builders should expose entity setter methods for
-`belongsTo` edges. Setting by entity writes its id into the underlying FK
-property:
+Generated create/update builders expose the resolved FK property for `belongsTo`
+edges. For implicit FKs, this is the generated `{edge}Id` property:
 
 ```kotlin
 client.posts.create {
-    setAuthor(alice)
+    authorId = alice.id
 }.save()
 ```
 
-They also expose the resolved FK property, either as the generated implicit FK
-such as `authorId`, or as the user-declared field for
-`belongsTo(...).field(handle)` edges:
+For nullable implicit FKs, assigning `null` clears the relationship:
 
 ```kotlin
-setAuthor(alice)     // sets authorId = alice.id
-authorId = alice.id  // writes the FK directly
-setAuthor(null)      // .nullable() edge only; clears authorId
-authorId = null      // .nullable() edge only; clears the FK directly
+authorId = null      // .nullable() edge only; clears the FK
 ```
 
 For a field-backed edge, the user-declared field is the id-only path:
@@ -446,13 +409,7 @@ class Post : EntSchema("posts") {
 
 ```kotlin
 client.posts.create {
-    setAuthor(alice)      // sets writerId = alice.id
-}.save()
-```
-
-```kotlin
-client.posts.create {
-    writerId = alice.id   // writes the FK directly; no authorId is generated
+    writerId = alice.id   // no authorId is generated
 }.save()
 ```
 
@@ -461,12 +418,10 @@ For implicit FKs, the id-only path is the generated `{edge}Id` property. For
 field property backing that edge. The implementation must not create a second
 FK path.
 
-For field-backed edges, the entity setter method name is derived from the edge
-declaration property name, while the FK property name is the backing field
-declaration property name. The backing field name is authoritative — it is
-**not** a synthesized `{edge}Id` suffix. If the backing field is named
-without an `Id` suffix, the generated FK property has no `Id` suffix
-either:
+For field-backed edges, the FK property name is the backing field declaration
+property name. The backing field name is authoritative — it is **not** a
+synthesized `{edge}Id` suffix. If the backing field is named without an `Id`
+suffix, the generated FK property has no `Id` suffix either:
 
 ```kotlin
 class Post : EntSchema("posts") {
@@ -479,7 +434,6 @@ Generates:
 
 ```kotlin
 client.posts.update(post.id) {
-    setAuthor(alice)      // entity setter — name from the edge declaration ("author")
     writer = alice.id     // FK property — name from the backing field declaration ("writer")
 }.save()
 ```
@@ -524,11 +478,11 @@ the backing field, so generated edge metadata and database constraints must
 agree.
 
 The backing field also controls relationship mutability. If the backing field is
-immutable, create builders may expose the entity setter method and resolved FK
-setter, but update builders must not expose either write path for that
-relationship. Hook-facing update mutation views also must not expose the
-immutable backing FK as mutable. Implicit FK-backed relationships are mutable by
-default unless a future edge-level immutability modifier defines otherwise.
+immutable, create builders may expose the resolved FK setter, but update builders
+must not expose a write path for that relationship. Hook-facing update mutation
+views also must not expose the immutable backing FK as mutable. Implicit
+FK-backed relationships are mutable by default unless a future edge-level
+immutability modifier defines otherwise.
 
 Create defaults on field-backed FK fields apply like scalar create defaults
 during create final-value computation. Required edge checks see the final
@@ -538,10 +492,9 @@ For nullable field-backed FKs, the rule is **explicit null wins**:
 
 - If the caller does not touch the relationship (unset), the create
   default fires and the persisted FK is the default value.
-- If the caller explicitly assigns `null` (`setAuthor(null)` or
-  `authorId = null`), the default is suppressed and the persisted FK
-  is `null`. The explicit assignment is treated as the caller's
-  intentional choice.
+- If the caller explicitly assigns `null` (`authorId = null`), the default is
+  suppressed and the persisted FK is `null`. The explicit assignment is treated
+  as the caller's intentional choice.
 
 This rule is relationship-specific in this RFC. Whether scalar
 fields with create defaults follow the same explicit-null-wins
@@ -551,10 +504,9 @@ nullable scalar create builders to distinguish "untouched" from
 outside this RFC's scope.
 
 This requires the create builder to distinguish "untouched" from
-"explicitly assigned `null`" for nullable field-backed FKs — typically
-via the same dirty-tracking shape the update path uses (an internal
-"assigned" flag set by the public setter method and FK property
-setter, separate from the underlying value).
+"explicitly assigned `null`" for nullable field-backed FKs — typically via the
+same dirty-tracking shape the update path uses (an internal "assigned" flag set
+by the FK property setter, separate from the underlying value).
 
 Required field-backed FKs cannot accept an explicit `null` assignment
 (the setters defensively reject null at entry — see Public Types), so
@@ -580,17 +532,15 @@ Defaults do not load or validate the target row; target existence
 remains enforced by database FK constraints unless a validation rule
 checks it earlier.
 
-## Mixed Entity-Setter And FK Writes
+## FK Writes And Hook Visibility
 
-Entity setter methods and FK assignment are two public ways to write the same
-pending relationship state. If a caller mixes them in one builder, to-one edges
-use last-write-wins semantics over the underlying FK value:
+FK assignment is the only public to-one relationship write path. Multiple writes
+to the same FK property in one builder use ordinary last-write-wins semantics:
 
 ```kotlin
 authorId = alice.id       // writes authorId
-setAuthor(bob)            // writes authorId = bob.id
-authorId = carol.id       // writes authorId and clears cached author
-setAuthor(null)           // nullable edge only; writes authorId = null
+authorId = bob.id         // overwrites authorId
+authorId = carol.id       // final value before hooks
 ```
 
 The final pending FK value after the create/update block and before hooks have
@@ -599,13 +549,12 @@ builder. Hooks mutate a hook-facing scalar/FK mutation view, not the public
 builder. For to-one relationships, that hook-facing view is FK-only: it exposes
 the resolved FK property, such as `authorId`, or the user-declared backing field
 for `belongsTo(...).field(handle)` edges. It does not expose relationship entity
-setter methods, such as `setAuthor(alice)`, or readable relationship entity
-properties. Hooks that need to assign a relationship by entity should write the
-entity id into the resolved FK property. Hook FK writes also follow
-last-write-wins before candidate construction. Hook, privacy, and validation code
-should treat the final pending FK value and `WriteCandidate` as the source of
-truth for changed relationship fields, not any cached entity reference that
-happened to be assigned earlier in the builder lifecycle.
+readable relationship entity properties; relationship entity setter methods
+are not part of the generated API at all. Hooks assign a relationship by
+writing the target id into the resolved FK property. Hook FK writes also
+follow last-write-wins before candidate construction. Hook, privacy,
+and validation code should treat the final pending FK value and `WriteCandidate`
+as the source of truth for changed relationship fields.
 
 Hook-facing to-one mutation views are **value-oriented**: a resolved FK
 getter returns the pending value when one exists and throws when the
@@ -672,9 +621,9 @@ Codegen should generate hook-facing mutation interfaces separately from the
 public create/update builders. Hook callbacks receive these restricted
 interfaces, not the concrete public builders. The interfaces expose mutable
 scalar fields and resolved FK fields according to field and relationship
-mutability, but they do not expose relationship entity setter methods, readable
-relationship entity properties, or link-table edge mutators. Create and update
-hook interfaces may differ when immutable fields are create-only.
+mutability, but they do not expose relationship entity properties or link-table
+edge mutators. Create and update hook interfaces may differ when immutable fields
+are create-only.
 
 `beforeSave` receives a common restricted `{Entity}Mutation` interface shared by
 create and update hooks. That common interface exposes only fields and FKs that
@@ -710,26 +659,18 @@ uniformly to both create and update.
 ## Generated Builder Shape
 
 For each mutable FK-owning to-one edge, generated create/update builders expose
-an entity setter method and the resolved FK property. Both write through to the
-same pending FK state.
+the resolved FK property. That property is the only relationship write path.
 
 Conceptually, for a required edge:
 
 ```kotlin
 class PostCreate {
-    private var cachedAuthor: User? = null
     private var resolvedAuthorFk: UUID? = null
-
-    fun setAuthor(value: User) {
-        cachedAuthor = value
-        resolvedAuthorFk = value.id
-    }
 
     var authorId: UUID
         get() = resolvedAuthorFk
             ?: error("authorId has not been assigned")
         set(value) {
-            cachedAuthor = null
             resolvedAuthorFk = value
         }
 }
@@ -751,11 +692,9 @@ later. For update, unset means leave the FK out of the update write set;
 explicitly set null means clear the FK. Required relationships only need unset
 vs non-null.
 
-If a caller writes the resolved FK property directly, the generated setter
-should clear the cached entity reference because the builder no longer knows
-which `User` instance, if any, matches the FK. The entity setter method sets both
-the cached entity and the resolved FK. Calling the nullable entity setter with
-`null`, or assigning `null` to the resolved FK, clears both for nullable edges.
+Generated builders do not cache assigned target entity objects for relationship
+writes. The builder stores only the pending FK value and the dirty/assigned state
+needed to distinguish unset from explicit null for nullable relationships.
 
 ## Save Pipeline
 
@@ -765,8 +704,8 @@ phase for `belongsTo` edges.
 
 Create saves follow the normal generated create pipeline:
 
-1. the create builder block has already run before `save()`, so entity setter
-   methods and FK writes have updated pending FK state
+1. the create builder block has already run before `save()`, so FK writes have
+   updated pending FK state
 2. before hooks run and may mutate hook-facing resolved FK properties
 3. generated field defaults and field-backed FK defaults are applied
 4. final scalar/FK values are computed, and generated field-shape checks plus
@@ -788,7 +727,7 @@ cases such as syntactically empty updates, hook-cleared empty updates, missing
 owner rows, update defaults, `NoChanges`, and returned entity hydration are
 governed by the ID-Based Update Roots RFC.
 
-- builder `set{Edge}(entity)` calls and FK writes update the requested patch
+- builder FK writes update the requested patch
 - untouched relationship FKs remain absent from the requested patch
 - hook-facing FK writes update the requested patch
 - nullable FK `null` writes become `FieldPatch.Set(null)`, not unset
@@ -806,8 +745,8 @@ before hooks.
 
 A to-one mutation returns the owner entity with scalar fields and FK fields
 reflecting the saved owner row. Relationship edges remain in the normal unloaded
-state. Calling `setAuthor(alice)` does not cause the returned `Post` to contain
-`alice` in its loaded edge state.
+state. Writing `authorId = alice.id` does not cause the returned `Post` to
+contain `alice` in its loaded edge state.
 
 For updates, the returned owner entity must reflect the persisted row after the
 update, including untouched scalar and FK fields that were not written. Generated
@@ -817,7 +756,7 @@ if they were persisted state.
 
 ```kotlin
 val saved = client.posts.update(post.id) {
-    setAuthor(alice)
+    authorId = alice.id
 }.save()
 
 saved.authorId == alice.id
@@ -845,9 +784,7 @@ is covered in [Transaction And Locking Semantics](04-transaction-locking-semanti
 
 ## Rollout Plan
 
-1. Document to-one entity setter methods as the ergonomic public API and FK
-   assignment as the ID-only variant. Ensure both write through to the same
-   resolved FK state.
+1. Document FK assignment as the public to-one mutation API.
 2. Change relationship nullability to required by default for `belongsTo(...)`,
    with `.nullable()` as the explicit nullable relationship
    marker. Follow the DSL-wide terminology contract from
@@ -859,11 +796,9 @@ is covered in [Transaction And Locking Semantics](04-transaction-locking-semanti
 
 Before implementation, add tests for:
 
-- required to-one entity setter method sets the FK
 - to-one id assignment sets the FK without loading the target entity
-- generated entity setter and resolved FK KDoc documents that to-one writes use
-  only target ids, do not load target rows, and do not evaluate target LOAD
-  privacy
+- generated resolved FK KDoc documents that to-one writes use only target ids, do
+  not load target rows, and do not evaluate target LOAD privacy
 - `belongsTo(...)` is required/non-null by default, while `.nullable()` makes a
   to-one edge nullable
 - `belongsTo(...).field(handle)` rejects mismatches between relationship
@@ -878,7 +813,8 @@ Before implementation, add tests for:
 - codegen rejects unique backing fields used by non-unique
   `belongsTo(...).field(handle)` edges
 - field-backed relationships inherit backing field immutability
-- immutable field-backed relationships can be set on create but cannot be updated
+- immutable field-backed relationships can set their FK on create but cannot be
+  updated
 - create defaults on field-backed FKs apply before required edge checks without
   loading or validating the target row
 - create defaults on field-backed FKs do not apply to untouched update
@@ -890,32 +826,28 @@ Before implementation, add tests for:
   a hook on the owner entity
 - before hooks observe pre-default FK state; field-backed FK defaults apply after
   before hooks during final-value computation
-- generated entity setter method names follow `set` plus the Kotlin schema
-  declaration property name in UpperCamelCase, not the storage/runtime edge
-  string, and reject collisions with fields, edges, generated methods, Kotlin
-  members, or JVM signatures
-- the generated update/create builder exposes `setAuthor(...)` and the
-  resolved FK property (`authorId`) for relationship writes, and does
-  **not** expose a writable `author` property — codegen assertion: the
-  generated `${Entity}Update` / `${Entity}Create` class contains
-  `public fun setAuthor(`/`public fun set<Edge>(` and does not contain a
-  `var author:` declaration for any `belongsTo` edge
+- generated implicit FK property names use the Kotlin schema declaration property
+  name plus `Id`, not the storage/runtime edge string, and reject collisions with
+  fields, edges, generated methods, Kotlin members, or JVM signatures
+- the generated update/create builder exposes the resolved FK property
+  (`authorId`) for relationship writes, and does **not** expose `setAuthor(...)`
+  or a writable `author` property — codegen assertion: the generated
+  `${Entity}Update` / `${Entity}Create` class contains `var authorId:` and does
+  not contain `public fun setAuthor(`/`public fun set<Edge>(` or `var author:`
+  for any `belongsTo` edge
 - the old property-style relationship assignment `author = alice` /
   `author = null` does not compile against the generated builder —
   compile-fail assertion: a Kotlin source snippet that writes
   `client.posts.update(id) { author = alice }` fails to type-check with
-  an "unresolved reference: author" error, while
-  `setAuthor(alice)` and `authorId = alice.id` type-check on the same
-  builder
+  an "unresolved reference: author" error, while `authorId = alice.id`
+  type-checks on the same builder
 - the generated builder does not expose a readable relationship entity
   property — codegen assertion: no `public val author:` or
   `public var author:` declaration appears in the generated
   `${Entity}Update` / `${Entity}Create` for any `belongsTo` edge
-- the hook-facing `${Entity}UpdateMutationView` interface does not
-  declare `setAuthor(...)` — codegen assertion: the generated interface
-  body contains the FK setter (`authorId`) and `unsetAuthorId()` but no
-  `setAuthor` member
-- edge declaration property names whose generated setter method names collide are
+- the hook-facing `${Entity}UpdateMutationView` interface exposes the FK setter
+  (`authorId`) and `unsetAuthorId()`, but no `setAuthor` member
+- edge declaration property names whose generated implicit FK names collide are
   rejected
 - schema collection fails if codegen cannot map a registered `belongsTo` builder
   to exactly one stable Kotlin declaration property name
@@ -924,18 +856,16 @@ Before implementation, add tests for:
 - implicit FK edges reject generated `{edge}Id` Kotlin member collisions and
   require `belongsTo(...).field(handle)` when callers need an explicit backing
   field name
-- field-backed edges derive entity setter names from the edge declaration
-  property and FK property names from the backing field declaration property
-- field-backed edges check entity setter method names and backing FK property
-  names independently for collisions
+- field-backed edges derive FK property names from the backing field declaration
+  property
+- field-backed edges check backing FK property names for collisions
 - nullable to-one `null` assignment clears the FK
 - nullable to-one update distinguishes unset from explicit null: unset leaves the
   FK out of the update write set, while explicit null clears it
 - nullable to-one create allows unset and explicit null, both producing a null FK
 - scalar-only updates do not write untouched FK values back to the database
 - unset required to-one create rejects during generated save preparation
-- required entity setter methods and required FK setters defensively reject
-  Java/platform null calls
+- required FK setters defensively reject Java/platform null calls
 - hooks can set a required FK that the builder left unset before required edge
   validation runs
 - hooks can set nullable FK values through the hook-facing resolved FK property
@@ -950,16 +880,18 @@ Before implementation, add tests for:
   and a `Set(non-null id)` entry has already passed the check by
   construction. The `FieldPatch.Set(null)` state is not representable for
   required FKs (patch type is `FieldPatch<TargetIdType>` with non-nullable
-  `T`); an explicit `authorId = null` on a required FK is caught earlier as
-  builder/staging dirty state (dirtyFields + null underlying value) and
-  rejected before the canonical requested patch is built — which is also
+  `T`). Normal write paths reject null at the FK setter entry, so neither
+  DSL callers nor `beforeUpdate` hooks can put the builder into a
+  dirty+null state. `_checkRequiredNotNull()` runs as an internal
+  backstop only for paths that bypass the setter (reflection writing
+  the backing field, a future internal bulk-write helper) and fires
+  before the canonical requested patch is built — which is also
   before privacy, validation, or database writes
-- direct FK writes clear any cached entity reference
 - create FK getters follow required-vs-nullable unset behavior: required unset
   throws, while nullable unset returns null
 - update FK getters return the pending FK when changed and throw when untouched
-- `setAuthor(alice)` does not evaluate target LOAD privacy and does not return
-  `alice` as a loaded edge
+- writing `authorId = alice.id` does not evaluate target LOAD privacy and does
+  not return `alice` as a loaded edge
 - returned update entities reflect the persisted row, not synthesized update
   input values
 - missing target FK writes surface database constraint errors; under
@@ -971,8 +903,8 @@ Before implementation, add tests for:
   changed FK values through the hook-facing scalar/FK mutation view
 - update hooks throw when reading untouched relationship FKs instead of exposing
   current database state
-- hook-facing to-one mutation views expose resolved FK fields only, not
-  relationship entity setter methods or readable relationship entity properties
+- hook-facing to-one mutation views expose resolved FK fields only, not readable
+  relationship entity properties
 - hook callbacks receive restricted hook-facing mutation interfaces, not the
   concrete public create/update builders
 - `beforeSave` receives a common restricted mutation interface that excludes
