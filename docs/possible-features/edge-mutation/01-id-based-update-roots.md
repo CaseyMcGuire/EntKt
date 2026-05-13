@@ -455,7 +455,7 @@ payload is valid, but no state transition will be persisted.
 
 ## Relationship To Other RFCs
 
-[To-One FK Assignment And Nullability](02-to-one-assignment-nullability.md)
+[To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
 defines to-one setter and FK semantics. This RFC defines the owner-row update
 root those setters run inside.
 
