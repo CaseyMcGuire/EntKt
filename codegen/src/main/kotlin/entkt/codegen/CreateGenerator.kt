@@ -298,11 +298,14 @@ internal class CreateGenerator(
         builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")
 
         // ---- Validate and bind each property to a local. ----
-        // Required fields throw `ValidationException` (mapped to
-        // `EntError.ValidationFailed` by `saveOrError()`) on missing
-        // input. Short-circuits on the first missing required field —
-        // collecting all violations across required + validator rules
-        // is left as a future improvement.
+        // Required fields throw `ValidationException` on missing input.
+        // (On the update side this is caught by `saveOrError()` and
+        // wrapped into `EntError.ValidationFailed`; on the create side
+        // there is no `saveOrError()` today — the exception propagates
+        // as-is. Create-side result variants are deferred to the
+        // Result Variants RFC.) Short-circuits on the first missing
+        // required field — collecting all violations across required +
+        // validator rules is left as a future improvement.
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             val required = !field.nullable && field.default == null
@@ -357,11 +360,16 @@ internal class CreateGenerator(
                     fkDefaultCodeBlock(fk),
                 )
                 // Required + no default: read staging directly so the
-                // missing-input throw is a ValidationException (mapped
-                // to EntError.ValidationFailed by saveOrError) rather
-                // than the property getter's IllegalStateException
-                // (which stays in place for hook/property reads, where
-                // an early read is a usage error).
+                // missing-input throw is a ValidationException rather
+                // than the property getter's IllegalStateException.
+                // The property getter stays as ISE for hook/property
+                // reads, where an early read is a usage error.
+                // (Create has no `saveOrError()` today — the
+                // ValidationException propagates from `save()` as-is.
+                // Create-side result variants are deferred to the
+                // Result Variants RFC. The thrown shape is correct so
+                // the wrapping lands automatically once that surface
+                // is added.)
                 fk.required -> builder.addStatement(
                     "val %L = this.%L ?: throw %T(%S, listOf(%T(%S, field = %S)))",
                     fk.propertyName,
@@ -528,8 +536,12 @@ private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision"
  * Emit inline validation checks for a single field's validators.
  * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
  * Each failed validator throws [ValidationException] with a single-element
- * violations list so generated `saveOrError()` callers receive
- * `EntError.ValidationFailed` instead of `IllegalStateException`.
+ * violations list. On the update path this is caught by `saveOrError()`
+ * and wrapped into `EntError.ValidationFailed`. The create path does
+ * not generate `saveOrError()` today (deferred to the Result Variants
+ * RFC), so the exception propagates from `create { … }.save()` as-is —
+ * but the thrown shape is already correct so the wrapping lands
+ * automatically once that surface is added.
  */
 internal fun emitFieldValidation(
     builder: FunSpec.Builder,

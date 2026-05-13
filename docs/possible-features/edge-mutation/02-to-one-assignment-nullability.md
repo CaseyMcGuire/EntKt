@@ -20,13 +20,17 @@ backing-field validators carried into the FK code path (so a
 `belongsTo(...).field(handle)` whose backing column has `.positive()`,
 `.min(...)`, etc. runs those checks during both create save and update
 effective-patch validation), generated local validation failures
-mapping to `EntError.ValidationFailed` (every emitted validator,
+mapping to `ValidationException` (every emitted validator,
 `_checkRequiredNotNull`, the create-side required-scalar binding, and
 the create-side required-FK binding now throw `ValidationException`
-so `saveOrError()` returns a structured `Err(ValidationFailed)`
-instead of letting an `IllegalStateException` escape; property
-getters still throw `IllegalStateException` for hook/property reads,
-which are usage errors rather than save-prep validation), sensitive
+with the correct shape — on update this is caught by `saveOrError()`
+and wrapped into `EntError.ValidationFailed`; on create the
+`ValidationException` propagates from `save()` as-is until a Create
+`saveOrError()` is generated under the Result Variants RFC; either
+way an `IllegalStateException` no longer escapes from save-prep.
+Property getters still throw `IllegalStateException` for
+hook/property reads, which are usage errors rather than save-prep
+validation), sensitive
 field-backed FK redaction in the generated entity `toString()` (a
 `belongsTo(...).field(handle)` whose backing column is `.sensitive()`
 now prints `propName=***` instead of the value), FK comments
@@ -1192,3 +1196,14 @@ required to use the new nullability model in practice:
   RFC's note about hook-facing create interfaces having distinct
   read-behavior wrappers is not yet implemented; create hooks currently
   read the builder directly.
+- **Create-side result variants (`saveOrError()` / `saveOrThrow()`).**
+  The update path generates `saveOrError()` (catching `EntException`,
+  `PrivacyDeniedException`, `ValidationException` → mapping into the
+  matching `EntError` variants) and `saveOrThrow()`. The create path
+  still only generates `fun save()`. Validation failures from the
+  create path (`_checkRequiredNotNull`-style required checks, missing
+  required FK at save binding, scalar / FK validator failures) all
+  throw `ValidationException` with the correct shape, so they will
+  wrap into `EntError.ValidationFailed` automatically once Create
+  generates `saveOrError()`. That generation is deferred to the
+  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md).
