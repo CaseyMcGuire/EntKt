@@ -353,6 +353,10 @@ internal class PrivacyGenerator(
             props.add(PropertySpec.builder(propName, patchType).initializer(propName).build())
         }
         for (fk in edgeFks) {
+            // Immutable FKs can't be patched on update — they're
+            // create-only — so omit them from the patch type to mirror
+            // the immutable-scalar skip above.
+            if (fk.immutable) continue
             val valueType = fk.idType.toTypeName().copy(nullable = !fk.required)
             val patchType = FIELD_PATCH.parameterizedBy(valueType)
             ctor.addParameter(

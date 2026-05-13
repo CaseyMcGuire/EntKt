@@ -261,6 +261,24 @@ private class NullableFkWithDefaultChild : EntSchema("nullable_default_children"
     val owner = belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
 }
 
+// ---------- Schema for immutable field-backed FK tests ----------
+
+private class ImmutableFkParent : EntSchema("immutable_parents") {
+    override fun id() = EntId.long()
+}
+
+/**
+ * Backing field is `.immutable()`, so the relationship is also
+ * immutable: writable on create, hidden from update builders and
+ * hook-facing update mutation views.
+ */
+private class ImmutableFkChild : EntSchema("immutable_children") {
+    override fun id() = EntId.int()
+    val name = string("name")
+    val ownerId = long("owner_id").immutable()
+    val owner = belongsTo<ImmutableFkParent>("owner").field(ownerId)
+}
+
 // ---------- Schemas for field-backed nullability mismatch tests ----------
 
 private class NullabilityMismatchParent : EntSchema("nullability_parents") {
@@ -454,6 +472,71 @@ class EdgeCodegenTest {
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `immutable field-backed FK is writable on Create but absent from Update`() {
+        val parent = ImmutableFkParent()
+        val child = ImmutableFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "ImmutableFkParent", child to "ImmutableFkChild")
+
+        val createOutput = CreateGenerator("com.example.ent")
+            .generate("ImmutableFkChild", child, names).toString()
+        // Create still exposes the FK so callers can set it on insert.
+        assert(createOutput.contains("override var ownerId: Long\n")) {
+            "Create should still expose ownerId as a non-null override\n$createOutput"
+        }
+
+        val updateOutput = UpdateGenerator("com.example.ent")
+            .generate("ImmutableFkChild", child, names).toString()
+        // Update must not expose the FK at all — no setter, no staging,
+        // no patch entry, no values-map line.
+        assert(!updateOutput.contains("override var ownerId")) {
+            "Update must not expose an ownerId setter for an immutable FK\n$updateOutput"
+        }
+        assert(!updateOutput.contains("_ownerIdStaging")) {
+            "Update must not declare a staging field for an immutable FK\n$updateOutput"
+        }
+        assert(!updateOutput.contains("dirtyFields.add(\"ownerId\")")) {
+            "Update must not have a setter that marks an immutable FK dirty\n$updateOutput"
+        }
+        assert(!updateOutput.contains("unsetOwnerId")) {
+            "UpdateMutationView adapter must not emit unsetOwnerId() for an immutable FK\n$updateOutput"
+        }
+        // Candidate construction still carries the FK value, sourced
+        // from `entity` rather than the (absent) effective patch.
+        assert(updateOutput.contains("ownerId = entity.ownerId")) {
+            "Candidate should pull immutable FK directly from entity.before\n$updateOutput"
+        }
+    }
+
+    @Test
+    fun `immutable field-backed FK omitted from UpdatePatch and UpdateMutationView`() {
+        val parent = ImmutableFkParent()
+        val child = ImmutableFkChild()
+        finalize(parent, child)
+        val names = mapOf<EntSchema, String>(parent to "ImmutableFkParent", child to "ImmutableFkChild")
+
+        val privacyOutput = PrivacyGenerator("com.example.ent")
+            .generate("ImmutableFkChild", child, names).toString()
+        // UpdatePatch must not carry a slot for the immutable FK.
+        assert(!privacyOutput.contains("ownerId: FieldPatch")) {
+            "UpdatePatch must not include an FK slot for immutable FKs\n$privacyOutput"
+        }
+
+        val mutationOutput = MutationGenerator("com.example.ent")
+            .generate("ImmutableFkChild", child, names).toString()
+        // Mutation interface must not declare immutable FKs (they're
+        // create-only writable; beforeSave hooks can't reach them).
+        // CreateMutationView exposes them; UpdateMutationView does not.
+        assert(mutationOutput.contains("public interface ImmutableFkChildCreateMutationView")) {
+            "Generator should emit CreateMutationView\n$mutationOutput"
+        }
+        // The unset method should not exist for an immutable FK.
+        assert(!mutationOutput.contains("unsetOwnerId")) {
+            "UpdateMutationView must not declare unsetOwnerId() for an immutable FK\n$mutationOutput"
         }
     }
 

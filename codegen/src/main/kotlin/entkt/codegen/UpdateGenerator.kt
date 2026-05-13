@@ -43,7 +43,12 @@ internal class UpdateGenerator(
         // setter null-reject). Don't double-emit them as scalar fields.
         val allFields = scalarFields(schema)
         val mutableFields = allFields.filter { !it.immutable }
-        val edgeFks = computeEdgeFks(schema, schemaNames)
+        // Immutable FKs are create-only — the update builder, the
+        // hook-facing view, and the patch must not expose a write path
+        // for them. `allEdgeFks` is used only for candidate construction
+        // (which carries the unchanged value from `entity.before`).
+        val allEdgeFks = computeEdgeFks(schema, schemaNames)
+        val edgeFks = allEdgeFks.filter { !it.immutable }
 
         val entityClass = ClassName(packageName, schemaName)
         val updateClass = ClassName(packageName, className)
@@ -158,7 +163,7 @@ internal class UpdateGenerator(
             )
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(mutableFields, edgeFks))
-            .addFunction(buildSaveFunction(schemaName, allFields, edgeFks))
+            .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks))
             .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
             .addFunction(buildSaveOrErrorFunction(schemaName))
@@ -536,7 +541,12 @@ internal class UpdateGenerator(
     private fun buildSaveFunction(
         schemaName: String,
         allFields: List<Field>,
+        // Mutable-only — the update builder's writable surface. Used
+        // everywhere except candidate construction.
         edgeFks: List<EdgeFk>,
+        // All FKs including immutable. Used by candidate construction so
+        // immutable FK values come from `entity.before` unchanged.
+        allEdgeFks: List<EdgeFk>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
@@ -613,7 +623,7 @@ internal class UpdateGenerator(
             builder,
             candidateClass = candidateClass,
             allFields = allFields,
-            edgeFks = edgeFks,
+            edgeFks = allEdgeFks,
         )
         builder.addStatement(
             "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
@@ -681,7 +691,7 @@ internal class UpdateGenerator(
             builder,
             candidateClass = candidateClass,
             allFields = allFields,
-            edgeFks = edgeFks,
+            edgeFks = allEdgeFks,
         )
         builder.addStatement(
             "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
@@ -792,10 +802,16 @@ internal class UpdateGenerator(
             }
         }
         for (fk in edgeFks) {
-            code.add(
-                "  %L = effectivePatch.%L.%M(entity.%L),\n",
-                fk.propertyName, fk.propertyName, FIELD_PATCH_OR_ELSE, fk.propertyName,
-            )
+            if (fk.immutable) {
+                // Immutable FKs are never in the patch — pull the
+                // unchanged value straight from the loaded `before` row.
+                code.add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
+            } else {
+                code.add(
+                    "  %L = effectivePatch.%L.%M(entity.%L),\n",
+                    fk.propertyName, fk.propertyName, FIELD_PATCH_OR_ELSE, fk.propertyName,
+                )
+            }
         }
         code.add(")\n")
         builder.addCode(code.build())

@@ -71,6 +71,12 @@ internal class MutationGenerator(
         val mutableFields = fields.filter { !it.immutable }
         val immutableFields = fields.filter { it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
+        // Field-backed FKs inherit backing-field immutability. Immutable
+        // FKs are create-only writable — they belong on `CreateMutationView`
+        // (which extends `Mutation`) but not on `Mutation` itself or on
+        // `UpdateMutationView`.
+        val mutableEdgeFks = edgeFks.filter { !it.immutable }
+        val immutableEdgeFks = edgeFks.filter { it.immutable }
 
         val mutationInterface = TypeSpec.interfaceBuilder(interfaceName)
 
@@ -83,7 +89,7 @@ internal class MutationGenerator(
             mutationInterface.addProperty(prop.build())
         }
 
-        for (fk in edgeFks) {
+        for (fk in mutableEdgeFks) {
             val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
             mutationInterface.addProperty(
                 PropertySpec.builder(fk.propertyName, typeName)
@@ -93,10 +99,11 @@ internal class MutationGenerator(
         }
 
         // The restricted hook-facing view passed to `beforeCreate`.
-        // Extends `Mutation` and adds immutable scalar fields, which are
-        // create-only writable. Hides `save()`, `client`, `driver`, the
-        // hook lists, the staging/assigned private fields, and any other
-        // concrete-builder surface that hooks must not reach.
+        // Extends `Mutation` and adds the create-only writable surface:
+        // immutable scalar fields plus immutable field-backed FKs.
+        // Hides `save()`, `client`, `driver`, hook lists, the
+        // staging/assigned private fields, and any other concrete-builder
+        // surface that hooks must not reach.
         val createView = TypeSpec.interfaceBuilder(createViewName)
             .addSuperinterface(ClassName(packageName, interfaceName))
         for (field in immutableFields) {
@@ -107,16 +114,25 @@ internal class MutationGenerator(
             if (comment != null) prop.addKdoc("%L", comment)
             createView.addProperty(prop.build())
         }
+        for (fk in immutableEdgeFks) {
+            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
+            createView.addProperty(
+                PropertySpec.builder(fk.propertyName, typeName)
+                    .mutable(true)
+                    .build(),
+            )
+        }
 
         // The restricted hook-facing view passed to `beforeUpdate`
         // (via `ctx.mutation`). Extends `Mutation` and adds unset
-        // semantics for the patch model.
+        // semantics only for mutable scalars and mutable FKs — there's
+        // no update surface for immutable values.
         val updateView = TypeSpec.interfaceBuilder(updateViewName)
             .addSuperinterface(ClassName(packageName, interfaceName))
         for (field in mutableFields) {
             updateView.addFunction(unsetSpec(toCamelCase(field.name)))
         }
-        for (fk in edgeFks) {
+        for (fk in mutableEdgeFks) {
             updateView.addFunction(unsetSpec(fk.propertyName))
         }
 

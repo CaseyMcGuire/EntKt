@@ -41,6 +41,13 @@ data class EdgeFk(
      * FKs (see [assignedFieldName]).
      */
     val default: Any? = null,
+    /**
+     * `true` when the relationship is immutable — set on create only,
+     * never on update. Driven by the backing field's `.immutable()` for
+     * field-backed edges. Implicit FKs are always mutable until an
+     * edge-level immutability modifier is added in a future RFC.
+     */
+    val immutable: Boolean = false,
 )
 
 /**
@@ -92,6 +99,7 @@ fun computeEdgeFks(
                     onDelete = belongsTo.onDelete,
                     isFieldBacked = true,
                     default = backingField?.default,
+                    immutable = backingField?.immutable == true,
                 )
             } else {
                 EdgeFk(
