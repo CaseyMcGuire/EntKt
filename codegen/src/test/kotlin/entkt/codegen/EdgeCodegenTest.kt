@@ -364,6 +364,72 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `create builder required FK getter throws on unassigned read`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Per RFC "Resolved FK Getter Behavior": on create builders for
+        // required relationships, reading the FK before assignment must
+        // throw because there is no valid FK value yet.
+        assert(
+            output.contains(
+                "get() = field ?: throw IllegalStateException(\"owner is required\")",
+            ),
+        ) {
+            "Required Create FK getter must throw when the field is unassigned\n$output"
+        }
+    }
+
+    @Test
+    fun `create builder nullable FK getter returns null on unassigned read`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Per RFC: on create builders for nullable relationships, reading
+        // the FK before assignment returns `null`. No custom getter is
+        // generated; default-null property behavior is correct.
+        assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
+            "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `create builder required FK setter rejects null at entry`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Per RFC: required FK setters defensively reject Java/platform
+        // null calls at setter entry. The post-hook backstop only
+        // catches paths that bypass the setter entirely.
+        assert(output.contains("@Suppress(\"SENSELESS_COMPARISON\")")) {
+            "Required FK setter should suppress SENSELESS_COMPARISON\n$output"
+        }
+        assert(output.contains("requireNotNull(value) { \"owner is required\" }")) {
+            "Required FK setter should requireNotNull at entry\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder required FK setter rejects null at entry`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = UpdateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Same defensive entry-time check on the update builder so
+        // hooks/DSL writes go through the requireNotNull guard.
+        assert(output.contains("requireNotNull(value) { \"owner is required\" }")) {
+            "Required FK setter should requireNotNull at entry on update builder\n$output"
+        }
+    }
+
+    @Test
     fun `update builder edge FK getter throws on untouched read`() {
         val (_, names, byName) = createAllSchemas()
         val output = UpdateGenerator("com.example.ent")

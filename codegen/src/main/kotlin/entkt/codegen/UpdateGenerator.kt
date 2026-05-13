@@ -203,6 +203,28 @@ internal class UpdateGenerator(
 
     private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {
         val typeName = fk.idType.toTypeName().copy(nullable = true)
+        val setterBuilder = FunSpec.setterBuilder()
+            .addParameter("value", typeName)
+        if (fk.required) {
+            // Required FKs reject null at setter entry so Java/platform
+            // callers can't put the builder into a dirty+null state.
+            // `_checkRequiredNotNull()` still runs as a backstop for
+            // setter-bypassing paths (reflection writing the backing
+            // field directly).
+            setterBuilder
+                .addAnnotation(
+                    AnnotationSpec.builder(Suppress::class)
+                        .addMember("%S", "SENSELESS_COMPARISON")
+                        .build(),
+                )
+                .addStatement(
+                    "requireNotNull(value) { %S }",
+                    "${fk.edgeName} is required",
+                )
+        }
+        setterBuilder
+            .addStatement("field = value")
+            .addStatement("dirtyFields.add(%S)", fk.propertyName)
         return PropertySpec.builder(fk.propertyName, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
@@ -217,13 +239,7 @@ internal class UpdateGenerator(
                     .addStatement("return field")
                     .build()
             )
-            .setter(
-                FunSpec.setterBuilder()
-                    .addParameter("value", typeName)
-                    .addStatement("field = value")
-                    .addStatement("dirtyFields.add(%S)", fk.propertyName)
-                    .build()
-            )
+            .setter(setterBuilder.build())
             .build()
     }
 

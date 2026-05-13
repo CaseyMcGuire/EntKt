@@ -129,6 +129,40 @@ internal class CreateGenerator(
             .mutable(true)
             .initializer("null")
         if (override) builder.addModifiers(KModifier.OVERRIDE)
+        // Required FKs:
+        //   - getter throws on unassigned read (per RFC "Resolved FK
+        //     Getter Behavior"). A hook that reads `m.authorId` before
+        //     assigning fails fast rather than seeing `null` for a
+        //     relationship that has no valid FK value yet.
+        //   - setter rejects null at entry so Java/platform callers
+        //     can't bypass the contract. The post-hook backstop only
+        //     catches paths that skip the property surface entirely.
+        if (fk.required) {
+            builder
+                .getter(
+                    FunSpec.getterBuilder()
+                        .addStatement(
+                            "return field ?: throw IllegalStateException(%S)",
+                            "${fk.edgeName} is required",
+                        )
+                        .build(),
+                )
+                .setter(
+                    FunSpec.setterBuilder()
+                        .addParameter("value", typeName)
+                        .addAnnotation(
+                            AnnotationSpec.builder(Suppress::class)
+                                .addMember("%S", "SENSELESS_COMPARISON")
+                                .build(),
+                        )
+                        .addStatement(
+                            "requireNotNull(value) { %S }",
+                            "${fk.edgeName} is required",
+                        )
+                        .addStatement("field = value")
+                        .build(),
+                )
+        }
         return builder.build()
     }
 
