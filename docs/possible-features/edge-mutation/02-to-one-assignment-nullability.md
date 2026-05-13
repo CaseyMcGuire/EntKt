@@ -427,15 +427,18 @@ setAuthor(null)
 
 There is no readable `author` property on the public mutation builder
 either: relationship entity reads are not part of the public surface,
-only the FK property (`authorId`) is readable. Hooks observe pending relationship
-state through `ctx.patch.authorId` and current state through
-`ctx.before.authorId` — the internal byId load returns the owner row with
-unloaded edges, so the target entity is not available on `ctx.before` itself;
-hooks that need the target row must query it explicitly via
-`ctx.client.users.byId(ctx.before.authorId)`. The hook-facing mutation view is
-FK-only, exposing `authorId = ...` (and `unsetAuthorId()` per the patch
-contract). Hooks assign relationships by writing the target id into the FK
-property directly: `ctx.mutation.authorId = alice.id`.
+only the FK property (`authorId`) is readable. `beforeUpdate` hooks
+observe pending relationship state through `ctx.patch.authorId` and current
+state through `ctx.before.authorId` — the internal byId load returns the owner
+row with unloaded edges, so the target entity is not available on `ctx.before`
+itself; hooks that need the target row must query it explicitly via
+`ctx.client.users.byId(ctx.before.authorId)` (for nullable relationships,
+null-check the FK before calling `byId`). Create hooks have no `before`
+row and no patch; they observe pending relationship state through the create
+hook mutation view. The hook-facing mutation view is FK-only, exposing
+`authorId = ...` (and `unsetAuthorId()` per the patch contract). Hooks assign
+relationships by writing the target id into the FK property directly:
+`ctx.mutation.authorId = alice.id`.
 
 Generated resolved FK properties must include KDoc explaining the
 relationship-write semantics. FK properties write only target ids, do not load
@@ -479,8 +482,8 @@ For implicit FKs, the id-only path is the generated `{edge}Id` property. For
 field property backing that edge. The implementation must not create a second
 FK path.
 
-For field-backed edges, the FK property name is the backing field declaration
-property name. The backing field name is authoritative — it is **not** a
+For field-backed edges, the FK property name is the captured backing field
+declaration property name. The backing field name is authoritative — it is **not** a
 synthesized `{edge}Id` suffix. If the backing field is named without an `Id`
 suffix, the generated FK property has no `Id` suffix either:
 
@@ -512,11 +515,30 @@ and validation expose the user-declared backing field, such as `writerId`. They
 do not expose a generated `authorId` property or relationship entity property
 for that edge.
 
-For implicit FK edges, codegen must reject schemas where the generated FK
-property name, such as `authorId`, collides with an existing field, edge,
-generated method, or Kotlin member name. Callers should use
-`belongsTo(...).field(handle)` to choose an explicit backing field when a
-collision would occur.
+Codegen must reject schemas where a relationship FK's generated API
+collides with another declared or generated identifier. The names that
+must be unique are the FK property name and the generated
+`unset{FkProperty}()` mutation method:
+
+- For implicit FK edges, the FK property name is the captured declaration
+  name plus `Id` suffix (e.g. `authorId`, with `unsetAuthorId()`).
+- For field-backed edges, the FK property name is the captured backing
+  field declaration name (e.g. `writer`, with `unsetWriter()`).
+
+Both are checked against:
+
+- the entity's other declared fields and edges,
+- generated names produced by other edges (implicit FK names,
+  field-backed FK names, and their `unset` methods — so a field-backed
+  FK named `writerId` cannot coexist with an implicit edge `val writer
+  = belongsTo<User>("writer")` whose generated FK is also `writerId`),
+- generated members on the entity data class, create/update builders,
+  hook-facing mutation views, patch type, and write candidate,
+- user-declared Kotlin members on the schema class, and JVM signatures.
+
+When a collision occurs, callers should rename the colliding declaration
+or, for implicit edges, switch to `belongsTo(...).field(handle)` with an
+explicit backing field.
 
 For `belongsTo(...).field(handle)` edges, relationship nullability and backing
 field nullability must match. Codegen should reject a required relationship
@@ -644,13 +666,20 @@ run is the value hooks initially observe for relationships changed by the
 builder. Hooks mutate a hook-facing scalar/FK mutation view, not the public
 builder. For to-one relationships, that hook-facing view is FK-only: it exposes
 the resolved FK property, such as `authorId`, or the user-declared backing field
-for `belongsTo(...).field(handle)` edges. It does not expose readable
-relationship entity properties; relationship entity setter methods are not
-part of the generated API at all. Hooks assign a relationship by writing
+for `belongsTo(...).field(handle)` edges. It does not expose relationship
+entity properties or relationship entity setter methods. Hooks assign a relationship by writing
 the target id into the resolved FK property. Hook FK writes also
-follow last-write-wins before candidate construction. Hook, privacy,
-and validation code should treat the final pending FK value and `WriteCandidate`
-as the source of truth for changed relationship fields.
+follow last-write-wins before candidate construction. On creates, hooks,
+privacy, and validation should treat the final FK value and the create
+write candidate as the source of truth for relationship state. On updates,
+they should treat the requested patch, effective patch, and full
+after-state candidate as the source of truth for changed relationship
+FKs (per [ID-Based Update Roots](01-id-based-update-roots.md)).
+
+The remaining examples in this subsection use an implicit FK
+(`authorId`, `unsetAuthorId()`, `ctx.before.authorId`); for field-backed
+edges, substitute the captured backing field declaration name (e.g.
+`writer`, with `unsetWriter()` and `ctx.before.writer`).
 
 Hook-facing to-one mutation views are **value-oriented**: a resolved FK
 getter returns the pending value when one exists and throws when the
@@ -697,7 +726,21 @@ Hooks that need the current FK value should read it from the loaded
 `before` row (`ctx.before.authorId`). The relationship edges on
 `ctx.before` are unloaded, so the target row itself is not directly
 accessible; hooks that need the target entity must query it
-explicitly via `ctx.client.users.byId(ctx.before.authorId)`.
+explicitly. For a required relationship, `ctx.before.authorId` is
+non-null:
+
+```kotlin
+val author = ctx.client.users.byId(ctx.before.authorId)
+```
+
+For a nullable relationship, `ctx.before.authorId` is itself nullable
+and must be checked before the lookup:
+
+```kotlin
+ctx.before.authorId?.let { id ->
+    ctx.client.users.byId(id)
+}
+```
 
 Hook-facing resolved FK properties are typed according to relationship
 nullability. Required relationship FKs expose non-null setters and defensively
@@ -722,9 +765,9 @@ builders: reading an unset required FK must throw, while reading an unset
 nullable FK returns null.
 
 Hooks may clear nullable relationships by setting the hook-facing resolved FK
-property to null. Hooks may not leave required relationships null: required edge
-checks run after hooks and reject a final null FK for create-time required FKs or
-changed required update FKs before privacy, validation, or database writes.
+property to null. They cannot leave a required relationship null: the required
+FK setter rejects null at entry, and the post-hook required check rejects only
+the create-time and internal-corruption cases listed above.
 
 ### Hook-Facing API Shape
 
@@ -944,17 +987,25 @@ Before implementation, add tests for:
   name plus `Id`, not the storage/runtime edge string, and reject collisions with
   fields, edges, generated methods, Kotlin members, or JVM signatures
 - the generated update/create builder exposes the resolved FK property
-  for each `belongsTo` edge and does **not** expose `setAuthor(...)` or
-  a writable relationship entity property — codegen assertion:
+  for each **mutable** FK-owning `belongsTo` edge and does **not** expose
+  `setAuthor(...)` or a writable relationship entity property; immutable
+  field-backed FKs follow the rule at "Relationship Mutability" above
+  (create builder may expose the setter, update builder must not) —
+  codegen assertion:
   - for an **implicit FK** fixture (`val author = belongsTo<User>("author")`),
     the generated `${Entity}Update` / `${Entity}Create` class contains
     `var authorId:` and does not contain `public fun setAuthor(`,
     `public fun set<Edge>(`, or `var author:` for that edge
-  - for a **field-backed** fixture
+  - for a **mutable field-backed** fixture
     (`val writerId = uuid("writer_id"); val author = belongsTo<User>("author").field(writerId)`),
     the generated class contains the backing field's declaration
     property (`var writerId:`) and does not contain a generated
     `authorId`, `setAuthor(...)`, or `var author:`
+  - for an **immutable field-backed** fixture
+    (`val writerId = uuid("writer_id").immutable(); val author = belongsTo<User>("author").field(writerId)`),
+    the generated `${Entity}Create` class contains `var writerId:` but the
+    generated `${Entity}Update` class does not contain `var writerId:`,
+    `authorId`, `setAuthor(...)`, or `var author:` for that edge
 - the old property-style relationship assignment does not compile
   against the generated builder — compile-fail assertion: a Kotlin
   source snippet that writes
@@ -974,6 +1025,12 @@ Before implementation, add tests for:
     `unsetAuthorId()` and no `setAuthor`
   - field-backed fixture: interface body contains `writerId` and
     `unsetWriterId()` and no `setAuthor`
+- the shared `beforeSave` `${Entity}Mutation` interface and the create
+  hook-facing interface are FK-only and contain no `setAuthor`-style
+  member — codegen assertion: for both the implicit FK fixture and the
+  field-backed fixture, neither interface body contains
+  `public fun setAuthor(`, `public fun set<Edge>(`, or `var author:` for
+  that edge
 - edge declaration property names whose generated implicit FK names collide are
   rejected
 - schema collection fails if codegen cannot map a registered `belongsTo` builder
