@@ -172,9 +172,10 @@ candidate construction.
 
 ## Public Types
 
-Generated to-one FK properties must be typed according to schema nullability.
-Required to-one edges must expose non-null FK types, such as `authorId: UUID`.
-Nullable to-one edges must expose nullable FK types, such as `authorId: UUID?`.
+Generated to-one FK mutation APIs must be typed according to schema
+nullability. Required to-one edges must expose non-null FK types, such as
+`authorId: UUID`. Nullable to-one edges must expose nullable FK types,
+such as `authorId: UUID?`.
 
 ```kotlin
 // required relationship
