@@ -26,6 +26,8 @@ private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
 private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
 private val ENT_NOT_FOUND_EXCEPTION = ClassName("entkt.runtime", "EntNotFoundException")
 private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime", "EntNoChangesException")
+private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
+private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
 
 
 internal class UpdateGenerator(
@@ -162,7 +164,7 @@ internal class UpdateGenerator(
                 ),
             )
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
-            .addFunction(buildCheckRequiredNotNullFunction(mutableFields, edgeFks))
+            .addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks))
             .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
@@ -464,17 +466,26 @@ internal class UpdateGenerator(
      * `dirtyFields`) or by reassigning a non-null value.
      */
     private fun buildCheckRequiredNotNullFunction(
+        schemaName: String,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
+        // Failed required-shape checks throw `ValidationException` so
+        // `saveOrError()` wraps them into `EntError.ValidationFailed`
+        // rather than letting an `IllegalStateException` escape.
+        // Short-circuits on the first failure (matches the existing
+        // single-throw shape; collect-and-throw is left as a future
+        // improvement).
         val builder = FunSpec.builder("_checkRequiredNotNull")
             .addModifiers(KModifier.PRIVATE)
         for (field in mutableFields) {
             if (field.nullable) continue
             val prop = toCamelCase(field.name)
             builder.addStatement(
-                "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
-                prop, prop, "${field.name} is required",
+                "if (%S in dirtyFields && this.%L == null) throw %T(%S, listOf(%T(%S, field = %S)))",
+                prop, prop,
+                VALIDATION_EXCEPTION, schemaName,
+                VALIDATION_INVALID, "${field.name} is required", field.name,
             )
         }
         for (fk in edgeFks) {
@@ -484,8 +495,10 @@ internal class UpdateGenerator(
             // throw-on-untouched getter (which would mask the diagnostic).
             val stagingName = stagingFieldName(fk.propertyName)
             builder.addStatement(
-                "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
-                fk.propertyName, stagingName, "${fk.edgeName} is required",
+                "if (%S in dirtyFields && this.%L == null) throw %T(%S, listOf(%T(%S, field = %S)))",
+                fk.propertyName, stagingName,
+                VALIDATION_EXCEPTION, schemaName,
+                VALIDATION_INVALID, "${fk.edgeName} is required", fk.columnName,
             )
         }
         return builder.build()
@@ -649,13 +662,13 @@ internal class UpdateGenerator(
         // ---- Field-level validation on Set entries of the effective patch. ----
         for (field in mutableFields) {
             if (field.validators.isEmpty()) continue
-            emitPatchEntryValidation(builder, field)
+            emitPatchEntryValidation(builder, schemaName, field)
         }
         for (fk in edgeFks) {
             if (fk.validators.isEmpty()) continue
             // Backing-field validators apply to the FK on update too —
             // run them on Set entries of the effective patch.
-            emitFkPatchEntryValidation(builder, fk)
+            emitFkPatchEntryValidation(builder, schemaName, fk)
         }
 
         // ---- Build the database write set from the effective patch. ----
@@ -765,7 +778,7 @@ internal class UpdateGenerator(
      * validators only run when the patched value is non-null (validators
      * don't validate null on nullable fields).
      */
-    private fun emitPatchEntryValidation(builder: FunSpec.Builder, field: Field) {
+    private fun emitPatchEntryValidation(builder: FunSpec.Builder, schemaName: String, field: Field) {
         val prop = toCamelCase(field.name)
         val localName = "${prop}_eff"
         builder.addStatement("val %L = effectivePatch.%L", localName, prop)
@@ -773,11 +786,11 @@ internal class UpdateGenerator(
         if (field.nullable) {
             builder.addStatement("val %L_v = %L.value", prop, localName)
             builder.beginControlFlow("if (%L_v != null)", prop)
-            emitFieldValidation(builder, "${prop}_v", field.name, field.validators, nullable = false)
+            emitFieldValidation(builder, schemaName, "${prop}_v", field.name, field.validators, nullable = false)
             builder.endControlFlow()
         } else {
             builder.addStatement("val %L_v = %L.value", prop, localName)
-            emitFieldValidation(builder, "${prop}_v", field.name, field.validators, nullable = false)
+            emitFieldValidation(builder, schemaName, "${prop}_v", field.name, field.validators, nullable = false)
         }
         builder.endControlFlow()
     }
@@ -788,7 +801,7 @@ internal class UpdateGenerator(
      * keyed off [EdgeFk.required] (whose nullability follows the
      * relationship) rather than scalar `field.nullable`.
      */
-    private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, fk: EdgeFk) {
+    private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, schemaName: String, fk: EdgeFk) {
         val prop = fk.propertyName
         val localName = "${prop}_eff"
         builder.addStatement("val %L = effectivePatch.%L", localName, prop)
@@ -796,11 +809,11 @@ internal class UpdateGenerator(
         if (!fk.required) {
             builder.addStatement("val %L_v = %L.value", prop, localName)
             builder.beginControlFlow("if (%L_v != null)", prop)
-            emitFieldValidation(builder, "${prop}_v", fk.columnName, fk.validators, nullable = false)
+            emitFieldValidation(builder, schemaName, "${prop}_v", fk.columnName, fk.validators, nullable = false)
             builder.endControlFlow()
         } else {
             builder.addStatement("val %L_v = %L.value", prop, localName)
-            emitFieldValidation(builder, "${prop}_v", fk.columnName, fk.validators, nullable = false)
+            emitFieldValidation(builder, schemaName, "${prop}_v", fk.columnName, fk.validators, nullable = false)
         }
         builder.endControlFlow()
     }

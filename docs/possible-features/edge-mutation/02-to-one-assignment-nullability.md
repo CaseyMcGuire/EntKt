@@ -16,10 +16,14 @@ for nullable field-backed FKs, a restricted `CreateMutationView` +
 hook surface), immutability-aware update surface for field-backed
 FKs (`.immutable()` backing field → no setter on `${Entity}Update`, no
 slot on `${Entity}UpdatePatch`, no `unset` on `${Entity}UpdateMutationView`),
-and backing-field validators carried into the FK code path (so a
+backing-field validators carried into the FK code path (so a
 `belongsTo(...).field(handle)` whose backing column has `.positive()`,
 `.min(...)`, etc. runs those checks during both create save and update
-effective-patch validation) are in place. Deferred work is listed under "Deferred Scope" at the
+effective-patch validation), and generated local validation failures
+mapping to `EntError.ValidationFailed` (every emitted validator and
+`_checkRequiredNotNull` now throws `ValidationException` so
+`saveOrError()` returns a structured `Err(ValidationFailed)` instead
+of letting an `IllegalStateException` escape) are in place. Deferred work is listed under "Deferred Scope" at the
 end of this document.
 
 Split out from [Edge Mutation API](00-overview.md).

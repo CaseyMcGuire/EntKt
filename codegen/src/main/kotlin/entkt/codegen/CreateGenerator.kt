@@ -296,15 +296,24 @@ internal class CreateGenerator(
         builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")
 
         // ---- Validate and bind each property to a local. ----
+        // Required fields throw `ValidationException` (mapped to
+        // `EntError.ValidationFailed` by `saveOrError()`) on missing
+        // input. Short-circuits on the first missing required field —
+        // collecting all violations across required + validator rules
+        // is left as a future improvement.
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             val required = !field.nullable && field.default == null
             when {
                 required -> builder.addStatement(
-                    "val %L = this.%L ?: throw IllegalStateException(%S)",
+                    "val %L = this.%L ?: throw %T(%S, listOf(%T(%S, field = %S)))",
                     prop,
                     prop,
+                    VALIDATION_EXCEPTION,
+                    schemaName,
+                    VALIDATION_INVALID,
                     "${field.name} is required",
+                    field.name,
                 )
                 field.default != null -> builder.addStatement(
                     "val %L = this.%L ?: %L",
@@ -321,7 +330,7 @@ internal class CreateGenerator(
             if (field.validators.isEmpty()) continue
             val prop = toCamelCase(field.name)
             val nullable = field.nullable
-            emitFieldValidation(builder, prop, field.name, field.validators, nullable)
+            emitFieldValidation(builder, schemaName, prop, field.name, field.validators, nullable)
         }
 
         for (fk in edgeFks) {
@@ -355,6 +364,7 @@ internal class CreateGenerator(
             if (fk.validators.isNotEmpty()) {
                 emitFieldValidation(
                     builder,
+                    schemaName = schemaName,
                     prop = fk.propertyName,
                     fieldName = fk.columnName,
                     validators = fk.validators,
@@ -494,12 +504,19 @@ internal fun hookListType(paramType: ClassName) =
         LambdaTypeName.get(parameters = arrayOf(paramType), returnType = UNIT),
     )
 
+private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
+private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
+
 /**
  * Emit inline validation checks for a single field's validators.
  * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
+ * Each failed validator throws [ValidationException] with a single-element
+ * violations list so generated `saveOrError()` callers receive
+ * `EntError.ValidationFailed` instead of `IllegalStateException`.
  */
 internal fun emitFieldValidation(
     builder: FunSpec.Builder,
+    schemaName: String,
     prop: String,
     fieldName: String,
     validators: List<entkt.schema.Validator>,
@@ -511,7 +528,7 @@ internal fun emitFieldValidation(
     for (validator in validators) {
         val spec = validator.spec
             ?: error("Validator '${validator.name}' on field '$fieldName' has no spec — codegen cannot emit it")
-        emitValidatorCheck(builder, prop, fieldName, validator.message, spec)
+        emitValidatorCheck(builder, schemaName, prop, fieldName, validator.message, spec)
     }
     if (nullable) {
         builder.endControlFlow()
@@ -520,49 +537,80 @@ internal fun emitFieldValidation(
 
 private fun emitValidatorCheck(
     builder: FunSpec.Builder,
+    schemaName: String,
     prop: String,
     fieldName: String,
     message: String,
     spec: ValidatorSpec,
 ) {
-    val errorMsg = "$fieldName: $message"
+    val throwExpr =
+        "throw %T(%S, listOf(%T(%S, field = %S)))"
     when (spec) {
         is ValidatorSpec.MinLen -> builder.addStatement(
-            "if (%L.length < %L) throw IllegalStateException(%S)", prop, spec.min, errorMsg,
+            "if (%L.length < %L) $throwExpr",
+            prop, spec.min,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.MaxLen -> builder.addStatement(
-            "if (%L.length > %L) throw IllegalStateException(%S)", prop, spec.max, errorMsg,
+            "if (%L.length > %L) $throwExpr",
+            prop, spec.max,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.NotEmpty -> builder.addStatement(
-            "if (%L.isEmpty()) throw IllegalStateException(%S)", prop, errorMsg,
+            "if (%L.isEmpty()) $throwExpr",
+            prop,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.Match -> {
             if (spec.options.isEmpty()) {
                 builder.addStatement(
-                    "if (!Regex(%S).matches(%L)) throw IllegalStateException(%S)", spec.pattern, prop, errorMsg,
+                    "if (!Regex(%S).matches(%L)) $throwExpr",
+                    spec.pattern, prop,
+                    VALIDATION_EXCEPTION, schemaName,
+                    VALIDATION_INVALID, message, fieldName,
                 )
             } else {
                 val optionsLiteral = spec.options.joinToString(", ") { "RegexOption.${it.name}" }
                 builder.addStatement(
-                    "if (!Regex(%S, setOf($optionsLiteral)).matches(%L)) throw IllegalStateException(%S)",
-                    spec.pattern, prop, errorMsg,
+                    "if (!Regex(%S, setOf($optionsLiteral)).matches(%L)) $throwExpr",
+                    spec.pattern, prop,
+                    VALIDATION_EXCEPTION, schemaName,
+                    VALIDATION_INVALID, message, fieldName,
                 )
             }
         }
         is ValidatorSpec.Min -> builder.addStatement(
-            "if (%L < %L) throw IllegalStateException(%S)", prop, spec.min, errorMsg,
+            "if (%L < %L) $throwExpr",
+            prop, spec.min,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.Max -> builder.addStatement(
-            "if (%L > %L) throw IllegalStateException(%S)", prop, spec.max, errorMsg,
+            "if (%L > %L) $throwExpr",
+            prop, spec.max,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.Positive -> builder.addStatement(
-            "if (%L <= 0) throw IllegalStateException(%S)", prop, errorMsg,
+            "if (%L <= 0) $throwExpr",
+            prop,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.Negative -> builder.addStatement(
-            "if (%L >= 0) throw IllegalStateException(%S)", prop, errorMsg,
+            "if (%L >= 0) $throwExpr",
+            prop,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
         is ValidatorSpec.NonNegative -> builder.addStatement(
-            "if (%L < 0) throw IllegalStateException(%S)", prop, errorMsg,
+            "if (%L < 0) $throwExpr",
+            prop,
+            VALIDATION_EXCEPTION, schemaName,
+            VALIDATION_INVALID, message, fieldName,
         )
     }
 }

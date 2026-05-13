@@ -208,8 +208,11 @@ class CreateGeneratorTest {
         assert(output.contains("name.isEmpty()")) {
             "Should emit notEmpty check\n$output"
         }
-        assert(output.contains("name: value must be at least 3 characters")) {
-            "Should include validator message\n$output"
+        // Validator failures throw ValidationException carrying both
+        // the rule's message and the field name; saveOrError wraps this
+        // into EntError.ValidationFailed (Phase 12).
+        assert(output.contains("Invalid(\"value must be at least 3 characters\", field = \"name\")")) {
+            "Should include validator message + field in ValidationDecision.Invalid\n$output"
         }
     }
 
@@ -222,8 +225,8 @@ class CreateGeneratorTest {
         assert(output.contains("age <= 0")) {
             "Should emit positive check\n$output"
         }
-        assert(output.contains("age: value must be positive")) {
-            "Should include validator message\n$output"
+        assert(output.contains("Invalid(\"value must be positive\", field = \"age\")")) {
+            "Should include validator message + field in ValidationDecision.Invalid\n$output"
         }
     }
 

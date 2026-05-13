@@ -135,12 +135,14 @@ class UpdateGeneratorTest {
             "Expected generated _checkRequiredNotNull\n$output"
         }
         val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
+        // Throws ValidationException so saveOrError wraps it into
+        // EntError.ValidationFailed (Phase 12).
         assert(
             checkFnBody.contains(
-                "if (\"name\" in dirtyFields && this.name == null) throw IllegalStateException(\"name is required\")",
+                "if (\"name\" in dirtyFields && this.name == null) throw ValidationException(\"User\", listOf(ValidationDecision.Invalid(\"name is required\", field = \"name\")))",
             ),
         ) {
-            "_checkRequiredNotNull must throw for dirty+null required field as the safety net\n$checkFnBody"
+            "_checkRequiredNotNull must throw ValidationException for dirty+null required field as the safety net\n$checkFnBody"
         }
     }
 
@@ -192,12 +194,14 @@ class UpdateGeneratorTest {
         val checkFnEnd = output.indexOf("public fun save", checkFnIdx)
         assert(checkFnEnd != -1) { "Couldn't find end of _checkRequiredNotNull body\n$output" }
         val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
+        // Throws ValidationException so saveOrError wraps it into
+        // EntError.ValidationFailed (Phase 12).
         assert(
             checkFnBody.contains(
-                "if (\"name\" in dirtyFields && this.name == null) throw IllegalStateException(\"name is required\")",
+                "if (\"name\" in dirtyFields && this.name == null) throw ValidationException(\"User\", listOf(ValidationDecision.Invalid(\"name is required\", field = \"name\")))",
             ),
         ) {
-            "_checkRequiredNotNull() should throw IllegalStateException for unrepaired null `name`\n$checkFnBody"
+            "_checkRequiredNotNull() should throw ValidationException for unrepaired null `name`\n$checkFnBody"
         }
     }
 

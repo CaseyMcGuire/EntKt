@@ -502,10 +502,15 @@ class EdgeCodegenTest {
             .replace("\\s+".toRegex(), " ")
 
         // The `.positive()` check (`if (prop <= 0) throw ...`) should
-        // appear in the save body keyed off the FK property name, with
-        // the backing column name in the error message.
-        assert(output.contains("if (ownerId <= 0) throw IllegalStateException(\"owner_id:")) {
-            "Create should emit the .positive() validator on the FK value\n$output"
+        // appear in the save body keyed off the FK property name. Phase 12
+        // routes the failure through ValidationException so saveOrError
+        // returns EntError.ValidationFailed; the backing column name lands
+        // in the ValidationDecision.Invalid `field` slot.
+        assert(output.contains("if (ownerId <= 0) throw ValidationException(\"ValidatedFkChild\",")) {
+            "Create should emit a ValidationException for the .positive() FK validator\n$output"
+        }
+        assert(output.contains("Invalid(\"value must be positive\", field = \"owner_id\")")) {
+            "Validator failure should carry the backing column name in the Invalid field slot\n$output"
         }
     }
 
@@ -524,8 +529,11 @@ class EdgeCodegenTest {
         assert(output.contains("ownerId_eff = effectivePatch.ownerId")) {
             "Update should bind the FK's effectivePatch entry to a local for validation\n$output"
         }
-        assert(output.contains("if (ownerId_v <= 0) throw IllegalStateException(\"owner_id:")) {
-            "Update should emit the .positive() validator on the patched FK value\n$output"
+        assert(output.contains("if (ownerId_v <= 0) throw ValidationException(\"ValidatedFkChild\",")) {
+            "Update should emit a ValidationException for the .positive() FK validator\n$output"
+        }
+        assert(output.contains("Invalid(\"value must be positive\", field = \"owner_id\")")) {
+            "Validator failure should carry the backing column name in the Invalid field slot\n$output"
         }
     }
 
