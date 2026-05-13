@@ -29,7 +29,7 @@ class Post : EntSchema("posts") {
     override fun id() = EntId.long()
     val author = belongsTo<User>("author")  // "many" side — adds author_id column to posts table
         .inverse(User::posts)               // links this edge to User.posts
-        .required()                         // author_id is NOT NULL
+                                            // required-by-default — author_id is NOT NULL
 }
 ```
 
@@ -50,7 +50,7 @@ creates `author_id`. Override it with `.field()`:
 class Post : EntSchema("posts") {
     override fun id() = EntId.long()
     val writerId = long("writer_id")
-    val author = belongsTo<User>("author").inverse(User::posts).required().field(writerId)
+    val author = belongsTo<User>("author").inverse(User::posts).field(writerId)
 }
 ```
 
@@ -71,11 +71,10 @@ data class Post(
     // ...
 )
 
-// Create builder
+// Create builder — FK assignment is the only public to-one write path.
 client.posts.create {
     title = "Hello"
-    authorId = alice.id      // set FK directly
-    author = alice           // or set the entity — authorId is derived
+    authorId = alice.id
 }.save()
 ```
 
@@ -137,8 +136,8 @@ class Group : EntSchema("groups") {
 
 class UserGroup : EntSchema("user_groups") {
     override fun id() = EntId.long()
-    val user = belongsTo<User>("user").required()
-    val group = belongsTo<Group>("group").required()
+    val user = belongsTo<User>("user")
+    val group = belongsTo<Group>("group")
 }
 ```
 
@@ -191,8 +190,8 @@ class Person : EntSchema("people") {
 
 class Friendship : EntSchema("friendships") {
     override fun id() = EntId.long()
-    val user = belongsTo<Person>("user").required()
-    val friend = belongsTo<Person>("friend").required()
+    val user = belongsTo<Person>("user")
+    val friend = belongsTo<Person>("friend")
 }
 ```
 
@@ -213,9 +212,9 @@ class Project : EntSchema("projects") {
 
 class ProjectAssignment : EntSchema("project_assignments") {
     override fun id() = EntId.long()
-    val project = belongsTo<Project>("project").required()
-    val assignee = belongsTo<Pet>("assignee").required()
-    val reviewer = belongsTo<Pet>("reviewer")              // different role, same target type
+    val project = belongsTo<Project>("project")
+    val assignee = belongsTo<Pet>("assignee")
+    val reviewer = belongsTo<Pet>("reviewer").nullable()   // different role, same target type
 }
 ```
 
@@ -227,12 +226,14 @@ for the DSL reference. The table mapping:
 
 | Edge declaration | FK constraint |
 |---|---|
-| `belongsTo<User>("author")` (optional) | `REFERENCES users(id) ON DELETE SET NULL` |
-| `belongsTo<User>("author").required()` | `REFERENCES users(id) ON DELETE RESTRICT` |
-| `belongsTo<User>("owner").required().onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
+| `belongsTo<User>("author")` | `REFERENCES users(id) ON DELETE RESTRICT` |
+| `belongsTo<User>("author").nullable()` | `REFERENCES users(id) ON DELETE SET NULL` |
+| `belongsTo<User>("owner").onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
 
-When no explicit `.onDelete()` is set, the default is inferred from
-nullability: `SET NULL` for optional FKs, `RESTRICT` for required FKs.
+`belongsTo(...)` is required by default; add `.nullable()` to declare an
+optional relationship. When no explicit `.onDelete()` is set, the default
+is inferred from nullability: `SET NULL` for optional FKs, `RESTRICT` for
+required FKs.
 
 Both `PostgresDriver` and `InMemoryDriver` enforce these actions at
 runtime.

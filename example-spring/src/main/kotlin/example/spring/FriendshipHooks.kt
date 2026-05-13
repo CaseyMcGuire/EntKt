@@ -18,18 +18,14 @@ class FriendshipHooksConfig {
     }
 
     fun requireValidParticipants(m: FriendshipCreate) {
-        val requesterId = m.requesterId
-            ?: throw IllegalStateException("requester is required")
-        val recipientId = m.recipientId
-            ?: throw IllegalStateException("recipient is required")
-        require(requesterId != recipientId) { "Cannot friend yourself" }
+        // Required FK getters throw on unassigned reads, so no explicit
+        // null guard is needed here.
+        require(m.requesterId != m.recipientId) { "Cannot friend yourself" }
     }
 
     fun forbidDuplicateRequest(m: FriendshipCreate) {
         val requesterId = m.requesterId
-            ?: throw IllegalStateException("requester is required")
         val recipientId = m.recipientId
-            ?: throw IllegalStateException("recipient is required")
         val existing = m.client.friendships.query {
             where(
                 ((Friendship.requesterId eq requesterId) and (Friendship.recipientId eq recipientId))

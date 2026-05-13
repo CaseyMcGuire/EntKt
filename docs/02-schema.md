@@ -148,7 +148,7 @@ class User : EntSchema("users") {
 class Post : EntSchema("posts") {
     override fun id() = EntId.long()
 
-    val author = belongsTo<User>("author").inverse(User::posts).required()
+    val author = belongsTo<User>("author").inverse(User::posts)
 }
 ```
 
@@ -170,20 +170,21 @@ class User : EntSchema("users") {
 ### BelongsTo
 
 `belongsTo<Target>(name)` declares the FK-owning side. This synthesizes
-a FK column (e.g. `author_id`) on the current entity.
+a FK column (e.g. `author_id`) on the current entity. Relationships are
+required-by-default; add `.nullable()` to make the FK optional.
 
 ```kotlin
 class Post : EntSchema("posts") {
     override fun id() = EntId.long()
 
-    val author = belongsTo<User>("author").inverse(User::posts).required()
+    val author = belongsTo<User>("author").inverse(User::posts)
 }
 ```
 
 | Modifier | Effect |
 |----------|--------|
 | `.inverse(Target::edge)` | Links to the inverse edge on the target schema |
-| `.required()` | FK column is NOT NULL |
+| `.nullable()` | FK column is nullable (default is NOT NULL) |
 | `.unique()` | Adds a UNIQUE constraint on the FK column (for 1:1 relationships) |
 | `.field(handle)` | Reuse an existing field declaration as the FK column |
 | `.onDelete(action)` | Set the FK `ON DELETE` action (see below) |
@@ -197,7 +198,7 @@ By default, FK columns use `ON DELETE SET NULL` (nullable) or
 class Pet : EntSchema("pets") {
     override fun id() = EntId.int()
 
-    val owner = belongsTo<Owner>("owner").required().onDelete(OnDelete.CASCADE)
+    val owner = belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
 }
 ```
 
@@ -242,8 +243,8 @@ class Person : EntSchema("people") {
 class Friendship : EntSchema("friendships") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<Person>("user").required()
-    val friend = belongsTo<Person>("friend").required()
+    val user = belongsTo<Person>("user")
+    val friend = belongsTo<Person>("friend")
 }
 ```
 
@@ -282,7 +283,6 @@ class Profile : EntSchema("profiles") {
 
     val user = belongsTo<User>("user")
         .inverse(User::profile)
-        .required()
         .unique()
 }
 ```
@@ -360,7 +360,6 @@ class Post : EntSchema("posts") {
 
     val author = belongsTo<User>("author")
         .inverse(User::posts)
-        .required()
 }
 ```
 
@@ -384,6 +383,7 @@ class Category : EntSchema("categories") {
     val children = hasMany<Category>("children")
     val parent = belongsTo<Category>("parent")
         .inverse(Category::children)
+        .nullable()
 }
 ```
 
@@ -412,8 +412,8 @@ class Group : EntSchema("groups") {
 class UserGroup : EntSchema("user_groups") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<User>("user").required()
-    val group = belongsTo<Group>("group").required()
+    val user = belongsTo<User>("user")
+    val group = belongsTo<Group>("group")
 
     val byUserGroup = index("idx_user_groups_user_group", user.fk, group.fk).unique()
 }
@@ -447,8 +447,8 @@ class Person : EntSchema("people") {
 class Friendship : EntSchema("friendships") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<Person>("user").required()
-    val friend = belongsTo<Person>("friend").required()
+    val user = belongsTo<Person>("user")
+    val friend = belongsTo<Person>("friend")
 
     val byFriendPair = index("idx_friendships_user_friend", user.fk, friend.fk).unique()
 }
@@ -486,8 +486,8 @@ class Group : EntSchema("groups") {
 class Membership : EntSchema("memberships") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<User>("user").required()
-    val group = belongsTo<Group>("group").required()
+    val user = belongsTo<User>("user")
+    val group = belongsTo<Group>("group")
 }
 ```
 
@@ -515,7 +515,7 @@ Column generation rules:
 
 Constraint and index rules:
 
-- `.required()` on `belongsTo(...)` makes the FK `NOT NULL`
+- `belongsTo(...)` is required-by-default; `.nullable()` opts in to a nullable FK
 - `.unique()` on `belongsTo(...)` adds a `UNIQUE` constraint on the FK column
 - field-level `.unique()` becomes a single-column unique constraint
 - `index("...", ...)` becomes a named secondary index
@@ -553,8 +553,8 @@ class User : EntSchema("users") {
 class Friendship : EntSchema("friendships") {
     override fun id() = EntId.int()
 
-    val requester = belongsTo<User>("requester").required()
-    val recipient = belongsTo<User>("recipient").required()
+    val requester = belongsTo<User>("requester")
+    val recipient = belongsTo<User>("recipient")
 
     val idx = index("idx_requester_recipient", requester.fk, recipient.fk).unique()
 }

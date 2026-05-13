@@ -372,13 +372,14 @@ class EdgeCodegenTest {
 
         // Per RFC "Resolved FK Getter Behavior": on create builders for
         // required relationships, reading the FK before assignment must
-        // throw because there is no valid FK value yet.
+        // throw because there is no valid FK value yet. The non-null
+        // public property reads from the private staging field.
         assert(
             output.contains(
-                "get() = field ?: throw IllegalStateException(\"owner is required\")",
+                "get() = _ownerIdStaging ?: throw IllegalStateException(\"owner is required\")",
             ),
         ) {
-            "Required Create FK getter must throw when the field is unassigned\n$output"
+            "Required Create FK getter must throw when staging is null\n$output"
         }
     }
 
@@ -394,6 +395,37 @@ class EdgeCodegenTest {
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
             "Nullable Create FK should not have a throw-on-unassigned getter\n$output"
+        }
+    }
+
+    @Test
+    fun `create builder required FK property is non-null typed`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = CreateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+
+        // Per RFC "Public Types": required to-one edges must expose
+        // non-null FK types on the generated builder. The internal
+        // staging field stays nullable.
+        assert(output.contains("override var ownerId: Long\n")) {
+            "Required Create FK property should be non-null typed (Long, not Long?)\n$output"
+        }
+        assert(output.contains("private var _ownerIdStaging: Long?")) {
+            "Required Create FK should have a private nullable staging field\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder required FK property is non-null typed`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = UpdateGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+
+        assert(output.contains("override var ownerId: Long\n")) {
+            "Required Update FK property should be non-null typed (Long, not Long?)\n$output"
+        }
+        assert(output.contains("private var _ownerIdStaging: Long?")) {
+            "Required Update FK should have a private nullable staging field\n$output"
         }
     }
 

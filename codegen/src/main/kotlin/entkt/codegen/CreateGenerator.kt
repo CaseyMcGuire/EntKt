@@ -103,6 +103,13 @@ internal class CreateGenerator(
             }
             .addProperties(mutableFields.map { buildProperty(it, override = true) })
             .addProperties(allFields.filter { it.immutable }.map { buildProperty(it, override = false) })
+            .also { builder ->
+                for (fk in edgeFks) {
+                    if (fk.required) {
+                        builder.addProperty(buildRequiredFkStagingProperty(fk))
+                    }
+                }
+            }
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
             .build()
@@ -124,32 +131,31 @@ internal class CreateGenerator(
     }
 
     private fun buildEdgeFkProperty(fk: EdgeFk, override: Boolean): PropertySpec {
-        val typeName = fk.idType.toTypeName().copy(nullable = true)
-        val builder = PropertySpec.builder(fk.propertyName, typeName)
-            .mutable(true)
-            .initializer("null")
-        if (override) builder.addModifiers(KModifier.OVERRIDE)
-        // Required FKs:
-        //   - getter throws on unassigned read (per RFC "Resolved FK
-        //     Getter Behavior"). A hook that reads `m.authorId` before
-        //     assigning fails fast rather than seeing `null` for a
-        //     relationship that has no valid FK value yet.
-        //   - setter rejects null at entry so Java/platform callers
-        //     can't bypass the contract. The post-hook backstop only
-        //     catches paths that skip the property surface entirely.
         if (fk.required) {
-            builder
+            // Required FKs:
+            //   - public property is non-null typed (per RFC "Public Types")
+            //   - private nullable staging field holds the value until assigned
+            //   - getter throws on unassigned read (per RFC "Resolved FK
+            //     Getter Behavior"); a hook that reads `m.authorId` before
+            //     assigning fails fast
+            //   - setter rejects null at entry so Java/platform callers
+            //     can't bypass the non-null contract
+            val nonNullType = fk.idType.toTypeName().copy(nullable = false)
+            val stagingName = stagingFieldName(fk.propertyName)
+            val builder = PropertySpec.builder(fk.propertyName, nonNullType)
+                .mutable(true)
                 .getter(
                     FunSpec.getterBuilder()
                         .addStatement(
-                            "return field ?: throw IllegalStateException(%S)",
+                            "return %L ?: throw IllegalStateException(%S)",
+                            stagingName,
                             "${fk.edgeName} is required",
                         )
                         .build(),
                 )
                 .setter(
                     FunSpec.setterBuilder()
-                        .addParameter("value", typeName)
+                        .addParameter("value", nonNullType)
                         .addAnnotation(
                             AnnotationSpec.builder(Suppress::class)
                                 .addMember("%S", "SENSELESS_COMPARISON")
@@ -159,11 +165,27 @@ internal class CreateGenerator(
                             "requireNotNull(value) { %S }",
                             "${fk.edgeName} is required",
                         )
-                        .addStatement("field = value")
+                        .addStatement("%L = value", stagingName)
                         .build(),
                 )
+            if (override) builder.addModifiers(KModifier.OVERRIDE)
+            return builder.build()
         }
+        val typeName = fk.idType.toTypeName().copy(nullable = true)
+        val builder = PropertySpec.builder(fk.propertyName, typeName)
+            .mutable(true)
+            .initializer("null")
+        if (override) builder.addModifiers(KModifier.OVERRIDE)
         return builder.build()
+    }
+
+    private fun buildRequiredFkStagingProperty(fk: EdgeFk): PropertySpec {
+        val nullableType = fk.idType.toTypeName().copy(nullable = true)
+        return PropertySpec.builder(stagingFieldName(fk.propertyName), nullableType)
+            .addModifiers(KModifier.PRIVATE)
+            .mutable(true)
+            .initializer("null")
+            .build()
     }
 
     /**
@@ -254,16 +276,10 @@ internal class CreateGenerator(
         }
 
         for (fk in edgeFks) {
-            if (fk.required) {
-                builder.addStatement(
-                    "val %L = this.%L ?: throw IllegalStateException(%S)",
-                    fk.propertyName,
-                    fk.propertyName,
-                    "${fk.edgeName} is required",
-                )
-            } else {
-                builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
-            }
+            // Required FKs are typed non-null on the public property and
+            // their throw-on-unassigned getter fires before reaching this
+            // line if no value was assigned. Nullable FKs stay nullable.
+            builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
         }
 
         // ---- Build the row map. ----

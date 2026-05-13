@@ -24,6 +24,14 @@ data class EdgeFk(
 )
 
 /**
+ * Private nullable staging field name used by builders to hold required
+ * FK values before the public non-null getter is read. The leading
+ * underscore + `Staging` suffix keeps the name out of the public API and
+ * distinct from any user-declared property.
+ */
+internal fun stagingFieldName(propertyName: String): String = "_${propertyName}Staging"
+
+/**
  * Compute implicit FK properties for a schema's `belongsTo` edges.
  * Other edge kinds keep their FK on the opposite side or in a junction
  * table. Edges with an explicit `.field(...)` are skipped — the FK is

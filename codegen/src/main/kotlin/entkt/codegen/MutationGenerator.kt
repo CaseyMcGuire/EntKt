@@ -76,7 +76,7 @@ internal class MutationGenerator(
         }
 
         for (fk in edgeFks) {
-            val typeName = fk.idType.toTypeName().copy(nullable = true)
+            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
             mutationInterface.addProperty(
                 PropertySpec.builder(fk.propertyName, typeName)
                     .mutable(true)

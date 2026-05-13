@@ -3,10 +3,12 @@
 ## Status
 
 Partially implemented. The required-by-default nullability model,
-removal of entity-setter properties from generated builders, defensive
-null check on required FK setters, and unassigned-read throw on Create
-required FK getters are in place. Deferred work is listed under
-"Deferred Scope" at the end of this document.
+removal of entity-setter properties from generated builders, non-null
+Kotlin types on required FK builder properties (with private nullable
+staging + custom getter/setter), defensive null check on required FK
+setters, and unassigned-read throw on Create required FK getters are
+in place. Deferred work is listed under "Deferred Scope" at the end of
+this document.
 
 Split out from [Edge Mutation API](00-overview.md).
 
@@ -1129,16 +1131,6 @@ The current implementation lands the core API and contract pieces of
 this RFC. The following sections remain as follow-up work and are not
 required to use the new nullability model in practice:
 
-- **Non-null Kotlin types on required FK builder properties.**
-  Generated `${Entity}Create` and `${Entity}Update` builders currently
-  expose required FKs as `var authorId: UUID?` (matching the scalar
-  pattern that uses nullable types as staging state). The RFC's stronger
-  rule — required FKs typed as `var authorId: UUID` — needs a private
-  nullable backing field with a custom getter/setter and matching
-  property types on the `${Entity}Mutation` and `${Entity}UpdateMutationView`
-  interfaces. The setter null-rejection and post-hook backstop already
-  catch the unsafe states; the remaining work is purely about
-  Kotlin-source ergonomics.
 - **Field-backed FK API derived from the captured backing field
   declaration name.** `belongsTo(...).field(handle)` still works as the
   storage-level FK declaration, but the generated FK API name comes from

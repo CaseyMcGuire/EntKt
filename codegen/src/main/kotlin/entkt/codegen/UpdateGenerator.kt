@@ -136,6 +136,13 @@ internal class UpdateGenerator(
                     .build()
             )
             .addProperties(mutableFields.map { buildProperty(it) })
+            .also { builder ->
+                for (fk in edgeFks) {
+                    if (fk.required) {
+                        builder.addProperty(buildRequiredFkStagingProperty(fk))
+                    }
+                }
+            }
             .addProperties(edgeFks.map { buildEdgeFkProperty(it) })
             .addProperty(
                 buildMutationViewProperty(
@@ -202,29 +209,55 @@ internal class UpdateGenerator(
     }
 
     private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {
-        val typeName = fk.idType.toTypeName().copy(nullable = true)
-        val setterBuilder = FunSpec.setterBuilder()
-            .addParameter("value", typeName)
         if (fk.required) {
-            // Required FKs reject null at setter entry so Java/platform
-            // callers can't put the builder into a dirty+null state.
-            // `_checkRequiredNotNull()` still runs as a backstop for
-            // setter-bypassing paths (reflection writing the backing
-            // field directly).
-            setterBuilder
-                .addAnnotation(
-                    AnnotationSpec.builder(Suppress::class)
-                        .addMember("%S", "SENSELESS_COMPARISON")
+            // Required FKs:
+            //   - public property is non-null typed (per RFC "Public Types")
+            //   - private nullable staging field holds the value until assigned
+            //   - getter throws on untouched read (per RFC); reading
+            //     pending update state goes through `ctx.patch.authorId`
+            //   - setter rejects null at entry so Java/platform callers
+            //     can't put the builder into a dirty+null state
+            //   - `_checkRequiredNotNull()` still runs as a backstop for
+            //     setter-bypassing paths (reflection writing the backing
+            //     field directly)
+            val nonNullType = fk.idType.toTypeName().copy(nullable = false)
+            val stagingName = stagingFieldName(fk.propertyName)
+            return PropertySpec.builder(fk.propertyName, nonNullType)
+                .addModifiers(KModifier.OVERRIDE)
+                .mutable(true)
+                .getter(
+                    FunSpec.getterBuilder()
+                        .addStatement(
+                            "if (%S !in dirtyFields) throw IllegalStateException(%S)",
+                            fk.propertyName,
+                            "${fk.propertyName} is not set in this update; read ctx.patch.${fk.propertyName} instead",
+                        )
+                        .addStatement(
+                            "return %L ?: throw IllegalStateException(%S)",
+                            stagingName,
+                            "${fk.edgeName} is required",
+                        )
                         .build(),
                 )
-                .addStatement(
-                    "requireNotNull(value) { %S }",
-                    "${fk.edgeName} is required",
+                .setter(
+                    FunSpec.setterBuilder()
+                        .addParameter("value", nonNullType)
+                        .addAnnotation(
+                            AnnotationSpec.builder(Suppress::class)
+                                .addMember("%S", "SENSELESS_COMPARISON")
+                                .build(),
+                        )
+                        .addStatement(
+                            "requireNotNull(value) { %S }",
+                            "${fk.edgeName} is required",
+                        )
+                        .addStatement("%L = value", stagingName)
+                        .addStatement("dirtyFields.add(%S)", fk.propertyName)
+                        .build(),
                 )
+                .build()
         }
-        setterBuilder
-            .addStatement("field = value")
-            .addStatement("dirtyFields.add(%S)", fk.propertyName)
+        val typeName = fk.idType.toTypeName().copy(nullable = true)
         return PropertySpec.builder(fk.propertyName, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
@@ -239,7 +272,22 @@ internal class UpdateGenerator(
                     .addStatement("return field")
                     .build()
             )
-            .setter(setterBuilder.build())
+            .setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", typeName)
+                    .addStatement("field = value")
+                    .addStatement("dirtyFields.add(%S)", fk.propertyName)
+                    .build()
+            )
+            .build()
+    }
+
+    private fun buildRequiredFkStagingProperty(fk: EdgeFk): PropertySpec {
+        val nullableType = fk.idType.toTypeName().copy(nullable = true)
+        return PropertySpec.builder(stagingFieldName(fk.propertyName), nullableType)
+            .addModifiers(KModifier.PRIVATE)
+            .mutable(true)
+            .initializer("null")
             .build()
     }
 
@@ -278,7 +326,8 @@ internal class UpdateGenerator(
             adapter.addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
         }
         for (fk in edgeFks) {
-            val typeName = fk.idType.toTypeName().copy(nullable = true)
+            // Forwarder property type matches the interface (required → non-null).
+            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
             adapter.addProperty(buildAdapterForwarderProperty(updateClassName, fk.propertyName, typeName))
         }
         // unset{Field}() overrides — the whole point of the view.
@@ -375,9 +424,15 @@ internal class UpdateGenerator(
         }
         for (fk in edgeFks) {
             if (fk.required) {
+                // Required FKs read from the private staging field rather
+                // than the throw-on-untouched getter, so a corrupted
+                // dirty+null state (setter-bypassing reflection) lowers
+                // to `Unset` here and is caught by
+                // `_checkRequiredNotNull()` before the canonical patch.
+                val stagingName = stagingFieldName(fk.propertyName)
                 code.add(
                     "  %L = if (%S in dirtyFields && this.%L != null) %T.Set(this.%L!!) else %T.Unset,\n",
-                    fk.propertyName, fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
+                    fk.propertyName, fk.propertyName, stagingName, FIELD_PATCH, stagingName, FIELD_PATCH,
                 )
             } else {
                 code.add(
@@ -416,9 +471,13 @@ internal class UpdateGenerator(
         }
         for (fk in edgeFks) {
             if (!fk.required) continue
+            // Read the private staging field directly so a corrupted
+            // dirty+null state is caught here rather than triggering the
+            // throw-on-untouched getter (which would mask the diagnostic).
+            val stagingName = stagingFieldName(fk.propertyName)
             builder.addStatement(
                 "if (%S in dirtyFields && this.%L == null) throw IllegalStateException(%S)",
-                fk.propertyName, fk.propertyName, "${fk.edgeName} is required",
+                fk.propertyName, stagingName, "${fk.edgeName} is required",
             )
         }
         return builder.build()
