@@ -1167,11 +1167,14 @@ required to use the new nullability model in practice:
 - **Schema-level rejection rules for field-backed FKs.** Codegen now
   rejects relationship/backing-field nullability mismatches in both
   directions (required edge + nullable field, and nullable edge +
-  non-null field), plus the existing mismatched-id-type and
-  unique-field-on-non-unique-edge checks. Still deferred:
-  `updateDefault(...)` on a field used as a `belongsTo(...).field(handle)`
-  backing FK should be rejected with a diagnostic directing the caller
-  to a hook.
+  non-null field), plus the mismatched-id-type,
+  unique-field-on-non-unique-edge, and
+  `updateDefault(...)`-on-backing-FK checks. (The `updateDefault`
+  rejection is preventative — only `time().updateDefaultNow()` exposes
+  the DSL today, and `time` can't match any current FK target id type,
+  so the type-mismatch check fires first under the current DSL. The
+  rule keeps the door closed if a numeric `.updateDefault(...)`
+  modifier is added later.)
 - **Collision detection.** Codegen does not yet reject schemas where a
   relationship FK's generated API name (FK property or
   `unset{FkProperty}()`) collides with another declared or generated

@@ -127,6 +127,25 @@ internal fun columnMetadataFor(
                     "${backingField.type} but target entity's id type is $targetIdType",
             )
         }
+        if (backingField.updateDefault != null) {
+            // Per RFC: update defaults on relationship FKs would silently
+            // rewrite untouched relationships on every update. The
+            // caller should express the intent as a beforeUpdate or
+            // afterUpdate hook on the owner entity instead.
+            //
+            // Today only `time().updateDefaultNow()` exposes the DSL,
+            // and `time` can't match any current FK target id type
+            // (Int / Long / UUID / String), so the type-mismatch check
+            // above fires first under the current DSL. This check is
+            // preventative future-proofing in case a numeric
+            // `.updateDefault(...)` modifier is added later.
+            error(
+                "Edge '${edge.name}' references .field(\"$f\") which carries " +
+                    "an updateDefault — update defaults are not allowed on " +
+                    "field-backed FK columns. Express the intent as a " +
+                    "beforeUpdate or afterUpdate hook on the owner entity instead.",
+            )
+        }
         val existing = explicitFieldEdges.put(
             f,
             ExplicitFieldEdge(edge.name, edge.target.tableName, belongsTo.onDelete, belongsTo.required, belongsTo.unique),
