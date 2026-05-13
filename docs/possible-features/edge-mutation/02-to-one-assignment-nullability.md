@@ -914,23 +914,36 @@ Before implementation, add tests for:
   name plus `Id`, not the storage/runtime edge string, and reject collisions with
   fields, edges, generated methods, Kotlin members, or JVM signatures
 - the generated update/create builder exposes the resolved FK property
-  (`authorId`) for relationship writes, and does **not** expose `setAuthor(...)`
-  or a writable `author` property — codegen assertion: the generated
-  `${Entity}Update` / `${Entity}Create` class contains `var authorId:` and does
-  not contain `public fun setAuthor(`/`public fun set<Edge>(` or `var author:`
-  for any `belongsTo` edge
-- the old property-style relationship assignment `author = alice` /
-  `author = null` does not compile against the generated builder —
-  compile-fail assertion: a Kotlin source snippet that writes
-  `client.posts.update(id) { author = alice }` fails to type-check with
-  an "unresolved reference: author" error, while `authorId = alice.id`
-  type-checks on the same builder
+  for each `belongsTo` edge and does **not** expose `setAuthor(...)` or
+  a writable relationship entity property — codegen assertion:
+  - for an **implicit FK** fixture (`val author = belongsTo<User>("author")`),
+    the generated `${Entity}Update` / `${Entity}Create` class contains
+    `var authorId:` and does not contain `public fun setAuthor(`,
+    `public fun set<Edge>(`, or `var author:` for that edge
+  - for a **field-backed** fixture
+    (`val writerId = uuid("writer_id"); val author = belongsTo<User>("author").field(writerId)`),
+    the generated class contains the backing field's declaration
+    property (`var writerId:`) and does not contain a generated
+    `authorId`, `setAuthor(...)`, or `var author:`
+- the old property-style relationship assignment does not compile
+  against the generated builder — compile-fail assertion: a Kotlin
+  source snippet that writes
+  `client.posts.update(id) { author = alice }` fails to type-check
+  with an "unresolved reference: author" error, while the
+  fixture-appropriate resolved FK write
+  (`authorId = alice.id` for implicit FKs, `writerId = alice.id` for
+  the field-backed fixture above) type-checks on the same builder
 - the generated builder does not expose a readable relationship entity
   property — codegen assertion: no `public val author:` or
   `public var author:` declaration appears in the generated
   `${Entity}Update` / `${Entity}Create` for any `belongsTo` edge
-- the hook-facing `${Entity}UpdateMutationView` interface exposes the FK setter
-  (`authorId`) and `unsetAuthorId()`, but no `setAuthor` member
+- the hook-facing `${Entity}UpdateMutationView` interface exposes the
+  resolved FK setter and `unset{FkProperty}()` and contains no
+  `setAuthor`-style member — codegen assertion:
+  - implicit FK fixture: interface body contains `authorId` and
+    `unsetAuthorId()` and no `setAuthor`
+  - field-backed fixture: interface body contains `writerId` and
+    `unsetWriterId()` and no `setAuthor`
 - edge declaration property names whose generated implicit FK names collide are
   rejected
 - schema collection fails if codegen cannot map a registered `belongsTo` builder
