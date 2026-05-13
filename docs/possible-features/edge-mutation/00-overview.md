@@ -20,7 +20,7 @@ related, but they should be reviewed and implemented independently:
 The monolithic RFC was covering several design changes with different risk
 levels and implementation timelines:
 
-- to-one FK assignment semantics
+- to-one FK mutation semantics
 - relationship nullability defaults
 - ID-based update root semantics
 - many-to-many schema modeling

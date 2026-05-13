@@ -274,6 +274,41 @@ rejected it:
 - *"Property name `<name>` requires separator munging; rename the
   declaration to lowerCamelCase."*
 
+### Field-backed FK declaration capture
+
+For `belongsTo(...).field(handle)` edges, schema inspection must also
+map the backing field builder to exactly one eligible Kotlin declaration
+property — the field participates in generated FK API names and the
+caller's declared name is authoritative.
+
+The same eligibility and mapping rules from "Eligible property shape"
+and "Mapping rules" above apply to the backing field property:
+
+- It is a public, non-`private`, non-`protected` Kotlin `val`
+  declared directly on the schema class.
+- Two back-to-back reads return the same field builder instance
+  (`===`).
+- Reading the property does not register additional field or edge
+  builders on the schema.
+- It is not delegated (`by lazy`, custom `getValue`, etc.).
+- The declaration property name is `lowerCamelCase`.
+- It maps to exactly one registered field builder via identity; the
+  field builder cannot be aliased through a second `val`.
+
+The generated FK property name is the backing field declaration
+property name — *not* the storage column name and *not* a
+synthesized `{edge}Id` suffix. For example, `val writer = uuid("writer_id")`
+produces a generated FK property named `writer`, and
+`val writerId = uuid("writer_id")` produces a generated FK property
+named `writerId`. See the "Explicit Backing Fields" section for the
+worked examples.
+
+If capture fails (the field is delegated, private, inherited, aliased
+through another `val`, or its property name requires separator munging),
+schema validation emits the same family of diagnostics as for edge
+builders, directing the caller to declare the field as a plain
+`val fieldName = uuid("column_name")` on the schema class.
+
 ### Scope
 
 This RFC requires declaration-name capture for **edge** API generation
