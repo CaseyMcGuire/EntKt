@@ -456,8 +456,8 @@ payload is valid, but no state transition will be persisted.
 ## Relationship To Other RFCs
 
 [To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
-defines to-one setter and FK semantics. This RFC defines the owner-row update
-root those setters run inside.
+defines to-one resolved FK mutation semantics. This RFC defines the
+owner-row update root that those FK writes run inside.
 
 [Transaction And Locking Semantics](04-transaction-locking-semantics.md)
 may extend this baseline with stronger update consistency modes, such as
