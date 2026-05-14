@@ -106,6 +106,18 @@ declarations use `throughEntity(...)`. Codegen should still reject mismatches
 between `throughLink(...)` and `throughEntity(...)` for the same junction
 relationship.
 
+By default, a `throughEntity(...)` declaration synthesizes a read-only reverse
+traversal edge on the opposite-side schema (matching the prior
+`manyToMany(...).through(...)` behavior — query traversal, eager loading,
+predicate handle, no write helpers). When the opposite side explicitly
+declares its own `throughEntity(...)` for the same junction, codegen
+**suppresses the synthesized reverse edge for that relationship** — the
+explicit declaration owns the traversal surface on its side, so duplicate
+traversal handles aren't generated. The two explicit declarations must agree
+on the junction schema and on the source/target property references (each
+side's `sourceEdge` is the opposite side's `targetEdge`); codegen rejects
+mismatched pairs at schema validation.
+
 ## Link-Table Safety
 
 The safety rules below define what qualifies as a helper-eligible
@@ -178,6 +190,14 @@ Before implementation, add tests for:
   and no predicate handle is exposed for the reverse direction
 - explicit opposite-side `throughEntity(...)` traversal declarations for the
   same junction relationship are allowed when both sides use `throughEntity(...)`
+- a `throughEntity(...)` declaration synthesizes a read-only reverse
+  traversal edge on the opposite-side schema by default; when the
+  opposite side explicitly declares its own `throughEntity(...)` for
+  the same junction, the synthesized reverse is suppressed so users
+  don't get duplicate traversal handles
+- mismatched explicit `throughEntity(...)` pairs (different junction
+  schema, or `sourceEdge`/`targetEdge` props that don't pair up
+  symmetrically) are rejected at schema validation
 - generated link-table M2M helpers are emitted only for the single explicit
   `throughLink(...)` declaration for a junction relationship
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
