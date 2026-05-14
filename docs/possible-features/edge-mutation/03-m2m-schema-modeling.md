@@ -502,14 +502,28 @@ chosen by which write surface the caller plans to use:
   callers mutate through the junction repo, junction `beforeCreate` /
   `beforeUpdate` hooks fire and can canonicalize or reject
   non-canonical pairs.
-- **`throughLink(...)` with caller-side canonicalization** — caller
-  always passes the pair to `add(...)` / `remove(...)` / `set(...)` in
-  canonical order (e.g., `(min(id), max(id))`). The pair-uniqueness
-  index then naturally rejects duplicates because every insertion
-  arrives at the same canonical ordering. Junction hooks **do not fire**
-  on this path (see "Link-table helpers bypass the junction repo"
-  below), so canonicalization has to happen in the caller, not via a
-  hook.
+- **`throughLink(...)` with caller-side canonicalization** — generated
+  helpers are owner-source: `client.users.update(a.id) { friends.add(b.id) }`
+  writes a junction row with `source = a.id, target = b.id` regardless of
+  which id is smaller. To keep storage canonical (e.g., always
+  `source = min(id), target = max(id)`), the caller has to **route the
+  write through the canonical-source side** — pick the smaller-id user
+  as the `update(...)` target before calling `friends.add(...)`. The
+  helper itself can't swap the source: it's pinned to the row being
+  updated.
+
+  This enforces a **storage invariant only**: the database ends up
+  with exactly one canonical row per friendship. It does **not** make
+  traversal symmetric — `client.users.update(largerId).friends` traverses
+  only rows where `largerId` is the source, so from that user's
+  perspective the friendship doesn't appear under `friends` unless they
+  also query the inverse direction (or the junction directly). Callers
+  that want to read "all friendships involving user X" must either
+  consult the junction schema's repo directly or do two traversals
+  (`x.friends` plus a query against the junction for rows where X is
+  the target). Junction hooks **do not fire** on this path (see
+  "Link-table helpers bypass the junction repo" below), so
+  canonicalization has to happen in the caller, not via a hook.
 - **`throughLink(...)` with a database `CHECK` constraint** —
   enforce the canonical ordering at the database level (e.g.,
   `CHECK (follower_id < followed_id)` in the junction's DDL). The
