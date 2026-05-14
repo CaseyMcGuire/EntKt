@@ -82,8 +82,43 @@ data class Through(
 ## Write Orientation
 
 For V1, a link-table M2M relationship may have only one explicit
-`throughLink(...)` declaration for a given junction/source/target pair. That
-declaration owns the write orientation and gets generated helpers.
+`throughLink(...)` declaration per **relationship key**, where the
+relationship key is the triple
+
+```
+(junction schema, source junction edge, target junction edge)
+```
+
+— the junction class and the two `belongsTo` property references the
+caller passes as `sourceEdge` / `targetEdge` to `.throughLink<Junction>(...)`.
+Keying on the specific junction edges (rather than just the source and
+target schema types) is required for self-referential and multi-FK
+junctions where both junction edges resolve to the same target schema:
+
+- `Friendship` with `val requester = belongsTo<User>("requester")` and
+  `val recipient = belongsTo<User>("recipient")` is one junction with two
+  distinct edges both pointing at `User`. The
+  `(Friendship::class, Friendship::requester, Friendship::recipient)` key
+  is distinct from `(Friendship::class, Friendship::recipient, Friendship::requester)`.
+- A junction with multiple FK columns to the same target type for
+  different purposes (e.g., a `ProjectAssignment` with `assignee` and
+  `reviewer` both pointing at `Pet`) likewise distinguishes relationships
+  by the specific junction-edge pair.
+
+That single declaration owns the write orientation and gets generated helpers.
+
+A second `throughLink(...)` whose key is the same triple — including the
+case where the source and target junction edges are swapped — is the
+"explicit opposite-side declaration" rejected below. Two `throughLink(...)`
+declarations whose keys differ in either junction edge (e.g.,
+`Friendship::requester` / `Friendship::recipient` for one relationship and
+`Friendship::recipient` / `Friendship::requester` for the reverse) are
+treated as the **same relationship in opposite orientations** and the
+second is rejected. Two declarations whose keys differ on one of the
+junction-edge properties but describe genuinely different relationships
+(e.g., `ProjectAssignment::project` / `ProjectAssignment::assignee` for
+"assignees" and `ProjectAssignment::project` / `ProjectAssignment::reviewer`
+for "reviewers") have distinct relationship keys and both are allowed.
 
 **V1 does not synthesize a reverse traversal edge for `throughLink(...)`
 relationships.** Codegen does not infer a read-only edge on the opposite-side
@@ -95,10 +130,12 @@ for V1. Reverse traversal for link-table relationships is deferred — see
 "Future Enhancements" for the planned design.
 
 Codegen must reject an explicit opposite-side `throughLink(...)` declaration for
-the same junction relationship in V1. Without a concrete read-only marker or
-canonical reverse-write lock model, explicit bidirectional link-table helpers
-would make the owner of the relationship ambiguous and could reintroduce
-exact-set races between opposite orientations.
+the same relationship key in V1 — concretely, a second declaration whose
+relationship key matches the first with `sourceEdge` / `targetEdge` swapped.
+Without a concrete read-only marker or canonical reverse-write lock model,
+explicit bidirectional link-table helpers would make the owner of the
+relationship ambiguous and could reintroduce exact-set races between opposite
+orientations.
 
 For `throughEntity(...)`, callers mutate the junction entity through its repo, so
 explicit opposite-side traversal declarations are allowed as long as both
@@ -182,8 +219,16 @@ Before implementation, add tests for:
 
 - M2M schemas use `throughLink(...)` or `throughEntity(...)`; codegen does not
   infer the mutation model from junction shape or runtime configuration
-- explicit reverse `throughLink(...)` declarations for the same junction
-  relationship are rejected in V1
+- a second `throughLink(...)` declaration whose relationship key
+  `(junction schema, sourceEdge prop, targetEdge prop)` matches an
+  existing declaration's key with `sourceEdge`/`targetEdge` swapped is
+  rejected in V1 (covers self-referential junctions like
+  `Friendship::requester` ↔ `Friendship::recipient` and multi-FK
+  junctions where both sides resolve to the same target schema)
+- two `throughLink(...)` declarations with distinct relationship keys —
+  e.g., `(ProjectAssignment, project, assignee)` and
+  `(ProjectAssignment, project, reviewer)` — describe genuinely
+  different relationships and both are accepted
 - V1 does not synthesize a reverse traversal edge for a `throughLink(...)`
   relationship: the opposite-side schema's generated `Edges` data class
   does not gain a synthesized field, no eager-loading scope is generated,
