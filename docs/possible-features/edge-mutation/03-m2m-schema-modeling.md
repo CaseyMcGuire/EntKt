@@ -195,6 +195,33 @@ declares its own `throughEntity(...)` for the same junction, codegen
 explicit declaration owns the traversal surface on its side, so duplicate
 traversal handles aren't generated.
 
+**Self-referential `throughEntity(...)`: no default synthesis.** When the
+declaring schema and the M2M target schema are the same — i.e., the
+"opposite-side schema" is the *same* schema — V1 does not synthesize a
+reverse traversal edge. There is no separate schema to put it on, and
+generating a second edge on the declaring schema would need a
+synthesized name with no stable convention (and risks colliding with
+the original declared edge). Callers that need bidirectional traversal
+for a self-referential `throughEntity(...)` declare both edges
+explicitly on the same schema, with orientation keys that pair-swap so
+the matching rule below recognizes them as the two orientations of one
+canonical relationship identity:
+
+```kotlin
+class User : EntSchema("users") {
+    val following = manyToMany<User>("following")
+        .throughEntity<Follow>(Follow::follower, Follow::followed)
+    val followers = manyToMany<User>("followers")
+        .throughEntity<Follow>(Follow::followed, Follow::follower)
+}
+```
+
+The two declarations are the two orientations of the same canonical
+identity (`{Follow, follower, followed}` as an unordered pair). Because
+each side is explicit, neither triggers the "default synthesize reverse"
+path — symmetric with how cross-schema explicit opposites suppress
+synthesis on both sides.
+
 **Matching rule for two explicit `throughEntity(...)` declarations.**
 Codegen treats two explicit declarations as opposite sides of the same
 relationship when, and only when:
@@ -530,6 +557,14 @@ Before implementation, add tests for:
   edges in opposite order (side A's
   `(sourceEdge, targetEdge) = (X, Y)`, side B's = `(Y, X)`); when
   matched, each side's synthesized reverse is suppressed
+- self-referential `throughEntity(...)` (declaring schema and M2M
+  target schema are the same) gets **no default reverse synthesis**;
+  callers who want bidirectional traversal declare both orientations
+  explicitly on the same schema with pair-swapped orientation keys
+  (e.g., `User.following` via `(Follow::follower, Follow::followed)`
+  and `User.followers` via `(Follow::followed, Follow::follower)`)
+  and the matching rule above recognizes them as the two orientations
+  of one canonical identity
 - mismatched explicit `throughEntity(...)` pairs are rejected: a
   different junction schema, OR a `(sourceEdge, targetEdge)` pair
   that doesn't pair-swap (e.g., `(project, assignee)` on one side and
