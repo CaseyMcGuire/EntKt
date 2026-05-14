@@ -42,13 +42,23 @@ import entkt.schema.EntSchema
  * Also generates two restricted hook-facing views that extend the
  * shared `Mutation` interface:
  *
- * - `${SchemaName}CreateMutationView` — passed to `beforeCreate` hooks.
- *   Adds immutable scalar fields (writable on create only). Hides the
- *   concrete-builder surface (`save()`, `client`, `driver`, hook lists,
- *   private staging fields) so hooks can't re-enter the save pipeline.
+ * - `${SchemaName}CreateMutationView` — the typed surface for
+ *   `beforeCreate` hook lambdas. Adds immutable scalar fields
+ *   (writable on create only). Hides the concrete-builder surface
+ *   (`save()`, `client`, `driver`, hook lists, private staging fields)
+ *   from the typed hook surface so a hook author working through
+ *   autocomplete and type-checked code can't reach them.
  *
- * - `${SchemaName}UpdateMutationView` — passed to `beforeUpdate` hooks
- *   via `ctx.mutation`. Adds `unset{Field}()` patch operations.
+ * - `${SchemaName}UpdateMutationView` — the typed surface for
+ *   `beforeUpdate` hook lambdas (via `ctx.mutation`). Adds
+ *   `unset{Field}()` patch operations.
+ *
+ * Both are static API restrictions, not sandboxed capability
+ * boundaries: the runtime value passed to a hook is still the
+ * concrete builder, so a hook that explicitly casts the parameter
+ * back to `${SchemaName}Create` / `${SchemaName}Update` can reach the
+ * hidden members. The contract is "hidden from the typed hook
+ * surface", not "unreachable at runtime".
  *
  * The Update view's `unset` methods live only on the update side because
  * the patch model they remove from is update-specific.

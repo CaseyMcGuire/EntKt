@@ -816,12 +816,18 @@ the create-time and internal-corruption cases listed above.
 ### Hook-Facing API Shape
 
 Codegen should generate hook-facing mutation interfaces separately from the
-public create/update builders. Hook callbacks receive these restricted
-interfaces, not the concrete public builders. The interfaces expose mutable
-scalar fields and resolved FK fields according to field and relationship
-mutability, but they do not expose relationship entity properties or link-table
-edge mutators. Create and update hook interfaces may differ when immutable fields
-are create-only.
+public create/update builders. Hook callbacks are **typed against** these
+restricted interfaces rather than the concrete public builders — this is a
+static API restriction (the typed hook surface hides `save()`, `driver`,
+`client`, hook lists, and other concrete-builder members), not a sandboxed
+capability boundary. The runtime value the framework passes to a hook is
+still the concrete builder, so a hook that explicitly casts the parameter
+back to the concrete type can reach the hidden members. The contract is
+"hidden from the typed hook surface", not "unreachable at runtime". The
+interfaces expose mutable scalar fields and resolved FK fields according to
+field and relationship mutability, but they do not expose relationship entity
+properties or link-table edge mutators. Create and update hook interfaces may
+differ when immutable fields are create-only.
 
 `beforeSave` receives a common restricted `{Entity}Mutation` interface shared by
 create and update hooks. That common interface exposes only fields and FKs that
