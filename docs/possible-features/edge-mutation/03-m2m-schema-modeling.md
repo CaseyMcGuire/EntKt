@@ -335,11 +335,16 @@ Concretely:
   rejection, both allowed.
 
 The same matching rule applies to the `throughLink(...)` opposite-side
-rejection (already covered above): two `throughLink(...)` declarations
-whose keys pair-swap describe the same relationship in opposite
-orientations and the second is rejected; declarations whose keys don't
-pair-swap describe genuinely different relationships and both are
-allowed.
+rejection (already covered above):
+
+- **Same canonical identity, orientation keys pair-swap** → second
+  declaration rejected (same relationship in opposite orientations).
+- **Same canonical identity, identical orientation keys** → second
+  declaration rejected as a same-orientation alias (see
+  "Same-orientation aliases are rejected" below).
+- **Distinct canonical identities** → declarations describe genuinely
+  different relationships and both are allowed; no matching attempted,
+  no rejection.
 
 **Same-orientation aliases are rejected.** V1 also rejects multiple
 explicit `throughEntity(...)` declarations whose canonical relationship
