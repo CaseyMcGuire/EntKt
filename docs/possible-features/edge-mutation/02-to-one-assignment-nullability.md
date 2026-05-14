@@ -1175,9 +1175,9 @@ required to use the new nullability model in practice:
   Backing Fields`) require reflection-driven property-name capture, plus
   diagnostics for ineligible properties (delegated, private, inherited,
   computed-getter, etc.).
-- **Schema-level rejection rules for field-backed FKs.** Codegen now
-  rejects relationship/backing-field nullability mismatches in both
-  directions (required edge + nullable field, and nullable edge +
+- **Schema-level rejection rules for field-backed FKs — implemented.**
+  Codegen rejects relationship/backing-field nullability mismatches in
+  both directions (required edge + nullable field, and nullable edge +
   non-null field), plus the mismatched-id-type,
   unique-field-on-non-unique-edge, and
   `updateDefault(...)`-on-backing-FK checks. (The `updateDefault`
@@ -1185,12 +1185,20 @@ required to use the new nullability model in practice:
   the DSL today, and `time` can't match any current FK target id type,
   so the type-mismatch check fires first under the current DSL. The
   rule keeps the door closed if a numeric `.updateDefault(...)`
-  modifier is added later.)
-- **Collision detection.** Codegen does not yet reject schemas where a
-  relationship FK's generated API name (FK property or
-  `unset{FkProperty}()`) collides with another declared or generated
-  identifier. The unified collision rule in "Explicit Backing Fields"
-  remains a specification target.
+  modifier is added later.) Listed here for completeness because
+  several earlier RFC drafts mentioned them as gaps; no further work
+  required.
+- **Collision detection — partial.** `validateMemberNames` in codegen
+  rejects schemas where the FK property name collides with a declared
+  field, edge, or another FK's property name (with attribution
+  distinguishing "field-backed FK for edge 'foo'" from "synthesized FK
+  for edge 'foo'"). What's still not enforced: collisions involving
+  the generated `unset{FkProperty}()` method names and other
+  cross-artifact namespaces (Mutation interface members, hook-facing
+  view methods, etc.) listed in the unified collision rule under
+  "Explicit Backing Fields". The current check catches the
+  highest-frequency collisions in practice; the broader rule remains
+  a specification target.
 - **Hook-facing FK getter behavior on Create.** Reading an unassigned
   required FK now throws on Create builders, matching the RFC. The
   RFC's note about hook-facing create interfaces having distinct
