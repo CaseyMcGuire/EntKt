@@ -298,9 +298,12 @@ The two `KProperty1<Junction, BelongsToHandle<*>>` arguments to
 are enforced as schema validation rules at codegen time, not by the
 Kotlin compiler:
 
-- both refs must resolve to non-null `belongsTo` edges declared on the
-  junction schema; refs that don't reach a junction `belongsTo` (e.g.,
-  point at a `hasMany`, a scalar field, or null) are rejected
+- both refs must resolve to a `belongsTo` edge declared on the junction
+  schema; refs that don't reach a junction `belongsTo` (e.g., point at
+  a `hasMany`, a scalar field, or a null property handle) are rejected.
+  This is a resolution check on the property reference itself, not a
+  statement about FK nullability — see the separate non-null-FK rule
+  under "Junction-shape rules" below for the helper-eligibility constraint
 - the two refs must be **distinct** junction edges; passing the same
   property reference twice (e.g., `Friendship::requester` for both
   `sourceEdge` and `targetEdge`) is rejected
@@ -315,6 +318,19 @@ Kotlin compiler:
 
 These ref-resolution rules apply equally to `throughEntity(...)` and
 are checked at the same point in schema validation.
+
+**Scope note: non-null junction FKs.** The "junction `belongsTo` edges
+must be relationship-required (no `.nullable()`)" constraint in
+"Junction-shape rules" below is a **`throughLink(...)` helper-eligibility
+rule only**, not a general M2M traversal invariant. `throughEntity(...)`
+relationships may declare junction `belongsTo` edges as `.nullable()`
+when the domain allows partial junction rows — callers mutate the
+junction through its repo, where nullable FKs interact with the
+normal create/update builder semantics. The direct-driver link-table
+helpers, in contrast, cannot reason about nullable junction FKs
+without a separate spec for "what does add(...) / remove(...) /
+set(...) mean when an endpoint may be null", so `throughLink(...)`
+restricts to non-null junction FKs in V1.
 
 #### Worked example
 
@@ -557,6 +573,12 @@ Before implementation, add tests for:
   `sourceEdge` and `targetEdge` is rejected; a `sourceEdge` whose
   target schema is not the declaring schema is rejected; a `targetEdge`
   whose target schema is not the M2M target schema is rejected
+- the non-null-junction-FK rule applies to **`throughLink(...)` only**.
+  A `throughLink(...)` declaration over a junction whose `belongsTo`
+  edges are `.nullable()` is rejected as helper-ineligible; the same
+  junction shape under `throughEntity(...)` is accepted (callers
+  mutate through the junction repo, which handles nullable FKs via
+  the normal builder semantics)
 - a second `throughLink(...)` declaration that resolves to the same
   **canonical relationship identity** as an existing declaration — same
   junction class, same junction-edge ref pair as an unordered pair,
