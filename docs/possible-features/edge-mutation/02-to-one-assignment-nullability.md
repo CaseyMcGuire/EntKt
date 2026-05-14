@@ -1180,10 +1180,13 @@ Before implementation, add tests for:
   current database state
 - hook-facing to-one mutation views expose resolved FK fields only, not readable
   relationship entity properties
-- hook callbacks receive restricted hook-facing mutation interfaces, not the
-  concrete public create/update builders
-- `beforeSave` receives a common restricted mutation interface that excludes
-  create-only immutable fields and immutable field-backed FKs
+- hook callbacks are typed against restricted hook-facing mutation interfaces,
+  not the concrete public create/update builders (per "Hook-Facing API Shape":
+  `beforeCreate` and `beforeSave` get the concrete builder typed as the view —
+  static-API restriction; `beforeUpdate` gets a private adapter that doesn't
+  extend the concrete builder — runtime-enforced narrowing)
+- `beforeSave` is typed against a common restricted mutation interface that
+  excludes create-only immutable fields and immutable field-backed FKs
 - update-side getters on the common `beforeSave` mutation interface throw for
   unset update scalar/FK fields instead of returning current database state
 - reading an unset required FK from a create hook-facing mutation view throws,
