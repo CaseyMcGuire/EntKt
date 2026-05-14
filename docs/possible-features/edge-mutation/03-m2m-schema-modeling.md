@@ -241,13 +241,27 @@ not run junction repo hooks, privacy, or validation.
 
 ## Rollout Plan
 
-1. Replace the generic many-to-many `.through(...)` API with explicit
-   `throughLink(...)` and `throughEntity(...)` schema markers.
-2. Add static codegen validation for link-table safety.
+1. **Remove the generic `.through(...)` marker.** It is replaced by the
+   explicit `throughLink(...)` and `throughEntity(...)` markers; there
+   is no alias from `.through(...)` to either form. The whole point of
+   the new markers is to force the schema author to choose the write
+   model — silently defaulting to one or the other would defeat the
+   purpose. If `.through(...)` still exists on the builder during a
+   migration window, schema validation must reject it with a diagnostic
+   directing callers to choose either `throughLink(...)` (junction is
+   pure relationship storage) or `throughEntity(...)` (junction carries
+   payload, hooks, privacy, or validation). Once the migration window
+   closes, the method is deleted from `ManyToManyBuilder`.
+2. Add static codegen validation for link-table safety (junction-shape
+   rules + ref-resolution rules from "Link-Table Safety").
 3. Generate direct helpers only for the single explicit `throughLink(...)`
    declaration for a junction relationship.
-4. Keep synthesized reverse link-table edges traversal-only in V1.
-5. Keep through-entity edges repo-only.
+4. V1 does not synthesize a reverse traversal edge for `throughLink(...)`
+   relationships (see "Write Orientation"); reverse traversal is
+   deferred to a follow-up `throughLinkInverse(...)` design.
+5. Keep through-entity edges repo-only for write paths; the
+   default-synthesize / opposite-side-suppress reverse-traversal rule
+   from "Write Orientation" applies.
 
 ## Test Requirements
 
@@ -255,6 +269,11 @@ Before implementation, add tests for:
 
 - M2M schemas use `throughLink(...)` or `throughEntity(...)`; codegen does not
   infer the mutation model from junction shape or runtime configuration
+- the generic `.through(...)` marker is removed and not aliased to
+  either explicit form; if it survives during a migration window,
+  schema validation rejects it with a diagnostic naming the two
+  replacements (`throughLink(...)` vs `throughEntity(...)`) and a
+  one-line summary of how to choose
 - `throughLink(...)` / `throughEntity(...)` ref resolution rules are
   enforced as schema validation: refs that don't resolve to a junction
   `belongsTo` are rejected; the same prop ref passed for both
