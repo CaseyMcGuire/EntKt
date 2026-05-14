@@ -425,9 +425,35 @@ private fun validateThroughLinkJunctions(
             val sourceFkCol = sourceBt.field ?: "${sourceJunctionEdge.name}_id"
             val targetFkCol = targetBt.field ?: "${targetJunctionEdge.name}_id"
 
-            // Rule 1: shape = id + 2 FK columns only. `scalarFields()` already
-            // excludes columns that back a belongsTo edge, so any remaining
-            // field is payload.
+            // Rule 1a: no extra belongsTo edges beyond the two named in
+            // throughLink. An extra junction belongsTo adds an FK column
+            // (synthesized or field-backed) the helpers will not populate.
+            // `scalarFields()` filters out *all* belongsTo backing columns
+            // — including the unnamed extra one — so without this check a
+            // third belongsTo would silently slip past Rule 1b's payload
+            // scan even though the junction has three FK columns.
+            val extraBelongsTo = junctionEdges
+                .filter { it.kind is EdgeKind.BelongsTo }
+                .filter { it !== sourceJunctionEdge && it !== targetJunctionEdge }
+            if (extraBelongsTo.isNotEmpty()) {
+                val names = extraBelongsTo.joinToString(", ") {
+                    val bt = it.kind as EdgeKind.BelongsTo
+                    val col = bt.field ?: "${it.name}_id"
+                    "'${it.name}' (FK column '$col' → ${schemaNames[it.target] ?: it.target.tableName})"
+                }
+                error(
+                    "$ctx: junction declares extra belongsTo edge(s) beyond the named " +
+                        "sourceEdge/targetEdge: $names. throughLink helpers only populate the two " +
+                        "FK columns named in the manyToMany declaration, so any additional " +
+                        "junction FK would be left unset on insert. Drop the extra edge(s) or " +
+                        "model this relationship as throughEntity.",
+                )
+            }
+
+            // Rule 1b: no payload scalar fields. `scalarFields()` excludes
+            // columns that back a belongsTo edge; with Rule 1a above, the
+            // only remaining belongsTo-backed columns are the two named
+            // FKs, so any leftover scalar here is genuine payload.
             val payload = scalarFields(junction)
             if (payload.isNotEmpty()) {
                 val names = payload.joinToString(", ") { "'${it.name}'" }

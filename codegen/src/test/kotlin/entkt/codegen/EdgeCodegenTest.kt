@@ -625,6 +625,56 @@ private class ValidatorBackingLinkPostTag : EntSchema("val_link_post_tags") {
     val pair = index("idx_val_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
+// Junction with a third belongsTo beyond sourceEdge/targetEdge
+// (violates rule 1a — adds an FK column the helpers would not populate).
+// Mirrors a multi-tenant link table where the schema author tried to
+// attach a `tenant` edge to the junction.
+private class TenantLink : EntSchema("tenant_link_orgs") {
+    override fun id() = EntId.long()
+}
+private class TenantedLinkPost : EntSchema("tenanted_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<TenantedLinkTag>("tags")
+        .throughLink<TenantedLinkPostTag>(TenantedLinkPostTag::post, TenantedLinkPostTag::tag)
+}
+private class TenantedLinkTag : EntSchema("tenanted_link_tags") {
+    override fun id() = EntId.long()
+}
+private class TenantedLinkPostTag : EntSchema("tenanted_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<TenantedLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<TenantedLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val tenant = belongsTo<TenantLink>("tenant").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_tenanted_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Same shape but with `.field(handle)` on the extra belongsTo, to prove
+// the check catches the field-backed case where `scalarFields()`
+// silently filters out the third FK's backing column.
+private class FieldBackedTenantedLinkPost : EntSchema("fb_tenanted_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<FieldBackedTenantedLinkTag>("tags")
+        .throughLink<FieldBackedTenantedLinkPostTag>(
+            FieldBackedTenantedLinkPostTag::post, FieldBackedTenantedLinkPostTag::tag,
+        )
+}
+private class FieldBackedTenantedLinkTag : EntSchema("fb_tenanted_link_tags") {
+    override fun id() = EntId.long()
+}
+private class FieldBackedTenantedLinkPostTag : EntSchema("fb_tenanted_link_post_tags") {
+    override fun id() = EntId.long()
+    val postIdCol = long("post_id_col")
+    val tagIdCol = long("tag_id_col")
+    val tenantIdCol = long("tenant_id_col")
+    val post = belongsTo<FieldBackedTenantedLinkPost>("post")
+        .field(postIdCol).onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<FieldBackedTenantedLinkTag>("tag")
+        .field(tagIdCol).onDelete(OnDelete.CASCADE)
+    val tenant = belongsTo<TenantLink>("tenant")
+        .field(tenantIdCol).onDelete(OnDelete.CASCADE)
+    val pair = index("idx_fb_tenanted_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
 // Junction with EXPLICIT id strategy (violates rule 5).
 private class ExplicitIdLinkPost : EntSchema("explicit_id_link_posts") {
     override fun id() = EntId.long()
@@ -1915,6 +1965,36 @@ class EdgeCodegenTest {
             ))
         }
         assertContains(err.message!!, "validator")
+    }
+
+    @Test
+    fun `throughLink junction with extra synthesized-FK belongsTo is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("TenantLink", TenantLink()),
+                SchemaInput("TenantedLinkPost", TenantedLinkPost()),
+                SchemaInput("TenantedLinkTag", TenantedLinkTag()),
+                SchemaInput("TenantedLinkPostTag", TenantedLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "extra belongsTo edge")
+        assertContains(err.message!!, "'tenant'")
+        assertContains(err.message!!, "tenant_id")
+    }
+
+    @Test
+    fun `throughLink junction with extra field-backed belongsTo is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("TenantLink", TenantLink()),
+                SchemaInput("FieldBackedTenantedLinkPost", FieldBackedTenantedLinkPost()),
+                SchemaInput("FieldBackedTenantedLinkTag", FieldBackedTenantedLinkTag()),
+                SchemaInput("FieldBackedTenantedLinkPostTag", FieldBackedTenantedLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "extra belongsTo edge")
+        assertContains(err.message!!, "'tenant'")
+        assertContains(err.message!!, "tenant_id_col")
     }
 
     @Test
