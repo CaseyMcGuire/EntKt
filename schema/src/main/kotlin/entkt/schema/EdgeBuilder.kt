@@ -329,17 +329,49 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
         @Suppress("UNCHECKED_CAST")
         val tgtProp = junctionTargetProp!! as KProperty1<EntSchema, *>
 
+        if (srcProp == tgtProp) {
+            error(
+                "manyToMany edge '$edgeName': sourceEdge and targetEdge are the same junction " +
+                    "property '${srcProp.name}' on ${jc.simpleName} — pass two distinct belongsTo " +
+                    "refs (one pointing at the declaring schema, one at the M2M target).",
+            )
+        }
+
         val srcHandle = resolvePropertySafely(srcProp, junctionInstance, edgeName, "sourceEdge")
         val tgtHandle = resolvePropertySafely(tgtProp, junctionInstance, edgeName, "targetEdge")
 
-        val srcEdgeName = (srcHandle as? EdgeBuilderBase)?.edgeName
-            ?: error("Edge '$edgeName': sourceEdge does not resolve to an edge declaration")
-        val tgtEdgeName = (tgtHandle as? EdgeBuilderBase)?.edgeName
-            ?: error("Edge '$edgeName': targetEdge does not resolve to an edge declaration")
+        val srcBuilder = srcHandle as? BelongsToBuilder<*>
+            ?: error("Edge '$edgeName': sourceEdge '${srcProp.name}' does not resolve to a belongsTo edge")
+        val tgtBuilder = tgtHandle as? BelongsToBuilder<*>
+            ?: error("Edge '$edgeName': targetEdge '${tgtProp.name}' does not resolve to a belongsTo edge")
+
+        val ownerInstance = registry[owner]
+            ?: error("Edge '$edgeName': declaring schema ${owner.simpleName} not found in registry")
+        val targetInstance = resolvedTarget!!
+
+        // The junction's sourceEdge must point back at the declaring schema, and
+        // the targetEdge at the M2M target — otherwise the relationship is
+        // miswired and would resolve to FK columns on the wrong side at codegen.
+        if (registry[srcBuilder.targetClass] !== ownerInstance) {
+            error(
+                "manyToMany edge '$edgeName': sourceEdge '${srcBuilder.edgeName}' on " +
+                    "${jc.simpleName} targets ${srcBuilder.targetClass.simpleName}, not the declaring " +
+                    "schema ${owner.simpleName} — pass the junction belongsTo that points back at the " +
+                    "schema declaring this manyToMany.",
+            )
+        }
+        if (registry[tgtBuilder.targetClass] !== targetInstance) {
+            error(
+                "manyToMany edge '$edgeName': targetEdge '${tgtBuilder.edgeName}' on " +
+                    "${jc.simpleName} targets ${tgtBuilder.targetClass.simpleName}, not the M2M target " +
+                    "${targetClass.simpleName} — pass the junction belongsTo that points at the " +
+                    "manyToMany<Target> type parameter.",
+            )
+        }
 
         resolvedThrough = when (resolvedMode) {
-            ManyToManyMode.LINK -> ManyToManyThrough.LinkTable(junctionInstance, srcEdgeName, tgtEdgeName)
-            ManyToManyMode.ENTITY -> ManyToManyThrough.ThroughEntity(junctionInstance, srcEdgeName, tgtEdgeName)
+            ManyToManyMode.LINK -> ManyToManyThrough.LinkTable(junctionInstance, srcBuilder.edgeName, tgtBuilder.edgeName)
+            ManyToManyMode.ENTITY -> ManyToManyThrough.ThroughEntity(junctionInstance, srcBuilder.edgeName, tgtBuilder.edgeName)
         }
     }
 

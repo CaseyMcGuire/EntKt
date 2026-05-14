@@ -46,7 +46,7 @@ class Group : EntSchema("groups") {
     val name = string("name")
 
     val users = manyToMany<User>("users")
-        .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
+        .throughEntity<UserGroup>(UserGroup::group, UserGroup::user)
 }
 
 class UserGroup : EntSchema("user_groups") {
@@ -136,6 +136,53 @@ private class ComputedGetterOwner : EntSchema("owners") {
     override fun id() = EntId.int()
     val sides = manyToMany<M2mSide>("sides")
         .throughEntity<ComputedGetterJunction>(ComputedGetterJunction::left, ComputedGetterJunction::right)
+}
+
+// Fixtures for ref-resolution validation in ManyToManyBuilder.resolve().
+private class M2mTargetA : EntSchema("a") {
+    override fun id() = EntId.int()
+}
+private class M2mTargetB : EntSchema("b") {
+    override fun id() = EntId.int()
+}
+
+// Junction whose two belongsTo edges both point at M2mTargetA.
+// Using either as sourceEdge from a non-A declaring schema triggers
+// the "not the declaring schema" check.
+private class BadSourceJunction : EntSchema("bad_source_junction") {
+    override fun id() = EntId.int()
+    val first = belongsTo<M2mTargetA>("first")
+    val second = belongsTo<M2mTargetA>("second")
+}
+private class WrongSourceTargetOwner : EntSchema("wst_owner") {
+    override fun id() = EntId.int()
+    val bs = manyToMany<M2mTargetB>("bs")
+        .throughEntity<BadSourceJunction>(BadSourceJunction::first, BadSourceJunction::second)
+}
+
+// Junction where sourceEdge correctly targets the declaring schema
+// but targetEdge points at M2mTargetA — mismatched with the M2M's
+// declared <M2mTargetB>. Exercises the "not the M2M target" check
+// after the source-side check passes.
+private class WrongTargetTargetOwner : EntSchema("wtt_owner") {
+    override fun id() = EntId.int()
+    val bs = manyToMany<M2mTargetB>("bs")
+        .throughEntity<BadTargetJunction>(BadTargetJunction::owner, BadTargetJunction::wrongTarget)
+}
+private class BadTargetJunction : EntSchema("bad_target_junction") {
+    override fun id() = EntId.int()
+    val owner = belongsTo<WrongTargetTargetOwner>("owner")
+    val wrongTarget = belongsTo<M2mTargetA>("wrong_target")
+}
+
+private class SamePropJunction : EntSchema("same_prop_junction") {
+    override fun id() = EntId.int()
+    val only = belongsTo<M2mTargetA>("only")
+}
+private class SamePropOwner : EntSchema("same_prop_owner") {
+    override fun id() = EntId.int()
+    val xs = manyToMany<M2mTargetA>("xs")
+        .throughEntity<SamePropJunction>(SamePropJunction::only, SamePropJunction::only)
 }
 
 // Helper to build a finalized schema graph
@@ -587,5 +634,30 @@ class SchemaTest {
             buildRegistry(M2mSide(), ComputedGetterJunction(), ComputedGetterOwner())
         }
         assertContains(err.message!!, "computed getter")
+    }
+
+    @Test
+    fun `manyToMany rejects same junction property as both source and target`() {
+        val err = assertFailsWith<IllegalStateException> {
+            buildRegistry(M2mTargetA(), SamePropJunction(), SamePropOwner())
+        }
+        assertContains(err.message!!, "sourceEdge and targetEdge are the same junction property")
+    }
+
+    @Test
+    fun `manyToMany rejects sourceEdge that does not target the declaring schema`() {
+        val err = assertFailsWith<IllegalStateException> {
+            buildRegistry(M2mTargetA(), M2mTargetB(), BadSourceJunction(), WrongSourceTargetOwner())
+        }
+        assertContains(err.message!!, "sourceEdge")
+        assertContains(err.message!!, "not the declaring schema")
+    }
+
+    @Test
+    fun `manyToMany rejects targetEdge that does not target the M2M target`() {
+        val err = assertFailsWith<IllegalStateException> {
+            buildRegistry(M2mTargetA(), M2mTargetB(), BadTargetJunction(), WrongTargetTargetOwner())
+        }
+        assertContains(err.message!!, "not the M2M target")
     }
 }

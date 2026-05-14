@@ -1384,17 +1384,13 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `self-referential M2M with same source and target edge fails`() {
+    fun `self-referential M2M with same source and target edge fails at finalize`() {
         val person = SameEdgePersonSchema()
         val junction = SameEdgeJunctionSchema()
-        finalize(person, junction)
-        val names = mapOf<EntSchema, String>(person to "Person", junction to "Friendship")
-        val error = runCatching {
-            EntityGenerator("com.example.ent").generate("Person", person, names)
-        }.exceptionOrNull()
-        assert(error != null) { "Should fail when sourceEdge and targetEdge resolve to same junction edge" }
-        assert(error!!.message!!.contains("same junction edge")) {
-            "Error should mention same junction edge: ${error.message}"
+        val error = runCatching { finalize(person, junction) }.exceptionOrNull()
+        assert(error != null) { "Should fail at finalize when sourceEdge and targetEdge are the same junction property" }
+        assert(error!!.message!!.contains("sourceEdge and targetEdge are the same junction property")) {
+            "Error should call out same junction property: ${error.message}"
         }
     }
 
