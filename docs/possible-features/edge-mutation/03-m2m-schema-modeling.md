@@ -269,22 +269,50 @@ only when:
 - both junction `belongsTo` edges are non-null. Under the long-term schema model,
   this is the default; junction edges marked `.nullable()` are not safe for
   direct link-table helpers
+- both junction `belongsTo` edges declare `OnDelete.CASCADE`. Pure
+  link-table junction rows are meaningless once either endpoint is
+  gone — leaving them around contradicts the relationship's set
+  semantics and breaks the pair-uniqueness invariant for the next
+  insert. `OnDelete.RESTRICT` is rejected because it would block
+  endpoint deletion until the caller manually drained the link rows
+  (a foot-gun for "delete this user" callers); `OnDelete.SET_NULL`
+  is already rejected indirectly via the non-null junction-FK rule
+  above. Junctions with a different deletion policy should be
+  modeled with `throughEntity(...)`, where the caller mutates the
+  junction through its repo and can encode any policy explicitly.
 - its id strategy can be satisfied without caller input, such as auto numeric
   ids or client-generated UUIDs. Junction schemas with explicit caller-provided
   ids, such as `EntId.string()`, are not safe for direct helpers unless a later
   design defines how edge mutators supply those ids
 - it declares a non-partial unique composite index or constraint on
-  **exactly the source FK and target FK columns** — order-insensitive,
-  so either `(source_fk, target_fk)` or `(target_fk, source_fk)`
-  qualifies. The constraint must contain only those two columns; an
-  index that adds a third column (even one that's deterministically
-  set, like a `kind` discriminator) does not enforce uniqueness of
-  the pair alone and is not sufficient. The constraint must also be
-  non-partial — a `WHERE` clause filtering out some rows wouldn't
-  reject duplicate links under concurrent writers in the filtered
-  region. Normalized set semantics require the database to reject
-  duplicate links under concurrent writers and to rule out preexisting
-  duplicate link rows.
+  **exactly the source FK column followed by the target FK column**,
+  in that order: `(source_fk, target_fk)`. The constraint must contain
+  only those two columns; an index that adds a third column (even one
+  that's deterministically set, like a `kind` discriminator) does not
+  enforce uniqueness of the pair alone and is not sufficient. The
+  constraint must also be non-partial — a `WHERE` clause filtering out
+  some rows wouldn't reject duplicate links under concurrent writers
+  in the filtered region. Normalized set semantics require the
+  database to reject duplicate links under concurrent writers and to
+  rule out preexisting duplicate link rows.
+
+  **Why source-first**, not order-insensitive: generated link-table
+  helpers also need to look up "all links for a given source FK" (for
+  `set(...)` exact-set semantics, eager-loading the M2M edge by source,
+  etc.). A `(source_fk, target_fk)` index serves both the
+  pair-uniqueness constraint and that source-keyed lookup directly via
+  the index's leading column; allowing `(target_fk, source_fk)` would
+  force callers to either tolerate a sequential scan for the
+  source-keyed lookup or maintain a companion source-first index. V1
+  picks the simpler rule: one source-first index covers both needs.
+
+  **Column resolution.** The two columns named here are the **physical
+  backing FK columns** after `belongsTo(...).field(handle)` resolution
+  (the `field` value on `EdgeKind.BelongsTo`, defaulting to
+  `${edgeName}_id`), not the junction edge identifiers. A junction
+  edge declared as
+  `val source = belongsTo<Post>("source").field(postId)` contributes
+  `post_id` (the backing column), not `source_id`.
 
 For junction schemas whose id strategy is client-generated UUID, generated
 link-table M2M helpers must populate the junction `id` with a freshly generated
@@ -392,12 +420,23 @@ Before implementation, add tests for:
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
   columns, nullable source/target FKs, caller-provided ids, partial unique
   indexes, or missing non-partial unique source/target FK pairs
-- the unique source/target FK pair check is order-insensitive: a
-  composite unique index on `(source_fk, target_fk)` and one on
-  `(target_fk, source_fk)` both qualify
+- `throughLink(...)` requires both junction `belongsTo` edges to declare
+  `OnDelete.CASCADE`; `OnDelete.RESTRICT` (or unset, when the
+  framework default isn't CASCADE) is rejected. Junctions that need a
+  different deletion policy must be modeled with `throughEntity(...)`
+- the unique source/target FK pair check requires source-first
+  ordering: an index declared as `(source_fk, target_fk)` qualifies;
+  one declared as `(target_fk, source_fk)` is rejected (V1 picks the
+  source-first rule so a single index covers both pair-uniqueness and
+  the source-keyed lookups generated helpers need)
 - a unique index that includes a third column alongside the source
   and target FKs does not satisfy the pair-uniqueness check, even when
   non-partial
+- the source FK and target FK columns named in the unique-pair check
+  are the **physical backing columns** after
+  `belongsTo(...).field(handle)` resolution
+  (`EdgeKind.BelongsTo.field`, defaulting to `${edgeName}_id`), not
+  the junction edge identifiers
 - generated link-table M2M helpers populate client-generated UUID junction ids
   before calling raw `Driver.insert(...)` / `insertMany(...)`
 - `throughEntity(...)` M2M edges do not generate direct helpers and continue to
