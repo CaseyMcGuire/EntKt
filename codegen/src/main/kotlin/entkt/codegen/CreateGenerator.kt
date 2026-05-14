@@ -290,6 +290,12 @@ internal class CreateGenerator(
         // beforeCreate hooks receive a CreateHookContext wrapping the
         // restricted view and the client. `this` satisfies the view
         // contract, so it can be passed as the mutation directly.
+        // Note: this is a static API restriction (hook lambdas are typed
+        // against the view interface, not the concrete builder), not a
+        // sandboxed capability boundary — a hook that explicitly casts
+        // `ctx.mutation as ${Schema}Create` can still reach save() etc.
+        // The contract is "hidden from the typed hook surface", not
+        // "unreachable at runtime".
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         builder.addStatement(
             "val createCtx = %T(client, this)",

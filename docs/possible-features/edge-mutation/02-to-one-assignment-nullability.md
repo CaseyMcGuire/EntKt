@@ -12,8 +12,11 @@ relationship-FK semantics for field-backed FKs
 as implicit FKs), create-default application with explicit-null-wins
 for nullable field-backed FKs, a restricted `CreateMutationView` +
 `CreateHookContext` for `beforeCreate` hooks (hiding `save()`,
-`driver`, hook lists, and the private staging/assigned fields off the
-hook surface), immutability-aware update surface for field-backed
+`driver`, hook lists, and the private staging/assigned fields from
+the typed hook surface — this is a static API restriction, not a
+sandboxed capability boundary; a hook that explicitly casts
+`ctx.mutation` back to the concrete `${Entity}Create` can still reach
+those members at runtime), immutability-aware update surface for field-backed
 FKs (`.immutable()` backing field → no setter on `${Entity}Update`, no
 slot on `${Entity}UpdatePatch`, no `unset` on `${Entity}UpdateMutationView`),
 backing-field validators carried into the FK code path (so a
