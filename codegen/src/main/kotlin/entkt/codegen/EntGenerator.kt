@@ -4,6 +4,7 @@ import com.squareup.kotlinpoet.FileSpec
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.ManyToManyThrough
+import entkt.schema.OnDelete
 import java.nio.file.Path
 import kotlin.reflect.KClass
 
@@ -26,6 +27,7 @@ internal fun ensureFinalized(schemas: List<SchemaInput>) {
     validateMemberNames(schemas, schemaNames)
     validateRelationNames(schemas, schemaNames)
     validateM2MOrientation(schemas, schemaNames)
+    validateThroughLinkJunctions(schemas, schemaNames)
 }
 
 /**
@@ -333,6 +335,177 @@ private fun validateM2MOrientation(
                         "Multiple manyToMany declarations cannot share the same junction class and " +
                         "the same (sourceEdge, targetEdge) — alias traversal names over the same " +
                         "relationship and direction aren't supported in V1.",
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Verify that every `throughLink(...)` M2M edge points at a junction
+ * schema satisfying the direct-helper safety constraints from RFC #3
+ * (junction-shape rules). Schemas that fail any rule are rejected with
+ * a message naming the failing junction and the rule that didn't hold;
+ * the caller's options are to fix the junction shape or switch the
+ * edge to `throughEntity(...)`.
+ *
+ * Rules enforced here:
+ * 1. Junction has exactly `id` + the two FK columns (no payload fields).
+ * 2. Both junction `belongsTo` edges are non-null.
+ * 3. The FK backing fields carry no write-time modifiers (validators,
+ *    sensitive, default, updateDefault, immutable).
+ * 4. Both junction `belongsTo` edges declare `OnDelete.CASCADE`
+ *    explicitly.
+ * 5. Junction id strategy is not `EXPLICIT` (auto-numeric or
+ *    client-UUID only).
+ * 6. Junction declares a non-partial unique index on exactly
+ *    `(sourceFkColumn, targetFkColumn)` in that order.
+ */
+private fun validateThroughLinkJunctions(
+    schemas: List<SchemaInput>,
+    schemaNames: Map<EntSchema, String>,
+) {
+    for (input in schemas) {
+        for (edge in input.schema.edges()) {
+            val m2m = edge.kind as? EdgeKind.ManyToMany ?: continue
+            val through = m2m.through as? ManyToManyThrough.LinkTable ?: continue
+
+            val junction = through.junction
+            val junctionName = schemaNames[junction]
+                ?: error(
+                    "throughLink edge '${input.name}.${edge.name}' references junction " +
+                        "${junction.tableName} which is not in the current schema set",
+                )
+            val ctx = "throughLink edge '${input.name}.${edge.name}' (junction '$junctionName')"
+
+            val junctionEdges = junction.edges()
+            val sourceJunctionEdge = junctionEdges.firstOrNull { it.name == through.sourceEdge }
+                ?: error("$ctx: sourceEdge '${through.sourceEdge}' not found on junction (codegen invariant)")
+            val targetJunctionEdge = junctionEdges.firstOrNull { it.name == through.targetEdge }
+                ?: error("$ctx: targetEdge '${through.targetEdge}' not found on junction (codegen invariant)")
+            val sourceBt = sourceJunctionEdge.kind as EdgeKind.BelongsTo
+            val targetBt = targetJunctionEdge.kind as EdgeKind.BelongsTo
+
+            // Rule 2: non-null junction FKs.
+            if (!sourceBt.required) {
+                error(
+                    "$ctx: source junction edge '${sourceJunctionEdge.name}' is nullable; " +
+                        "throughLink requires both junction belongsTo edges to be non-null. " +
+                        "Drop `.nullable()` on the junction, or model this relationship as throughEntity.",
+                )
+            }
+            if (!targetBt.required) {
+                error(
+                    "$ctx: target junction edge '${targetJunctionEdge.name}' is nullable; " +
+                        "throughLink requires both junction belongsTo edges to be non-null. " +
+                        "Drop `.nullable()` on the junction, or model this relationship as throughEntity.",
+                )
+            }
+
+            // Rule 4: OnDelete.CASCADE explicit.
+            if (sourceBt.onDelete != OnDelete.CASCADE) {
+                error(
+                    "$ctx: source junction edge '${sourceJunctionEdge.name}' has onDelete=" +
+                        "${sourceBt.onDelete}; throughLink requires explicit OnDelete.CASCADE on " +
+                        "both junction belongsTo edges. Add `.onDelete(OnDelete.CASCADE)` or " +
+                        "model this relationship as throughEntity.",
+                )
+            }
+            if (targetBt.onDelete != OnDelete.CASCADE) {
+                error(
+                    "$ctx: target junction edge '${targetJunctionEdge.name}' has onDelete=" +
+                        "${targetBt.onDelete}; throughLink requires explicit OnDelete.CASCADE on " +
+                        "both junction belongsTo edges. Add `.onDelete(OnDelete.CASCADE)` or " +
+                        "model this relationship as throughEntity.",
+                )
+            }
+
+            // Resolve FK column names — after `.field(handle)` if explicit,
+            // otherwise the synthesized `${edgeName}_id`.
+            val sourceFkCol = sourceBt.field ?: "${sourceJunctionEdge.name}_id"
+            val targetFkCol = targetBt.field ?: "${targetJunctionEdge.name}_id"
+
+            // Rule 1: shape = id + 2 FK columns only. `scalarFields()` already
+            // excludes columns that back a belongsTo edge, so any remaining
+            // field is payload.
+            val payload = scalarFields(junction)
+            if (payload.isNotEmpty()) {
+                val names = payload.joinToString(", ") { "'${it.name}'" }
+                error(
+                    "$ctx: junction carries payload field(s) $names besides the id and the two " +
+                        "FK columns; throughLink helpers bypass the junction repo, so payload " +
+                        "fields would silently skip defaults/hooks/validation. Move these fields " +
+                        "to a domain-entity junction declared with throughEntity, or drop them.",
+                )
+            }
+
+            // Rule 3: no write-time modifiers on FK backing fields.
+            val fieldsByName = junction.fields().associateBy { it.name }
+            for ((label, fkCol) in listOf("source" to sourceFkCol, "target" to targetFkCol)) {
+                val backing = fieldsByName[fkCol] ?: continue // synthesized FK has no backing Field, nothing to check
+                if (backing.validators.isNotEmpty()) {
+                    error(
+                        "$ctx: $label FK backing field '${backing.name}' carries " +
+                            "${backing.validators.size} validator(s); throughLink helpers bypass " +
+                            "junction CREATE validation, so the validator would silently not run. " +
+                            "Move the field to a throughEntity junction or drop the validator.",
+                    )
+                }
+                if (backing.sensitive) {
+                    error(
+                        "$ctx: $label FK backing field '${backing.name}' is `.sensitive()`; " +
+                            "throughLink helpers bypass junction toString redaction, so the " +
+                            "modifier would silently not apply. Drop it or use throughEntity.",
+                    )
+                }
+                if (backing.default != null) {
+                    error(
+                        "$ctx: $label FK backing field '${backing.name}' has a `.default(...)`; " +
+                            "throughLink helpers insert junction rows directly through the driver " +
+                            "and never apply field defaults. Drop the default or use throughEntity.",
+                    )
+                }
+                if (backing.updateDefault != null) {
+                    error(
+                        "$ctx: $label FK backing field '${backing.name}' has an " +
+                            "`.updateDefault(...)`; throughLink helpers do not update junction " +
+                            "rows after insert, so the marker is inert. Drop it or use throughEntity.",
+                    )
+                }
+                if (backing.immutable) {
+                    error(
+                        "$ctx: $label FK backing field '${backing.name}' is `.immutable()`; " +
+                            "throughLink helpers never update junction rows, so the marker adds " +
+                            "no enforcement on this path. Drop it or use throughEntity.",
+                    )
+                }
+            }
+
+            // Rule 5: id strategy not EXPLICIT.
+            if (idStrategyName(junction) == "EXPLICIT") {
+                error(
+                    "$ctx: junction id strategy is EXPLICIT (caller-provided id); throughLink " +
+                        "helpers cannot mint caller ids. Use an auto-numeric id (EntId.long() / " +
+                        "EntId.int()) or a client-UUID id (EntId.uuid()), or model this " +
+                        "relationship as throughEntity.",
+                )
+            }
+
+            // Rule 6: source-first non-partial unique composite index.
+            val indexes = try { junction.indexes() } catch (e: Exception) {
+                error("$ctx: junction indexes could not be resolved: ${e.message}")
+            }
+            val qualifying = indexes.firstOrNull {
+                it.unique &&
+                    it.where == null &&
+                    it.fields == listOf(sourceFkCol, targetFkCol)
+            }
+            if (qualifying == null) {
+                error(
+                    "$ctx: junction is missing a non-partial unique composite index on " +
+                        "($sourceFkCol, $targetFkCol). Declare one with " +
+                        "`index(\"<name>\", <source_fk>, <target_fk>).unique()` (no `.where(...)`), " +
+                        "or model this relationship as throughEntity.",
                 )
             }
         }

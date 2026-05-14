@@ -490,6 +490,157 @@ private class MultiRelAssignment : EntSchema("multi_rel_assignments") {
     val reviewer = belongsTo<MultiRelPet>("reviewer")
 }
 
+// ---------- Test schemas for throughLink junction-shape rules ----------
+
+private class LinkPost : EntSchema("link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<LinkTag>("tags")
+        .throughLink<LinkPostTag>(LinkPostTag::post, LinkPostTag::tag)
+}
+private class LinkTag : EntSchema("link_tags") {
+    override fun id() = EntId.long()
+}
+// Helper-eligible junction: id + 2 FK columns, both non-null, CASCADE,
+// non-partial unique index on (post_id, tag_id). Used as the baseline
+// for "all rules pass" tests.
+private class LinkPostTag : EntSchema("link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<LinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<LinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Junction with a payload column (violates rule 1).
+private class PayloadLinkPost : EntSchema("payload_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<PayloadLinkTag>("tags")
+        .throughLink<PayloadLinkPostTag>(PayloadLinkPostTag::post, PayloadLinkPostTag::tag)
+}
+private class PayloadLinkTag : EntSchema("payload_link_tags") {
+    override fun id() = EntId.long()
+}
+private class PayloadLinkPostTag : EntSchema("payload_link_post_tags") {
+    override fun id() = EntId.long()
+    val nickname = string("nickname")
+    val post = belongsTo<PayloadLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<PayloadLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_payload_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Junction with a nullable belongsTo (violates rule 2).
+private class NullableLinkPost : EntSchema("nullable_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<NullableLinkTag>("tags")
+        .throughLink<NullableLinkPostTag>(NullableLinkPostTag::post, NullableLinkPostTag::tag)
+}
+private class NullableLinkTag : EntSchema("nullable_link_tags") {
+    override fun id() = EntId.long()
+}
+private class NullableLinkPostTag : EntSchema("nullable_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<NullableLinkPost>("post").onDelete(OnDelete.CASCADE).nullable()
+    val tag = belongsTo<NullableLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_nullable_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Junction missing OnDelete.CASCADE (violates rule 4).
+private class NoCascadeLinkPost : EntSchema("no_cascade_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<NoCascadeLinkTag>("tags")
+        .throughLink<NoCascadeLinkPostTag>(NoCascadeLinkPostTag::post, NoCascadeLinkPostTag::tag)
+}
+private class NoCascadeLinkTag : EntSchema("no_cascade_link_tags") {
+    override fun id() = EntId.long()
+}
+private class NoCascadeLinkPostTag : EntSchema("no_cascade_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<NoCascadeLinkPost>("post").onDelete(OnDelete.RESTRICT)
+    val tag = belongsTo<NoCascadeLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_no_cascade_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Junction without the required unique composite index (violates rule 6).
+private class NoIndexLinkPost : EntSchema("no_index_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<NoIndexLinkTag>("tags")
+        .throughLink<NoIndexLinkPostTag>(NoIndexLinkPostTag::post, NoIndexLinkPostTag::tag)
+}
+private class NoIndexLinkTag : EntSchema("no_index_link_tags") {
+    override fun id() = EntId.long()
+}
+private class NoIndexLinkPostTag : EntSchema("no_index_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<NoIndexLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<NoIndexLinkTag>("tag").onDelete(OnDelete.CASCADE)
+}
+
+// Junction with a partial unique index (violates rule 6).
+private class PartialIdxLinkPost : EntSchema("partial_idx_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<PartialIdxLinkTag>("tags")
+        .throughLink<PartialIdxLinkPostTag>(PartialIdxLinkPostTag::post, PartialIdxLinkPostTag::tag)
+}
+private class PartialIdxLinkTag : EntSchema("partial_idx_link_tags") {
+    override fun id() = EntId.long()
+}
+private class PartialIdxLinkPostTag : EntSchema("partial_idx_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<PartialIdxLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<PartialIdxLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_partial_link_post_tags_post_tag", post.fk, tag.fk).unique().where("post_id > 0")
+}
+
+// Junction with the unique index in the wrong order (violates rule 6).
+private class ReverseOrderIdxLinkPost : EntSchema("rev_idx_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<ReverseOrderIdxLinkTag>("tags")
+        .throughLink<ReverseOrderIdxLinkPostTag>(ReverseOrderIdxLinkPostTag::post, ReverseOrderIdxLinkPostTag::tag)
+}
+private class ReverseOrderIdxLinkTag : EntSchema("rev_idx_link_tags") {
+    override fun id() = EntId.long()
+}
+private class ReverseOrderIdxLinkPostTag : EntSchema("rev_idx_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<ReverseOrderIdxLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<ReverseOrderIdxLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    // (tag_id, post_id) instead of (post_id, tag_id).
+    val pair = index("idx_rev_link_post_tags_tag_post", tag.fk, post.fk).unique()
+}
+
+// Junction with a field-backed FK that carries a validator (violates rule 3).
+private class ValidatorBackingLinkPost : EntSchema("val_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<ValidatorBackingLinkTag>("tags")
+        .throughLink<ValidatorBackingLinkPostTag>(ValidatorBackingLinkPostTag::post, ValidatorBackingLinkPostTag::tag)
+}
+private class ValidatorBackingLinkTag : EntSchema("val_link_tags") {
+    override fun id() = EntId.long()
+}
+private class ValidatorBackingLinkPostTag : EntSchema("val_link_post_tags") {
+    override fun id() = EntId.long()
+    val postIdCol = long("post_id_col").positive()
+    val tagIdCol = long("tag_id_col")
+    val post = belongsTo<ValidatorBackingLinkPost>("post").field(postIdCol).onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<ValidatorBackingLinkTag>("tag").field(tagIdCol).onDelete(OnDelete.CASCADE)
+    val pair = index("idx_val_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Junction with EXPLICIT id strategy (violates rule 5).
+private class ExplicitIdLinkPost : EntSchema("explicit_id_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<ExplicitIdLinkTag>("tags")
+        .throughLink<ExplicitIdLinkPostTag>(ExplicitIdLinkPostTag::post, ExplicitIdLinkPostTag::tag)
+}
+private class ExplicitIdLinkTag : EntSchema("explicit_id_link_tags") {
+    override fun id() = EntId.long()
+}
+private class ExplicitIdLinkPostTag : EntSchema("explicit_id_link_post_tags") {
+    override fun id() = EntId.string() // explicit caller-provided id
+    val post = belongsTo<ExplicitIdLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<ExplicitIdLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_explicit_id_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
 class EdgeCodegenTest {
 
     private fun createAllSchemas(): Triple<
@@ -1665,6 +1816,117 @@ class EdgeCodegenTest {
         assert(output.contains("\"teams_members\"")) {
             "One-sided throughEntity should synthesize reverse on target\n$output"
         }
+    }
+
+    // ---------- Phase 5: throughLink junction-shape rules ----------
+
+    @Test
+    fun `helper-eligible throughLink junction passes validation`() {
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("LinkPost", LinkPost()),
+            SchemaInput("LinkTag", LinkTag()),
+            SchemaInput("LinkPostTag", LinkPostTag()),
+        ))
+    }
+
+    @Test
+    fun `throughLink junction with payload column is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("PayloadLinkPost", PayloadLinkPost()),
+                SchemaInput("PayloadLinkTag", PayloadLinkTag()),
+                SchemaInput("PayloadLinkPostTag", PayloadLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "payload field")
+        assertContains(err.message!!, "'nickname'")
+    }
+
+    @Test
+    fun `throughLink junction with nullable belongsTo is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("NullableLinkPost", NullableLinkPost()),
+                SchemaInput("NullableLinkTag", NullableLinkTag()),
+                SchemaInput("NullableLinkPostTag", NullableLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "is nullable")
+        assertContains(err.message!!, "throughLink requires both junction belongsTo edges to be non-null")
+    }
+
+    @Test
+    fun `throughLink junction without explicit OnDelete CASCADE is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("NoCascadeLinkPost", NoCascadeLinkPost()),
+                SchemaInput("NoCascadeLinkTag", NoCascadeLinkTag()),
+                SchemaInput("NoCascadeLinkPostTag", NoCascadeLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "onDelete=")
+        assertContains(err.message!!, "OnDelete.CASCADE")
+    }
+
+    @Test
+    fun `throughLink junction without unique composite index is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("NoIndexLinkPost", NoIndexLinkPost()),
+                SchemaInput("NoIndexLinkTag", NoIndexLinkTag()),
+                SchemaInput("NoIndexLinkPostTag", NoIndexLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "missing a non-partial unique composite index")
+        assertContains(err.message!!, "(post_id, tag_id)")
+    }
+
+    @Test
+    fun `throughLink junction with partial unique index is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("PartialIdxLinkPost", PartialIdxLinkPost()),
+                SchemaInput("PartialIdxLinkTag", PartialIdxLinkTag()),
+                SchemaInput("PartialIdxLinkPostTag", PartialIdxLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "missing a non-partial unique composite index")
+    }
+
+    @Test
+    fun `throughLink junction with wrong column order in unique index is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("ReverseOrderIdxLinkPost", ReverseOrderIdxLinkPost()),
+                SchemaInput("ReverseOrderIdxLinkTag", ReverseOrderIdxLinkTag()),
+                SchemaInput("ReverseOrderIdxLinkPostTag", ReverseOrderIdxLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "missing a non-partial unique composite index")
+    }
+
+    @Test
+    fun `throughLink junction with validator on FK backing field is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("ValidatorBackingLinkPost", ValidatorBackingLinkPost()),
+                SchemaInput("ValidatorBackingLinkTag", ValidatorBackingLinkTag()),
+                SchemaInput("ValidatorBackingLinkPostTag", ValidatorBackingLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "validator")
+    }
+
+    @Test
+    fun `throughLink junction with EXPLICIT id strategy is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("ExplicitIdLinkPost", ExplicitIdLinkPost()),
+                SchemaInput("ExplicitIdLinkTag", ExplicitIdLinkTag()),
+                SchemaInput("ExplicitIdLinkPostTag", ExplicitIdLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "EXPLICIT")
     }
 
     // ---------- Per-group limit/offset in eager loading ----------
