@@ -20,7 +20,7 @@ private class M2mGroupSchema : EntSchema("groups") {
     override fun id() = EntId.int()
     val name = string("name")
     val members = manyToMany<M2mPersonSchema>("members")
-        .through<M2mMembershipSchema>(M2mMembershipSchema::group, M2mMembershipSchema::person)
+        .throughEntity<M2mMembershipSchema>(M2mMembershipSchema::group, M2mMembershipSchema::person)
 }
 
 private class M2mPersonSchema : EntSchema("persons") {

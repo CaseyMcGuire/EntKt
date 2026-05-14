@@ -46,7 +46,7 @@ class Group : EntSchema("groups") {
     val name = string("name")
 
     val users = manyToMany<User>("users")
-        .through<UserGroup>(UserGroup::user, UserGroup::group)
+        .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
 class UserGroup : EntSchema("user_groups") {
@@ -135,7 +135,7 @@ private class ComputedGetterJunction : EntSchema("junctions") {
 private class ComputedGetterOwner : EntSchema("owners") {
     override fun id() = EntId.int()
     val sides = manyToMany<M2mSide>("sides")
-        .through<ComputedGetterJunction>(ComputedGetterJunction::left, ComputedGetterJunction::right)
+        .throughEntity<ComputedGetterJunction>(ComputedGetterJunction::left, ComputedGetterJunction::right)
 }
 
 // Helper to build a finalized schema graph
@@ -387,7 +387,7 @@ class SchemaTest {
         assertEquals("users", usersEdge.name)
         assertTrue(usersEdge.target is User)
         val m2m = usersEdge.kind as EdgeKind.ManyToMany
-        assertTrue(m2m.through.target is UserGroup)
+        assertTrue(m2m.through.junction is UserGroup)
     }
 
     @Test

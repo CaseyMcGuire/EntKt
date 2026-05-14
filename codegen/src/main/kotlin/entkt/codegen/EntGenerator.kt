@@ -70,10 +70,10 @@ private fun validateEdgeTargetIdentity(schemas: List<SchemaInput>) {
                 )
             }
             val m2m = edge.kind as? EdgeKind.ManyToMany
-            if (m2m != null && m2m.through.target !in instanceSet) {
+            if (m2m != null && m2m.through.junction !in instanceSet) {
                 error(
                     "Edge '${edge.name}' on schema '${input.name}' has a ManyToMany junction " +
-                        "schema instance (table '${m2m.through.target.tableName}') not in the " +
+                        "schema instance (table '${m2m.through.junction.tableName}') not in the " +
                         "current schema set — this typically means a pre-finalized schema was " +
                         "mixed with a freshly-constructed junction. Pass all schemas unfinalized " +
                         "and let ensureFinalized() resolve them together.",

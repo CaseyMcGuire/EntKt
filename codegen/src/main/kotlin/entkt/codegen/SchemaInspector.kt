@@ -308,15 +308,15 @@ object SchemaInspector {
                 }
                 is EdgeKind.ManyToMany -> {
                     val through = kind.through
-                    val junctionTable = through.target.tableName
+                    val junctionTable = through.junction.tableName
                     ExplainedEdge(
                         name = edge.name,
                         kind = "manyToMany",
                         targetSchema = targetName,
                         through = ExplainedThrough(
                             junctionTable = junctionTable,
-                            sourceEdge = through.sourceEdge ?: "",
-                            targetEdge = through.targetEdge ?: "",
+                            sourceEdge = through.sourceEdge,
+                            targetEdge = through.targetEdge,
                         ),
                         comment = edge.comment,
                     )
@@ -346,7 +346,7 @@ object SchemaInspector {
                 .mapNotNull { edge ->
                     val m2m = edge.kind as EdgeKind.ManyToMany
                     val through = m2m.through
-                    val junctionTable = through.target.tableName
+                    val junctionTable = through.junction.tableName
                     val reverseName = reverseM2MEdgeName(otherSchema, edge.name)
                     ExplainedEdge(
                         name = reverseName,
@@ -355,8 +355,8 @@ object SchemaInspector {
                         through = ExplainedThrough(
                             junctionTable = junctionTable,
                             // Reverse: source/target edges are swapped
-                            sourceEdge = through.targetEdge ?: "",
-                            targetEdge = through.sourceEdge ?: "",
+                            sourceEdge = through.targetEdge,
+                            targetEdge = through.sourceEdge,
                         ),
                     )
                 }

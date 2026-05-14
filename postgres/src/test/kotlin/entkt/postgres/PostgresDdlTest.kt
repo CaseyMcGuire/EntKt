@@ -41,7 +41,7 @@ private class O2mPost : EntSchema("o2m_posts") {
 private class M2mUser : EntSchema("m2m_users") {
     override fun id() = EntId.long()
     val groups = manyToMany<M2mGroup>("groups")
-        .through<M2mUserGroup>(M2mUserGroup::user, M2mUserGroup::group)
+        .throughEntity<M2mUserGroup>(M2mUserGroup::user, M2mUserGroup::group)
 }
 
 private class M2mGroup : EntSchema("m2m_groups") {
@@ -59,7 +59,7 @@ private class M2mUserGroup : EntSchema("m2m_user_groups") {
 private class M2mPerson : EntSchema("m2m_people") {
     override fun id() = EntId.long()
     val friends = manyToMany<M2mPerson>("friends")
-        .through<M2mFriendship>(M2mFriendship::user, M2mFriendship::friend)
+        .throughEntity<M2mFriendship>(M2mFriendship::user, M2mFriendship::friend)
 }
 
 private class M2mFriendship : EntSchema("m2m_friendships") {
@@ -73,13 +73,13 @@ private class M2mFriendship : EntSchema("m2m_friendships") {
 private class M2mBiUser : EntSchema("m2m_bi_users") {
     override fun id() = EntId.long()
     val groups = manyToMany<M2mBiGroup>("groups")
-        .through<M2mBiMembership>(M2mBiMembership::user, M2mBiMembership::group)
+        .throughEntity<M2mBiMembership>(M2mBiMembership::user, M2mBiMembership::group)
 }
 
 private class M2mBiGroup : EntSchema("m2m_bi_groups") {
     override fun id() = EntId.long()
     val users = manyToMany<M2mBiUser>("users")
-        .through<M2mBiMembership>(M2mBiMembership::group, M2mBiMembership::user)
+        .throughEntity<M2mBiMembership>(M2mBiMembership::group, M2mBiMembership::user)
 }
 
 private class M2mBiMembership : EntSchema("m2m_bi_memberships") {

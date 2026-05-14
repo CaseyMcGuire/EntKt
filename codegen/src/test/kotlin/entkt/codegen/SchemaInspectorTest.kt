@@ -53,7 +53,7 @@ private class InspTag : EntSchema("tags") {
     override fun id() = EntId.int()
     val label = string("label")
     val articles = manyToMany<InspArticle>("articles")
-        .through<InspArticleTag>(InspArticleTag::tag, InspArticleTag::article)
+        .throughEntity<InspArticleTag>(InspArticleTag::tag, InspArticleTag::article)
 }
 
 private class InspArticle : EntSchema("articles") {
@@ -115,7 +115,7 @@ private class InspColJunction : EntSchema("col_owner_items") {
 private class InspColOwner : EntSchema("col_owners") {
     override fun id() = EntId.int()
     val items = manyToMany<InspColItem>("items")
-        .through<InspColJunction>(InspColJunction::owner, InspColJunction::item)
+        .throughEntity<InspColJunction>(InspColJunction::owner, InspColJunction::item)
 }
 
 // Schemas for duplicate reverse M2M name test.
@@ -145,14 +145,14 @@ private class InspDupM2MJunctionB : EntSchema("dup_junc_b") {
 private class InspDupM2MSourceA : EntSchema("dup_foo_bar") {
     override fun id() = EntId.int()
     val baz = manyToMany<InspDupM2MTarget>("baz")
-        .through<InspDupM2MJunctionA>(InspDupM2MJunctionA::src, InspDupM2MJunctionA::tgt)
+        .throughEntity<InspDupM2MJunctionA>(InspDupM2MJunctionA::src, InspDupM2MJunctionA::tgt)
 }
 
 // table "dup_foo", edge "bar_baz" → reverse name "dup_foo_bar_baz"
 private class InspDupM2MSourceB : EntSchema("dup_foo") {
     override fun id() = EntId.int()
     val bar_baz = manyToMany<InspDupM2MTarget>("bar_baz")
-        .through<InspDupM2MJunctionB>(InspDupM2MJunctionB::src, InspDupM2MJunctionB::tgt)
+        .throughEntity<InspDupM2MJunctionB>(InspDupM2MJunctionB::src, InspDupM2MJunctionB::tgt)
 }
 
 private class InspCascadeParent : EntSchema("cascade_parents") {

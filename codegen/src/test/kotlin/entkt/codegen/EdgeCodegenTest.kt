@@ -5,7 +5,7 @@ import entkt.schema.EdgeKind
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.OnDelete
-import entkt.schema.Through
+import entkt.schema.ManyToManyThrough
 import java.util.UUID
 import kotlin.reflect.KClass
 import kotlin.test.Test
@@ -42,7 +42,7 @@ class Team : EntSchema("teams") {
     override fun id() = EntId.int()
     val name = string("name")
 
-    val members = manyToMany<Pet>("members").through<TeamMember>(TeamMember::team, TeamMember::member)
+    val members = manyToMany<Pet>("members").throughEntity<TeamMember>(TeamMember::team, TeamMember::member)
 }
 
 class TeamMember : EntSchema("team_members") {
@@ -61,7 +61,7 @@ class Person : EntSchema("persons") {
     override fun id() = EntId.int()
     val name = string("name")
 
-    val friends = manyToMany<Person>("friends").through<Friendship>(Friendship::person, Friendship::friend)
+    val friends = manyToMany<Person>("friends").throughEntity<Friendship>(Friendship::person, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships") {
@@ -80,7 +80,7 @@ class Project : EntSchema("projects") {
     override fun id() = EntId.int()
     val name = string("name")
 
-    val assignees = manyToMany<Pet>("assignees").through<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
+    val assignees = manyToMany<Pet>("assignees").throughEntity<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
 }
 
 class ProjectAssignment : EntSchema("project_assignments") {
@@ -124,7 +124,7 @@ private class SameEdgePersonSchema : EntSchema("persons") {
     override fun id() = EntId.int()
     val name = string("name")
     val friends = manyToMany<SameEdgePersonSchema>("friends")
-        .through<SameEdgeJunctionSchema>(SameEdgeJunctionSchema::person, SameEdgeJunctionSchema::person)
+        .throughEntity<SameEdgeJunctionSchema>(SameEdgeJunctionSchema::person, SameEdgeJunctionSchema::person)
 }
 
 // ---------- Test schemas for onDelete / .field() tests ----------
@@ -1445,7 +1445,7 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `ambiguous junction without hints fails fast`() {
+    fun `wrong sourceEdge ref fails fast with clear error`() {
         val (_, names, byName) = createAllSchemas()
         val pet = byName["Pet"]!!
         val projectAssignment = byName["ProjectAssignment"]!!
@@ -1453,31 +1453,8 @@ class EdgeCodegenTest {
         val edge = Edge(
             name = "assignees",
             target = pet,
-            kind = EdgeKind.ManyToMany(Through(projectAssignment)),
-        )
-
-        val error = assertFailsWith<IllegalStateException> {
-            resolveM2MEdgeJoin(edge, project, names)
-        }
-        assert(error.message!!.contains("Ambiguous M2M")) {
-            "Should mention ambiguous M2M: ${error.message}"
-        }
-        assert(error.message!!.contains("sourceEdge")) {
-            "Should suggest sourceEdge/targetEdge: ${error.message}"
-        }
-    }
-
-    @Test
-    fun `wrong sourceEdge hint fails fast with clear error`() {
-        val (_, names, byName) = createAllSchemas()
-        val pet = byName["Pet"]!!
-        val projectAssignment = byName["ProjectAssignment"]!!
-        val project = byName["Project"]!!
-        val edge = Edge(
-            name = "assignees",
-            target = pet,
-            kind = EdgeKind.ManyToMany(Through(
-                projectAssignment,
+            kind = EdgeKind.ManyToMany(ManyToManyThrough.ThroughEntity(
+                junction = projectAssignment,
                 sourceEdge = "assignee",
                 targetEdge = "reviewer",
             )),
@@ -1486,13 +1463,13 @@ class EdgeCodegenTest {
         val error = assertFailsWith<IllegalStateException> {
             resolveM2MEdgeJoin(edge, project, names)
         }
-        assert(error.message!!.contains("sourceEdge hint")) {
-            "Should mention sourceEdge hint: ${error.message}"
+        assert(error.message!!.contains("M2M sourceEdge")) {
+            "Should mention M2M sourceEdge: ${error.message}"
         }
     }
 
     @Test
-    fun `wrong targetEdge hint fails fast with clear error`() {
+    fun `wrong targetEdge ref fails fast with clear error`() {
         val (_, names, byName) = createAllSchemas()
         val pet = byName["Pet"]!!
         val projectAssignment = byName["ProjectAssignment"]!!
@@ -1500,8 +1477,8 @@ class EdgeCodegenTest {
         val edge = Edge(
             name = "assignees",
             target = pet,
-            kind = EdgeKind.ManyToMany(Through(
-                projectAssignment,
+            kind = EdgeKind.ManyToMany(ManyToManyThrough.ThroughEntity(
+                junction = projectAssignment,
                 sourceEdge = "project",
                 targetEdge = "project",
             )),
@@ -1510,8 +1487,8 @@ class EdgeCodegenTest {
         val error = assertFailsWith<IllegalStateException> {
             resolveM2MEdgeJoin(edge, project, names)
         }
-        assert(error.message!!.contains("targetEdge hint")) {
-            "Should mention targetEdge hint: ${error.message}"
+        assert(error.message!!.contains("M2M targetEdge")) {
+            "Should mention M2M targetEdge: ${error.message}"
         }
     }
 

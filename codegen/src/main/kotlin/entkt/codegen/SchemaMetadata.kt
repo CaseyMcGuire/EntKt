@@ -343,12 +343,9 @@ internal fun resolveEdgeJoin(
 /**
  * Resolve a many-to-many edge's join through its junction table.
  * The junction schema declares `belongsTo` edges pointing at both
- * sides. We read those FK column names to build the junction join.
- *
- * When the junction has multiple `belongsTo` edges to the same schema
- * (e.g. a `ProjectAssignment` with both `assignee` and `reviewer`
- * edges to `User`), the [Through.sourceEdge] and [Through.targetEdge]
- * hints disambiguate which junction edges participate in the M2M.
+ * sides; `through.sourceEdge` / `through.targetEdge` name them
+ * explicitly (the DSL forces both refs via `throughLink` /
+ * `throughEntity`), so we look them up directly and verify the targets.
  */
 internal fun resolveM2MEdgeJoin(
     edge: Edge,
@@ -357,37 +354,18 @@ internal fun resolveM2MEdgeJoin(
 ): EdgeJoin? {
     val m2m = edge.kind as? EdgeKind.ManyToMany ?: return null
     val through = m2m.through
-    val junctionSchema = through.target
+    val junctionSchema = through.junction
     val junctionName = schemaNames[junctionSchema] ?: return null
     val junctionTable = junctionSchema.tableName
 
     val junctionEdges = junctionSchema.edges()
 
-    // Find the junction belongsTo edge pointing at the source schema.
-    // If through.sourceEdge is set, match by name for disambiguation.
-    val sourceEdge = if (through.sourceEdge != null) {
-        junctionEdges.firstOrNull { it.name == through.sourceEdge && it.kind is EdgeKind.BelongsTo && it.target === source }
-            ?: error(
-                "M2M sourceEdge hint \"${through.sourceEdge}\" does not match any belongsTo edge " +
-                    "on junction $junctionName targeting ${schemaNames[source] ?: "source"}. " +
-                    "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
-            )
-    } else {
-        val candidates = junctionEdges.filter { it.target === source && it.kind is EdgeKind.BelongsTo }
-        if (candidates.size > 1) {
-            val names = candidates.map { it.name }
-            error(
-                "Ambiguous M2M: junction $junctionName has ${candidates.size} belongsTo edges " +
-                    "targeting ${schemaNames[source] ?: "source"}: $names. " +
-                    "Use through(..., sourceEdge = \"...\", targetEdge = \"...\") to disambiguate.",
-            )
-        }
-        candidates.firstOrNull()
-    } ?: error(
-        "M2M edge \"${edge.name}\": junction $junctionName has no belongsTo edge " +
-            "targeting ${schemaNames[source] ?: "source"}. " +
-            "The junction schema must have a belongsTo edge pointing at each side of the M2M relationship.",
-    )
+    val sourceEdge = junctionEdges.firstOrNull { it.name == through.sourceEdge && it.kind is EdgeKind.BelongsTo && it.target === source }
+        ?: error(
+            "M2M sourceEdge \"${through.sourceEdge}\" does not match any belongsTo edge " +
+                "on junction $junctionName targeting ${schemaNames[source] ?: "source"}. " +
+                "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
+        )
     val sourceBt = sourceEdge.kind as EdgeKind.BelongsTo
     val sourceFieldName = sourceBt.field
     val sourceFk = if (sourceFieldName != null) {
@@ -396,40 +374,16 @@ internal fun resolveM2MEdgeJoin(
         "${sourceEdge.name}_id"
     }
 
-    // Find the junction belongsTo edge pointing at the target schema.
-    // If through.targetEdge is set, match by name; otherwise search
-    // remaining edges (excluding sourceEdge by index to avoid reuse).
-    val targetEdge = if (through.targetEdge != null) {
-        junctionEdges.firstOrNull { it.name == through.targetEdge && it.kind is EdgeKind.BelongsTo && it.target === edge.target }
-            ?: error(
-                "M2M targetEdge hint \"${through.targetEdge}\" does not match any belongsTo edge " +
-                    "on junction $junctionName targeting ${schemaNames[edge.target] ?: "target"}. " +
-                    "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
-            )
-    } else {
-        val sourceIdx = junctionEdges.indexOf(sourceEdge)
-        val candidates = junctionEdges
-            .filterIndexed { i, _ -> i != sourceIdx }
-            .filter { it.target === edge.target && it.kind is EdgeKind.BelongsTo }
-        if (candidates.size > 1) {
-            val names = candidates.map { it.name }
-            error(
-                "Ambiguous M2M: junction $junctionName has ${candidates.size} belongsTo edges " +
-                    "targeting ${schemaNames[edge.target] ?: "target"}: $names. " +
-                    "Use through(..., sourceEdge = \"...\", targetEdge = \"...\") to disambiguate.",
-            )
-        }
-        candidates.firstOrNull()
-    } ?: error(
-        "M2M edge \"${edge.name}\": junction $junctionName has no belongsTo edge " +
-            "targeting ${schemaNames[edge.target] ?: "target"}. " +
-            "The junction schema must have a belongsTo edge pointing at each side of the M2M relationship.",
-    )
+    val targetEdge = junctionEdges.firstOrNull { it.name == through.targetEdge && it.kind is EdgeKind.BelongsTo && it.target === edge.target }
+        ?: error(
+            "M2M targetEdge \"${through.targetEdge}\" does not match any belongsTo edge " +
+                "on junction $junctionName targeting ${schemaNames[edge.target] ?: "target"}. " +
+                "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
+        )
     if (sourceEdge === targetEdge) {
         error(
             "M2M edge \"${edge.name}\": sourceEdge and targetEdge resolved to the same " +
-                "junction edge \"${sourceEdge.name}\" on $junctionName. " +
-                "The two hints must refer to distinct belongsTo edges.",
+                "junction edge \"${sourceEdge.name}\" on $junctionName — the two refs must be distinct.",
         )
     }
     val targetBt = targetEdge.kind as EdgeKind.BelongsTo

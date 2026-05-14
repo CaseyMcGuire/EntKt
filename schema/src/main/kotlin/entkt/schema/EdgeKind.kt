@@ -10,5 +10,5 @@ sealed interface EdgeKind {
 
     data object HasMany : EdgeKind
     data object HasOne : EdgeKind
-    data class ManyToMany(val through: Through) : EdgeKind
+    data class ManyToMany(val through: ManyToManyThrough) : EdgeKind
 }

@@ -14,5 +14,5 @@ class Tag : EntSchema("tags") {
     val category = enum<TagCategory>("category")
 
     val posts = manyToMany<Post>("posts")
-        .through<PostTag>(PostTag::tag, PostTag::post)
+        .throughEntity<PostTag>(PostTag::tag, PostTag::post)
 }

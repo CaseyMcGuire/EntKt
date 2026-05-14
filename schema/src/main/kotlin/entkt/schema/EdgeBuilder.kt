@@ -240,6 +240,20 @@ class HasOneBuilder<Target : EntSchema> internal constructor(
     }
 }
 
+/**
+ * Write model for an M2M relationship. Picked by the schema author at
+ * declaration time via `throughLink(...)` (pure relationship storage,
+ * direct edge helpers) or `throughEntity(...)` (junction is a domain
+ * entity, mutated through its repo). The generic `.through(...)`
+ * marker has been removed — schemas must pick one explicitly.
+ *
+ * Marked `@PublishedApi internal` so the public inline `throughLink` /
+ * `throughEntity` builders can reference the enum entries while
+ * keeping the enum out of the published API surface.
+ */
+@PublishedApi
+internal enum class ManyToManyMode { LINK, ENTITY }
+
 class ManyToManyBuilder<Target : EntSchema> internal constructor(
     override val edgeName: String,
     @PublishedApi internal val targetClass: KClass<Target>,
@@ -247,27 +261,50 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
     private var junctionClass: KClass<out EntSchema>? = null
     private var junctionSourceProp: KProperty1<out EntSchema, *>? = null
     private var junctionTargetProp: KProperty1<out EntSchema, *>? = null
+    private var mode: ManyToManyMode? = null
     private var comment: String? = null
 
     // Resolved during finalize
     private var resolvedTarget: EntSchema? = null
-    private var resolvedThrough: Through? = null
+    private var resolvedThrough: ManyToManyThrough? = null
 
-    inline fun <reified Junction : EntSchema> through(
+    /**
+     * Declare the relationship as a pure link table. The junction
+     * schema is relationship storage; direct M2M helpers (per the
+     * Link-Table Helpers RFC) are eligible for generation when the
+     * junction satisfies the helper-eligibility constraints.
+     */
+    inline fun <reified Junction : EntSchema> throughLink(
         sourceEdge: KProperty1<Junction, BelongsToHandle<*>>,
         targetEdge: KProperty1<Junction, BelongsToHandle<*>>,
-    ): ManyToManyBuilder<Target> = through(Junction::class, sourceEdge, targetEdge)
+    ): ManyToManyBuilder<Target> = throughInternal(Junction::class, sourceEdge, targetEdge, ManyToManyMode.LINK)
+
+    /**
+     * Declare the relationship as a through-entity. The junction is a
+     * domain entity; callers mutate it through its generated repo so
+     * payload fields, hooks, privacy, and validation apply on the
+     * normal builder paths.
+     */
+    inline fun <reified Junction : EntSchema> throughEntity(
+        sourceEdge: KProperty1<Junction, BelongsToHandle<*>>,
+        targetEdge: KProperty1<Junction, BelongsToHandle<*>>,
+    ): ManyToManyBuilder<Target> = throughInternal(Junction::class, sourceEdge, targetEdge, ManyToManyMode.ENTITY)
 
     @PublishedApi
-    internal fun <Junction : EntSchema> through(
+    internal fun <Junction : EntSchema> throughInternal(
         junctionClass: KClass<Junction>,
         sourceEdge: KProperty1<Junction, *>,
         targetEdge: KProperty1<Junction, *>,
+        mode: ManyToManyMode,
     ): ManyToManyBuilder<Target> = apply {
         checkNotFrozen()
+        check(this.mode == null) {
+            "manyToMany edge '$edgeName' has both throughLink() and throughEntity() — pick one"
+        }
         this.junctionClass = junctionClass
         this.junctionSourceProp = sourceEdge
         this.junctionTargetProp = targetEdge
+        this.mode = mode
     }
 
     fun comment(text: String): ManyToManyBuilder<Target> = apply { checkNotFrozen(); comment = text }
@@ -277,31 +314,43 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
             ?: error("Edge '$edgeName': target schema ${targetClass.simpleName} not found in registry")
 
         val jc = junctionClass
-            ?: error("manyToMany edge '$edgeName' must have a .through() junction schema")
+            ?: error(
+                "manyToMany edge '$edgeName' must declare a write model — call either " +
+                    "throughLink<Junction>(sourceEdge, targetEdge) (pure relationship storage) or " +
+                    "throughEntity<Junction>(sourceEdge, targetEdge) (junction is a domain entity)",
+            )
         val junctionInstance = registry[jc]
             ?: error("Edge '$edgeName': junction schema ${jc.simpleName} not found in registry")
+        val resolvedMode = mode
+            ?: error("manyToMany edge '$edgeName' is missing a write model — internal state error")
 
         @Suppress("UNCHECKED_CAST")
         val srcProp = junctionSourceProp!! as KProperty1<EntSchema, *>
         @Suppress("UNCHECKED_CAST")
         val tgtProp = junctionTargetProp!! as KProperty1<EntSchema, *>
 
-        val srcHandle = resolvePropertySafely(srcProp, junctionInstance, edgeName, "through() sourceEdge")
-        val tgtHandle = resolvePropertySafely(tgtProp, junctionInstance, edgeName, "through() targetEdge")
+        val srcHandle = resolvePropertySafely(srcProp, junctionInstance, edgeName, "sourceEdge")
+        val tgtHandle = resolvePropertySafely(tgtProp, junctionInstance, edgeName, "targetEdge")
 
         val srcEdgeName = (srcHandle as? EdgeBuilderBase)?.edgeName
-            ?: error("Edge '$edgeName': through() sourceEdge does not resolve to an edge declaration")
+            ?: error("Edge '$edgeName': sourceEdge does not resolve to an edge declaration")
         val tgtEdgeName = (tgtHandle as? EdgeBuilderBase)?.edgeName
-            ?: error("Edge '$edgeName': through() targetEdge does not resolve to an edge declaration")
+            ?: error("Edge '$edgeName': targetEdge does not resolve to an edge declaration")
 
-        resolvedThrough = Through(junctionInstance, srcEdgeName, tgtEdgeName)
+        resolvedThrough = when (resolvedMode) {
+            ManyToManyMode.LINK -> ManyToManyThrough.LinkTable(junctionInstance, srcEdgeName, tgtEdgeName)
+            ManyToManyMode.ENTITY -> ManyToManyThrough.ThroughEntity(junctionInstance, srcEdgeName, tgtEdgeName)
+        }
     }
 
     override fun build(): Edge {
         val target = resolvedTarget
             ?: error("Edge '$edgeName' has not been finalized — call schema.finalize() first")
         val t = resolvedThrough
-            ?: error("manyToMany edge '$edgeName' must have a .through() junction schema")
+            ?: error(
+                "manyToMany edge '$edgeName' must declare a write model — call either " +
+                    "throughLink<Junction>(...) or throughEntity<Junction>(...)",
+            )
         return Edge(
             name = edgeName,
             target = target,
