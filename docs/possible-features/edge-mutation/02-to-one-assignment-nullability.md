@@ -1178,19 +1178,6 @@ required to use the new nullability model in practice:
   Backing Fields`) require reflection-driven property-name capture, plus
   diagnostics for ineligible properties (delegated, private, inherited,
   computed-getter, etc.).
-- **Schema-level rejection rules for field-backed FKs — implemented.**
-  Codegen rejects relationship/backing-field nullability mismatches in
-  both directions (required edge + nullable field, and nullable edge +
-  non-null field), plus the mismatched-id-type,
-  unique-field-on-non-unique-edge, and
-  `updateDefault(...)`-on-backing-FK checks. (The `updateDefault`
-  rejection is preventative — only `time().updateDefaultNow()` exposes
-  the DSL today, and `time` can't match any current FK target id type,
-  so the type-mismatch check fires first under the current DSL. The
-  rule keeps the door closed if a numeric `.updateDefault(...)`
-  modifier is added later.) Listed here for completeness because
-  several earlier RFC drafts mentioned them as gaps; no further work
-  required.
 - **Collision detection — partial.** `validateMemberNames` in codegen
   rejects schemas where the FK property name collides with a declared
   field, edge, or another FK's property name (with attribution
