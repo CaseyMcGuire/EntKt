@@ -288,6 +288,34 @@ orientations and the second is rejected; declarations whose keys don't
 pair-swap describe genuinely different relationships and both are
 allowed.
 
+**Same-orientation aliases are rejected.** V1 also rejects multiple
+explicit `throughEntity(...)` declarations whose canonical relationship
+identity *and* orientation key are identical — i.e., two `manyToMany(...)`
+declarations on the same schema that pass the same junction class and
+the same `(sourceEdge, targetEdge)` prop pair under different
+`manyToMany` names. Example:
+
+```kotlin
+class Group : EntSchema("groups") {
+    val members = manyToMany<User>("members")
+        .throughEntity<Membership>(Membership::group, Membership::user)
+    val users = manyToMany<User>("users")
+        .throughEntity<Membership>(Membership::group, Membership::user)
+}
+```
+
+Both declarations have orientation key
+`(Membership, Membership::group, Membership::user)` and would generate
+two separate traversal surfaces over the *same* relationship in the
+*same* direction. V1 rejects this — alias traversal names over the
+same relationship require a separate future alias design, mirroring
+the same restriction RFC #2 places on
+`belongsTo(...).field(handle)` (a single backing field may back at
+most one edge). The same alias-rejection rule applies to
+`throughLink(...)` for completeness: two same-orientation
+`throughLink(...)` declarations on the same schema are rejected even
+though the pair-swap rule wouldn't catch them.
+
 ## Link-Table Safety
 
 ### Ref resolution
@@ -628,6 +656,13 @@ Before implementation, add tests for:
   edges in opposite order (side A's
   `(sourceEdge, targetEdge) = (X, Y)`, side B's = `(Y, X)`); when
   matched, each side's synthesized reverse is suppressed
+- multiple `throughEntity(...)` declarations with identical canonical
+  identity AND identical orientation key (same junction class, same
+  `(sourceEdge, targetEdge)` pair, different `manyToMany` names) are
+  rejected as same-orientation aliases; this also applies to
+  `throughLink(...)`. The same-relationship-in-two-orientations case
+  is governed by the pair-swap rule above; this bullet covers
+  same-relationship-in-same-orientation duplicates
 - self-referential `throughEntity(...)` (declaring schema and M2M
   target schema are the same) gets **no default reverse synthesis**;
   callers who want bidirectional traversal declare both orientations
