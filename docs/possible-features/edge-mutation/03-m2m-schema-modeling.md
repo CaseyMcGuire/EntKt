@@ -195,6 +195,41 @@ declares its own `throughEntity(...)` for the same junction, codegen
 explicit declaration owns the traversal surface on its side, so duplicate
 traversal handles aren't generated.
 
+**Synthesized reverse name.** Codegen names the synthesized reverse
+edge mechanically so callers can refer to it from eager-loading
+scopes, predicates, and `EdgeRef`s without surprise:
+
+- **Edge name** (the runtime metadata `Edge.name` string used in the
+  generated `EntitySchema.edges` map and the database-facing
+  identifiers): `${sourceTable}_${forwardEdgeName}`. For
+  `Post.tags = manyToMany<Tag>("tags").throughEntity<PostTag>(...)`
+  on a schema with `tableName = "posts"`, the synthesized reverse
+  edge on `Tag` has edge name `posts_tags`.
+- **Kotlin property name** on the opposite-side schema's `Edges`
+  inner data class (and on its companion `EdgeRef` for eager-loading
+  / predicate handles): `toCamelCase("${sourceTable}_${forwardEdgeName}")`,
+  i.e. `postsTags` for the example above. This is the identifier
+  reverse-traversal callers see in autocomplete.
+
+The `${sourceTable}_${forwardEdgeName}` shape is deterministic, mirrors
+the FK column-naming convention already used elsewhere in the schema,
+and disambiguates multi-relationship junctions (e.g.,
+`ProjectAssignment` with both an `assignees` forward edge on `Project`
+and a `reviewers` forward edge on `Project` synthesizes
+`projects_assignees` and `projects_reviewers` on the opposite-side
+schemas — distinct names from distinct forward edges).
+
+**Collision rejection.** If the synthesized reverse edge name collides
+with an existing declared edge, declared field, generated edge ref,
+generated eager-loading member, or JVM signature on the opposite-side
+schema, codegen rejects the schema at validation time and directs the
+caller to declare the opposite-side `throughEntity(...)` **explicitly**
+with a chosen `manyToMany` name. An explicit opposite-side declaration
+picks the name and suppresses the synthesized reverse (per the matching
+rule below), so the caller has full control of the identifier when the
+synthesized name doesn't fit. The synthesized name is never silently
+renamed or suffix-disambiguated.
+
 **Self-referential `throughEntity(...)`: no default synthesis.** When the
 declaring schema and the M2M target schema are the same — i.e., the
 "opposite-side schema" is the *same* schema — V1 does not synthesize a
@@ -549,7 +584,18 @@ Before implementation, add tests for:
 - a `throughEntity(...)` declaration synthesizes a read-only reverse
   traversal edge on the opposite-side schema by default; when the
   opposite side explicitly declares its own `throughEntity(...)` for
-  the same junction, the synthesized reverse is suppressed so users
+  the same junction, the synthesized reverse is suppressed
+- the synthesized reverse edge is named mechanically:
+  `Edge.name = "${sourceTable}_${forwardEdgeName}"`, Kotlin property
+  on the opposite-side `Edges` data class and `EdgeRef` companion =
+  `toCamelCase(edgeName)` (e.g., `Post.tags` with
+  `tableName = "posts"` produces `posts_tags` / `postsTags` on `Tag`)
+- if the synthesized reverse edge name collides with an existing
+  declared edge, declared field, generated edge ref, generated
+  eager-loading member, or JVM signature on the opposite-side schema,
+  codegen rejects the schema and directs the caller to declare the
+  opposite-side `throughEntity(...)` explicitly with a chosen name;
+  the synthesized name is never silently renamed so users
   don't get duplicate traversal handles
 - two explicit `throughEntity(...)` declarations are treated as
   opposite sides of the same relationship only when they reference
