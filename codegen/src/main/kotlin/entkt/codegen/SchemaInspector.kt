@@ -335,15 +335,26 @@ object SchemaInspector {
     /**
      * Build explained edges for reverse M2M entries that codegen
      * synthesizes on the target side of each manyToMany declaration.
+     * Mirrors the suppression rules in [reverseM2MEdgeEntries]:
+     * self-ref M2M and canonical-identity matches against an existing
+     * declaration on [schema] do not produce synthesized edges.
      */
     private fun buildReverseM2MEdges(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): List<ExplainedEdge> {
+        val schemaDeclaredCanonicals = schema.edges()
+            .mapNotNull { canonicalM2MIdentity(it) }
+            .toSet()
         return schemaNames.flatMap { (otherSchema, otherName) ->
             otherSchema.edges()
                 .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
                 .mapNotNull { edge ->
+                    if (otherSchema === schema) return@mapNotNull null
+                    val canonical = canonicalM2MIdentity(edge)
+                    if (canonical != null && canonical in schemaDeclaredCanonicals) {
+                        return@mapNotNull null
+                    }
                     val m2m = edge.kind as EdgeKind.ManyToMany
                     val through = m2m.through
                     val junctionTable = through.junction.tableName

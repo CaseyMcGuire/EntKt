@@ -1589,6 +1589,84 @@ class EdgeCodegenTest {
         ))
     }
 
+    // ---------- Phase 4: reverse-synthesis suppression rules ----------
+
+    @Test
+    fun `cross-schema explicit throughEntity suppresses synthesized reverse on both sides`() {
+        // BiUser declares (user, group); BiGroup declares (group, user) — same
+        // canonical identity, pair-swapped orientations. Neither side should
+        // get a synthesized reverse edge (the explicit declarations own the
+        // traversal surface).
+        val biUser = BiUser()
+        val biGroup = BiGroup()
+        val biMembership = BiMembership()
+        val names = mapOf<EntSchema, String>(
+            biUser to "BiUser", biGroup to "BiGroup", biMembership to "BiMembership",
+        )
+        finalize(biUser, biGroup, biMembership)
+
+        val userOutput = EntityGenerator("com.example.ent")
+            .generate("BiUser", biUser, names).toString()
+        val groupOutput = EntityGenerator("com.example.ent")
+            .generate("BiGroup", biGroup, names).toString()
+
+        // Reverse names that WOULD be synthesized:
+        //   on BiUser: "bi_groups_users"  (from BiGroup.users)
+        //   on BiGroup: "bi_users_groups" (from BiUser.groups)
+        assert(!userOutput.contains("\"bi_groups_users\"")) {
+            "BiUser should not synthesize reverse 'bi_groups_users' — opposite-side explicit\n$userOutput"
+        }
+        assert(!groupOutput.contains("\"bi_users_groups\"")) {
+            "BiGroup should not synthesize reverse 'bi_users_groups' — opposite-side explicit\n$groupOutput"
+        }
+    }
+
+    @Test
+    fun `self-referential throughEntity does not synthesize reverse on the declaring schema`() {
+        // FollowUser declares 'following' and 'followers' over Follow with
+        // pair-swapped orientations. The declaring schema and the M2M target
+        // are the same — no reverse synthesis (would collide with the
+        // declared edge names anyway).
+        val user = FollowUser()
+        val follow = Follow()
+        val names = mapOf<EntSchema, String>(user to "FollowUser", follow to "Follow")
+        finalize(user, follow)
+
+        val output = EntityGenerator("com.example.ent")
+            .generate("FollowUser", user, names).toString()
+
+        // The reverse-synthesis algorithm would emit "follow_users_following"
+        // and "follow_users_followers" if self-ref weren't suppressed.
+        assert(!output.contains("\"follow_users_following\"")) {
+            "Self-ref M2M should not synthesize reverse 'follow_users_following'\n$output"
+        }
+        assert(!output.contains("\"follow_users_followers\"")) {
+            "Self-ref M2M should not synthesize reverse 'follow_users_followers'\n$output"
+        }
+        // Forward edges remain.
+        assert(output.contains("\"following\"")) {
+            "Forward 'following' edge should still be present\n$output"
+        }
+        assert(output.contains("\"followers\"")) {
+            "Forward 'followers' edge should still be present\n$output"
+        }
+    }
+
+    @Test
+    fun `one-sided throughEntity still synthesizes reverse on the target`() {
+        // Sanity check that suppression doesn't fire when the opposite side
+        // has no explicit declaration over the same canonical identity. This
+        // is the "default" case from the RFC.
+        val (_, names, byName) = createAllSchemas()
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+
+        // Team.members targets Pet → Pet gets the reverse "teams_members"
+        assert(output.contains("\"teams_members\"")) {
+            "One-sided throughEntity should synthesize reverse on target\n$output"
+        }
+    }
+
     // ---------- Per-group limit/offset in eager loading ----------
 
     @Test
