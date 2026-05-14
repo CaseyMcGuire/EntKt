@@ -346,8 +346,32 @@ behavior.
 
 If a relationship needs hooks, privacy, validation, or other write-time behavior
 on the junction row itself, that relationship should be declared with
-`throughEntity(...)` instead of `throughLink(...)`. Direct link-table helpers do
-not run junction repo hooks, privacy, or validation.
+`throughEntity(...)` instead of `throughLink(...)`.
+
+**`throughLink(...)` helpers bypass the junction repo entirely.** They
+write junction rows directly through the driver
+(`Driver.insert(...)` / `insertMany(...)` / `delete(...)` /
+`deleteMany(...)`) and **must not** call the junction's generated
+`{Junction}Create` / `{Junction}Update` / `{Junction}.deleteById`
+builders. As a consequence, link-table helpers do not run any of:
+
+- junction field defaults (`.default(...)`, `.defaultNow()`,
+  `updateDefault(...)`)
+- junction `beforeSave` / `beforeCreate` / `beforeUpdate` /
+  `beforeDelete` / `afterCreate` / `afterUpdate` / `afterDelete` hooks
+- junction CREATE / UPDATE / DELETE privacy rules
+- junction CREATE / UPDATE validation rules
+- junction LOAD privacy on returned values
+- the requested-patch / effective-patch / write-candidate machinery
+  generated for the update path
+
+If caller code needs any of the above on the junction row itself, the
+schema must declare the relationship with `throughEntity(...)` and
+mutate through the junction repo. The junction-shape rules above
+(`exactly the junction id plus the two FK columns`,
+`OnDelete.CASCADE`, etc.) exist precisely to keep `throughLink(...)`
+junctions free of state that would silently be skipped on the
+direct-driver path.
 
 ## Relationship To Other RFCs
 
@@ -466,7 +490,17 @@ Before implementation, add tests for:
   before calling raw `Driver.insert(...)` / `insertMany(...)`
 - `throughEntity(...)` M2M edges do not generate direct helpers and continue to
   be mutated through the junction repo
-- direct link-table helpers do not invoke junction repo write rules
+- direct link-table helpers do not invoke any junction repo
+  machinery — concretely, generated `throughLink(...)` helpers must
+  not call `{Junction}Create.save()` / `{Junction}Update.save*()` /
+  `{Junction}.deleteById(...)`, and they do not run junction field
+  defaults, beforeSave/beforeCreate/beforeUpdate/beforeDelete/
+  afterCreate/afterUpdate/afterDelete hooks, CREATE/UPDATE/DELETE
+  privacy rules, CREATE/UPDATE validation rules, returned LOAD
+  privacy, or the requested-patch / effective-patch / write-candidate
+  machinery. Test fixtures should declare a junction with one of each
+  (a hook, a privacy rule, a validation rule, a default) and assert
+  none of them fire on a `throughLink(...)` helper write
 
 ## Future Enhancements
 
