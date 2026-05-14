@@ -458,18 +458,40 @@ ordered column pair.
 mutual friendship where `(a, b)` and `(b, a)` should be the same edge)
 are **not special-cased in V1.** Codegen does not canonicalize
 `(a, b)` / `(b, a)`, will not deduplicate them, and does not generate
-helpers that swap the pair to a canonical orientation. Two valid
-modeling choices for symmetric relationships in V1:
+helpers that swap the pair to a canonical orientation.
 
-- Declare the relationship with `throughEntity(...)`, store both
-  `(a, b)` and `(b, a)` rows, and let application-level validation /
-  hooks maintain the symmetry invariant.
-- Or use `throughLink(...)` with an application-level rule that
-  canonicalizes the pair (e.g., always store
-  `(min(userId), max(userId))`) and enforce the invariant via a
-  `beforeCreate` hook on the junction or a database `CHECK`
-  constraint. Direct link-table helpers will still see the canonical
-  pair as a directed edge.
+Three valid modeling choices for symmetric relationships in V1,
+chosen by which write surface the caller plans to use:
+
+- **`throughEntity(...)`** — store both `(a, b)` and `(b, a)` rows
+  (or a canonical single row), and let application-level validation /
+  hooks on the junction repo maintain the symmetry invariant. Because
+  callers mutate through the junction repo, junction `beforeCreate` /
+  `beforeUpdate` hooks fire and can canonicalize or reject
+  non-canonical pairs.
+- **`throughLink(...)` with caller-side canonicalization** — caller
+  always passes the pair to `add(...)` / `remove(...)` / `set(...)` in
+  canonical order (e.g., `(min(id), max(id))`). The pair-uniqueness
+  index then naturally rejects duplicates because every insertion
+  arrives at the same canonical ordering. Junction hooks **do not fire**
+  on this path (see "Link-table helpers bypass the junction repo"
+  below), so canonicalization has to happen in the caller, not via a
+  hook.
+- **`throughLink(...)` with a database `CHECK` constraint** —
+  enforce the canonical ordering at the database level (e.g.,
+  `CHECK (follower_id < followed_id)` in the junction's DDL). The
+  constraint rejects non-canonical inserts at the driver layer
+  regardless of which write surface the caller used. Pair this with
+  caller-side canonicalization so `throughLink(...)` helpers don't
+  hit the constraint on every misordered call.
+
+What is **not** a viable option for symmetric self-referential
+`throughLink(...)`: a junction `beforeCreate` hook. Junction hooks
+don't run on the direct-driver path used by `throughLink(...)`
+helpers, so a hook that canonicalizes
+`(follower_id, followed_id)` would silently fail to fire for every
+helper-driven write. If the design depends on a hook, the
+relationship belongs in `throughEntity(...)`.
 
 A future RFC may add first-class symmetric-relationship support
 (canonicalization, single-row uniqueness, swap-aware traversal).
