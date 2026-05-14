@@ -213,6 +213,50 @@ what tells `Friendship::requester` and `Friendship::recipient` apart
 and prevents a degenerate
 `throughLink<Friendship>(Friendship::requester, Friendship::requester)`.
 
+### Self-referential M2M
+
+V1 `throughLink(...)` supports **directed** self-referential
+relationships when the source and target junction edges are distinct.
+Example:
+
+```kotlin
+class Follow : EntSchema("follows") {
+    val follower = belongsTo<User>("follower")
+    val followed = belongsTo<User>("followed")
+}
+
+class User : EntSchema("users") {
+    val following = manyToMany<User>("following")
+        .throughLink<Follow>(Follow::follower, Follow::followed)
+}
+```
+
+`(a, b)` and `(b, a)` are treated as distinct directed edges (a follows b
+is not the same as b follows a). The pair-uniqueness check from
+"Junction-shape rules" enforces this at the database level on the
+ordered column pair.
+
+**Undirected or symmetric self-referential relationships** (e.g.,
+mutual friendship where `(a, b)` and `(b, a)` should be the same edge)
+are **not special-cased in V1.** Codegen does not canonicalize
+`(a, b)` / `(b, a)`, will not deduplicate them, and does not generate
+helpers that swap the pair to a canonical orientation. Two valid
+modeling choices for symmetric relationships in V1:
+
+- Declare the relationship with `throughEntity(...)`, store both
+  `(a, b)` and `(b, a)` rows, and let application-level validation /
+  hooks maintain the symmetry invariant.
+- Or use `throughLink(...)` with an application-level rule that
+  canonicalizes the pair (e.g., always store
+  `(min(userId), max(userId))`) and enforce the invariant via a
+  `beforeCreate` hook on the junction or a database `CHECK`
+  constraint. Direct link-table helpers will still see the canonical
+  pair as a directed edge.
+
+A future RFC may add first-class symmetric-relationship support
+(canonicalization, single-row uniqueness, swap-aware traversal).
+Until then, V1 treats every link-table relationship as directed.
+
 ### Junction-shape rules
 
 The safety rules below define what qualifies as a helper-eligible
@@ -320,6 +364,15 @@ Before implementation, add tests for:
   e.g., `(ProjectAssignment, project, assignee)` and
   `(ProjectAssignment, project, reviewer)` — describe genuinely
   different relationships and both are accepted
+- directed self-referential `throughLink(...)` works (`User.following`
+  via `Follow::follower` / `Follow::followed`) — `(a, b)` and `(b, a)`
+  are distinct rows; pair-uniqueness applies to the ordered pair
+- V1 does not auto-canonicalize symmetric self-referential pairs;
+  generated helpers treat every link-table relationship as directed.
+  Symmetric relationships are modeled either as `throughEntity(...)`
+  with application-level invariants or as directed `throughLink(...)`
+  with caller-side canonicalization (e.g., always
+  `(min(id), max(id))`)
 - V1 does not synthesize a reverse traversal edge for a `throughLink(...)`
   relationship: the opposite-side schema's generated `Edges` data class
   does not gain a synthesized field, no eager-loading scope is generated,
