@@ -108,44 +108,60 @@ silently fall through.
 
 ## Write Orientation
 
-For V1, a link-table M2M relationship may have only one explicit
-`throughLink(...)` declaration per **relationship key**, where the
-relationship key is the triple
+M2M identity in this RFC works at two levels:
 
-```
-(junction schema, source junction edge, target junction edge)
-```
+1. The **orientation key** is the ordered triple
 
-— the junction class and the two `belongsTo` property references the
-caller passes as `sourceEdge` / `targetEdge` to `.throughLink<Junction>(...)`.
+   ```
+   (junction schema, source junction edge, target junction edge)
+   ```
+
+   — the junction class and the two `belongsTo` property references the
+   caller passes as `sourceEdge` / `targetEdge` to
+   `.throughLink<Junction>(...)`. It's what the caller actually writes
+   down, and order matters: it pins the write orientation, the
+   pair-uniqueness column order, and which side owns the helpers.
+
+2. The **canonical relationship identity** is the orientation key
+   normalized so the two junction edge refs are *unordered*. Two
+   orientation keys whose junction class matches and whose junction
+   edge refs are the same set — regardless of which is `sourceEdge`
+   and which is `targetEdge` — describe the same relationship in
+   opposite orientations.
+
 Keying on the specific junction edges (rather than just the source and
 target schema types) is required for self-referential and multi-FK
 junctions where both junction edges resolve to the same target schema:
 
 - `Friendship` with `val requester = belongsTo<User>("requester")` and
-  `val recipient = belongsTo<User>("recipient")` is one junction with two
-  distinct edges both pointing at `User`. The
-  `(Friendship::class, Friendship::requester, Friendship::recipient)` key
-  is distinct from `(Friendship::class, Friendship::recipient, Friendship::requester)`.
+  `val recipient = belongsTo<User>("recipient")` is one junction with
+  two distinct edges both pointing at `User`. Orientation keys
+  `(Friendship::class, requester, recipient)` and
+  `(Friendship::class, recipient, requester)` are *distinct
+  orientations* of the *same canonical relationship identity*.
 - A junction with multiple FK columns to the same target type for
   different purposes (e.g., a `ProjectAssignment` with `assignee` and
-  `reviewer` both pointing at `Pet`) likewise distinguishes relationships
-  by the specific junction-edge pair.
+  `reviewer` both pointing at `Pet`) hosts multiple canonical
+  relationship identities: `{ProjectAssignment, project, assignee}` and
+  `{ProjectAssignment, project, reviewer}` are distinct identities,
+  not just two orientations of the same relationship.
 
-That single declaration owns the write orientation and gets generated helpers.
+For V1, a link-table M2M relationship may have only one explicit
+`throughLink(...)` declaration per **canonical relationship identity**.
+That single declaration's orientation key picks the write orientation
+and gets generated helpers.
 
-A second `throughLink(...)` whose key is the same triple — including the
-case where the source and target junction edges are swapped — is the
-"explicit opposite-side declaration" rejected below. Two `throughLink(...)`
-declarations whose keys differ in either junction edge (e.g.,
-`Friendship::requester` / `Friendship::recipient` for one relationship and
-`Friendship::recipient` / `Friendship::requester` for the reverse) are
-treated as the **same relationship in opposite orientations** and the
-second is rejected. Two declarations whose keys differ on one of the
-junction-edge properties but describe genuinely different relationships
-(e.g., `ProjectAssignment::project` / `ProjectAssignment::assignee` for
-"assignees" and `ProjectAssignment::project` / `ProjectAssignment::reviewer`
-for "reviewers") have distinct relationship keys and both are allowed.
+A second `throughLink(...)` whose canonical relationship identity
+matches an existing declaration — including the case where the source
+and target junction edges are swapped (same identity, opposite
+orientation) — is the "explicit opposite-side declaration" rejected
+below. So in practice the rejection rule is "two `throughLink(...)`
+declarations with the same canonical identity are rejected"; whether
+the two orientation keys match exactly or are pair-swapped doesn't
+matter for rejection. Two declarations with *distinct* canonical
+identities — e.g., `(ProjectAssignment, project, assignee)` and
+`(ProjectAssignment, project, reviewer)` — describe genuinely
+different relationships and both are allowed.
 
 **V1 does not synthesize a reverse traversal edge for `throughLink(...)`
 relationships.** Codegen does not infer a read-only edge on the opposite-side
