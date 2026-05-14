@@ -797,14 +797,33 @@ Before implementation, add tests for:
   the same junction schema AND the same two junction `belongsTo`
   edges in opposite order (side A's
   `(sourceEdge, targetEdge) = (X, Y)`, side B's = `(Y, X)`); when
-  matched, each side's synthesized reverse is suppressed
+  matched, each side's synthesized reverse is suppressed. Test
+  fixtures cover both shapes the rule has to handle:
+  - **cross-schema**: e.g., `Group.members` and `User.groups` over a
+    `Membership` junction, each declared on a different endpoint
+    schema and pair-swapping each other's orientation key. Assert
+    neither side synthesizes a reverse, and both declared `manyToMany`
+    handles work for traversal/eager-loading/predicates.
+  - **self-schema (self-referential)**: e.g., `User.following` and
+    `User.followers` over a `Follow` junction, both declared on the
+    same `User` schema with pair-swapped orientation keys (per the
+    self-referential rule below). Assert no synthesis attempt, no
+    same-orientation-alias rejection, and both declared `manyToMany`
+    handles work side-by-side
 - multiple `throughEntity(...)` declarations with identical canonical
   identity AND identical orientation key (same junction class, same
   `(sourceEdge, targetEdge)` pair, different `manyToMany` names) are
   rejected as same-orientation aliases; this also applies to
   `throughLink(...)`. The same-relationship-in-two-orientations case
   is governed by the pair-swap rule above; this bullet covers
-  same-relationship-in-same-orientation duplicates
+  same-relationship-in-same-orientation duplicates. Test fixtures
+  cover both shapes:
+  - **cross-schema**: e.g., two `manyToMany<User>` declarations on
+    the same `Group` schema (`val members` and `val users`) both
+    passing `(Membership::group, Membership::user)` — rejected.
+  - **self-schema (self-referential)**: e.g., two `manyToMany<User>`
+    declarations on the same `User` schema both passing
+    `(Follow::follower, Follow::followed)` — rejected
 - self-referential `throughEntity(...)` (declaring schema and M2M
   target schema are the same) gets **no default reverse synthesis**;
   callers who want bidirectional traversal declare both orientations
