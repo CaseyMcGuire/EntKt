@@ -9,11 +9,22 @@ Split out from [Edge Mutation API](00-overview.md).
 ## Summary
 
 Generate collection-style mutation helpers for helper-eligible `throughLink(...)`
-many-to-many edges:
+many-to-many edges. The public API is **id-only**, mirroring the to-one
+FK philosophy from [To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
+(`belongsTo` writes go through `authorId = alice.id`, not `author = alice`):
 
-- `tags.add(tag)` / `tags.addId(tagId)`
-- `tags.remove(tag)` / `tags.removeId(tagId)`
-- `tags.set(tags)` / `tags.setIds(tagIds)`
+- `tags.add(tagId)`
+- `tags.remove(tagId)`
+- `tags.set(tagIds)`
+
+`tagId` is typed as the target's id type (e.g., `UUID` for
+`Tag` with `EntId.uuid()`, `Long` for `EntId.long()`), so calls are
+still compile-time-checked against passing a wrong-typed id. The
+helpers do not accept loaded `Tag` entities; callers with a target
+entity in hand pass `tag.id` explicitly. This matches the
+`authorId = alice.id` pattern from RFC #2 — relationship writes never
+mix with loaded-entity state, and there's a single uniform write
+surface across to-one and M2M.
 
 This RFC covers helper API shape, normalization, hook-facing pending edge views,
 privacy/validation candidate shape, target loading semantics, edge-only update
@@ -26,69 +37,67 @@ and locking requirements live in
 
 ## Proposed API
 
-For link-table many-to-many edges, generate collection-style add/remove/set
-methods on the edge property:
+For link-table many-to-many edges, generate collection-style id-only
+add/remove/set methods on the edge property:
 
 ```kotlin
 client.withTransaction { tx ->
-    tx.posts.update(post) {
-        tags.add(kotlinTag)
+    tx.posts.update(post.id) {
+        tags.add(kotlinTagId)
     }.save()
 }
 ```
 
 ```kotlin
 client.withTransaction { tx ->
-    tx.posts.update(post) {
-        tags.remove(oldTag)
+    tx.posts.update(post.id) {
+        tags.remove(oldTagId)
     }.save()
 }
 ```
 
 ```kotlin
 client.withTransaction { tx ->
-    tx.posts.update(post) {
-        tags.set(listOf(kotlinTag, ormTag))
+    tx.posts.update(post.id) {
+        tags.set(listOf(kotlinTagId, ormTagId))
     }.save()
 }
 ```
 
-Generate ID-only variants for callers that do not have the target entities
-loaded:
-
-```kotlin
-client.withTransaction { tx ->
-    tx.posts.update(post) {
-        tags.addId(kotlinTagId)
-        tags.removeId(oldTagId)
-    }.save()
-}
-```
+Callers that have a target entity in hand pass `tag.id` explicitly:
 
 ```kotlin
 client.withTransaction { tx ->
-    tx.posts.update(post) {
-        tags.setIds(listOf(kotlinTagId, ormTagId))
+    tx.posts.update(post.id) {
+        tags.add(kotlinTag.id)
+        tags.remove(oldTag.id)
     }.save()
 }
 ```
+
+The id type is the target's id type (e.g., `UUID` for `Tag` with
+`EntId.uuid()`, `Long` for `EntId.long()`). The compiler rejects
+mismatched types — you can't pass a `Post` id to a `tags.add(...)`
+call. No entity-argument overloads exist; the only way to call
+`tags.add(...)` is with a target id.
 
 All generated link-table M2M helpers require a transaction-scoped client and use
-the same owner-edge serialization discipline. `set(...)` and `setIds(...)` are
-exact replacements: generated code serializes the owner-edge relationship before
+the same owner-edge serialization discipline. `set(...)` is an exact
+replacement: generated code serializes the owner-edge relationship before
 reading or mutating junction rows. After the generated junction writes complete
 inside that serialized section, the relationship set equals the requested set.
 
 ## Target Loading And Existence
 
-For link-table M2M helpers, entity arguments are lowered to target ids.
-`tags.add(tag)`, `tags.remove(tag)`, and `tags.set(tags)` do not reload target
-rows; ID variants never load target rows. Target LOAD privacy is not evaluated
-just because a target entity or id appears in a link-table M2M mutation.
+Link-table M2M helpers operate on target ids only. `tags.add(...)`,
+`tags.remove(...)`, and `tags.set(...)` never load target rows because
+there is no target entity to load — only an id. Target LOAD privacy is
+not evaluated just because a target id appears in a link-table M2M
+mutation.
 
 Target existence for inserted links is enforced by junction-table foreign-key
 constraints unless a validation rule explicitly checks it earlier. Removals do
-not prove target existence: `removeId(nonexistentId)` may be a no-op if no
+not prove target existence: `remove(nonexistentId)` may be a no-op if no
 matching link exists. Applications that want unknown removal ids rejected should
 add validation.
 
@@ -103,37 +112,28 @@ class PostUpdate {
 }
 
 class TagEdgeMutator {
-    fun add(tag: Tag) {
-        addId(tag.id)
-    }
-
-    fun remove(tag: Tag) {
-        removeId(tag.id)
-    }
-
-    fun set(tags: List<Tag>) {
-        setIds(tags.map { it.id })
-    }
-
-    fun addId(id: UUID)
-    fun removeId(id: UUID)
-    fun setIds(ids: List<UUID>)
+    fun add(id: UUID)
+    fun remove(id: UUID)
+    fun set(ids: List<UUID>)
 }
 ```
 
-Generated edge mutators should be typed. `tags.add(...)` / `tags.remove(...)`
-should accept `Tag`, and `tags.addId(...)` / `tags.removeId(...)` /
-`tags.setIds(...)` should accept `Tag` ids.
+Generated edge mutators are typed by the target's id type — `UUID`
+for `Tag` declared with `EntId.uuid()`, `Long` for `EntId.long()`,
+etc. The compiler rejects mismatched types, so `tags.add(post.id)`
+where `Post.id` is `Long` and `Tag.id` is `UUID` is a compile error.
+No entity-argument overloads are generated; the only signatures on
+the mutator are id-typed.
 
-`set(...)` and `setIds(...)` are replacement operations. In V1, replacement
-operations and delta operations are mutually exclusive for a given edge within a
-single mutation. A builder may call either `set(...)` / `setIds(...)` or
-`add(...)` / `addId(...)` / `remove(...)` / `removeId(...)`, but not both for the
-same edge. Multiple replacement calls for the same edge are allowed; the latest
-replacement wins as long as no delta operation is also present. Generated
-mutators should reject mixed replacement/delta usage at the incompatible call
-site, or at `save()` preflight before hooks, privacy, validation, driver reads,
-or driver writes.
+`set(...)` is a replacement operation. In V1, replacement and delta
+operations are mutually exclusive for a given edge within a single
+mutation. A builder may call either `set(...)` or `add(...)` /
+`remove(...)`, but not both for the same edge. Multiple `set(...)`
+calls for the same edge are allowed; the latest replacement wins as
+long as no delta operation is also present. Generated mutators should
+reject mixed replacement/delta usage at the incompatible call site,
+or at `save()` preflight before hooks, privacy, validation, driver
+reads, or driver writes.
 
 ## Pending Edge Operations
 
@@ -145,7 +145,7 @@ sequence.
 Before hooks should receive hook-facing mutation interfaces, not the public
 builder type that exposes link-table M2M mutators. Hook-facing interfaces should
 continue to expose mutable scalar/FK fields, but they must not expose
-`tags.add(...)`, `tags.remove(...)`, `tags.set(...)`, or ID variants. They should
+`tags.add(...)`, `tags.remove(...)`, or `tags.set(...)`. They should
 instead expose a read-only view of pending link-table edge operation intent.
 Hooks may inspect which M2M edge operations were requested, but they must not
 mutate pending edge operations.
@@ -185,23 +185,20 @@ intent is unordered; hooks must not depend on iteration order.
 
 For a given edge, `requestedSet` is mutually exclusive with `ensurePresentIds` /
 `ensureAbsentIds` in `PendingEdgeOps` because V1 rejects mixed replacement and
-delta operations. `requestedSet` is the deduplicated latest `set(...)` /
-`setIds(...)` operand. `ensurePresentIds` and `ensureAbsentIds` are used only for
-delta-only mutations and contain deduplicated ids from `add(...)` / `addId(...)`
-and `remove(...)` / `removeId(...)` calls after applying in-builder delta
-normalization.
+delta operations. `requestedSet` is the deduplicated latest `set(...)`
+operand. `ensurePresentIds` and `ensureAbsentIds` are used only for
+delta-only mutations and contain deduplicated ids from `add(...)`
+and `remove(...)` calls after applying in-builder delta normalization.
 
 ## Normalization
 
 Many-to-many mutations normalize by target id before writing:
 
 - duplicate ids collapse to a single intended relationship
-- `set(listOf(a, a))` is equivalent to `set(listOf(a))`
-- `setIds(listOf(aId, aId))` is equivalent to `setIds(listOf(aId))`
-- `add(a)` twice is equivalent to `add(a)` once
-- `addId(aId)` twice is equivalent to `addId(aId)` once
-- `add(a)` followed by `removeId(a.id)` has no net add
-- `removeId(aId)` followed by `addId(aId)` has no net remove if `aId` was
+- `set(listOf(aId, aId))` is equivalent to `set(listOf(aId))`
+- `add(aId)` twice is equivalent to `add(aId)` once
+- `add(aId)` followed by `remove(aId)` has no net add
+- `remove(aId)` followed by `add(aId)` has no net remove if `aId` was
   already linked, and results in a net add if `aId` was not linked
 - removing an id that is not linked is a no-op
 - generated writes should compute the final add/remove sets before touching the
@@ -224,8 +221,8 @@ data class EdgeChanges<ID>(
 `EdgeChanges` separates replacement intent from the computed database effect:
 
 - `requestedSet` is present only when the pending operation log contains a
-  `set(...)` / `setIds(...)` replacement. It contains the deduplicated final
-  intended relationship set from the latest replacement operation.
+  `set(...)` replacement. It contains the deduplicated final intended
+  relationship set from the latest replacement operation.
 - `added` contains ids that will be inserted into the link table after comparing
   the pending operations with current junction rows.
 - `removed` contains ids that will be deleted from the link table after
@@ -240,23 +237,23 @@ authorize the computed database effect in `added` / `removed`; `requestedSet` is
 available when a rule needs to distinguish replacement operations from delta
 operations.
 
-For example, if the current link set is `[a, c]` and the caller runs
-`tags.set(listOf(a, b))`, rules observe:
+For example, if the current link set is `[aId, cId]` and the caller runs
+`tags.set(listOf(aId, bId))`, rules observe:
 
 ```kotlin
 EdgeChanges(
-    requestedSet = setOf(a, b),
-    added = setOf(b),
-    removed = setOf(c),
+    requestedSet = setOf(aId, bId),
+    added = setOf(bId),
+    removed = setOf(cId),
 )
 ```
 
-If the caller runs `tags.setIds(listOf(a, b))`, then `tags.addId(c)` in the same
-mutation, the builder rejects the mixed replacement/delta usage before
+If the caller runs `tags.set(listOf(aId, bId))`, then `tags.add(cId)` in the
+same mutation, the builder rejects the mixed replacement/delta usage before
 observable work.
 
-If the caller runs `tags.add(a)` followed by `tags.removeId(a.id)` in one
-mutation, rules observe no computed database change for `a`.
+If the caller runs `tags.add(aId)` followed by `tags.remove(aId)` in one
+mutation, rules observe no computed database change for `aId`.
 
 A future `PostWriteCandidate` could include:
 
@@ -339,8 +336,10 @@ explicit query with eager loading after `save()`.
 
 1. Extend write candidates or write contexts with typed edge changes.
 2. Generate many-to-many update helpers for link-table edges with
-   junction-table `add/remove/set` and `addId/removeId/setIds` on the single
-   explicit `throughLink(...)` declaration only.
+   id-only junction-table `add`, `remove`, and `set` on the single
+   explicit `throughLink(...)` declaration only. The mutator's
+   parameter type is the target's id type (mirrors the to-one FK API
+   from RFC #2). No entity-argument overloads are generated.
 3. Require the transaction and owner-edge serialization semantics from
    [Transaction And Locking Semantics](04-transaction-locking-semantics.md).
 4. Consider create-time many-to-many helpers once owner id availability and
@@ -350,13 +349,13 @@ explicit query with eager loading after `save()`.
 
 Before implementation, add tests for:
 
-- link-table M2M `add`, `remove`, `set`, `addId`, `removeId`, and `setIds`
-  require a transaction-scoped client and update the junction table
-- link-table M2M entity arguments lower to target ids without reloading target
-  rows, and ID variants never load target rows
-- link-table M2M mutations do not evaluate target LOAD privacy just because a
-  target entity or id appears in the mutation
-- `removeId(nonexistentId)` can be a no-op unless validation rejects unknown
+- link-table M2M `add`, `remove`, and `set` require a transaction-scoped
+  client and update the junction table; helper parameters are typed
+  by the target's id type, and no entity-argument overloads are
+  generated
+- link-table M2M mutations do not evaluate target LOAD privacy and do not
+  load target rows just because a target id appears in the mutation
+- `remove(nonexistentId)` can be a no-op unless validation rejects unknown
   removal ids
 - edge mutation changes are visible to validation and privacy rules
 - returned owner entities have normal unloaded edge state after link-table M2M
@@ -365,7 +364,7 @@ Before implementation, add tests for:
 - `EdgeChanges` exposes set-valued `requestedSet`, `added`, and `removed`, with
   `added` and `removed` computed from current junction rows
 - `EdgeChanges.requestedSet` reflects the final intended replacement set after
-  the latest `set` / `setIds`
+  the latest `set` call
 - `PendingEdgeOps` exposes set-valued intent fields and does not expose the raw
   ordered operation log
 - mixed replacement and delta operations for the same link-table M2M edge are
