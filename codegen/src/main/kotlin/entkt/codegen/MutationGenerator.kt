@@ -40,25 +40,26 @@ import entkt.schema.EntSchema
  * inspection, or `unset{Field}()`.
  *
  * Also generates two restricted hook-facing views that extend the
- * shared `Mutation` interface:
+ * shared `Mutation` interface. The strength of the restriction differs
+ * between create and update:
  *
  * - `${SchemaName}CreateMutationView` — the typed surface for
  *   `beforeCreate` hook lambdas. Adds immutable scalar fields
- *   (writable on create only). Hides the concrete-builder surface
- *   (`save()`, `client`, `driver`, hook lists, private staging fields)
- *   from the typed hook surface so a hook author working through
- *   autocomplete and type-checked code can't reach them.
+ *   (writable on create only). The hook receives the concrete
+ *   `${SchemaName}Create` builder typed as the view, so the
+ *   restriction is a static API restriction only: a hook that
+ *   explicitly casts back to `${SchemaName}Create` can still reach
+ *   `save()`, `client`, `driver`, hook lists, etc. at runtime.
  *
  * - `${SchemaName}UpdateMutationView` — the typed surface for
  *   `beforeUpdate` hook lambdas (via `ctx.mutation`). Adds
- *   `unset{Field}()` patch operations.
- *
- * Both are static API restrictions, not sandboxed capability
- * boundaries: the runtime value passed to a hook is still the
- * concrete builder, so a hook that explicitly casts the parameter
- * back to `${SchemaName}Create` / `${SchemaName}Update` can reach the
- * hidden members. The contract is "hidden from the typed hook
- * surface", not "unreachable at runtime".
+ *   `unset{Field}()` patch operations. The hook receives a private
+ *   anonymous adapter whose runtime type implements only this view —
+ *   it forwards property reads/writes and unset() calls to the outer
+ *   update builder but does not extend or expose `${SchemaName}Update`.
+ *   A hook that casts the parameter to `${SchemaName}Update` throws
+ *   `ClassCastException`. So on the update path the narrowing is
+ *   actually runtime-enforced, not just typed.
  *
  * The Update view's `unset` methods live only on the update side because
  * the patch model they remove from is update-specific.

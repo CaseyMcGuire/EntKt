@@ -817,17 +817,32 @@ the create-time and internal-corruption cases listed above.
 
 Codegen should generate hook-facing mutation interfaces separately from the
 public create/update builders. Hook callbacks are **typed against** these
-restricted interfaces rather than the concrete public builders — this is a
-static API restriction (the typed hook surface hides `save()`, `driver`,
-`client`, hook lists, and other concrete-builder members), not a sandboxed
-capability boundary. The runtime value the framework passes to a hook is
-still the concrete builder, so a hook that explicitly casts the parameter
-back to the concrete type can reach the hidden members. The contract is
-"hidden from the typed hook surface", not "unreachable at runtime". The
-interfaces expose mutable scalar fields and resolved FK fields according to
-field and relationship mutability, but they do not expose relationship entity
-properties or link-table edge mutators. Create and update hook interfaces may
-differ when immutable fields are create-only.
+restricted interfaces rather than the concrete public builders. The interfaces
+expose mutable scalar fields and resolved FK fields according to field and
+relationship mutability, but they do not expose relationship entity properties
+or link-table edge mutators. Create and update hook interfaces may differ when
+immutable fields are create-only.
+
+The strength of the restriction differs between the two paths:
+
+- **`beforeCreate`** receives the concrete `${Entity}Create` builder typed
+  as `${Entity}CreateMutationView`. The view interface hides `save()`,
+  `driver`, `client`, hook lists, and the private staging/assigned fields
+  from autocomplete and type-checked use. The runtime value is still the
+  concrete builder, so a hook that explicitly casts the parameter back
+  (`ctx.mutation as ${Entity}Create`) can reach the hidden members. This
+  is a static API restriction, not a sandboxed capability boundary —
+  "hidden from the typed hook surface", not "unreachable at runtime".
+
+- **`beforeUpdate`** receives a private anonymous adapter object whose
+  runtime type implements only `${Entity}UpdateMutationView`. The adapter
+  forwards property reads/writes and `unset{Field}()` calls to the outer
+  update builder, but it does not extend or expose the concrete
+  `${Entity}Update`. A hook that casts back (`ctx.mutation as
+  ${Entity}Update`) throws `ClassCastException` — the runtime really
+  doesn't expose the hidden members through this object. So on the update
+  path the restriction is a runtime-enforced narrowing, not just a typed
+  one.
 
 `beforeSave` receives a common restricted `{Entity}Mutation` interface shared by
 create and update hooks. That common interface exposes only fields and FKs that
