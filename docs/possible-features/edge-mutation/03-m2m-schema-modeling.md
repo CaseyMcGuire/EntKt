@@ -183,6 +183,36 @@ Kotlin compiler:
 These ref-resolution rules apply equally to `throughEntity(...)` and
 are checked at the same point in schema validation.
 
+#### Worked example
+
+For
+
+```kotlin
+class Post : EntSchema("posts") {
+    val tags = manyToMany<Tag>("tags")
+        .throughLink<PostTag>(PostTag::post, PostTag::tag)
+}
+```
+
+schema validation requires:
+
+- `PostTag::post` resolves to a `belongsTo<Post>` edge declared on
+  `PostTag` (the junction schema). The target type `Post` matches the
+  declaring schema (`manyToMany<Tag>` is declared on `Post`).
+- `PostTag::tag` resolves to a `belongsTo<Tag>` edge declared on
+  `PostTag`. The target type `Tag` matches the M2M target schema
+  (the type parameter of `manyToMany<Tag>`).
+- `PostTag::post` and `PostTag::tag` are distinct junction edges (not
+  the same property reference passed twice).
+
+For a self-referential or multi-role junction (e.g., `Friendship` with
+two `belongsTo<User>` edges named `requester` and `recipient`), the
+declaring and target schemas are the same `User`. The rule still
+holds: both refs target `User`, but the **distinct-edges** check is
+what tells `Friendship::requester` and `Friendship::recipient` apart
+and prevents a degenerate
+`throughLink<Friendship>(Friendship::requester, Friendship::requester)`.
+
 ### Junction-shape rules
 
 The safety rules below define what qualifies as a helper-eligible
