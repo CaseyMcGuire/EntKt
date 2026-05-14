@@ -157,6 +157,34 @@ mismatched pairs at schema validation.
 
 ## Link-Table Safety
 
+### Ref resolution
+
+The two `KProperty1<Junction, BelongsToHandle<*>>` arguments to
+`.throughLink<Junction>(sourceEdge, targetEdge)` are erased to
+`BelongsToHandle<*>` at the type-system level, so the constraints below
+are enforced as schema validation rules at codegen time, not by the
+Kotlin compiler:
+
+- both refs must resolve to non-null `belongsTo` edges declared on the
+  junction schema; refs that don't reach a junction `belongsTo` (e.g.,
+  point at a `hasMany`, a scalar field, or null) are rejected
+- the two refs must be **distinct** junction edges; passing the same
+  property reference twice (e.g., `Friendship::requester` for both
+  `sourceEdge` and `targetEdge`) is rejected
+- `sourceEdge` must resolve to a junction `belongsTo` whose target is
+  the **declaring schema** (the schema declaring the `manyToMany`);
+  rejected otherwise. For self-referential M2M (the declaring schema
+  and the M2M target schema are the same), this collapses to "must
+  target the shared schema."
+- `targetEdge` must resolve to a junction `belongsTo` whose target is
+  the **M2M target schema** (the type parameter of `manyToMany<Target>`);
+  rejected otherwise
+
+These ref-resolution rules apply equally to `throughEntity(...)` and
+are checked at the same point in schema validation.
+
+### Junction-shape rules
+
 The safety rules below define what qualifies as a helper-eligible
 `throughLink(...)` edge in V1. A junction schema is safe for direct edge mutation
 only when:
@@ -219,6 +247,12 @@ Before implementation, add tests for:
 
 - M2M schemas use `throughLink(...)` or `throughEntity(...)`; codegen does not
   infer the mutation model from junction shape or runtime configuration
+- `throughLink(...)` / `throughEntity(...)` ref resolution rules are
+  enforced as schema validation: refs that don't resolve to a junction
+  `belongsTo` are rejected; the same prop ref passed for both
+  `sourceEdge` and `targetEdge` is rejected; a `sourceEdge` whose
+  target schema is not the declaring schema is rejected; a `targetEdge`
+  whose target schema is not the M2M target schema is rejected
 - a second `throughLink(...)` declaration whose relationship key
   `(junction schema, sourceEdge prop, targetEdge prop)` matches an
   existing declaration's key with `sourceEdge`/`targetEdge` swapped is
