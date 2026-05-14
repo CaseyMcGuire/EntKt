@@ -270,16 +270,48 @@ relationship when, and only when:
 
 If both conditions hold, the synthesized reverse on each side is
 suppressed and the two explicit declarations describe the same
-relationship from the two endpoints. If either side's
-`(sourceEdge, targetEdge)` pair doesn't pair-swap with the other,
-codegen rejects the configuration at schema validation rather than
-silently treating two unrelated edges as opposites — for example, a
-junction `ProjectAssignment` with `project` / `assignee` / `reviewer`
-edges could host both a `(project, assignee)` and a `(project, reviewer)`
-relationship, and an opposite-side `throughEntity(...)` whose
-orientation key is `(assignee, project)` pairs with the first one
-only; declaring an opposite-side `(reviewer, project)` against the
-first relationship's `(project, assignee)` pair is rejected.
+relationship from the two endpoints.
+
+**Scope of the matching rule.** The pair-swap check applies *only* when
+the two declarations share a canonical relationship identity — same
+junction class plus the same junction-edge ref pair as an unordered
+set. Declarations with **distinct canonical relationship identities**
+are independent and may coexist freely: no matching is attempted
+between them, no rejection fires, and each independently runs the
+default reverse-synthesis path on its own target schema (which the
+opposite-side schema can suppress by declaring its own explicit
+`throughEntity(...)`).
+
+For example, on `Project`, two relationships over the same junction
+schema (`ProjectAssignment` with `project` / `assignee` / `reviewer`
+edges) are perfectly fine:
+
+```kotlin
+val assignees = manyToMany<User>("assignees")
+    .throughEntity<ProjectAssignment>(
+        ProjectAssignment::project, ProjectAssignment::assignee
+    )
+val reviewers = manyToMany<User>("reviewers")
+    .throughEntity<ProjectAssignment>(
+        ProjectAssignment::project, ProjectAssignment::reviewer
+    )
+```
+
+The two declarations share the junction class but have different
+unordered junction-edge ref pairs (`{project, assignee}` vs
+`{project, reviewer}`), so their canonical identities are distinct.
+Codegen doesn't try to match them as opposites and doesn't reject
+them — they describe two genuinely independent relationships.
+
+Concretely:
+
+- **Same canonical identity, orientation keys pair-swap** → matched
+  as opposites; synthesized reverse suppressed on both sides.
+- **Same canonical identity, identical orientation key** → rejected
+  as same-orientation alias (see "Same-orientation aliases are
+  rejected" below).
+- **Distinct canonical identities** → independent; no matching, no
+  rejection, both allowed.
 
 The same matching rule applies to the `throughLink(...)` opposite-side
 rejection (already covered above): two `throughLink(...)` declarations
@@ -671,12 +703,13 @@ Before implementation, add tests for:
   and `User.followers` via `(Follow::followed, Follow::follower)`)
   and the matching rule above recognizes them as the two orientations
   of one canonical identity
-- mismatched explicit `throughEntity(...)` pairs are rejected: a
-  different junction schema, OR a `(sourceEdge, targetEdge)` pair
-  that doesn't pair-swap (e.g., `(project, assignee)` on one side and
-  `(reviewer, project)` on the other for a junction with both
-  `assignee` and `reviewer` edges) — these don't describe the same
-  relationship and must not be silently coupled
+- two explicit `throughEntity(...)` declarations with **distinct
+  canonical relationship identities** (different junction class, or
+  same junction class with different unordered junction-edge ref
+  pairs, e.g. `(project, assignee)` vs `(project, reviewer)`) are
+  independent — no matching attempted, no rejection, both allowed,
+  each independently runs default reverse synthesis on its target
+  schema
 - generated link-table M2M helpers are emitted only for the single explicit
   `throughLink(...)` declaration for a junction relationship
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
