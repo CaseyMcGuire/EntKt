@@ -3,6 +3,7 @@ package entkt.codegen
 import com.squareup.kotlinpoet.FileSpec
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
+import entkt.schema.ManyToManyThrough
 import java.nio.file.Path
 import kotlin.reflect.KClass
 
@@ -24,6 +25,7 @@ internal fun ensureFinalized(schemas: List<SchemaInput>) {
     val schemaNames = schemas.associate { it.schema to it.name }
     validateMemberNames(schemas, schemaNames)
     validateRelationNames(schemas, schemaNames)
+    validateM2MOrientation(schemas, schemaNames)
 }
 
 /**
@@ -208,6 +210,129 @@ private fun validateRelationNames(
                     "Synthesized unique index '$synth' for column '${col.name}' on " +
                         "schema '${input.name}' collides with $prev — " +
                         "relation names must be globally unique",
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Reject incompatible M2M declarations that share a canonical
+ * relationship identity (same junction class plus the same unordered
+ * pair of junction `belongsTo` edges).
+ *
+ * Rules:
+ * - Any two `throughLink` declarations with the same canonical identity
+ *   are rejected — link tables allow at most one declaration per
+ *   relationship identity (regardless of orientation). The opposite
+ *   side, when needed, is deferred until link-table reverse-traversal
+ *   is specified.
+ * - Mixed `throughLink` + `throughEntity` over the same canonical
+ *   identity is rejected — the same junction edge pair must be
+ *   modelled consistently.
+ * - Two `throughEntity` declarations with **identical** orientation
+ *   keys are rejected as a same-orientation alias. Pair-swapped
+ *   orientations (one declaration's `(sourceEdge, targetEdge)` is the
+ *   other's `(targetEdge, sourceEdge)`) are *allowed* — this is how
+ *   callers declare bidirectional traversal.
+ *
+ * Phase 2's `ManyToManyBuilder.resolve()` already enforces that
+ * `sourceEdge` points back at the declaring schema and `targetEdge` at
+ * the M2M target type parameter, so a same-orientation alias across
+ * two distinct declaring schemas is unreachable here (the junction
+ * `belongsTo` cannot target both schemas). Same-orientation aliases
+ * therefore only need to be detected within a single declaring schema.
+ */
+private fun validateM2MOrientation(
+    schemas: List<SchemaInput>,
+    schemaNames: Map<EntSchema, String>,
+) {
+    data class M2MDecl(
+        val declaringSchema: String,
+        val edgeName: String,
+        val junctionName: String,
+        val sourceEdge: String,
+        val targetEdge: String,
+        val mode: String, // "throughLink" or "throughEntity"
+    )
+
+    // Key for canonical relationship identity: junction schema +
+    // unordered pair of junction edge names. Use a sorted Pair so the
+    // map key is stable regardless of declaration order.
+    fun canonicalKey(d: M2MDecl): Triple<String, String, String> {
+        val (lo, hi) = if (d.sourceEdge <= d.targetEdge) d.sourceEdge to d.targetEdge
+        else d.targetEdge to d.sourceEdge
+        return Triple(d.junctionName, lo, hi)
+    }
+
+    val declarations = mutableListOf<M2MDecl>()
+    for (input in schemas) {
+        for (edge in input.schema.edges()) {
+            val m2m = edge.kind as? EdgeKind.ManyToMany ?: continue
+            val through = m2m.through
+            val junctionName = schemaNames[through.junction]
+                ?: error(
+                    "M2M edge '${edge.name}' on schema '${input.name}' references junction " +
+                        "${through.junction.tableName} which is not in the current schema set",
+                )
+            val mode = when (through) {
+                is ManyToManyThrough.LinkTable -> "throughLink"
+                is ManyToManyThrough.ThroughEntity -> "throughEntity"
+            }
+            declarations += M2MDecl(
+                declaringSchema = input.name,
+                edgeName = edge.name,
+                junctionName = junctionName,
+                sourceEdge = through.sourceEdge,
+                targetEdge = through.targetEdge,
+                mode = mode,
+            )
+        }
+    }
+
+    val byCanonical = declarations.groupBy { canonicalKey(it) }
+    for ((_, group) in byCanonical) {
+        if (group.size < 2) continue
+
+        val modes = group.map { it.mode }.toSet()
+        if (modes.size > 1) {
+            val descriptions = group.joinToString(", ") {
+                "${it.mode} on '${it.declaringSchema}.${it.edgeName}' (${it.sourceEdge}, ${it.targetEdge})"
+            }
+            error(
+                "Mixed M2M write models for the same canonical relationship over junction " +
+                    "'${group[0].junctionName}' with edge pair {${group[0].sourceEdge}, ${group[0].targetEdge}}: " +
+                    "$descriptions. The same junction edge pair must be modelled consistently — " +
+                    "either both sides as throughEntity (bidirectional traversal) or a single " +
+                    "throughLink (link-table relationship; no opposite-side declaration in V1).",
+            )
+        }
+
+        if (modes.single() == "throughLink") {
+            val descriptions = group.joinToString(", ") {
+                "'${it.declaringSchema}.${it.edgeName}' (${it.sourceEdge}, ${it.targetEdge})"
+            }
+            error(
+                "Duplicate throughLink declarations over junction '${group[0].junctionName}' with " +
+                    "edge pair {${group[0].sourceEdge}, ${group[0].targetEdge}}: $descriptions. " +
+                    "Link-table relationships allow at most one throughLink per canonical identity; " +
+                    "drop the duplicate or model the relationship as throughEntity if both sides " +
+                    "need explicit traversal.",
+            )
+        } else {
+            // Pure throughEntity group — reject identical orientation keys only.
+            val byOrientation = group.groupBy { it.sourceEdge to it.targetEdge }
+            for ((orientation, sameOrientation) in byOrientation) {
+                if (sameOrientation.size < 2) continue
+                val descriptions = sameOrientation.joinToString(", ") {
+                    "'${it.declaringSchema}.${it.edgeName}'"
+                }
+                error(
+                    "Same-orientation alias M2M declarations on junction '${group[0].junctionName}' " +
+                        "with orientation key (${orientation.first}, ${orientation.second}): $descriptions. " +
+                        "Multiple manyToMany declarations cannot share the same junction class and " +
+                        "the same (sourceEdge, targetEdge) — alias traversal names over the same " +
+                        "relationship and direction aren't supported in V1.",
                 )
             }
         }

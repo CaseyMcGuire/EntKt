@@ -371,6 +371,125 @@ private fun finalize(vararg schemas: EntSchema) {
     schemas.forEach { it.finalize(registry) }
 }
 
+// ---------- Test schemas for M2M orientation / alias rules ----------
+
+private class M2MUser : EntSchema("m2m_users") {
+    override fun id() = EntId.long()
+}
+private class M2MGroup : EntSchema("m2m_groups") {
+    override fun id() = EntId.long()
+}
+private class M2MMembership : EntSchema("m2m_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<M2MUser>("user")
+    val group = belongsTo<M2MGroup>("group")
+}
+
+// Same-orientation alias: two manyToMany declarations on the same
+// schema with identical (junction, sourceEdge, targetEdge) keys.
+private class M2MAliasGroup : EntSchema("alias_groups") {
+    override fun id() = EntId.long()
+    val members = manyToMany<M2MAliasUser>("members")
+        .throughEntity<M2MAliasMembership>(M2MAliasMembership::group, M2MAliasMembership::user)
+    val users = manyToMany<M2MAliasUser>("users")
+        .throughEntity<M2MAliasMembership>(M2MAliasMembership::group, M2MAliasMembership::user)
+}
+private class M2MAliasUser : EntSchema("alias_users") {
+    override fun id() = EntId.long()
+}
+private class M2MAliasMembership : EntSchema("alias_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<M2MAliasUser>("user")
+    val group = belongsTo<M2MAliasGroup>("group")
+}
+
+// Cross-schema pair-swap with throughEntity is allowed (this is the
+// canonical bidirectional traversal pattern).
+private class BiUser : EntSchema("bi_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<BiGroup>("groups")
+        .throughEntity<BiMembership>(BiMembership::user, BiMembership::group)
+}
+private class BiGroup : EntSchema("bi_groups") {
+    override fun id() = EntId.long()
+    val users = manyToMany<BiUser>("users")
+        .throughEntity<BiMembership>(BiMembership::group, BiMembership::user)
+}
+private class BiMembership : EntSchema("bi_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<BiUser>("user")
+    val group = belongsTo<BiGroup>("group")
+}
+
+// Self-referential pair-swap on the same schema is allowed.
+private class FollowUser : EntSchema("follow_users") {
+    override fun id() = EntId.long()
+    val following = manyToMany<FollowUser>("following")
+        .throughEntity<Follow>(Follow::follower, Follow::followed)
+    val followers = manyToMany<FollowUser>("followers")
+        .throughEntity<Follow>(Follow::followed, Follow::follower)
+}
+private class Follow : EntSchema("follows") {
+    override fun id() = EntId.long()
+    val follower = belongsTo<FollowUser>("follower")
+    val followed = belongsTo<FollowUser>("followed")
+}
+
+// Cross-schema pair-swap with throughLink is rejected (link-table
+// relationships allow only one declaration per canonical identity).
+private class LinkUser : EntSchema("link_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<LinkGroup>("groups")
+        .throughLink<LinkMembership>(LinkMembership::user, LinkMembership::group)
+}
+private class LinkGroup : EntSchema("link_groups") {
+    override fun id() = EntId.long()
+    val users = manyToMany<LinkUser>("users")
+        .throughLink<LinkMembership>(LinkMembership::group, LinkMembership::user)
+}
+private class LinkMembership : EntSchema("link_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<LinkUser>("user")
+    val group = belongsTo<LinkGroup>("group")
+}
+
+// Mixed mode (one side throughLink, the other throughEntity) over the
+// same canonical identity is rejected.
+private class MixedLinkUser : EntSchema("mixed_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<MixedLinkGroup>("groups")
+        .throughLink<MixedLinkMembership>(MixedLinkMembership::user, MixedLinkMembership::group)
+}
+private class MixedLinkGroup : EntSchema("mixed_groups") {
+    override fun id() = EntId.long()
+    val users = manyToMany<MixedLinkUser>("users")
+        .throughEntity<MixedLinkMembership>(MixedLinkMembership::group, MixedLinkMembership::user)
+}
+private class MixedLinkMembership : EntSchema("mixed_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<MixedLinkUser>("user")
+    val group = belongsTo<MixedLinkGroup>("group")
+}
+
+// Multi-relationship junction (distinct canonical identities) is
+// allowed even though both share the junction class.
+private class MultiRelProject : EntSchema("multi_rel_projects") {
+    override fun id() = EntId.long()
+    val assignees = manyToMany<MultiRelPet>("assignees")
+        .throughEntity<MultiRelAssignment>(MultiRelAssignment::project, MultiRelAssignment::assignee)
+    val reviewers = manyToMany<MultiRelPet>("reviewers")
+        .throughEntity<MultiRelAssignment>(MultiRelAssignment::project, MultiRelAssignment::reviewer)
+}
+private class MultiRelPet : EntSchema("multi_rel_pets") {
+    override fun id() = EntId.long()
+}
+private class MultiRelAssignment : EntSchema("multi_rel_assignments") {
+    override fun id() = EntId.long()
+    val project = belongsTo<MultiRelProject>("project")
+    val assignee = belongsTo<MultiRelPet>("assignee")
+    val reviewer = belongsTo<MultiRelPet>("reviewer")
+}
+
 class EdgeCodegenTest {
 
     private fun createAllSchemas(): Triple<
@@ -1392,6 +1511,82 @@ class EdgeCodegenTest {
         assert(error!!.message!!.contains("sourceEdge and targetEdge are the same junction property")) {
             "Error should call out same junction property: ${error.message}"
         }
+    }
+
+    // ---------- M2M orientation / alias rules ----------
+
+    @Test
+    fun `same-orientation alias throughEntity declarations on one schema are rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("AliasGroup", M2MAliasGroup()),
+                SchemaInput("AliasUser", M2MAliasUser()),
+                SchemaInput("AliasMembership", M2MAliasMembership()),
+            ))
+        }
+        assertContains(err.message!!, "Same-orientation alias")
+        assertContains(err.message!!, "AliasGroup.members")
+        assertContains(err.message!!, "AliasGroup.users")
+    }
+
+    @Test
+    fun `cross-schema pair-swapped throughEntity is allowed`() {
+        // BiUser declares (user, group); BiGroup declares (group, user) — same
+        // canonical identity, pair-swapped orientations. Both should be accepted.
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("BiUser", BiUser()),
+            SchemaInput("BiGroup", BiGroup()),
+            SchemaInput("BiMembership", BiMembership()),
+        ))
+    }
+
+    @Test
+    fun `self-referential pair-swapped throughEntity is allowed`() {
+        // FollowUser.following uses (follower, followed); FollowUser.followers
+        // uses (followed, follower) — pair-swapped, same canonical identity.
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("FollowUser", FollowUser()),
+            SchemaInput("Follow", Follow()),
+        ))
+    }
+
+    @Test
+    fun `cross-schema pair-swapped throughLink is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("LinkUser", LinkUser()),
+                SchemaInput("LinkGroup", LinkGroup()),
+                SchemaInput("LinkMembership", LinkMembership()),
+            ))
+        }
+        assertContains(err.message!!, "Duplicate throughLink declarations")
+        assertContains(err.message!!, "LinkUser.groups")
+        assertContains(err.message!!, "LinkGroup.users")
+    }
+
+    @Test
+    fun `mixed throughLink and throughEntity on same canonical identity is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("MixedLinkUser", MixedLinkUser()),
+                SchemaInput("MixedLinkGroup", MixedLinkGroup()),
+                SchemaInput("MixedLinkMembership", MixedLinkMembership()),
+            ))
+        }
+        assertContains(err.message!!, "Mixed M2M write models")
+        assertContains(err.message!!, "throughLink")
+        assertContains(err.message!!, "throughEntity")
+    }
+
+    @Test
+    fun `multi-relationship junction with distinct canonical identities is allowed`() {
+        // MultiRelProject declares two manyToMany via MultiRelAssignment but
+        // with distinct edge pairs ({project, assignee} vs {project, reviewer}).
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("MultiRelProject", MultiRelProject()),
+            SchemaInput("MultiRelPet", MultiRelPet()),
+            SchemaInput("MultiRelAssignment", MultiRelAssignment()),
+        ))
     }
 
     // ---------- Per-group limit/offset in eager loading ----------
