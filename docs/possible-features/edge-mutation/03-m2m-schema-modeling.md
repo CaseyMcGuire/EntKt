@@ -263,9 +263,27 @@ The safety rules below define what qualifies as a helper-eligible
 `throughLink(...)` edge in V1. A junction schema is safe for direct edge mutation
 only when:
 
-- it contains exactly the junction id column plus the two FK columns. Extra
-  payload columns are not safe in V1, even when nullable or defaulted, because
-  generated create builders, not low-level `Driver.insert`, apply field defaults
+- it contains exactly the junction id column plus the two FK columns.
+  **Any declared scalar field other than the junction id and the two
+  source/target FK columns counts as a payload column** and makes
+  `throughLink(...)` invalid. Specifically rejected:
+  - nullable fields (e.g., `val nickname = string("nickname").nullable()`)
+  - defaulted fields (`.default(...)`, `.defaultNow()`)
+  - timestamp / audit fields (`createdAt`, `updatedAt`, `deletedAt`)
+  - soft-delete markers, version fields, optimistic-concurrency tokens
+  - role / kind / status discriminators
+  - any mixin-provided field (e.g. `include(::Timestamps)` adds
+    timestamp fields that count as payload here)
+  - field-backed FK columns whose backing field carries any of the
+    above (e.g. a `comment`-only field is allowed because it doesn't
+    add a column, but a `string("note")` column is not)
+
+  Generated create builders apply field defaults, run before-create
+  hooks, evaluate validation rules, and so on — none of which fire
+  on the low-level `Driver.insert(...)` / `insertMany(...)` paths
+  used by the link-table helpers, so any "harmless" payload column
+  silently bypasses its declared semantics. The cleaner answer is to
+  reject and direct the schema author to `throughEntity(...)`.
 - both junction `belongsTo` edges are non-null. Under the long-term schema model,
   this is the default; junction edges marked `.nullable()` are not safe for
   direct link-table helpers
@@ -420,6 +438,13 @@ Before implementation, add tests for:
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
   columns, nullable source/target FKs, caller-provided ids, partial unique
   indexes, or missing non-partial unique source/target FK pairs
+- the payload-column rejection is enumerative, not heuristic: any
+  declared scalar field other than the junction id and the two
+  source/target FK columns triggers it. Test coverage spans nullable
+  fields, defaulted fields, timestamp fields (`createdAt`,
+  `updatedAt`, `deletedAt`), soft-delete markers, version /
+  optimistic-concurrency tokens, role/kind discriminators, and
+  mixin-provided fields (e.g. `include(::Timestamps)`)
 - `throughLink(...)` requires both junction `belongsTo` edges to declare
   `OnDelete.CASCADE`; `OnDelete.RESTRICT` (or unset, when the
   framework default isn't CASCADE) is rejected. Junctions that need a
