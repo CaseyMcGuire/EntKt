@@ -75,18 +75,27 @@ field on `Through`:
 
 ```kotlin
 sealed interface ManyToManyThrough {
-    val target: EntSchema
+    /**
+     * The junction `EntSchema` (e.g., `PostTag` for `Post.tags`). Named
+     * `junction` rather than `target` because in M2M edge metadata
+     * "target" already means the M2M edge's *target schema* (the type
+     * parameter of `manyToMany<Target>`, e.g., `Tag` for `Post.tags`),
+     * and conflating the two names is a footgun. Codegen reads the
+     * M2M edge target schema from `Edge.target`; this carries the
+     * junction class separately.
+     */
+    val junction: EntSchema
     val sourceEdge: String
     val targetEdge: String
 
     data class LinkTable(
-        override val target: EntSchema,
+        override val junction: EntSchema,
         override val sourceEdge: String,
         override val targetEdge: String,
     ) : ManyToManyThrough
 
     data class ThroughEntity(
-        override val target: EntSchema,
+        override val junction: EntSchema,
         override val sourceEdge: String,
         override val targetEdge: String,
     ) : ManyToManyThrough
@@ -496,17 +505,30 @@ only when:
 - both junction `belongsTo` edges are non-null. Under the long-term schema model,
   this is the default; junction edges marked `.nullable()` are not safe for
   direct link-table helpers
-- both junction `belongsTo` edges declare `OnDelete.CASCADE`. Pure
-  link-table junction rows are meaningless once either endpoint is
-  gone — leaving them around contradicts the relationship's set
-  semantics and breaks the pair-uniqueness invariant for the next
-  insert. `OnDelete.RESTRICT` is rejected because it would block
-  endpoint deletion until the caller manually drained the link rows
-  (a foot-gun for "delete this user" callers); `OnDelete.SET_NULL`
-  is already rejected indirectly via the non-null junction-FK rule
-  above. Junctions with a different deletion policy should be
-  modeled with `throughEntity(...)`, where the caller mutates the
-  junction through its repo and can encode any policy explicitly.
+- both junction `belongsTo` edges declare `OnDelete.CASCADE`
+  **explicitly**. Pure link-table junction rows are meaningless once
+  either endpoint is gone — leaving them around contradicts the
+  relationship's set semantics and breaks the pair-uniqueness
+  invariant for the next insert. `OnDelete.RESTRICT` is rejected
+  because it would block endpoint deletion until the caller manually
+  drained the link rows (a foot-gun for "delete this user" callers);
+  `OnDelete.SET_NULL` is already rejected indirectly via the non-null
+  junction-FK rule above. Junctions with a different deletion policy
+  should be modeled with `throughEntity(...)`, where the caller
+  mutates the junction through its repo and can encode any policy
+  explicitly.
+
+  **Note on "explicit".** Codegen reads
+  `EdgeKind.BelongsTo.onDelete` and accepts the helper-eligibility
+  check only when that field equals `OnDelete.CASCADE`. If EntKt's
+  framework-level default for a `belongsTo` without an `.onDelete(...)`
+  call is something other than an explicit `OnDelete.CASCADE` value
+  in the resolved metadata (e.g., null / `RESTRICT` / a sentinel
+  "framework default"), the schema author must declare
+  `.onDelete(OnDelete.CASCADE)` explicitly on each junction
+  `belongsTo` for the junction to qualify. This avoids ambiguity over
+  whether "unset" should be treated as `CASCADE` — the helper rule is
+  literal: the resolved `onDelete` value must be `OnDelete.CASCADE`.
 - its id strategy can be satisfied without caller input, such as auto numeric
   ids or client-generated UUIDs. Junction schemas with explicit caller-provided
   ids, such as `EntId.string()`, are not safe for direct helpers unless a later
@@ -540,6 +562,18 @@ only when:
   edge declared as
   `val source = belongsTo<Post>("source").field(postId)` contributes
   `post_id` (the backing column), not `source_id`.
+
+  **Scope of "exactly".** "Exactly the source FK column followed by
+  the target FK column" describes the *qualifying index itself* — its
+  column list contains exactly those two columns in that order. It is
+  not a statement about the whole junction schema's index set: the
+  junction may declare additional indexes (e.g., a target-first
+  secondary lookup index, a partial index for an unrelated query
+  pattern, a single-column index on the source FK for join planning)
+  as long as one qualifying index exists. Duplicate-shape indexes
+  remain subject to the normal schema index-validation rules
+  (duplicate index names, duplicate column-set + uniqueness + where
+  triples).
 
 For junction schemas whose id strategy is client-generated UUID, generated
 link-table M2M helpers must populate the junction `id` with a freshly generated
