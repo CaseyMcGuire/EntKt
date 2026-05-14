@@ -998,6 +998,14 @@ is covered in [Transaction And Locking Semantics](04-transaction-locking-semanti
 
 ## Test Requirements
 
+This is the full specification's test checklist. Most bullets describe
+behavior that is implemented and covered by codegen / integration
+tests on `master`; a handful describe deferred-spec behavior that
+will land alongside the work in "Deferred Scope" below. Each
+deferred-only bullet is annotated `(deferred — Declaration Name
+Capture)` or similar so readers can tell at a glance which bullets
+are aspirational vs. already locked in by tests.
+
 Before implementation, add tests for:
 
 - to-one id assignment sets the FK without loading the target entity
@@ -1083,16 +1091,21 @@ Before implementation, add tests for:
   that edge
 - edge declaration property names whose generated implicit FK names collide are
   rejected
-- schema collection fails if codegen cannot map a registered `belongsTo` builder
-  to exactly one stable Kotlin declaration property name
-- computed getter edge declarations are rejected when they create new builders
-  during property inspection
+- *(deferred — Declaration Name Capture)* schema collection fails if codegen
+  cannot map a registered `belongsTo` builder to exactly one stable Kotlin
+  declaration property name
+- *(deferred — Declaration Name Capture)* computed getter edge declarations
+  are rejected when they create new builders during property inspection
 - implicit FK edges reject generated `{edge}Id` Kotlin member collisions and
   require `belongsTo(...).field(handle)` when callers need an explicit backing
-  field name
-- field-backed edges derive FK property names from the backing field declaration
-  property
+  field name *(unset method collisions and broader cross-artifact namespaces
+  deferred — see "Collision detection — partial" in Deferred Scope)*
+- *(deferred — Declaration Name Capture)* field-backed edges derive FK
+  property names from the backing field declaration property (today derived
+  from the column name via `toCamelCase`)
 - field-backed edges check backing FK property names for collisions
+  *(unset method collisions deferred — see "Collision detection — partial"
+  in Deferred Scope)*
 - nullable to-one `null` assignment clears the FK
 - nullable to-one update distinguishes unset from explicit null: unset leaves the
   FK out of the update write set, while explicit null clears it
