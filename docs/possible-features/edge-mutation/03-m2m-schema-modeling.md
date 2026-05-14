@@ -177,10 +177,37 @@ predicate handle, no write helpers). When the opposite side explicitly
 declares its own `throughEntity(...)` for the same junction, codegen
 **suppresses the synthesized reverse edge for that relationship** — the
 explicit declaration owns the traversal surface on its side, so duplicate
-traversal handles aren't generated. The two explicit declarations must agree
-on the junction schema and on the source/target property references (each
-side's `sourceEdge` is the opposite side's `targetEdge`); codegen rejects
-mismatched pairs at schema validation.
+traversal handles aren't generated.
+
+**Matching rule for two explicit `throughEntity(...)` declarations.**
+Codegen treats two explicit declarations as opposite sides of the same
+relationship when, and only when:
+
+1. They reference the **same junction schema** (same `KClass`).
+2. They reference the **same two junction `belongsTo` edges**, in
+   opposite order — concretely, side A's `(sourceEdge, targetEdge)`
+   relationship key is `(X, Y)` and side B's relationship key is
+   `(Y, X)` for the same two junction-edge property references.
+
+If both conditions hold, the synthesized reverse on each side is
+suppressed and the two explicit declarations describe the same
+relationship from the two endpoints. If either side's
+`(sourceEdge, targetEdge)` pair doesn't pair-swap with the other,
+codegen rejects the configuration at schema validation rather than
+silently treating two unrelated edges as opposites — for example, a
+junction `ProjectAssignment` with `project` / `assignee` / `reviewer`
+edges could host both a `(project, assignee)` and a `(project, reviewer)`
+relationship, and an opposite-side `throughEntity(...)` whose
+relationship key is `(assignee, project)` pairs with the first one
+only; declaring an opposite-side `(reviewer, project)` against the
+first relationship's `(project, assignee)` pair is rejected.
+
+The same matching rule applies to the `throughLink(...)` opposite-side
+rejection (already covered above): two `throughLink(...)` declarations
+whose keys pair-swap describe the same relationship in opposite
+orientations and the second is rejected; declarations whose keys don't
+pair-swap describe genuinely different relationships and both are
+allowed.
 
 ## Link-Table Safety
 
@@ -481,9 +508,18 @@ Before implementation, add tests for:
   opposite side explicitly declares its own `throughEntity(...)` for
   the same junction, the synthesized reverse is suppressed so users
   don't get duplicate traversal handles
-- mismatched explicit `throughEntity(...)` pairs (different junction
-  schema, or `sourceEdge`/`targetEdge` props that don't pair up
-  symmetrically) are rejected at schema validation
+- two explicit `throughEntity(...)` declarations are treated as
+  opposite sides of the same relationship only when they reference
+  the same junction schema AND the same two junction `belongsTo`
+  edges in opposite order (side A's
+  `(sourceEdge, targetEdge) = (X, Y)`, side B's = `(Y, X)`); when
+  matched, each side's synthesized reverse is suppressed
+- mismatched explicit `throughEntity(...)` pairs are rejected: a
+  different junction schema, OR a `(sourceEdge, targetEdge)` pair
+  that doesn't pair-swap (e.g., `(project, assignee)` on one side and
+  `(reviewer, project)` on the other for a junction with both
+  `assignee` and `reviewer` edges) — these don't describe the same
+  relationship and must not be silently coupled
 - generated link-table M2M helpers are emitted only for the single explicit
   `throughLink(...)` declaration for a junction relationship
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
