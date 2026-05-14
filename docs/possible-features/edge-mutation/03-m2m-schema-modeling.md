@@ -401,6 +401,22 @@ without a separate spec for "what does add(...) / remove(...) /
 set(...) mean when an endpoint may be null", so `throughLink(...)`
 restricts to non-null junction FKs in V1.
 
+**Traversal semantics with nullable junction FKs.** When a
+`throughEntity(...)` relationship's junction `belongsTo` is
+`.nullable()` and a row has `NULL` on the source or target FK,
+generated M2M traversal and eager loading use **inner-join
+semantics** and skip those rows — they are not part of the
+relationship for query purposes. Concretely, a row in the junction
+with `source_id = NULL` doesn't show up when traversing from any
+source row (there's no source to traverse from), and a row with
+`target_id = NULL` doesn't show up when eager-loading the target
+collection from a given source. Predicate handles
+(`Junction.<sourceEdge>.has(...)` and the like) treat the null FK
+as "doesn't participate" rather than "participates in every match".
+Callers that need to operate on partial junction rows query the
+junction schema directly through its repo. This mirrors how nullable
+FK columns are treated in vanilla SQL JOINs.
+
 #### Worked example
 
 For
@@ -695,6 +711,14 @@ Before implementation, add tests for:
   junction shape under `throughEntity(...)` is accepted (callers
   mutate through the junction repo, which handles nullable FKs via
   the normal builder semantics)
+- when a `throughEntity(...)` junction `belongsTo` is `.nullable()`
+  and a row has NULL on the source or target FK, generated M2M
+  traversal, eager loading, and predicate handles use inner-join
+  semantics: the row is skipped (it doesn't traverse from anywhere
+  and doesn't appear in any source's target collection). Test fixture
+  inserts both a fully-populated junction row and one with each FK
+  set to NULL, then asserts traversal returns only the populated row
+  pair
 - a second `throughLink(...)` declaration that resolves to the same
   **canonical relationship identity** as an existing declaration — same
   junction class, same junction-edge ref pair as an unordered pair,
