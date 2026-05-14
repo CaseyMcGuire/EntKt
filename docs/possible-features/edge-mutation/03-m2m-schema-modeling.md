@@ -543,6 +543,36 @@ only when:
 - both junction `belongsTo` edges are non-null. Under the long-term schema model,
   this is the default; junction edges marked `.nullable()` are not safe for
   direct link-table helpers
+- the two source/target FK backing fields carry no write-time
+  modifiers. Specifically rejected on a `throughLink(...)` junction's
+  source/target FK columns:
+  - field-level validators (`.positive()`, `.min(...)`,
+    `.maxLen(...)`, `.match(...)`, etc.)
+  - `.sensitive()`
+  - `.default(...)` / `.defaultNow()`
+  - `.updateDefault(...)` / `.updateDefaultNow()` (already rejected
+    by the general `belongsTo(...).field(handle)` backing-FK rule
+    from RFC #2, restated here for completeness)
+  - `.immutable()` (`throughLink(...)` writes FK columns directly via
+    the driver and never updates them after insert; declaring the
+    backing field immutable adds nothing on this path and is rejected
+    to keep the allowed modifier list mechanical)
+
+  Allowed on the FK backing fields:
+  - `.comment(...)` — pure metadata, doesn't affect write semantics.
+  - `.field(...)` storage column rename (`uuid("alt_name")`) — the
+    physical column name, not a modifier.
+
+  Reasoning: `throughLink(...)` helpers bypass the junction repo
+  entirely (see "Link-table helpers bypass the junction repo" below),
+  so junction CREATE validation, defaults, hooks, and update-default
+  resolution never fire. A `.positive()` on `post_id` would silently
+  not run when the helpers insert junction rows. Rejecting these
+  modifiers at schema validation surfaces the gap at build time
+  instead of leaving the marker silently inert. Junctions that need
+  any of those behaviors should be modeled with `throughEntity(...)`,
+  where the junction repo runs validation/defaults/hooks on the
+  normal builder paths.
 - both junction `belongsTo` edges declare `OnDelete.CASCADE`
   **explicitly**. Pure link-table junction rows are meaningless once
   either endpoint is gone — leaving them around contradicts the
@@ -802,6 +832,15 @@ Before implementation, add tests for:
   `updatedAt`, `deletedAt`), soft-delete markers, version /
   optimistic-concurrency tokens, role/kind discriminators, and
   mixin-provided fields (e.g. `include(::Timestamps)`)
+- `throughLink(...)` rejects junction schemas whose two source/target
+  FK backing fields carry write-time modifiers (validators like
+  `.positive()` / `.minLen(...)` / `.match(...)`, `.sensitive()`,
+  `.default(...)` / `.defaultNow()`, `.updateDefault(...)`,
+  `.immutable()`). Junction helpers bypass the repo so these never
+  fire and silent inertness is a foot-gun. `.comment(...)` is
+  allowed (pure metadata). The same junction shape under
+  `throughEntity(...)` accepts these modifiers because the junction
+  repo runs validation / defaults / hooks on the normal builder paths
 - `throughLink(...)` requires both junction `belongsTo` edges to declare
   `OnDelete.CASCADE`; `OnDelete.RESTRICT` (or unset, when the
   framework default isn't CASCADE) is rejected. Junctions that need a
