@@ -199,10 +199,18 @@ only when:
   ids or client-generated UUIDs. Junction schemas with explicit caller-provided
   ids, such as `EntId.string()`, are not safe for direct helpers unless a later
   design defines how edge mutators supply those ids
-- it declares a non-partial unique composite index or constraint on exactly the
-  source FK and target FK pair. Normalized set semantics require the database to
-  reject duplicate links under concurrent writers and to rule out preexisting
-  duplicate link rows
+- it declares a non-partial unique composite index or constraint on
+  **exactly the source FK and target FK columns** — order-insensitive,
+  so either `(source_fk, target_fk)` or `(target_fk, source_fk)`
+  qualifies. The constraint must contain only those two columns; an
+  index that adds a third column (even one that's deterministically
+  set, like a `kind` discriminator) does not enforce uniqueness of
+  the pair alone and is not sufficient. The constraint must also be
+  non-partial — a `WHERE` clause filtering out some rows wouldn't
+  reject duplicate links under concurrent writers in the filtered
+  region. Normalized set semantics require the database to reject
+  duplicate links under concurrent writers and to rule out preexisting
+  duplicate link rows.
 
 For junction schemas whose id strategy is client-generated UUID, generated
 link-table M2M helpers must populate the junction `id` with a freshly generated
@@ -282,6 +290,12 @@ Before implementation, add tests for:
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
   columns, nullable source/target FKs, caller-provided ids, partial unique
   indexes, or missing non-partial unique source/target FK pairs
+- the unique source/target FK pair check is order-insensitive: a
+  composite unique index on `(source_fk, target_fk)` and one on
+  `(target_fk, source_fk)` both qualify
+- a unique index that includes a third column alongside the source
+  and target FKs does not satisfy the pair-uniqueness check, even when
+  non-partial
 - generated link-table M2M helpers populate client-generated UUID junction ids
   before calling raw `Driver.insert(...)` / `insertMany(...)`
 - `throughEntity(...)` M2M edges do not generate direct helpers and continue to
