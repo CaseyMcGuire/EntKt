@@ -172,13 +172,14 @@ the relationship from the opposite side query the junction schema directly
 for V1. Reverse traversal for link-table relationships is deferred — see
 "Future Enhancements" for the planned design.
 
-Codegen must reject an explicit opposite-side `throughLink(...)` declaration for
-the same relationship key in V1 — concretely, a second declaration whose
-relationship key matches the first with `sourceEdge` / `targetEdge` swapped.
-Without a concrete read-only marker or canonical reverse-write lock model,
-explicit bidirectional link-table helpers would make the owner of the
-relationship ambiguous and could reintroduce exact-set races between opposite
-orientations.
+Codegen must reject an explicit opposite-side `throughLink(...)` declaration
+that resolves to the same **canonical relationship identity** in V1 —
+concretely, any second declaration whose junction class matches and whose
+junction-edge ref pair matches the first's as an unordered pair, regardless
+of which side is `sourceEdge` and which is `targetEdge`. Without a concrete
+read-only marker or canonical reverse-write lock model, explicit bidirectional
+link-table helpers would make the owner of the relationship ambiguous and
+could reintroduce exact-set races between opposite orientations.
 
 For `throughEntity(...)`, callers mutate the junction entity through its repo, so
 explicit opposite-side traversal declarations are allowed as long as both
@@ -264,7 +265,7 @@ relationship when, and only when:
 1. They reference the **same junction schema** (same `KClass`).
 2. They reference the **same two junction `belongsTo` edges**, in
    opposite order — concretely, side A's `(sourceEdge, targetEdge)`
-   relationship key is `(X, Y)` and side B's relationship key is
+   orientation key is `(X, Y)` and side B's orientation key is
    `(Y, X)` for the same two junction-edge property references.
 
 If both conditions hold, the synthesized reverse on each side is
@@ -276,7 +277,7 @@ silently treating two unrelated edges as opposites — for example, a
 junction `ProjectAssignment` with `project` / `assignee` / `reviewer`
 edges could host both a `(project, assignee)` and a `(project, reviewer)`
 relationship, and an opposite-side `throughEntity(...)` whose
-relationship key is `(assignee, project)` pairs with the first one
+orientation key is `(assignee, project)` pairs with the first one
 only; declaring an opposite-side `(reviewer, project)` against the
 first relationship's `(project, assignee)` pair is rejected.
 
@@ -556,16 +557,18 @@ Before implementation, add tests for:
   `sourceEdge` and `targetEdge` is rejected; a `sourceEdge` whose
   target schema is not the declaring schema is rejected; a `targetEdge`
   whose target schema is not the M2M target schema is rejected
-- a second `throughLink(...)` declaration whose relationship key
-  `(junction schema, sourceEdge prop, targetEdge prop)` matches an
-  existing declaration's key with `sourceEdge`/`targetEdge` swapped is
-  rejected in V1 (covers self-referential junctions like
+- a second `throughLink(...)` declaration that resolves to the same
+  **canonical relationship identity** as an existing declaration — same
+  junction class, same junction-edge ref pair as an unordered pair,
+  regardless of which side is `sourceEdge` and which is `targetEdge` —
+  is rejected in V1 (covers self-referential junctions like
   `Friendship::requester` ↔ `Friendship::recipient` and multi-FK
   junctions where both sides resolve to the same target schema)
-- two `throughLink(...)` declarations with distinct relationship keys —
-  e.g., `(ProjectAssignment, project, assignee)` and
-  `(ProjectAssignment, project, reviewer)` — describe genuinely
-  different relationships and both are accepted
+- two `throughLink(...)` declarations with **distinct canonical
+  identities** — e.g., `{ProjectAssignment, project, assignee}` and
+  `{ProjectAssignment, project, reviewer}` (different junction-edge
+  ref pairs) — describe genuinely different relationships and both are
+  accepted
 - directed self-referential `throughLink(...)` works (`User.following`
   via `Follow::follower` / `Follow::followed`) — `(a, b)` and `(b, a)`
   are distinct rows; pair-uniqueness applies to the ordered pair
@@ -697,5 +700,5 @@ Before implementation, add tests for:
   schema DSL gains a concrete read-only/write-orientation marker or the
   driver/runtime gains a canonical edge-lock model. Any design must
   ensure helpers from both endpoint directions serialize on the same
-  relationship key so exact `set(...)` semantics cannot race with
-  reverse-direction `add(...)`, `remove(...)`, or `set(...)`.
+  canonical relationship identity so exact `set(...)` semantics cannot
+  race with reverse-direction `add(...)`, `remove(...)`, or `set(...)`.
