@@ -83,9 +83,16 @@ data class Through(
 
 For V1, a link-table M2M relationship may have only one explicit
 `throughLink(...)` declaration for a given junction/source/target pair. That
-declaration owns the write orientation and gets generated helpers. The reverse
-edge, if synthesized, inherits the relationship metadata but remains
-traversal/eager/query-only.
+declaration owns the write orientation and gets generated helpers.
+
+**V1 does not synthesize a reverse traversal edge for `throughLink(...)`
+relationships.** Codegen does not infer a read-only edge on the opposite-side
+schema, the opposite-side `Edges` inner data class does not gain a
+synthesized field for the relationship, and there is no eager-loading or
+predicate surface for the reverse direction. Callers that need to traverse
+the relationship from the opposite side query the junction schema directly
+for V1. Reverse traversal for link-table relationships is deferred — see
+"Future Enhancements" for the planned design.
 
 Codegen must reject an explicit opposite-side `throughLink(...)` declaration for
 the same junction relationship in V1. Without a concrete read-only marker or
@@ -164,8 +171,11 @@ Before implementation, add tests for:
 - M2M schemas use `throughLink(...)` or `throughEntity(...)`; codegen does not
   infer the mutation model from junction shape or runtime configuration
 - explicit reverse `throughLink(...)` declarations for the same junction
-  relationship are rejected in V1, while synthesized reverse edges inherit the
-  relationship metadata and remain traversal-only
+  relationship are rejected in V1
+- V1 does not synthesize a reverse traversal edge for a `throughLink(...)`
+  relationship: the opposite-side schema's generated `Edges` data class
+  does not gain a synthesized field, no eager-loading scope is generated,
+  and no predicate handle is exposed for the reverse direction
 - explicit opposite-side `throughEntity(...)` traversal declarations for the
   same junction relationship are allowed when both sides use `throughEntity(...)`
 - generated link-table M2M helpers are emitted only for the single explicit
@@ -181,9 +191,38 @@ Before implementation, add tests for:
 
 ## Future Enhancements
 
-- Bidirectional link-table write helpers could be added later if the schema DSL
-  gains a concrete read-only/write-orientation marker or the driver/runtime gains
-  a canonical edge-lock model. Any design must ensure helpers from both endpoint
-  directions serialize on the same relationship key so exact `set(...)`
-  semantics cannot race with reverse-direction `add(...)`, `remove(...)`, or
-  `set(...)`.
+- **Read-only reverse traversal via an explicit marker.** V1 omits the
+  reverse traversal edge for `throughLink(...)` relationships entirely.
+  The eventual design is a third M2M DSL marker — working name
+  `throughLinkInverse(...)` — that the opposite-side schema declares
+  explicitly to opt into traversal, eager loading, and predicate
+  handles for the reverse direction. The marker generates no
+  `add(...)` / `remove(...)` / `set(...)` helpers, so the write
+  orientation stays unambiguous. Sketch:
+
+  ```kotlin
+  class Post : EntSchema("posts") {
+      val tags = manyToMany<Tag>("tags")
+          .throughLink<PostTag>(PostTag::post, PostTag::tag)
+  }
+
+  class Tag : EntSchema("tags") {
+      val posts = manyToMany<Post>("posts")
+          .throughLinkInverse(Post::tags)   // read-only reverse
+  }
+  ```
+
+  Conflict rules: declaring both an explicit reverse `throughLink(...)`
+  *and* a `throughLinkInverse(...)` for the same junction is rejected;
+  declaring `throughLinkInverse(...)` without the corresponding write
+  orientation `throughLink(...)` is rejected; the inverse marker
+  inherits all relationship metadata from the write side. Migration
+  from V1 is purely additive — V1 callers gain reverse traversal by
+  declaring the marker; existing schemas continue to work unchanged.
+
+- **Bidirectional link-table write helpers** could be added later if the
+  schema DSL gains a concrete read-only/write-orientation marker or the
+  driver/runtime gains a canonical edge-lock model. Any design must
+  ensure helpers from both endpoint directions serialize on the same
+  relationship key so exact `set(...)` semantics cannot race with
+  reverse-direction `add(...)`, `remove(...)`, or `set(...)`.
