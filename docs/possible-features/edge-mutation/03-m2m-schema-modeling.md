@@ -2,7 +2,43 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Partially implemented. The schema-side write-model marker (`throughLink` /
+`throughEntity`), the static validation rules described in this RFC, and the
+default reverse-edge synthesis behavior all landed. Specifically implemented:
+
+- `manyToMany<Target>(...).throughLink<Junction>(sourceEdge, targetEdge)` and
+  `throughEntity<Junction>(sourceEdge, targetEdge)` are the only ways to mark
+  an M2M edge — the generic `.through(...)` form is gone.
+- Schema finalization rejects malformed refs: identical source/target props,
+  sourceEdge not targeting the declaring schema, targetEdge not targeting the
+  `manyToMany<Target>` type parameter.
+- Codegen rejects incompatible declarations with the same canonical
+  relationship identity (junction + unordered junction-edge ref pair): two
+  `throughLink` declarations, mixed `throughLink` + `throughEntity`, and
+  same-orientation `throughEntity` aliases. Pair-swapped `throughEntity`
+  declarations remain allowed and are the supported bidirectional pattern.
+- Default reverse-edge synthesis is suppressed for self-referential M2M and
+  for any opposite-side schema that declares its own pair-swapped
+  `throughEntity` (the explicit declaration owns the traversal surface).
+- `throughLink` junction-shape helper-eligibility is enforced at codegen
+  time: payload columns, nullable junction FKs, missing
+  `OnDelete.CASCADE`, write-time modifiers on FK backing fields, EXPLICIT id
+  strategies, and missing / partial / wrong-order unique composite indexes
+  are all rejected with a message naming the failing rule.
+
+Deferred to a future RFC (or to the link-table-helpers RFC #5):
+
+- The actual `throughLink` direct-helper method generation (`tags.add(...)`,
+  `tags.remove(...)`, `tags.set(...)`) — RFC #5 covers the API shape; the
+  generator implementation is not yet in this repo.
+- Runtime traversal surface for `throughLink` reverse direction (predicate
+  handles, eager loading on the target side). For V1 the reverse-edge
+  metadata is still synthesized so forward query traversal works, but no
+  user-facing reverse surface is generated for link-table relationships.
+- Junction `belongsTo` nullable-FK traversal semantics for `throughEntity`
+  (inner-join skip-null behavior described under "Traversal semantics with
+  nullable junction FKs"); the runtime currently treats nullable junction
+  FKs the same as non-null ones until the link-table helpers spec lands.
 
 Split out from [Edge Mutation API](00-overview.md).
 
