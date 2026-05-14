@@ -287,8 +287,17 @@ V1 should keep privacy and validation owner-centric:
 - `throughLink(...)` write-orientation edges get direct M2M helpers only when the
   junction schema satisfies the helper-eligible static shape constraints from
   [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
-- synthesized reverse orientations remain traversal-only in V1, and explicit
-  reverse `throughLink(...)` declarations are rejected
+- V1 does not synthesize a reverse traversal edge for `throughLink(...)`
+  relationships (per
+  [Many-To-Many Schema Modeling — Write Orientation](03-m2m-schema-modeling.md)),
+  so there are no reverse-orientation helpers to talk about — callers
+  that need to traverse the relationship from the opposite side query
+  the junction schema directly. Explicit reverse `throughLink(...)`
+  declarations (a second declaration with the same canonical
+  relationship identity, including the swapped-orientation case) are
+  rejected at schema validation. Reverse traversal is deferred to a
+  follow-up `throughLinkInverse(...)` design — see "Future Enhancements"
+  in RFC #3.
 - `throughEntity(...)` edges do not get direct M2M helpers; their write rules
   live on the junction entity repo
 
