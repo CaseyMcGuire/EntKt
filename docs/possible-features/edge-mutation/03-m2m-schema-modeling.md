@@ -221,6 +221,18 @@ scopes, predicates, and `EdgeRef`s without surprise:
   i.e. `postsTags` for the example above. This is the identifier
   reverse-traversal callers see in autocomplete.
 
+**Read-only / repo-only writes.** The synthesized reverse edge is
+**read-only** — codegen emits no `add(...)` / `remove(...)` / `set(...)`
+helpers on it, and the only write surface for the relationship is
+the forward `throughEntity(...)` declaration on the source schema
+(which goes through the junction repo). Mutations to the M2M
+relationship from the opposite-side schema's perspective happen by
+creating, updating, or deleting junction rows directly through the
+junction's generated repo. Implementers should not be tempted by the
+synthesized reverse appearing in `Edges` and `EdgeRef` to also emit
+write helpers for it — the surface is intentionally narrow to keep
+the write orientation unambiguous.
+
 The `${sourceTable}_${forwardEdgeName}` shape is deterministic, mirrors
 the FK column-naming convention already used elsewhere in the schema,
 and disambiguates multi-relationship junctions (e.g.,
