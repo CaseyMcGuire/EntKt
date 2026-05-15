@@ -2089,6 +2089,34 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `M2M eager loading dedups duplicate (source, target) junction rows`() {
+        // throughEntity junctions can legitimately carry duplicate
+        // (source_id, target_id) pairs (the row carries distinct
+        // payload — there's no required pair-uniqueness index for
+        // throughEntity, only for throughLink). Without dedup, the
+        // eager-load helper would append the same target twice to one
+        // source's group, while the EXISTS-based queryX traversal
+        // returns each target once — and per-group drop/take would
+        // slice from a duplicated list.
+        val (_, names, byName) = createAllSchemas()
+        val output = QueryGenerator("com.example.ent")
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
+
+        // Membership lookup uses Set (LinkedHashSet via mutableSetOf),
+        // not List. Duplicate junction rows collapse to one membership.
+        assert(output.contains("MutableSet<Any?>")) {
+            "Membership lookup must use a Set so duplicate (source, target) junction rows dedup\n$output"
+        }
+        assert(output.contains("mutableSetOf()")) {
+            "Should initialize per-target-id source bucket with mutableSetOf()\n$output"
+        }
+        // Negative: the old List form would not dedup.
+        assert(!output.contains("MutableList<Any?>")) {
+            "Should not use MutableList for the membership lookup (dedup needs Set)\n$output"
+        }
+    }
+
+    @Test
     fun `M2M eager loading groups by iterating ordered target rows, not junction rows`() {
         // Iterating junctionRows here would group in driver-default
         // junction order — which is unrelated to `subQuery.orderFields`

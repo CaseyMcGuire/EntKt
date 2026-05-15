@@ -755,12 +755,26 @@ internal class QueryGenerator(
         // come back in driver-default order, not target order — and the
         // subsequent `drop(offset).take(limit)` per group would slice
         // the wrong subset for `withTags { orderBy(...); limit(...) }`.
+        //
+        // The membership lookup uses a `MutableSet` per target id, not
+        // a `MutableList`, so a junction with duplicate
+        // `(source_id, target_id)` pairs (legal for `throughEntity`
+        // junctions with no unique pair index — the row carries
+        // distinct payload) collapses to one membership entry. Without
+        // the dedup, `withTags()` would return the same target multiple
+        // times in one source's group, while the EXISTS-based
+        // `queryTags()` traversal correctly returns each target once,
+        // and per-group `drop`/`take` would slice from a duplicated
+        // list. `mutableSetOf()` returns a `LinkedHashSet` so insertion
+        // order is preserved (not that the source iteration order
+        // matters for the per-group ordering — that's driven by the
+        // target-row iteration).
         body.addStatement(
-            "val sourcesByTargetId = mutableMapOf<Any?, MutableList<Any?>>()",
+            "val sourcesByTargetId = mutableMapOf<Any?, MutableSet<Any?>>()",
         )
         body.beginControlFlow("for (jr in junctionRows)")
         body.addStatement(
-            "sourcesByTargetId.getOrPut(jr[%S]) { mutableListOf() }.add(jr[%S])",
+            "sourcesByTargetId.getOrPut(jr[%S]) { mutableSetOf() }.add(jr[%S])",
             join.junctionTargetColumn,
             join.junctionSourceColumn,
         )
