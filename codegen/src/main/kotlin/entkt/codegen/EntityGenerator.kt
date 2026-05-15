@@ -46,10 +46,13 @@ internal class EntityGenerator(
             addAll(allFields.map { buildFieldColumnRef(it) })
             addAll(edgeFks.map { buildEdgeColumnRef(it) })
         }
-        // Edge refs are emitted for *every* declared edge — including
-        // non-unique to-many edges that don't get a synthetic FK column.
-        // The runtime uses these to lower has/exists predicates.
-        val edgeRefs = schema.edges()
+        // Edge refs are emitted for *every* declared edge plus every
+        // synthesized read-only reverse M2M edge (the latter so callers
+        // can do `Tag.postsTags.has { ... }` for one-sided throughEntity
+        // declarations). Non-unique to-many edges get one too — the
+        // runtime uses these to lower has/exists predicates.
+        val syntheticReverses = synthesizedReverseM2MEdges(schema, schemaNames)
+        val edgeRefs = (schema.edges() + syntheticReverses.map { it.edge })
             .mapNotNull { edge -> buildEdgeRef(edge, schemaNames) }
 
         val entityClass = ClassName(packageName, className)
@@ -62,8 +65,10 @@ internal class EntityGenerator(
             .build()
         val fromRowFn = buildFromRowFunction(entityClass, schema, schemaNames)
 
-        // Build Edges inner data class for schemas with edges
-        val edgeDescriptors = schema.edges().mapNotNull { edge ->
+        // Build Edges inner data class for schemas with edges. Synthesized
+        // reverses appear here as nullable list properties — they're
+        // always M2M, so the to-one branch never fires for them.
+        val edgeDescriptors = (schema.edges() + syntheticReverses.map { it.edge }).mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
             val targetClass = ClassName(packageName, targetName)
             EdgeDescriptor(edge.name, targetClass, edge.kind is EdgeKind.BelongsTo || edge.kind is EdgeKind.HasOne, edge.comment)

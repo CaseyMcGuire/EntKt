@@ -6,6 +6,7 @@ import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
+import entkt.schema.ManyToManyThrough
 import entkt.schema.OnDelete
 
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
@@ -600,6 +601,82 @@ internal fun canonicalM2MIdentity(edge: Edge): Triple<EntSchema, String, String>
         through.targetEdge to through.sourceEdge
     }
     return Triple(through.junction, lo, hi)
+}
+
+/**
+ * One synthesized read-only reverse-M2M edge on [schema] paired with
+ * the predicate name to use for traversal. For a forward edge declared
+ * on `otherSchema` (e.g. `Post.tags`), the reverse on the target
+ * `Tag` is named `${otherTable}_${forwardName}` (e.g. `posts_tags`).
+ *
+ * [edge] is a synthetic [Edge] with the through `sourceEdge` /
+ * `targetEdge` refs swapped, so [resolveM2MEdgeJoin] yields a join
+ * whose `junctionSourceColumn` is the original junction's *target* FK
+ * — which is what eager loading from [schema] needs.
+ *
+ * [predicateEdgeName] is the name to put inside `HasEdgeWith` /
+ * `HasEdge` predicates when the *forward* schema's query traverses
+ * through this reverse. Forward traversal walks the target's reverse
+ * edge name; reverse traversal walks the source's *forward* edge name
+ * (which is what callers find in the source's `SCHEMA.edges` map).
+ */
+internal data class SynthesizedReverseM2M(
+    val edge: Edge,
+    val predicateEdgeName: String,
+)
+
+/**
+ * Build read-only reverse M2M edges that the codegen surfaces on
+ * [schema] for every M2M declared on another schema that targets it.
+ *
+ * Suppression mirrors [reverseM2MEdgeEntries]:
+ * - self-referential M2M (target === source) — no synthesis.
+ * - opposite-side schema declares its own M2M with the same canonical
+ *   identity — that explicit declaration owns the surface.
+ *
+ * Consumers that need both the runtime metadata and the user-facing
+ * surface (entity `Edges`, `EdgeRef`, query traversal, eager loading)
+ * iterate this list alongside `schema.edges()`.
+ */
+internal fun synthesizedReverseM2MEdges(
+    schema: EntSchema,
+    schemaNames: Map<EntSchema, String>,
+): List<SynthesizedReverseM2M> {
+    val schemaDeclaredCanonicals = schema.edges()
+        .mapNotNull { canonicalM2MIdentity(it) }
+        .toSet()
+
+    return schemaNames.flatMap { (otherSchema, _) ->
+        otherSchema.edges()
+            .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
+            .mapNotNull { forward ->
+                if (otherSchema === schema) return@mapNotNull null
+                val canonical = canonicalM2MIdentity(forward)
+                if (canonical != null && canonical in schemaDeclaredCanonicals) {
+                    return@mapNotNull null
+                }
+                val forwardM2M = forward.kind as EdgeKind.ManyToMany
+                val forwardThrough = forwardM2M.through
+                val reverseThrough = when (forwardThrough) {
+                    is ManyToManyThrough.LinkTable -> ManyToManyThrough.LinkTable(
+                        junction = forwardThrough.junction,
+                        sourceEdge = forwardThrough.targetEdge,
+                        targetEdge = forwardThrough.sourceEdge,
+                    )
+                    is ManyToManyThrough.ThroughEntity -> ManyToManyThrough.ThroughEntity(
+                        junction = forwardThrough.junction,
+                        sourceEdge = forwardThrough.targetEdge,
+                        targetEdge = forwardThrough.sourceEdge,
+                    )
+                }
+                val reverseEdge = Edge(
+                    name = reverseM2MEdgeName(otherSchema, forward.name),
+                    target = otherSchema,
+                    kind = EdgeKind.ManyToMany(reverseThrough),
+                )
+                SynthesizedReverseM2M(edge = reverseEdge, predicateEdgeName = forward.name)
+            }
+    }
 }
 
 /**

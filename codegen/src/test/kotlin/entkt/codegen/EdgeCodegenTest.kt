@@ -1868,6 +1868,127 @@ class EdgeCodegenTest {
         }
     }
 
+    @Test
+    fun `synthesized M2M reverse appears as EdgeRef on target companion`() {
+        // Team.members targets Pet → Pet.kt gets a teamsMembers EdgeRef
+        // pointing at TeamQuery so callers can do `Pet.teamsMembers.has { ... }`.
+        val (_, names, byName) = createAllSchemas()
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+
+        assert(output.contains("teamsMembers: EdgeRef<Team, TeamQuery>")) {
+            "Synthesized reverse should produce a typed EdgeRef on the target companion\n$output"
+        }
+        assert(output.contains("EdgeRef(\"teams_members\")")) {
+            "EdgeRef name should be the synthesized reverse name\n$output"
+        }
+    }
+
+    @Test
+    fun `synthesized M2M reverse appears as field on target Edges class`() {
+        // Pet.Edges should have a teamsMembers: List<Team>? field so eagerly
+        // loading the reverse direction surfaces the loaded entities.
+        val (_, names, byName) = createAllSchemas()
+        val output = EntityGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+
+        assert(output.contains("val teamsMembers: List<Team>? = null")) {
+            "Synthesized reverse should appear as nullable list field on Edges\n$output"
+        }
+    }
+
+    @Test
+    fun `target query gets traversal method for synthesized M2M reverse`() {
+        // PetQuery.queryTeamsMembers() returns TeamQuery, walking back through
+        // the junction. The HasEdgeWith predicate names Team's *forward*
+        // edge ("members"), not a doubly-reversed name like "pets_teams_members".
+        val (_, names, byName) = createAllSchemas()
+        val output = QueryGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+
+        assert(output.contains("fun queryTeamsMembers(): TeamQuery")) {
+            "Should generate reverse traversal queryTeamsMembers()\n$output"
+        }
+        assert(output.contains("Predicate.HasEdgeWith(\"members\", parent)")) {
+            "Reverse traversal predicate should reference the forward edge name 'members'\n$output"
+        }
+        assert(output.contains("Predicate.HasEdge(\"members\")")) {
+            "Reverse traversal should fall back to HasEdge(\"members\") with no parent\n$output"
+        }
+        // Negative: the doubly-reversed name shouldn't appear in queryTeamsMembers
+        assert(!output.contains("Predicate.HasEdgeWith(\"pets_teams_members\"")) {
+            "Reverse traversal predicate should not double-reverse the name\n$output"
+        }
+    }
+
+    @Test
+    fun `target query gets eager-loading method for synthesized M2M reverse`() {
+        // PetQuery.withTeamsMembers { } eagerly loads the reverse direction.
+        val (_, names, byName) = createAllSchemas()
+        val output = QueryGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+
+        assert(output.contains("fun withTeamsMembers(")) {
+            "Should generate eager-loading withTeamsMembers()\n$output"
+        }
+        assert(output.contains("TeamQuery.() -> Unit")) {
+            "withTeamsMembers should accept a TeamQuery DSL block\n$output"
+        }
+    }
+
+    @Test
+    fun `bidirectional throughEntity does not generate reverse surface on either side`() {
+        // BiUser declares (user, group); BiGroup declares (group, user) — same
+        // canonical identity, pair-swapped orientations. Each side already
+        // owns a forward surface, so neither should get a synthesized reverse
+        // EdgeRef / Edges field / query method / withX.
+        val biUser = BiUser()
+        val biGroup = BiGroup()
+        val biMembership = BiMembership()
+        val names = mapOf<EntSchema, String>(
+            biUser to "BiUser", biGroup to "BiGroup", biMembership to "BiMembership",
+        )
+        finalize(biUser, biGroup, biMembership)
+
+        val biUserEntity = EntityGenerator("com.example.ent").generate("BiUser", biUser, names).toString()
+        val biGroupQuery = QueryGenerator("com.example.ent").generate("BiGroup", biGroup, names).toString()
+
+        // Synthesized names would have been "biGroupsUsers" on BiUser and
+        // "biUsersGroups" on BiGroup. Neither should appear.
+        assert(!biUserEntity.contains("biGroupsUsers")) {
+            "Suppressed reverse should not produce EdgeRef/Edges field\n$biUserEntity"
+        }
+        assert(!biGroupQuery.contains("queryBiUsersGroups")) {
+            "Suppressed reverse should not produce traversal method\n$biGroupQuery"
+        }
+        assert(!biGroupQuery.contains("withBiUsersGroups")) {
+            "Suppressed reverse should not produce eager-loading method\n$biGroupQuery"
+        }
+    }
+
+    @Test
+    fun `self-referential throughEntity does not generate synthesized reverse surface`() {
+        // FollowUser declares 'following' and 'followers' over Follow with
+        // pair-swapped orientations. Self-ref → no synthesis, so no extra
+        // surfaces beyond the two declared edges.
+        val user = FollowUser()
+        val follow = Follow()
+        val names = mapOf<EntSchema, String>(user to "FollowUser", follow to "Follow")
+        finalize(user, follow)
+
+        val entityOutput = EntityGenerator("com.example.ent").generate("FollowUser", user, names).toString()
+        val queryOutput = QueryGenerator("com.example.ent").generate("FollowUser", user, names).toString()
+
+        // Synthesized names would have been "followUsersFollowing" /
+        // "followUsersFollowers" if self-ref weren't suppressed.
+        assert(!entityOutput.contains("followUsersFollowing")) {
+            "Self-ref reverse should not appear as EdgeRef/Edges field\n$entityOutput"
+        }
+        assert(!queryOutput.contains("queryFollowUsersFollowing")) {
+            "Self-ref reverse should not appear as traversal method\n$queryOutput"
+        }
+    }
+
     // ---------- Phase 5: throughLink junction-shape rules ----------
 
     @Test
