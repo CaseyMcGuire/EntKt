@@ -126,9 +126,15 @@ not re-insert it, so the final link set is smaller than the requested set.
 Owner-edge serialization (cooperative or true row lock, per
 [Transaction And Locking Semantics](04-transaction-locking-semantics.md))
 protects the owner row, not the target rows. Callers that need stronger
-guarantees can serialize endpoint deletes against M2M saves themselves (for
-example by locking the target row before deleting it through application code).
-V1 does not add target-side locking inside the M2M helpers; see Open Questions.
+guarantees coordinate at the application level by taking a shared lock keyed
+by target id on **both** sides of the race — for example,
+`pg_advisory_xact_lock(targetId)` acquired in the endpoint-delete transaction
+*and* at the start of the M2M save's transaction (via a `beforeUpdate` hook
+or in caller code wrapping the save). The endpoint delete blocks until any
+concurrent M2M save commits, and vice versa. The helpers themselves remain
+id-only and do not acquire target-side locks; the protocol lives in
+application code. V1 does not add target-side locking inside the M2M
+helpers; see Open Questions.
 
 ## Generated Builder Shape
 
@@ -154,52 +160,66 @@ where `Post.id` is `Long` and `Tag.id` is `UUID` is a compile error.
 No entity-argument overloads are generated; the only signatures on
 the mutator are id-typed.
 
-`set(...)` is a replacement operation. In V1, replacement and delta
-operations are mutually exclusive for a given edge within a single
-mutation. A builder may call either `set(...)` or `add(...)` /
-`remove(...)`, but not both for the same edge. Multiple `set(...)`
-calls for the same edge are allowed; the latest replacement wins as
-long as no delta operation is also present. Generated mutators must
-reject mixed replacement/delta usage by throwing `IllegalStateException`
-naming the edge and the conflicting operations. The check fires fail-fast
-at the incompatible mutator call site, with a defense-in-depth check at
-`save()` preflight that throws the same exception if state somehow
-becomes mixed through reflection or a generated bulk-write helper that
-bypasses the per-call check. The defense-in-depth check runs **after**
-the transaction/capability preflight and **before** hooks, privacy,
-validation, driver reads, or driver writes (per the Many-To-Many Pipeline
-order in
+`set(...)` is a replacement operation. V1 enforces two mutual-exclusivity
+rules at the builder level:
+
+1. **Replacement vs delta.** For a given edge, `set(...)` and the delta
+   operators `add(...)` / `remove(...)` are mutually exclusive within a
+   single mutation. Multiple `set(...)` calls for the same edge are
+   allowed; the latest replacement wins as long as no delta operation is
+   also present.
+2. **Same-id mixed-direction delta.** For a given edge in delta mode, an
+   id may be the subject of `add(...)` calls **or** `remove(...)` calls,
+   but not both within one mutation. Multiple `add(aId)` or `remove(aId)`
+   calls deduplicate; a `remove(aId)` after an `add(aId)` (or vice versa)
+   for the same `aId` is rejected.
+
+Both rules guard against caller-side programming errors. Generated mutators
+must reject violations by throwing `IllegalStateException` naming the edge
+and the conflicting operations. The check fires fail-fast at the offending
+mutator call site — under normal usage, the bad mutator call throws
+**before** `save()` is ever invoked, so `IllegalStateException` is what the
+caller sees regardless of transaction state. A defense-in-depth check at
+`save()` preflight throws the same exception if state somehow becomes
+inconsistent through reflection or a generated bulk-write helper that
+bypasses the per-call check; that defense-in-depth check runs **after** the
+transaction/capability preflight and **before** hooks, privacy, validation,
+driver reads, or driver writes (per the Many-To-Many Pipeline order in
 [Transaction And Locking Semantics](04-transaction-locking-semantics.md)),
-so a malformed save outside a transaction surfaces
-`TransactionRequiredException` first, not `IllegalStateException`. Mixed
-replacement/delta is a deterministic programming error, not a branchable
-expected outcome — it throws on every path including `saveOrError()`,
-and is not modeled as an `EntError` variant.
+so a save reaching the defense-in-depth check outside a transaction
+surfaces `TransactionRequiredException` first **on that path**. Both rules
+describe deterministic programming errors, not branchable expected
+outcomes — `IllegalStateException` throws on every path including
+`saveOrError()`, and is not modeled as an `EntError` variant.
 
 ## Pending Edge Operations
 
 Builders should preserve the ordered operation log internally. The public
-candidate/context representation should expose the requested replacement, if
-any, plus the computed database delta. It should not expose the raw operation
-sequence.
+candidate/context representation should expose the requested operation intent
+(replacement set or per-id add/remove intent) plus the computed database
+delta. It should not expose the raw operation sequence.
 
 Before hooks should receive hook-facing mutation interfaces, not the public
-builder type that exposes link-table M2M mutators. Hook-facing interfaces should
-continue to expose mutable scalar/FK fields, but they must not expose
-`tags.add(...)`, `tags.remove(...)`, or `tags.set(...)`. They should
-instead expose a read-only view of pending link-table edge operation intent.
-Hooks may inspect which M2M edge operations were requested, but they must not
-mutate pending edge operations.
+builder type that exposes link-table M2M mutators. Hook-facing mutation
+interfaces continue to expose mutable scalar/FK fields, but they must not
+expose `tags.add(...)`, `tags.remove(...)`, or `tags.set(...)` — that surface
+is build-time only.
+
+Pending edge operation intent is exposed to hooks **on the update hook
+context, not on the shared mutation interface**. M2M helpers are update-only
+in V1, and RFC #2 (To-One FK Mutation And Nullability) defines `beforeSave`
+against a common `{Entity}Mutation` interface that has to fit both create and
+update hooks. Putting `pendingEdges` on that shared interface would put
+update-only edge state on a create/update-shared surface; instead, RFC #1's
+`{Entity}UpdateHookContext` gains a sibling field next to `before` / `patch`
+/ `mutation`. `beforeSave` continues to see the shared mutation interface
+without any edge-intent slot. `beforeUpdate` reads pending edge intent via
+`ctx.pendingEdges`. Hooks may inspect which M2M edge operations were
+requested, but they must not mutate pending edge operations.
 
 Conceptually:
 
 ```kotlin
-interface PostHookMutation {
-    var title: String
-    var authorId: UUID
-    val pendingEdges: PostPendingEdgeOps
-}
-
 data class PendingEdgeOps<ID>(
     val requestedSet: Set<ID>? = null,
     val ensurePresentIds: Set<ID> = emptySet(),
@@ -213,24 +233,33 @@ data class PendingEdgeOps<ID>(
 data class PostPendingEdgeOps(
     val tags: PendingEdgeOps<Long> = PendingEdgeOps(),
 )
+
+data class PostUpdateHookContext(
+    val client: EntClient,
+    val before: Post,
+    val patch: PostUpdatePatch,
+    val pendingEdges: PostPendingEdgeOps,
+    val mutation: PostUpdateMutationView,
+)
 ```
 
 `PendingEdgeOps` is intent-level. It is computed from the builder's pending
 operation log before current junction rows are read. `EdgeChanges`, described
-below, is computed later after current junction rows are read. `ensurePresentIds`
-and `ensureAbsentIds` are intent names: they describe relationships the caller
+below, is computed later after current junction rows are read.
+`ensurePresentIds` and `ensureAbsentIds` describe relationships the caller
 wants present or absent, not database rows that are known to be inserted or
-deleted. Actual computed database deltas are exposed only on `EdgeChanges.added`
-and `EdgeChanges.removed`. Its public fields are sets because relationship
-intent is unordered; hooks must not depend on iteration order.
+deleted. Actual computed database deltas are exposed only on
+`EdgeChanges.added` and `EdgeChanges.removed`. Public fields are sets because
+relationship intent is unordered; hooks must not depend on iteration order.
 
-For a given edge, `requestedSet` is mutually exclusive with `ensurePresentIds` /
-`ensureAbsentIds` in `PendingEdgeOps` because V1 rejects mixed replacement and
-delta operations. `requestedSet` is the deduplicated latest `set(...)`
-operand. `ensurePresentIds` and `ensureAbsentIds` are used only for delta-only
-mutations and contain deduplicated ids from `add(...)` and `remove(...)` calls.
-Duplicate calls for the same id collapse, but same-id cancellations do **not**
-remove from these sets — they are the literal call log (deduped), aligned with
+For a given edge, `requestedSet` is mutually exclusive with `ensurePresentIds`
+/ `ensureAbsentIds` in `PendingEdgeOps` because V1 rejects mixed replacement
+and delta operations. `requestedSet` is the deduplicated latest `set(...)`
+operand. `ensurePresentIds` and `ensureAbsentIds` are used only for
+delta-only mutations and contain deduplicated ids from `add(...)` and
+`remove(...)` calls. The two sets are disjoint by construction: same-id
+mixed-direction calls are rejected at the builder call site (see "Generated
+Builder Shape"), so no id can appear in both. The shape aligns with
 `EdgeChanges.requestedAdds` / `requestedRemoves`.
 
 ## Normalization
@@ -240,13 +269,40 @@ Many-to-many mutations normalize by target id before writing:
 - duplicate ids collapse to a single intended relationship
 - `set(listOf(aId, aId))` is equivalent to `set(listOf(aId))`
 - `add(aId)` twice is equivalent to `add(aId)` once
-- `add(aId)` followed by `remove(aId)` has no net add
-- `remove(aId)` followed by `add(aId)` has no net remove if `aId` was
-  already linked, and results in a net add if `aId` was not linked
 - removing an id that is not linked is a no-op
 - generated writes should compute the final add/remove sets before touching the
   junction table instead of relying on uniqueness constraints or SQL execution
   order for correctness
+
+Same-id mixed-direction sequences (`add(aId); remove(aId)` or
+`remove(aId); add(aId)`) cannot exist in pending state — the builder rejects
+them as programming errors at the conflicting call site (see "Generated
+Builder Shape" above), so no "cancellation" normalization is needed.
+
+### Delta mode normalization
+
+For `add(...)` / `remove(...)` mutations, the builder maintains two disjoint
+sets, `requestedAdds` and `requestedRemoves`, populated by the deduplicated
+literal call log. The disjoint invariant is enforced at the mutator call site
+(per Generated Builder Shape), so order does not affect effect computation.
+After reading current junction rows, the database delta is set algebra:
+
+- `added = requestedAdds - current`
+- `removed = requestedRemoves ∩ current`
+
+### Replacement mode normalization
+
+For `set(...)` mutations, the builder retains the deduplicated operand of the
+latest `set(...)` call. Replacement mode is mutually exclusive with delta
+mode per Generated Builder Shape. After reading current junction rows:
+
+- `added = requestedSet - current`
+- `removed = current - requestedSet`
+
+Generated writes apply `added` via junction `INSERT` and `removed` via
+junction `DELETE`. Implementations must compute `added` and `removed` as sets
+before any junction write — uniqueness constraints and SQL execution order
+are not part of the correctness model.
 
 ## Candidate Shape
 
@@ -272,15 +328,12 @@ updates:
   latest `set(...)` operation. Present only in replacement mode.
 - `requestedAdds` is the deduplicated set of ids the caller called `add(...)`
   on. Present only in delta mode (mutually exclusive with `requestedSet` per
-  the replacement/delta rule). Duplicate calls for the same id collapse, but a
-  matching cancelling `remove(...)` for the same id does **not** remove the id
-  from this set.
+  the replacement/delta rule). Duplicate calls for the same id collapse.
 - `requestedRemoves` is the deduplicated set of ids the caller called
-  `remove(...)` on. Present only in delta mode. Duplicate calls collapse, but
-  a matching cancelling `add(...)` for the same id does **not** remove the id
-  from this set. A caller who does `remove(badId); add(badId)` still sees
-  `badId` in `requestedRemoves`, so a validator that inspects requested intent
-  fires regardless of whether the database effect cancels out.
+  `remove(...)` on. Present only in delta mode. Duplicate calls collapse.
+  Disjoint from `requestedAdds`: same-id mixed-direction calls are rejected at
+  the builder call site (see "Generated Builder Shape"), so no id appears in
+  both sets.
 - `added` contains ids that will be inserted into the link table after comparing
   the pending operations with current junction rows (the computed database
   effect).
@@ -314,25 +367,12 @@ If the caller runs `tags.set(listOf(aId, bId))`, then `tags.add(cId)` in the
 same mutation, the builder throws `IllegalStateException` from the
 `tags.add(cId)` call site, before any observable work.
 
-If the current link set is `[aId]` and the caller runs `tags.remove(aId)`
-followed by `tags.add(aId)` in one mutation (the operations cancel), rules
-observe:
-
-```kotlin
-EdgeChanges(
-    requestedSet = null,
-    requestedAdds = setOf(aId),
-    requestedRemoves = setOf(aId),
-    added = emptySet(),
-    removed = emptySet(),
-)
-```
-
-`aId` appears in both `requestedAdds` and `requestedRemoves` (the literal call
-log captures both calls), but `added` and `removed` are empty because the
-normalized database effect is a no-op. A validator inspecting either intent
-field still sees the request and can reject (e.g.) a `remove(unknownId)` even
-when a paired `add(unknownId)` cancels the net effect.
+A caller who attempts a same-id mixed-direction pair like
+`tags.remove(aId); tags.add(aId)` in one mutation gets `IllegalStateException`
+from the second call — the builder rejects same-id mixed-direction sequences
+before they reach pending state (see "Generated Builder Shape").
+`requestedAdds` and `requestedRemoves` are therefore disjoint when
+validation/privacy observe `EdgeChanges`.
 
 If the current link set is `[cId]` and the caller runs
 `tags.add(aId); tags.remove(bId)` where `bId` is not currently linked, rules
@@ -353,19 +393,39 @@ was no `(P, bId)` link row to delete. A validation rule that wants to reject
 unknown removal ids inspects `requestedRemoves` (intent) rather than `removed`
 (effect) — the use case from Target Loading And Existence.
 
-A future `PostWriteCandidate` could include:
+`WriteCandidate` represents only the owner row's after-state scalar/FK values
+— nothing junction-shaped lives on it. Edge changes are exposed as a sibling
+context field nested by edge name, so a `WriteCandidate` for a create or
+delete save never carries empty `EdgeChanges` slots, and an entity with
+multiple M2M edges exposes one entry per edge:
 
 ```kotlin
-data class PostWriteCandidate(
-    val title: String,
-    val authorId: UUID,
-    val tags: EdgeChanges<Long> = EdgeChanges(),
+data class PostEdgeChanges(
+    val tags: EdgeChanges<UUID> = EdgeChanges(),
+)
+```
+
+Update privacy and validation contexts then carry both the owner candidate
+and the per-edge changes side-by-side:
+
+```kotlin
+data class PostUpdatePrivacyContext(
+    val privacy: PrivacyContext,
+    val client: EntClient,
+    val before: Post,
+    val requestedPatch: PostUpdatePatch,
+    val effectivePatch: PostUpdatePatch,
+    val candidate: PostWriteCandidate,
+    val edgeChanges: PostEdgeChanges,
 )
 ```
 
 This gives privacy and validation rules enough information to reason about the
-relationship replacement request and computed database effect without requiring
-the target rows to be loaded.
+relationship replacement request and computed database effect without
+requiring the target rows to be loaded, and matches the
+[Many-To-Many Pipeline](04-transaction-locking-semantics.md) ordering, which
+already treats the owner candidate and the computed edge changes as separate
+inputs to write privacy and validation.
 
 ## Privacy Scope
 
@@ -410,6 +470,29 @@ multi-write creates.
 
 ## Edge-Only Updates And Returned Entity State
 
+Pending link-table M2M operations make the update syntactically non-empty. The
+RFC #1 "syntactically empty update → `NoChanges`" preflight considers both
+scalar/FK dirty state **and** pending edge operation state. An update with no
+scalar/FK changes but at least one pending edge operation (`add(...)`,
+`remove(...)`, or `set(...)`) does **not** report `NoChanges` at the initial
+request-shape check; it proceeds through transaction/capability preflight, the
+owner-row read, hooks, privacy, validation, and the junction writes per the
+Many-To-Many Pipeline. Implementations must not reuse a naive
+`dirtyFields.isEmpty()` check from the scalar update path — the emptiness
+predicate is `dirtyFields.isEmpty() && pendingEdgeOps.isEmpty()`.
+
+A pending M2M operation that normalizes to an empty database delta is not the
+same as RFC #1 `NoChanges`. When `requestedAdds` / `requestedRemoves` /
+`requestedSet` is non-empty but the computed `added` and `removed` sets are
+both empty (e.g., `remove(nonexistentId)`, `add(alreadyLinkedId)`,
+`set(currentSet)`), the save still runs hooks, privacy, validation, after
+hooks, and returned LOAD privacy, then returns the owner row, unless a rule
+rejects it. `NoChanges` remains reserved for the request-shape empty case (no
+scalar/FK changes **and** no pending edge operations at `save()` start), or
+for hook-cleared scalar updates with no pending edge operations. This
+parallels RFC #1's treatment of state-equal scalar writes — they go through
+the full pipeline rather than collapsing to `NoChanges`.
+
 An update containing only link-table M2M edge operations is still an owner update
 operation for hooks, privacy, validation, after hooks, and return LOAD privacy.
 Before hooks run and may mutate scalar/FK fields, such as `updatedAt`. If hooks
@@ -451,6 +534,16 @@ Before implementation, add tests for:
   client and update the junction table; helper parameters are typed
   by the target's id type, and no entity-argument overloads are
   generated
+- edge-only link-table M2M updates with no scalar/FK changes but at least one
+  pending edge operation are not classified as syntactically empty — they
+  proceed through transaction preflight, owner-row read, hooks, privacy,
+  validation, and junction writes, and do not report `NoChanges` at the
+  initial request-shape check
+- pending M2M operations that normalize to an empty database delta (e.g.,
+  `add(alreadyLinkedId)`, `remove(nonLinkedId)`, or `set(currentSet)`) return
+  `Ok(owner)` after running hooks/privacy/validation, **not** `NoChanges`;
+  `NoChanges` is reserved for the request-shape empty case with no pending
+  edge operations
 - link-table M2M mutations do not evaluate target LOAD privacy and do not
   load target rows just because a target id appears in the mutation
 - `remove(nonexistentId)` can be a no-op (no link to delete); applications
@@ -463,35 +556,35 @@ Before implementation, add tests for:
   entities
 - `EdgeChanges` exposes set-valued `requestedSet`, `requestedAdds`,
   `requestedRemoves`, `added`, and `removed`. `requestedSet` is populated only
-  in replacement mode; `requestedAdds` / `requestedRemoves` only in delta mode.
-  `added` and `removed` are computed from current junction rows; intent fields
-  are the deduplicated literal call log (duplicates collapse, same-id
-  cancellations do not remove from intent)
-- a `remove(aId); add(aId)` (or `add(aId); remove(aId)`) sequence in one
-  mutation surfaces `aId` in both `EdgeChanges.requestedAdds` and
-  `EdgeChanges.requestedRemoves`, while `added` and `removed` reflect the
-  normalized database effect (potentially empty when the operations cancel)
+  in replacement mode; `requestedAdds` / `requestedRemoves` only in delta mode
+  and are disjoint by construction. `added` and `removed` are computed from
+  current junction rows; intent fields are the deduplicated literal call log
 - `EdgeChanges.requestedSet` reflects the final intended replacement set after
   the latest `set` call
 - `PendingEdgeOps` exposes set-valued intent fields (deduplicated literal call
-  log; same-id cancellations do not remove from these sets, aligned with
-  `EdgeChanges.requestedAdds` / `requestedRemoves`) and does not expose the
-  raw ordered operation log
+  log; `ensurePresentIds` and `ensureAbsentIds` are disjoint by construction,
+  aligned with `EdgeChanges.requestedAdds` / `requestedRemoves`) and does not
+  expose the raw ordered operation log
 - mixed replacement and delta operations for the same link-table M2M edge
   throw `IllegalStateException` — fail-fast at the incompatible mutator call
   site, and as a defense-in-depth check at start-of-save preflight (after the
   transaction/capability preflight, before hooks/privacy/validation/driver
   I/O); the exception is not an `EntError` variant and `saveOrError()` does
   not catch it
+- same-id mixed-direction delta operations (`add(aId); remove(aId)` or
+  `remove(aId); add(aId)`) throw `IllegalStateException` from the second call
+  site, same exception type and same not-an-`EntError`-variant treatment as
+  mixed replacement/delta; the defense-in-depth preflight check throws the
+  same exception if state somehow becomes inconsistent through reflection or
+  bulk-write paths
 - before hooks receive hook-facing mutation interfaces that expose mutable
-  scalar/FK fields and read-only `PendingEdgeOps`, but do not expose link-table
-  M2M mutators
+  scalar/FK fields but not link-table M2M mutators; pending edge intent
+  (`PendingEdgeOps`) is read-only and lives on the update hook context
+  (`ctx.pendingEdges`), not on the shared `beforeSave` mutation interface
 - hooks fire once for the owning entity mutation
 
 ## Open Questions
 
-- Should edge changes live directly on `WriteCandidate`, or should privacy and
-  validation contexts expose them separately from scalar candidates?
 - Should the helpers add a target-side locking strategy so endpoint deletes on
   requested-present ids can't race with `set(...)` / `add(...)` and shrink the
   final link set? V1 declines — adding target-side locking would contradict the
