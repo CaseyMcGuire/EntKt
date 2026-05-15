@@ -233,13 +233,22 @@ consistency mode.
 ### Link-Table M2M And UpdateConsistency
 
 `UpdateConsistency` applies to link-table M2M update saves the same way it
-applies to scalar/to-one update saves. It governs owner-*row* stability:
+applies to scalar/to-one update saves. It governs the *contract* for
+owner-*row* stability, not the implementation primitive (the primitive is
+chosen per driver — see "Driver Capabilities" below):
 
-- `ReadCurrent` (the default) reads the owner row without a true lock. Another
-  transaction can change the owner row's scalar fields or delete it between the
-  read and the write — the RFC #1 `ReadCurrent` races.
-- `Pessimistic` reads the owner row under a true row lock, so the `before` state
-  observed by hooks, privacy, and validation stays stable through the write.
+- `ReadCurrent` (the default) does not guarantee owner-row stability. Another
+  transaction may change the owner row's scalar fields or delete it between the
+  read and the write — the RFC #1 `ReadCurrent` races. (On a driver with
+  `supportsReadRowForUpdate`, the implementation primitive at the read step is
+  the true row lock, which incidentally blocks those concurrent writes; on
+  advisory-only drivers it doesn't. Callers must not rely on the side-effect
+  the contract doesn't promise.)
+- `Pessimistic` does guarantee owner-row stability: the `before` state observed
+  by hooks, privacy, and validation stays stable through the write. This is
+  enforced by requiring `supportsReadRowForUpdate` at the capability gate and
+  using the true row lock for the owner-row read; advisory-only drivers reject
+  `Pessimistic` saves up front.
 
 M2M saves carry one additional, orthogonal requirement: they must serialize the
 owner *edge* so concurrent generated M2M helpers do not corrupt the junction set
