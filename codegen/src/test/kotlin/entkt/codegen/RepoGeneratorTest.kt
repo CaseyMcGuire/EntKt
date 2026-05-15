@@ -118,7 +118,12 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `deleteById fetches entity then delegates to delete`() {
+    fun `deleteById fetches entity then delegates to deleteLoaded (skipping the public delete preflight)`() {
+        // The public `delete(entity)` runs the transaction-requirement
+        // preflight at its own entry; deleteById has already run it
+        // before the byId, so it skips the public entry by going
+        // straight to the private `deleteLoaded` helper. Avoids
+        // double-checking the requirement.
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -126,8 +131,11 @@ class RepoGeneratorTest {
         assert(output.contains("driver.byId(Car.TABLE, id)")) {
             "deleteById should fetch entity via driver (bypassing LOAD privacy)\n$output"
         }
-        assert(output.contains("return delete(entity)")) {
-            "deleteById should delegate to delete(entity)\n$output"
+        assert(output.contains("return deleteLoaded(entity)")) {
+            "deleteById should delegate to deleteLoaded(entity), not the public delete (avoids double preflight)\n$output"
+        }
+        assert(!output.contains("return delete(entity)")) {
+            "deleteById should not call public delete(entity) — that would re-run the preflight\n$output"
         }
     }
 
@@ -268,13 +276,19 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `deleteMany queries then deletes through hook path`() {
+    fun `deleteMany queries then deletes through deleteLoaded (hook path, no double preflight)`() {
+        // Per-entity deletes go through `deleteLoaded` so they get the
+        // hook/privacy/validation path without re-running deleteMany's
+        // outer multi-write preflight per row.
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("if (delete(entity)) count++")) {
-            "deleteMany should delegate to delete(entity) for hook support\n$output"
+        assert(output.contains("if (deleteLoaded(entity)) count++")) {
+            "deleteMany should delegate to deleteLoaded(entity), not public delete (avoids per-row preflight)\n$output"
+        }
+        assert(!output.contains("if (delete(entity)) count++")) {
+            "deleteMany should not loop through public delete(entity) — that would re-run preflight per row\n$output"
         }
     }
 

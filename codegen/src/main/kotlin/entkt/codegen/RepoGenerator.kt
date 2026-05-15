@@ -181,6 +181,7 @@ internal class RepoGenerator(
                     .build()
             )
             .addFunction(buildDelete(schemaName, entityClass, candidateClass))
+            .addFunction(buildDeleteLoaded(entityClass))
             .addFunction(buildDeleteById(schemaName, entityClass, idType, candidateClass))
             .also { builder ->
                 if (idStrategyName(schema) != "EXPLICIT") {
@@ -225,6 +226,14 @@ internal class RepoGenerator(
         return body.build()
     }
 
+    /**
+     * Public `delete(entity)` entry — runs the transaction-requirement
+     * preflight, then delegates to [buildDeleteLoaded] for the rest of
+     * the pipeline. The internal callers ([buildDeleteById],
+     * [buildDeleteMany]) skip this and go straight to `deleteLoaded`
+     * after their own preflight to avoid double-checking the
+     * requirement.
+     */
     private fun buildDelete(
         schemaName: String,
         entityClass: ClassName,
@@ -236,6 +245,27 @@ internal class RepoGenerator(
             // Transaction-requirement preflight (RFC #4) — fires before
             // the privacy context load and any other observable work.
             .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
+            .addStatement("return deleteLoaded(entity)")
+            .build()
+    }
+
+    /**
+     * Private internal-only delete pipeline that assumes the caller
+     * already ran the transaction-requirement preflight. Used by
+     * `delete(entity)` (public, runs preflight first), `deleteById`
+     * (runs preflight + byId, then this), and `deleteMany` (runs
+     * multi-write preflight + query, then this in a loop). Extracting
+     * this avoids the double preflight that `deleteById ->
+     * delete(entity)` and `deleteMany -> delete(entity)` would
+     * otherwise do.
+     */
+    private fun buildDeleteLoaded(
+        entityClass: ClassName,
+    ): FunSpec {
+        return FunSpec.builder("deleteLoaded")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("entity", entityClass)
+            .returns(Boolean::class)
             .addStatement("val privacy = client.currentPrivacyContext()")
             .addStatement("val candidate = buildDeleteCandidate(entity)")
             .addStatement("evaluateDeletePrivacy(privacy, entity, candidate)")
@@ -267,7 +297,11 @@ internal class RepoGenerator(
                 entityClass,
                 entityClass,
             )
-            .addStatement("return delete(entity)")
+            // Skip the public `delete(entity)` entry — it would re-run
+            // the same preflight we just ran above. Go straight to the
+            // private `deleteLoaded` so the per-call observable work
+            // (privacy / hooks / driver.delete) happens once.
+            .addStatement("return deleteLoaded(entity)")
             .build()
     }
 
@@ -309,7 +343,11 @@ internal class RepoGenerator(
             )
             .addStatement("val entities = rows.map { %T.fromRow(it) }", entityClass)
             .addStatement("var count = 0")
-            .addStatement("for (entity in entities) { if (delete(entity)) count++ }")
+            // Per-entity deletes go through the private `deleteLoaded` so
+            // they don't re-run the multi-write preflight that already
+            // ran above. (Going through public `delete(entity)` would
+            // call `checkTransactionRequirement` once per matching row.)
+            .addStatement("for (entity in entities) { if (deleteLoaded(entity)) count++ }")
             .addStatement("return count")
             .build()
     }
