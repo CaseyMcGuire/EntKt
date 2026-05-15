@@ -54,10 +54,16 @@ haven't been implemented yet.
   `ReadCurrent` path keeps the existing `byId(...)`-based RFC #1
   pipeline.
 - **Hook / privacy / validation contexts** observe the
-  transaction-scoped client when the save runs inside one — the
-  existing wiring already passed `ctx.client` through
-  `withTransaction`, and the Update / Create / Delete pipelines all
-  read it from the surrounding scope.
+  transaction-scoped client when the save runs inside one. Privacy
+  and validation contexts pick this up through the per-rule context
+  classes that already carry `client`. For hooks, `ctx.client` is
+  exposed only on the surfaces whose lambda parameter is a context
+  object — `beforeCreate` and `beforeUpdate`. The remaining hook
+  surfaces (`beforeSave`, `afterCreate`, `afterUpdate`,
+  `beforeDelete`, `afterDelete`) take a bare entity or the
+  `Mutation` interface in V1 and have no `ctx.client`; lifting them
+  into context-object shapes is deferred (it's a breaking change to
+  the hook DSL, sized for a separate RFC iteration).
 
 ### M2M-specific RFC #4 semantics (deferred to RFC #5 implementation)
 
@@ -111,8 +117,9 @@ change the selected consistency mode.
 Generated saves are transaction-neutral by default: they execute in the client
 scope they are called from. A normal client does not open a transaction
 implicitly. A transaction-scoped client created by
-`client.withTransaction { tx -> ... }` causes generated driver calls, before and
-after hook `ctx.client`, privacy checks, validation checks, and rule-context
+`client.withTransaction { tx -> ... }` causes generated driver calls, hook
+`ctx.client` (on hooks that receive a context object — see "Hook context
+surface" below), privacy checks, validation checks, and rule-context
 `ctx.client` queries for that save to use the transaction-scoped driver/client.
 
 Transactions are required only when the selected operation semantics require
@@ -198,14 +205,36 @@ transaction-scoped driver so rule code observes the same transaction snapshot as
 the write it is authorizing or validating. When a save runs on a normal client,
 contexts use the normal client/driver.
 
-Before and after hook `ctx.client` follows the same rule: it uses the save's
-client scope. On a transaction-scoped client, every `beforeCreate`,
-`beforeUpdate`, `beforeSave`, `afterCreate`, and `afterUpdate` hook observes the
-transaction-scoped driver/client, so hook reads and writes share the same
-transaction snapshot as the save. This is consistent with
-[ID-Based Update Roots](01-id-based-update-roots.md), which already specifies
-this for update hooks; this RFC extends the same rule to create and M2M save
-hooks. On a normal client, hook `ctx.client` uses the normal client/driver.
+**Hook context surface.** `ctx.client` is exposed on the hooks whose
+generated lambda parameter is a context object: `beforeCreate` (receives
+`{Entity}CreateHookContext`) and `beforeUpdate` (receives
+`{Entity}UpdateHookContext`). When a save runs on a transaction-scoped
+client, that `ctx.client` is the transaction-scoped sub-client, so hook
+reads and writes share the same transaction snapshot as the save (the
+existing `withTransaction` wiring already copies hook lists, privacy,
+validation, and the transaction requirement onto the sub-client). On a
+normal client, `ctx.client` is the normal client.
+
+The other hook surfaces today don't receive a context object —
+`beforeSave` takes the entity's `Mutation` interface, and `afterCreate`,
+`afterUpdate`, `beforeDelete`, and `afterDelete` take just the entity.
+A hook lambda registered on those surfaces that wants to issue queries
+or writes against the same client must capture the application's
+`EntClient` from its enclosing scope rather than read it through `ctx`.
+That captured client is *not* automatically the transaction-scoped
+sub-client — the captured client is whichever `EntClient` the hook
+closure was constructed against, typically the application root.
+
+Lifting the missing surfaces (`beforeSave`, `afterCreate`,
+`afterUpdate`, `beforeDelete`, `afterDelete`) into context-object
+shapes — so they too get a transaction-scoped `ctx.client` — is a
+plausible follow-up RFC iteration. It's a breaking change to the hook
+DSL signature, so it isn't bundled in here. Until that lands, hook
+authors who need transaction-scoped client access from the
+non-context-bearing hooks should put their logic in `beforeCreate` /
+`beforeUpdate` instead, or accept that captured-client writes happen
+on the application root client (and would not roll back with the save's
+transaction).
 
 ## Update Consistency Modes
 
@@ -891,10 +920,17 @@ Before implementation, add tests for:
   validation
 - saves called through a transaction-scoped client use the transaction-scoped
   driver/client for any follow-up read needed to hydrate the returned entity
-- before and after hook `ctx.client` queries and writes use the
-  transaction-scoped driver/client when the save runs on a transaction-scoped
-  client, for every `beforeCreate`, `beforeUpdate`, `beforeSave`, `afterCreate`,
-  and `afterUpdate` hook
+- hook `ctx.client` queries and writes use the transaction-scoped
+  driver/client when the save runs on a transaction-scoped client.
+  V1 exposes `ctx.client` only on the hooks whose generated lambda
+  parameter is a context object — `beforeCreate`
+  (`{Entity}CreateHookContext`) and `beforeUpdate`
+  (`{Entity}UpdateHookContext`). Tests cover those two surfaces.
+  The other hook surfaces (`beforeSave`, `afterCreate`,
+  `afterUpdate`, `beforeDelete`, `afterDelete`) take a bare entity or
+  `Mutation` interface and have no `ctx.client`; lifting them into
+  context-object shapes is deferred follow-up work (it's a breaking
+  change to the hook DSL signature, sized for a separate RFC).
 - database writes a hook makes through `ctx.client` participate in the save's
   transaction and roll back when the failure propagates as an uncaught exception
   out of the caller's `withTransaction` block; on the `saveOrError()` path they
