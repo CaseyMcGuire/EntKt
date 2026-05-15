@@ -603,6 +603,43 @@ class PostgresDriverTest {
     }
 
     @Test
+    fun `lock capability flags advertise driver-family support, not 'this instance can call right now'`() {
+        // Subtle contract: `supportsReadRowForUpdate == true` on the
+        // root driver means "the Postgres driver family supports the
+        // capability when transaction-scoped," not "calling
+        // readRowForUpdate on this instance right now will succeed."
+        // Generated code preflights `inTransaction` *before* invoking
+        // the lock method, so it never hits the root throw — but the
+        // asymmetry still needs to be visible in tests so a future
+        // change that conflates the flag with "callable right now"
+        // breaks loudly.
+        val driver = fresh()
+        val row = driver.insert("users", mapOf<String, Any?>("name" to "Carol"))
+
+        // Flag says yes...
+        assertEquals(true, driver.supportsReadRowForUpdate)
+        assertEquals(true, driver.supportsOwnerEdgeSerialization)
+
+        // ...but calling on the root throws (auto-commit would release
+        // the lock immediately).
+        assertFailsWith<IllegalStateException> {
+            driver.readRowForUpdate("users", row["id"]!!)
+        }
+        assertFailsWith<IllegalStateException> {
+            driver.serializeOwnerEdgeAndRead("users", row["id"]!!)
+        }
+
+        // The same flag still says yes on the transaction-scoped sub-driver,
+        // and there the call actually executes.
+        driver.withTransaction { tx ->
+            assertEquals(true, tx.supportsReadRowForUpdate)
+            assertEquals(true, tx.supportsOwnerEdgeSerialization)
+            assertEquals("Carol", tx.readRowForUpdate("users", row["id"]!!)!!["name"])
+            assertEquals("Carol", tx.serializeOwnerEdgeAndRead("users", row["id"]!!)!!["name"])
+        }
+    }
+
+    @Test
     fun `transaction driver throws after block returns including register`() {
         val driver = fresh()
         var captured: entkt.runtime.Driver? = null

@@ -194,6 +194,19 @@ interface Driver {
      * saves on drivers that support both this and
      * [supportsOwnerEdgeSerialization].
      *
+     * **Contract subtlety.** This flag advertises *driver-family*
+     * support — "this driver's transaction-scoped sub-driver can take
+     * a true row lock." It does *not* say "calling [readRowForUpdate]
+     * on this instance right now will succeed." A driver may legally
+     * report `true` on its non-transactional root and still throw
+     * from [readRowForUpdate] there (e.g. PostgresDriver: the root
+     * runs in auto-commit, where the row lock would release
+     * immediately, so the root throws but the transaction-scoped
+     * sub-driver executes the lock for real). Generated code
+     * preflights [inTransaction] before calling, so it never hits
+     * that throw; callers reaching for [readRowForUpdate] directly
+     * should do the same.
+     *
      * Default `false` — subclasses opt in by overriding both this and
      * [readRowForUpdate].
      */
@@ -240,6 +253,15 @@ interface Driver {
      * for `UpdateConsistency.Pessimistic`: a cooperative advisory
      * lock does not block ordinary `UPDATE`/`DELETE` and so cannot
      * provide the `Pessimistic` owner-row stability guarantee.
+     *
+     * Same contract subtlety as [supportsReadRowForUpdate]: this flag
+     * advertises *driver-family* support, not "this instance can
+     * call right now." A driver may report `true` on its non-
+     * transactional root and still throw from
+     * [serializeOwnerEdgeAndRead] there (e.g. PostgresDriver — the
+     * `pg_advisory_xact_lock` is xact-scoped, so the root in
+     * auto-commit has nothing to bind to). Generated code preflights
+     * [inTransaction] before calling.
      *
      * Default `false` — subclasses opt in by overriding both this and
      * [serializeOwnerEdgeAndRead]. A driver that supports
