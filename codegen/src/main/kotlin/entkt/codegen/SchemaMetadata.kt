@@ -6,7 +6,6 @@ import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
-import entkt.schema.ManyToManyThrough
 import entkt.schema.OnDelete
 
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
@@ -581,93 +580,6 @@ internal fun reverseM2MEdgeEntries(
                 val reverseName = reverseM2MEdgeName(otherSchema, edge.name)
                 val targetTable = otherSchema.tableName
                 EdgeEntry(reverseName, targetTable, reverseJoin)
-            }
-    }
-}
-
-/**
- * A synthesized reverse M2M edge plus the metadata codegen needs to
- * wire up its user-facing traversal surface.
- *
- * [edge] is a fully-formed [Edge] shaped so the standard edge
- * consumers ([EntityGenerator] `EdgeRef` / `Edges` field,
- * [QueryGenerator] eager-loading) treat it like any declared
- * `manyToMany`: its `target` is the schema that declared the *forward*
- * edge, and its `through` carries the junction with `sourceEdge` /
- * `targetEdge` swapped so [resolveM2MEdgeJoin] walks the junction in
- * the reverse direction.
- *
- * [forwardEdgeName] is the original forward edge's name on the
- * declaring schema. Reverse query traversal lowers to a
- * `HasEdgeWith(forwardEdgeName, parent)` predicate against the
- * declaring schema's `SCHEMA.edges` map — it references the *forward*
- * edge, not a doubly-reversed synthesized name.
- */
-internal data class SynthesizedReverseEdge(
-    val edge: Edge,
-    val forwardEdgeName: String,
-)
-
-/**
- * Reverse M2M edges that should gain a user-facing traversal surface
- * on [schema] — `queryX()`, `withX()`, an `EdgeRef`, and an `Edges`
- * field — per RFC #3's default-reverse-synthesis behavior.
- *
- * Only `throughEntity` forward edges qualify: RFC #3 explicitly says
- * `throughLink` relationships get no opposite-side read-only edge,
- * eager-loading, or predicate surface in V1. (The runtime `SCHEMA.edges`
- * reverse metadata in [reverseM2MEdgeEntries] is still emitted for
- * `throughLink` so forward query traversal keeps working — that's a
- * separate, non-user-facing concern.)
- *
- * Mirrors [reverseM2MEdgeEntries]'s suppression rules: self-referential
- * M2M and canonical-identity matches against an explicit declaration on
- * [schema] produce no synthesized surface.
- */
-internal fun synthesizedReverseM2MEdges(
-    schema: EntSchema,
-    schemaNames: Map<EntSchema, String>,
-): List<SynthesizedReverseEdge> {
-    val schemaDeclaredCanonicals = schema.edges()
-        .mapNotNull { canonicalM2MIdentity(it) }
-        .toSet()
-
-    return schemaNames.flatMap { (otherSchema, _) ->
-        otherSchema.edges()
-            .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
-            .mapNotNull { forwardEdge ->
-                if (otherSchema === schema) return@mapNotNull null
-
-                val m2m = forwardEdge.kind as EdgeKind.ManyToMany
-                val through = m2m.through
-                // throughLink gets no user-facing reverse surface in V1.
-                if (through !is ManyToManyThrough.ThroughEntity) return@mapNotNull null
-
-                val canonical = canonicalM2MIdentity(forwardEdge)
-                if (canonical != null && canonical in schemaDeclaredCanonicals) {
-                    return@mapNotNull null
-                }
-
-                // Sanity-check the join resolves before emitting a surface.
-                resolveM2MEdgeJoin(forwardEdge, otherSchema, schemaNames)
-                    ?: return@mapNotNull null
-
-                val reverseName = reverseM2MEdgeName(otherSchema, forwardEdge.name)
-                val reverseEdge = Edge(
-                    name = reverseName,
-                    target = otherSchema,
-                    kind = EdgeKind.ManyToMany(
-                        ManyToManyThrough.ThroughEntity(
-                            junction = through.junction,
-                            // Swap source/target so resolveM2MEdgeJoin walks
-                            // the junction from [schema] back to otherSchema.
-                            sourceEdge = through.targetEdge,
-                            targetEdge = through.sourceEdge,
-                        ),
-                    ),
-                    comment = null,
-                )
-                SynthesizedReverseEdge(reverseEdge, forwardEdge.name)
             }
     }
 }
