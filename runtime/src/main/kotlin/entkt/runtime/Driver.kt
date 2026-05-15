@@ -193,6 +193,19 @@ interface Driver {
      * rolls back, so that other transactions cannot update or delete
      * the row in between. Returns `null` if no row exists with that id.
      *
+     * **Implementation contract.** Implementations that override this
+     * method MUST also reject calls when the driver is not in a
+     * transaction (i.e. when [inTransaction] is false). The lock
+     * semantics require a transaction boundary to bind to; calling
+     * this method on a non-transactional driver would either release
+     * the lock immediately at statement end (in auto-commit) or have
+     * nothing to bind to at all. Generated saves preflight
+     * [inTransaction] before calling, but the implementation must
+     * defend the contract independently — a future caller that skips
+     * the preflight is a programming error and should fail fast.
+     * Use [requireTransactionForLocking] if a uniform `IllegalStateException`
+     * shape is desired.
+     *
      * Implementations that do not support true row-lock semantics must
      * leave [supportsReadRowForUpdate] false; calling this method on
      * such a driver is a programming error and should throw
@@ -233,6 +246,14 @@ interface Driver {
      * enclosing transaction commits or rolls back. Returns `null` if
      * no row exists with that id.
      *
+     * **Implementation contract.** Same as [readRowForUpdate]:
+     * implementations that override this method MUST also reject
+     * calls when [inTransaction] is false. The serialization token's
+     * duration is the surrounding transaction; calling this method on
+     * a non-transactional driver leaves nothing for the token to bind
+     * to. Use [requireTransactionForLocking] for a uniform
+     * `IllegalStateException` shape.
+     *
      * Postgres-style implementations bind the serialization token to
      * the transaction (e.g. `pg_advisory_xact_lock`) so the duration
      * requirement is automatic; non-transactional primitives must
@@ -245,4 +266,30 @@ interface Driver {
             "Driver ${this::class.simpleName} does not support serializeOwnerEdgeAndRead; " +
                 "check supportsOwnerEdgeSerialization before calling.",
         )
+
+    /**
+     * Helper for [readRowForUpdate] / [serializeOwnerEdgeAndRead]
+     * implementations that want a uniform error shape when the driver
+     * is asked to lock outside a transaction. Throws
+     * [IllegalStateException] when [inTransaction] is false; otherwise
+     * does nothing. The interface contract on the lock methods *requires*
+     * implementations to reject non-transactional calls — this just
+     * standardizes the rejection.
+     *
+     * Use it at the top of an overriding method:
+     *
+     * ```kotlin
+     * override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
+     *     requireTransactionForLocking("readRowForUpdate")
+     *     // ... do the locking read
+     * }
+     * ```
+     */
+    fun requireTransactionForLocking(method: String) {
+        check(inTransaction) {
+            "Driver.$method requires a transaction-scoped driver — call inside withTransaction. " +
+                "Calling on a non-transactional driver would release the lock immediately " +
+                "(in auto-commit) or have no transaction boundary to bind to."
+        }
+    }
 }

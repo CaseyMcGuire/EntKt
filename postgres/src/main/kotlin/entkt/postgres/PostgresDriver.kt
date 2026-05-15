@@ -828,29 +828,40 @@ class PostgresDriver(
     // in auto-commit immediately releases the lock when the statement
     // completes, defeating the purpose). Callers must reach the
     // locking methods through the [PostgresTransactionalDriver]
-    // returned inside [withTransaction]; the root driver throws.
+    // returned inside [withTransaction]; the root driver enforces the
+    // contract via the shared `requireTransactionForLocking` helper.
 
     override val supportsReadRowForUpdate: Boolean
         get() = true
 
-    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? =
+    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
+        // Uniform contract enforcement (RFC #4): the
+        // `Driver.readRowForUpdate` interface contract requires
+        // implementations to reject non-transactional callers. The
+        // helper throws IllegalStateException when `inTransaction`
+        // is false, which on the root driver is always.
+        requireTransactionForLocking("readRowForUpdate")
+        // Unreachable — the helper above always throws on the root
+        // because root.inTransaction == false. The explicit error
+        // here is defensive: if a future subclass overrides
+        // `inTransaction` to return true on a root-class instance,
+        // this still surfaces the impossible call site.
         error(
-            "PostgresDriver.readRowForUpdate must be called on a transaction-scoped driver " +
-                "obtained via withTransaction; calling it on the root driver in auto-commit " +
-                "would release the row lock immediately. Generated saves preflight `inTransaction` " +
-                "before calling this method.",
+            "PostgresDriver.readRowForUpdate reached the root-class body despite passing the " +
+                "transaction check — root must not advertise inTransaction = true.",
         )
+    }
 
     override val supportsOwnerEdgeSerialization: Boolean
         get() = true
 
-    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? =
+    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
+        requireTransactionForLocking("serializeOwnerEdgeAndRead")
         error(
-            "PostgresDriver.serializeOwnerEdgeAndRead must be called on a transaction-scoped " +
-                "driver obtained via withTransaction; the cooperative lock is bound to the " +
-                "transaction (pg_advisory_xact_lock) and would release immediately in auto-commit. " +
-                "Generated saves preflight `inTransaction` before calling this method.",
+            "PostgresDriver.serializeOwnerEdgeAndRead reached the root-class body despite passing " +
+                "the transaction check — root must not advertise inTransaction = true.",
         )
+    }
 
     /**
      * Lock the row by id with `SELECT ... FOR UPDATE` and return its
