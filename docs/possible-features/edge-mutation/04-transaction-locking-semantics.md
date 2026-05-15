@@ -677,6 +677,30 @@ For link-table M2M updates and `Pessimistic` scalar/to-one updates, the owner ro
 read for this save is also the update `before` state and the fallback base for
 scalar/FK fields the caller did not change.
 
+**Post-read owner deletion under `ReadCurrent`.** A `ReadCurrent` M2M save
+serializes the owner *edge* but does not lock the owner *row*, so another
+transaction can delete the owner between the step 4 read and the step 11–13
+junction writes. The visible behavior splits by save shape:
+
+- **Mixed updates (scalar/FK + edge)**: the owner `UPDATE` in step 12 affects
+  0 rows, generated code returns the `NotFound` result (mirroring the existing
+  `driver.update(...) ?: return null` mapping), and step 13 junction writes are
+  skipped.
+- **Edge-only updates (no scalar/FK changes)**: there is no owner `UPDATE` to
+  detect the missing row. Junction `INSERT`(s) in step 13 reference the now-gone
+  owner id and the database surfaces a foreign-key violation; junction `DELETE`(s)
+  for a non-existent owner are no-ops and don't surface anything. V1 does *not*
+  map this FK violation to `NotFound`: the constraint error propagates as the
+  driver's raw exception (a `org.postgresql.util.PSQLException` for the Postgres
+  driver). Callers who need a clean `NotFound` for the owner-deleted-post-read
+  case on edge-only saves select `UpdateConsistency.Pessimistic`, which holds
+  the owner row across the junction writes and rejects the concurrent delete.
+
+Mapping FK violations on the owner side to `NotFound` is plausible follow-up
+work — it requires the driver to introspect the constraint that fired so the
+runtime can distinguish "owner gone" from a genuine target-side FK error — and
+is deferred until a concrete EntError variant for constraint violations lands.
+
 The advisory-lock strategy is acceptable only for `serializeOwnerEdgeAndRead`
 (link-table M2M owner-edge serialization), never for `readRowForUpdate`: a
 cooperative advisory lock does not block ordinary `UPDATE`/`DELETE` and so cannot
@@ -819,6 +843,14 @@ Before implementation, add tests for:
   but does not lock the owner row, so concurrent writers can change owner scalar
   fields or delete the owner row before the write — the RFC #1 `ReadCurrent`
   races
+- post-read owner deletion under `ReadCurrent` M2M: when the owner is deleted
+  by another transaction between the owner-row read and the junction writes,
+  a *mixed* update (scalar/FK + edge) returns `NotFound` (the step-12 owner
+  `UPDATE` affects 0 rows); an *edge-only* update raises the driver's raw
+  FK-violation exception from the step-13 junction `INSERT`(s). V1 does not
+  map the FK violation to `NotFound` — callers who need that select
+  `Pessimistic`. Test coverage exercises both shapes (mixed vs edge-only)
+  with a concurrent owner-delete arriving between read and write
 - a `Pessimistic` link-table M2M update reads the owner row under a true row lock
   and requires `supportsReadRowForUpdate`
 - link-table M2M owner-edge serialization is always applied regardless of the
