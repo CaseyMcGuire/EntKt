@@ -584,6 +584,8 @@ class PostgresDriver(
                 is Predicate.HasEdge -> lowerHasEdge(predicate.edge, null, schema, alias)
                 is Predicate.HasEdgeWith ->
                     lowerHasEdge(predicate.edge, predicate.inner, schema, alias)
+                is Predicate.HasM2MEdgeFrom ->
+                    lowerInverseM2M(predicate, alias)
             }
 
         private fun lowerLeaf(leaf: Predicate.Leaf, schema: EntitySchema, alias: String): String {
@@ -679,6 +681,36 @@ class PostgresDriver(
             val innerSql = inner?.let { lower(it, targetSchema, targetAlias) }
             val where = if (innerSql == null) join else "$join AND $innerSql"
             return "EXISTS (SELECT 1 FROM ${quote(edge.targetTable)} AS $targetAlias WHERE $where)"
+        }
+
+        /**
+         * Lower [Predicate.HasM2MEdgeFrom] into an EXISTS subquery that
+         * walks the junction backwards: candidate target row's id =
+         * junction.targetCol = source.id; the optional source-side
+         * filter applies to the source table.
+         */
+        private fun lowerInverseM2M(
+            predicate: Predicate.HasM2MEdgeFrom,
+            candidateAlias: String,
+        ): String {
+            val sourceSchema = schemas[predicate.sourceTable]
+                ?: error("HasM2MEdgeFrom: unregistered source table ${predicate.sourceTable}")
+            val edge = sourceSchema.edges[predicate.edgeName]
+                ?: error("HasM2MEdgeFrom: edge ${predicate.sourceTable}.${predicate.edgeName} has no metadata")
+            val junctionTable = edge.junctionTable
+                ?: error("HasM2MEdgeFrom: edge ${predicate.sourceTable}.${predicate.edgeName} is not M2M")
+
+            val jAlias = nextAlias()
+            val sAlias = nextAlias()
+            val joinJunctionToCandidate =
+                "$jAlias.${quote(edge.junctionTargetColumn!!)} = $candidateAlias.${quote(edge.targetColumn)}"
+            val joinJunctionToSource =
+                "$jAlias.${quote(edge.junctionSourceColumn!!)} = $sAlias.${quote(edge.sourceColumn)}"
+            val innerSql = predicate.sourceFilter?.let { lower(it, sourceSchema, sAlias) }
+            val where = listOfNotNull(joinJunctionToCandidate, joinJunctionToSource, innerSql).joinToString(" AND ")
+            return "EXISTS (SELECT 1 FROM ${quote(junctionTable)} AS $jAlias" +
+                " JOIN ${quote(predicate.sourceTable)} AS $sAlias ON $joinJunctionToSource" +
+                " WHERE $where)"
         }
     }
 

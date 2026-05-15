@@ -395,6 +395,48 @@ class InMemoryDriver : Driver {
             is Predicate.HasEdge -> hasAnyRelated(row, predicate.edge, sourceTable, null)
             is Predicate.HasEdgeWith ->
                 hasAnyRelated(row, predicate.edge, sourceTable, predicate.inner)
+            is Predicate.HasM2MEdgeFrom ->
+                hasInverseM2M(row, predicate)
+        }
+    }
+
+    /**
+     * Returns true iff at least one row in [Predicate.HasM2MEdgeFrom.sourceTable]
+     * matching [Predicate.HasM2MEdgeFrom.sourceFilter] has the candidate
+     * `targetRow` as its M2M target via the forward edge declared on
+     * the source schema. Walks the junction backwards: candidate.id →
+     * junctionTargetColumn → matching junction rows → junctionSourceColumn
+     * → source row → optional inner-predicate check.
+     */
+    private fun hasInverseM2M(
+        targetRow: Map<String, Any?>,
+        predicate: Predicate.HasM2MEdgeFrom,
+    ): Boolean {
+        val sourceSchema = schemas[predicate.sourceTable]
+            ?: error("HasM2MEdgeFrom: unregistered source table ${predicate.sourceTable}")
+        val edge = sourceSchema.edges[predicate.edgeName]
+            ?: error("HasM2MEdgeFrom: edge ${predicate.sourceTable}.${predicate.edgeName} has no metadata")
+        val junctionTable = edge.junctionTable
+            ?: error("HasM2MEdgeFrom: edge ${predicate.sourceTable}.${predicate.edgeName} is not M2M")
+        val jSrcCol = edge.junctionSourceColumn!!
+        val jTgtCol = edge.junctionTargetColumn!!
+
+        val candidateJoinValue = targetRow[edge.targetColumn] ?: return false
+        val junctionRows = tables[junctionTable] ?: return false
+        val sourceRows = tables[predicate.sourceTable] ?: return false
+
+        synchronized(junctionRows) {
+            val matchingJunctions = junctionRows.filter { it[jTgtCol] == candidateJoinValue }
+            val sourceFilter = predicate.sourceFilter
+            return synchronized(sourceRows) {
+                matchingJunctions.any { jr ->
+                    val sourceJoinValue = jr[jSrcCol]
+                    sourceRows.any { sr ->
+                        sr[edge.sourceColumn] == sourceJoinValue &&
+                            (sourceFilter == null || evaluate(sr, sourceFilter, predicate.sourceTable))
+                    }
+                }
+            }
         }
     }
 

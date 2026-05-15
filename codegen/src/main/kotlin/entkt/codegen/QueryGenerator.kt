@@ -832,13 +832,11 @@ internal class QueryGenerator(
 
     /**
      * Generate a `queryX(): TargetQuery` traversal for a many-to-many
-     * [edge] (one with `.through(...)`). Unlike direct traversal, there's
-     * no inverse edge on the target schema. Instead, the target's
-     * generated `EntitySchema` carries a reverse M2M edge entry (injected
-     * by [reverseM2MEdgeEntries]) whose name combines the source table
-     * name and the forward edge name. The generated method references
-     * that reverse name so the runtime can walk the junction table in
-     * the right direction.
+     * [edge]. Lowered to a `Predicate.HasM2MEdgeFrom` against the
+     * candidate target row, naming the *source* schema's table and the
+     * forward edge — the runtime walks the junction backwards using the
+     * source schema's own edge metadata, with no dependency on a
+     * synthesized reverse edge on the target.
      */
     private fun buildM2MTraversal(
         edge: Edge,
@@ -848,25 +846,18 @@ internal class QueryGenerator(
         val targetName = schemaNames[edge.target] ?: return null
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
-        val reverseEdgeName = reverseM2MEdgeName(source, edge.name)
+        val sourceTable = source.tableName
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
             .addStatement("val parent = combinedPredicate()")
             .addStatement("val target = %T(driver, client)", targetQueryClass)
-            .beginControlFlow("if (parent != null)")
             .addStatement(
-                "target.where(%T.HasEdgeWith(%S, parent))",
+                "target.where(%T.HasM2MEdgeFrom(%S, %S, parent))",
                 predicateClass,
-                reverseEdgeName,
+                sourceTable,
+                edge.name,
             )
-            .nextControlFlow("else")
-            .addStatement(
-                "target.where(%T.HasEdge(%S))",
-                predicateClass,
-                reverseEdgeName,
-            )
-            .endControlFlow()
             .addStatement("return target")
             .build()
     }

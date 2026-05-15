@@ -445,7 +445,7 @@ internal fun entitySchemaCodeBlock(
         .build()
 
     val edgesLiteral = CodeBlock.builder()
-    val forwardEntries = schema.edges()
+    val edgeEntries = schema.edges()
         .mapNotNull { edge ->
             val join = if (edge.kind is EdgeKind.ManyToMany) {
                 resolveM2MEdgeJoin(edge, schema, schemaNames)
@@ -454,12 +454,10 @@ internal fun entitySchemaCodeBlock(
             } ?: return@mapNotNull null
             EdgeEntry(edge.name, edge.target.tableName, join, edge.comment)
         }
-    val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames)
-    val edgeEntries = forwardEntries + reverseEntries
     val seenEdges = mutableSetOf<String>()
     for (entry in edgeEntries) {
         require(seenEdges.add(entry.name)) {
-            "Duplicate edge name '${entry.name}' — edge names must be unique per entity (including reverse M2M edges)"
+            "Duplicate edge name '${entry.name}' — edge names must be unique per entity"
         }
     }
 
@@ -520,11 +518,10 @@ internal fun entitySchemaCodeBlock(
 }
 
 /**
- * Find M2M edges declared on *other* schemas that target [schema] and
- * produce reverse edge entries so the runtime can resolve `HasEdge` /
- * `HasEdgeWith` predicates from the target side. Each reverse entry
- * swaps the junction's source and target FK columns so the join walks
- * from [schema] back through the junction to the declaring schema.
+ * One forward edge entry as it appears in a generated entity's
+ * `SCHEMA.edges` map. M2M traversal predicates ([Predicate.HasM2MEdgeFrom])
+ * resolve the source's forward edge directly; no reverse-edge entries
+ * are synthesized on the target schema.
  */
 internal data class EdgeEntry(
     val name: String,
@@ -533,63 +530,12 @@ internal data class EdgeEntry(
     val comment: String? = null,
 )
 
-internal fun reverseM2MEdgeEntries(
-    schema: EntSchema,
-    schemaNames: Map<EntSchema, String>,
-): List<EdgeEntry> {
-    // Canonical-identity keys of M2M edges [schema] declares for itself.
-    // If `otherSchema` has a forward M2M targeting [schema] whose
-    // canonical identity matches one of these, the explicit declaration
-    // on [schema] owns the traversal surface, so we suppress the
-    // default synthesized reverse (per RFC #3 "matching rule for two
-    // explicit throughEntity declarations").
-    val schemaDeclaredCanonicals = schema.edges()
-        .mapNotNull { canonicalM2MIdentity(it) }
-        .toSet()
-
-    return schemaNames.flatMap { (otherSchema, _) ->
-        otherSchema.edges()
-            .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
-            .mapNotNull { edge ->
-                // Self-referential M2M: declaring schema and M2M target
-                // are the same instance. RFC #3 explicitly skips reverse
-                // synthesis here — there's no separate schema to host
-                // the synthesized edge, and any name would collide with
-                // the original declared edge. Callers that need
-                // bidirectional traversal for a self-referential
-                // throughEntity declare both edges explicitly with
-                // pair-swapped orientation keys.
-                if (otherSchema === schema) return@mapNotNull null
-
-                // Opposite side declares the relationship explicitly —
-                // suppress synthesis so we don't shadow / duplicate it.
-                val canonical = canonicalM2MIdentity(edge)
-                if (canonical != null && canonical in schemaDeclaredCanonicals) {
-                    return@mapNotNull null
-                }
-
-                val forwardJoin = resolveM2MEdgeJoin(edge, otherSchema, schemaNames)
-                    ?: return@mapNotNull null
-                val reverseJoin = EdgeJoin(
-                    sourceColumn = "id",
-                    targetColumn = "id",
-                    junctionTable = forwardJoin.junctionTable,
-                    junctionSourceColumn = forwardJoin.junctionTargetColumn,
-                    junctionTargetColumn = forwardJoin.junctionSourceColumn,
-                )
-                val reverseName = reverseM2MEdgeName(otherSchema, edge.name)
-                val targetTable = otherSchema.tableName
-                EdgeEntry(reverseName, targetTable, reverseJoin)
-            }
-    }
-}
-
 /**
  * Canonical relationship identity of an M2M edge — the junction schema
  * paired with the unordered set of junction-edge property names. Two
  * edges with the same canonical identity describe the same relationship
- * (possibly in opposite orientations); used to detect when one side
- * already owns the traversal surface and synthesis should be suppressed.
+ * (possibly in opposite orientations); used at codegen-validation time
+ * to detect duplicate / pair-swapped declarations.
  */
 internal fun canonicalM2MIdentity(edge: Edge): Triple<EntSchema, String, String>? {
     val m2m = edge.kind as? EdgeKind.ManyToMany ?: return null
@@ -601,13 +547,3 @@ internal fun canonicalM2MIdentity(edge: Edge): Triple<EntSchema, String, String>
     }
     return Triple(through.junction, lo, hi)
 }
-
-
-/**
- * Compute the name for a reverse M2M edge entry on the target schema.
- * Incorporates both the source table name and the forward edge name so
- * that multiple M2M edges from the same source to the same target each
- * get their own unique reverse entry.
- */
-internal fun reverseM2MEdgeName(sourceSchema: EntSchema, forwardEdgeName: String): String =
-    "${sourceSchema.tableName}_$forwardEdgeName"

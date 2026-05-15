@@ -17,19 +17,20 @@ default reverse-edge synthesis behavior all landed. Specifically implemented:
   `throughLink` declarations, mixed `throughLink` + `throughEntity`, and
   same-orientation `throughEntity` aliases. Pair-swapped `throughEntity`
   declarations remain allowed and are the supported bidirectional pattern.
-- The reverse-edge runtime metadata that powers forward query traversal
-  is synthesized on the target schema's `SCHEMA.edges` map for every
-  M2M (both `throughLink` and `throughEntity`). Synthesis is suppressed
-  for self-referential M2M and when the opposite-side schema declares
-  its own pair-swapped M2M (Phase 4) — both sides' explicit
-  declarations then own the traversal surface and there's no duplicate
-  metadata.
-- **No user-facing reverse traversal API is generated automatically.**
+- **No reverse-edge metadata or user-facing API is synthesized.**
+  An entity's `SCHEMA.edges` map contains only the edges its own schema
+  declares; nothing is injected on the target side of a `manyToMany`.
   Bidirectional traversal — `EdgeRef` on the entity, field on `Edges`,
   `queryX()`, `withX { }` — requires both schemas to declare the M2M
   explicitly with pair-swapped orientations. This keeps the generated
-  surface explicit: adding a `manyToMany` on schema X never silently
-  introduces methods on schema Y.
+  surface explicit: adding a `manyToMany` on schema X never introduces
+  metadata or methods on schema Y, even by string name.
+- Forward query traversal works without synthesized reverse names. The
+  generated `queryX(): TargetQuery` method lowers to a
+  `Predicate.HasM2MEdgeFrom(sourceTable, edgeName, parent)` evaluated
+  against each candidate target row; the runtime walks the junction
+  backwards using the *source* schema's own forward-edge metadata, with
+  no dependency on a reverse entry in the target's schema.
 - `throughLink` junction-shape helper-eligibility is enforced at codegen
   time: payload columns, nullable junction FKs, missing
   `OnDelete.CASCADE`, write-time modifiers on FK backing fields, EXPLICIT id

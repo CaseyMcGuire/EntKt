@@ -1541,21 +1541,26 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `target entity gets reverse M2M edge in SCHEMA`() {
+    fun `M2M target schema does not synthesize reverse edge metadata`() {
+        // RFC #3 (post-revert): no auto-synthesized reverse-edge entries
+        // on the target's SCHEMA.edges. Bidirectional traversal needs an
+        // explicit declaration on the opposite schema.
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("\"teams_members\"")) {
-            "Pet SCHEMA should include reverse 'teams_members' M2M edge\n$output"
-        }
-        assert(output.contains("junctionTable = \"team_members\"")) {
-            "Reverse edge should carry junction table metadata\n$output"
+        assert(!output.contains("\"teams_members\"")) {
+            "Pet SCHEMA should not contain a synthesized reverse 'teams_members' entry\n$output"
         }
     }
 
     @Test
-    fun `query gets M2M traversal method`() {
+    fun `query M2M traversal lowers to HasM2MEdgeFrom against source schema`() {
+        // queryMembers() on TeamQuery walks back through the junction
+        // using the source-side forward-edge metadata, via a
+        // HasM2MEdgeFrom predicate naming the source table ("teams")
+        // and the forward edge ("members"). No reverse-edge name on
+        // Pet's SCHEMA is referenced.
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString()
@@ -1563,11 +1568,11 @@ class EdgeCodegenTest {
         assert(output.contains("fun queryMembers(): PetQuery")) {
             "Should generate M2M traversal queryMembers()\n$output"
         }
-        assert(output.contains("Predicate.HasEdgeWith(\"teams_members\", parent)")) {
-            "Should reference reverse M2M edge name\n$output"
+        assert(output.contains("Predicate.HasM2MEdgeFrom(\"teams\", \"members\", parent)")) {
+            "Should lower to HasM2MEdgeFrom against the source schema\n$output"
         }
-        assert(output.contains("Predicate.HasEdge(\"teams_members\")")) {
-            "Should fall back to HasEdge when parent has no wheres\n$output"
+        assert(!output.contains("Predicate.HasEdgeWith(\"teams_members\"")) {
+            "Should not reference the synthesized reverse-edge name\n$output"
         }
     }
 
@@ -1888,20 +1893,6 @@ class EdgeCodegenTest {
         }
     }
 
-    @Test
-    fun `one-sided throughEntity still synthesizes reverse on the target`() {
-        // Sanity check that suppression doesn't fire when the opposite side
-        // has no explicit declaration over the same canonical identity. This
-        // is the "default" case from the RFC.
-        val (_, names, byName) = createAllSchemas()
-        val output = EntityGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString()
-
-        // Team.members targets Pet → Pet gets the reverse "teams_members"
-        assert(output.contains("\"teams_members\"")) {
-            "One-sided throughEntity should synthesize reverse on target\n$output"
-        }
-    }
 
 
     // ---------- Phase 5: throughLink junction-shape rules ----------

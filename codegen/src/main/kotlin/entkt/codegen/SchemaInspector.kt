@@ -81,28 +81,6 @@ object SchemaInspector {
                 }
             }
 
-            // Check reverse M2M edge name collisions — codegen appends
-            // reverse entries and fails if a declared edge or another
-            // reverse entry uses the synthesized name.
-            try {
-                val forwardNames = edges.map { it.name }.toSet()
-                val reverseNames = mutableSetOf<String>()
-                for (reverse in reverseM2MEdgeEntries(input.schema, schemaNames)) {
-                    if (reverse.name in forwardNames) {
-                        errors.add(
-                            "Schema '${input.name}': reverse M2M edge '${reverse.name}' " +
-                                "collides with a declared edge of the same name",
-                        )
-                    }
-                    if (!reverseNames.add(reverse.name)) {
-                        errors.add(
-                            "Schema '${input.name}': duplicate reverse M2M edge '${reverse.name}'",
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                errors.add(e.message ?: e.toString())
-            }
         }
 
         // Resolve indexes — guard both indexableColumnMap and indexes().
@@ -324,54 +302,7 @@ object SchemaInspector {
             }
         }
 
-        // Include synthesized reverse M2M edges — these are injected by
-        // buildEntitySchemas() at runtime and used for M2M traversals from
-        // the target side.
-        val reverse = buildReverseM2MEdges(schema, schemaNames)
-
-        return declared + reverse
-    }
-
-    /**
-     * Build explained edges for reverse M2M entries that codegen
-     * synthesizes on the target side of each manyToMany declaration.
-     * Mirrors the suppression rules in [reverseM2MEdgeEntries]:
-     * self-ref M2M and canonical-identity matches against an existing
-     * declaration on [schema] do not produce synthesized edges.
-     */
-    private fun buildReverseM2MEdges(
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): List<ExplainedEdge> {
-        val schemaDeclaredCanonicals = schema.edges()
-            .mapNotNull { canonicalM2MIdentity(it) }
-            .toSet()
-        return schemaNames.flatMap { (otherSchema, otherName) ->
-            otherSchema.edges()
-                .filter { it.kind is EdgeKind.ManyToMany && it.target === schema }
-                .mapNotNull { edge ->
-                    if (otherSchema === schema) return@mapNotNull null
-                    val canonical = canonicalM2MIdentity(edge)
-                    if (canonical != null && canonical in schemaDeclaredCanonicals) {
-                        return@mapNotNull null
-                    }
-                    val m2m = edge.kind as EdgeKind.ManyToMany
-                    val through = m2m.through
-                    val junctionTable = through.junction.tableName
-                    val reverseName = reverseM2MEdgeName(otherSchema, edge.name)
-                    ExplainedEdge(
-                        name = reverseName,
-                        kind = "manyToMany",
-                        targetSchema = otherName,
-                        through = ExplainedThrough(
-                            junctionTable = junctionTable,
-                            // Reverse: source/target edges are swapped
-                            sourceEdge = through.targetEdge,
-                            targetEdge = through.sourceEdge,
-                        ),
-                    )
-                }
-        }
+        return declared
     }
 
     /**

@@ -45,6 +45,28 @@ sealed class Predicate {
      * inner block.
      */
     data class HasEdgeWith(val edge: String, val inner: Predicate) : Predicate()
+
+    /**
+     * "Is the M2M target of at least one row in [sourceTable] (matched
+     * by [sourceFilter]) via the forward edge [edgeName] declared on
+     * [sourceTable]."
+     *
+     * Used by generated query traversal so the predicate can compile to
+     * an EXISTS subquery in either direction without referencing a
+     * synthesized reverse-edge name on the target's `SCHEMA.edges`.
+     * Forward query traversal (e.g. `postQuery.queryTags()`) emits this
+     * variant against the candidate Tag with `sourceTable = "posts"`,
+     * `edgeName = "tags"` — the runtime walks the junction backwards
+     * using the source schema's forward-edge metadata.
+     *
+     * `sourceFilter == null` means "any related row" (mirrors
+     * [HasEdge] vs [HasEdgeWith]).
+     */
+    data class HasM2MEdgeFrom(
+        val sourceTable: String,
+        val edgeName: String,
+        val sourceFilter: Predicate?,
+    ) : Predicate()
 }
 
 enum class Op {

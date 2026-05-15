@@ -459,6 +459,61 @@ class InMemoryDriverTest {
     }
 
     @Test
+    fun `HasM2MEdgeFrom walks junction backwards using source schema's forward edge`() {
+        // Forward query traversal — `userQuery.where {...}.queryGroups()`
+        // — lowers to a HasM2MEdgeFrom predicate evaluated against each
+        // Group row. The runtime looks up User.SCHEMA.edges["groups"]
+        // (the source's forward edge), walks the junction backwards, and
+        // checks the source-side filter against matching User rows.
+        val driver = freshM2M()
+        val alice = driver.insert("users", mapOf("name" to "Alice"))
+        val bob = driver.insert("users", mapOf("name" to "Bob"))
+        val admins = driver.insert("groups", mapOf("name" to "Admins"))
+        val guests = driver.insert("groups", mapOf("name" to "Guests"))
+
+        driver.insert("user_groups", mapOf("user_id" to alice["id"], "group_id" to admins["id"]))
+        driver.insert("user_groups", mapOf("user_id" to bob["id"], "group_id" to guests["id"]))
+
+        // Groups whose membership includes a user named "Alice".
+        val rows = driver.query(
+            "groups",
+            listOf(
+                Predicate.HasM2MEdgeFrom(
+                    sourceTable = "users",
+                    edgeName = "groups",
+                    sourceFilter = Predicate.Leaf("name", Op.EQ, "Alice"),
+                ),
+            ),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Admins"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `HasM2MEdgeFrom with null source filter matches any related row`() {
+        val driver = freshM2M()
+        val alice = driver.insert("users", mapOf("name" to "Alice"))
+        val admins = driver.insert("groups", mapOf("name" to "Admins"))
+        val empty = driver.insert("groups", mapOf("name" to "Empty"))
+
+        driver.insert("user_groups", mapOf("user_id" to alice["id"], "group_id" to admins["id"]))
+
+        // Groups with at least one member.
+        val rows = driver.query(
+            "groups",
+            listOf(
+                Predicate.HasM2MEdgeFrom(
+                    sourceTable = "users",
+                    edgeName = "groups",
+                    sourceFilter = null,
+                ),
+            ),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("Admins"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
     fun `reverse M2M HasEdgeWith with inner predicate`() {
         val driver = freshM2M()
         val alice = driver.insert("users", mapOf("name" to "Alice"))

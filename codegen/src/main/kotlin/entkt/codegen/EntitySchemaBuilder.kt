@@ -204,40 +204,27 @@ private fun buildEdgeMap(
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
 ): Map<String, EdgeMetadata> {
-    val forwardEntries = schema.edges().mapNotNull { edge ->
+    val map = mutableMapOf<String, EdgeMetadata>()
+    for (edge in schema.edges()) {
         val join = if (edge.kind is entkt.schema.EdgeKind.ManyToMany) {
             resolveM2MEdgeJoin(edge, schema, schemaNames)
         } else {
             resolveEdgeJoin(edge, schema)
-        } ?: return@mapNotNull null
-        edge.name to EdgeMetadata(
-            targetTable = edge.target.tableName,
-            sourceColumn = join.sourceColumn,
-            targetColumn = join.targetColumn,
-            junctionTable = join.junctionTable,
-            junctionSourceColumn = join.junctionSourceColumn,
-            junctionTargetColumn = join.junctionTargetColumn,
-            comment = edge.comment,
+        } ?: continue
+        val existing = map.put(
+            edge.name,
+            EdgeMetadata(
+                targetTable = edge.target.tableName,
+                sourceColumn = join.sourceColumn,
+                targetColumn = join.targetColumn,
+                junctionTable = join.junctionTable,
+                junctionSourceColumn = join.junctionSourceColumn,
+                junctionTargetColumn = join.junctionTargetColumn,
+                comment = edge.comment,
+            ),
         )
-    }
-
-    val reverseEntries = reverseM2MEdgeEntries(schema, schemaNames).map { entry ->
-        entry.name to EdgeMetadata(
-            targetTable = entry.targetTable,
-            sourceColumn = entry.join.sourceColumn,
-            targetColumn = entry.join.targetColumn,
-            junctionTable = entry.join.junctionTable,
-            junctionSourceColumn = entry.join.junctionSourceColumn,
-            junctionTargetColumn = entry.join.junctionTargetColumn,
-        )
-    }
-
-    val allEntries = forwardEntries + reverseEntries
-    val map = mutableMapOf<String, EdgeMetadata>()
-    for ((name, meta) in allEntries) {
-        val existing = map.put(name, meta)
         if (existing != null) {
-            error("Duplicate edge name '$name' — edge names must be unique per entity (including reverse M2M edges)")
+            error("Duplicate edge name '${edge.name}' — edge names must be unique per entity")
         }
     }
     return map

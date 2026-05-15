@@ -196,35 +196,6 @@ class SchemaInspectorTest {
     }
 
     @Test
-    fun `validate catches reverse M2M edge name collision`() {
-        // InspColOwner.items is M2M → reverse entry on InspColItem is "col_owners_items".
-        // InspColItem declares a forward edge with that exact name.
-        val result = SchemaInspector.validate(listOf(
-            SchemaInput("ColOwner", InspColOwner()),
-            SchemaInput("ColItem", InspColItem()),
-            SchemaInput("ColJunction", InspColJunction()),
-        ))
-        assertFalse(result.valid)
-        assertContains(result.errors.first(), "reverse M2M edge")
-        assertContains(result.errors.first(), "col_owners_items")
-    }
-
-    @Test
-    fun `validate catches duplicate reverse M2M edge names`() {
-        // Two sources both produce reverse name "dup_foo_bar_baz" on the same target.
-        val result = SchemaInspector.validate(listOf(
-            SchemaInput("DupTarget", InspDupM2MTarget()),
-            SchemaInput("DupSourceA", InspDupM2MSourceA()),
-            SchemaInput("DupSourceB", InspDupM2MSourceB()),
-            SchemaInput("DupJuncA", InspDupM2MJunctionA()),
-            SchemaInput("DupJuncB", InspDupM2MJunctionB()),
-        ))
-        assertFalse(result.valid)
-        assertContains(result.errors.first(), "duplicate reverse M2M edge")
-        assertContains(result.errors.first(), "dup_foo_bar_baz")
-    }
-
-    @Test
     fun `validate catches unresolved inverse`() {
         // hasMany with no matching belongsTo on target
         class Orphan : EntSchema("orphans") { override fun id() = EntId.int() }
@@ -460,19 +431,14 @@ class SchemaInspectorTest {
     }
 
     @Test
-    fun `explain includes reverse manyToMany edges on target schema`() {
+    fun `explain does not synthesize reverse manyToMany edges on target schema`() {
+        // RFC #3 (post-revert): no auto-synthesized reverse edges. The
+        // explain output reflects only declared edges.
         val graph = SchemaInspector.explain(inputs(
             InspTag(), InspArticle(), InspArticleTag(),
         ))
-        // Tag declares manyToMany("articles", Article) → Article should get
-        // a synthesized reverse edge "tags_articles"
         val article = graph.schemas.first { it.schemaName == "Article" }
-        val reverseEdge = article.edges.firstOrNull { it.name == "tags_articles" }
-        assertNotNull(reverseEdge)
-        assertEquals("manyToMany", reverseEdge.kind)
-        assertEquals("Tag", reverseEdge.targetSchema)
-        assertNotNull(reverseEdge.through)
-        assertEquals("article_tags", reverseEdge.through!!.junctionTable)
+        assertNull(article.edges.firstOrNull { it.name == "tags_articles" })
     }
 
     // ── explain: indexes ────────────────────────────────────────────
