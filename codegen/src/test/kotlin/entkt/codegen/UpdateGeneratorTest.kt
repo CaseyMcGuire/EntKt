@@ -571,6 +571,47 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `Pessimistic preflight checks inTransaction before driver capability before readRowForUpdate call`() {
+        // Pins the ordering of three things in the generated save():
+        //   1. `if (!driver.inTransaction)` → throw TransactionRequiredException
+        //   2. `if (!driver.supportsReadRowForUpdate)` → throw UnsupportedDriverCapabilityException
+        //   3. `driver.readRowForUpdate(...)` call site
+        // The inTransaction guard MUST come before the readRowForUpdate
+        // call. Without it, a future refactor that reorders the
+        // preflights could let a non-transactional driver hit the
+        // root-class throw inside `readRowForUpdate`, surfacing the
+        // wrong exception type (IllegalStateException from
+        // `requireTransactionForLocking` instead of
+        // TransactionRequiredException — and on Postgres root, the lock
+        // would have released immediately even if the call had been
+        // allowed). PostgresDriver advertises
+        // `supportsReadRowForUpdate = true` on its non-transactional
+        // root specifically so the capability check passes for
+        // valid-driver-family callers; the inTransaction check is
+        // what protects the actual call site.
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+
+        val txCheck = output.indexOf("if (!driver.inTransaction)")
+        val capabilityCheck = output.indexOf("if (!driver.supportsReadRowForUpdate)")
+        val lockCall = output.indexOf("driver.readRowForUpdate(")
+
+        assert(txCheck != -1) { "Should emit !driver.inTransaction guard for Pessimistic\n$output" }
+        assert(capabilityCheck != -1) { "Should emit !driver.supportsReadRowForUpdate guard for Pessimistic\n$output" }
+        assert(lockCall != -1) { "Should call driver.readRowForUpdate for Pessimistic\n$output" }
+        assert(txCheck < lockCall) {
+            "!driver.inTransaction guard MUST come before driver.readRowForUpdate(...) — " +
+                "future refactors that flip this order surface IllegalStateException instead of " +
+                "TransactionRequiredException, and on auto-commit drivers (e.g. Postgres root) the " +
+                "lock would release immediately even if the call were allowed.\n$output"
+        }
+        assert(capabilityCheck < lockCall) {
+            "!driver.supportsReadRowForUpdate guard MUST come before driver.readRowForUpdate(...)\n$output"
+        }
+    }
+
+    @Test
     fun `save calls before hooks before requested patch construction`() {
         val user = User()
         finalize(user, Car())
