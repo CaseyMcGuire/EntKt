@@ -96,65 +96,6 @@ private class InspAccount : EntSchema("accounts") {
         .inverse(InspAccountHolder::account).unique().field(holderId)
 }
 
-// Schemas for reverse M2M edge name collision test.
-// Owner.items is manyToMany → reverse entry on InspColItem will be "col_owners_items".
-// InspColItem declares a belongsTo edge with that exact name to trigger the collision.
-private class InspColItem : EntSchema("col_items") {
-    override fun id() = EntId.int()
-    val col_owners_items = belongsTo<InspColItem>("col_owners_items")
-}
-
-private class InspColJunction : EntSchema("col_owner_items") {
-    override fun id() = EntId.int()
-    val ownerId = int("owner_id")
-    val itemId = int("item_id")
-    val owner = belongsTo<InspColOwner>("owner").field(ownerId)
-    val item = belongsTo<InspColItem>("item").field(itemId)
-}
-
-private class InspColOwner : EntSchema("col_owners") {
-    override fun id() = EntId.int()
-    val items = manyToMany<InspColItem>("items")
-        .throughEntity<InspColJunction>(InspColJunction::owner, InspColJunction::item)
-}
-
-// Schemas for duplicate reverse M2M name test.
-// Table "dup_foo_bar" with edge "baz" and table "dup_foo" with edge "bar_baz"
-// both produce reverse name "dup_foo_bar_baz" on the shared target.
-private class InspDupM2MTarget : EntSchema("dup_target") {
-    override fun id() = EntId.int()
-}
-
-private class InspDupM2MJunctionA : EntSchema("dup_junc_a") {
-    override fun id() = EntId.int()
-    val srcId = int("src_id")
-    val tgtId = int("tgt_id")
-    val src = belongsTo<InspDupM2MSourceA>("src").field(srcId)
-    val tgt = belongsTo<InspDupM2MTarget>("tgt").field(tgtId)
-}
-
-private class InspDupM2MJunctionB : EntSchema("dup_junc_b") {
-    override fun id() = EntId.int()
-    val srcId = int("src_id")
-    val tgtId = int("tgt_id")
-    val src = belongsTo<InspDupM2MSourceB>("src").field(srcId)
-    val tgt = belongsTo<InspDupM2MTarget>("tgt").field(tgtId)
-}
-
-// table "dup_foo_bar", edge "baz" → reverse name "dup_foo_bar_baz"
-private class InspDupM2MSourceA : EntSchema("dup_foo_bar") {
-    override fun id() = EntId.int()
-    val baz = manyToMany<InspDupM2MTarget>("baz")
-        .throughEntity<InspDupM2MJunctionA>(InspDupM2MJunctionA::src, InspDupM2MJunctionA::tgt)
-}
-
-// table "dup_foo", edge "bar_baz" → reverse name "dup_foo_bar_baz"
-private class InspDupM2MSourceB : EntSchema("dup_foo") {
-    override fun id() = EntId.int()
-    val bar_baz = manyToMany<InspDupM2MTarget>("bar_baz")
-        .throughEntity<InspDupM2MJunctionB>(InspDupM2MJunctionB::src, InspDupM2MJunctionB::tgt)
-}
-
 private class InspCascadeParent : EntSchema("cascade_parents") {
     override fun id() = EntId.int()
     val children = hasMany<InspCascadeChild>("children")

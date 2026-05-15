@@ -1830,14 +1830,16 @@ class EdgeCodegenTest {
         ))
     }
 
-    // ---------- Phase 4: reverse-synthesis suppression rules ----------
+    // ---------- M2M target schema gets no reverse-edge metadata ----------
 
     @Test
-    fun `cross-schema explicit throughEntity suppresses synthesized reverse on both sides`() {
+    fun `bidirectional throughEntity emits no reverse-edge metadata on either side`() {
         // BiUser declares (user, group); BiGroup declares (group, user) — same
-        // canonical identity, pair-swapped orientations. Neither side should
-        // get a synthesized reverse edge (the explicit declarations own the
-        // traversal surface).
+        // canonical identity, pair-swapped orientations. Each side carries
+        // its own forward edge in SCHEMA.edges; nothing extra is synthesized
+        // on the opposite side — so neither schema picks up the
+        // `${otherTable}_${otherEdge}` shape that older codegen used to
+        // inject as a reverse entry.
         val biUser = BiUser()
         val biGroup = BiGroup()
         val biMembership = BiMembership()
@@ -1851,23 +1853,19 @@ class EdgeCodegenTest {
         val groupOutput = EntityGenerator("com.example.ent")
             .generate("BiGroup", biGroup, names).toString()
 
-        // Reverse names that WOULD be synthesized:
-        //   on BiUser: "bi_groups_users"  (from BiGroup.users)
-        //   on BiGroup: "bi_users_groups" (from BiUser.groups)
         assert(!userOutput.contains("\"bi_groups_users\"")) {
-            "BiUser should not synthesize reverse 'bi_groups_users' — opposite-side explicit\n$userOutput"
+            "BiUser SCHEMA should not contain a reverse 'bi_groups_users' entry\n$userOutput"
         }
         assert(!groupOutput.contains("\"bi_users_groups\"")) {
-            "BiGroup should not synthesize reverse 'bi_users_groups' — opposite-side explicit\n$groupOutput"
+            "BiGroup SCHEMA should not contain a reverse 'bi_users_groups' entry\n$groupOutput"
         }
     }
 
     @Test
-    fun `self-referential throughEntity does not synthesize reverse on the declaring schema`() {
+    fun `self-referential throughEntity emits only the declared forward edges`() {
         // FollowUser declares 'following' and 'followers' over Follow with
-        // pair-swapped orientations. The declaring schema and the M2M target
-        // are the same — no reverse synthesis (would collide with the
-        // declared edge names anyway).
+        // pair-swapped orientations. Both declared edges appear in
+        // SCHEMA.edges; no `follow_users_*` reverse name shows up.
         val user = FollowUser()
         val follow = Follow()
         val names = mapOf<EntSchema, String>(user to "FollowUser", follow to "Follow")
@@ -1876,20 +1874,17 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("FollowUser", user, names).toString()
 
-        // The reverse-synthesis algorithm would emit "follow_users_following"
-        // and "follow_users_followers" if self-ref weren't suppressed.
         assert(!output.contains("\"follow_users_following\"")) {
-            "Self-ref M2M should not synthesize reverse 'follow_users_following'\n$output"
+            "FollowUser SCHEMA should not contain a 'follow_users_following' reverse entry\n$output"
         }
         assert(!output.contains("\"follow_users_followers\"")) {
-            "Self-ref M2M should not synthesize reverse 'follow_users_followers'\n$output"
+            "FollowUser SCHEMA should not contain a 'follow_users_followers' reverse entry\n$output"
         }
-        // Forward edges remain.
         assert(output.contains("\"following\"")) {
-            "Forward 'following' edge should still be present\n$output"
+            "Declared forward 'following' edge should be present\n$output"
         }
         assert(output.contains("\"followers\"")) {
-            "Forward 'followers' edge should still be present\n$output"
+            "Declared forward 'followers' edge should be present\n$output"
         }
     }
 
