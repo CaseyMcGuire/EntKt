@@ -18,14 +18,28 @@ import kotlin.test.assertNotNull
  * lands the owner row through `Driver.readRowForUpdate(...)` rather
  * than the `ReadCurrent` `byId(...)` path.
  *
- * The InMemoryDriver advertises both row-lock capabilities and
- * delegates them to `byId` — that's enough to exercise the codegen
- * branches end-to-end. Concurrent-correctness tests against true
- * SQL-level locking belong to the Postgres driver suite.
+ * The bare [InMemoryDriver] reports `supportsReadRowForUpdate = false`
+ * because its per-table `synchronized` blocks scope only individual
+ * driver calls (not "until transaction end"). For codegen-shape
+ * happy-path tests we wrap it in [LockSupportInMemoryDriver], a thin
+ * test-only adapter that advertises the capability and forwards
+ * locking calls to `byId`. Real concurrent-correctness checks belong
+ * to the Postgres driver suite, where the lock semantics are real.
  */
 class UpdateConsistencyIntegrationTest {
 
+    /** Bare in-memory driver — reports `supportsReadRowForUpdate = false`. */
     private fun freshDriver(): InMemoryDriver = InMemoryDriver()
+
+    /**
+     * In-memory driver wrapped to advertise true row-lock support so
+     * the Pessimistic codegen branches can be exercised end-to-end.
+     * The wrapper does not implement real lock-until-tx-end semantics
+     * — it just satisfies the capability gate and forwards
+     * `readRowForUpdate` to `byId`. Real concurrency tests belong on
+     * Postgres.
+     */
+    private fun lockingDriver(): entkt.runtime.Driver = LockSupportInMemoryDriver(InMemoryDriver())
 
     @Test
     fun `default consistency is ReadCurrent and update succeeds outside a transaction`() {
@@ -63,8 +77,10 @@ class UpdateConsistencyIntegrationTest {
 
     @Test
     fun `Pessimistic update inside a transaction succeeds`() {
-        val driver = freshDriver()
-        val client = EntClient(driver)
+        // Uses the lock-advertising wrapper so the capability gate
+        // accepts the save. Bare InMemoryDriver reports
+        // `supportsReadRowForUpdate = false` and would reject.
+        val client = EntClient(lockingDriver())
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
@@ -81,8 +97,7 @@ class UpdateConsistencyIntegrationTest {
 
     @Test
     fun `Pessimistic update returns null when the owner row is missing`() {
-        val driver = freshDriver()
-        val client = EntClient(driver)
+        val client = EntClient(lockingDriver())
 
         val result = client.withTransaction { tx ->
             tx.users.update(9999L, consistency = UpdateConsistency.Pessimistic) {
@@ -123,8 +138,8 @@ class UpdateConsistencyIntegrationTest {
 
     @Test
     fun `defaultUpdateConsistency on the client is honored when no per-save override is passed`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
+        // Lock-advertising wrapper so the inside-tx case can complete.
+        val client = EntClient(lockingDriver()) {
             defaultUpdateConsistency = UpdateConsistency.Pessimistic
         }
         val user = client.users.create {
@@ -169,6 +184,72 @@ class UpdateConsistencyIntegrationTest {
         }
         assertEquals(true, ex.message!!.contains("supportsReadRowForUpdate"))
     }
+}
+
+/**
+ * Test-only wrapper that delegates everything to an [InMemoryDriver]
+ * but advertises both row-lock capabilities so the codegen
+ * Pessimistic happy-path can be exercised end-to-end. The forwarded
+ * `readRowForUpdate` / `serializeOwnerEdgeAndRead` calls don't hold
+ * a lock until transaction end — they just delegate to `byId`. Real
+ * concurrency tests against true row-lock semantics belong on the
+ * Postgres driver suite.
+ */
+private class LockSupportInMemoryDriver(private val real: InMemoryDriver) : entkt.runtime.Driver {
+    override fun register(schema: entkt.runtime.EntitySchema) = real.register(schema)
+    override fun insert(table: String, values: Map<String, Any?>) = real.insert(table, values)
+    override fun update(table: String, id: Any, values: Map<String, Any?>) = real.update(table, id, values)
+    override fun byId(table: String, id: Any) = real.byId(table, id)
+    override fun query(
+        table: String,
+        predicates: List<entkt.query.Predicate>,
+        orderBy: List<entkt.query.OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ) = real.query(table, predicates, orderBy, limit, offset)
+    override fun count(table: String, predicates: List<entkt.query.Predicate>) = real.count(table, predicates)
+    override fun exists(table: String, predicates: List<entkt.query.Predicate>) = real.exists(table, predicates)
+    override fun delete(table: String, id: Any) = real.delete(table, id)
+    override fun insertMany(table: String, values: List<Map<String, Any?>>) = real.insertMany(table, values)
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate>) =
+        real.updateMany(table, values, predicates)
+    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate>) = real.deleteMany(table, predicates)
+    override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T =
+        real.withTransaction { txReal -> block(LockSupportInMemoryTxDriver(txReal)) }
+
+    override val supportsReadRowForUpdate: Boolean get() = true
+    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? = real.byId(table, id)
+    override val supportsOwnerEdgeSerialization: Boolean get() = true
+    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? = real.byId(table, id)
+}
+
+/** Tx-scoped sibling of [LockSupportInMemoryDriver]. */
+private class LockSupportInMemoryTxDriver(private val txReal: entkt.runtime.Driver) : entkt.runtime.Driver {
+    override fun register(schema: entkt.runtime.EntitySchema) = txReal.register(schema)
+    override fun insert(table: String, values: Map<String, Any?>) = txReal.insert(table, values)
+    override fun update(table: String, id: Any, values: Map<String, Any?>) = txReal.update(table, id, values)
+    override fun byId(table: String, id: Any) = txReal.byId(table, id)
+    override fun query(
+        table: String,
+        predicates: List<entkt.query.Predicate>,
+        orderBy: List<entkt.query.OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ) = txReal.query(table, predicates, orderBy, limit, offset)
+    override fun count(table: String, predicates: List<entkt.query.Predicate>) = txReal.count(table, predicates)
+    override fun exists(table: String, predicates: List<entkt.query.Predicate>) = txReal.exists(table, predicates)
+    override fun delete(table: String, id: Any) = txReal.delete(table, id)
+    override fun insertMany(table: String, values: List<Map<String, Any?>>) = txReal.insertMany(table, values)
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate>) =
+        txReal.updateMany(table, values, predicates)
+    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate>) = txReal.deleteMany(table, predicates)
+    override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T = block(this)
+
+    override val inTransaction: Boolean get() = true
+    override val supportsReadRowForUpdate: Boolean get() = true
+    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? = txReal.byId(table, id)
+    override val supportsOwnerEdgeSerialization: Boolean get() = true
+    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? = txReal.byId(table, id)
 }
 
 /**

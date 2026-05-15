@@ -210,24 +210,32 @@ class InMemoryDriver : Driver {
 
     // ---------- Locking capabilities (RFC #4) ----------
     //
-    // The in-memory driver doesn't have real concurrent transactions
-    // — its mutations are guarded by per-table `synchronized` blocks,
-    // which gives strong serialization for free. Both row-lock
-    // capabilities are therefore reported as supported, and both
-    // methods just look up the current row state. Tests that exercise
-    // the Pessimistic / link-table M2M paths can use the in-memory
-    // driver end-to-end; concurrent-correctness tests against true
-    // SQL semantics belong in the Postgres driver suite.
+    // The in-memory driver does NOT support true row-lock or
+    // cooperative owner-edge serialization semantics — its per-table
+    // `synchronized` blocks scope only individual driver calls, not
+    // "until transaction end". A row read here is not held against
+    // concurrent updates from other transactions; a single transaction
+    // worth of compound read-then-write is not atomic (see the class
+    // doc above).
+    //
+    // Both capability flags therefore report `false` and the methods
+    // throw [UnsupportedOperationException] — generated saves under
+    // `UpdateConsistency.Pessimistic` (RFC #4 Phase 3) are rejected
+    // at the capability gate when running on this driver, and the
+    // link-table M2M owner-edge serialization (RFC #5) is similarly
+    // rejected.
+    //
+    // Tests that need to exercise the codegen Pessimistic happy path
+    // wrap this driver in a thin capability-advertising adapter (see
+    // `LockSupportInMemoryDriver` in the integration-tests module);
+    // tests that need real concurrent-correctness checks belong in
+    // the Postgres driver suite, where the lock semantics are real.
 
     override val supportsReadRowForUpdate: Boolean
-        get() = true
-
-    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? = byId(table, id)
+        get() = false
 
     override val supportsOwnerEdgeSerialization: Boolean
-        get() = true
-
-    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? = byId(table, id)
+        get() = false
 
     override fun <T> withTransaction(block: (Driver) -> T): T {
         // Snapshot current state: table names, their contents, and id counters.
@@ -642,19 +650,11 @@ private class InMemoryTransactionalDriver(
     override val inTransaction: Boolean
         get() = true
 
-    override val supportsReadRowForUpdate: Boolean
-        get() = root.supportsReadRowForUpdate
-
-    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
-        checkOpen(); return root.readRowForUpdate(table, id)
-    }
-
-    override val supportsOwnerEdgeSerialization: Boolean
-        get() = root.supportsOwnerEdgeSerialization
-
-    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
-        checkOpen(); return root.serializeOwnerEdgeAndRead(table, id)
-    }
+    // Both row-lock capabilities are inherited from the root driver
+    // (which reports `false`). The transactional wrapper would need
+    // to implement transaction-scoped lock tracking to honestly
+    // advertise true row-lock semantics; in-memory is not that
+    // driver — concurrent-correctness tests belong on Postgres.
 }
 
 /**

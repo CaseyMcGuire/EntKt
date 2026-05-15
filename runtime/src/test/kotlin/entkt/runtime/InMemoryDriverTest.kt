@@ -473,40 +473,55 @@ class InMemoryDriverTest {
     }
 
     @Test
-    fun `supportsReadRowForUpdate and supportsOwnerEdgeSerialization are advertised`() {
+    fun `InMemoryDriver does not advertise true row-lock or owner-edge serialization`() {
+        // The in-memory driver's per-table `synchronized` blocks scope
+        // only individual driver calls, not "until transaction end" —
+        // it can't actually hold a row against concurrent updates from
+        // other transactions. Both capability flags therefore report
+        // false, on root and on the transactional wrapper. Generated
+        // saves under `UpdateConsistency.Pessimistic` (RFC #4) reject
+        // at the capability gate when running on this driver.
         val driver = fresh()
-        assertEquals(true, driver.supportsReadRowForUpdate)
-        assertEquals(true, driver.supportsOwnerEdgeSerialization)
+        assertEquals(false, driver.supportsReadRowForUpdate)
+        assertEquals(false, driver.supportsOwnerEdgeSerialization)
         driver.withTransaction { tx ->
-            assertEquals(true, tx.supportsReadRowForUpdate)
-            assertEquals(true, tx.supportsOwnerEdgeSerialization)
+            assertEquals(false, tx.supportsReadRowForUpdate)
+            assertEquals(false, tx.supportsOwnerEdgeSerialization)
         }
     }
 
     @Test
-    fun `readRowForUpdate returns the current row state and null for missing ids`() {
+    fun `readRowForUpdate throws on InMemoryDriver because it can't honor the contract`() {
         val driver = fresh()
         val row = driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
 
+        // Calling readRowForUpdate without checking the capability flag
+        // first is a programming error — the default Driver impl
+        // throws `UnsupportedOperationException` because the in-memory
+        // driver leaves both the flag false and the method overrides
+        // off.
+        assertFailsWith<UnsupportedOperationException> {
+            driver.readRowForUpdate("users", row["id"]!!)
+        }
         driver.withTransaction { tx ->
-            val locked = tx.readRowForUpdate("users", row["id"]!!)
-            assertEquals("Alice", locked!!["name"])
-            assertEquals(30, locked["age"])
-
-            assertNull(tx.readRowForUpdate("users", 9999L))
+            assertFailsWith<UnsupportedOperationException> {
+                tx.readRowForUpdate("users", row["id"]!!)
+            }
         }
     }
 
     @Test
-    fun `serializeOwnerEdgeAndRead returns the current row state and null for missing ids`() {
+    fun `serializeOwnerEdgeAndRead throws on InMemoryDriver because it can't honor the contract`() {
         val driver = fresh()
         val row = driver.insert("users", mapOf("name" to "Bob", "age" to 25, "active" to true))
 
+        assertFailsWith<UnsupportedOperationException> {
+            driver.serializeOwnerEdgeAndRead("users", row["id"]!!)
+        }
         driver.withTransaction { tx ->
-            val serialized = tx.serializeOwnerEdgeAndRead("users", row["id"]!!)
-            assertEquals("Bob", serialized!!["name"])
-
-            assertNull(tx.serializeOwnerEdgeAndRead("users", 9999L))
+            assertFailsWith<UnsupportedOperationException> {
+                tx.serializeOwnerEdgeAndRead("users", row["id"]!!)
+            }
         }
     }
 
