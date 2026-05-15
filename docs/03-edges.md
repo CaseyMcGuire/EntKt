@@ -13,7 +13,7 @@ For the schema DSL reference (modifiers, syntax), see [Schema](02-schema.md#edge
 | One-to-many | `hasMany<Post>("posts")` | Target table | None |
 | Many-to-one | `belongsTo<User>("author").inverse(User::posts)` | This table | None |
 | One-to-one | `hasOne<Profile>("profile")` / `belongsTo<User>("user").unique()` | BelongsTo side | None |
-| Many-to-many | `manyToMany<Group>("groups").through<UserGroup>(...)` | Junction table | Junction table |
+| Many-to-many | `manyToMany<Group>("groups").throughEntity<UserGroup>(...)` *or* `.throughLink<UserGroup>(...)` | Junction table | Junction table |
 
 ## One-to-many / many-to-one
 
@@ -120,13 +120,22 @@ edges = mapOf(
 ## Many-to-many
 
 M2M relationships use a junction table — a separate `EntSchema` with
-`belongsTo()` edges pointing at both sides:
+`belongsTo()` edges pointing at both sides. The schema author picks
+the write model with one of two markers (see
+[Schema → Many-to-Many](02-schema.md#many-to-many) for the full
+comparison):
+
+- `.throughEntity<Junction>(sourceEdge, targetEdge)` — junction is a
+  domain entity, mutated through its generated repo.
+- `.throughLink<Junction>(sourceEdge, targetEdge)` — junction is pure
+  relationship storage; direct edge helpers become eligible once the
+  link-table-helper RFC lands.
 
 ```kotlin
 class User : EntSchema("users") {
     override fun id() = EntId.long()
     val groups = manyToMany<Group>("groups")
-        .through<UserGroup>(UserGroup::user, UserGroup::group)
+        .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
 class Group : EntSchema("groups") {
@@ -140,6 +149,12 @@ class UserGroup : EntSchema("user_groups") {
     val group = belongsTo<Group>("group")
 }
 ```
+
+The two refs name the junction's `belongsTo` edges in source-first
+order: `sourceEdge` (here `UserGroup::user`) targets the schema
+declaring the `manyToMany` (`User`); `targetEdge` (here
+`UserGroup::group`) targets the M2M target type (`Group`). Schema
+finalization rejects the wrong orientation.
 
 ### What this produces
 
@@ -172,8 +187,18 @@ edges = mapOf(
 )
 ```
 
-The target side (`Group`) gets a reverse edge entry automatically so that
-edge predicates and eager loading work from either direction.
+**No auto-synthesized reverse edge.** The target side (`Group`) does
+*not* automatically get a reverse traversal edge. Bidirectional
+traversal requires `Group` to declare its own `manyToMany<User>`
+explicitly, with the orientation key pair-swapped (one side passes
+`(user, group)`, the other passes `(group, user)`) so codegen
+recognizes them as opposite sides of the same canonical relationship.
+Adding a `manyToMany` on schema `X` never silently introduces methods
+on schema `Y` — see
+[Schema → M2M Bidirectional](02-schema.md#m2m-bidirectional). Forward
+query traversal of a one-sided declaration still works (it lowers to
+`Predicate.HasM2MEdgeFrom` against the source schema's own forward
+edge metadata, no reverse-edge entry needed on the target).
 
 ### Self-referential M2M
 
@@ -185,7 +210,7 @@ the junction has two edges to the same schema. Use `sourceEdge` and
 class Person : EntSchema("people") {
     override fun id() = EntId.long()
     val friends = manyToMany<Person>("friends")
-        .through<Friendship>(Friendship::user, Friendship::friend)
+        .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships") {
@@ -207,7 +232,7 @@ edges to the same target type for different purposes:
 class Project : EntSchema("projects") {
     override fun id() = EntId.long()
     val assignees = manyToMany<Pet>("assignees")
-        .through<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
+        .throughEntity<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
 }
 
 class ProjectAssignment : EntSchema("project_assignments") {
@@ -252,7 +277,12 @@ join columns:
    via `.inverse()` and reads its FK column.
    Join: `sourceColumn = "id", targetColumn = fk_column`.
 
-3. **ManyToMany** (`manyToMany(...).through(...)`) — both source and target
-   join on `id`; the junction table provides the bridge columns. The target
-   schema gets a synthetic reverse edge entry so predicates and eager loading
-   work from the target side.
+3. **ManyToMany** (`manyToMany(...).throughEntity(...)` / `.throughLink(...)`) —
+   both source and target join on `id`; the junction table provides the
+   bridge columns. The runtime metadata for forward traversal lives only
+   on the source schema (the one declaring the `manyToMany`); no reverse
+   entry is synthesized on the target. Forward query traversal lowers
+   to `Predicate.HasM2MEdgeFrom(sourceTable, edgeName, parent)` so the
+   predicate runs against the source schema's own metadata. Bidirectional
+   traversal requires both endpoints to declare their own pair-swapped
+   `manyToMany`.

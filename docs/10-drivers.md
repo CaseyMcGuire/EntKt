@@ -10,9 +10,12 @@ generated entity classes provide the typed facade.
 ```kotlin
 interface Driver {
     fun register(schema: EntitySchema)
+
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
     fun byId(table: String, id: Any): Map<String, Any?>?
+    fun delete(table: String, id: Any): Boolean
+
     fun query(
         table: String,
         predicates: List<Predicate>,
@@ -20,11 +23,33 @@ interface Driver {
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>>
-    fun delete(table: String, id: Any): Boolean
+    fun count(table: String, predicates: List<Predicate>): Long
+    fun exists(table: String, predicates: List<Predicate>): Boolean
+
     fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
     fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
     fun deleteMany(table: String, predicates: List<Predicate>): Int
+
+    fun explainQuery(
+        table: String,
+        predicates: List<Predicate>,
+        orderBy: List<OrderField>,
+        limit: Int?,
+        offset: Int?,
+    ): QueryExplanation
+    fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation
+
     fun <T> withTransaction(block: (Driver) -> T): T
+    val inTransaction: Boolean
+
+    // Owner-row locking capabilities (RFC #4).
+    val supportsReadRowForUpdate: Boolean
+    fun readRowForUpdate(table: String, id: Any): Map<String, Any?>?
+
+    val supportsOwnerEdgeSerialization: Boolean
+    fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>?
+
+    fun requireTransactionForLocking(method: String)
 }
 ```
 
@@ -33,6 +58,9 @@ interface Driver {
 - `insert()` returns the persisted row including any server-assigned values
   (auto-increment IDs, defaults).
 - `update()` returns the updated row, or `null` if the row was not found.
+- `count()` / `exists()` evaluate the same predicate tree as `query()`;
+  drivers may short-circuit `exists()` (Postgres uses `SELECT EXISTS(...)`
+  / `LIMIT 1`).
 - `insertMany()` batch-inserts multiple rows, returning all persisted rows
   with assigned IDs. PostgresDriver uses multi-row `INSERT ... VALUES`.
 - `updateMany()` updates all rows matching the predicates with the same
@@ -43,9 +71,42 @@ interface Driver {
 These three bulk methods are low-level driver operations that do **not**
 fire lifecycle hooks. The generated repo methods (`createMany`,
 `deleteMany`) wrap them with hook support — see [Hooks](05-hooks.md).
+- `explainQuery()` / `explainCount()` return a `QueryExplanation` for the
+  SELECT / COUNT the driver *would* run, without executing it. Defaults
+  to `UnsupportedQueryExplanation`; PostgresDriver returns SQL + bind
+  args. Used by the generated query builder's `explainRaw()` /
+  `explainRawCount()` and per-terminal `explain*()` methods.
 - `withTransaction()` runs a block in a transaction. The block receives a
   transaction-scoped driver. If it completes normally, the transaction
   commits. If it throws, the transaction rolls back.
+- `inTransaction` is `false` on the root client driver and `true` on the
+  driver passed inside `withTransaction { tx -> ... }`. Generated
+  `save()` paths use this to enforce
+  `TransactionRequirement` at save-start (RFC #4).
+
+### Owner-row locking capabilities (RFC #4)
+
+Generated saves use these for two distinct purposes that need different
+lock semantics:
+
+| Capability | Purpose | When generated saves call it |
+|---|---|---|
+| `supportsReadRowForUpdate` / `readRowForUpdate(table, id)` | True owner-row lock that blocks concurrent `UPDATE`/`DELETE` of the same row | `update(id, consistency = UpdateConsistency.Pessimistic) { ... }` — replaces the default `byId` current-row read |
+| `supportsOwnerEdgeSerialization` / `serializeOwnerEdgeAndRead(table, id)` | Cooperative serialization token (e.g. advisory lock) that pairs with a current-row read | Reserved for link-table M2M edge writes (deferred) |
+
+Both flags advertise **driver-family** support, not instance-level
+ability. A driver may report `true` while still throwing
+`IllegalStateException` from the corresponding method when called
+outside a transaction (the root client driver is not transactional).
+Generated saves preflight `inTransaction` before calling, so they
+never hit that throw — but direct callers should preflight too. Use
+`requireTransactionForLocking("methodName")` to produce the
+canonical error message.
+
+A driver that supports `readRowForUpdate` does **not** automatically
+satisfy `supportsOwnerEdgeSerialization` and vice versa. Drivers that
+support neither leave both flags at the interface defaults
+(`false` / throwing default methods).
 
 ## InMemoryDriver
 
@@ -68,6 +129,17 @@ Features:
 Use `InMemoryDriver` for unit tests and demos. It evaluates predicates
 in-process, so behavior matches SQL drivers for all supported predicate
 types.
+
+**Lock capabilities.** `InMemoryDriver` reports
+`supportsReadRowForUpdate = false` and
+`supportsOwnerEdgeSerialization = false`. The snapshot model commits
+transactions atomically but does not hold a true row lock during the
+block, so claiming row-lock support would mislead application code
+into believing concurrent writers are serialized when they are not.
+Tests that exercise the `Pessimistic`/M2M-locking codegen paths use a
+test-only `LockSupportInMemoryDriver` wrapper that flips the flags on
+without changing storage semantics — intended for happy-path codegen
+verification only, not for concurrency tests.
 
 ## PostgresDriver
 
@@ -157,6 +229,27 @@ client.withTransaction { tx ->
 Nested `withTransaction` calls reuse the existing transaction (no
 savepoints).
 
+### Locking (RFC #4)
+
+`PostgresDriver` reports both
+`supportsReadRowForUpdate = true` and
+`supportsOwnerEdgeSerialization = true` — these are
+*driver-family* claims. The methods themselves only execute on the
+transactional driver passed inside `withTransaction { tx -> ... }`:
+
+- `readRowForUpdate(table, id)` issues
+  `SELECT ... FROM <table> WHERE id = ? FOR UPDATE` — a true row-level
+  lock.
+- `serializeOwnerEdgeAndRead(table, id)` takes a transaction-scoped
+  `pg_advisory_xact_lock(...)` keyed by table OID + id, then performs a
+  current-row read.
+
+Both methods throw `IllegalStateException` (via
+`requireTransactionForLocking`) if called on the root client driver,
+since the lock would not be tied to a containing transaction's commit.
+Generated saves preflight `inTransaction` so they never trigger that
+throw — direct callers must do the same.
+
 ### Testing with Testcontainers
 
 The Postgres driver tests use Testcontainers to spin up a real
@@ -191,7 +284,27 @@ contract:
 1. `register()` must be idempotent -- called on every repo construction
 2. `insert()` must return the full row including server-assigned values
 3. `query()` must evaluate all `Predicate` types (including edge predicates)
-5. `withTransaction()` must roll back on exception
+4. `withTransaction()` must roll back on exception, and the inner
+   driver must report `inTransaction = true`
+5. Optional: implement the RFC #4 lock capabilities. If the backend
+   supports a true row lock that survives until transaction commit
+   (e.g. `SELECT ... FOR UPDATE` in SQL or an equivalent), set
+   `supportsReadRowForUpdate = true` and implement `readRowForUpdate`.
+   If it supports a cooperative serialization token (e.g. an advisory
+   lock keyed by table + id), also set
+   `supportsOwnerEdgeSerialization = true` and implement
+   `serializeOwnerEdgeAndRead`. Both methods must throw if invoked
+   without a containing transaction — call
+   `requireTransactionForLocking("methodName")` for the canonical
+   error.
+6. Optional: override `explainQuery` / `explainCount` to surface a
+   driver-specific `QueryExplanation` (default returns
+   `UnsupportedQueryExplanation`).
+
+The flags advertise driver-family ability, not instance-level
+ability — see the RFC #4 capability section above. The default
+methods on `Driver` return `false` / throwing implementations, so a
+new driver gets safe defaults if it does nothing.
 
 For migration planning, you'll also need:
 
