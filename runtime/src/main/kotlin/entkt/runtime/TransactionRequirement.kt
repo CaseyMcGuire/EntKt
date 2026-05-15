@@ -12,11 +12,15 @@ package entkt.runtime
  *   they were called from. This is the default and matches behavior
  *   prior to RFC #4.
  * - [RequiredForMultiWrite]: saves that issue more than one driver
- *   write must run on a transaction-scoped client. Single-write
- *   create/update/delete saves don't need a transaction; link-table
- *   M2M helpers and other multi-write paths do. (Until link-table
- *   helpers land — RFC #5 — this behaves the same as [Optional],
- *   because no multi-write save shape exists yet.)
+ *   write must run on a transaction-scoped client; single-row
+ *   create/update/delete saves stay transaction-optional. The
+ *   generated aggregate write APIs that classify as multi-write
+ *   today are `createMany(...)` (when called with 2+ blocks) and
+ *   `deleteMany(...)` (regardless of how many rows match — classified
+ *   by operation shape, not result size, so an empty-match call
+ *   still rejects). Future link-table M2M write helpers from RFC #5
+ *   (`tags.add(...)`, `tags.remove(...)`, `tags.set(...)`) will join
+ *   the same classification once they land.
  * - [RequiredForAllWrites]: every generated write — create, update,
  *   delete, multi-write — requires a transaction-scoped client.
  *   Useful for teams that always want explicit transaction boundaries
