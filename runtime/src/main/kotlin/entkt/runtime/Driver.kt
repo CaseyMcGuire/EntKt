@@ -163,14 +163,28 @@ interface Driver {
 
     // ---------- Owner-row locking capabilities (RFC #4) ----------
     //
-    // Generated update saves under `UpdateConsistency.Pessimistic` and
-    // generated link-table M2M helpers need to read the owner row in a
-    // way that prevents another transaction from changing or deleting
-    // it before the write. The two capabilities below let drivers
-    // expose the strongest mechanism they support; capability-rejection
-    // happens at the start of `save()` so unsupported combinations
-    // surface before hooks, privacy, validation, driver reads, or
-    // driver writes.
+    // Generated saves use these capabilities for two distinct purposes
+    // that ride on different lock semantics:
+    //
+    //  - `UpdateConsistency.Pessimistic` updates need a true owner-row
+    //    lock — one that blocks ordinary `UPDATE`/`DELETE` from any
+    //    transaction until ours commits, so the checked owner state
+    //    can't change between rule evaluation and the write.
+    //    Implemented via `readRowForUpdate(...)` (`SELECT ... FOR
+    //    UPDATE`-equivalent).
+    //  - Generated link-table M2M helpers need owner-edge
+    //    serialization — they only need to serialize against other
+    //    callers using the same discipline (so two concurrent
+    //    `tags.set(...)` calls on the same owner can't interleave
+    //    junction reads and writes), not against unrelated
+    //    `UPDATE`/`DELETE` traffic. On drivers with true row locking,
+    //    `readRowForUpdate(...)` strictly satisfies this and the M2M
+    //    helpers reuse it; on advisory-only drivers the weaker
+    //    `serializeOwnerEdgeAndRead(...)` is sufficient.
+    //
+    // Capability-rejection happens at the start of `save()` so
+    // unsupported combinations surface before hooks, privacy,
+    // validation, driver reads, or driver writes.
 
     /**
      * True when this driver can take a true row lock (`SELECT ... FOR
