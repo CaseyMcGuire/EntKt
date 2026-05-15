@@ -168,10 +168,22 @@ class EntktPluginTest {
                 repoContent.contains("fun create(block: PetCreate.() -> Unit): PetCreate"),
                 "Repo should expose create(block)",
             )
+            // RFC #4: `update(...)` accepts an optional UpdateConsistency
+            // per-save argument that defaults to the client's configured
+            // default. The signature wraps across multiple lines under
+            // KotlinPoet, so check the constituents rather than the full
+            // signature string.
+            assertTrue(repoContent.contains("fun update("), "Repo should expose update(...)")
+            assertTrue(repoContent.contains("id: Int"), "update should take id")
             assertTrue(
-                repoContent.contains("fun update(id: Int, block: PetUpdate.() -> Unit): PetUpdate"),
-                "Repo should expose update(id, block)",
+                repoContent.contains("consistency: UpdateConsistency = client.defaultUpdateConsistency"),
+                "update should take a per-save UpdateConsistency override defaulting to the client's default",
             )
+            assertTrue(
+                repoContent.contains("block: PetUpdate.() -> Unit"),
+                "update should take a builder block",
+            )
+            assertTrue(repoContent.contains("): PetUpdate"), "update should return PetUpdate")
             assertTrue(
                 repoContent.contains("fun query(block: PetQuery.() -> Unit = {}): PetQuery"),
                 "Repo should expose query(block)",

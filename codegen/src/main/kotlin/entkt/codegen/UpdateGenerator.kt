@@ -28,6 +28,9 @@ private val ENT_NOT_FOUND_EXCEPTION = ClassName("entkt.runtime", "EntNotFoundExc
 private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime", "EntNoChangesException")
 private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
 private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
+private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
+private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
+private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime", "UnsupportedDriverCapabilityException")
 
 
 internal class UpdateGenerator(
@@ -82,6 +85,7 @@ internal class UpdateGenerator(
                     .addParameter("driver", DRIVER)
                     .addParameter("client", clientClass)
                     .addParameter("id", idType)
+                    .addParameter("consistency", UPDATE_CONSISTENCY)
                     .addParameter("beforeSaveHooks", beforeSaveHookType)
                     .addParameter("beforeUpdateHooks", beforeUpdateHookType)
                     .addParameter("afterUpdateHooks", afterUpdateHookType)
@@ -104,6 +108,17 @@ internal class UpdateGenerator(
             .addProperty(
                 PropertySpec.builder("id", idType)
                     .initializer("id")
+                    .build()
+            )
+            // Per-save UpdateConsistency selected by the caller (or
+            // inherited from the client's `defaultUpdateConsistency`).
+            // Read by save() at the start to choose between the
+            // ReadCurrent unlocked byId path and the Pessimistic
+            // readRowForUpdate path.
+            .addProperty(
+                PropertySpec.builder("consistency", UPDATE_CONSISTENCY)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("consistency")
                     .build()
             )
             // Internal state: populated by save() from the byId(id) load.
@@ -597,12 +612,50 @@ internal class UpdateGenerator(
         // configured TransactionRequirement isn't satisfied. ----
         builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName update")
 
-        // ---- Internal current-row load (bypasses LOAD privacy). ----
-        // Missing rows short-circuit before hooks/privacy/validation run.
+        // ---- Pessimistic preflight (RFC #4): require a transaction
+        // and a driver with true row-lock support. Both rejections
+        // fire before the owner-row load, hooks, privacy, validation,
+        // or driver writes. ----
+        builder.beginControlFlow(
+            "if (consistency == %T.Pessimistic)",
+            UPDATE_CONSISTENCY,
+        )
+        builder.beginControlFlow("if (!driver.inTransaction)")
         builder.addStatement(
-            "val row0 = driver.byId(%T.TABLE, id) ?: return null",
+            "throw %T(%S)",
+            TRANSACTION_REQUIRED_EXCEPTION,
+            "$schemaName Pessimistic update requires a transaction-scoped client",
+        )
+        builder.endControlFlow()
+        builder.beginControlFlow("if (!driver.supportsReadRowForUpdate)")
+        builder.addStatement(
+            "throw %T(%S)",
+            UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
+            "$schemaName Pessimistic update requires a driver with supportsReadRowForUpdate = true",
+        )
+        builder.endControlFlow()
+        builder.endControlFlow()
+
+        // ---- Internal current-row load. Pessimistic uses
+        // readRowForUpdate so the row is held under a true row lock
+        // through the rest of the save; ReadCurrent uses byId (the
+        // RFC #1 staleness-permitting path). Both bypass LOAD
+        // privacy; missing rows short-circuit before hooks/privacy/
+        // validation run. ----
+        builder.beginControlFlow(
+            "val row0 = if (consistency == %T.Pessimistic)",
+            UPDATE_CONSISTENCY,
+        )
+        builder.addStatement(
+            "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
             entityClass,
         )
+        builder.nextControlFlow("else")
+        builder.addStatement(
+            "driver.byId(%T.TABLE, id) ?: return null",
+            entityClass,
+        )
+        builder.endControlFlow()
         builder.addStatement("entity = %T.fromRow(row0)", entityClass)
 
         // ---- beforeSave hooks (shared with create — receive Mutation interface). ----

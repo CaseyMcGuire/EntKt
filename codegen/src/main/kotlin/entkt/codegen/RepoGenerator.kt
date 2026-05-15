@@ -20,6 +20,7 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val LIST = ClassName("kotlin.collections", "List")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val INT = Int::class.asClassName()
+private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val PRIVACY_OPERATION = ClassName("entkt.runtime", "PrivacyOperation")
@@ -152,12 +153,22 @@ internal class RepoGenerator(
             )
             .addFunction(buildRepoCreate(schema, entityClass, createClass, createLambda))
             .addFunction(
+                // Per-save UpdateConsistency override (RFC #4). Defaults
+                // to the client's `defaultUpdateConsistency` so callers
+                // who don't pass `consistency =` get the configured
+                // baseline (`ReadCurrent` unless the EntClientConfig
+                // sets otherwise).
                 FunSpec.builder("update")
                     .addParameter("id", idType)
+                    .addParameter(
+                        ParameterSpec.builder("consistency", UPDATE_CONSISTENCY)
+                            .defaultValue("client.defaultUpdateConsistency")
+                            .build(),
+                    )
                     .addParameter("block", updateLambda)
                     .returns(updateClass)
                     .addStatement(
-                        "return %T(driver, client, id, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
+                        "return %T(driver, client, id, consistency, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
                         updateClass,
                     )
                     .build()

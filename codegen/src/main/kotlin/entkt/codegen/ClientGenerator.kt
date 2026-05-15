@@ -24,6 +24,7 @@ private val VIEWER = ClassName("entkt.runtime", "Viewer")
 private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
+private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -113,6 +114,13 @@ internal class ClientGenerator(
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("%T.Optional", TRANSACTION_REQUIREMENT)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("defaultUpdateConsistency", UPDATE_CONSISTENCY)
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("%T.ReadCurrent", UPDATE_CONSISTENCY)
                     .build()
             )
             .addFunction(
@@ -313,6 +321,15 @@ internal class ClientGenerator(
                     .initializer("%T.Optional", TRANSACTION_REQUIREMENT)
                     .build()
             )
+            .addProperty(
+                // Configurable client-wide default UpdateConsistency. The
+                // per-save `consistency = ...` argument on `update(...)`
+                // always overrides this default.
+                PropertySpec.builder("defaultUpdateConsistency", UPDATE_CONSISTENCY)
+                    .mutable(true)
+                    .initializer("%T.ReadCurrent", UPDATE_CONSISTENCY)
+                    .build()
+            )
             .addFunction(
                 FunSpec.builder("hooks")
                     .addParameter("block", hooksBlockLambda)
@@ -355,6 +372,7 @@ internal class ClientGenerator(
         }
         block.addStatement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
         block.addStatement("transactionRequirement = cfg.transactionRequirement")
+        block.addStatement("defaultUpdateConsistency = cfg.defaultUpdateConsistency")
         return block.build()
     }
 
@@ -369,6 +387,7 @@ internal class ClientGenerator(
         body.addStatement("val tx = %T(txDriver)", clientClass)
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
+        body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -466,6 +485,7 @@ internal class ClientGenerator(
         body.addStatement("val scoped = %T(driver)", clientClass)
         body.addStatement("scoped.privacyContextProvider = { context }")
         body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
+        body.addStatement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -497,6 +517,7 @@ internal class ClientGenerator(
         body.addStatement("val fixed = %T(driver)", clientClass)
         body.addStatement("fixed.privacyContextProvider = { context }")
         body.addStatement("fixed.transactionRequirement = this.transactionRequirement")
+        body.addStatement("fixed.defaultUpdateConsistency = this.defaultUpdateConsistency")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("fixed.%L.copyHooksFrom(this.%L)", propName, propName)
