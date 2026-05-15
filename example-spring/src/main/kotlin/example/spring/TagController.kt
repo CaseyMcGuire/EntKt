@@ -1,7 +1,6 @@
 package example.spring
 
 import example.ent.EntClient
-import example.ent.PostTag
 import example.ent.Tag
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -48,15 +47,25 @@ class TagController(private val client: EntClient) {
         }
     }
 
-    /** List posts that have this tag, via the M2M junction. */
+    /**
+     * List posts that have this tag.
+     *
+     * Uses the generated forward M2M traversal `TagQuery.queryPosts()`,
+     * declared by `Tag.posts = manyToMany<Post>(...).throughEntity<PostTag>(...)`
+     * in [example.schema.Tag]. The traversal lowers to a
+     * `Predicate.HasM2MEdgeFrom("tags", "posts", <tag-filter>)` evaluated
+     * against each candidate `Post` row; the runtime walks the junction
+     * backwards using `Tag`'s own forward-edge metadata. No reverse-edge
+     * entry is synthesized on `Post`'s schema — this is the explicit-API
+     * contract from RFC #3.
+     */
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: Int): List<PostResponse> {
         client.tags.byId(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val postTags = client.postTags.query {
-            where(PostTag.tagId eq id)
-            withPost()
-        }.all()
-        return postTags.mapNotNull { it.edges.post?.toResponse() }
+        val posts = client.tags.query { where(Tag.id eq id) }
+            .queryPosts()
+            .all()
+        return posts.map { it.toResponse() }
     }
 }

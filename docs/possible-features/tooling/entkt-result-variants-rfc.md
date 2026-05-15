@@ -419,9 +419,9 @@ absence.
 ### Update
 
 ```kotlin
-client.users.update(user) { ... }.saveOrThrow(): User
-client.users.update(user) { ... }.saveOrError(): EntResult<User>
-client.users.update(user) { ... }.saveIfExistsOrNull(): User?
+client.users.update(user.id) { ... }.saveOrThrow(): User
+client.users.update(user.id) { ... }.saveOrError(): EntResult<User>
+client.users.update(user.id) { ... }.saveIfExistsOrNull(): User?
 ```
 
 `saveIfExistsOrNull()` is optional. If generated, `null` means only that the row
@@ -457,12 +457,12 @@ where:
 Edge mutation APIs should use the same result-family design as scalar writes.
 
 ```kotlin
-client.posts.update(post) {
-    tags.add(kotlinTag)
+client.posts.update(post.id) {
+    tags.add(kotlinTagId)
 }.saveOrError()
 
-client.posts.update(post) {
-    tags.setExact(listOf(kotlinTag, ormTag))
+client.posts.update(post.id) {
+    tags.set(listOf(kotlinTagId, ormTagId))
 }.saveOrError()
 ```
 
@@ -499,7 +499,7 @@ Throwing APIs compose naturally with existing transactions:
 ```kotlin
 client.withTransaction { tx ->
     val user = tx.users.create { ... }.saveOrThrow()
-    tx.posts.create { author = user }.saveOrThrow()
+    tx.posts.create { authorId = user.id }.saveOrThrow()
 }
 ```
 
@@ -528,7 +528,7 @@ Recommended API:
 ```kotlin
 client.withTransactionOrError { tx ->
     val user = tx.users.create { ... }.saveOrError().bind()
-    val post = tx.posts.create { author = user }.saveOrError().bind()
+    val post = tx.posts.create { authorId = user.id }.saveOrError().bind()
     post
 }: EntResult<Post>
 ```
@@ -555,7 +555,7 @@ Alternative non-throwing composition:
 ```kotlin
 client.withTransactionOrError { tx ->
     tx.users.create { ... }.saveOrError().flatMap { user ->
-        tx.posts.create { author = user }.saveOrError()
+        tx.posts.create { authorId = user.id }.saveOrError()
     }
 }
 ```
@@ -737,13 +737,11 @@ val result = client.withTransactionOrError { tx ->
 
     val post = tx.posts.create {
         title = input.title
-        author = user
+        authorId = user.id
     }.saveOrError().bind()
 
-    tx.posts.update(post) {
-        tags.setExact(input.tagIds.map { tagId ->
-            tx.tags.byIdOrError(tagId).bind()
-        })
+    tx.posts.update(post.id) {
+        tags.set(input.tagIds)
     }.saveOrError().bind()
 }
 

@@ -195,6 +195,36 @@ class EntityGeneratorTest {
     }
 
     @Test
+    fun `emits a typed id column ref on the companion`() {
+        // Lets callers compose an id filter via the same DSL as other
+        // columns — `where(Car.id eq 42)` — instead of falling back to
+        // `Predicate.Leaf("id", Op.EQ, 42)`. The id type follows the
+        // schema's `id()` declaration.
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        // Car uses EntId.int() so the column ref is ComparableColumn<Int>
+        assert(output.contains("val id: ComparableColumn<Int> = ComparableColumn<Int>(\"id\")")) {
+            "Should emit ComparableColumn<Int> for id on Car (which declares EntId.int())\n$output"
+        }
+    }
+
+    @Test
+    fun `id column ref type follows the schema's id() declaration`() {
+        // User uses EntId.uuid() → Column<UUID> (UUID isn't comparable in
+        // the entkt query DSL, matching how the existing UUID-typed FK
+        // column refs are emitted).
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+
+        assert(output.contains("val id: Column<UUID> = Column<UUID>(\"id\")")) {
+            "Should emit Column<UUID> for id on User (which declares EntId.uuid())\n$output"
+        }
+    }
+
+    @Test
     fun `emits typed column refs on the companion for each field`() {
         val car = Car()
         finalize(car, User())

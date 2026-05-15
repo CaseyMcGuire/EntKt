@@ -43,6 +43,7 @@ internal class EntityGenerator(
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val columnRefs = buildList {
+            add(buildIdColumnRef(schema))
             addAll(allFields.map { buildFieldColumnRef(it) })
             addAll(edgeFks.map { buildEdgeColumnRef(it) })
         }
@@ -271,6 +272,22 @@ internal class EntityGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .returns(String::class)
             .addStatement("return %P", template)
+            .build()
+    }
+
+    /**
+     * Companion column ref for the entity's id column. Surfaced so
+     * callers can write `where(Foo.id eq someId)` when they need to
+     * compose an id filter into a query — e.g. to chain a forward
+     * M2M traversal off a single known entity. The id column is
+     * always non-null and named "id"; type follows the schema's
+     * `id()` declaration.
+     */
+    private fun buildIdColumnRef(schema: EntSchema): PropertySpec {
+        val idType = schema.id().type
+        val columnType = columnClassFor(idType, nullable = false)
+        return PropertySpec.builder("id", columnType)
+            .initializer("%T(%S)", columnType, "id")
             .build()
     }
 

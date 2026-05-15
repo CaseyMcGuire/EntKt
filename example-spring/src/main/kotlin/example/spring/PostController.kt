@@ -69,16 +69,28 @@ class PostController(private val client: EntClient) {
         }
     }
 
-    /** List tags on a post via the M2M junction. */
+    /**
+     * List tags on a post.
+     *
+     * Demonstrates the generated forward M2M *eager-load* surface
+     * (`PostQuery.withTags { }`) declared by `Post.tags =
+     * manyToMany<Tag>(...).throughEntity<PostTag>(...)`. The query
+     * fetches the matching `Post` row plus all related `Tag` rows in
+     * the runtime's M2M-eager-load helper (junction-IN → target-IN);
+     * the loaded list lands on the entity's generated `Edges.tags`
+     * field. Compare to the predicate-only traversal in
+     * [TagController.posts]: this path returns the tags on a single
+     * known post via eager loading; that path returns the posts that
+     * carry a single known tag via `queryPosts()` lowering to
+     * `Predicate.HasM2MEdgeFrom`.
+     */
     @GetMapping("/{id}/tags")
     fun tags(@PathVariable id: Long): List<TagResponse> {
-        client.posts.byId(id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val postTags = client.postTags.query {
-            where(PostTag.postId eq id)
-            withTag()
-        }.all()
-        return postTags.mapNotNull { it.edges.tag?.toResponse() }
+        val post = client.posts.query {
+            where(Post.id eq id)
+            withTags()
+        }.firstOrNull() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        return post.edges.tags?.map { it.toResponse() } ?: emptyList()
     }
 
     /** Add a tag to a post. Idempotent — re-tagging is a no-op. */
