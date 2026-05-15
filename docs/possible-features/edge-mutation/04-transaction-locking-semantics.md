@@ -2,7 +2,62 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Partially implemented. The transaction-neutral generated save model, the
+`TransactionRequirement` runtime guardrail, the `UpdateConsistency.Pessimistic`
+per-save mode, and the driver capability surface that backs both all landed.
+Specifically implemented:
+
+- **Driver capability surface.** `Driver.inTransaction`,
+  `supportsReadRowForUpdate` + `readRowForUpdate(table, id)`, and
+  `supportsOwnerEdgeSerialization` + `serializeOwnerEdgeAndRead(table, id)`.
+  InMemoryDriver advertises both row-lock capabilities and delegates to
+  `byId` (its per-table `synchronized` blocks make the cooperative-vs-true-row-lock
+  distinction moot for sequential tests). PostgresDriver's
+  `readRowForUpdate` runs `SELECT ... FOR UPDATE` and
+  `serializeOwnerEdgeAndRead` calls `pg_advisory_xact_lock` then reads —
+  both methods throw on the root (auto-commit) driver since the lock would
+  release immediately; the transactional sub-driver routes through
+  internal `*With(conn, ...)` helpers.
+- **`TransactionRequirement` guardrail.** Runtime enum
+  (`Optional` / `RequiredForMultiWrite` / `RequiredForAllWrites`) plus
+  `TransactionRequiredException`. EntClient exposes a
+  `transactionRequirement` config knob; every generated save (Create
+  builder, Update builder, repo `delete`) calls
+  `client.checkTransactionRequirement(...)` at the start of `save()` /
+  `delete(...)`, before hooks, privacy, validation, driver reads, or
+  driver writes. Both transactional and scoped sub-clients inherit the
+  configured requirement.
+- **`UpdateConsistency.Pessimistic`.** Runtime enum +
+  `UnsupportedDriverCapabilityException`. EntClient exposes
+  `defaultUpdateConsistency`; the generated `update(id, consistency =
+  client.defaultUpdateConsistency, block)` factory takes an optional
+  per-save override. The Update builder's `save()` runs two preflights
+  for `Pessimistic` (no transaction → `TransactionRequiredException`,
+  driver without `supportsReadRowForUpdate` →
+  `UnsupportedDriverCapabilityException`) and routes the internal
+  current-row load through `driver.readRowForUpdate(...)`. The
+  `ReadCurrent` path keeps the existing `byId(...)`-based RFC #1
+  pipeline.
+- **Hook / privacy / validation contexts** observe the
+  transaction-scoped client when the save runs inside one — the
+  existing wiring already passed `ctx.client` through
+  `withTransaction`, and the Update / Create / Delete pipelines all
+  read it from the surrounding scope.
+
+Deferred to RFC #5 (link-table M2M helpers):
+
+- The link-table M2M write helpers themselves (`tags.add(...)`,
+  `tags.remove(...)`, `tags.set(...)`) — RFC #5 covers the API shape.
+  Until they exist, no save uses
+  `serializeOwnerEdgeAndRead(...)` or calls
+  `checkTransactionRequirement(op, multiWrite = true)`, so
+  `RequiredForMultiWrite` is effectively a no-op (it behaves like
+  `Optional` for single-write saves).
+- The Many-To-Many save pipeline described in this RFC's
+  `Many-To-Many Pipeline` section. The pipeline's per-driver primitive
+  choice and pessimistic-row-lock-shared-with-edge-serialization design
+  is documented here, but no generator emits the M2M save shape
+  yet — the multi-write helpers it relies on don't exist.
 
 Split out from [Edge Mutation API](00-overview.md).
 
@@ -158,9 +213,28 @@ client.withTransaction { tx ->
 
 The parameter defaults to `UpdateConsistency.ReadCurrent`, so existing
 `update(id) { ... }` calls keep RFC #1 semantics unchanged. A client may
-configure a different default; per-save selection always overrides the client
-default. Create saves have no current-row load and do not take a consistency
-mode.
+configure a different default through `EntClientConfig`, set via the config
+lambda the `EntClient(driver) { ... }` constructor already accepts:
+
+```kotlin
+val client = EntClient(driver) {
+    defaultUpdateConsistency = UpdateConsistency.Pessimistic
+}
+```
+
+`defaultUpdateConsistency` defaults to `UpdateConsistency.ReadCurrent`. The
+per-save `consistency = ...` argument on `update(...)` always overrides the
+client default.
+
+Every generated client derived from a parent client must preserve the parent's
+`defaultUpdateConsistency` — the transaction-scoped client from
+`withTransaction`, plus the privacy-, validation-, and system-context scoped
+clients behind hook and rule `ctx.client` — so a per-save `consistency = ...`
+omitted from a hook- or rule-issued save resolves to the same default as a save
+issued through the original client. This mirrors `TransactionRequirement`
+inheritance (see Runtime Transaction Guardrails).
+
+Create saves have no current-row load and do not take a consistency mode.
 
 ### Pessimistic Requires A Transaction-Scoped Client
 
@@ -338,32 +412,28 @@ counts as multi-write, even if normalization later produces no junction delta or
 the save emits no owner-row update. Scalar/to-one saves count as multi-write only
 when the generated save path is known to require more than one driver write.
 
-## To-One Preflight
+## To-One FK Writes
 
-To-one edge mutations do not need a relationship write phase, but they still use
-the same start-of-save preflight discipline:
+To-one FK writes do not add a relationship write phase. They participate in the
+selected create or update save pipeline as ordinary FK values (see the Create
+save pipeline and the `ReadCurrent` and Pessimistic update save pipelines in
+Generated Save Transaction Model). For update roots, the current owner row is
+still loaded — or locked and read — before `beforeUpdate` hooks, according to
+the selected `UpdateConsistency`. Syntactically empty update classification and
+transaction/capability preflight precede the current-row load per RFC #1.
 
-1. for update roots, request-shape no-op classification runs first, then
-   start-of-save transaction requirement checks run. A syntactically empty
-   update reports `NoChanges` before transaction requirement checks or any
-   other observable work, per
-   [ID-Based Update Roots](01-id-based-update-roots.md). For non-empty
-   scalar/to-one saves, transaction checks primarily enforce configured
-   guardrails such as `TransactionRequirement.RequiredForAllWrites`, and must
-   throw before hooks or other observable work when the requirement is not met
-2. before hooks run
-3. resolved FK assignment has already updated the FK property
-4. final scalar/FK values are computed and field validation plus required edge
-   checks run
-5. the write candidate includes the final FK value
-6. privacy and validation run in the caller's client scope
-7. the owner row is inserted or updated
-8. after hooks and return LOAD privacy run
+To-one-specific details:
 
-This describes the preflight for `UpdateConsistency.ReadCurrent` to-one updates.
-A `Pessimistic` to-one update additionally requires a transaction-scoped client
-and `supportsReadRowForUpdate`, and locks and reads the owner row before before
-hooks — see Update Consistency Modes.
+- resolved FK assignment updates the scalar FK property; no separate
+  relationship write phase is generated
+- required edge checks run on the final FK value (create) or the effective patch
+  values (update)
+- writing a target id does not load the target row
+- target LOAD privacy is not evaluated just because a target id appears in the
+  mutation
+- a `Pessimistic` to-one update additionally requires a transaction-scoped
+  client and `supportsReadRowForUpdate`, and reads the owner row under a true
+  row lock before `beforeUpdate` hooks (see Update Consistency Modes)
 
 ## Link-Table M2M Transaction Requirement
 
@@ -718,17 +788,22 @@ junction writes. The visible behavior splits by save shape:
 - **Edge-only updates (no scalar/FK changes)**: there is no owner `UPDATE` to
   detect the missing row. Junction `INSERT`(s) in step 13 reference the now-gone
   owner id and the database surfaces a foreign-key violation; junction `DELETE`(s)
-  for a non-existent owner are no-ops and don't surface anything. V1 does *not*
-  map this FK violation to `NotFound`: the constraint error propagates as the
-  driver's raw exception (a `org.postgresql.util.PSQLException` for the Postgres
-  driver). Callers who need a clean `NotFound` for the owner-deleted-post-read
-  case on edge-only saves select `UpdateConsistency.Pessimistic`, which holds
-  the owner row across the junction writes and rejects the concurrent delete.
+  for a non-existent owner are no-ops and don't surface anything. The FK
+  violation surfaces according to the
+  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md) constraint
+  mapping: throwing APIs propagate the driver's raw exception (e.g. a
+  `org.postgresql.util.PSQLException` for the Postgres driver, or an
+  `EntConstraintViolationException` wrapper once that mapping is wired), and
+  `saveOrError()` returns `Err(EntError.ConstraintViolation)`. Callers who need
+  a clean `NotFound` for the owner-deleted-post-read case on edge-only saves
+  select `UpdateConsistency.Pessimistic`, which holds the owner row across the
+  junction writes and rejects the concurrent delete.
 
-Mapping FK violations on the owner side to `NotFound` is plausible follow-up
-work — it requires the driver to introspect the constraint that fired so the
-runtime can distinguish "owner gone" from a genuine target-side FK error — and
-is deferred until a concrete EntError variant for constraint violations lands.
+Remapping this specific FK violation to `NotFound` (so an edge-only `ReadCurrent`
+M2M save matches the mixed-update shape's behavior) is plausible follow-up work:
+it requires the driver to introspect the constraint that fired so the runtime
+can distinguish "owner gone" from a genuine target-side FK error. That remapping
+is deferred; the `ConstraintViolation` surfacing above is the V1 contract.
 
 The advisory-lock strategy is acceptable only for `serializeOwnerEdgeAndRead`
 (link-table M2M owner-edge serialization), never for `readRowForUpdate`: a
@@ -832,9 +907,16 @@ Before implementation, add tests for:
   `updatedAt.updateDefaultNow()` field causes an owner-row update even when no
   user scalar field changed
 - edge-only link-table M2M updates with no scalar/FK changes return the current
-  owner row read inside the transaction after the owner lock, with edges unloaded
+  owner row read inside the transaction after the owner-row read / owner-edge
+  serialization, with edges unloaded
 - `UpdateConsistency.ReadCurrent` is the default update mode; existing
   `update(id) { ... }` calls keep RFC #1 unlocked-read semantics
+- `defaultUpdateConsistency` is configured on `EntClientConfig` and defaults to
+  `UpdateConsistency.ReadCurrent`; every generated client derived from a parent
+  — the transaction-scoped client from `withTransaction`, plus the privacy-,
+  validation-, and system-context scoped clients behind hook and rule
+  `ctx.client` — preserves the parent's `defaultUpdateConsistency`, and the
+  per-save `consistency = ...` argument always overrides it
 - `UpdateConsistency.Pessimistic` selected per save locks and reads the owner row
   with `readRowForUpdate` before before hooks, privacy, validation, and the
   owner-row update
@@ -882,15 +964,19 @@ Before implementation, add tests for:
   does not block ordinary `DELETE`): when the owner is deleted by another
   transaction between the owner-row read and the junction writes, a *mixed*
   update (scalar/FK + edge) returns `NotFound` (the step-12 owner `UPDATE`
-  affects 0 rows); an *edge-only* update raises the driver's raw FK-violation
-  exception from the step-13 junction `INSERT`(s). V1 does not map the FK
-  violation to `NotFound` — callers who need that select `Pessimistic`. (On
-  drivers with `supportsReadRowForUpdate`, step 4 uses the true row lock for
-  *both* modes, so the post-read DELETE is blocked until the save commits and
-  the race does not fire — but the contract permits it, so callers must not
-  rely on the implementation side-effect.) Test coverage exercises both
-  shapes (mixed vs edge-only) on an advisory-only driver fixture with a
-  concurrent owner-delete arriving between read and write
+  affects 0 rows); an *edge-only* update surfaces the FK violation from the
+  step-13 junction `INSERT`(s) — `Err(EntError.ConstraintViolation)` under
+  `saveOrError()` (per the
+  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md)) and the
+  driver's raw exception (or its `EntConstraintViolationException` wrapper)
+  on throwing paths. V1 does not remap the FK violation to `NotFound` for
+  this specific case — callers who need that select `Pessimistic`. (On drivers
+  with `supportsReadRowForUpdate`, step 4 uses the true row lock for *both*
+  modes, so the post-read DELETE is blocked until the save commits and the
+  race does not fire — but the contract permits it, so callers must not rely
+  on the implementation side-effect.) Test coverage exercises both shapes
+  (mixed vs edge-only) on an advisory-only driver fixture with a concurrent
+  owner-delete arriving between read and write
 - a `Pessimistic` link-table M2M update reads the owner row under a true row lock
   and requires `supportsReadRowForUpdate`
 - link-table M2M owner-edge serialization is always applied regardless of the
