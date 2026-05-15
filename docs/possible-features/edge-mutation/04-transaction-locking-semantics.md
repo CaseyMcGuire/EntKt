@@ -21,8 +21,10 @@ This RFC assumes [ID-Based Update Roots](01-id-based-update-roots.md) and extend
 that baseline with `UpdateConsistency.Pessimistic`, a per-save update mode that
 locks and reads the owner row before update hooks, privacy, validation, and
 writes — see Update Consistency Modes below. Generated update saves are rooted by
-id, not `update(entity)`. Link-table M2M helpers reuse that owner-row lock/read
-instead of defining a separate update root pipeline.
+id, not `update(entity)`. `UpdateConsistency` applies uniformly to scalar/to-one
+and link-table M2M update saves; M2M saves additionally serialize the owner edge
+for their junction multi-write, which is an orthogonal requirement that does not
+change the selected consistency mode.
 
 ## Generated Save Transaction Model
 
@@ -38,9 +40,10 @@ them, such as any generated link-table M2M helper, or when the client configures
 a stricter `TransactionRequirement`.
 
 The generated save pipeline is not one generic shape. Create saves, `ReadCurrent`
-update saves, and pessimistic/link-table M2M update saves order their phases
-differently, because update roots load (or lock and read) the current owner row
-before before hooks. The shapes below are high-level; the authoritative
+scalar/to-one update saves, and owner-row-serialized update saves (`Pessimistic`
+updates and link-table M2M updates) order their phases differently, because
+update roots load — or lock, or cooperatively serialize and read — the current
+owner row before before hooks. The shapes below are high-level; the authoritative
 algorithm for update saves lives in
 [ID-Based Update Roots](01-id-based-update-roots.md), and the detailed
 link-table M2M ordering lives in the Many-To-Many Pipeline section below.
@@ -58,7 +61,7 @@ Create save pipeline:
 9. after hooks
 10. returned LOAD privacy
 
-`ReadCurrent` update save pipeline (see
+`ReadCurrent` scalar/to-one update save pipeline (see
 [ID-Based Update Roots](01-id-based-update-roots.md) for the authoritative
 algorithm):
 
@@ -79,15 +82,18 @@ algorithm):
 12. after hooks
 13. returned LOAD privacy
 
-Pessimistic update and link-table M2M update save pipeline (see the
+Pessimistic update and link-table M2M update save pipeline (covers `Pessimistic`
+scalar/to-one and M2M updates and `ReadCurrent` M2M updates; see the
 Many-To-Many Pipeline section below for the detailed link-table M2M steps):
 
 1. syntactically empty update classification where applicable — report
    `NoChanges` before any other observable work
 2. transaction/capability preflight, including the transaction-scoped client and
-   row-lock capability requirements
-3. owner-row lock/read — the locked row is the update `before` state; a missing
-   row reports `NotFound`
+   the locking-capability requirements
+3. owner-row read under the save's serialization level — a true row lock for
+   `Pessimistic` (scalar/to-one or M2M), a cooperative owner-edge serialized read
+   for `ReadCurrent` M2M; the row read here is the update `before` state, and a
+   missing row reports `NotFound`
 4. before hooks
 5. hook-cleared empty classification (scalar/to-one, no pending M2M ops) — run
    UPDATE privacy, then report `NoChanges`
@@ -170,14 +176,16 @@ ordinary `UPDATE`/`DELETE` (see Driver Strategy). The preflight checks are:
 - driver lacks true row-lock support (`supportsReadRowForUpdate`) →
   `UnsupportedDriverCapabilityException`
 
-Both are named entkt exceptions, not raw `kotlin.UnsupportedOperationException`,
-so the result-variants path can map them. Like transaction requirement failures,
-an unsupported driver capability is neither a validation failure nor a privacy
-denial: it throws on throwing paths and, under `saveOrError()`, surfaces as a
-structured `EntError.DriverCapabilityUnsupported` once the
-[Result Variants RFC](../tooling/entkt-result-variants-rfc.md) defines that
-variant. It is never converted to `null` by `saveOrNull()`, per
-[ID-Based Update Roots](01-id-based-update-roots.md).
+Both are named entkt exceptions, not raw `kotlin.UnsupportedOperationException`.
+A missing transaction or an unsupported driver capability is a deterministic
+configuration/programming error, not a branchable expected outcome: it is
+neither a validation failure nor a privacy denial, and it is not modeled as an
+`EntError` result variant. `TransactionRequiredException` and
+`UnsupportedDriverCapabilityException` throw on every path, including
+`saveOrError()` — `saveOrError()` does not catch them. `saveOrNull()` likewise
+does not swallow them: because they throw rather than returning, `saveOrNull()`
+never converts them to `null` (per
+[ID-Based Update Roots](01-id-based-update-roots.md)).
 
 Both checks run at the start of `save()`, after request-shape no-op
 classification for update roots but before hooks, privacy, validation, driver
@@ -218,16 +226,28 @@ be changed or deleted by another transaction before the owner-row update.
 the checked current state to stay stable until the write should use a stronger
 consistency mode.
 
-### Relationship To Link-Table M2M
+### Link-Table M2M And UpdateConsistency
 
-Link-table M2M update saves always lock and read the owner row regardless of the
-selected `UpdateConsistency`, because they need owner-edge serialization (see
-Link-Table M2M Transaction Requirement). M2M update saves are pessimistic on the
-owner row by construction; selecting `UpdateConsistency` is meaningful only for
-scalar/to-one updates with no pending link-table M2M operations. Selecting
-`UpdateConsistency.ReadCurrent` on a save that has pending link-table M2M
-operations does not weaken the owner-row lock — the M2M serialization
-requirement still applies.
+`UpdateConsistency` applies to link-table M2M update saves the same way it
+applies to scalar/to-one update saves. It governs owner-*row* stability:
+
+- `ReadCurrent` (the default) reads the owner row without a true lock. Another
+  transaction can change the owner row's scalar fields or delete it between the
+  read and the write — the RFC #1 `ReadCurrent` races.
+- `Pessimistic` reads the owner row under a true row lock, so the `before` state
+  observed by hooks, privacy, and validation stays stable through the write.
+
+M2M saves carry one additional, orthogonal requirement: they must serialize the
+owner *edge* so concurrent generated M2M helpers do not corrupt the junction set
+(see Link-Table M2M Transaction Requirement). That owner-edge serialization is
+always on for M2M saves and is independent of the selected `UpdateConsistency` —
+a `ReadCurrent` M2M save still serializes its edge cooperatively; a `Pessimistic`
+M2M save serializes it via the true row lock, which is strictly stronger. What
+`UpdateConsistency` changes for an M2M save is only the owner-row stability
+guarantee, exactly as it does for a scalar/to-one save. Selecting `ReadCurrent`
+on an M2M save does not weaken edge serialization, and selecting `Pessimistic`
+does not add a second locking concept — it just upgrades the owner-row read to a
+true lock.
 
 ## Runtime Transaction Guardrails
 
@@ -335,14 +355,15 @@ owner-edge serialization boundary. Generated code must reject link-table M2M
 saves outside an explicit transaction before hooks, privacy, validation, driver
 reads, or driver writes.
 
-All generated link-table M2M writes use one serialization discipline. Any save
-with pending `add(...)`, `remove(...)`, or `set(...)` requires a
-transaction-scoped client and a driver owner-edge serialization capability —
-either true row-lock support (`supportsReadRowForUpdate`) or the weaker
-cooperative `supportsOwnerEdgeSerialization` (see Driver Strategy). The
-transaction and capability requirements are checked at the start of `save()`,
-before hooks, field extraction/defaulting, privacy, validation, driver reads, or
-driver writes.
+All generated link-table M2M writes serialize the owner edge. Any save with
+pending `add(...)`, `remove(...)`, or `set(...)` requires a transaction-scoped
+client and a driver owner-edge serialization capability. A `ReadCurrent` M2M save
+accepts either true row-lock support (`supportsReadRowForUpdate`) or the weaker
+cooperative `supportsOwnerEdgeSerialization`; a `Pessimistic` M2M save requires
+true row-lock support, like any other `Pessimistic` save (see Driver Strategy and
+Update Consistency Modes). The transaction and capability requirements are
+checked at the start of `save()`, before hooks, field extraction/defaulting,
+privacy, validation, driver reads, or driver writes.
 
 Before reading current junction rows or mutating the junction table, generated
 code must serialize the owner-edge relationship. V1 may implement this by
@@ -372,11 +393,13 @@ a transaction-scoped client:
 1. start-of-save transaction and capability preflight runs first. If any
    generated link-table M2M operation is pending, generated code requires a
    transaction-scoped client — throwing `TransactionRequiredException` when the
-   save is not transaction-scoped — and a driver owner-edge serialization
-   capability, `supportsReadRowForUpdate` or `supportsOwnerEdgeSerialization` —
-   throwing `UnsupportedDriverCapabilityException` when the driver has neither.
-   Both checks run before hooks, before the mixed replacement/delta rejection in
-   step 2, and before privacy, validation, driver reads, or driver writes
+   save is not transaction-scoped — and a driver locking capability:
+   `supportsReadRowForUpdate` for a `Pessimistic` M2M save, or either
+   `supportsReadRowForUpdate` or `supportsOwnerEdgeSerialization` for a
+   `ReadCurrent` M2M save — throwing `UnsupportedDriverCapabilityException` when
+   the driver lacks the required capability. Both checks run before hooks, before
+   the mixed replacement/delta rejection in step 2, and before privacy,
+   validation, driver reads, or driver writes
 2. start-of-save preflight rejects mixed replacement/delta operations for the
    same edge, if that was not already rejected at the incompatible mutator call
    site, before hooks, privacy, validation, driver reads, or driver writes (per
@@ -384,23 +407,26 @@ a transaction-scoped client:
 3. the pending edge operation log is captured and the read-only `PendingEdgeOps`
    view that before hooks observe is computed from it. Before hooks cannot
    mutate pending edge operations, so this snapshot is fixed before hooks run
-4. generated code serializes the owner-edge relationship and reads the current
-   owner row before current junction rows are read or junction rows are mutated
+4. generated code serializes the owner edge and reads the current owner row
+   before current junction rows are read or junction rows are mutated. The read
+   uses a true row lock under `Pessimistic` and a cooperative owner-edge
+   serialized read under `ReadCurrent`; either way it serializes the owner edge
+   against other generated M2M helpers
 5. before hooks receive the normal scalar/FK mutation surface plus the read-only
-   pending edge operation view from step 3 and the locked current owner row as
-   update `before` state
+   pending edge operation view from step 3 and the owner row read for this save
+   as update `before` state
 6. update defaults are applied to the post-hook scalar/FK patch to produce the
-   effective scalar/FK patch, using the locked current owner row as the fallback
-   base for fields the builder and hooks did not change. Framework update
-   defaults such as `updatedAt.updateDefaultNow()` are added here, even when no
-   user scalar field changed
+   effective scalar/FK patch, using the owner row read for this save as the
+   fallback base for fields the builder and hooks did not change. Framework
+   update defaults such as `updatedAt.updateDefaultNow()` are added here, even
+   when no user scalar field changed
 7. field validation and required edge checks run on the effective scalar/FK
    patch values
-8. the owner after-state candidate is built from the locked `before` row plus
-   the effective scalar/FK patch
+8. the owner after-state candidate is built from the owner row read for this
+   save plus the effective scalar/FK patch
 9. current junction rows are read and `EdgeChanges` is computed from the
    captured pending operation log and current link set
-10. write privacy runs with the locked current owner row, the requested and
+10. write privacy runs with the owner row read for this save, the requested and
     effective scalar/FK patches, the candidate, and computed edge changes
 11. configured write validation runs with the same information
 12. the owner row is updated when the effective scalar/FK patch is non-empty,
@@ -416,6 +442,19 @@ computed in step 9 are typed shapes defined authoritatively by
 only that before hooks receive a read-only `PendingEdgeOps` view and that privacy
 and validation receive the normalized `EdgeChanges` object; it does not redefine
 their field shapes.
+
+Under `UpdateConsistency.ReadCurrent` — the default — the owner row read in
+step 4 is a cooperative owner-edge serialized read, not a true lock. It
+serializes the owner edge against other generated M2M helpers, but it does not
+block ordinary `UPDATE`/`DELETE` on the owner row: another transaction may change
+the owner row's scalar fields, or delete the owner row, between step 4 and the
+step 11–13 writes. Hooks, privacy, and validation therefore observe a `before`
+state with the same staleness window as a `ReadCurrent` scalar/to-one update
+(see [ID-Based Update Roots](01-id-based-update-roots.md)). Callers that need the
+checked owner state to stay stable through the write select
+`UpdateConsistency.Pessimistic`, which reads the owner row under a true row lock.
+The owner-edge serialization that protects the junction set is unchanged by the
+mode; only owner-row stability differs.
 
 For update, the owner id is already known. For create, the owner id may only be
 known after insert for auto-increment ids, so create-time many-to-many mutation
@@ -442,8 +481,10 @@ A plain `saveOrError()` inside a `withTransaction` block that returns normally
 lets the writes commit.
 
 Database rollback does not undo external side effects performed by before or
-after hooks. Before hooks for pessimistic update saves run after the owner row is
-locked and read, but before write privacy and validation authorize the mutation.
+after hooks. Before hooks for owner-row-serialized update saves run after the
+owner row is read — under a true lock for `Pessimistic`, under cooperative
+owner-edge serialization for `ReadCurrent` M2M — but before write privacy and
+validation authorize the mutation.
 After hooks may run before the caller's explicit transaction exits. Hooks that
 send messages, write caches, or call external services should be idempotent or
 use an outbox/after-commit pattern if those side effects must only happen after
@@ -451,17 +492,16 @@ the transaction commits. A dedicated after-commit hook can be considered
 separately.
 
 For update saves with pending link-table M2M operations, the generated update
-root is the owner id. The locked current owner row is the update `before` state
-for hooks, privacy, and validation, and the fallback base for scalar/FK fields
-the caller did not change. Link-table M2M helpers must not define a separate
-hook-before-current-row-load update model.
+root is the owner id. The owner row read for this save is the update `before`
+state for hooks, privacy, and validation, and the fallback base for scalar/FK
+fields the caller did not change. Link-table M2M helpers must not define a
+separate hook-before-current-row-load update model.
 
 For edge-only updates whose effective scalar/FK patch is empty — no builder or
 hook scalar/FK changes and no framework update defaults — generated code must not
-issue a no-op owner update. Instead, it returns the current owner row read inside
-the transaction after the owner lock, with relationship edges unloaded. If the
-owner row cannot be locked/read, `save()` returns `null` and no junction rows are
-read or mutated.
+issue a no-op owner update. Instead, it returns the owner row read inside the
+transaction, with relationship edges unloaded. If the owner row cannot be read,
+`save()` returns `null` and no junction rows are read or mutated.
 
 ## Driver Strategy
 
@@ -566,26 +606,37 @@ if (needsOwnerEdgeSerialization &&
 }
 ```
 
-After that guard has passed, generated code locks and reads the current owner row
-before before hooks, and — for link-table M2M saves — before reading current
-junction rows or mutating the junction table. It uses the true row lock whenever
-the driver supports it, since that is strictly stronger; only an M2M save on a
-driver without true row-lock support falls back to cooperative serialization:
+After that guard has passed, generated code reads the current owner row before
+before hooks, and — for link-table M2M saves — before reading current junction
+rows or mutating the junction table. The primitive choice is **per driver**, not
+per consistency mode: when the driver supports `readRowForUpdate`, all
+owner-row reads use it (whether the save is `Pessimistic` or a `ReadCurrent`
+M2M); the cooperative `serializeOwnerEdgeAndRead` is used only on drivers that
+lack true row-lock support. This guarantees that two concurrent M2M-mutating
+saves on the same owner take the *same* lock regardless of their consistency
+modes — without it, a `Pessimistic` save's row lock and a concurrent
+`ReadCurrent` save's advisory lock would not block one another, and the
+merged-relationship bug that owner-edge serialization exists to prevent could
+reintroduce itself across mixed-mode callers.
 
 ```kotlin
 if (requiresOwnerRowLock) {
-    lockedOwnerRow = (
+    ownerRow = (
         if (driver.supportsReadRowForUpdate) {
+            // Pessimistic OR ReadCurrent M2M: the true row lock serves
+            // both — and using one primitive per driver guarantees mutual
+            // serialization between concurrent saves of any mode.
             driver.readRowForUpdate(Post.TABLE, post.id)
         } else {
-            // link-table M2M only — Pessimistic has already been guaranteed
-            // a true row lock by the capability check above
+            // Driver supports only cooperative owner-edge serialization
+            // — that's ReadCurrent M2M (Pessimistic was already rejected
+            // at the capability guard above).
             driver.serializeOwnerEdgeAndRead(Post.TABLE, post.id)
         }
     ) ?: return null
 }
 
-val before = Post.fromRow(lockedOwnerRow)
+val before = Post.fromRow(ownerRow)
 val candidate = buildCandidate(fallbackBase = before, dirtyScalarAndFkValues)
 // link-table M2M only:
 val currentLinks = driver.query(PostTag.TABLE, ownerIdFilter)
@@ -595,17 +646,17 @@ val edgeChanges = normalize(currentLinks, pendingEdgeOps)
 // optional owner update, junction writes
 ```
 
-If the owner row cannot be locked and read because it no longer exists, generated
-update saves should return `null` (the `NotFound` result) without reading or
-mutating junction rows, matching the existing `driver.update(...) ?: return null`
-behavior. For edge-only updates with no scalar/FK changes, this locked row is the
-owner existence check and generated code should not issue a no-op owner update;
-it should return the owner row read inside the transaction after the lock, with
-edges unloaded.
+If the owner row cannot be read because it no longer exists, generated update
+saves should return `null` (the `NotFound` result) without reading or mutating
+junction rows, matching the existing `driver.update(...) ?: return null`
+behavior. For edge-only updates with no scalar/FK changes, this owner-row read is
+the owner existence check and generated code should not issue a no-op owner
+update; it should return the owner row read inside the transaction, with edges
+unloaded.
 
-For link-table M2M updates and `Pessimistic` scalar/to-one updates, the locked
-owner row is also the update `before` state and the fallback base for scalar/FK
-fields the caller did not change.
+For link-table M2M updates and `Pessimistic` scalar/to-one updates, the owner row
+read for this save is also the update `before` state and the fallback base for
+scalar/FK fields the caller did not change.
 
 The advisory-lock strategy is acceptable only for `serializeOwnerEdgeAndRead`
 (link-table M2M owner-edge serialization), never for `readRowForUpdate`: a
@@ -691,12 +742,12 @@ Before implementation, add tests for:
   link-table M2M helpers at the start of `save()`, before hooks, privacy,
   validation, driver reads, or driver writes
 - link-table M2M update returns `null` without reading or mutating junction rows
-  when the owner row cannot be locked because it no longer exists
-- link-table M2M updates use the locked current owner row as the hook,
+  when the owner row cannot be read because it no longer exists
+- link-table M2M updates use the owner row read for this save as the hook,
   privacy/validation `before` state and fallback base for non-dirty scalar/FK
   fields
-- link-table M2M before hooks run after owner-row lock/read and observe the
-  locked current owner row through the ID-based update hook context
+- link-table M2M before hooks run after the owner-row read and observe the owner
+  row read for this save through the ID-based update hook context
 - edge-only link-table M2M updates run before hooks, owner write privacy checks,
   validation, after hooks, and return LOAD privacy once
 - link-table M2M saves roll back owner updates and junction database writes when
@@ -720,14 +771,21 @@ Before implementation, add tests for:
   outside a transaction, before hooks, privacy, validation, driver reads, or
   driver writes
 - `Pessimistic` updates throw `UnsupportedDriverCapabilityException` when the
-  driver does not report `supportsReadRowForUpdate`; it is not a validation
-  failure and `saveOrNull()` does not convert it to `null`
-- `Pessimistic` updates require true row-lock support; a driver that reports only
-  `supportsOwnerEdgeSerialization` (cooperative) is rejected, while link-table
-  M2M saves accept either `supportsReadRowForUpdate` or
+  driver does not report `supportsReadRowForUpdate`; it is not an `EntError`
+  result variant — it throws on every path including `saveOrError()`, and
+  `saveOrNull()` does not convert it to `null`
+- `Pessimistic` updates (scalar/to-one or M2M) require true row-lock support; a
+  driver that reports only `supportsOwnerEdgeSerialization` is rejected, while a
+  `ReadCurrent` link-table M2M save accepts either `supportsReadRowForUpdate` or
   `supportsOwnerEdgeSerialization`
-- link-table M2M saves use `readRowForUpdate` when the driver supports it and
-  fall back to `serializeOwnerEdgeAndRead` only when it does not
+- the owner-row primitive is chosen per driver, not per consistency mode:
+  on a driver with `supportsReadRowForUpdate`, both `Pessimistic` and
+  `ReadCurrent` link-table M2M saves use `readRowForUpdate`; only on a
+  driver without true row-lock support does a `ReadCurrent` link-table
+  M2M save fall back to `serializeOwnerEdgeAndRead`. Test coverage
+  must include the mixed-mode case: a `Pessimistic` save and a
+  concurrent `ReadCurrent` link-table M2M save on the same owner
+  serialize through the same primitive (no merged-relationship bug)
 - a syntactically empty `Pessimistic` update reports `NoChanges` before the
   transaction-scoped client and row-lock capability checks
 - `Pessimistic` updates return the `NotFound` result when `readRowForUpdate`
@@ -735,6 +793,15 @@ Before implementation, add tests for:
 - `Pessimistic` updates use the locked owner row as the `before` state and the
   fallback base for non-dirty scalar/FK fields, keeping every other RFC #1 update
   phase ordering
-- link-table M2M update saves lock and read the owner row regardless of the
-  selected `UpdateConsistency`, and selecting `ReadCurrent` does not weaken the
-  M2M owner-edge serialization requirement
+- `UpdateConsistency` applies to link-table M2M update saves the same as to
+  scalar/to-one update saves: `ReadCurrent` (default) reads the owner row without
+  a true lock, `Pessimistic` reads it under a true row lock
+- a `ReadCurrent` link-table M2M update serializes the owner edge cooperatively
+  but does not lock the owner row, so concurrent writers can change owner scalar
+  fields or delete the owner row before the write — the RFC #1 `ReadCurrent`
+  races
+- a `Pessimistic` link-table M2M update reads the owner row under a true row lock
+  and requires `supportsReadRowForUpdate`
+- link-table M2M owner-edge serialization is always applied regardless of the
+  selected `UpdateConsistency`; selecting `ReadCurrent` does not weaken edge
+  serialization and selecting `Pessimistic` does not add a second locking concept
