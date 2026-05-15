@@ -2,31 +2,46 @@
 
 ## Status
 
-Partially implemented. The transaction-neutral generated save model, the
-`TransactionRequirement` runtime guardrail, the `UpdateConsistency.Pessimistic`
-per-save mode, and the driver capability surface that backs both all landed.
-Specifically implemented:
+Partially implemented. **The RFC #4 infrastructure layer landed**
+(transaction-neutral save model, `TransactionRequirement` guardrail,
+`UpdateConsistency.Pessimistic` per-save mode, driver capability
+surface). **The M2M-specific RFC #4 semantics are still deferred** —
+they depend on the link-table M2M write helpers from RFC #5, which
+haven't been implemented yet.
+
+### RFC #4 infrastructure (implemented)
 
 - **Driver capability surface.** `Driver.inTransaction`,
   `supportsReadRowForUpdate` + `readRowForUpdate(table, id)`, and
-  `supportsOwnerEdgeSerialization` + `serializeOwnerEdgeAndRead(table, id)`.
-  InMemoryDriver advertises both row-lock capabilities and delegates to
-  `byId` (its per-table `synchronized` blocks make the cooperative-vs-true-row-lock
-  distinction moot for sequential tests). PostgresDriver's
-  `readRowForUpdate` runs `SELECT ... FOR UPDATE` and
-  `serializeOwnerEdgeAndRead` calls `pg_advisory_xact_lock` then reads —
-  both methods throw on the root (auto-commit) driver since the lock would
-  release immediately; the transactional sub-driver routes through
-  internal `*With(conn, ...)` helpers.
+  `supportsOwnerEdgeSerialization` + `serializeOwnerEdgeAndRead(table, id)`,
+  with `requireTransactionForLocking(method)` as a uniform helper for
+  overriding implementations to enforce the in-transaction contract.
+  InMemoryDriver advertises both row-lock capabilities as `false` —
+  its per-table `synchronized` blocks scope only individual driver
+  calls, not "until transaction end," so it can't honor the contract;
+  generated saves under `Pessimistic` reject at the capability gate
+  on this driver. PostgresDriver's `readRowForUpdate` runs
+  `SELECT ... FOR UPDATE` and `serializeOwnerEdgeAndRead` calls
+  `pg_advisory_xact_lock` then reads — both methods throw on the root
+  (auto-commit) driver via `requireTransactionForLocking` since the
+  lock would release immediately; the transactional sub-driver routes
+  through internal `*With(conn, ...)` helpers.
 - **`TransactionRequirement` guardrail.** Runtime enum
   (`Optional` / `RequiredForMultiWrite` / `RequiredForAllWrites`) plus
   `TransactionRequiredException`. EntClient exposes a
-  `transactionRequirement` config knob; every generated save (Create
-  builder, Update builder, repo `delete`) calls
-  `client.checkTransactionRequirement(...)` at the start of `save()` /
-  `delete(...)`, before hooks, privacy, validation, driver reads, or
-  driver writes. Both transactional and scoped sub-clients inherit the
-  configured requirement.
+  `transactionRequirement` config knob; every generated single-write
+  entry point (Create.save, Update.save, repo delete, deleteById)
+  calls `client.checkTransactionRequirement(...)` at the start of
+  `save()` / `delete(...)` with `multiWrite = false`, before hooks,
+  privacy, validation, driver reads, or driver writes. The two
+  generated multi-write repo entry points — `createMany` and
+  `deleteMany` — call the same helper with `multiWrite = true` (or
+  `multiWrite = blocks.size > 1` for createMany), classifying by
+  operation shape before any read/write. Internal callers reuse a
+  private `deleteLoaded(entity)` helper to avoid double-checking the
+  requirement on per-entity dispatch (e.g. `deleteMany` runs one
+  preflight, not N+1). Both transactional and scoped sub-clients
+  inherit the configured requirement.
 - **`UpdateConsistency.Pessimistic`.** Runtime enum +
   `UnsupportedDriverCapabilityException`. EntClient exposes
   `defaultUpdateConsistency`; the generated `update(id, consistency =
@@ -44,20 +59,30 @@ Specifically implemented:
   `withTransaction`, and the Update / Create / Delete pipelines all
   read it from the surrounding scope.
 
-Deferred to RFC #5 (link-table M2M helpers):
+### M2M-specific RFC #4 semantics (deferred to RFC #5 implementation)
+
+The pieces below are described in this RFC but no generator emits
+them yet because they depend on the link-table M2M write helpers
+that RFC #5 defines but doesn't implement:
 
 - The link-table M2M write helpers themselves (`tags.add(...)`,
-  `tags.remove(...)`, `tags.set(...)`) — RFC #5 covers the API shape.
-  Until they exist, no save uses
-  `serializeOwnerEdgeAndRead(...)` or calls
-  `checkTransactionRequirement(op, multiWrite = true)`, so
-  `RequiredForMultiWrite` is effectively a no-op (it behaves like
-  `Optional` for single-write saves).
-- The Many-To-Many save pipeline described in this RFC's
-  `Many-To-Many Pipeline` section. The pipeline's per-driver primitive
-  choice and pessimistic-row-lock-shared-with-edge-serialization design
-  is documented here, but no generator emits the M2M save shape
-  yet — the multi-write helpers it relies on don't exist.
+  `tags.remove(...)`, `tags.set(...)`).
+- The pending edge operation classification, owner-edge serialization
+  call site (`serializeOwnerEdgeAndRead`), current junction reads,
+  `EdgeChanges` computation, and junction writes that the
+  Many-To-Many Pipeline section in this RFC describes.
+- The per-driver primitive choice for M2M owner-row reads (true row
+  lock when the driver supports it; cooperative serialization
+  otherwise) — the rule is documented here but no save shape selects
+  it yet.
+
+Test guidance: integration tests for RFC #4 today exercise the
+infrastructure (`TransactionRequirementIntegrationTest`,
+`UpdateConsistencyIntegrationTest`) but **do not** exercise M2M
+transaction semantics — those will arrive with the RFC #5 helpers.
+A test that asserts `RequiredForMultiWrite` rejects an M2M
+`tags.set(...)` outside a transaction can't exist until `tags.set`
+exists.
 
 Split out from [Edge Mutation API](00-overview.md).
 
