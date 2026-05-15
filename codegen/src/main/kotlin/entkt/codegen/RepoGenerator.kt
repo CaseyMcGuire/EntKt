@@ -257,6 +257,11 @@ internal class RepoGenerator(
         return FunSpec.builder("deleteById")
             .addParameter("id", idType)
             .returns(Boolean::class)
+            // Transaction-requirement preflight (RFC #4) — fires before
+            // the byId read so a missing-id call under
+            // RequiredForAllWrites still throws (instead of silently
+            // returning false because the row doesn't exist).
+            .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
             .addStatement(
                 "val entity = driver.byId(%T.TABLE, id)?.let { %T.fromRow(it) } ?: return false",
                 entityClass,
@@ -279,6 +284,13 @@ internal class RepoGenerator(
                     .build(),
             )
             .returns(INT)
+            // Transaction-requirement preflight (RFC #4) — fires before
+            // the candidate query so an empty-result call under
+            // RequiredForAllWrites still throws (instead of silently
+            // returning 0 because nothing matched), and a non-empty
+            // result doesn't get partway through the candidate query
+            // before the per-entity delete throws.
+            .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
             .addStatement(
                 "val rows = driver.query(%T.TABLE, predicates.toList(), emptyList(), null, null)",
                 entityClass,

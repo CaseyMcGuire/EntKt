@@ -121,6 +121,71 @@ class TransactionRequirementIntegrationTest {
     }
 
     @Test
+    fun `RequiredForAllWrites rejects deleteById for a missing id (preflight runs before the byId read)`() {
+        // Without the preflight, a missing-id deleteById would silently
+        // return false outside a transaction because the byId read
+        // returns null before the per-entity delete fires its own
+        // transaction-requirement check. The preflight must fire first
+        // so the strict requirement still surfaces.
+        val driver = freshDriver()
+        val strict = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForAllWrites
+        }
+        val ex = assertFailsWith<TransactionRequiredException> {
+            strict.users.deleteById(9999L)
+        }
+        assertEquals(true, ex.message!!.contains("RequiredForAllWrites"))
+        assertEquals(true, ex.message!!.contains("delete"))
+    }
+
+    @Test
+    fun `RequiredForAllWrites rejects deleteMany for an empty match (preflight runs before the candidate query)`() {
+        // Without the preflight, deleteMany over a predicate matching
+        // no rows would silently return 0 outside a transaction —
+        // the candidate query reads no rows, so no per-entity delete
+        // is dispatched and the per-entity preflight never runs.
+        // deleteMany must check the requirement before the query.
+        val driver = freshDriver()
+        val strict = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForAllWrites
+        }
+        val ex = assertFailsWith<TransactionRequiredException> {
+            // Predicate that can't match anything — even without seeded data,
+            // the preflight rejects before the empty query result returns.
+            strict.users.deleteMany(entkt.integrationtest.ent.User.email eq "nobody@example.com")
+        }
+        assertEquals(true, ex.message!!.contains("RequiredForAllWrites"))
+        assertEquals(true, ex.message!!.contains("delete"))
+    }
+
+    @Test
+    fun `RequiredForAllWrites rejects deleteMany before reading any candidate rows`() {
+        // Even with matching rows, the deleteMany preflight must fire
+        // before the candidate query — otherwise we'd burn a query
+        // round-trip before the strict requirement surfaces. Seed a
+        // matching row so the candidate query *would* return data,
+        // then assert the call still throws without partial work.
+        val driver = freshDriver()
+        val seed = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.Optional
+        }
+        seed.users.create {
+            name = "Alice"
+            email = "alice@example.com"
+        }.save()
+
+        val strict = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForAllWrites
+        }
+        val ex = assertFailsWith<TransactionRequiredException> {
+            strict.users.deleteMany(entkt.integrationtest.ent.User.email eq "alice@example.com")
+        }
+        assertEquals(true, ex.message!!.contains("RequiredForAllWrites"))
+        // Row should still exist — the preflight rejected before any delete fired.
+        assertEquals(1L, driver.count("users", emptyList()))
+    }
+
+    @Test
     fun `RequiredForMultiWrite accepts single-write create outside a transaction`() {
         // Create is a single-write save shape, so RequiredForMultiWrite
         // doesn't apply to it. Once link-table M2M helpers land (RFC #5)
