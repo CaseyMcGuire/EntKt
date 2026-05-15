@@ -202,12 +202,12 @@ interface PostHookMutation {
 
 data class PendingEdgeOps<ID>(
     val requestedSet: Set<ID>? = null,
-    val ensurePresentIds: Set<ID> = emptySet(),
-    val ensureAbsentIds: Set<ID> = emptySet(),
+    val requestedAdds: Set<ID> = emptySet(),
+    val requestedRemoves: Set<ID> = emptySet(),
 ) {
     val hasReplacement: Boolean get() = requestedSet != null
     val hasChanges: Boolean get() =
-        requestedSet != null || ensurePresentIds.isNotEmpty() || ensureAbsentIds.isNotEmpty()
+        requestedSet != null || requestedAdds.isNotEmpty() || requestedRemoves.isNotEmpty()
 }
 
 data class PostPendingEdgeOps(
@@ -217,17 +217,21 @@ data class PostPendingEdgeOps(
 
 `PendingEdgeOps` is intent-level. It is computed from the builder's pending
 operation log before current junction rows are read. `EdgeChanges`, described
-below, is computed later after current junction rows are read. `ensurePresentIds`
-and `ensureAbsentIds` are intent names: they describe relationships the caller
+below, is computed later after current junction rows are read and adds
+computed `added` / `removed` delta sets. The two types share field names on
+purpose: `PendingEdgeOps` is a strict subset of `EdgeChanges`' caller-intent
+fields, so a rule that reads `requestedAdds` / `requestedRemoves` in a before
+hook sees the same set names in privacy / validation later. `requestedAdds` /
+`requestedRemoves` are intent names: they describe relationships the caller
 wants present or absent, not database rows that are known to be inserted or
 deleted. Actual computed database deltas are exposed only on `EdgeChanges.added`
 and `EdgeChanges.removed`. Its public fields are sets because relationship
 intent is unordered; hooks must not depend on iteration order.
 
-For a given edge, `requestedSet` is mutually exclusive with `ensurePresentIds` /
-`ensureAbsentIds` in `PendingEdgeOps` because V1 rejects mixed replacement and
+For a given edge, `requestedSet` is mutually exclusive with `requestedAdds` /
+`requestedRemoves` in `PendingEdgeOps` because V1 rejects mixed replacement and
 delta operations. `requestedSet` is the deduplicated latest `set(...)`
-operand. `ensurePresentIds` and `ensureAbsentIds` are used only for delta-only
+operand. `requestedAdds` and `requestedRemoves` are used only for delta-only
 mutations and contain deduplicated ids from `add(...)` and `remove(...)` calls.
 Duplicate calls for the same id collapse, but same-id cancellations do **not**
 remove from these sets — they are the literal call log (deduped), aligned with
@@ -262,6 +266,17 @@ data class EdgeChanges<ID>(
     val removed: Set<ID> = emptySet(),
 )
 ```
+
+> **Behavior change vs. "operations cancel out".** The `requestedAdds` /
+> `requestedRemoves` intent fields are the deduplicated literal call log;
+> they are **not** the post-cancellation set. A caller that does
+> `remove(aId); add(aId)` in one mutation surfaces `aId` in *both* intent
+> sets, even though the normalized database effect is empty (`added` and
+> `removed` are both empty in that case). This is deliberate: it lets a
+> validator reject `remove(unknownId)` regardless of whether a paired
+> `add(...)` cancels the net effect. Callers used to "operations cancel"
+> semantics should read the computed `added` / `removed` fields if they
+> only care about the database effect.
 
 `EdgeChanges` exposes both the caller's request intent and the computed database
 effect, mirroring the `requestedPatch` / `effectivePatch` split that
@@ -473,10 +488,11 @@ Before implementation, add tests for:
   normalized database effect (potentially empty when the operations cancel)
 - `EdgeChanges.requestedSet` reflects the final intended replacement set after
   the latest `set` call
-- `PendingEdgeOps` exposes set-valued intent fields (deduplicated literal call
-  log; same-id cancellations do not remove from these sets, aligned with
-  `EdgeChanges.requestedAdds` / `requestedRemoves`) and does not expose the
-  raw ordered operation log
+- `PendingEdgeOps` exposes the same intent field names as `EdgeChanges`
+  (`requestedSet`, `requestedAdds`, `requestedRemoves`). Same dedup /
+  no-cancellation rule. `PendingEdgeOps` does not expose `added` / `removed`
+  because junction state has not been read yet, and does not expose the raw
+  ordered operation log
 - mixed replacement and delta operations for the same link-table M2M edge
   throw `IllegalStateException` — fail-fast at the incompatible mutator call
   site, and as a defense-in-depth check at start-of-save preflight (after the

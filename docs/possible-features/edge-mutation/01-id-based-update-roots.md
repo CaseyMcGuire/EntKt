@@ -235,7 +235,24 @@ data class PostUpdatePrivacyContext(
     val effectivePatch: PostUpdatePatch,
     val candidate: PostWriteCandidate,
 )
+
+data class PostUpdateValidationContext(
+    val client: EntClient,
+    val before: Post,
+    val requestedPatch: PostUpdatePatch,
+    val effectivePatch: PostUpdatePatch,
+    val candidate: PostWriteCandidate,
+)
 ```
+
+The validation context mirrors the privacy context shape minus the
+`PrivacyContext` field (validators are not authorization rules). Both run
+against the same loaded `before`, the same requested / effective patches,
+and the same after-state candidate, so a rule moved from validation to
+privacy or vice versa sees the same data. When the link-table M2M RFC
+([05-link-table-helpers.md](05-link-table-helpers.md)) lands, both
+contexts will also expose an `edgeChanges` sidecar surfacing the
+caller's intent and the computed database delta per M2M edge.
 
 `candidate` represents the writable owner-row values after the mutation. The
 database update should still write only effective patch/dirty fields, not every
