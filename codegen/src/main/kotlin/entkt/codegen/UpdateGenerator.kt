@@ -540,8 +540,22 @@ internal class UpdateGenerator(
      * all skipped because no state transition is persisted.
      *
      * **Internal current-row load.** Otherwise `save()` loads the
-     * current owner row via `driver.byId(id)` (bypassing LOAD
-     * privacy) before any hook runs. If the row no longer exists,
+     * current owner row before any hook runs. The path branches on
+     * the per-save `consistency` parameter (RFC #4):
+     *
+     * - `UpdateConsistency.ReadCurrent` (the default) reads the row
+     *   via `driver.byId(id)` — no lock; another transaction may
+     *   change or delete the row between this read and the write.
+     * - `UpdateConsistency.Pessimistic` reads the row via
+     *   `driver.readRowForUpdate(id)` — held under a true row lock
+     *   until the surrounding transaction commits or rolls back,
+     *   so the checked owner state stays stable through the write.
+     *   Two preflights run before this load: a missing transaction
+     *   throws `TransactionRequiredException` and a driver without
+     *   `supportsReadRowForUpdate` throws
+     *   `UnsupportedDriverCapabilityException`.
+     *
+     * Either path bypasses LOAD privacy. If the row no longer exists,
      * `save()` returns `null` before hooks, privacy, validation, or
      * the driver write. The loaded row is the privacy/validation
      * `before` and the fallback for untouched fields in the
