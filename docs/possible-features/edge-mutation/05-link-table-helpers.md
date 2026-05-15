@@ -19,7 +19,11 @@ FK philosophy from [To-One FK Mutation And Nullability](02-to-one-assignment-nul
 
 `tagId` is typed as the target's id type (e.g., `UUID` for
 `Tag` with `EntId.uuid()`, `Long` for `EntId.long()`), so calls are
-still compile-time-checked against passing a wrong-typed id. The
+compile-time-checked by id scalar type — a `tags.add(...)` call is
+rejected only when the argument's scalar type differs from the
+target's id scalar type. Ids are plain scalars (`Long`, `UUID`,
+`Int`, `String`), not entity-specific wrappers, so an id from a
+different entity with the same scalar type still compiles. The
 helpers do not accept loaded `Tag` entities; callers with a target
 entity in hand pass `tag.id` explicitly. This matches the
 `authorId = alice.id` pattern from RFC #2 — relationship writes never
@@ -77,9 +81,12 @@ client.withTransaction { tx ->
 
 The id type is the target's id type (e.g., `UUID` for `Tag` with
 `EntId.uuid()`, `Long` for `EntId.long()`). The compiler rejects
-mismatched types — you can't pass a `Post` id to a `tags.add(...)`
-call. No entity-argument overloads exist; the only way to call
-`tags.add(...)` is with a target id.
+arguments whose scalar type differs from the target's id scalar type.
+Because ids are plain scalars, not entity-specific wrappers, a `Post`
+id with the same scalar type as `Tag`'s id still compiles —
+type-checking is by id scalar type, not by source entity. No
+entity-argument overloads exist; the only way to call `tags.add(...)`
+is with a target id.
 
 All generated link-table M2M helpers require a transaction-scoped client and use
 the same owner-edge serialization discipline. `set(...)` is an exact
