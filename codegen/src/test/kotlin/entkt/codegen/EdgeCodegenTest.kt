@@ -2088,6 +2088,39 @@ class EdgeCodegenTest {
         }
     }
 
+    @Test
+    fun `M2M eager loading groups by iterating ordered target rows, not junction rows`() {
+        // Iterating junctionRows here would group in driver-default
+        // junction order — which is unrelated to `subQuery.orderFields`
+        // — so a later `drop(offset).take(limit)` per group would pick
+        // the wrong subset for `withTags { orderBy(...); limit(...) }`.
+        // The fix builds a target→sources membership lookup from the
+        // junction rows, then iterates targetRows (already ordered by
+        // `subQuery.orderFields`) and appends each target to its
+        // source groups.
+        val (_, names, byName) = createAllSchemas()
+        val output = QueryGenerator("com.example.ent")
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
+
+        // The loop that populates the grouped map must iterate
+        // targetRows, not junctionRows.
+        assert(output.contains("for (row in targetRows)")) {
+            "M2M eager grouping must iterate ordered targetRows\n$output"
+        }
+        // Membership lookup: target id → list of sources.
+        assert(output.contains("sourcesByTargetId")) {
+            "Should build a target→sources membership lookup\n$output"
+        }
+        // Negative: the old "iterate junctionRows + targetById lookup"
+        // shape would lose ordering.
+        assert(!output.contains("for (jr in junctionRows) { val target = targetById[")) {
+            "Should not iterate junctionRows when building groups\n$output"
+        }
+        assert(!output.contains("val targetById = targetRows.map")) {
+            "Should not pre-build targetById; iterating targetRows directly preserves order\n$output"
+        }
+    }
+
     // ---------- Ambiguous junction disambiguation ----------
 
     @Test

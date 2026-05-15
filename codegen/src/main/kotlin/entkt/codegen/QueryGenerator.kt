@@ -747,21 +747,33 @@ internal class QueryGenerator(
             "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, targetIds), subQuery.orderFields, null, null)",
             targetClass, PREDICATE, "id", OP,
         )
+        // Build a target → sources membership lookup from the junction
+        // rows. Then iterate `targetRows` in its (already
+        // `subQuery.orderFields`-ordered) order, appending each target
+        // to the per-source groups it belongs to. Iterating junction
+        // rows directly here would drop the ordering — junction rows
+        // come back in driver-default order, not target order — and the
+        // subsequent `drop(offset).take(limit)` per group would slice
+        // the wrong subset for `withTags { orderBy(...); limit(...) }`.
         body.addStatement(
-            "val targetById = targetRows.map { %T.fromRow(it) }.associateBy { it.id }",
-            targetClass,
+            "val sourcesByTargetId = mutableMapOf<Any?, MutableList<Any?>>()",
         )
-        // Group targets by source via junction rows, then paginate per group.
-        body.addStatement("val grouped = mutableMapOf<Any?, MutableList<%T>>()", targetClass)
         body.beginControlFlow("for (jr in junctionRows)")
         body.addStatement(
-            "val target = targetById[jr[%S]] ?: continue",
+            "sourcesByTargetId.getOrPut(jr[%S]) { mutableListOf() }.add(jr[%S])",
             join.junctionTargetColumn,
-        )
-        body.addStatement(
-            "grouped.getOrPut(jr[%S]) { mutableListOf() }.add(target)",
             join.junctionSourceColumn,
         )
+        body.endControlFlow()
+        body.addStatement("val grouped = mutableMapOf<Any?, MutableList<%T>>()", targetClass)
+        body.beginControlFlow("for (row in targetRows)")
+        body.addStatement("val target = %T.fromRow(row)", targetClass)
+        body.addStatement("val sources = sourcesByTargetId[target.id] ?: continue")
+        body.beginControlFlow("for (src in sources)")
+        body.addStatement(
+            "grouped.getOrPut(src) { mutableListOf() }.add(target)",
+        )
+        body.endControlFlow()
         body.endControlFlow()
         body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
         body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
