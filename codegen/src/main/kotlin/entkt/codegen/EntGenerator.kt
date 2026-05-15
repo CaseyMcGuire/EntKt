@@ -420,6 +420,31 @@ private fun validateThroughLinkJunctions(
                 )
             }
 
+            // Rule 4a: junction belongsTo edges must not be `.unique()` —
+            // that would constrain each source/target endpoint to at most
+            // one junction row, turning the M2M into 1:1 and breaking
+            // helper semantics like repeated `tags.add(...)` calls.
+            if (sourceBt.unique) {
+                error(
+                    "$ctx: source junction edge '${sourceJunctionEdge.name}' is `.unique()`; this " +
+                        "constrains each ${schemaNames[sourceJunctionEdge.target] ?: sourceJunctionEdge.target.tableName} " +
+                        "to at most one junction row, turning the relationship into 1:1 and breaking " +
+                        "M2M helper semantics. Drop `.unique()` (the source-first composite unique " +
+                        "index from Rule 6 already enforces pair uniqueness) or model this " +
+                        "relationship as throughEntity / hasOne+belongsTo.",
+                )
+            }
+            if (targetBt.unique) {
+                error(
+                    "$ctx: target junction edge '${targetJunctionEdge.name}' is `.unique()`; this " +
+                        "constrains each ${schemaNames[targetJunctionEdge.target] ?: targetJunctionEdge.target.tableName} " +
+                        "to at most one junction row, turning the relationship into 1:1 and breaking " +
+                        "M2M helper semantics. Drop `.unique()` (the source-first composite unique " +
+                        "index from Rule 6 already enforces pair uniqueness) or model this " +
+                        "relationship as throughEntity / hasOne+belongsTo.",
+                )
+            }
+
             // Resolve FK column names — after `.field(handle)` if explicit,
             // otherwise the synthesized `${edgeName}_id`.
             val sourceFkCol = sourceBt.field ?: "${sourceJunctionEdge.name}_id"
@@ -505,6 +530,13 @@ private fun validateThroughLinkJunctions(
                             "no enforcement on this path. Drop it or use throughEntity.",
                     )
                 }
+                // Note: a `.unique()` on the backing field can't survive
+                // schema finalization unless the belongsTo edge is also
+                // `.unique()` (the existing edge/field consistency check
+                // from RFC #2 rejects the mismatch). When the edge IS
+                // `.unique()`, Rule 4a above fires before we ever look
+                // at the backing field — so a separate Rule 3 unique
+                // check would be dead code.
             }
 
             // Rule 5: id strategy not EXPLICIT.
@@ -532,6 +564,28 @@ private fun validateThroughLinkJunctions(
                         "($sourceFkCol, $targetFkCol). Declare one with " +
                         "`index(\"<name>\", <source_fk>, <target_fk>).unique()` (no `.where(...)`), " +
                         "or model this relationship as throughEntity.",
+                )
+            }
+
+            // Rule 6a: no extra unique index that constrains a single FK
+            // column (partial or not). A `unique()` index on just
+            // `source_fk` or `target_fk` would force at most one junction
+            // row per endpoint — same broken-M2M effect as Rule 4a's
+            // `.unique()` on the belongsTo edge. The RFC explicitly
+            // allows additional non-unique single-column indexes (for
+            // join planning), so we only reject the unique single-FK
+            // case here.
+            val badFkUniqueIndex = indexes.firstOrNull { idx ->
+                idx.unique && idx.fields.size == 1 &&
+                    (idx.fields.single() == sourceFkCol || idx.fields.single() == targetFkCol)
+            }
+            if (badFkUniqueIndex != null) {
+                error(
+                    "$ctx: junction declares unique single-column index '${badFkUniqueIndex.name}' " +
+                        "on '${badFkUniqueIndex.fields.single()}'; this constrains each endpoint " +
+                        "to at most one junction row, turning the M2M into 1:1 and breaking helper " +
+                        "semantics. Drop the `.unique()` (a non-unique single-column index for " +
+                        "join planning is fine) or model this relationship as throughEntity.",
                 )
             }
         }

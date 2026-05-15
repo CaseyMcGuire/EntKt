@@ -675,6 +675,41 @@ private class FieldBackedTenantedLinkPostTag : EntSchema("fb_tenanted_link_post_
     val pair = index("idx_fb_tenanted_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
+// Junction whose source belongsTo is `.unique()` (violates rule 4a).
+private class UniqueEdgeLinkPost : EntSchema("uniq_edge_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<UniqueEdgeLinkTag>("tags")
+        .throughLink<UniqueEdgeLinkPostTag>(UniqueEdgeLinkPostTag::post, UniqueEdgeLinkPostTag::tag)
+}
+private class UniqueEdgeLinkTag : EntSchema("uniq_edge_link_tags") {
+    override fun id() = EntId.long()
+}
+private class UniqueEdgeLinkPostTag : EntSchema("uniq_edge_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<UniqueEdgeLinkPost>("post").unique().onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<UniqueEdgeLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_uniq_edge_link_post_tags_post_tag", post.fk, tag.fk).unique()
+}
+
+// Junction with an extra unique single-column index on a junction FK
+// (violates rule 6a). The required composite is also present so we
+// exercise the new rule, not Rule 6's missing-composite path.
+private class UniqueSingleIdxLinkPost : EntSchema("uniq_single_idx_link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<UniqueSingleIdxLinkTag>("tags")
+        .throughLink<UniqueSingleIdxLinkPostTag>(UniqueSingleIdxLinkPostTag::post, UniqueSingleIdxLinkPostTag::tag)
+}
+private class UniqueSingleIdxLinkTag : EntSchema("uniq_single_idx_link_tags") {
+    override fun id() = EntId.long()
+}
+private class UniqueSingleIdxLinkPostTag : EntSchema("uniq_single_idx_link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<UniqueSingleIdxLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<UniqueSingleIdxLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_uniq_single_idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
+    val byPost = index("idx_uniq_single_idx_link_post_tags_post", post.fk).unique()
+}
+
 // Junction with EXPLICIT id strategy (violates rule 5).
 private class ExplicitIdLinkPost : EntSchema("explicit_id_link_posts") {
     override fun id() = EntId.long()
@@ -1996,6 +2031,33 @@ class EdgeCodegenTest {
         assertContains(err.message!!, "extra belongsTo edge")
         assertContains(err.message!!, "'tenant'")
         assertContains(err.message!!, "tenant_id_col")
+    }
+
+    @Test
+    fun `throughLink junction with unique() belongsTo is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("UniqueEdgeLinkPost", UniqueEdgeLinkPost()),
+                SchemaInput("UniqueEdgeLinkTag", UniqueEdgeLinkTag()),
+                SchemaInput("UniqueEdgeLinkPostTag", UniqueEdgeLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "is `.unique()`")
+        assertContains(err.message!!, "1:1")
+        assertContains(err.message!!, "'post'")
+    }
+
+    @Test
+    fun `throughLink junction with extra unique single-column FK index is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("UniqueSingleIdxLinkPost", UniqueSingleIdxLinkPost()),
+                SchemaInput("UniqueSingleIdxLinkTag", UniqueSingleIdxLinkTag()),
+                SchemaInput("UniqueSingleIdxLinkPostTag", UniqueSingleIdxLinkPostTag()),
+            ))
+        }
+        assertContains(err.message!!, "unique single-column index")
+        assertContains(err.message!!, "post_id")
     }
 
     @Test
