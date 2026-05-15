@@ -285,12 +285,24 @@ internal class RepoGenerator(
             )
             .returns(INT)
             // Transaction-requirement preflight (RFC #4) — fires before
-            // the candidate query so an empty-result call under
-            // RequiredForAllWrites still throws (instead of silently
-            // returning 0 because nothing matched), and a non-empty
-            // result doesn't get partway through the candidate query
-            // before the per-entity delete throws.
-            .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
+            // the candidate query so:
+            //  - an empty-result call under RequiredForAllWrites still
+            //    throws (instead of silently returning 0 because
+            //    nothing matched), and a non-empty result doesn't get
+            //    partway through the candidate query before the
+            //    per-entity delete throws;
+            //  - RequiredForMultiWrite fires too — deleteMany is a
+            //    multi-write API regardless of how many rows match,
+            //    so we classify by operation shape before the query
+            //    rather than waiting for per-entity preflights to
+            //    each report single-write. (The per-entity delete
+            //    preflight then runs single-write inside the
+            //    transaction.) Mirrors the RFC's "classify before
+            //    normalization" rule for empty patches.
+            .addStatement(
+                "client.checkTransactionRequirement(%S, multiWrite = true)",
+                "$schemaName deleteMany",
+            )
             .addStatement(
                 "val rows = driver.query(%T.TABLE, predicates.toList(), emptyList(), null, null)",
                 entityClass,
@@ -535,6 +547,16 @@ internal class RepoGenerator(
         entityClass: ClassName,
         createLambda: LambdaTypeName,
     ): FunSpec {
+        // Classify by actual write count: 0 or 1 blocks = single-write
+        // (matches the per-block create() preflight); 2+ blocks =
+        // multi-write so RequiredForMultiWrite fires for the aggregate
+        // call even though each per-block create() preflight runs as
+        // single-write. RequiredForAllWrites fires either way (the
+        // multi-write flag doesn't change that branch). Without this
+        // outer preflight, RequiredForMultiWrite would silently
+        // accept a 5-block createMany outside a transaction because
+        // each delegated `create().save()` looks single-write to its
+        // own preflight.
         return FunSpec.builder("createMany")
             .addParameter(
                 ParameterSpec.builder("blocks", createLambda)
@@ -542,6 +564,13 @@ internal class RepoGenerator(
                     .build()
             )
             .returns(LIST.parameterizedBy(entityClass))
+            .addStatement(
+                "client.checkTransactionRequirement(%S, multiWrite = blocks.size > 1)",
+                // Operation label intentionally distinct from "create" so
+                // diagnostics show the multi-write entry point, not the
+                // delegated single-write path that runs per block.
+                "${entityClass.simpleName} createMany",
+            )
             .addStatement("return blocks.map { create(it).save() }")
             .build()
     }

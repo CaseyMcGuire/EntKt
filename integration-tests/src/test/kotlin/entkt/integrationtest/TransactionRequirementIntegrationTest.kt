@@ -202,6 +202,106 @@ class TransactionRequirementIntegrationTest {
     }
 
     @Test
+    fun `RequiredForMultiWrite accepts single-block createMany outside a transaction`() {
+        // createMany classifies by actual write count: 1 block = 1
+        // delegated `create().save()` = single-write, so the
+        // RequiredForMultiWrite preflight passes outside a transaction.
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
+        }
+        val users = client.users.createMany({
+            name = "Alice"
+            email = "alice@example.com"
+        })
+        assertEquals(1, users.size)
+    }
+
+    @Test
+    fun `RequiredForMultiWrite rejects multi-block createMany outside a transaction`() {
+        // 2+ blocks = 2+ delegated writes = multi-write. Without an
+        // outer createMany preflight, RequiredForMultiWrite would
+        // silently accept this — each per-block create() preflight
+        // sees only its own single write. Surface it as a TX-required
+        // error before any block runs, by classifying at the createMany
+        // entry.
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
+        }
+        val ex = assertFailsWith<TransactionRequiredException> {
+            client.users.createMany(
+                {
+                    name = "Alice"
+                    email = "alice-${java.util.UUID.randomUUID()}@example.com"
+                },
+                {
+                    name = "Bob"
+                    email = "bob-${java.util.UUID.randomUUID()}@example.com"
+                },
+            )
+        }
+        assertEquals(true, ex.message!!.contains("RequiredForMultiWrite"))
+        assertEquals(true, ex.message!!.contains("createMany"))
+        // No row was inserted — the preflight rejected before any per-block
+        // create() ran.
+        assertEquals(0L, driver.count("users", emptyList()))
+    }
+
+    @Test
+    fun `RequiredForMultiWrite accepts multi-block createMany inside a transaction`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
+        }
+        val users = client.withTransaction { tx ->
+            tx.users.createMany(
+                {
+                    name = "Alice"
+                    email = "alice-${java.util.UUID.randomUUID()}@example.com"
+                },
+                {
+                    name = "Bob"
+                    email = "bob-${java.util.UUID.randomUUID()}@example.com"
+                },
+            )
+        }
+        assertEquals(2, users.size)
+    }
+
+    @Test
+    fun `RequiredForMultiWrite rejects deleteMany outside a transaction (classify by operation shape, not result size)`() {
+        // deleteMany is a multi-write API regardless of how many rows
+        // actually match — classifying by operation shape mirrors the
+        // RFC's "classify before normalization" rule. Without this,
+        // a deleteMany over a predicate that matches 0 rows would
+        // silently return 0 outside a tx; matching N rows would loop
+        // through N delegated single-write deletes and never trigger
+        // the multi-write requirement.
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
+        }
+        val ex = assertFailsWith<TransactionRequiredException> {
+            client.users.deleteMany(entkt.integrationtest.ent.User.email eq "nobody@example.com")
+        }
+        assertEquals(true, ex.message!!.contains("RequiredForMultiWrite"))
+        assertEquals(true, ex.message!!.contains("deleteMany"))
+    }
+
+    @Test
+    fun `RequiredForMultiWrite accepts deleteMany inside a transaction`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
+        }
+        val deleted = client.withTransaction { tx ->
+            tx.users.deleteMany(entkt.integrationtest.ent.User.email eq "nobody@example.com")
+        }
+        assertEquals(0, deleted)
+    }
+
+    @Test
     fun `transaction requirement propagates to the transactional client`() {
         // The transactional sub-client must inherit the configured
         // requirement so nested saves still see it (and the inTransaction
