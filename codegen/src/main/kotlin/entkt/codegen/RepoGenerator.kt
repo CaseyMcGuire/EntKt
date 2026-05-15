@@ -595,6 +595,17 @@ internal class RepoGenerator(
         // accept a 5-block createMany outside a transaction because
         // each delegated `create().save()` looks single-write to its
         // own preflight.
+        //
+        // Zero-block calls short-circuit *before* the preflight,
+        // returning emptyList(). Vararg size is statically known on
+        // call entry — no I/O is needed to decide there's nothing to
+        // write — so this mirrors how update(id) { } reports NoChanges
+        // before the transaction-requirement check (per the RFC's
+        // "classify syntactically empty before any other observable
+        // work, including transaction requirement checks" rule). The
+        // contrast is deliberate against deleteMany(predicate), which
+        // requires a query to learn it has no work and therefore
+        // classifies by operation shape, not result size.
         return FunSpec.builder("createMany")
             .addParameter(
                 ParameterSpec.builder("blocks", createLambda)
@@ -602,6 +613,7 @@ internal class RepoGenerator(
                     .build()
             )
             .returns(LIST.parameterizedBy(entityClass))
+            .addStatement("if (blocks.isEmpty()) return emptyList()")
             .addStatement(
                 "client.checkTransactionRequirement(%S, multiWrite = blocks.size > 1)",
                 // Operation label intentionally distinct from "create" so

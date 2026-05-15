@@ -202,6 +202,34 @@ class TransactionRequirementIntegrationTest {
     }
 
     @Test
+    fun `zero-block createMany short-circuits before the transaction-requirement preflight`() {
+        // A `createMany()` with no blocks has nothing to write, and
+        // the vararg size is statically known on call entry — no I/O
+        // is needed to decide there's nothing to do. Mirrors how
+        // `update(id) { }` reports NoChanges before the preflight
+        // ("classify syntactically empty before any other observable
+        // work, including transaction requirement checks"). So even
+        // under the strictest requirement, an empty createMany returns
+        // emptyList() outside a transaction rather than throwing.
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForAllWrites
+        }
+        val users = client.users.createMany()
+        assertEquals(0, users.size)
+    }
+
+    @Test
+    fun `zero-block createMany short-circuits under RequiredForMultiWrite too`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
+        }
+        val users = client.users.createMany()
+        assertEquals(0, users.size)
+    }
+
+    @Test
     fun `RequiredForMultiWrite accepts single-block createMany outside a transaction`() {
         // createMany classifies by actual write count: 1 block = 1
         // delegated `create().save()` = single-write, so the
