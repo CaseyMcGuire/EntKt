@@ -85,7 +85,10 @@ private val USER_GROUP_SCHEMA = EntitySchema(
     edges = emptyMap(),
 )
 
-// USER_SCHEMA with reverse M2M edge (as codegen would inject)
+// USER_SCHEMA augmented with a hand-built "groups" forward M2M edge —
+// stands in for what a `User.groups = manyToMany<Group>(...).throughEntity<UserGroup>(...)`
+// declaration would compile to. Used by the HasEdge / HasEdgeWith
+// tests below that exercise forward M2M traversal from the User side.
 private val USER_SCHEMA_WITH_M2M = EntitySchema(
     table = "users",
     idColumn = "id",
@@ -440,7 +443,7 @@ class InMemoryDriverTest {
     }
 
     @Test
-    fun `reverse M2M HasEdge from target side`() {
+    fun `forward M2M HasEdge from declaring side`() {
         val driver = freshM2M()
         val alice = driver.insert("users", mapOf("name" to "Alice"))
         val bob = driver.insert("users", mapOf("name" to "Bob"))
@@ -514,7 +517,7 @@ class InMemoryDriverTest {
     }
 
     @Test
-    fun `reverse M2M HasEdgeWith with inner predicate`() {
+    fun `forward M2M HasEdgeWith with inner predicate`() {
         val driver = freshM2M()
         val alice = driver.insert("users", mapOf("name" to "Alice"))
         val bob = driver.insert("users", mapOf("name" to "Bob"))

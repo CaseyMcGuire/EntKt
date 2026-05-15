@@ -198,7 +198,7 @@ On failure, each error is listed:
 
 ```
 Schema validation failed:
-  - Schema 'Post': reverse M2M edge 'users_posts' collides with a declared edge of the same name
+  - Schema 'Post': edge 'author' references unregistered target schema 'User'
 ```
 
 ### Explain

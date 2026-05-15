@@ -495,7 +495,7 @@ Consolidation:
 `SchemaInspectorTest` covers:
 
 - validation pass/fail (valid graph, duplicate tables, unresolved inverse,
-  reverse M2M edge name collisions)
+  unregistered edge targets, member-name collisions)
 - id type and strategy (AUTO_LONG, CLIENT_UUID, AUTO_INT)
 - fields (types, modifiers, nullable, unique, defaults, enum defaults)
 - edge-driven uniqueness carried onto reused FK fields
