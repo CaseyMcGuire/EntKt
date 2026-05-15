@@ -788,22 +788,34 @@ junction writes. The visible behavior splits by save shape:
 - **Edge-only updates (no scalar/FK changes)**: there is no owner `UPDATE` to
   detect the missing row. Junction `INSERT`(s) in step 13 reference the now-gone
   owner id and the database surfaces a foreign-key violation; junction `DELETE`(s)
-  for a non-existent owner are no-ops and don't surface anything. The FK
-  violation surfaces according to the
-  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md) constraint
-  mapping: throwing APIs propagate the driver's raw exception (e.g. a
-  `org.postgresql.util.PSQLException` for the Postgres driver, or an
-  `EntConstraintViolationException` wrapper once that mapping is wired), and
-  `saveOrError()` returns `Err(EntError.ConstraintViolation)`. Callers who need
-  a clean `NotFound` for the owner-deleted-post-read case on edge-only saves
-  select `UpdateConsistency.Pessimistic`, which holds the owner row across the
+  for a non-existent owner are no-ops and don't surface anything. **V1 does not
+  catch this FK violation**: the driver's raw exception propagates through both
+  throwing and `saveOrError()` paths (e.g. a `org.postgresql.util.PSQLException`
+  for the Postgres driver). `EntError` does not have a `ConstraintViolation`
+  variant in V1 and generated `saveOrError()` only catches `EntException` /
+  `PrivacyDeniedException` / `ValidationException`; constraint errors fall
+  outside those. Callers who need a clean `NotFound` for the
+  owner-deleted-post-read case on edge-only saves select
+  `UpdateConsistency.Pessimistic`, which holds the owner row across the
   junction writes and rejects the concurrent delete.
 
-Remapping this specific FK violation to `NotFound` (so an edge-only `ReadCurrent`
-M2M save matches the mixed-update shape's behavior) is plausible follow-up work:
-it requires the driver to introspect the constraint that fired so the runtime
-can distinguish "owner gone" from a genuine target-side FK error. That remapping
-is deferred; the `ConstraintViolation` surfacing above is the V1 contract.
+Two follow-up improvements are deferred and intentionally out of V1 scope:
+
+1. **A structured `EntError.ConstraintViolation` result variant** plus an
+   `EntConstraintViolationException` wrapper, so generated `saveOrError()`
+   maps the FK violation to `Err(EntError.ConstraintViolation)` instead of
+   propagating the raw driver exception. This needs a driver-side capability
+   to identify constraint failures and a runtime mapping; both are
+   non-trivial and outside this RFC's scope.
+2. **Remapping this specific FK violation to `NotFound`** (so an edge-only
+   `ReadCurrent` M2M save matches the mixed-update shape's behavior). On
+   top of (1), this requires the driver to introspect *which* constraint
+   fired so the runtime can distinguish "owner gone" from a genuine
+   target-side FK error.
+
+Until both land, V1's contract is "the driver exception propagates"; pick
+`UpdateConsistency.Pessimistic` if you need NotFound or other structured
+results on the owner-deleted-post-read edge case.
 
 The advisory-lock strategy is acceptable only for `serializeOwnerEdgeAndRead`
 (link-table M2M owner-edge serialization), never for `readRowForUpdate`: a
@@ -965,13 +977,13 @@ Before implementation, add tests for:
   transaction between the owner-row read and the junction writes, a *mixed*
   update (scalar/FK + edge) returns `NotFound` (the step-12 owner `UPDATE`
   affects 0 rows); an *edge-only* update surfaces the FK violation from the
-  step-13 junction `INSERT`(s) — `Err(EntError.ConstraintViolation)` under
-  `saveOrError()` (per the
-  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md)) and the
-  driver's raw exception (or its `EntConstraintViolationException` wrapper)
-  on throwing paths. V1 does not remap the FK violation to `NotFound` for
-  this specific case — callers who need that select `Pessimistic`. (On drivers
-  with `supportsReadRowForUpdate`, step 4 uses the true row lock for *both*
+  step-13 junction `INSERT`(s). V1 does not catch that FK violation — the
+  driver's raw exception propagates through both throwing and `saveOrError()`
+  paths (`EntError.ConstraintViolation` and a structured `saveOrError()`
+  mapping for it are deferred follow-up work; see the "Post-read owner
+  deletion under `ReadCurrent`" section above for details). Callers who
+  need a clean `NotFound` here select `Pessimistic`. (On drivers with
+  `supportsReadRowForUpdate`, step 4 uses the true row lock for *both*
   modes, so the post-read DELETE is blocked until the save commits and the
   race does not fire — but the contract permits it, so callers must not rely
   on the implementation side-effect.) Test coverage exercises both shapes

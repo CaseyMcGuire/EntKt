@@ -221,10 +221,23 @@ orientation) — is the "explicit opposite-side declaration" rejected
 below. So in practice the rejection rule is "two `throughLink(...)`
 declarations with the same canonical identity are rejected"; whether
 the two orientation keys match exactly or are pair-swapped doesn't
-matter for rejection. Two declarations with *distinct* canonical
-identities — e.g., `(ProjectAssignment, project, assignee)` and
-`(ProjectAssignment, project, reviewer)` — describe genuinely
-different relationships and both are allowed.
+matter for rejection.
+
+Two `throughEntity(...)` declarations with *distinct* canonical
+identities over the same junction — e.g.,
+`(ProjectAssignment, project, assignee)` and
+`(ProjectAssignment, project, reviewer)` over a `ProjectAssignment`
+junction with `project`, `assignee`, *and* `reviewer` `belongsTo`
+edges — describe genuinely different relationships and both are
+allowed. **For `throughLink(...)` this combination is unreachable**:
+the Junction-shape rules below restrict a helper-eligible
+`throughLink(...)` junction to exactly the id and the two named FK
+columns, so a junction that would host distinct canonical identities
+necessarily has belongsTo edges beyond the named pair, which the
+extra-belongsTo rule rejects. A relationship that wants distinct
+canonical identities over one junction must therefore declare both
+sides as `throughEntity(...)` and mutate the junction through its
+generated repo.
 
 **V1 synthesizes no reverse traversal edge for any M2M.** Codegen does not
 infer a read-only edge on the opposite-side schema, the opposite-side
@@ -629,6 +642,18 @@ only when:
   should be modeled with `throughEntity(...)`, where the caller
   mutates the junction through its repo and can encode any policy
   explicitly.
+
+  **Concurrency note.** The `OnDelete.CASCADE` requirement also has a
+  concurrency consequence for the link-table helpers: a concurrent
+  endpoint delete on a target that a `tags.set(...)` or `tags.add(...)`
+  call has just read can silently remove the corresponding junction
+  row via the cascade, between the helper's junction read and write.
+  Owner-edge serialization protects the owner row but not the target
+  rows, so the helper's "the relationship set equals the requested
+  set" guarantee is scoped to interleavings among generated M2M
+  helpers, not against endpoint cascades. See
+  [Link-Table M2M Mutation Helpers — Target Loading And Existence](05-link-table-helpers.md)
+  for the full discussion.
 
   **Note on "explicit".** Codegen reads
   `EdgeKind.BelongsTo.onDelete` and accepts the helper-eligibility
