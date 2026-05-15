@@ -222,6 +222,9 @@ internal class RepoGenerator(
         return FunSpec.builder("delete")
             .addParameter("entity", entityClass)
             .returns(Boolean::class)
+            // Transaction-requirement preflight (RFC #4) — fires before
+            // the privacy context load and any other observable work.
+            .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
             .addStatement("val privacy = client.currentPrivacyContext()")
             .addStatement("val candidate = buildDeleteCandidate(entity)")
             .addStatement("evaluateDeletePrivacy(privacy, entity, candidate)")

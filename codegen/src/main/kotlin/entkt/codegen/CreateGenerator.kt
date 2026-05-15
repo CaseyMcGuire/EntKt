@@ -285,6 +285,12 @@ internal class CreateGenerator(
     ) {
         val idStrategy = idStrategyName(schema)
 
+        // ---- Transaction-requirement preflight (RFC #4). Throws
+        // TransactionRequiredException before any observable work
+        // (hooks, defaults, validation, driver writes) when the
+        // configured TransactionRequirement isn't satisfied. ----
+        builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName create")
+
         // ---- Lifecycle hooks (before validation so hooks can set fields). ----
         builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
         // beforeCreate hooks receive a CreateHookContext wrapping the

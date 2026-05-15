@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -21,6 +22,8 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val VIEWER = ClassName("entkt.runtime", "Viewer")
 private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
+private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime", "TransactionRequirement")
+private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -103,6 +106,56 @@ internal class ClientGenerator(
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("{ %T(%T.Anonymous) }", PRIVACY_CONTEXT, VIEWER)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("transactionRequirement", TRANSACTION_REQUIREMENT)
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("%T.Optional", TRANSACTION_REQUIREMENT)
+                    .build()
+            )
+            .addFunction(
+                // Generated saves call this at save() / delete() preflight
+                // (and at the multi-write equivalents once those land) so a
+                // configured TransactionRequirement is enforced *before*
+                // hooks, privacy, validation, driver reads, or driver writes.
+                // [multiWrite] indicates whether the calling save will issue
+                // more than one driver write — RequiredForMultiWrite only
+                // fires for those; RequiredForAllWrites fires for any write.
+                FunSpec.builder("checkTransactionRequirement")
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter("operation", String::class)
+                    .addParameter(
+                        ParameterSpec.builder("multiWrite", BOOLEAN)
+                            .defaultValue("false")
+                            .build(),
+                    )
+                    .addCode(
+                        CodeBlock.builder()
+                            .beginControlFlow("when (transactionRequirement)")
+                            .addStatement("%T.Optional -> Unit", TRANSACTION_REQUIREMENT)
+                            .beginControlFlow("%T.RequiredForMultiWrite ->", TRANSACTION_REQUIREMENT)
+                            .beginControlFlow("if (multiWrite && !driver.inTransaction)")
+                            .addStatement(
+                                "throw %T(operation + %S)",
+                                TRANSACTION_REQUIRED_EXCEPTION,
+                                " requires a transaction-scoped client (TransactionRequirement.RequiredForMultiWrite)",
+                            )
+                            .endControlFlow()
+                            .endControlFlow()
+                            .beginControlFlow("%T.RequiredForAllWrites ->", TRANSACTION_REQUIREMENT)
+                            .beginControlFlow("if (!driver.inTransaction)")
+                            .addStatement(
+                                "throw %T(operation + %S)",
+                                TRANSACTION_REQUIRED_EXCEPTION,
+                                " requires a transaction-scoped client (TransactionRequirement.RequiredForAllWrites)",
+                            )
+                            .endControlFlow()
+                            .endControlFlow()
+                            .endControlFlow()
+                            .build(),
+                    )
                     .build()
             )
             .addProperties(sorted.map { buildRepoProperty(it) })
@@ -251,6 +304,15 @@ internal class ClientGenerator(
                     .initializer("null")
                     .build()
             )
+            .addProperty(
+                // Configurable per-client transaction requirement. The config
+                // exposes it as a public DSL property so callers write
+                // `EntClient(driver) { transactionRequirement = TransactionRequirement.RequiredForAllWrites }`.
+                PropertySpec.builder("transactionRequirement", TRANSACTION_REQUIREMENT)
+                    .mutable(true)
+                    .initializer("%T.Optional", TRANSACTION_REQUIREMENT)
+                    .build()
+            )
             .addFunction(
                 FunSpec.builder("hooks")
                     .addParameter("block", hooksBlockLambda)
@@ -292,6 +354,7 @@ internal class ClientGenerator(
             block.addStatement("%L.applyValidation(cfg.policiesConfig.%LValidationConfig)", propName, propName)
         }
         block.addStatement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
+        block.addStatement("transactionRequirement = cfg.transactionRequirement")
         return block.build()
     }
 
@@ -305,6 +368,7 @@ internal class ClientGenerator(
         body.beginControlFlow("return driver.withTransaction { txDriver ->")
         body.addStatement("val tx = %T(txDriver)", clientClass)
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
+        body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -401,6 +465,7 @@ internal class ClientGenerator(
         val body = CodeBlock.builder()
         body.addStatement("val scoped = %T(driver)", clientClass)
         body.addStatement("scoped.privacyContextProvider = { context }")
+        body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -431,6 +496,7 @@ internal class ClientGenerator(
         val body = CodeBlock.builder()
         body.addStatement("val fixed = %T(driver)", clientClass)
         body.addStatement("fixed.privacyContextProvider = { context }")
+        body.addStatement("fixed.transactionRequirement = this.transactionRequirement")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("fixed.%L.copyHooksFrom(this.%L)", propName, propName)

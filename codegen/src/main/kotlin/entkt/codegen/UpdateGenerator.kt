@@ -577,6 +577,10 @@ internal class UpdateGenerator(
         // Reporting NoChanges before the load avoids existence-leaking
         // `update(missingId) {}` calls. saveOrNull throws here too —
         // NoChanges is not "expected absence" per the result-variants RFC.
+        // This also fires before the transaction-requirement preflight
+        // below, matching the RFC #4 pipeline ("syntactically empty
+        // update classification — report NoChanges before any other
+        // observable work, including transaction requirement checks").
         builder.beginControlFlow("if (dirtyFields.isEmpty())")
         builder.addStatement(
             "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
@@ -586,6 +590,12 @@ internal class UpdateGenerator(
             ENT_OPERATION,
         )
         builder.endControlFlow()
+
+        // ---- Transaction-requirement preflight (RFC #4). Throws
+        // TransactionRequiredException before the owner-row load,
+        // hooks, defaults, validation, driver writes when the
+        // configured TransactionRequirement isn't satisfied. ----
+        builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName update")
 
         // ---- Internal current-row load (bypasses LOAD privacy). ----
         // Missing rows short-circuit before hooks/privacy/validation run.
