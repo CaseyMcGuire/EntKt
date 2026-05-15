@@ -214,30 +214,47 @@ appropriate `DROP CONSTRAINT` / `ADD CONSTRAINT` ops.
 
 ### Many-to-Many
 
-Use `manyToMany<Target>(...).through<Junction>(...)` to declare an M2M
-relationship via a junction table:
+M2M relationships are declared by picking a write model at the schema
+site — the junction can either be a **domain entity** mutated through
+its own repo, or a **pure link table** that direct edge helpers can
+write to. Pick the write model with one of two markers:
+
+| Marker | When to use |
+|---|---|
+| `.throughEntity<Junction>(sourceEdge, targetEdge)` | Junction carries payload, hooks, privacy, or validation. Callers mutate it through the generated junction repo (e.g. `client.userGroups.create { ... }.save()`). |
+| `.throughLink<Junction>(sourceEdge, targetEdge)` | Junction is pure relationship storage (id + the two FK columns; no payload, no hooks, no privacy). Direct edge helpers (`add`, `remove`, `set`) become eligible once the link-table-helper RFC lands. |
+
+The two refs always name the junction's `belongsTo` edges in the
+order **source first, target second** — `sourceEdge` points back at
+the schema declaring the `manyToMany`; `targetEdge` points at the
+M2M target (`<Target>` in `manyToMany<Target>`). Schema finalization
+rejects refs that don't match this orientation.
+
+The throughEntity case (most domain models start here):
 
 ```kotlin
 class User : EntSchema("users") {
     override fun id() = EntId.long()
 
-    val groups = manyToMany<Group>("groups").through<UserGroup>(UserGroup::user, UserGroup::group)
+    val groups = manyToMany<Group>("groups")
+        .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 ```
 
 The junction schema (`UserGroup`) is itself an `EntSchema` with two
-`belongsTo()` edges pointing at the two sides.
+`belongsTo()` edges pointing at the two sides — and any payload fields
+the relationship needs (e.g. `joinedAt`, `role`).
 
-For ambiguous junction tables (where both sides point to the same entity
-type), the typed property references disambiguate which junction edge
-is source vs target:
+For ambiguous junction tables (where both sides point to the same
+entity type), the typed property references disambiguate which
+junction edge is source vs target:
 
 ```kotlin
 class Person : EntSchema("people") {
     override fun id() = EntId.long()
 
     val friends = manyToMany<Person>("friends")
-        .through<Friendship>(Friendship::user, Friendship::friend)
+        .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships") {
@@ -248,13 +265,22 @@ class Friendship : EntSchema("friendships") {
 }
 ```
 
+A `throughLink` declaration is also rejected at codegen time if the
+junction doesn't satisfy the helper-eligibility rules: id + exactly
+the two named FK columns, both `belongsTo` edges non-null, both with
+explicit `OnDelete.CASCADE`, no write-time modifiers on the FK
+backing fields, a non-`EXPLICIT` id strategy, and a non-partial
+unique composite index on `(sourceFk, targetFk)`. Junctions that
+need anything beyond that shape — payload columns, hooks, validators
+— must use `throughEntity`.
+
 ## Relationship Patterns
 
 The relationship DSL is centered on one rule:
 
 - `belongsTo(...)` owns the foreign key column
 - `hasMany(...)` / `hasOne(...)` are inverse traversal declarations
-- `manyToMany(...).through(...)` points at an explicit junction schema
+- `manyToMany(...).throughEntity(...)` (or `.throughLink(...)`) points at an explicit junction schema
 
 Quick map:
 
@@ -265,9 +291,9 @@ Quick map:
 | `O2O Bidirectional` | same as O2O, with inverse declared | same table shape as O2O; both traversals exposed |
 | `O2M Two Types` | `hasMany` + `belongsTo()` | FK column on the many-side table |
 | `O2M Same Type` | self `hasMany` + self `belongsTo()` | self-referencing FK column on the child rows |
-| `M2M Two Types` | `manyToMany().through<Junction>(...)` | explicit junction table with two FKs |
-| `M2M Same Type` | self `manyToMany().through<Junction>(...)` | explicit self-junction table with two FKs to the same table |
-| `M2M Bidirectional` | matching `manyToMany().through(...)` on both endpoint schemas | same junction table; both traversals exposed |
+| `M2M Two Types` | `manyToMany().throughEntity<Junction>(...)` (or `.throughLink<Junction>(...)`) | explicit junction table with two FKs |
+| `M2M Same Type` | self `manyToMany().throughEntity<Junction>(...)` | explicit self-junction table with two FKs to the same table |
+| `M2M Bidirectional` | matching `manyToMany().throughEntity(...)` on both endpoint schemas with pair-swapped orientation keys | same junction table; both endpoints declare their own forward traversal |
 
 ### O2O Two Types
 
@@ -402,7 +428,7 @@ class User : EntSchema("users") {
     override fun id() = EntId.long()
 
     val groups = manyToMany<Group>("groups")
-        .through<UserGroup>(UserGroup::user, UserGroup::group)
+        .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
 class Group : EntSchema("groups") {
@@ -441,7 +467,7 @@ class Person : EntSchema("people") {
     override fun id() = EntId.long()
 
     val friends = manyToMany<Person>("friends")
-        .through<Friendship>(Friendship::user, Friendship::friend)
+        .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships") {
@@ -463,8 +489,9 @@ Generated table shape:
   - `user_id BIGINT NOT NULL REFERENCES people(id) ON DELETE RESTRICT`
   - `friend_id BIGINT NOT NULL REFERENCES people(id) ON DELETE RESTRICT`
 
-The property references in `through(...)` disambiguate which junction edge is
-the source and which is the target.
+The property references passed to `throughEntity(...)` (or
+`throughLink(...)`) disambiguate which junction edge is the source
+and which is the target — `sourceEdge` first, then `targetEdge`.
 
 ### M2M Bidirectional
 
@@ -473,14 +500,14 @@ class User : EntSchema("users") {
     override fun id() = EntId.long()
 
     val groups = manyToMany<Group>("groups")
-        .through<Membership>(Membership::user, Membership::group)
+        .throughEntity<Membership>(Membership::user, Membership::group)
 }
 
 class Group : EntSchema("groups") {
     override fun id() = EntId.long()
 
     val users = manyToMany<User>("users")
-        .through<Membership>(Membership::group, Membership::user)
+        .throughEntity<Membership>(Membership::group, Membership::user)
 }
 
 class Membership : EntSchema("memberships") {
@@ -493,10 +520,15 @@ class Membership : EntSchema("memberships") {
 
 Result:
 
-- `User` can traverse to `groups`
-- `Group` can traverse to `users`
+- `User` can traverse to `groups` via its own `manyToMany<Group>("groups")` declaration
+- `Group` can traverse to `users` via its own `manyToMany<User>("users")` declaration
 - the SQL table shape is still just `users`, `groups`, and `memberships`
-- declaring both sides adds traversal metadata, not extra endpoint columns
+- bidirectional traversal **requires** both endpoints to declare their own
+  `manyToMany`; the codegen does not auto-synthesize a reverse traversal
+  edge on the opposite side. Declaring both is the explicit-API pattern —
+  the orientation keys must pair-swap (one side passes
+  `(user, group)`, the other passes `(group, user)`) so codegen
+  recognizes them as opposite sides of the same canonical relationship
 
 ## How Table Schema Is Generated
 
@@ -527,9 +559,9 @@ Runtime metadata rules:
 - `hasMany(...)` / `hasOne(...)` are traversal-only metadata on the current
   schema
 - `belongsTo(...)` contributes both traversal metadata and a local FK column
-- `manyToMany(...).through(...)` resolves through the junction schema at
-  finalization time and is emitted as join metadata, not as extra columns on the
-  endpoint tables
+- `manyToMany(...).throughEntity(...)` (or `.throughLink(...)`) resolves
+  through the junction schema at finalization time and is emitted as join
+  metadata, not as extra columns on the endpoint tables
 
 ## Indexes
 

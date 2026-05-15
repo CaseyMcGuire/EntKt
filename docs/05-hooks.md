@@ -55,9 +55,15 @@ The `beforeUpdate` hook receives a `${Entity}UpdateHookContext` with
 three fields:
 
 - **`before`** — the loaded current owner row. `update(id)` performs
-  an internal `byId` load before any hook runs (bypassing LOAD
+  an internal current-row load before any hook runs (bypassing LOAD
   privacy), so `before` is always present and reflects database state
-  at the moment of the load.
+  at the moment of the load. With the default
+  `UpdateConsistency.ReadCurrent`, the load is a plain `byId`. With
+  `update(id, consistency = UpdateConsistency.Pessimistic) { ... }`
+  inside `withTransaction`, the load is a row-locking read
+  (`SELECT ... FOR UPDATE` on Postgres) so concurrent writers block
+  until commit — see [Drivers — Transactions](10-drivers.md#transactions) for the
+  capability requirements.
 - **`patch`** — a snapshot of the requested patch as accumulated *up
   to this hook*. It's a `${Entity}UpdatePatch` whose fields are
   `FieldPatch<T>` (`Unset` or `Set(value)`). The snapshot is taken
@@ -153,61 +159,80 @@ validation, or the driver write runs.
 
 For a **create** operation, the full execution order is:
 
-1. `beforeSave` (receives `UserMutation`)
-2. `beforeCreate` (receives `UserCreate`)
-3. Field extraction + defaults
-4. Field validation (generated from schema validators)
-5. Build `WriteCandidate`
-6. Privacy create check
-7. Entity validation create (see [Validation](07-validation.md))
-8. `driver.insert(...)`
-9. `afterCreate` (receives `User`)
-10. Load privacy on returned entity
+1. **TransactionRequirement preflight** (RFC #4) — if the client is
+   configured with `RequiredForAllWrites`, `save()` throws
+   `TransactionRequiredException` when called outside `withTransaction`
+   before any hook runs. See [Drivers — Transactions](10-drivers.md#transactions).
+2. `beforeSave` (receives `UserMutation`)
+3. `beforeCreate` (receives `UserCreate`)
+4. Field extraction + defaults
+5. Field validation (generated from schema validators)
+6. Build `WriteCandidate`
+7. Privacy create check
+8. Entity validation create (see [Validation](07-validation.md))
+9. `driver.insert(...)`
+10. `afterCreate` (receives `User`)
+11. Load privacy on returned entity
 
 For an **update**:
 
- 1. **Syntactically empty check.** If `update(id) { }` was called with
+ 1. **TransactionRequirement preflight** (RFC #4) — same as create. If
+    the per-save `consistency = UpdateConsistency.Pessimistic` mode was
+    requested, this also asserts the call site is inside
+    `withTransaction` *and* the driver advertises
+    `supportsReadRowForUpdate`; otherwise it throws
+    `TransactionRequiredException` /
+    `UnsupportedDriverCapabilityException`.
+ 2. **Syntactically empty check.** If `update(id) { }` was called with
     no field assignments, `save()` throws `EntNoChangesException`
     *before* loading the owner row — request shape, not database state,
     classifies the no-op (avoids leaking whether the id exists)
- 2. **Internal current-row load** via `driver.byId(id)` (bypasses LOAD
-    privacy). Missing row → `save()` returns `null` (or `saveOrThrow()`
-    throws `EntNotFoundException`)
- 3. `beforeSave` (receives `UserMutation`)
- 4. `beforeUpdate` (receives `UserUpdateHookContext` — each hook gets a
+ 3. **Internal current-row load** (bypasses LOAD privacy). Default
+    `UpdateConsistency.ReadCurrent` calls `driver.byId(id)`;
+    `UpdateConsistency.Pessimistic` calls
+    `driver.readRowForUpdate(id)` so the row is locked for the rest
+    of the transaction. Missing row → `save()` returns `null` (or
+    `saveOrThrow()` throws `EntNotFoundException`)
+ 4. `beforeSave` (receives `UserMutation`)
+ 5. `beforeUpdate` (receives `UserUpdateHookContext` — each hook gets a
     fresh `patch` snapshot built from the current dirty state; hooks
     may write through `ctx.mutation` or call `unsetFoo()` to remove
     entries)
- 5. **Required-not-null check** on dirty fields (after hooks, so a
+ 6. **Required-not-null check** on dirty fields (after hooks, so a
     hook can repair an explicit `name = null` via `unsetName()` or by
     reassigning a value)
- 6. Build the canonical requested patch
- 7. **Hook-cleared empty path:** if all dirty fields were unset by
+ 7. Build the canonical requested patch
+ 8. **Hook-cleared empty path:** if all dirty fields were unset by
     hooks, run UPDATE privacy on the unchanged candidate, then throw
     `EntNoChangesException` (skip update defaults, validation, the
     driver write, `afterUpdate`, and returned LOAD privacy)
- 8. Apply update defaults (e.g. `updatedAt = updateDefaultNow()`) to
+ 9. Apply update defaults (e.g. `updatedAt = updateDefaultNow()`) to
     produce the effective patch
- 9. Field validators run on the effective patch's `Set` entries
-10. Build the database write set from the effective patch — only
+10. Field validators run on the effective patch's `Set` entries
+11. Build the database write set from the effective patch — only
     `Set` entries are sent to `driver.update`; untouched columns are
     not round-tripped
-11. Build the full after-state `WriteCandidate` by folding the
+12. Build the full after-state `WriteCandidate` by folding the
     effective patch over `before`
-12. Privacy update check
-13. Entity validation update
-14. `driver.update(...)` — returns the persisted row
-15. `afterUpdate` (receives the persisted `User`)
-16. Load privacy on returned entity
+13. Privacy update check
+14. Entity validation update
+15. `driver.update(...)` — returns the persisted row
+16. `afterUpdate` (receives the persisted `User`)
+17. Load privacy on returned entity
 
 For a **delete**:
 
-1. Build `WriteCandidate`
-2. Privacy delete check
-3. Entity validation delete
-4. `beforeDelete` (receives `User`)
-5. `driver.delete(...)`
-6. `afterDelete` (receives `User`)
+1. **TransactionRequirement preflight** (RFC #4) — same as create/update.
+   `RequiredForAllWrites` is enforced here so it covers the
+   `deleteById(id)` helper path that would otherwise hit `byId` first.
+2. **Internal current-row load** via `driver.byId(id)` (delete-by-id
+   only; `delete(entity)` already has the loaded row)
+3. Build `WriteCandidate`
+4. Privacy delete check
+5. Entity validation delete
+6. `beforeDelete` (receives `User`)
+7. `driver.delete(...)`
+8. `afterDelete` (receives `User`)
 
 Hooks are for side effects (setting timestamps, logging, notifications),
 not for authorization or invariant enforcement. Use

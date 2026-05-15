@@ -274,3 +274,9 @@ client.withTransaction { tx ->
 
 If the block throws, the transaction rolls back. Nested
 `withTransaction` calls reuse the existing transaction.
+
+For write-side transaction discipline — `TransactionRequirement`
+(client-level write guardrail) and `UpdateConsistency.Pessimistic`
+(per-save row-locking update mode) — see [Hooks → Execution
+Order](05-hooks.md#execution-order) and
+[Drivers → Locking (RFC #4)](10-drivers.md#locking-rfc-4).
