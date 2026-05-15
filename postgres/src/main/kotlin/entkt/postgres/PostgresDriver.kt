@@ -819,6 +819,88 @@ class PostgresDriver(
         }
     }
 
+    // ---------- Locking capabilities (RFC #4) ----------
+    //
+    // The root (non-transactional) driver advertises both row-lock
+    // capabilities so the generated capability-preflight at save-start
+    // accepts saves that need them — but the methods themselves only
+    // do useful work inside a transaction (a `SELECT ... FOR UPDATE`
+    // in auto-commit immediately releases the lock when the statement
+    // completes, defeating the purpose). Callers must reach the
+    // locking methods through the [PostgresTransactionalDriver]
+    // returned inside [withTransaction]; the root driver throws.
+
+    override val supportsReadRowForUpdate: Boolean
+        get() = true
+
+    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? =
+        error(
+            "PostgresDriver.readRowForUpdate must be called on a transaction-scoped driver " +
+                "obtained via withTransaction; calling it on the root driver in auto-commit " +
+                "would release the row lock immediately. Generated saves preflight `inTransaction` " +
+                "before calling this method.",
+        )
+
+    override val supportsOwnerEdgeSerialization: Boolean
+        get() = true
+
+    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? =
+        error(
+            "PostgresDriver.serializeOwnerEdgeAndRead must be called on a transaction-scoped " +
+                "driver obtained via withTransaction; the cooperative lock is bound to the " +
+                "transaction (pg_advisory_xact_lock) and would release immediately in auto-commit. " +
+                "Generated saves preflight `inTransaction` before calling this method.",
+        )
+
+    /**
+     * Lock the row by id with `SELECT ... FOR UPDATE` and return its
+     * current contents. Caller is responsible for the surrounding
+     * transaction lifecycle. Returns `null` if no row exists.
+     */
+    internal fun readRowForUpdateWith(conn: Connection, table: String, id: Any): Map<String, Any?>? {
+        val schema = schemas[table] ?: error("Unregistered table: $table")
+        val sql = "SELECT * FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ? FOR UPDATE"
+        return conn.prepareStatement(sql).use { stmt ->
+            bind(stmt, 1, schema.idType, id)
+            stmt.executeQuery().use { rs ->
+                if (rs.next()) decodeRow(rs, schema.columns) else null
+            }
+        }
+    }
+
+    /**
+     * Take a transaction-scoped advisory lock keyed by `(table, id)`,
+     * then read the row. The advisory lock serializes other callers
+     * using the same discipline against this `(table, id)` pair, but
+     * does not block ordinary `UPDATE`/`DELETE` from outside the
+     * discipline. Returns `null` if no row exists.
+     *
+     * The lock key folds the table name's `hashCode` and the id's
+     * `hashCode` into a single `bigint` argument to
+     * `pg_advisory_xact_lock(key1, key2)`. Postgres advisory locks
+     * are released automatically at transaction end, so the duration
+     * requirement from RFC #4 ("held until the enclosing transaction
+     * commits or rolls back") is automatic.
+     */
+    internal fun serializeOwnerEdgeAndReadWith(conn: Connection, table: String, id: Any): Map<String, Any?>? {
+        val schema = schemas[table] ?: error("Unregistered table: $table")
+        // pg_advisory_xact_lock(int4, int4) — bind table-name hash and
+        // id hash as the two key columns. Hash collisions only mean
+        // over-serialization (false sharing), never under-serialization.
+        val tableKey = table.hashCode()
+        val idKey = id.hashCode()
+        conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").use { stmt ->
+            stmt.setInt(1, tableKey)
+            stmt.setInt(2, idKey)
+            stmt.executeQuery().close()
+        }
+        // Then read the row inside the held lock.
+        return byIdWith(conn, table, id)
+    }
+
+    private val EntitySchema.idType: FieldType?
+        get() = columns.firstOrNull { it.name == idColumn }?.type
+
     // ---------- Identifier quoting ----------
 
     /**
@@ -918,6 +1000,25 @@ class PostgresDriver(
             checkOpen()
             // Nested: reuse the same transaction.
             return block(this)
+        }
+
+        // ---------- RFC #4 capability surface ----------
+
+        override val inTransaction: Boolean
+            get() = true
+
+        override val supportsReadRowForUpdate: Boolean
+            get() = root.supportsReadRowForUpdate
+
+        override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
+            checkOpen(); return root.readRowForUpdateWith(conn, table, id)
+        }
+
+        override val supportsOwnerEdgeSerialization: Boolean
+            get() = root.supportsOwnerEdgeSerialization
+
+        override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
+            checkOpen(); return root.serializeOwnerEdgeAndReadWith(conn, table, id)
         }
     }
 }

@@ -461,6 +461,55 @@ class InMemoryDriverTest {
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
     }
 
+    // ---------- RFC #4 capability surface ----------
+
+    @Test
+    fun `inTransaction is false on the root driver and true inside withTransaction`() {
+        val driver = fresh()
+        assertEquals(false, driver.inTransaction)
+        driver.withTransaction { tx ->
+            assertEquals(true, tx.inTransaction)
+        }
+    }
+
+    @Test
+    fun `supportsReadRowForUpdate and supportsOwnerEdgeSerialization are advertised`() {
+        val driver = fresh()
+        assertEquals(true, driver.supportsReadRowForUpdate)
+        assertEquals(true, driver.supportsOwnerEdgeSerialization)
+        driver.withTransaction { tx ->
+            assertEquals(true, tx.supportsReadRowForUpdate)
+            assertEquals(true, tx.supportsOwnerEdgeSerialization)
+        }
+    }
+
+    @Test
+    fun `readRowForUpdate returns the current row state and null for missing ids`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf("name" to "Alice", "age" to 30, "active" to true))
+
+        driver.withTransaction { tx ->
+            val locked = tx.readRowForUpdate("users", row["id"]!!)
+            assertEquals("Alice", locked!!["name"])
+            assertEquals(30, locked["age"])
+
+            assertNull(tx.readRowForUpdate("users", 9999L))
+        }
+    }
+
+    @Test
+    fun `serializeOwnerEdgeAndRead returns the current row state and null for missing ids`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf("name" to "Bob", "age" to 25, "active" to true))
+
+        driver.withTransaction { tx ->
+            val serialized = tx.serializeOwnerEdgeAndRead("users", row["id"]!!)
+            assertEquals("Bob", serialized!!["name"])
+
+            assertNull(tx.serializeOwnerEdgeAndRead("users", 9999L))
+        }
+    }
+
     @Test
     fun `HasM2MEdgeFrom walks junction backwards using source schema's forward edge`() {
         // Forward query traversal — `userQuery.where {...}.queryGroups()`

@@ -150,4 +150,99 @@ interface Driver {
      * the block — using it after the block returns will throw.
      */
     fun <T> withTransaction(block: (Driver) -> T): T
+
+    /**
+     * True when this [Driver] is the transaction-scoped driver passed
+     * inside [withTransaction]. False on a normal client-level driver.
+     * Generated saves use this at save-start to enforce a configured
+     * [entkt.runtime.TransactionRequirement] (RFC #4) without having
+     * to thread a separate flag through every layer.
+     */
+    val inTransaction: Boolean
+        get() = false
+
+    // ---------- Owner-row locking capabilities (RFC #4) ----------
+    //
+    // Generated update saves under `UpdateConsistency.Pessimistic` and
+    // generated link-table M2M helpers need to read the owner row in a
+    // way that prevents another transaction from changing or deleting
+    // it before the write. The two capabilities below let drivers
+    // expose the strongest mechanism they support; capability-rejection
+    // happens at the start of `save()` so unsupported combinations
+    // surface before hooks, privacy, validation, driver reads, or
+    // driver writes.
+
+    /**
+     * True when this driver can take a true row lock (`SELECT ... FOR
+     * UPDATE`-equivalent) that blocks ordinary `UPDATE`/`DELETE` until
+     * the surrounding transaction commits or rolls back. Required by
+     * `UpdateConsistency.Pessimistic`; preferred by link-table M2M
+     * saves on drivers that support both this and
+     * [supportsOwnerEdgeSerialization].
+     *
+     * Default `false` — subclasses opt in by overriding both this and
+     * [readRowForUpdate].
+     */
+    val supportsReadRowForUpdate: Boolean
+        get() = false
+
+    /**
+     * Lock the row by id and return its current contents in one
+     * logical operation, equivalent to `SELECT ... FOR UPDATE`. The
+     * lock must hold until the surrounding transaction commits or
+     * rolls back, so that other transactions cannot update or delete
+     * the row in between. Returns `null` if no row exists with that id.
+     *
+     * Implementations that do not support true row-lock semantics must
+     * leave [supportsReadRowForUpdate] false; calling this method on
+     * such a driver is a programming error and should throw
+     * [UnsupportedOperationException]. The default implementation
+     * throws.
+     */
+    fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? =
+        throw UnsupportedOperationException(
+            "Driver ${this::class.simpleName} does not support readRowForUpdate; " +
+                "check supportsReadRowForUpdate before calling.",
+        )
+
+    /**
+     * True when this driver can serialize owner-edge access against
+     * other callers using the same discipline (cooperative locking)
+     * and return the owner row in one logical operation. Sufficient
+     * for link-table M2M owner-edge serialization, **not** sufficient
+     * for `UpdateConsistency.Pessimistic`: a cooperative advisory
+     * lock does not block ordinary `UPDATE`/`DELETE` and so cannot
+     * provide the `Pessimistic` owner-row stability guarantee.
+     *
+     * Default `false` — subclasses opt in by overriding both this and
+     * [serializeOwnerEdgeAndRead]. A driver that supports
+     * [supportsReadRowForUpdate] does *not* automatically satisfy
+     * this — link-table M2M saves prefer the true row lock when
+     * available, so most drivers will support both flags
+     * independently.
+     */
+    val supportsOwnerEdgeSerialization: Boolean
+        get() = false
+
+    /**
+     * Serialize owner-edge access keyed by `(table, id)` against other
+     * callers using the same discipline, then return the owner row.
+     * The serialization must hold from the call through the rest of
+     * the save's transaction (current junction read, privacy and
+     * validation checks, junction writes) — in practice until the
+     * enclosing transaction commits or rolls back. Returns `null` if
+     * no row exists with that id.
+     *
+     * Postgres-style implementations bind the serialization token to
+     * the transaction (e.g. `pg_advisory_xact_lock`) so the duration
+     * requirement is automatic; non-transactional primitives must
+     * hold explicitly until transaction end. A driver that does not
+     * support this leaves [supportsOwnerEdgeSerialization] false; the
+     * default implementation throws.
+     */
+    fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? =
+        throw UnsupportedOperationException(
+            "Driver ${this::class.simpleName} does not support serializeOwnerEdgeAndRead; " +
+                "check supportsOwnerEdgeSerialization before calling.",
+        )
 }

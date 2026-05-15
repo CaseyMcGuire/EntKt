@@ -519,6 +519,89 @@ class PostgresDriverTest {
         assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
     }
 
+    // ---------- RFC #4 capability surface ----------
+
+    @Test
+    fun `inTransaction is false on the root driver and true inside withTransaction`() {
+        val driver = fresh()
+        assertEquals(false, driver.inTransaction)
+        driver.withTransaction { tx ->
+            assertEquals(true, tx.inTransaction)
+        }
+    }
+
+    @Test
+    fun `Postgres driver advertises both row-lock capabilities`() {
+        val driver = fresh()
+        assertEquals(true, driver.supportsReadRowForUpdate)
+        assertEquals(true, driver.supportsOwnerEdgeSerialization)
+        driver.withTransaction { tx ->
+            assertEquals(true, tx.supportsReadRowForUpdate)
+            assertEquals(true, tx.supportsOwnerEdgeSerialization)
+        }
+    }
+
+    @Test
+    fun `readRowForUpdate returns the current row state inside a transaction`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf<String, Any?>("name" to "Alice"))
+
+        driver.withTransaction { tx ->
+            val locked = tx.readRowForUpdate("users", row["id"]!!)
+            assertEquals("Alice", locked!!["name"])
+            assertEquals(row["id"], locked["id"])
+        }
+    }
+
+    @Test
+    fun `readRowForUpdate returns null for a missing id`() {
+        val driver = fresh()
+        driver.withTransaction { tx ->
+            assertNull(tx.readRowForUpdate("users", 9999L))
+        }
+    }
+
+    @Test
+    fun `readRowForUpdate on the root driver throws because the lock would release immediately`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf<String, Any?>("name" to "Alice"))
+        // Calling readRowForUpdate outside a transaction would release the lock as soon
+        // as the auto-commit statement returned, defeating the contract.
+        assertFailsWith<IllegalStateException> {
+            driver.readRowForUpdate("users", row["id"]!!)
+        }
+    }
+
+    @Test
+    fun `serializeOwnerEdgeAndRead returns the current row state inside a transaction`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf<String, Any?>("name" to "Bob"))
+
+        driver.withTransaction { tx ->
+            val serialized = tx.serializeOwnerEdgeAndRead("users", row["id"]!!)
+            assertEquals("Bob", serialized!!["name"])
+        }
+    }
+
+    @Test
+    fun `serializeOwnerEdgeAndRead returns null for a missing id`() {
+        val driver = fresh()
+        driver.withTransaction { tx ->
+            assertNull(tx.serializeOwnerEdgeAndRead("users", 9999L))
+        }
+    }
+
+    @Test
+    fun `serializeOwnerEdgeAndRead on the root driver throws because the advisory lock is xact-scoped`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf<String, Any?>("name" to "Bob"))
+        // Calling serializeOwnerEdgeAndRead outside a transaction would release the
+        // pg_advisory_xact_lock immediately at statement end, defeating the contract.
+        assertFailsWith<IllegalStateException> {
+            driver.serializeOwnerEdgeAndRead("users", row["id"]!!)
+        }
+    }
+
     @Test
     fun `transaction driver throws after block returns including register`() {
         val driver = fresh()

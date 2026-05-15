@@ -208,6 +208,27 @@ class InMemoryDriver : Driver {
         }
     }
 
+    // ---------- Locking capabilities (RFC #4) ----------
+    //
+    // The in-memory driver doesn't have real concurrent transactions
+    // — its mutations are guarded by per-table `synchronized` blocks,
+    // which gives strong serialization for free. Both row-lock
+    // capabilities are therefore reported as supported, and both
+    // methods just look up the current row state. Tests that exercise
+    // the Pessimistic / link-table M2M paths can use the in-memory
+    // driver end-to-end; concurrent-correctness tests against true
+    // SQL semantics belong in the Postgres driver suite.
+
+    override val supportsReadRowForUpdate: Boolean
+        get() = true
+
+    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? = byId(table, id)
+
+    override val supportsOwnerEdgeSerialization: Boolean
+        get() = true
+
+    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? = byId(table, id)
+
     override fun <T> withTransaction(block: (Driver) -> T): T {
         // Snapshot current state: table names, their contents, and id counters.
         val knownTables = tables.keys.toSet()
@@ -614,6 +635,25 @@ private class InMemoryTransactionalDriver(
         checkOpen()
         // Nested: reuse the same transaction.
         return block(this)
+    }
+
+    // ---------- RFC #4 capability surface ----------
+
+    override val inTransaction: Boolean
+        get() = true
+
+    override val supportsReadRowForUpdate: Boolean
+        get() = root.supportsReadRowForUpdate
+
+    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
+        checkOpen(); return root.readRowForUpdate(table, id)
+    }
+
+    override val supportsOwnerEdgeSerialization: Boolean
+        get() = root.supportsOwnerEdgeSerialization
+
+    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
+        checkOpen(); return root.serializeOwnerEdgeAndRead(table, id)
     }
 }
 
