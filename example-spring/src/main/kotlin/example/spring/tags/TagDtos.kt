@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.tags
 
 import example.ent.Tag
 import example.schema.TagCategory

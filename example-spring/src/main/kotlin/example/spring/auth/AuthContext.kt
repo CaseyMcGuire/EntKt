@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.auth
 
 import org.springframework.stereotype.Component
 import org.springframework.web.context.annotation.RequestScope

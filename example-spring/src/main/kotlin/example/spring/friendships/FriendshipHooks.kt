@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.friendships
 
 import entkt.runtime.orElse
 import example.ent.Friendship

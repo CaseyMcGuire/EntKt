@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.friendships
 
 import example.ent.Friendship
 import example.schema.FriendshipStatus

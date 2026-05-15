@@ -1,8 +1,10 @@
-package example.spring
+package example.spring.friendships
 
 import example.ent.EntClient
 import example.ent.Friendship
 import example.schema.FriendshipStatus
+import example.spring.users.UserResponse
+import example.spring.users.toResponse
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable

@@ -1,6 +1,8 @@
-package example.spring
+package example.spring.users
 
 import example.ent.User
+import example.spring.posts.PostResponse
+import example.spring.posts.toResponse
 import java.util.UUID
 
 data class CreateUserRequest(

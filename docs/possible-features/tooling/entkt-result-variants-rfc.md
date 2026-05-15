@@ -471,11 +471,20 @@ Exact set operations need precise concurrency wording.
 Recommended wording:
 
 ```text
-For a given owner id and edge, set(...) is serialized with other relationship
-mutations on that same owner-edge. At its serialization point, the relationship
-set equals the requested set. Later serialized mutations may change the
+For a given owner id and edge, set(...) is serialized against other generated
+M2M helpers on the same owner-edge. At its serialization point, the
+relationship set equals the requested set among generated M2M helpers.
+Endpoint deletes are not part of that discipline — they cascade through the
+junction FK (OnDelete.CASCADE) and can interleave between the helper's
+junction read and write, producing a final link set smaller than the
+requested set. Later serialized M2M-helper mutations may change the
 relationship again.
 ```
+
+See [Many-To-Many Schema Modeling](../edge-mutation/03-m2m-schema-modeling.md)
+for the `OnDelete.CASCADE` requirement and
+[Link-Table M2M Mutation Helpers — Target Loading And Existence](../edge-mutation/05-link-table-helpers.md)
+for the full endpoint-cascade race discussion.
 
 A serialization or compare-and-set failure should be represented as:
 
@@ -680,7 +689,12 @@ Before implementation, add tests for the following.
 
 ### Edge Mutations
 
-- `set(...)` produces the requested relationship set at its serialization point.
+- `set(...)` produces the requested relationship set at its serialization
+  point **among generated M2M helpers**. Endpoint deletes that cascade through
+  the junction FK can interleave between the helper's junction read and write
+  and shrink the final set; this scope matches the Recommended wording above
+  and
+  [Link-Table M2M Mutation Helpers — Target Loading And Existence](../edge-mutation/05-link-table-helpers.md).
 - Concurrent owner-edge mutations either serialize correctly or return
   `Err(Conflict)`.
 - Later serialized relationship mutations may change the set again.

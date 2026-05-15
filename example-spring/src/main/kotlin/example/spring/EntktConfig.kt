@@ -4,6 +4,12 @@ import entkt.postgres.PostgresDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.Viewer
 import example.ent.EntClient
+import example.spring.auth.AuthContext
+import example.spring.friendships.FriendshipHooksConfig
+import example.spring.posts.PostHooksConfig
+import example.spring.posts.PostPolicy
+import example.spring.users.UserHooksConfig
+import example.spring.users.UserPolicy
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import javax.sql.DataSource

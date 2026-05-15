@@ -1,6 +1,7 @@
-package example.spring
+package example.spring.web
 
 import entkt.runtime.PrivacyDeniedException
+import example.spring.auth.AccessDeniedException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler

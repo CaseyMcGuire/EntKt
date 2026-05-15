@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.auth
 
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest

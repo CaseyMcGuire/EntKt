@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.posts
 
 import example.ent.Post
 import java.util.UUID

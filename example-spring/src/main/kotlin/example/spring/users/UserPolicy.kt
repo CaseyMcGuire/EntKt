@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.users
 
 import entkt.runtime.EntityPolicy
 import entkt.runtime.PrivacyDecision

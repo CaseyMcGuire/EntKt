@@ -1,14 +1,13 @@
-package example.spring
+package example.spring.users
 
-import example.ent.PostHooks
+import example.ent.UserHooks
 import org.springframework.stereotype.Component
 import java.time.Instant
 
 @Component
-class PostHooksConfig {
-    fun apply(hooks: PostHooks) {
+class UserHooksConfig {
+    fun apply(hooks: UserHooks) {
         hooks.beforeSave { it.updatedAt = Instant.now() }
         hooks.beforeCreate { it.mutation.createdAt = Instant.now() }
-        // Ownership checks moved to PostPolicy privacy rules
     }
 }

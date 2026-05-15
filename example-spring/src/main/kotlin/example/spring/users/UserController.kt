@@ -1,8 +1,10 @@
-package example.spring
+package example.spring.users
 
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.User
+import example.spring.posts.PostResponse
+import example.spring.posts.toResponse
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping

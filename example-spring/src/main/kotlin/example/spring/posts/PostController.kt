@@ -1,8 +1,10 @@
-package example.spring
+package example.spring.posts
 
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.PostTag
+import example.spring.tags.TagResponse
+import example.spring.tags.toResponse
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping

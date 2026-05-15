@@ -1,4 +1,4 @@
-package example.spring
+package example.spring.friendships
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.BeforeEach
