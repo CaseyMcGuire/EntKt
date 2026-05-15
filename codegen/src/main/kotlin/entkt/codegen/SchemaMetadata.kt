@@ -627,16 +627,24 @@ internal data class SynthesizedReverseM2M(
 
 /**
  * Build read-only reverse M2M edges that the codegen surfaces on
- * [schema] for every M2M declared on another schema that targets it.
+ * [schema] for every `throughEntity` declared on another schema that
+ * targets it.
  *
- * Suppression mirrors [reverseM2MEdgeEntries]:
+ * Suppression rules:
  * - self-referential M2M (target === source) — no synthesis.
  * - opposite-side schema declares its own M2M with the same canonical
  *   identity — that explicit declaration owns the surface.
+ * - `throughLink` forward edges produce **no user-facing reverse
+ *   surface** per the RFC ("V1 does not synthesize a reverse traversal
+ *   edge for throughLink relationships"). The runtime metadata in
+ *   [reverseM2MEdgeEntries] is still emitted for throughLink so
+ *   forward query traversal can resolve `HasEdgeWith` against the
+ *   target schema's `SCHEMA.edges`, but no `EdgeRef` /
+ *   `Edges` field / `queryX` / `withX` is generated on the target.
  *
- * Consumers that need both the runtime metadata and the user-facing
- * surface (entity `Edges`, `EdgeRef`, query traversal, eager loading)
- * iterate this list alongside `schema.edges()`.
+ * Consumers that need the user-facing surface (entity `Edges`,
+ * `EdgeRef`, query traversal, eager loading) iterate this list
+ * alongside `schema.edges()`.
  */
 internal fun synthesizedReverseM2MEdges(
     schema: EntSchema,
@@ -657,18 +665,14 @@ internal fun synthesizedReverseM2MEdges(
                 }
                 val forwardM2M = forward.kind as EdgeKind.ManyToMany
                 val forwardThrough = forwardM2M.through
-                val reverseThrough = when (forwardThrough) {
-                    is ManyToManyThrough.LinkTable -> ManyToManyThrough.LinkTable(
-                        junction = forwardThrough.junction,
-                        sourceEdge = forwardThrough.targetEdge,
-                        targetEdge = forwardThrough.sourceEdge,
-                    )
-                    is ManyToManyThrough.ThroughEntity -> ManyToManyThrough.ThroughEntity(
-                        junction = forwardThrough.junction,
-                        sourceEdge = forwardThrough.targetEdge,
-                        targetEdge = forwardThrough.sourceEdge,
-                    )
-                }
+                // throughLink reverse surface is deferred — only throughEntity
+                // synthesizes a user-facing reverse edge.
+                if (forwardThrough !is ManyToManyThrough.ThroughEntity) return@mapNotNull null
+                val reverseThrough = ManyToManyThrough.ThroughEntity(
+                    junction = forwardThrough.junction,
+                    sourceEdge = forwardThrough.targetEdge,
+                    targetEdge = forwardThrough.sourceEdge,
+                )
                 val reverseEdge = Edge(
                     name = reverseM2MEdgeName(otherSchema, forward.name),
                     target = otherSchema,

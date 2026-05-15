@@ -1967,6 +1967,41 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `one-sided throughLink does not generate user-facing reverse surface`() {
+        // throughLink: per RFC, V1 doesn't synthesize a reverse traversal
+        // edge on the target. The runtime metadata IS still emitted in
+        // SCHEMA.edges (so forward query traversal via HasEdgeWith
+        // resolves), but no EdgeRef / Edges field / queryX / withX
+        // appears on the target side.
+        val post = LinkPost()
+        val tag = LinkTag()
+        val pt = LinkPostTag()
+        val names = mapOf<EntSchema, String>(post to "LinkPost", tag to "LinkTag", pt to "LinkPostTag")
+        finalize(post, tag, pt)
+
+        val tagEntity = EntityGenerator("com.example.ent").generate("LinkTag", tag, names).toString()
+        val tagQuery = QueryGenerator("com.example.ent").generate("LinkTag", tag, names).toString()
+
+        // Runtime metadata IS present (forward traversal needs it).
+        assert(tagEntity.contains("\"link_posts_tags\"")) {
+            "throughLink target SCHEMA should still carry reverse runtime metadata\n$tagEntity"
+        }
+        // User-facing surface is NOT generated.
+        assert(!tagEntity.contains("linkPostsTags: EdgeRef")) {
+            "throughLink target should not get reverse EdgeRef\n$tagEntity"
+        }
+        assert(!tagEntity.contains("linkPostsTags: List<LinkPost>")) {
+            "throughLink target should not get reverse Edges field\n$tagEntity"
+        }
+        assert(!tagQuery.contains("queryLinkPostsTags")) {
+            "throughLink target should not get reverse traversal method\n$tagQuery"
+        }
+        assert(!tagQuery.contains("withLinkPostsTags")) {
+            "throughLink target should not get reverse eager-loading method\n$tagQuery"
+        }
+    }
+
+    @Test
     fun `self-referential throughEntity does not generate synthesized reverse surface`() {
         // FollowUser declares 'following' and 'followers' over Follow with
         // pair-swapped orientations. Self-ref → no synthesis, so no extra
