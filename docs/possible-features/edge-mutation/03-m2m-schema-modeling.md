@@ -3,8 +3,11 @@
 ## Status
 
 Partially implemented. The schema-side write-model marker (`throughLink` /
-`throughEntity`), the static validation rules described in this RFC, and the
-default reverse-edge synthesis behavior all landed. Specifically implemented:
+`throughEntity`) and the static validation rules described in this RFC landed,
+but the original "default reverse-edge synthesis" behavior was reverted in
+favor of an explicit, no-synthesis model — see the "Auto-synthesized
+user-facing reverse traversal API" deferred item below for the rationale.
+Specifically implemented:
 
 - `manyToMany<Target>(...).throughLink<Junction>(sourceEdge, targetEdge)` and
   `throughEntity<Junction>(sourceEdge, targetEdge)` are the only ways to mark
@@ -223,14 +226,17 @@ identities — e.g., `(ProjectAssignment, project, assignee)` and
 `(ProjectAssignment, project, reviewer)` — describe genuinely
 different relationships and both are allowed.
 
-**V1 does not synthesize a reverse traversal edge for `throughLink(...)`
-relationships.** Codegen does not infer a read-only edge on the opposite-side
-schema, the opposite-side `Edges` inner data class does not gain a
-synthesized field for the relationship, and there is no eager-loading or
-predicate surface for the reverse direction. Callers that need to traverse
-the relationship from the opposite side query the junction schema directly
-for V1. Reverse traversal for link-table relationships is deferred — see
-"Future Enhancements" for the planned design.
+**V1 synthesizes no reverse traversal edge for any M2M.** Codegen does not
+infer a read-only edge on the opposite-side schema, the opposite-side
+`Edges` inner data class does not gain a synthesized field, and there is
+no eager-loading or predicate surface for the reverse direction. The rule
+applies to both `throughLink(...)` and `throughEntity(...)` (see
+"No reverse-edge synthesis" below for the `throughEntity` case and the
+forward-traversal mechanism that lets queries work without it). For
+`throughLink(...)` specifically, callers that need reverse traversal in
+V1 query the junction schema directly; an opt-in marker for read-only
+reverse traversal of link-table relationships is sketched in
+"Future Enhancements".
 
 Codegen must reject an explicit opposite-side `throughLink(...)` declaration
 that resolves to the same **canonical relationship identity** in V1 —
@@ -247,73 +253,28 @@ declarations use `throughEntity(...)`. Codegen should still reject mismatches
 between `throughLink(...)` and `throughEntity(...)` for the same junction
 relationship.
 
-By default, a `throughEntity(...)` declaration synthesizes a read-only reverse
-traversal edge on the opposite-side schema (matching the prior
-`manyToMany(...).through(...)` behavior — query traversal, eager loading,
-predicate handle, no write helpers). When the opposite side explicitly
-declares its own `throughEntity(...)` for the same junction, codegen
-**suppresses the synthesized reverse edge for that relationship** — the
-explicit declaration owns the traversal surface on its side, so duplicate
-traversal handles aren't generated.
+**No reverse-edge synthesis.** A `throughEntity(...)` declaration produces
+a traversal surface (`EdgeRef`, `Edges` field, `queryX()`, `withX { }`) only
+on its own declaring schema. Codegen does not synthesize a reverse-edge entry
+on the M2M target's schema, neither in the runtime `SCHEMA.edges` map nor as
+a Kotlin-visible surface. Bidirectional traversal requires the opposite-side
+schema to declare its own pair-swapped `throughEntity(...)` explicitly. This
+keeps the generated surface explicit: adding a `manyToMany` on schema X never
+introduces metadata or methods on schema Y, even by string name.
 
-**Synthesized reverse name.** Codegen names the synthesized reverse
-edge mechanically so callers can refer to it from eager-loading
-scopes, predicates, and `EdgeRef`s without surprise:
+Forward query traversal still works without any reverse metadata. The
+generated `queryX(): TargetQuery` method lowers to a
+`Predicate.HasM2MEdgeFrom(sourceTable, forwardEdgeName, parent)` evaluated
+against each candidate target row; the runtime walks the junction backwards
+using the *source* schema's own forward-edge metadata. No reverse-edge entry
+is needed on the target schema for the predicate to resolve.
 
-- **Edge name** (the runtime metadata `Edge.name` string used in the
-  generated `EntitySchema.edges` map and the database-facing
-  identifiers): `${sourceTable}_${forwardEdgeName}`. For
-  `Post.tags = manyToMany<Tag>("tags").throughEntity<PostTag>(...)`
-  on a schema with `tableName = "posts"`, the synthesized reverse
-  edge on `Tag` has edge name `posts_tags`.
-- **Kotlin property name** on the opposite-side schema's `Edges`
-  inner data class (and on its companion `EdgeRef` for eager-loading
-  / predicate handles): `toCamelCase("${sourceTable}_${forwardEdgeName}")`,
-  i.e. `postsTags` for the example above. This is the identifier
-  reverse-traversal callers see in autocomplete.
-
-**Read-only / repo-only writes.** The synthesized reverse edge is
-**read-only** — codegen emits no `add(...)` / `remove(...)` / `set(...)`
-helpers on it, and the only write surface for the relationship is
-the forward `throughEntity(...)` declaration on the source schema
-(which goes through the junction repo). Mutations to the M2M
-relationship from the opposite-side schema's perspective happen by
-creating, updating, or deleting junction rows directly through the
-junction's generated repo. Implementers should not be tempted by the
-synthesized reverse appearing in `Edges` and `EdgeRef` to also emit
-write helpers for it — the surface is intentionally narrow to keep
-the write orientation unambiguous.
-
-The `${sourceTable}_${forwardEdgeName}` shape is deterministic, mirrors
-the FK column-naming convention already used elsewhere in the schema,
-and disambiguates multi-relationship junctions (e.g.,
-`ProjectAssignment` with both an `assignees` forward edge on `Project`
-and a `reviewers` forward edge on `Project` synthesizes
-`projects_assignees` and `projects_reviewers` on the opposite-side
-schemas — distinct names from distinct forward edges).
-
-**Collision rejection.** If the synthesized reverse edge name collides
-with an existing declared edge, declared field, generated edge ref,
-generated eager-loading member, or JVM signature on the opposite-side
-schema, codegen rejects the schema at validation time and directs the
-caller to declare the opposite-side `throughEntity(...)` **explicitly**
-with a chosen `manyToMany` name. An explicit opposite-side declaration
-picks the name and suppresses the synthesized reverse (per the matching
-rule below), so the caller has full control of the identifier when the
-synthesized name doesn't fit. The synthesized name is never silently
-renamed or suffix-disambiguated.
-
-**Self-referential `throughEntity(...)`: no default synthesis.** When the
-declaring schema and the M2M target schema are the same — i.e., the
-"opposite-side schema" is the *same* schema — V1 does not synthesize a
-reverse traversal edge. There is no separate schema to put it on, and
-generating a second edge on the declaring schema would need a
-synthesized name with no stable convention (and risks colliding with
-the original declared edge). Callers that need bidirectional traversal
-for a self-referential `throughEntity(...)` declare both edges
-explicitly on the same schema, with orientation keys that pair-swap so
-the matching rule below recognizes them as the two orientations of one
-canonical relationship identity:
+**Self-referential `throughEntity(...)`: requires explicit pair-swap for
+bidirectional traversal.** When the declaring schema and the M2M target
+schema are the same, no reverse synthesis applies (consistent with the
+no-synthesis rule above). Callers that need bidirectional traversal for a
+self-referential relationship declare both edges explicitly on the same
+schema with pair-swapped orientation keys:
 
 ```kotlin
 class User : EntSchema("users") {
@@ -325,10 +286,10 @@ class User : EntSchema("users") {
 ```
 
 The two declarations are the two orientations of the same canonical
-identity (`{Follow, follower, followed}` as an unordered pair). Because
-each side is explicit, neither triggers the "default synthesize reverse"
-path — symmetric with how cross-schema explicit opposites suppress
-synthesis on both sides.
+identity (`{Follow, follower, followed}` as an unordered pair). Each
+declaration produces its own traversal surface, and Phase 3's matching
+rule below treats them as opposite sides of one canonical relationship
+(used for codegen validation, not synthesis).
 
 **Matching rule for two explicit `throughEntity(...)` declarations.**
 Codegen treats two explicit declarations as opposite sides of the same
@@ -340,19 +301,19 @@ relationship when, and only when:
    orientation key is `(X, Y)` and side B's orientation key is
    `(Y, X)` for the same two junction-edge property references.
 
-If both conditions hold, the synthesized reverse on each side is
-suppressed and the two explicit declarations describe the same
-relationship from the two endpoints.
+If both conditions hold, the two declarations describe the same
+relationship from the two endpoints. Each side independently produces
+its own forward traversal surface; the matching rule does not synthesize
+or merge metadata, it only governs whether the pair is *accepted* (for
+`throughEntity`) or *rejected* (for `throughLink`, see below).
 
 **Scope of the matching rule.** The pair-swap check applies *only* when
 the two declarations share a canonical relationship identity — same
 junction class plus the same junction-edge ref pair as an unordered
 set. Declarations with **distinct canonical relationship identities**
 are independent and may coexist freely: no matching is attempted
-between them, no rejection fires, and each independently runs the
-default reverse-synthesis path on its own target schema (which the
-opposite-side schema can suppress by declaring its own explicit
-`throughEntity(...)`).
+between them, no rejection fires, and each side produces its own
+forward traversal surface independently.
 
 For example, on `Project`, two relationships over the same junction
 schema (`ProjectAssignment` with `project` / `assignee` / `reviewer`
@@ -377,8 +338,9 @@ them — they describe two genuinely independent relationships.
 
 Concretely:
 
-- **Same canonical identity, orientation keys pair-swap** → matched
-  as opposites; synthesized reverse suppressed on both sides.
+- **Same canonical identity, orientation keys pair-swap** → accepted
+  as opposite sides of one canonical relationship; each side keeps
+  its own forward traversal surface.
 - **Same canonical identity, identical orientation key** → rejected
   as same-orientation alias (see "Same-orientation aliases are
   rejected" below).
@@ -793,12 +755,16 @@ direct-driver path.
    rules + ref-resolution rules from "Link-Table Safety").
 3. Generate direct helpers only for the single explicit `throughLink(...)`
    declaration for a junction relationship.
-4. V1 does not synthesize a reverse traversal edge for `throughLink(...)`
-   relationships (see "Write Orientation"); reverse traversal is
-   deferred to a follow-up `throughLinkInverse(...)` design.
-5. Keep through-entity edges repo-only for write paths; the
-   default-synthesize / opposite-side-suppress reverse-traversal rule
-   from "Write Orientation" applies.
+4. V1 does not synthesize a reverse traversal edge for any M2M, regardless
+   of write model (see "Write Orientation" → "No reverse-edge synthesis").
+   Bidirectional traversal requires the opposite-side schema to declare
+   its own pair-swapped `throughEntity(...)`. Reverse traversal for
+   `throughLink(...)` is deferred to a follow-up `throughLinkInverse(...)`
+   design.
+5. Keep through-entity edges repo-only for write paths. Forward query
+   traversal lowers to `Predicate.HasM2MEdgeFrom` against the source
+   schema's forward-edge metadata, so no target-side reverse entry is
+   needed at runtime.
 
 ## Test Requirements
 
@@ -852,46 +818,36 @@ Before implementation, add tests for:
   with application-level invariants or as directed `throughLink(...)`
   with caller-side canonicalization (e.g., always
   `(min(id), max(id))`)
-- V1 does not synthesize a reverse traversal edge for a `throughLink(...)`
-  relationship: the opposite-side schema's generated `Edges` data class
-  does not gain a synthesized field, no eager-loading scope is generated,
-  and no predicate handle is exposed for the reverse direction
+- no auto-synthesized reverse-edge entries on the target side of any
+  M2M (regardless of write model). Test asserts that the M2M target's
+  generated `SCHEMA.edges` map contains no `${sourceTable}_${forwardEdgeName}`
+  entry; that the target's `Edges` inner data class has no
+  reverse-side field; and that no `EdgeRef` / `queryX()` / `withX { }`
+  is emitted on the target's companion / query class
+- forward query traversal lowers to `Predicate.HasM2MEdgeFrom(sourceTable,
+  forwardEdgeName, parent)` against the candidate target row; the runtime
+  walks the junction backwards using the source schema's own
+  forward-edge metadata. Test asserts the generated `queryX()` body
+  emits `HasM2MEdgeFrom` (not `HasEdgeWith` against a synthesized
+  reverse name) and that the runtime returns the right targets when
+  the source-side filter matches a subset of source rows
 - explicit opposite-side `throughEntity(...)` traversal declarations for the
-  same junction relationship are allowed when both sides use `throughEntity(...)`
-- a `throughEntity(...)` declaration synthesizes a read-only reverse
-  traversal edge on the opposite-side schema by default; when the
-  opposite side explicitly declares its own `throughEntity(...)` for
-  the same junction, the synthesized reverse is suppressed
-- the synthesized reverse edge is named mechanically:
-  `Edge.name = "${sourceTable}_${forwardEdgeName}"`, Kotlin property
-  on the opposite-side `Edges` data class and `EdgeRef` companion =
-  `toCamelCase(edgeName)` (e.g., `Post.tags` with
-  `tableName = "posts"` produces `posts_tags` / `postsTags` on `Tag`)
-- if the synthesized reverse edge name collides with an existing
-  declared edge, declared field, generated edge ref, generated
-  eager-loading member, or JVM signature on the opposite-side schema,
-  codegen rejects the schema and directs the caller to declare the
-  opposite-side `throughEntity(...)` explicitly with a chosen name;
-  the synthesized name is never silently renamed so users
-  don't get duplicate traversal handles
-- two explicit `throughEntity(...)` declarations are treated as
-  opposite sides of the same relationship only when they reference
-  the same junction schema AND the same two junction `belongsTo`
-  edges in opposite order (side A's
-  `(sourceEdge, targetEdge) = (X, Y)`, side B's = `(Y, X)`); when
-  matched, each side's synthesized reverse is suppressed. Test
-  fixtures cover both shapes the rule has to handle:
+  same junction relationship are allowed when both sides use `throughEntity(...)`.
+  Each side produces its own forward traversal surface; nothing is merged
+  or de-duplicated. Test fixtures cover both shapes the matching rule has
+  to handle:
   - **cross-schema**: e.g., `Group.members` and `User.groups` over a
     `Membership` junction, each declared on a different endpoint
-    schema and pair-swapping each other's orientation key. Assert
-    neither side synthesizes a reverse, and both declared `manyToMany`
-    handles work for traversal/eager-loading/predicates.
+    schema and pair-swapping each other's orientation key. Assert both
+    declared `manyToMany` handles work for traversal/eager-loading/predicates
+    independently, and that the target side has no synthesized
+    `${sourceTable}_${forwardEdgeName}` entry
   - **self-schema (self-referential)**: e.g., `User.following` and
     `User.followers` over a `Follow` junction, both declared on the
     same `User` schema with pair-swapped orientation keys (per the
-    self-referential rule below). Assert no synthesis attempt, no
-    same-orientation-alias rejection, and both declared `manyToMany`
-    handles work side-by-side
+    self-referential rule below). Assert both declared `manyToMany`
+    handles work side-by-side and the canonical-identity match does
+    not fire same-orientation-alias rejection
 - multiple `throughEntity(...)` declarations with identical canonical
   identity AND identical orientation key (same junction class, same
   `(sourceEdge, targetEdge)` pair, different `manyToMany` names) are
@@ -907,20 +863,17 @@ Before implementation, add tests for:
     declarations on the same `User` schema both passing
     `(Follow::follower, Follow::followed)` — rejected
 - self-referential `throughEntity(...)` (declaring schema and M2M
-  target schema are the same) gets **no default reverse synthesis**;
-  callers who want bidirectional traversal declare both orientations
-  explicitly on the same schema with pair-swapped orientation keys
-  (e.g., `User.following` via `(Follow::follower, Follow::followed)`
-  and `User.followers` via `(Follow::followed, Follow::follower)`)
-  and the matching rule above recognizes them as the two orientations
-  of one canonical identity
+  target schema are the same): callers who want bidirectional
+  traversal declare both orientations explicitly on the same schema
+  with pair-swapped orientation keys (e.g., `User.following` via
+  `(Follow::follower, Follow::followed)` and `User.followers` via
+  `(Follow::followed, Follow::follower)`) and the matching rule above
+  recognizes them as the two orientations of one canonical identity
 - two explicit `throughEntity(...)` declarations with **distinct
   canonical relationship identities** (different junction class, or
   same junction class with different unordered junction-edge ref
   pairs, e.g. `(project, assignee)` vs `(project, reviewer)`) are
-  independent — no matching attempted, no rejection, both allowed,
-  each independently runs default reverse synthesis on its target
-  schema
+  independent — no matching attempted, no rejection, both allowed
 - generated link-table M2M helpers are emitted only for the single explicit
   `throughLink(...)` declaration for a junction relationship
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
