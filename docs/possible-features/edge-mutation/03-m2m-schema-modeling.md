@@ -17,17 +17,19 @@ default reverse-edge synthesis behavior all landed. Specifically implemented:
   `throughLink` declarations, mixed `throughLink` + `throughEntity`, and
   same-orientation `throughEntity` aliases. Pair-swapped `throughEntity`
   declarations remain allowed and are the supported bidirectional pattern.
-- Default reverse-edge synthesis is suppressed for self-referential M2M and
-  for any opposite-side schema that declares its own pair-swapped
-  `throughEntity` (the explicit declaration owns the traversal surface).
-- For one-sided `throughEntity` declarations the synthesized reverse
-  produces a full read-only surface on the target schema: an
-  `EdgeRef<Source, SourceQuery>` on the companion, a `List<Source>?`
-  field on the `Edges` inner data class, a `queryX(): SourceQuery`
-  traversal method, and a `withX { }` eager-loading method. The
-  traversal predicate uses the source's *forward* edge name in
-  `HasEdgeWith`, which the runtime resolves against the source's
-  `SCHEMA.edges`.
+- The reverse-edge runtime metadata that powers forward query traversal
+  is synthesized on the target schema's `SCHEMA.edges` map for every
+  M2M (both `throughLink` and `throughEntity`). Synthesis is suppressed
+  for self-referential M2M and when the opposite-side schema declares
+  its own pair-swapped M2M (Phase 4) — both sides' explicit
+  declarations then own the traversal surface and there's no duplicate
+  metadata.
+- **No user-facing reverse traversal API is generated automatically.**
+  Bidirectional traversal — `EdgeRef` on the entity, field on `Edges`,
+  `queryX()`, `withX { }` — requires both schemas to declare the M2M
+  explicitly with pair-swapped orientations. This keeps the generated
+  surface explicit: adding a `manyToMany` on schema X never silently
+  introduces methods on schema Y.
 - `throughLink` junction-shape helper-eligibility is enforced at codegen
   time: payload columns, nullable junction FKs, missing
   `OnDelete.CASCADE`, write-time modifiers on FK backing fields, EXPLICIT id
@@ -39,12 +41,14 @@ Deferred to a future RFC (or to the link-table-helpers RFC #5):
 - The actual `throughLink` direct-helper method generation (`tags.add(...)`,
   `tags.remove(...)`, `tags.set(...)`) — RFC #5 covers the API shape; the
   generator implementation is not yet in this repo.
-- User-facing reverse surface for `throughLink` (vs. `throughEntity`).
-  For `throughLink` the reverse-edge runtime metadata is still
-  synthesized so forward query traversal works, but no
-  `EdgeRef` / `Edges` field / `queryX` / `withX` is generated on the
-  target — link-table reverse traversal is deferred until the
-  link-table helpers spec lands.
+- Auto-synthesized user-facing reverse traversal API. The RFC text
+  ("By default, a `throughEntity(...)` declaration synthesizes a
+  read-only reverse traversal edge on the opposite-side schema") was
+  briefly implemented but reverted in favor of the explicit
+  pair-swapped declaration pattern. A future revision could revisit
+  the auto-synthesis design (with a non-mechanical naming scheme and
+  opt-in surfacing) if the explicit pattern proves too ceremonious in
+  practice.
 - Junction `belongsTo` nullable-FK traversal semantics for `throughEntity`
   (inner-join skip-null behavior described under "Traversal semantics with
   nullable junction FKs"); the runtime currently treats nullable junction

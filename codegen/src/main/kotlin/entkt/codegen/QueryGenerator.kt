@@ -45,28 +45,17 @@ internal class QueryGenerator(
         val queryClass = ClassName(packageName, className)
         val entityClass = ClassName(packageName, schemaName)
 
-        val syntheticReverses = synthesizedReverseM2MEdges(schema, schemaNames)
-
-        // Forward traversal for declared edges + reverse traversal for
-        // synthesized M2M reverses. The two paths use the same M2M
-        // traversal builder; the difference is which edge name goes
-        // into the HasEdgeWith predicate (declared forward → reverse
-        // edge on target; synthesized reverse → forward edge on source).
         val traversalMethods = schema.edges()
             .mapNotNull { edge ->
                 if (edge.kind is EdgeKind.ManyToMany) {
-                    buildM2MTraversal(edge, reverseM2MEdgeName(schema, edge.name), schemaNames)
+                    buildM2MTraversal(edge, schema, schemaNames)
                 } else {
                     buildTraversal(edge, schema, schemaNames)
                 }
-            } + syntheticReverses.mapNotNull { syn ->
-                buildM2MTraversal(syn.edge, syn.predicateEdgeName, schemaNames)
             }
 
-        // Eager loading: with{Edge}() methods and properties — declared
-        // edges plus synthesized reverse M2M edges (eager-load the
-        // opposite side of a one-sided throughEntity declaration).
-        val eagerEdgeSpecs = (schema.edges() + syntheticReverses.map { it.edge }).mapNotNull { edge ->
+        // Eager loading: with{Edge}() methods and properties
+        val eagerEdgeSpecs = schema.edges().mapNotNull { edge ->
             buildEagerEdgeSpec(edge, schema, schemaNames)
         }
 
@@ -564,11 +553,7 @@ internal class QueryGenerator(
         body.addStatement("if (results.isEmpty()) return results")
         body.addStatement("var entities = results")
 
-        // Declared edges, plus synthesized M2M reverses so eagerly
-        // loading a one-sided throughEntity from the target side works.
-        val syntheticReverses = synthesizedReverseM2MEdges(schema, schemaNames)
-        val allEdges = schema.edges() + syntheticReverses.map { it.edge }
-        for (edge in allEdges) {
+        for (edge in schema.edges()) {
             val targetName = schemaNames[edge.target] ?: continue
             val targetClass = ClassName(packageName, targetName)
             val eagerPropName = "eager${toPascalCase(edge.name)}"
@@ -855,23 +840,16 @@ internal class QueryGenerator(
      * that reverse name so the runtime can walk the junction table in
      * the right direction.
      */
-    /**
-     * Generate `queryX(): TargetQuery` for an M2M edge. [predicateEdgeName]
-     * is the edge name to put inside the `HasEdgeWith` / `HasEdge`
-     * predicate — for a declared forward edge this is the target's
-     * synthesized reverse name (`${sourceTable}_${edge.name}`); for a
-     * synthesized reverse edge this is the source's *forward* edge name.
-     * In both cases the runtime resolves it against the target schema's
-     * `SCHEMA.edges` map.
-     */
     private fun buildM2MTraversal(
         edge: Edge,
-        predicateEdgeName: String,
+        source: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec? {
         val targetName = schemaNames[edge.target] ?: return null
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
+        val reverseEdgeName = reverseM2MEdgeName(source, edge.name)
+
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
             .addStatement("val parent = combinedPredicate()")
@@ -880,13 +858,13 @@ internal class QueryGenerator(
             .addStatement(
                 "target.where(%T.HasEdgeWith(%S, parent))",
                 predicateClass,
-                predicateEdgeName,
+                reverseEdgeName,
             )
             .nextControlFlow("else")
             .addStatement(
                 "target.where(%T.HasEdge(%S))",
                 predicateClass,
-                predicateEdgeName,
+                reverseEdgeName,
             )
             .endControlFlow()
             .addStatement("return target")
