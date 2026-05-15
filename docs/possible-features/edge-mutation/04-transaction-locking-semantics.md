@@ -570,6 +570,25 @@ with `SELECT ... FOR UPDATE`, or with a weaker strategy such as an advisory lock
 keyed by table and id plus an owner existence check and row read. `null` means
 the owner row does not exist.
 
+**Duration.** The serialization must hold from the call through the rest of the
+save's transaction — at minimum across the current junction read, privacy and
+validation checks, and the junction writes; in practice until the enclosing
+transaction commits or rolls back. An implementation that releases the
+serialization token at the end of the call (i.e., serializing only the row read
+itself) does not satisfy the contract: a concurrent caller could observe the
+same junction snapshot between this save's check and write phases and produce
+the merged-relationship bug `set(...)` semantics is meant to rule out. Postgres
+`pg_advisory_xact_lock(...)` satisfies this naturally — the lock is bound to the
+transaction. Implementations that use non-transactional primitives must hold the
+token explicitly until transaction end, and a transaction-scoped client is
+required precisely so the driver has a transaction boundary to bind to.
+
+The same "held until transaction end" rule applies to `readRowForUpdate` by the
+"until this transaction ends" wording above; the explicit note here is for
+`serializeOwnerEdgeAndRead` because cooperative locking primitives more often
+ship with per-call (release-on-return) variants that would silently break the
+contract.
+
 Both methods are internal driver capabilities, intentionally table/id based to
 match the existing raw `Driver` contract. Application code should not call them
 as the edge mutation API; the typed application-facing API remains on generated
