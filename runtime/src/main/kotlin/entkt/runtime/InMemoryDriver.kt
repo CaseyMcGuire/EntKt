@@ -87,6 +87,7 @@ class InMemoryDriver : Driver {
             // composite-index check uses unchanged columns from the
             // existing row as part of the effective tuple).
             validateUniqueConstraints(table, schema, values, excludingRow = existing, baselineRow = existing)
+            validateNoChildReferencesDangling(table, schema, values, existing)
             for ((k, v) in values) {
                 if (k == schema.idColumn) continue // never let an update rewrite the id
                 existing[k] = v
@@ -202,6 +203,7 @@ class InMemoryDriver : Driver {
                     excludingRow = row,
                     baselineRow = row,
                 )
+                validateNoChildReferencesDangling(table, schema, values, row)
             }
             for (row in matched) {
                 for (k in cols) {
@@ -289,6 +291,67 @@ class InMemoryDriver : Driver {
                     "Unique index violation on $table${idx.columns.joinToString(prefix = "(", postfix = ")")}" +
                         " = $newTuple already exists (index: ${idx.name})",
                 )
+            }
+        }
+    }
+
+    /**
+     * Reject updates to a parent column that would leave existing
+     * child rows dangling. Mirrors Postgres's `ON UPDATE NO ACTION`
+     * default (the implicit behavior for any `REFERENCES` constraint
+     * without explicit `ON UPDATE`): the parent update fails if any
+     * child row still references the old value, regardless of
+     * whether the new value is also a valid parent.
+     *
+     * The check matters because [ForeignKeyRef] supports non-id
+     * reference columns (`ForeignKeyRef(table, column)` where column
+     * isn't the id). For id columns the runtime's `update` already
+     * skips the id column, so there's no parent-id-update path to
+     * dangle children — this check only fires for non-id references
+     * (e.g. `parent_code` referencing `parents.code`).
+     *
+     * Algorithm: for each column being changed (new value differs
+     * from existing), walk every other registered schema, find any
+     * column whose `references` points back at `(table, col)`, and
+     * scan the child table for rows whose FK column equals the OLD
+     * value. If any exist, throw.
+     *
+     * NULL semantics: a NULL child FK doesn't reference anything,
+     * so it can't dangle. The scan filters those out implicitly via
+     * value equality (`row[childCol] == oldValue` is false when
+     * `oldValue` is non-null and `row[childCol]` is null, and the
+     * reverse case is uninteresting since a non-null old value can't
+     * be replaced by a child-FK NULL).
+     */
+    private fun validateNoChildReferencesDangling(
+        table: String,
+        schema: EntitySchema,
+        values: Map<String, Any?>,
+        existing: Map<String, Any?>,
+    ) {
+        for ((col, newValue) in values) {
+            if (col == schema.idColumn) continue // update never rewrites the id
+            val oldValue = existing[col]
+            if (oldValue == newValue) continue // no change to this column
+            if (oldValue == null) continue // nothing could have referenced a null
+            // Look for any schema that references (table, col).
+            for ((childTable, childSchema) in schemas) {
+                if (childTable == table) continue
+                for (childCol in childSchema.columns) {
+                    val ref = childCol.references ?: continue
+                    if (ref.table != table || ref.column != col) continue
+                    val childRows = tables[childTable] ?: continue
+                    val dangling = synchronized(childRows) {
+                        childRows.any { it[childCol.name] == oldValue }
+                    }
+                    if (dangling) {
+                        throw IllegalStateException(
+                            "FK violation: cannot update $table.$col from $oldValue to $newValue — " +
+                                "$childTable.${childCol.name} still references the old value. " +
+                                "(Postgres default ON UPDATE NO ACTION; matches PostgresDriver behavior.)",
+                        )
+                    }
+                }
             }
         }
     }

@@ -1313,6 +1313,103 @@ class InMemoryDriverTest {
         assertEquals(1L, driver.count("post_tags", emptyList()))
     }
 
+    // ---------- Parent-update FK enforcement ----------
+
+    private fun parentSchemaWithCode(): EntitySchema = EntitySchema(
+        table = "pu_parents",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("code", FieldType.STRING, nullable = false, unique = true),
+            ColumnMetadata("label", FieldType.STRING, nullable = true),
+        ),
+        edges = emptyMap(),
+    )
+
+    private fun childSchemaReferencingCode(): EntitySchema = EntitySchema(
+        table = "pu_children",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata(
+                "parent_code", FieldType.STRING, nullable = false,
+                references = ForeignKeyRef("pu_parents", "code", OnDelete.CASCADE),
+            ),
+        ),
+        edges = emptyMap(),
+    )
+
+    @Test
+    fun `update of a referenced parent column is rejected when children still reference the old value`() {
+        // Postgres ON UPDATE NO ACTION default: parent code change
+        // fails because pu_children still points at the old code.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        val parent = driver.insert("pu_parents", mapOf("code" to "A", "label" to "first"))
+        driver.insert("pu_children", mapOf("parent_code" to "A"))
+
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.update("pu_parents", parent["id"]!!, mapOf("code" to "B"))
+        }
+        assertTrue(ex.message!!.contains("FK violation"))
+        assertTrue(ex.message!!.contains("pu_parents.code"))
+        assertTrue(ex.message!!.contains("pu_children.parent_code"))
+        // Parent unchanged — no partial update.
+        assertEquals("A", driver.byId("pu_parents", parent["id"]!!)!!["code"])
+    }
+
+    @Test
+    fun `update of a referenced parent column succeeds when no children reference it`() {
+        // The check only fires when children actually point at the
+        // old value. A code update on an orphan parent is fine.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        val parent = driver.insert("pu_parents", mapOf("code" to "A", "label" to "first"))
+
+        driver.update("pu_parents", parent["id"]!!, mapOf("code" to "B"))
+
+        assertEquals("B", driver.byId("pu_parents", parent["id"]!!)!!["code"])
+    }
+
+    @Test
+    fun `update of a non-referenced parent column is unaffected by the child check`() {
+        // Only the column being changed gets checked. Updating
+        // `label` (not referenced by anything) doesn't scan children.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        val parent = driver.insert("pu_parents", mapOf("code" to "A", "label" to "first"))
+        driver.insert("pu_children", mapOf("parent_code" to "A"))
+
+        driver.update("pu_parents", parent["id"]!!, mapOf("label" to "second"))
+
+        assertEquals("second", driver.byId("pu_parents", parent["id"]!!)!!["label"])
+    }
+
+    @Test
+    fun `update that writes the same value is a no-op for the child check`() {
+        // oldValue == newValue → skip the scan entirely. A no-op
+        // rewrite shouldn't false-positive against existing children.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        val parent = driver.insert("pu_parents", mapOf("code" to "A", "label" to "first"))
+        driver.insert("pu_children", mapOf("parent_code" to "A"))
+
+        // Same code value — should not throw.
+        driver.update("pu_parents", parent["id"]!!, mapOf("code" to "A"))
+
+        assertEquals("A", driver.byId("pu_parents", parent["id"]!!)!!["code"])
+    }
+
     @Test
     fun `composite unique index allows distinct pairs on insert`() {
         val driver = InMemoryDriver().apply { register(compositeUniqueSchema()) }
