@@ -694,10 +694,22 @@ internal class UpdateGenerator(
      * carries the per-edge op log and exposes the public id-only
      * `add(id)` / `remove(id)` / `set(ids)` mutator surface.
      *
-     * The op-log fields (`_requestedSet`, `_adds`, `_removes`) are
-     * `internal` so the enclosing Update builder (in the same module)
-     * can read them when computing `EdgeChanges` in Phase 5. The
-     * constructor is `internal` so callers cannot construct a
+     * The op-log fields are `private` so even same-module code can't
+     * bypass the per-call invariants by writing `tags._adds.add(...)`
+     * directly. Downstream codegen consumes the state through three
+     * `internal` accessor methods on the mutator:
+     *
+     *  - `hasOps(): Boolean` — gate for `_hasPendingLinkTableM2MOps` /
+     *    junction-read decision.
+     *  - `snapshotOps(): PendingEdgeOps<ID>` — used by
+     *    `_buildPendingEdgeOps` to materialize the immutable
+     *    aggregator the hook context / privacy / validation surfaces
+     *    consume.
+     *  - `validateInvariants()` — used by the save-preflight
+     *    defense-in-depth check (`_checkLinkTableM2MMixedMode`) to
+     *    re-assert both mixed-mode rules against captured state.
+     *
+     * The constructor is `internal` so callers cannot construct a
      * standalone mutator outside the builder.
      *
      * Two mixed-mode rules fire at the call site (per RFC #5 spec
@@ -712,22 +724,25 @@ internal class UpdateGenerator(
      *     throw at the second call.
      *
      * Both throw `IllegalStateException` with a message naming the
-     * edge and the conflicting operations. A defense-in-depth check
-     * at save preflight (Phase 4) re-runs the replacement-vs-delta
-     * rule against the captured state; same-id mixed-direction is
-     * unreachable in pending state since both call-site checks fire
-     * before either set could receive a conflicting id.
+     * edge and the conflicting operations. The save-preflight
+     * `validateInvariants()` is the backstop for reflection or future
+     * generated bulk-write code that could bypass per-call guards;
+     * with `private` field visibility there's no documented in-module
+     * path that needs the backstop, but it stays as defense-in-depth.
      */
     private fun buildEdgeMutatorType(edge: HelperEligibleM2M): TypeSpec {
         val idType = edge.targetIdTypeName
         val listOfId = LIST.parameterizedBy(idType)
         val mutableListOfId = MUTABLE_LIST.parameterizedBy(idType)
+        val pendingEdgeOpsParamed = PENDING_EDGE_OPS.parameterizedBy(idType)
         val mixedModeMessage = "edge '${edge.edgeName}': cannot mix replacement (set) and " +
             "delta (add/remove) operations in one mutation"
         val sameIdAddAfterRemoveMessage = "edge '${edge.edgeName}': cannot add(id) after " +
             "remove(id) for the same id in one mutation"
         val sameIdRemoveAfterAddMessage = "edge '${edge.edgeName}': cannot remove(id) after " +
             "add(id) for the same id in one mutation"
+        val sameIdOverlapMessage = "edge '${edge.edgeName}': delta add/remove sets overlap on " +
+            "one or more ids — `add(x)` and `remove(x)` for the same x must not coexist"
 
         return TypeSpec.classBuilder(edge.mutatorClassSimpleName)
             .addKdoc(
@@ -736,7 +751,11 @@ internal class UpdateGenerator(
                     "fire fail-fast at the call site: replacement-vs-delta (`set` and\n" +
                     "`add`/`remove` are mutually exclusive) and same-id mixed-direction\n" +
                     "(`add(x)` after `remove(x)` and the reverse are rejected). Both\n" +
-                    "throw `IllegalStateException`.",
+                    "throw `IllegalStateException`.\n\n" +
+                    "Op-log fields are `private` to prevent same-module bypass; downstream\n" +
+                    "codegen uses the `internal` accessor methods (`hasOps`,\n" +
+                    "`snapshotOps`, `validateInvariants`) instead of reaching into the\n" +
+                    "raw lists.",
                 edge.edgeName,
             )
             .primaryConstructor(
@@ -744,27 +763,26 @@ internal class UpdateGenerator(
                     .addModifiers(KModifier.INTERNAL)
                     .build(),
             )
-            // Op log. `internal` so the enclosing Update builder can
-            // read them in Phase 5 when computing EdgeChanges. The two
-            // delta lists stay disjoint by construction — the per-call
-            // same-id checks below reject any sequence that would put
-            // the same id in both.
+            // Op log — `private`. Same-module application code can't
+            // bypass the per-call invariants by reaching into these
+            // fields. Downstream codegen accesses state through the
+            // internal accessors below.
             .addProperty(
                 PropertySpec.builder("_requestedSet", listOfId.copy(nullable = true))
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("null")
                     .build(),
             )
             .addProperty(
                 PropertySpec.builder("_adds", mutableListOfId)
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .initializer("mutableListOf()")
                     .build(),
             )
             .addProperty(
                 PropertySpec.builder("_removes", mutableListOfId)
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .initializer("mutableListOf()")
                     .build(),
             )
@@ -823,6 +841,43 @@ internal class UpdateGenerator(
                     )
                     .build(),
             )
+            .addFunction(
+                // Materializes the immutable PendingEdgeOps snapshot
+                // consumed by _buildPendingEdgeOps. Replaces the
+                // previous inline field reads in the aggregator
+                // constructor; with private fields the codegen can't
+                // inline them anyway.
+                FunSpec.builder("snapshotOps")
+                    .addModifiers(KModifier.INTERNAL)
+                    .returns(pendingEdgeOpsParamed)
+                    .addStatement(
+                        "return %T(\n" +
+                            "  requestedSet = _requestedSet?.toSet(),\n" +
+                            "  requestedAdds = _adds.toSet(),\n" +
+                            "  requestedRemoves = _removes.toSet(),\n" +
+                            ")",
+                        PENDING_EDGE_OPS,
+                    )
+                    .build(),
+            )
+            .addFunction(
+                // Save-preflight defense-in-depth check. Re-runs both
+                // mixed-mode rules against the captured op-log state.
+                // Replaces the inlined field-access checks in the
+                // previous _checkLinkTableM2MMixedMode helper, which
+                // can no longer access the private fields directly.
+                FunSpec.builder("validateInvariants")
+                    .addModifiers(KModifier.INTERNAL)
+                    .addStatement(
+                        "if (_requestedSet != null && (_adds.isNotEmpty() || _removes.isNotEmpty())) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
+                    )
+                    .addStatement(
+                        "if ((_adds.toSet() intersect _removes.toSet()).isNotEmpty()) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, sameIdOverlapMessage,
+                    )
+                    .build(),
+            )
             .build()
     }
 
@@ -859,38 +914,18 @@ internal class UpdateGenerator(
     private fun buildCheckLinkTableM2MMixedModeFunction(
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec {
+        // The two mixed-mode invariants live on the mutator itself
+        // (`validateInvariants()`) now that the op-log fields are
+        // private. This helper just dispatches per edge. Per-call
+        // guards in add()/remove()/set() reject violations at the
+        // mutator surface under normal usage; this preflight is the
+        // defense-in-depth backstop for state that bypassed those
+        // guards (reflection or future bulk-write codegen that
+        // sidestepped the per-call rule).
         val builder = FunSpec.builder("_checkLinkTableM2MMixedMode")
             .addModifiers(KModifier.PRIVATE)
         for (edge in helperEligibleEdges) {
-            val replacementVsDeltaMessage = "edge '${edge.edgeName}': cannot mix replacement (set) " +
-                "and delta (add/remove) operations in one mutation"
-            // Layer 1: replacement-vs-delta (Phase 4 backstop for
-            // bypassed call-site guards).
-            builder.addStatement(
-                "if (this.%L._requestedSet != null && (this.%L._adds.isNotEmpty() || this.%L._removes.isNotEmpty())) throw %T(%S)",
-                edge.mutatorPropertyName,
-                edge.mutatorPropertyName,
-                edge.mutatorPropertyName,
-                ILLEGAL_STATE_EXCEPTION,
-                replacementVsDeltaMessage,
-            )
-            // Layer 2 (Phase 8 / P3): same-id mixed-direction overlap.
-            // Per-call guards in add() / remove() keep `_adds` and
-            // `_removes` disjoint by construction under normal usage;
-            // this backstop catches state that bypassed those guards
-            // (reflection writing the lists directly, or a future
-            // generated bulk-write helper that does the same).
-            // Spec invariant from RFC #5 §Generated Builder Shape:
-            // "The two sets are disjoint by construction."
-            val sameIdOverlapMessage = "edge '${edge.edgeName}': delta add/remove sets overlap on " +
-                "one or more ids — `add(x)` and `remove(x)` for the same x must not coexist"
-            builder.addStatement(
-                "if ((this.%L._adds.toSet() intersect this.%L._removes.toSet()).isNotEmpty()) throw %T(%S)",
-                edge.mutatorPropertyName,
-                edge.mutatorPropertyName,
-                ILLEGAL_STATE_EXCEPTION,
-                sameIdOverlapMessage,
-            )
+            builder.addStatement("this.%L.validateInvariants()", edge.mutatorPropertyName)
         }
         return builder.build()
     }
@@ -902,11 +937,12 @@ internal class UpdateGenerator(
      * view that hooks see through `ctx.pendingEdges` and
      * `ctx.mutation.pendingEdges`.
      *
-     * Dedup happens at snapshot time: `_requestedSet: List<ID>?` becomes
-     * `requestedSet: Set<ID>?`, and the mutable add/remove lists become
-     * sets. Same-id paired add+remove is preserved across both intent
-     * fields (RFC's literal-call-log rule) because each list goes into
-     * its own set independently — no cancellation.
+     * Dedup happens inside the mutator's `snapshotOps()` accessor,
+     * which converts the private `_requestedSet: List<ID>?` / `_adds`
+     * / `_removes` lists into the immutable `PendingEdgeOps<ID>`
+     * sets. By the time this generator emits, the op-log fields are
+     * private — the codegen calls `snapshotOps()` rather than reaching
+     * into the fields directly.
      *
      * For schemas with no helper-eligible M2M edges the aggregator is
      * empty (no constructor parameters), so this just returns
@@ -930,15 +966,7 @@ internal class UpdateGenerator(
         code.add("return %T(\n", pendingEdgeOpsClass)
         for (edge in helperEligibleEdges) {
             val prop = edge.mutatorPropertyName
-            code.add(
-                "  %L = %T(\n" +
-                    "    requestedSet = this.%L._requestedSet?.toSet(),\n" +
-                    "    requestedAdds = this.%L._adds.toSet(),\n" +
-                    "    requestedRemoves = this.%L._removes.toSet(),\n" +
-                    "  ),\n",
-                prop, PENDING_EDGE_OPS,
-                prop, prop, prop,
-            )
+            code.add("  %L = this.%L.snapshotOps(),\n", prop, prop)
         }
         code.add(")\n")
         builder.addCode(code.build())

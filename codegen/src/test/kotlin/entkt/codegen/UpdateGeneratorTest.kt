@@ -893,26 +893,40 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `mutator op log fields are internal so the enclosing Update class can read them`() {
+    fun `mutator op log fields are private — downstream codegen consumes them through internal accessors`() {
+        // RFC #5 Phase 8: op-log fields locked down to private so
+        // same-module application code can't bypass per-call invariants
+        // by writing tags._adds.add(...) directly. Downstream codegen
+        // (_buildPendingEdgeOps, _checkLinkTableM2MMixedMode, the M2M
+        // pending-ops gate) uses the internal accessors instead.
         val (post, tag, postTag, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // _requestedSet, _adds, _removes are internal — Phase 5 needs to
-        // read them from the enclosing Update builder for EdgeChanges
-        // computation. `private` would make them invisible to the outer
-        // class.
-        assert(output.contains("internal var _requestedSet: List<UUID>?")) {
-            "_requestedSet must be internal so the enclosing Update class can read it\n$output"
+        assert(output.contains("private var _requestedSet: List<UUID>?")) {
+            "_requestedSet must be private (not internal) to block same-module bypass\n$output"
         }
-        assert(output.contains("internal val _adds: MutableList<UUID>")) {
-            "_adds must be internal\n$output"
+        assert(output.contains("private val _adds: MutableList<UUID>")) {
+            "_adds must be private\n$output"
         }
-        assert(output.contains("internal val _removes: MutableList<UUID>")) {
-            "_removes must be internal\n$output"
+        assert(output.contains("private val _removes: MutableList<UUID>")) {
+            "_removes must be private\n$output"
         }
+        // No `internal var/val _requestedSet/_adds/_removes` form should leak.
+        assert(!output.contains("internal var _requestedSet") &&
+               !output.contains("internal val _adds") &&
+               !output.contains("internal val _removes")) {
+            "Internal field-visibility form must be gone — the bypass vector\n$output"
+        }
+        // Three internal accessors: hasOps, snapshotOps, validateInvariants.
         assert(output.contains("internal fun hasOps(): Boolean")) {
-            "hasOps() must be internal — wired into Phase 4's M2M preflight\n$output"
+            "hasOps() accessor must be internal — wired into M2M preflight gate\n$output"
+        }
+        assert(output.contains("internal fun snapshotOps(): PendingEdgeOps<UUID>")) {
+            "snapshotOps() accessor must be internal — replaces inline field reads in _buildPendingEdgeOps\n$output"
+        }
+        assert(output.contains("internal fun validateInvariants()")) {
+            "validateInvariants() accessor must be internal — replaces inline checks in _checkLinkTableM2MMixedMode\n$output"
         }
     }
 
@@ -995,26 +1009,29 @@ class UpdateGeneratorTest {
     // ---------- RFC #5 Phase 3: PendingEdgeOps hook surface ----------
 
     @Test
-    fun `update builder emits a _buildPendingEdgeOps that dedupes op log into PendingEdgeOps`() {
+    fun `update builder emits a _buildPendingEdgeOps that delegates per-edge to snapshotOps`() {
+        // Phase 8: with mutator op-log fields private, the aggregator
+        // construction no longer reaches into _requestedSet / _adds /
+        // _removes directly. Each per-edge entry calls the mutator's
+        // internal `snapshotOps()` accessor, which performs the dedup
+        // internally and returns the immutable PendingEdgeOps<ID>.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The private helper builds the per-entity aggregator from each
-        // mutator's op log, deduping the lists into sets. Same-id paired
-        // add+remove is preserved across both intent fields because each
-        // list goes into its own set independently (no cancellation).
         assert(output.contains("private fun _buildPendingEdgeOps(): M2MPostPendingEdgeOps")) {
             "Expected private _buildPendingEdgeOps helper returning the aggregator\n$output"
         }
-        assert(output.contains("requestedSet = this.tags._requestedSet?.toSet()")) {
-            "Expected dedup of _requestedSet to Set<ID>?\n$output"
+        assert(output.contains("tags = this.tags.snapshotOps()")) {
+            "Per-edge entry must delegate to mutator's snapshotOps() accessor\n$output"
         }
-        assert(output.contains("requestedAdds = this.tags._adds.toSet()")) {
-            "Expected dedup of _adds to Set<ID>\n$output"
-        }
-        assert(output.contains("requestedRemoves = this.tags._removes.toSet()")) {
-            "Expected dedup of _removes to Set<ID>\n$output"
+        // No direct field accesses survive in the aggregator construction —
+        // those would compile-error against private fields now anyway,
+        // but pin it via test for clarity.
+        assert(!output.contains("this.tags._requestedSet") &&
+               !output.contains("this.tags._adds") &&
+               !output.contains("this.tags._removes")) {
+            "Aggregator construction must not reach into private op-log fields\n$output"
         }
     }
 
@@ -1279,24 +1296,29 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update builder emits _checkLinkTableM2MMixedMode as the defense-in-depth backstop`() {
+    fun `update builder emits _checkLinkTableM2MMixedMode that dispatches per-edge to validateInvariants`() {
+        // Phase 8: the mixed-mode invariants live on the mutator
+        // itself (`validateInvariants()`) now that the op-log fields
+        // are private. The save-preflight helper just dispatches per
+        // edge.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The defense-in-depth check re-runs the same per-call rule
-        // against the captured op log. Same error message as the
-        // per-call mutator throw.
         assert(output.contains("private fun _checkLinkTableM2MMixedMode()")) {
             "Expected _checkLinkTableM2MMixedMode helper\n$output"
         }
-        assert(output.contains(
-            "if (this.tags._requestedSet != null && (this.tags._adds.isNotEmpty() || this.tags._removes.isNotEmpty())) throw IllegalStateException",
-        )) {
-            "Expected per-edge mixed-mode check naming both replacement and delta state\n$output"
+        assert(output.contains("this.tags.validateInvariants()")) {
+            "Expected per-edge dispatch to mutator's validateInvariants() accessor\n$output"
         }
+        // The actual invariant assertions now live inside the
+        // mutator class's validateInvariants() body — pin the error
+        // messages there.
         assert(output.contains("edge 'tags': cannot mix replacement (set) and delta (add/remove)")) {
-            "Defense-in-depth error message must match the per-call message\n$output"
+            "Replacement-vs-delta error message must still surface from the mutator\n$output"
+        }
+        assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
+            "Same-id overlap error message must still surface from the mutator\n$output"
         }
     }
 
@@ -1412,43 +1434,49 @@ class UpdateGeneratorTest {
 
     @Test
     fun `defense-in-depth also catches same-id overlap between _adds and _removes`() {
-        // Layer 2 backstop (Phase 8 / P3): per-call add()/remove()
-        // guards keep `_adds` and `_removes` disjoint by construction
-        // under normal usage, but bypassed state (reflection writing
-        // the lists directly, or a future bulk-write helper that
-        // doesn't go through the per-call rule) could leave an id in
-        // both. The runtime computeEdgeChanges algorithm relies on
-        // disjointness — without this backstop, overlap would slip
-        // through to privacy/validation and the junction writes.
+        // Phase 8: with the op-log fields now private, the overlap
+        // check lives inside the mutator's validateInvariants() body
+        // — and the save-preflight _checkLinkTableM2MMixedMode calls
+        // it via this.tags.validateInvariants(). Test both: the
+        // mutator implements the check, and the preflight dispatches.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
+        // Inside the mutator's validateInvariants():
         assert(output.contains(
-            "if ((this.tags._adds.toSet() intersect this.tags._removes.toSet()).isNotEmpty()) throw IllegalStateException",
+            "if ((_adds.toSet() intersect _removes.toSet()).isNotEmpty()) throw IllegalStateException",
         )) {
-            "Defense-in-depth must catch same-id overlap between _adds and _removes\n$output"
+            "Mutator's validateInvariants() must catch same-id overlap between _adds and _removes\n$output"
         }
+        // The named-edge error message.
         assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
             "Overlap-check message should name the edge and the overlap shape\n$output"
         }
     }
 
     @Test
-    fun `multi-edge schemas emit a same-id overlap check per edge`() {
+    fun `multi-edge schemas dispatch validateInvariants per edge in the preflight`() {
+        // Phase 8: the save-preflight _checkLinkTableM2MMixedMode
+        // calls each mutator's validateInvariants(). Pin the
+        // per-edge dispatch.
         val (doc, _, _, _, names) = makeMultiEdgeSchemas()
         val output = generator.generate("M2MDoc", doc, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains(
-            "if ((this.tags._adds.toSet() intersect this.tags._removes.toSet()).isNotEmpty()) throw",
-        )) {
-            "Expected overlap check on the tags edge\n$output"
+        assert(output.contains("this.tags.validateInvariants()")) {
+            "Expected per-edge dispatch for tags\n$output"
         }
-        assert(output.contains(
-            "if ((this.labels._adds.toSet() intersect this.labels._removes.toSet()).isNotEmpty()) throw",
-        )) {
-            "Expected overlap check on the labels edge\n$output"
+        assert(output.contains("this.labels.validateInvariants()")) {
+            "Expected per-edge dispatch for labels\n$output"
+        }
+        // Each mutator's body carries its own overlap check, with
+        // the edge name in the error message.
+        assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
+            "Each mutator should embed its named overlap message\n$output"
+        }
+        assert(output.contains("edge 'labels': delta add/remove sets overlap")) {
+            "Each mutator should embed its named overlap message\n$output"
         }
     }
 
