@@ -176,6 +176,28 @@ internal class UpdateGenerator(
                     .initializer("mutableSetOf()")
                     .build()
             )
+            // RFC #5 Phase 8 (P3): captured pendingEdges snapshot. The
+            // adapter's `pendingEdges` getter routes through this field
+            // so that ctx.mutation.pendingEdges returns the *same*
+            // snapshot ctx.pendingEdges holds — not a freshly-rebuilt
+            // value off the live mutator. save() populates this once
+            // after the owner-row read and before any hook fires; the
+            // getter throws if accessed before then (adapter touched
+            // outside save context). Always emitted (even on schemas
+            // without helper-eligible M2M edges) because the adapter's
+            // pendingEdges getter is unconditional — UpdateMutationView
+            // always carries pendingEdges typed against the (possibly
+            // empty) per-entity aggregator.
+            .addProperty(
+                PropertySpec.builder(
+                    "_capturedPendingEdges",
+                    ClassName(packageName, "${schemaName}PendingEdgeOps").copy(nullable = true),
+                )
+                    .addModifiers(KModifier.PRIVATE)
+                    .mutable(true)
+                    .initializer("null")
+                    .build(),
+            )
             .addProperties(mutableFields.map { buildProperty(it) })
             .also { builder ->
                 for (fk in edgeFks) {
@@ -411,16 +433,31 @@ internal class UpdateGenerator(
         for (fk in edgeFks) {
             adapter.addFunction(buildAdapterUnsetFunction(updateClassName, fk.propertyName))
         }
-        // RFC #5 Phase 3: read-only `pendingEdges` forwarder. Hooks
-        // cannot mutate the underlying op log (no mutator surface on
-        // the view), so the getter rebuilds the immutable aggregator on
-        // each read — the result is stable during the hook block.
+        // RFC #5 Phase 3 + Phase 8 (P3): read-only `pendingEdges`
+        // forwarder routes through the captured snapshot on the
+        // enclosing Update class, so ctx.mutation.pendingEdges returns
+        // the SAME object ctx.pendingEdges holds. Rebuilding here
+        // from live mutator state would (a) be redundant — hooks
+        // can't mutate the underlying op log through documented
+        // surfaces — but more importantly (b) silently diverge if
+        // any future path (bulk-write codegen, reflection helpers,
+        // reused Update instances) ever did reach the mutator
+        // post-snapshot. The error path triggers only if the adapter
+        // is touched outside a save context (no save() has populated
+        // _capturedPendingEdges yet).
         adapter.addProperty(
             PropertySpec.builder("pendingEdges", pendingEdgeOpsClass)
                 .addModifiers(KModifier.OVERRIDE)
                 .getter(
                     FunSpec.getterBuilder()
-                        .addStatement("return this@%L._buildPendingEdgeOps()", updateClassName)
+                        .addStatement(
+                            "return this@%L._capturedPendingEdges " +
+                                "?: error(%S)",
+                            updateClassName,
+                            "pendingEdges accessed outside a save() — the captured snapshot is " +
+                                "only populated during save() between the owner-row read and the " +
+                                "afterUpdate hook block",
+                        )
                         .build(),
                 )
                 .build(),
@@ -1145,8 +1182,11 @@ internal class UpdateGenerator(
         // is not on the hook-facing view), so a single snapshot is
         // stable across the whole hook block. Surfaced to update hooks
         // as `ctx.pendingEdges` and also reachable through
-        // `ctx.mutation.pendingEdges` for consistency. ----
+        // `ctx.mutation.pendingEdges` — both routed through the same
+        // captured value (Phase 8 / P3) so the two views are object-
+        // identity equal, not just structurally equal. ----
         builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
+        builder.addStatement("_capturedPendingEdges = pendingEdges")
 
         // ---- beforeSave hooks (shared with create — receive Mutation interface). ----
         // Pass the restricted `_mutationView` adapter rather than `this`

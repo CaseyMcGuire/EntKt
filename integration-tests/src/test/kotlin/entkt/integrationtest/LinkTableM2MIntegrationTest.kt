@@ -369,6 +369,32 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
+    fun `ctx_pendingEdges and ctx_mutation_pendingEdges are the same object instance`() {
+        // Phase 8 (P3): both surfaces route through the captured
+        // _capturedPendingEdges field, so they're object-identity
+        // equal. Pre-Phase-8 the adapter rebuilt on every read; the
+        // values were structurally equal but `===` was false.
+        var observed: Pair<entkt.runtime.PendingEdgeOps<Long>, entkt.runtime.PendingEdgeOps<Long>>? = null
+        val (client, _) = lockingClientWithHook { ctx ->
+            observed = ctx.pendingEdges.tags to ctx.mutation.pendingEdges.tags
+        }
+        val (post, tagA, _) = seedPostAndTags(client)
+
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) {
+                tags.add(tagA.id)
+            }.save()
+        }
+
+        val (fromCtx, fromMutationView) = assertNotNull(observed)
+        // Object identity, not just structural equality.
+        assertTrue(
+            fromCtx === fromMutationView,
+            "ctx.pendingEdges.tags and ctx.mutation.pendingEdges.tags must be the same instance",
+        )
+    }
+
+    @Test
     fun `pendingEdges requestedAdds and requestedRemoves stay disjoint — paired calls cannot reach pending state`() {
         // The mutator's call-site rejection means hooks never see a
         // PendingEdgeOps with the same id in both intent sets. This

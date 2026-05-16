@@ -1117,17 +1117,77 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `mutation view adapter forwards pendingEdges via _buildPendingEdgeOps`() {
+    fun `mutation view adapter pendingEdges routes through the captured snapshot, not a fresh rebuild`() {
+        // Phase 8 (P3): the adapter returns the SAME pendingEdges
+        // instance that the hook context received. The previous
+        // _buildPendingEdgeOps() rebuild path was structurally
+        // equivalent (because hook code can't mutate the op log
+        // through the view) but every read paid a fresh allocation
+        // and the two surfaces returned different object instances.
+        // Routing through _capturedPendingEdges keeps them
+        // object-identity equal and forecloses divergence if any
+        // future path ever reaches the live mutator post-snapshot.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The adapter implements the view interface's pendingEdges
-        // getter by calling the outer builder's _buildPendingEdgeOps().
-        // Mutators are read-only to hooks, so rebuilding on each read
-        // is stable for the duration of the hook block.
-        assert(output.contains("override val pendingEdges: M2MPostPendingEdgeOps get() = this@M2MPostUpdate._buildPendingEdgeOps()")) {
-            "Adapter pendingEdges getter must delegate to outer _buildPendingEdgeOps()\n$output"
+        assert(output.contains(
+            "override val pendingEdges: M2MPostPendingEdgeOps get() = " +
+                "this@M2MPostUpdate._capturedPendingEdges",
+        )) {
+            "Adapter pendingEdges getter must read the captured snapshot field\n$output"
+        }
+        // Error path when accessed outside save context (field still
+        // null at adapter-touch time).
+        assert(output.contains("pendingEdges accessed outside a save()")) {
+            "Adapter getter should error when the captured snapshot is unset\n$output"
+        }
+        // The old direct delegation to _buildPendingEdgeOps() in the
+        // getter must be gone — that was the divergence vector.
+        assert(!output.contains(
+            "override val pendingEdges: M2MPostPendingEdgeOps get() = " +
+                "this@M2MPostUpdate._buildPendingEdgeOps()",
+        )) {
+            "Old direct-rebuild adapter getter must be gone\n$output"
+        }
+    }
+
+    @Test
+    fun `update class declares the captured pendingEdges snapshot field, even for non-M2M schemas`() {
+        // The adapter is always generated (UpdateMutationView always
+        // carries pendingEdges typed against the per-entity aggregator,
+        // empty or not), so the field that backs it must always be
+        // present too — otherwise the getter wouldn't compile on
+        // non-M2M schemas.
+        val user = User()
+        finalize(user, Car())
+        val userOutput = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(userOutput.contains("private var _capturedPendingEdges: UserPendingEdgeOps?")) {
+            "Non-M2M schemas should also declare _capturedPendingEdges\n$userOutput"
+        }
+
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val postOutput = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(postOutput.contains("private var _capturedPendingEdges: M2MPostPendingEdgeOps?")) {
+            "M2M-capable schemas declare _capturedPendingEdges typed against their aggregator\n$postOutput"
+        }
+    }
+
+    @Test
+    fun `save populates _capturedPendingEdges immediately after building the snapshot`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The same snapshot value flows into the field and into the
+        // hook context constructor — guaranteeing object identity
+        // between ctx.pendingEdges and ctx.mutation.pendingEdges.
+        assert(output.contains(
+            "val pendingEdges = _buildPendingEdgeOps() _capturedPendingEdges = pendingEdges",
+        )) {
+            "save() must populate _capturedPendingEdges with the same snapshot it threads into hooks\n$output"
         }
     }
 
