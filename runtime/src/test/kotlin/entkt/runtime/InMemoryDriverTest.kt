@@ -1226,6 +1226,61 @@ class InMemoryDriverTest {
     }
 
     @Test
+    fun `insert rejects an explicit duplicate primary key`() {
+        // PostgreSQL treats PRIMARY KEY as implicitly UNIQUE. The
+        // codegen marks `id` with `primaryKey = true` but doesn't set
+        // `unique = true`, so the in-memory check needs to consult
+        // both flags. Without this, two inserts with the same explicit
+        // id silently succeed and corrupt byId / update / delete (each
+        // sees only the first match).
+        val schema = EntitySchema(
+            table = "pk_test",
+            idColumn = "id",
+            idStrategy = IdStrategy.EXPLICIT,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("label", FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply { register(schema) }
+
+        driver.insert("pk_test", mapOf("id" to 1L, "label" to "first"))
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.insert("pk_test", mapOf("id" to 1L, "label" to "second"))
+        }
+        assertTrue(ex.message!!.contains("Primary key violation"))
+        assertTrue(ex.message!!.contains("pk_test.id"))
+        assertEquals(1L, driver.count("pk_test", emptyList()))
+    }
+
+    @Test
+    fun `insert with explicit id on an AUTO_LONG schema still rejects duplicates`() {
+        // Even when the schema mints ids by default, the caller can
+        // bypass the mint by passing an explicit id in the values map.
+        // The check must still catch that case.
+        val schema = EntitySchema(
+            table = "pk_auto_test",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("label", FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply { register(schema) }
+
+        // First insert mints id=1 automatically.
+        val first = driver.insert("pk_auto_test", mapOf("label" to "first"))
+        assertEquals(1L, first["id"])
+        // Second insert tries to reuse id=1 explicitly.
+        assertFailsWith<IllegalStateException> {
+            driver.insert("pk_auto_test", mapOf("id" to 1L, "label" to "second"))
+        }
+    }
+
+    @Test
     fun `insert allows multiple NULL values on a nullable unique column`() {
         // NULLS DISTINCT semantics — Postgres default. Multiple NULL
         // values in a nullable UNIQUE column do not collide.

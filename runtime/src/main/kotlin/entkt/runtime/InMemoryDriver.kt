@@ -255,17 +255,25 @@ class InMemoryDriver : Driver {
         fun effective(col: String): Any? = if (col in values) values[col] else baselineRow?.get(col)
 
         // Single-column UNIQUE constraints. Skip columns that aren't
-        // being written — uniqueness can't change.
+        // being written — uniqueness can't change. PRIMARY KEY columns
+        // are implicitly UNIQUE in Postgres (the PRIMARY KEY constraint
+        // implies it), so the check fires for `col.primaryKey ||
+        // col.unique`. Without the PK side of the OR, an explicit
+        // duplicate id like `insert(table, mapOf("id" to 1L, ...))`
+        // twice would silently succeed in memory — visible corruption:
+        // byId / update / delete only see the first match and mutate
+        // it, leaving a ghost row behind.
         for (col in schema.columns) {
-            if (!col.unique) continue
+            if (!(col.unique || col.primaryKey)) continue
             if (col.name !in values) continue
             val newValue = values[col.name] ?: continue
             val conflict = synchronized(rows) {
                 rows.any { it !== excludingRow && it[col.name] == newValue }
             } || additionalRows.any { it !== excludingRow && it[col.name] == newValue }
             if (conflict) {
+                val kind = if (col.primaryKey) "Primary key violation" else "Unique violation"
                 throw IllegalStateException(
-                    "Unique violation: $table.${col.name} = $newValue already exists",
+                    "$kind: $table.${col.name} = $newValue already exists",
                 )
             }
         }
