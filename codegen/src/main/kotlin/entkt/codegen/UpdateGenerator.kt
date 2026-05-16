@@ -958,7 +958,20 @@ internal class UpdateGenerator(
         // below, matching the RFC #4 pipeline ("syntactically empty
         // update classification — report NoChanges before any other
         // observable work, including transaction requirement checks").
-        builder.beginControlFlow("if (dirtyFields.isEmpty())")
+        //
+        // RFC #5 Phase 7: an M2M-only update (caller invoked
+        // `tags.add(...)` etc. but assigned no scalar/FK fields) has
+        // `dirtyFields.isEmpty()` since `dirtyFields` tracks scalar
+        // assignments only. Gate this top-of-save NoChanges throw on
+        // `!_hasPendingLinkTableM2MOps()` so M2M-only updates proceed
+        // to the preflights below. The Phase 6 hook-cleared-empty
+        // branch downstream uses the same gate.
+        val topEmptyCondition = if (helperEligibleEdges.isNotEmpty()) {
+            "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps())"
+        } else {
+            "if (dirtyFields.isEmpty())"
+        }
+        builder.beginControlFlow(topEmptyCondition)
         builder.addStatement(
             "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
             ENT_NO_CHANGES_EXCEPTION,

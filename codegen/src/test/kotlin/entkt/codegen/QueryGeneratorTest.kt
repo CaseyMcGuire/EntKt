@@ -136,7 +136,7 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `does not emit eager loading methods when schemaNames is empty`() {
+    fun `does not emit per-edge withMethods when schemaNames is empty but always emits loadEdges`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -144,19 +144,30 @@ class QueryGeneratorTest {
         assert(!output.contains("withCars")) {
             "Without schemaNames, with{Edge} should be skipped\n$output"
         }
-        assert(!output.contains("loadEdges")) {
-            "Without schemaNames, loadEdges should be skipped\n$output"
+        // loadEdges is always emitted (RFC #5 Phase 7 fix): an M2M
+        // eager-load block on a source query unconditionally calls
+        // `subQuery.loadEdges(...)` on the target's query class, so
+        // every query class needs the method even when its own schema
+        // has no eager-loadable edges. The body is a no-op for such
+        // schemas (the loop over schema.edges() iterates zero times).
+        assert(output.contains("internal fun loadEdges(")) {
+            "loadEdges should always be emitted, even when schemaNames is empty\n$output"
         }
     }
 
     @Test
-    fun `does not emit eager loading methods for schema with no edges`() {
+    fun `always emits loadEdges as a no-op for schemas with no edges`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(!output.contains("loadEdges")) {
-            "Schema with no edges should not have loadEdges\n$output"
+        assert(output.contains("internal fun loadEdges(")) {
+            "loadEdges should always be emitted — needed by M2M eager-load callers from other queries\n$output"
+        }
+        // No per-edge eager block since Car has only a belongsTo
+        // (currently not eager-loadable via withMethod).
+        assert(!output.contains("if (results.isEmpty()) return results\n        var entities = results\n        eager")) {
+            "Body should not reference any eagerProp fields for a schema with no eager edges\n$output"
         }
     }
 

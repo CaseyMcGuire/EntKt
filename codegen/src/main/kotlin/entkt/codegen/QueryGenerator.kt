@@ -125,11 +125,15 @@ internal class QueryGenerator(
             .addFunction(buildOffset(queryClass))
             .addFunction(buildCombinedPredicate())
             .addFunctions(eagerEdgeSpecs.map { it.withMethod })
-            .apply {
-                if (hasEdges) {
-                    addFunction(buildLoadEdges(entityClass, schema, schemaNames))
-                }
-            }
+            // Always emit `loadEdges` — the M2M eager-load codegen
+            // emitted on a *source* query calls `subQuery.loadEdges(...)`
+            // unconditionally on the target's query, so a target schema
+            // with zero outgoing edges of its own (like a simple `Tag`)
+            // still needs the no-op method to satisfy that call site.
+            // The body's loop over `schema.edges()` produces zero
+            // iterations for edge-less schemas, so the method just
+            // returns its `results` parameter unchanged.
+            .addFunction(buildLoadEdges(entityClass, schema, schemaNames))
             .addFunction(buildRequireClient(schemaName))
             .addFunction(buildAll(schemaName, entityClass, hasEdges))
             .addFunction(buildFirstOrNull(schemaName, entityClass, hasEdges))

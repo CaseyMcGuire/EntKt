@@ -1350,17 +1350,24 @@ class UpdateGeneratorTest {
     // ---------- RFC #5 Phase 6: junction writes + edge-only owner-UPDATE suppression ----------
 
     @Test
-    fun `M2M-only update no longer throws NoChanges — empty-branch condition gates on M2M pending`() {
+    fun `M2M-only update no longer throws NoChanges — both empty checks gate on M2M pending`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Phase 5 had: if (dirtyFields.isEmpty()) { ... throw NoChanges }
-        // Phase 6: gate the throw on `!_hasPendingLinkTableM2MOps()` so
-        // M2M-only updates fall through to the non-empty branch where
-        // junction writes fire.
-        assert(output.contains("if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch")) {
-            "Empty-scalar NoChanges branch must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
+        // Phase 5 had two empty checks in save():
+        //   - top of save(): syntactic check before any preflight runs
+        //   - after the canonical patch build: hook-cleared branch
+        // Phase 6 gated the hook-cleared branch. Phase 7 also gates the
+        // top-of-save syntactic check, since M2M-only updates have
+        // dirtyFields.isEmpty() (the mutators don't touch dirtyFields).
+        val topGate = "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { throw EntNoChangesException"
+        val hookClearedGate = "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch"
+        assert(output.contains(topGate)) {
+            "Top-of-save syntactic empty check must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
+        }
+        assert(output.contains(hookClearedGate)) {
+            "Hook-cleared empty branch must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
         }
         // Schemas WITHOUT helper-eligible M2M keep the unguarded form
         // so non-M2M flow is untouched.

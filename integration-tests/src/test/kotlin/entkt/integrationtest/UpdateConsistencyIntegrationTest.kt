@@ -1,6 +1,7 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.support.LockSupportInMemoryDriver
 import entkt.runtime.InMemoryDriver
 import entkt.runtime.TransactionRequiredException
 import entkt.runtime.UnsupportedDriverCapabilityException
@@ -184,72 +185,6 @@ class UpdateConsistencyIntegrationTest {
         }
         assertEquals(true, ex.message!!.contains("supportsReadRowForUpdate"))
     }
-}
-
-/**
- * Test-only wrapper that delegates everything to an [InMemoryDriver]
- * but advertises both row-lock capabilities so the codegen
- * Pessimistic happy-path can be exercised end-to-end. The forwarded
- * `readRowForUpdate` / `serializeOwnerEdgeAndRead` calls don't hold
- * a lock until transaction end — they just delegate to `byId`. Real
- * concurrency tests against true row-lock semantics belong on the
- * Postgres driver suite.
- */
-private class LockSupportInMemoryDriver(private val real: InMemoryDriver) : entkt.runtime.Driver {
-    override fun register(schema: entkt.runtime.EntitySchema) = real.register(schema)
-    override fun insert(table: String, values: Map<String, Any?>) = real.insert(table, values)
-    override fun update(table: String, id: Any, values: Map<String, Any?>) = real.update(table, id, values)
-    override fun byId(table: String, id: Any) = real.byId(table, id)
-    override fun query(
-        table: String,
-        predicates: List<entkt.query.Predicate>,
-        orderBy: List<entkt.query.OrderField>,
-        limit: Int?,
-        offset: Int?,
-    ) = real.query(table, predicates, orderBy, limit, offset)
-    override fun count(table: String, predicates: List<entkt.query.Predicate>) = real.count(table, predicates)
-    override fun exists(table: String, predicates: List<entkt.query.Predicate>) = real.exists(table, predicates)
-    override fun delete(table: String, id: Any) = real.delete(table, id)
-    override fun insertMany(table: String, values: List<Map<String, Any?>>) = real.insertMany(table, values)
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate>) =
-        real.updateMany(table, values, predicates)
-    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate>) = real.deleteMany(table, predicates)
-    override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T =
-        real.withTransaction { txReal -> block(LockSupportInMemoryTxDriver(txReal)) }
-
-    override val supportsReadRowForUpdate: Boolean get() = true
-    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? = real.byId(table, id)
-    override val supportsOwnerEdgeSerialization: Boolean get() = true
-    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? = real.byId(table, id)
-}
-
-/** Tx-scoped sibling of [LockSupportInMemoryDriver]. */
-private class LockSupportInMemoryTxDriver(private val txReal: entkt.runtime.Driver) : entkt.runtime.Driver {
-    override fun register(schema: entkt.runtime.EntitySchema) = txReal.register(schema)
-    override fun insert(table: String, values: Map<String, Any?>) = txReal.insert(table, values)
-    override fun update(table: String, id: Any, values: Map<String, Any?>) = txReal.update(table, id, values)
-    override fun byId(table: String, id: Any) = txReal.byId(table, id)
-    override fun query(
-        table: String,
-        predicates: List<entkt.query.Predicate>,
-        orderBy: List<entkt.query.OrderField>,
-        limit: Int?,
-        offset: Int?,
-    ) = txReal.query(table, predicates, orderBy, limit, offset)
-    override fun count(table: String, predicates: List<entkt.query.Predicate>) = txReal.count(table, predicates)
-    override fun exists(table: String, predicates: List<entkt.query.Predicate>) = txReal.exists(table, predicates)
-    override fun delete(table: String, id: Any) = txReal.delete(table, id)
-    override fun insertMany(table: String, values: List<Map<String, Any?>>) = txReal.insertMany(table, values)
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate>) =
-        txReal.updateMany(table, values, predicates)
-    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate>) = txReal.deleteMany(table, predicates)
-    override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T = block(this)
-
-    override val inTransaction: Boolean get() = true
-    override val supportsReadRowForUpdate: Boolean get() = true
-    override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? = txReal.byId(table, id)
-    override val supportsOwnerEdgeSerialization: Boolean get() = true
-    override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? = txReal.byId(table, id)
 }
 
 /**
