@@ -53,6 +53,7 @@ class InMemoryDriver : Driver {
 
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
         val schema = schemas[table] ?: error("Unregistered table: $table")
+        validateForeignKeyReferences(table, schema, values)
         val rows = tables.getValue(table)
 
         val row = values.toMutableMap()
@@ -76,6 +77,7 @@ class InMemoryDriver : Driver {
         values: Map<String, Any?>,
     ): Map<String, Any?>? {
         val schema = schemas[table] ?: error("Unregistered table: $table")
+        validateForeignKeyReferences(table, schema, values)
         val rows = tables.getValue(table)
         synchronized(rows) {
             val existing = rows.firstOrNull { it[schema.idColumn] == id } ?: return null
@@ -144,8 +146,9 @@ class InMemoryDriver : Driver {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
         // Build all rows first, then add atomically — if any row fails
-        // (e.g. missing id for EXPLICIT strategy), none are persisted.
+        // (e.g. missing id for EXPLICIT strategy, dangling FK), none are persisted.
         val built = values.map { v ->
+            validateForeignKeyReferences(table, schema, v)
             val row = v.toMutableMap()
             if (row[schema.idColumn] == null) {
                 row[schema.idColumn] = when (schema.idStrategy) {
@@ -164,6 +167,7 @@ class InMemoryDriver : Driver {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val cols = values.keys.filter { it != schema.idColumn }
         if (cols.isEmpty()) return 0
+        validateForeignKeyReferences(table, schema, values)
         val rows = tables.getValue(table)
         synchronized(rows) {
             // Collect matches before mutating so edge predicates that
@@ -175,6 +179,67 @@ class InMemoryDriver : Driver {
                 }
             }
             return matched.size
+        }
+    }
+
+    /**
+     * Reject writes whose FK columns point at a non-existent target
+     * row. Mirrors the FK-existence behavior PostgresDriver gets for
+     * free from PostgreSQL's `REFERENCES ... ON DELETE` constraints —
+     * without this check, the in-memory driver would silently accept
+     * dangling FK values that the real database would reject.
+     *
+     * Applied to `insert` / `insertMany` / `update` / `updateMany`.
+     * Skips columns absent from [values] (no write to that column)
+     * and skips null values (nullable FK being cleared).
+     *
+     * Throws `IllegalStateException` naming the violating table,
+     * column, value, and the referenced (table, column) pair. The
+     * generated `saveOrError()` paths don't catch this — `EntError`
+     * doesn't have a `ConstraintViolation` variant in V1 (see the
+     * Result Variants RFC §V1 status), so the raw exception
+     * propagates the same way PostgresDriver's
+     * `org.postgresql.util.PSQLException` does today.
+     *
+     * Same-batch parent+child inserts: validate against the running
+     * state after each row is appended. `insertMany`'s validator
+     * runs per row before that row is added, so a child insert that
+     * follows its parent in the same `values` list works as long as
+     * the parent is built first by the time the child's validator
+     * runs — currently false since `insertMany` does map() then
+     * addAll(), so the parent isn't visible until both are added.
+     * V1 callers don't rely on within-batch FK references; the
+     * generated `createMany` loops through per-row `create.save()`
+     * (each going through the single-row `insert` path), which
+     * correctly handles parent-first ordering.
+     */
+    private fun validateForeignKeyReferences(
+        table: String,
+        schema: EntitySchema,
+        values: Map<String, Any?>,
+    ) {
+        for (col in schema.columns) {
+            val ref = col.references ?: continue
+            // Only validate columns the caller actually writes; a
+            // partial update or insert that omits a FK column should
+            // not re-check the existing value.
+            if (col.name !in values) continue
+            val fkValue = values[col.name] ?: continue
+            val refRows = tables[ref.table]
+                ?: throw IllegalStateException(
+                    "FK violation: $table.${col.name} references unregistered table " +
+                        "'${ref.table}' (driver doesn't know about it — make sure the schema " +
+                        "is registered before any write referencing it)",
+                )
+            val present = synchronized(refRows) {
+                refRows.any { it[ref.column] == fkValue }
+            }
+            if (!present) {
+                throw IllegalStateException(
+                    "FK violation: $table.${col.name} = $fkValue does not match any row in " +
+                        "${ref.table}.${ref.column}",
+                )
+            }
         }
     }
 

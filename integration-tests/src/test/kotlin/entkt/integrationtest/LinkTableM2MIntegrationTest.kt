@@ -172,6 +172,45 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
+    fun `add of a nonexistent target id is rejected at the junction insert — no dangling row`() {
+        // PostgresDriver gets this for free from the FK constraint
+        // declared by RFC #3's junction-shape rule 4. InMemoryDriver
+        // previously skipped FK existence validation on insert, so
+        // dangling junction rows could be silently created — masking
+        // the bug in InMemoryDriver-backed tests. The new in-memory
+        // FK validation now rejects the dangling insert with a
+        // structured exception.
+        val (client, real) = lockingClient()
+        val (post, _, _) = seedPostAndTags(client)
+        val nonexistentTagId = 999_999L
+
+        val ex = client.withTransaction { tx ->
+            assertFailsWith<IllegalStateException> {
+                tx.posts.update(post.id) {
+                    tags.add(nonexistentTagId)
+                }.save()
+            }
+        }
+        // Message names the table, column, value, and the referenced
+        // (table, column) pair so the failure points at the bad input.
+        val msg = ex.message!!
+        assertTrue(
+            msg.contains("post_tags.tag_id"),
+            "FK violation message should name the violating table.column; got: $msg",
+        )
+        assertTrue(
+            msg.contains("$nonexistentTagId"),
+            "FK violation message should name the bad value; got: $msg",
+        )
+        assertTrue(
+            msg.contains("tags.id"),
+            "FK violation message should name the referenced table.column; got: $msg",
+        )
+        // No dangling junction row was persisted.
+        assertEquals(emptyList(), linkedTagIds(real, post.id))
+    }
+
+    @Test
     fun `remove of an unlinked id is a database no-op`() {
         val (client, real) = lockingClient()
         val (post, tagA, _) = seedPostAndTags(client)
