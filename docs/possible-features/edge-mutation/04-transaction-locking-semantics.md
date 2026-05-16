@@ -2,12 +2,11 @@
 
 ## Status
 
-Partially implemented. **The RFC #4 infrastructure layer landed**
+V1 implemented. The RFC #4 infrastructure layer landed
 (transaction-neutral save model, `TransactionRequirement` guardrail,
 `UpdateConsistency.Pessimistic` per-save mode, driver capability
-surface). **The M2M-specific RFC #4 semantics are still deferred** —
-they depend on the link-table M2M write helpers from RFC #5, which
-haven't been implemented yet.
+surface), and the M2M-specific transaction / locking semantics landed
+with [RFC #5 Link-Table M2M Mutation Helpers](05-link-table-helpers.md).
 
 ### RFC #4 infrastructure (implemented)
 
@@ -65,30 +64,35 @@ haven't been implemented yet.
   into context-object shapes is deferred (it's a breaking change to
   the hook DSL, sized for a separate RFC iteration).
 
-### M2M-specific RFC #4 semantics (deferred to RFC #5 implementation)
+### M2M-specific RFC #4 semantics (implemented with RFC #5)
 
-The pieces below are described in this RFC but no generator emits
-them yet because they depend on the link-table M2M write helpers
-that RFC #5 defines but doesn't implement:
+Generated update builders for helper-eligible `throughLink(...)`
+edges now emit the pieces this RFC requires:
 
-- The link-table M2M write helpers themselves (`tags.add(...)`,
-  `tags.remove(...)`, `tags.set(...)`).
-- The pending edge operation classification, owner-edge serialization
-  call site (`serializeOwnerEdgeAndRead`), current junction reads,
-  `EdgeChanges` computation, and junction writes that the
-  Many-To-Many Pipeline section in this RFC describes.
-- The per-driver primitive choice for M2M owner-row reads (true row
-  lock when the driver supports it; cooperative serialization
-  otherwise) — the rule is documented here but no save shape selects
-  it yet.
+- link-table M2M write helpers (`tags.add(...)`, `tags.remove(...)`,
+  `tags.set(...)`)
+- transaction and driver-capability preflight for pending M2M writes
+- pending edge operation classification and mixed-mode defense
+- owner-edge serialization call sites (`readRowForUpdate` when
+  available, otherwise `serializeOwnerEdgeAndRead`)
+- current junction reads, `EdgeChanges` computation, and junction
+  writes
+- edge-only owner-`UPDATE` suppression so M2M-only saves proceed to
+  junction writes instead of being classified as `NoChanges`
 
-Test guidance: integration tests for RFC #4 today exercise the
-infrastructure (`TransactionRequirementIntegrationTest`,
-`UpdateConsistencyIntegrationTest`) but **do not** exercise M2M
-transaction semantics — those will arrive with the RFC #5 helpers.
-A test that asserts `RequiredForMultiWrite` rejects an M2M
-`tags.set(...)` outside a transaction can't exist until `tags.set`
-exists.
+Coverage is split across infrastructure tests
+(`TransactionRequirementIntegrationTest`, `UpdateConsistencyIntegrationTest`),
+generated-code tests (`UpdateGeneratorTest`), and M2M end-to-end tests
+(`LinkTableM2MIntegrationTest` plus Postgres-backed FK coverage in
+`LinkTableM2MPostgresIntegrationTest`).
+
+Deferred follow-ups:
+
+- a real Postgres concurrency race test against `SELECT ... FOR
+  UPDATE` / `pg_advisory_xact_lock`
+- structured Result Variants mapping for the edge-only owner-deleted
+  FK path; until that lands, the raw driver exception still
+  propagates there
 
 Split out from [Edge Mutation API](00-overview.md).
 
@@ -628,8 +632,12 @@ the failure propagates and the block throws, so rollback happens. On the
 `saveOrError()` path the failure is caught and returned as `EntError`; the owner
 and junction writes have already been issued to the transaction-scoped driver, so
 they roll back only if the caller propagates the `Err` in a way that aborts the
-transaction — for example `withTransactionOrError { ... }.bind()`, which re-throws
-to roll back (see [Result Variants RFC](../tooling/entkt-result-variants-rfc.md)).
+transaction — for example by calling `saveOrError().bind()` *inside* a
+`withTransactionOrError { tx -> ... }` block (the `bind()` extension is scoped
+to `EntResultScope` and throws `AbortEntResultTransaction` on `Err`; the
+framework catches that and rolls back, then the outer
+`withTransactionOrError(...)` returns `EntResult<T>` to the caller). See
+[Result Variants RFC](../tooling/entkt-result-variants-rfc.md).
 A plain `saveOrError()` inside a `withTransaction` block that returns normally
 lets the writes commit.
 

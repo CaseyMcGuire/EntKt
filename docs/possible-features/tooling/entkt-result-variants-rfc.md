@@ -2,7 +2,25 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+**Partially implemented.** The core `EntResult` / `EntError` types and the
+`EntException` hierarchy are defined, and the update path generates
+`saveOrError()` that wraps `EntException` / `PrivacyDeniedException` /
+`ValidationException` into their matching `EntError` variants. Constraint
+and driver failures still propagate as their underlying exception types
+from both `saveOrError()` and `saveOrThrow()` — the driver-side capability
+to identify constraint failures and the runtime mapping into
+`Err(ConstraintViolation)` / `Err(DriverFailure)`
+are deferred follow-up work. Transaction requirement and
+unsupported-driver-capability failures are **not** `EntError` variants by
+design — they're deterministic programming/configuration errors, so
+`TransactionRequiredException` and `UnsupportedDriverCapabilityException`
+throw on every path including `saveOrError()` (see
+[Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md)
+for the Option 3 contract). The result tables
+below describe the V1 target shape; rows that depend on the deferred
+mapping are flagged with footnotes. Create-side `saveOrError()`,
+read-side `*OrError`, the `withTransactionOrError` helper, and bulk
+`*OrError` variants are not yet generated.
 
 ## Summary
 
@@ -369,9 +387,13 @@ Recommended behavior:
 | Outcome | `byIdOrThrow` | `byIdOrNull` | `visibleByIdOrNull` | `byIdOrError` |
 |---|---|---|---|---|
 | Row exists and is visible | returns row | returns row | returns row | `Ok(row)` |
-| Row does not exist | throws `NotFound` | `null` | `null` | `Err(NotFound)` |
-| Row exists but LOAD privacy denies | throws `PrivacyDenied` | throws `PrivacyDenied` | `null` | `Err(PrivacyDenied)` |
-| Driver failure | throws `DriverFailure` | throws `DriverFailure` | throws `DriverFailure` | `Err(DriverFailure)` |
+| Row does not exist | throws `EntNotFoundException` | `null` | `null` | `Err(NotFound)` |
+| Row exists but LOAD privacy denies | throws `EntPrivacyDeniedException` | throws `EntPrivacyDeniedException` | `null` | `Err(PrivacyDenied)` |
+| Driver failure | throws `EntDriverException` | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` ¹ |
+
+¹ Deferred wiring — see Status. V1 currently propagates the underlying driver
+exception (e.g., `org.postgresql.util.PSQLException`) rather than wrapping it
+in `EntDriverException` or surfacing it as `Err(DriverFailure)`.
 
 ### First Row
 
@@ -385,9 +407,24 @@ query.firstOrError(): EntResult<User>
 Recommended behavior:
 
 - `firstOrNull()` returns `null` only if no row matches the storage predicate.
-- `firstVisibleOrNull()` returns the first visible row if supported by the
-  chosen privacy mode, or `null` if none is visible.
+- `firstVisibleOrNull()` returns the first visible row, or `null` if none is
+  visible. See "Visible-only API contract" below for the V1 scan/overfetch
+  semantics.
 - Privacy denial remains explicit unless the method name says `visible`.
+
+**Visible-only API contract (V1).** `firstVisibleOrNull()` /
+`visibleAll()` / `visibleAllOrError()` filter storage-matched rows through
+LOAD privacy before returning. When the privacy mode supports server-side
+predicate pushdown, generated code uses that and all returned rows are
+visible by construction. When pushdown is unavailable, the engine performs
+an **in-process filter after the storage predicate**, with a configurable
+client-level overfetch cap (default 100 rows). If the cap is exhausted
+without finding a visible row, `firstVisibleOrNull()` returns `null` and
+`visibleAllOrError()` returns `Err(DriverFailure)` with an
+"overfetch cap exceeded" message. Pagination across visible-only results is
+the caller's responsibility for `visibleAll()` — there is no implicit
+pagination loop. The overfetch cap is exposed on `EntClientConfig` as
+`visibleOverfetchLimit`.
 
 ### Many Rows
 
@@ -419,10 +456,13 @@ absence.
 | Outcome | `saveOrThrow` | `saveOrError` |
 |---|---|---|
 | Created successfully | returns entity | `Ok(entity)` |
-| Privacy denied | throws `PrivacyDenied` | `Err(PrivacyDenied)` |
-| Validation failed | throws `ValidationFailed` | `Err(ValidationFailed)` |
-| Unique/FK/check constraint failed | throws `ConstraintViolation` | `Err(ConstraintViolation)` |
-| Driver failure | throws `DriverFailure` | `Err(DriverFailure)` |
+| Privacy denied | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
+| Validation failed | throws `EntValidationException` | `Err(ValidationFailed)` |
+| Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` ¹ |
+| Driver failure | throws `EntDriverException` | `Err(DriverFailure)` ¹ |
+
+¹ Deferred wiring — see Status. V1 currently propagates the underlying
+constraint/driver exception through both `saveOrThrow` and `saveOrError`.
 
 ### Update
 
@@ -438,12 +478,15 @@ introducing a second alias.
 | Outcome | `saveOrThrow` | `saveOrError` |
 |---|---|---|
 | Updated successfully | returns entity | `Ok(entity)` |
-| No requested changes (empty patch) | throws `NoChanges` | `Err(NoChanges)` |
-| Owner row missing | throws `NotFound` | `Err(NotFound)` |
-| Privacy denied | throws `PrivacyDenied` | `Err(PrivacyDenied)` |
-| Validation failed | throws `ValidationFailed` | `Err(ValidationFailed)` |
-| Unique/FK/check constraint failed | throws `ConstraintViolation` | `Err(ConstraintViolation)` |
-| Driver failure | throws `DriverFailure` | `Err(DriverFailure)` |
+| No requested changes (empty patch) | throws `EntNoChangesException` | `Err(NoChanges)` |
+| Owner row missing | throws `EntNotFoundException` | `Err(NotFound)` |
+| Privacy denied | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
+| Validation failed | throws `EntValidationException` | `Err(ValidationFailed)` |
+| Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` ¹ |
+| Driver failure | throws `EntDriverException` | `Err(DriverFailure)` ¹ |
+
+¹ Deferred wiring — see Status. V1 currently propagates the underlying
+constraint/driver exception through both `saveOrThrow` and `saveOrError`.
 
 `NoChanges` is the empty-patch outcome defined by
 [ID-Based Update Roots](../edge-mutation/01-id-based-update-roots.md).
@@ -591,6 +634,17 @@ the exact "bad pattern" above — and would force the helper signature to either
 inspect the return value (a second rollback mechanism on top of `bind()`) or
 collapse to `EntResult<EntResult<T>>`. Specifying one shape avoids both.
 
+**Runtime guard.** Because Kotlin's type system can't reject `T : EntResult<*>`
+at compile time, the helper must enforce the rule at runtime: if the block
+returns a value that is itself an `EntResult<*>`, the helper throws
+`IllegalStateException` *and rolls back the transaction*. This converts the
+silent-commit bad pattern into a deterministic programming error caught at the
+first run, rather than letting `EntResult<EntResult<T>>` escape to callers or
+allowing `Err` to ride out as `Ok(Err(...))`. Callers who meant to compose
+results should use `.bind()` inside the block; callers who meant to return the
+raw `EntResult` should restructure to call `withTransactionOrError` outside
+the result composition.
+
 Implementation shape:
 
 ```kotlin
@@ -625,8 +679,19 @@ createManyOrThrow(...): List<User>
 createManyOrError(...): EntResult<List<User>>
 ```
 
-In V1, `createManyOrError` can stop on the first failure and return that error.
-If callers need all per-item failures, add an explicit batch result later:
+**`createManyOrError` requires a transaction-scoped client in V1.** Outside a
+transaction, generated code throws `TransactionRequiredException` at preflight
+(before any per-row write), mirroring the link-table M2M helpers' multi-write
+contract. The transactional requirement guarantees all-or-nothing semantics:
+on first failure, the helper rolls back and returns `Err(...)`, and the
+returned `Err` is sound for retry logic because no rows survived. A future
+follow-up may add a separate non-transactional `createManyBatchOrError(...)`
+returning `EntBatchResult<T>` (defined below) for callers that explicitly want
+partial-success semantics; that variant is deferred until the use case is
+concrete.
+
+If callers need all per-item failures and partial success, the deferred
+batch-result shape is:
 
 ```kotlin
 sealed interface EntBatchResult<out T> {
@@ -643,9 +708,10 @@ data class EntBatchFailure(
 )
 ```
 
-If bulk operations can partially write data outside a transaction, the docs must
-say so explicitly. Callers who need all-or-nothing behavior should use
-`withTransactionOrError`.
+Because V1 `createManyOrError` requires a transaction-scoped client, partial
+writes cannot escape — the helper either commits all rows or rolls all rows
+back. Callers wanting per-row outcomes wait on the deferred
+`createManyBatchOrError` / `EntBatchResult` shape above.
 
 ## Naming Guidelines
 

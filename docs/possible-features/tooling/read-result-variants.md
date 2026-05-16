@@ -2,7 +2,14 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+**Superseded by [Result Variants](entkt-result-variants-rfc.md).** This RFC's
+`byIdResult` / `ReadResult.Visible/Missing/Denied` shape is replaced by the
+unified `byIdOrError` / `EntResult<T>` / `EntError` model in the Result
+Variants RFC; readers should treat the proposal below as historical context,
+not as a normative spec. The Result Variants RFC's "Read API Semantics"
+section covers the read surface (`byIdOrThrow`, `byIdOrNull`,
+`visibleByIdOrNull`, `byIdOrError`) with the same case coverage in a single
+sealed type shared across reads and mutations.
 
 ## Summary
 
