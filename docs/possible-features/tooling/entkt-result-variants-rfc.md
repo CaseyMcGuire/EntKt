@@ -3,24 +3,29 @@
 ## Status
 
 **Partially implemented.** The core `EntResult` / `EntError` types and the
-`EntException` hierarchy are defined, and the update path generates
-`saveOrError()` that wraps `EntException` / `PrivacyDeniedException` /
-`ValidationException` into their matching `EntError` variants. Constraint
-and driver failures still propagate as their underlying exception types
-from both `saveOrError()` and `saveOrThrow()` — the driver-side capability
-to identify constraint failures and the runtime mapping into
-`Err(ConstraintViolation)` / `Err(DriverFailure)`
-are deferred follow-up work. Transaction requirement and
+`EntException` hierarchy are defined. `Driver.classifyException(...)` is the
+classifier extension point: it returns `EntError.ConstraintViolation` for
+SQLSTATE `23xxx` on `PostgresDriver` and for the `InMemoryDriver`'s own
+validator message-prefixes; `classifyDriverError(...)` falls back to
+`EntError.DriverFailure(cause = throwable)` for unrecognized exceptions.
+The create path generates the full `saveOrError()` / `saveOrThrow()` trio
+that wraps `EntException` / `PrivacyDeniedException` / `ValidationException`
+into their matching `EntError` variants and routes uncaught `Exception`
+through `classifyDriverError`, so unique/FK/check constraint failures
+surface as `Err(ConstraintViolation)` and uncategorized driver exceptions
+as `Err(DriverFailure)`. The update path generates `saveOrError()` /
+`saveOrThrow()` but does **not** yet route uncaught exceptions through
+`classifyDriverError` — that wiring is deferred and is flagged in the
+update-table footnotes below. Transaction requirement and
 unsupported-driver-capability failures are **not** `EntError` variants by
 design — they're deterministic programming/configuration errors, so
 `TransactionRequiredException` and `UnsupportedDriverCapabilityException`
 throw on every path including `saveOrError()` (see
 [Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md)
-for the Option 3 contract). The result tables
-below describe the V1 target shape; rows that depend on the deferred
-mapping are flagged with footnotes. Create-side `saveOrError()`,
-read-side `*OrError`, the `withTransactionOrError` helper, and bulk
-`*OrError` variants are not yet generated.
+for the Option 3 contract). The result tables below describe the V1
+target shape; rows that depend on still-deferred wiring are flagged with
+footnotes. Read-side `*OrError`, the `withTransactionOrError` helper, and
+bulk `*OrError` variants are not yet generated.
 
 ## Summary
 
@@ -458,11 +463,8 @@ absence.
 | Created successfully | returns entity | `Ok(entity)` |
 | Privacy denied | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
 | Validation failed | throws `EntValidationException` | `Err(ValidationFailed)` |
-| Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` ¹ |
-| Driver failure | throws `EntDriverException` | `Err(DriverFailure)` ¹ |
-
-¹ Deferred wiring — see Status. V1 currently propagates the underlying
-constraint/driver exception through both `saveOrThrow` and `saveOrError`.
+| Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` |
+| Driver failure | throws `EntDriverException` | `Err(DriverFailure)` |
 
 ### Update
 

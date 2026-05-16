@@ -7,6 +7,7 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
@@ -22,6 +23,12 @@ private val DRIVER = ClassName("entkt.runtime", "Driver")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
+private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
+private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
+private val ENT_EXCEPTION = ClassName("entkt.runtime", "EntException")
+private val PRIVACY_DENIED_EXCEPTION = ClassName("entkt.runtime", "PrivacyDeniedException")
+private val VALIDATION_EXCEPTION_CLASS = ClassName("entkt.runtime", "ValidationException")
 
 internal class CreateGenerator(
     private val packageName: String,
@@ -131,6 +138,8 @@ internal class CreateGenerator(
             }
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
+            .addFunction(buildSaveOrErrorFunction(schemaName))
+            .addFunction(buildSaveOrThrowFunction(schemaName))
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -533,6 +542,83 @@ internal class CreateGenerator(
             candidateClass,
         )
         builder.addStatement("client.%L.evaluateCreatePrivacy(privacy, candidate)", repoPropName)
+    }
+
+    /**
+     * Result-variant entry point for the create path. Wraps `save()` in
+     * a single try/catch that maps each recognized failure surface into
+     * the matching [EntError] variant:
+     *
+     *  - [PrivacyDeniedException] → `Err(PrivacyDenied)`
+     *  - [ValidationException] → `Err(ValidationFailed)` (rule-DSL
+     *    `ValidationDecision.Invalid` violations bridged through
+     *    `toValidationViolation()`)
+     *  - any other [EntException] (e.g. NoChanges from a transitively-
+     *    composed save) → carried through via `e.error`
+     *  - any remaining [Exception] → routed through
+     *    [classifyDriverError] so the driver can emit
+     *    `ConstraintViolation` for SQLSTATE 23xxx, falling back to
+     *    `DriverFailure` with the raw cause attached.
+     *
+     * [Exception] (not [Throwable]) is the floor: [Error] subclasses
+     * (OOME, StackOverflowError) propagate untouched. The driver
+     * classifier is the integration point for Phase 2's
+     * SQLSTATE/message-prefix mapping, so adding new constraint codes
+     * to a driver does not require regenerating consumer code.
+     */
+    private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        val resultType = ENT_RESULT.parameterizedBy(entityClass)
+        return FunSpec.builder("saveOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  %T.Ok(save())\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED_EXCEPTION)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", VALIDATION_EXCEPTION_CLASS)
+                    .add(
+                        "  %T.Err(%T.ValidationFailed(e.entity, %T.CREATE, e.violations.map { it.%M() }))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                        MemberName("entkt.runtime", "toValidationViolation"),
+                    )
+                    .add("} catch (e: %T) {\n", ENT_EXCEPTION)
+                    .add("  %T.Err(e.error)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.CREATE))\n",
+                        ENT_RESULT,
+                        MemberName("entkt.runtime", "classifyDriverError"),
+                        schemaName,
+                        ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * Throwing variant: delegates to [saveOrError] and unwraps via
+     * [EntResult.getOrThrow] so callers get a structured
+     * [EntException] subclass for every recognized failure surface.
+     * Implemented as a wrapper per the RFC's "throwing APIs should be
+     * implemented as wrappers over xOrError()" guideline — keeps the
+     * classification/mapping logic in one place.
+     */
+    private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        return FunSpec.builder("saveOrThrow")
+            .returns(entityClass)
+            .addStatement(
+                "return saveOrError().%M()",
+                MemberName("entkt.runtime", "getOrThrow"),
+            )
+            .build()
     }
 }
 

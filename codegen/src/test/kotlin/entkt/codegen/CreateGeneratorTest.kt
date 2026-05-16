@@ -402,4 +402,59 @@ class CreateGeneratorTest {
             "Should not validate nullable field as required\n$output"
         }
     }
+
+    @Test
+    fun `generates the full save result-variant trio`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        // saveOrThrow delegates to saveOrError().getOrThrow() — the
+        // RFC's "throwing wraps result" guideline.
+        assert(output.contains("public fun saveOrThrow(): Car = saveOrError().getOrThrow()")) {
+            "Should generate saveOrThrow as a wrapper over saveOrError\n$output"
+        }
+
+        // saveOrError returns EntResult<Car> and wraps a successful save in Ok.
+        assert(output.contains("public fun saveOrError(): EntResult<Car>")) {
+            "Should generate saveOrError returning EntResult<Car>\n$output"
+        }
+        assert(output.contains("EntResult.Ok(save())")) {
+            "Should wrap successful save in Ok\n$output"
+        }
+        // KotlinPoet may line-wrap inside arg lists; check call shapes
+        // without anchoring on specific whitespace.
+        assert(output.contains("catch (e: PrivacyDeniedException)")) {
+            "Should catch PrivacyDeniedException\n$output"
+        }
+        assert(output.contains("EntError.PrivacyDenied(e.entity, EntOperation.valueOf(e.operation.name),")) {
+            "Should map PrivacyDeniedException into EntError.PrivacyDenied\n$output"
+        }
+        assert(output.contains("catch (e: ValidationException)")) {
+            "Should catch ValidationException\n$output"
+        }
+        assert(output.contains("EntError.ValidationFailed(e.entity, EntOperation.CREATE, e.violations.map {")) {
+            "Should map ValidationException into ValidationFailed with CREATE operation\n$output"
+        }
+        assert(output.contains("it.toValidationViolation() }")) {
+            "Should bridge each Invalid via toValidationViolation()\n$output"
+        }
+        // Any other EntException (e.g. NoChanges from a composed save)
+        // — carry through via e.error.
+        assert(output.contains("catch (e: EntException)")) {
+            "Should catch the generic EntException base class\n$output"
+        }
+        assert(output.contains("EntResult.Err(e.error)")) {
+            "Should pass EntException's error through unchanged\n$output"
+        }
+        // Exception catch-all routes through classifyDriverError so the
+        // driver-level classifier (Phase 2) produces ConstraintViolation
+        // for SQLSTATE 23xxx or DriverFailure as the fallback.
+        assert(output.contains("catch (e: Exception)")) {
+            "Should have a catch-all for Exception\n$output"
+        }
+        assert(output.contains("classifyDriverError(driver, e, \"Car\", EntOperation.CREATE)")) {
+            "Should route uncaught Exception through classifyDriverError with CREATE operation\n$output"
+        }
+    }
 }
