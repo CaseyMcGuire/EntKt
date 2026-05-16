@@ -1614,6 +1614,51 @@ class InMemoryDriverTest {
     }
 
     @Test
+    fun `self-referential FK is checked on parent-column update`() {
+        // A self-FK like nodes.parent_code → nodes.code: updating
+        // `code` on a node whose `parent_code` still equals the old
+        // value would leave the self-reference dangling. The previous
+        // `if (childTable == table) continue` skipped this case
+        // entirely; now the same-table case is checked.
+        val nodeSchema = EntitySchema(
+            table = "self_fk_nodes",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("code", FieldType.STRING, nullable = false, unique = true),
+                ColumnMetadata(
+                    "parent_code", FieldType.STRING, nullable = true,
+                    references = ForeignKeyRef("self_fk_nodes", "code", OnDelete.SET_NULL),
+                ),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply { register(nodeSchema) }
+
+        // Root node with code "A" referencing nothing.
+        val a = driver.insert("self_fk_nodes", mapOf("code" to "A", "parent_code" to null))
+        // Child node B → A.
+        driver.insert("self_fk_nodes", mapOf("code" to "B", "parent_code" to "A"))
+
+        // Renaming A's code to "Z" would leave B.parent_code = "A"
+        // dangling. The previous skip-self code let this through;
+        // now it throws.
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.update("self_fk_nodes", a["id"]!!, mapOf("code" to "Z"))
+        }
+        assertTrue(ex.message!!.contains("FK violation"))
+        assertTrue(ex.message!!.contains("self_fk_nodes.code"))
+        assertTrue(ex.message!!.contains("self_fk_nodes.parent_code"))
+        // Neither row was mutated.
+        val all = driver.query("self_fk_nodes", emptyList(), emptyList(), null, null)
+            .associateBy { it["code"] }
+        assertEquals(2, all.size)
+        assertEquals(null, all["A"]!!["parent_code"])
+        assertEquals("A", all["B"]!!["parent_code"])
+    }
+
+    @Test
     fun `update that writes the same value is a no-op for the child check`() {
         // oldValue == newValue → skip the scan entirely. A no-op
         // rewrite shouldn't false-positive against existing children.

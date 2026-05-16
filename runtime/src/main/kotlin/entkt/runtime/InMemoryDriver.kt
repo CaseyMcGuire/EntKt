@@ -399,9 +399,16 @@ class InMemoryDriver : Driver {
             val oldValue = existing[col]
             if (oldValue == newValue) continue // no change to this column
             if (oldValue == null) continue // nothing could have referenced a null
-            // Look for any schema that references (table, col).
+            // Look for any schema that references (table, col),
+            // including the SAME table — a self-referential FK like
+            // `nodes.parent_code` referencing `nodes.code` would
+            // otherwise let the parent_code → code link dangle when
+            // `code` is updated. The row being updated isn't excluded
+            // from the scan; if its own FK column equals the old
+            // value, it correctly counts as a dangling reference
+            // (after the update, the row's `code` is the new value
+            // but its `parent_code` still points at the old value).
             for ((childTable, childSchema) in schemas) {
-                if (childTable == table) continue
                 for (childCol in childSchema.columns) {
                     val ref = childCol.references ?: continue
                     if (ref.table != table || ref.column != col) continue
