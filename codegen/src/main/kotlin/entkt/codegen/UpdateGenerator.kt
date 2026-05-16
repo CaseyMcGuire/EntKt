@@ -862,15 +862,34 @@ internal class UpdateGenerator(
         val builder = FunSpec.builder("_checkLinkTableM2MMixedMode")
             .addModifiers(KModifier.PRIVATE)
         for (edge in helperEligibleEdges) {
-            val mixedModeMessage = "edge '${edge.edgeName}': cannot mix replacement (set) and " +
-                "delta (add/remove) operations in one mutation"
+            val replacementVsDeltaMessage = "edge '${edge.edgeName}': cannot mix replacement (set) " +
+                "and delta (add/remove) operations in one mutation"
+            // Layer 1: replacement-vs-delta (Phase 4 backstop for
+            // bypassed call-site guards).
             builder.addStatement(
                 "if (this.%L._requestedSet != null && (this.%L._adds.isNotEmpty() || this.%L._removes.isNotEmpty())) throw %T(%S)",
                 edge.mutatorPropertyName,
                 edge.mutatorPropertyName,
                 edge.mutatorPropertyName,
                 ILLEGAL_STATE_EXCEPTION,
-                mixedModeMessage,
+                replacementVsDeltaMessage,
+            )
+            // Layer 2 (Phase 8 / P3): same-id mixed-direction overlap.
+            // Per-call guards in add() / remove() keep `_adds` and
+            // `_removes` disjoint by construction under normal usage;
+            // this backstop catches state that bypassed those guards
+            // (reflection writing the lists directly, or a future
+            // generated bulk-write helper that does the same).
+            // Spec invariant from RFC #5 §Generated Builder Shape:
+            // "The two sets are disjoint by construction."
+            val sameIdOverlapMessage = "edge '${edge.edgeName}': delta add/remove sets overlap on " +
+                "one or more ids — `add(x)` and `remove(x)` for the same x must not coexist"
+            builder.addStatement(
+                "if ((this.%L._adds.toSet() intersect this.%L._removes.toSet()).isNotEmpty()) throw %T(%S)",
+                edge.mutatorPropertyName,
+                edge.mutatorPropertyName,
+                ILLEGAL_STATE_EXCEPTION,
+                sameIdOverlapMessage,
             )
         }
         return builder.build()

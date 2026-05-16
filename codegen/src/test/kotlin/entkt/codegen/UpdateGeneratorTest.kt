@@ -1374,6 +1374,48 @@ class UpdateGeneratorTest {
         }
     }
 
+    @Test
+    fun `defense-in-depth also catches same-id overlap between _adds and _removes`() {
+        // Layer 2 backstop (Phase 8 / P3): per-call add()/remove()
+        // guards keep `_adds` and `_removes` disjoint by construction
+        // under normal usage, but bypassed state (reflection writing
+        // the lists directly, or a future bulk-write helper that
+        // doesn't go through the per-call rule) could leave an id in
+        // both. The runtime computeEdgeChanges algorithm relies on
+        // disjointness — without this backstop, overlap would slip
+        // through to privacy/validation and the junction writes.
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains(
+            "if ((this.tags._adds.toSet() intersect this.tags._removes.toSet()).isNotEmpty()) throw IllegalStateException",
+        )) {
+            "Defense-in-depth must catch same-id overlap between _adds and _removes\n$output"
+        }
+        assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
+            "Overlap-check message should name the edge and the overlap shape\n$output"
+        }
+    }
+
+    @Test
+    fun `multi-edge schemas emit a same-id overlap check per edge`() {
+        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains(
+            "if ((this.tags._adds.toSet() intersect this.tags._removes.toSet()).isNotEmpty()) throw",
+        )) {
+            "Expected overlap check on the tags edge\n$output"
+        }
+        assert(output.contains(
+            "if ((this.labels._adds.toSet() intersect this.labels._removes.toSet()).isNotEmpty()) throw",
+        )) {
+            "Expected overlap check on the labels edge\n$output"
+        }
+    }
+
     // ---------- RFC #5 Phase 5: three-way owner-row read + junction reads + EdgeChanges ----------
 
     @Test
