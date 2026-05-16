@@ -78,10 +78,16 @@ class InMemoryDriver : Driver {
         values: Map<String, Any?>,
     ): Map<String, Any?>? {
         val schema = schemas[table] ?: error("Unregistered table: $table")
-        validateForeignKeyReferences(table, schema, values)
         val rows = tables.getValue(table)
         synchronized(rows) {
             val existing = rows.firstOrNull { it[schema.idColumn] == id } ?: return null
+            // FK validation runs AFTER the missing-row short-circuit
+            // so a save against a non-existent id returns null rather
+            // than throwing an FK error — matches Postgres, which
+            // skips FK checks when the UPDATE affects zero rows. If
+            // FK ran first, the caller would see a spurious
+            // "FK violation" before learning the row doesn't exist.
+            validateForeignKeyReferences(table, schema, values)
             // Pass the existing row as both the excluding row (don't
             // match it against itself) and the baseline (so the
             // composite-index check uses unchanged columns from the
@@ -185,12 +191,19 @@ class InMemoryDriver : Driver {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val cols = values.keys.filter { it != schema.idColumn }
         if (cols.isEmpty()) return 0
-        validateForeignKeyReferences(table, schema, values)
         val rows = tables.getValue(table)
         synchronized(rows) {
             // Collect matches before mutating so edge predicates that
             // reference the same table see a consistent snapshot.
             val matched = rows.filter { row -> predicates.all { evaluate(row, it, table) } }
+            // Defer FK validation until we know the predicate matched
+            // at least one row — matches Postgres, which skips FK
+            // checks when the UPDATE affects zero rows. Without this,
+            // an updateMany with a bad FK in `values` and a predicate
+            // that matches nothing would throw FK errors even though
+            // no row would have changed.
+            if (matched.isEmpty()) return 0
+            validateForeignKeyReferences(table, schema, values)
 
             // Batch-internal unique violation: if `values` writes a
             // non-null value to a unique-or-PK column AND multiple

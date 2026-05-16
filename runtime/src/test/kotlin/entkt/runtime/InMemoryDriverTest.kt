@@ -1478,6 +1478,61 @@ class InMemoryDriverTest {
         assertEquals(1L, driver.count("post_tags", emptyList()))
     }
 
+    @Test
+    fun `update of a missing id with a bad FK returns null, not an FK violation`() {
+        // Postgres skips FK checks when the UPDATE affects zero rows.
+        // The in-memory check now defers until after the missing-row
+        // null path, so caller learns "not found" (null), not "bad
+        // FK" — matches PG semantics. Without this, the spurious FK
+        // error would obscure the real "no such id" outcome.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        // No parent — parent_code FK would dangle if we tried to write it.
+        val result = driver.update(
+            "pu_children",
+            id = 9_999_999L,
+            mapOf("parent_code" to "nonexistent"),
+        )
+        assertEquals(null, result)
+    }
+
+    @Test
+    fun `updateMany with predicate matching zero rows skips FK validation`() {
+        // Same Postgres parity rule for the bulk path: if no rows
+        // match, no FK check fires. Caller gets the no-op 0 result,
+        // not a spurious FK error.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        // No children exist; the predicate matches nothing.
+        val result = driver.updateMany(
+            "pu_children",
+            mapOf("parent_code" to "nonexistent"),
+            listOf(Predicate.Leaf("parent_code", Op.EQ, "never_matches")),
+        )
+        assertEquals(0, result)
+    }
+
+    @Test
+    fun `update with bad FK and matching id still rejects with FK violation`() {
+        // Regression guard: FK validation still fires when there IS
+        // a row to update. Deferring past the missing-row case must
+        // not skip the check entirely.
+        val driver = InMemoryDriver().apply {
+            register(parentSchemaWithCode())
+            register(childSchemaReferencingCode())
+        }
+        driver.insert("pu_parents", mapOf("code" to "A"))
+        val child = driver.insert("pu_children", mapOf("parent_code" to "A"))
+
+        assertFailsWith<IllegalStateException> {
+            driver.update("pu_children", child["id"]!!, mapOf("parent_code" to "nonexistent"))
+        }
+    }
+
     // ---------- Parent-update FK enforcement ----------
 
     private fun parentSchemaWithCode(): EntitySchema = EntitySchema(
