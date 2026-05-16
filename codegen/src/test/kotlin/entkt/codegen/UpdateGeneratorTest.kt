@@ -1051,7 +1051,7 @@ class UpdateGeneratorTest {
         // hooks means hooks see the snapshot.
         val fromRowIdx = output.indexOf("entity = M2MPost.fromRow(row0)")
         val captureIdx = output.indexOf("val pendingEdges = _buildPendingEdgeOps()")
-        val beforeSaveIdx = output.indexOf("for (hook in beforeSaveHooks) hook(_mutationView)")
+        val beforeSaveIdx = output.indexOf("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
         assert(fromRowIdx != -1 && captureIdx != -1 && beforeSaveIdx != -1) {
             "Missing one of the pipeline anchors\n$output"
         }
@@ -1064,43 +1064,74 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `beforeSave on M2M-capable update receives the restricted mutation view, not the concrete update builder`() {
-        // Cast-attack mitigation: a hook receiving the shared
-        // ${Schema}Mutation interface could otherwise cast to
-        // ${Schema}Update and reach the public `tags` mutator, calling
-        // `tags.add(...)` AFTER the immutable pendingEdges snapshot was
-        // captured. That created snapshot/live divergence — junction
-        // writes silently dropped, edgeChanges stale, M2M preflight
-        // bypassed. Passing `_mutationView` (the anonymous adapter)
-        // instead of `this` means the runtime object isn't an
-        // ${Schema}Update, so the cast fails at runtime.
+    fun `beforeSave on M2M-capable update receives the shared-only adapter, not the concrete update builder or update view`() {
+        // Two cast-attack vectors are closed:
+        //   1. `mutation as ${Schema}Update` — would reach the public
+        //      `tags` mutator and corrupt the pendingEdges snapshot/live
+        //      contract.
+        //   2. `mutation as ${Schema}UpdateMutationView` — would reach
+        //      `unsetTitle()` (silently drop a caller's patch entry)
+        //      or `pendingEdges` (read-only, informational leak).
+        // `_beforeSaveView` implements ONLY ${Schema}Mutation, so both
+        // casts fail at runtime — beforeSave hooks see exactly the
+        // shared write surface the docs promise. beforeUpdate hooks
+        // continue to receive `_mutationView` via ctx.mutation.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("for (hook in beforeSaveHooks) hook(_mutationView)")) {
-            "beforeSave on update saves must receive _mutationView, not `this`\n$output"
+        assert(output.contains("for (hook in beforeSaveHooks) hook(_beforeSaveView)")) {
+            "beforeSave on update saves must receive _beforeSaveView (shared-only adapter)\n$output"
         }
         assert(!output.contains("for (hook in beforeSaveHooks) hook(this)")) {
-            "Old `hook(this)` shape must be gone — it exposes the cast attack\n$output"
+            "Old `hook(this)` shape must be gone — it exposed the concrete-builder cast attack\n$output"
+        }
+        assert(!output.contains("for (hook in beforeSaveHooks) hook(_mutationView)")) {
+            "Intermediate `hook(_mutationView)` shape must be gone — it exposed the view cast attack\n$output"
         }
     }
 
     @Test
-    fun `beforeSave on non-M2M update also receives the restricted mutation view for uniform behavior`() {
-        // Apply the fix uniformly across all update schemas. The
-        // adapter is generated whether or not the schema has
-        // helper-eligible M2M edges, so there's no reason to keep the
-        // old `hook(this)` shape on non-M2M schemas — and uniformity
-        // means a schema gaining a throughLink edge later doesn't
-        // silently change the hook surface.
+    fun `beforeSave on non-M2M update also receives the shared-only adapter for uniform behavior`() {
+        // Apply the fix uniformly across all update schemas so a
+        // schema gaining a throughLink edge later doesn't silently
+        // change the hook surface.
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("for (hook in beforeSaveHooks) hook(_mutationView)")) {
-            "Non-M2M schemas should also pass the restricted view to beforeSave\n$output"
+        assert(output.contains("for (hook in beforeSaveHooks) hook(_beforeSaveView)")) {
+            "Non-M2M schemas should also pass the shared-only adapter to beforeSave\n$output"
+        }
+    }
+
+    @Test
+    fun `_beforeSaveView is the shared-only adapter — implements Mutation, omits pendingEdges and unset`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The adapter is typed as M2MPostMutation (the shared
+        // interface), not M2MPostUpdateMutationView.
+        assert(output.contains("private val _beforeSaveView: M2MPostMutation = object : M2MPostMutation")) {
+            "_beforeSaveView must implement M2MPostMutation directly, not the update view\n$output"
+        }
+        // Find the adapter block start, then scan a bounded window
+        // forward to its closing brace pattern. The adapter must NOT
+        // expose pendingEdges or unsetTitle inside its body — those
+        // belong to the update view, which the adapter doesn't inherit.
+        val viewIdx = output.indexOf("private val _beforeSaveView: M2MPostMutation = object : M2MPostMutation")
+        assert(viewIdx != -1) { "Missing _beforeSaveView adapter\n$output" }
+        // The adapter body is small (just scalar forwarders); window
+        // out to the next `private` declaration after it.
+        val nextPrivateIdx = output.indexOf("private", viewIdx + 1).let { if (it == -1) output.length else it }
+        val adapterWindow = output.substring(viewIdx, nextPrivateIdx)
+        assert(!adapterWindow.contains("pendingEdges")) {
+            "_beforeSaveView must not carry pendingEdges (that's update-view-only)\n$adapterWindow"
+        }
+        assert(!adapterWindow.contains("unsetTitle")) {
+            "_beforeSaveView must not carry unsetTitle (that's update-view-only)\n$adapterWindow"
         }
     }
 

@@ -302,6 +302,44 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
+    fun `beforeSave hook on update cannot cast to PostUpdateMutationView to reach unsetX or pendingEdges`() {
+        // Residual cast-attack hole: even with `mutation as PostUpdate`
+        // blocked, a hook could previously cast to
+        // PostUpdateMutationView and reach unsetTitle() (silently drop
+        // a caller's patch entry) or pendingEdges (info leak). The
+        // _beforeSaveView adapter implements ONLY PostMutation, so
+        // this cast now fails at runtime.
+        val real = InMemoryDriver()
+        val locking = LockSupportInMemoryDriver(real)
+        val client = EntClient(locking) {
+            hooks {
+                posts {
+                    beforeSave { mutation ->
+                        val klass = mutation::class.java.name
+                        if (klass.contains("PostUpdate") || klass.contains("anonymous")) {
+                            @Suppress("UNUSED_VARIABLE")
+                            val view = mutation as entkt.integrationtest.ent.PostUpdateMutationView
+                        }
+                    }
+                }
+            }
+        }
+        val (post, _, _) = seedPostAndTags(client)
+
+        val ex = client.withTransaction { tx ->
+            assertFailsWith<ClassCastException> {
+                tx.posts.update(post.id) {
+                    title = "Renamed"
+                }.save()
+            }
+        }
+        assertTrue(
+            ex.message!!.contains("PostUpdateMutationView") || ex.message!!.contains("cannot be cast"),
+            "Expected ClassCastException about PostUpdateMutationView; got: ${ex.message}",
+        )
+    }
+
+    @Test
     fun `beforeSave hook on update cannot cast to PostUpdate to reach the tags mutator`() {
         // Cast-attack mitigation: the beforeSave hook receives the
         // restricted PostUpdateMutationView adapter, not the concrete

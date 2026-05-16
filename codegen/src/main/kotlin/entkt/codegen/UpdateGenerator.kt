@@ -217,6 +217,23 @@ internal class UpdateGenerator(
                     pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
                 ),
             )
+            // RFC #5 Phase 8 (P2-residual): private `_beforeSaveView`
+            // adapter that implements ONLY the shared `${Schema}Mutation`
+            // interface — no `pendingEdges`, no `unsetX()`, none of the
+            // update-specific patch operations. Passed to beforeSave
+            // hooks so that even a `mutation as ${Schema}UpdateMutationView`
+            // cast attempt fails at runtime, not just the more obvious
+            // `mutation as ${Schema}Update`. beforeUpdate hooks
+            // continue to receive `_mutationView` (the full update view)
+            // via `ctx.mutation`.
+            .addProperty(
+                buildBeforeSaveAdapterProperty(
+                    schemaName = schemaName,
+                    mutationClass = mutationClass,
+                    mutableFields = mutableFields,
+                    edgeFks = edgeFks,
+                ),
+            )
             // RFC #5 Phase 2: link-table M2M mutator properties. Public
             // DSL surface — callers reach add/remove/set through
             // `update(id) { tags.add(tagId) }`. Constructor is internal
@@ -463,6 +480,43 @@ internal class UpdateGenerator(
                 .build(),
         )
         return PropertySpec.builder("_mutationView", updateMutationViewClass)
+            .addModifiers(KModifier.PRIVATE)
+            .initializer("%L", adapter.build())
+            .build()
+    }
+
+    /**
+     * RFC #5 Phase 8 (P2-residual): build the private `_beforeSaveView`
+     * adapter. Implements ONLY `${Schema}Mutation` — the shared
+     * write surface — without the `pendingEdges` read, the
+     * `unsetX()` patch operations, or any other update-specific
+     * surface that `${Schema}UpdateMutationView` adds. beforeSave
+     * hooks receive this adapter, so a misbehaving hook trying
+     * `mutation as ${Schema}UpdateMutationView` fails at runtime.
+     *
+     * The adapter forwards each mutable scalar field and mutable
+     * edge FK property to the outer Update builder, same as the
+     * `_mutationView` forwarders.
+     */
+    private fun buildBeforeSaveAdapterProperty(
+        schemaName: String,
+        mutationClass: ClassName,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): PropertySpec {
+        val updateClassName = "${schemaName}Update"
+        val adapter = TypeSpec.anonymousClassBuilder()
+            .addSuperinterface(mutationClass)
+        for (field in mutableFields) {
+            val propName = toCamelCase(field.name)
+            val typeName = field.resolvedTypeName().copy(nullable = true)
+            adapter.addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
+        }
+        for (fk in edgeFks) {
+            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
+            adapter.addProperty(buildAdapterForwarderProperty(updateClassName, fk.propertyName, typeName))
+        }
+        return PropertySpec.builder("_beforeSaveView", mutationClass)
             .addModifiers(KModifier.PRIVATE)
             .initializer("%L", adapter.build())
             .build()
@@ -1189,19 +1243,22 @@ internal class UpdateGenerator(
         builder.addStatement("_capturedPendingEdges = pendingEdges")
 
         // ---- beforeSave hooks (shared with create — receive Mutation interface). ----
-        // Pass the restricted `_mutationView` adapter rather than `this`
-        // (the concrete update builder). The hook's parameter type is
-        // ${Schema}Mutation, but the runtime object would otherwise be
-        // ${Schema}Update — letting a hook do
-        // `(m as ${Schema}Update).tags.add(x)` after the pendingEdges
-        // snapshot was already captured. The adapter implements
-        // ${Schema}UpdateMutationView (which extends ${Schema}Mutation)
-        // and deliberately omits the M2M mutator surface, so the cast
-        // fails at runtime — closing the snapshot/live divergence hole
-        // that would otherwise let hook-staged M2M ops bypass the M2M
-        // preflight, miss junction writes, and skew the edgeChanges
-        // view that privacy and validation see.
-        builder.addStatement("for (hook in beforeSaveHooks) hook(_mutationView)")
+        // Pass the restricted `_beforeSaveView` adapter which
+        // implements ONLY ${Schema}Mutation. Three runtime narrowing
+        // properties hold:
+        //   - `mutation as ${Schema}Update` fails (the original cast
+        //     attack — reach the public tags mutator after the
+        //     pendingEdges snapshot was captured),
+        //   - `mutation as ${Schema}UpdateMutationView` fails (the
+        //     residual cast — call `unsetTitle()` to silently drop
+        //     a caller's patch entry, or read `pendingEdges`),
+        //   - any other concrete narrowing fails.
+        // beforeSave hooks see exactly the shared write surface they
+        // were contracted for. beforeUpdate hooks continue to receive
+        // `_mutationView` via the hook context, which is the
+        // expected surface for patch-clearing and pending-edges
+        // inspection.
+        builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
 
         // ---- beforeUpdate hooks (receive a per-hook context with snapshot). ----
         // `patch` in the context is a snapshot built *before* the hook
