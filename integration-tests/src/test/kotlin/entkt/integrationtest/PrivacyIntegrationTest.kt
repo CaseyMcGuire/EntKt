@@ -265,10 +265,10 @@ class PrivacyIntegrationTest {
         assertTrue(result.published)
     }
 
-    // ---- LOAD: repo.byId() ----
+    // ---- LOAD: repo.byIdOrNull() ----
 
     @Test
-    fun `byId throws on denied entity`() {
+    fun `byIdOrNull throws on denied entity`() {
         val client = freshClient(Viewer.Anonymous)
         val (alice, _) = seedData(client)
 
@@ -282,12 +282,12 @@ class PrivacyIntegrationTest {
         assertNotNull(draft)
 
         assertFailsWith<PrivacyDeniedException> {
-            client.articles.byId(draft.id)
+            client.articles.byIdOrNull(draft.id)
         }
     }
 
     @Test
-    fun `byId returns allowed entity`() {
+    fun `byIdOrNull returns allowed entity`() {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
@@ -296,7 +296,7 @@ class PrivacyIntegrationTest {
         }
         assertNotNull(published)
 
-        val result = client.articles.byId(published.id)
+        val result = client.articles.byIdOrNull(published.id)
         assertNotNull(result)
         assertEquals(published.id, result.id)
     }
@@ -490,7 +490,7 @@ class PrivacyIntegrationTest {
 
         // Verify the article still exists
         val still = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.byId(aliceArticle.id)
+            sys.articles.byIdOrNull(aliceArticle.id)
         }
         assertNotNull(still)
     }
@@ -513,7 +513,7 @@ class PrivacyIntegrationTest {
         }
 
         val gone = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.byId(articleId)
+            sys.articles.byIdOrNull(articleId)
         }
         assertNull(gone)
     }
@@ -741,7 +741,7 @@ class PrivacyIntegrationTest {
 
         // Verify the draft still exists
         val still = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.byId(draftId)
+            sys.articles.byIdOrNull(draftId)
         }
         assertNotNull(still)
     }
@@ -766,7 +766,7 @@ class PrivacyIntegrationTest {
         }
 
         val gone = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.byId(draftId)
+            sys.articles.byIdOrNull(draftId)
         }
         assertNull(gone)
     }

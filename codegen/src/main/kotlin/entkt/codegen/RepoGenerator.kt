@@ -6,6 +6,7 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -29,6 +30,9 @@ private val PRIVACY_DECISION = ClassName("entkt.runtime", "PrivacyDecision")
 private val VIEWER = ClassName("entkt.runtime", "Viewer")
 private val VALIDATION_DECISION = ClassName("entkt.runtime", "ValidationDecision")
 private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
+private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
+private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -173,13 +177,10 @@ internal class RepoGenerator(
                     )
                     .build()
             )
-            .addFunction(
-                FunSpec.builder("byId")
-                    .addParameter("id", idType)
-                    .returns(entityClass.copy(nullable = true))
-                    .addCode(buildByIdBody(schemaName, entityClass))
-                    .build()
-            )
+            .addFunction(buildByIdOrNull(schemaName, entityClass, idType))
+            .addFunction(buildByIdOrThrow(schemaName, entityClass, idType))
+            .addFunction(buildVisibleByIdOrNull(entityClass, idType))
+            .addFunction(buildByIdOrError(schemaName, entityClass, idType))
             .addFunction(buildDelete(schemaName, entityClass, candidateClass))
             .addFunction(buildDeleteLoaded(entityClass))
             .addFunction(buildDeleteById(schemaName, entityClass, idType, candidateClass))
@@ -214,16 +215,131 @@ internal class RepoGenerator(
             .build()
     }
 
-    private fun buildByIdBody(
+    /**
+     * `byIdOrNull(id): T?` — the absence-collapses-to-null read API.
+     *
+     * - Row missing → `null`
+     * - Row exists but LOAD privacy denies → throws `PrivacyDeniedException`
+     * - Row exists and visible → returns the hydrated entity
+     *
+     * The privacy-denial throw is the raw [PrivacyDeniedException];
+     * structured [EntException] wrapping is provided by [byIdOrError]
+     * and [byIdOrThrow] (which both wrap this method). The visible-or-
+     * null collapse is provided by [visibleByIdOrNull].
+     */
+    private fun buildByIdOrNull(
         schemaName: String,
         entityClass: ClassName,
-    ): CodeBlock {
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec {
         val body = CodeBlock.builder()
         body.addStatement("val privacy = client.currentPrivacyContext()")
         body.addStatement("val entity = driver.byId(%T.TABLE, id)?.let { %T.fromRow(it) } ?: return null", entityClass, entityClass)
         body.addStatement("evaluateLoadPrivacy(privacy, entity)")
         body.addStatement("return entity")
-        return body.build()
+        return FunSpec.builder("byIdOrNull")
+            .addParameter("id", idType)
+            .returns(entityClass.copy(nullable = true))
+            .addCode(body.build())
+            .build()
+    }
+
+    /**
+     * `byIdOrThrow(id): T` — the strict read API. Throws structured
+     * EntException subclasses for every failure surface; on the happy
+     * path returns the hydrated entity.
+     *
+     * Delegates to [byIdOrError] + `getOrThrow()` so the mapping table
+     * (NotFound / PrivacyDenied / DriverFailure) lives in one place.
+     */
+    private fun buildByIdOrThrow(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec {
+        return FunSpec.builder("byIdOrThrow")
+            .addParameter("id", idType)
+            .returns(entityClass)
+            .addStatement(
+                "return byIdOrError(id).%M()",
+                MemberName("entkt.runtime", "getOrThrow"),
+            )
+            .build()
+    }
+
+    /**
+     * `visibleByIdOrNull(id): T?` — the absence-OR-invisibility
+     * collapse. Treats both "row missing" and "row exists but LOAD
+     * privacy denies" as `null`. Driver failures still propagate.
+     *
+     * Implemented as `try { byIdOrNull(id) } catch
+     * (PrivacyDeniedException) { null }`. The driver-failure surface
+     * remains as exceptions on this path — `byIdOrError` is the
+     * structured alternative.
+     */
+    private fun buildVisibleByIdOrNull(
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec {
+        return FunSpec.builder("visibleByIdOrNull")
+            .addParameter("id", idType)
+            .returns(entityClass.copy(nullable = true))
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  byIdOrNull(id)\n")
+                    .add("} catch (_: %T) {\n", PRIVACY_DENIED)
+                    .add("  null\n")
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `byIdOrError(id): EntResult<T>` — the structured-result read API.
+     * Maps each failure mode to its [EntError] variant:
+     *
+     * - row missing → `Err(NotFound)`
+     * - privacy denied → `Err(PrivacyDenied)`
+     * - any other uncaught Exception → routed through
+     *   [classifyDriverError] → `Err(ConstraintViolation)` for
+     *   recognized constraints or `Err(DriverFailure)` for the
+     *   fallback.
+     */
+    private fun buildByIdOrError(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec {
+        val resultType = ENT_RESULT.parameterizedBy(entityClass)
+        return FunSpec.builder("byIdOrError")
+            .addParameter("id", idType)
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add(
+                        "  byIdOrNull(id)?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.LOAD, id))\n",
+                        ENT_RESULT, ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.LOAD))\n",
+                        ENT_RESULT,
+                        MemberName("entkt.runtime", "classifyDriverError"),
+                        schemaName,
+                        ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
     }
 
     /**

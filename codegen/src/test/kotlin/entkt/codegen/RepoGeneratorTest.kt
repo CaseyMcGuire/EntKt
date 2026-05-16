@@ -61,28 +61,105 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo exposes byId taking the schema id type`() {
+    fun `repo exposes the byId family taking the schema id type`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        // User has UUID id; the byId param type must match.
-        assert(output.contains("fun byId(id: UUID): User?")) {
-            "byId should return nullable entity and take the schema id type\n$output"
+        // User has UUID id; every byId variant's param type matches.
+        // The repo-level `byId(id)` is removed per the Result Variants
+        // RFC — callers use the explicit *OrNull / *OrThrow /
+        // visibleOr* / *OrError names instead.
+        assert(!output.contains("public fun byId(id:")) {
+            "Repo-level byId(id) should be removed in favor of the *Or* family\n$output"
+        }
+        assert(output.contains("public fun byIdOrNull(id: UUID): User?")) {
+            "byIdOrNull should return nullable entity and take the schema id type\n$output"
+        }
+        assert(output.contains("public fun byIdOrThrow(id: UUID): User")) {
+            "byIdOrThrow should return non-null entity\n$output"
+        }
+        assert(output.contains("public fun visibleByIdOrNull(id: UUID): User?")) {
+            "visibleByIdOrNull should return nullable entity (absence OR invisibility → null)\n$output"
+        }
+        assert(output.contains("public fun byIdOrError(id: UUID): EntResult<User>")) {
+            "byIdOrError should return EntResult<User>\n$output"
         }
     }
 
     @Test
-    fun `byId delegates to the driver and hydrates via fromRow`() {
+    fun `byIdOrNull delegates to the driver and hydrates via fromRow`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         assert(output.contains("driver.byId(Car.TABLE, id)")) {
-            "byId should call driver.byId with the entity's TABLE constant\n$output"
+            "byIdOrNull should call driver.byId with the entity's TABLE constant\n$output"
         }
         assert(output.contains("Car.fromRow(it)")) {
-            "byId should hydrate the driver's row via Car.fromRow\n$output"
+            "byIdOrNull should hydrate the driver's row via Car.fromRow\n$output"
+        }
+    }
+
+    @Test
+    fun `byIdOrThrow wraps byIdOrError and throws via getOrThrow`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        assert(output.contains("public fun byIdOrThrow(id: Int): Car = byIdOrError(id).getOrThrow()")) {
+            "byIdOrThrow should delegate to byIdOrError(id).getOrThrow()\n$output"
+        }
+    }
+
+    @Test
+    fun `visibleByIdOrNull collapses PrivacyDeniedException to null`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        assert(output.contains("byIdOrNull(id)")) {
+            "visibleByIdOrNull should call byIdOrNull\n$output"
+        }
+        assert(output.contains("catch (_: PrivacyDeniedException)")) {
+            "visibleByIdOrNull should catch PrivacyDeniedException\n$output"
+        }
+    }
+
+    @Test
+    fun `byIdOrError maps every failure surface into a structured EntError variant`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Absence → Err(NotFound) inline (no PrivacyDeniedException
+        // for missing rows because byIdOrNull bails before the
+        // privacy check).
+        assert(
+            output.contains(
+                "byIdOrNull(id)?.let { EntResult.Ok(it) } ?: EntResult.Err(EntError.NotFound(\"Car\", EntOperation.LOAD, id))",
+            ),
+        ) {
+            "byIdOrError should map non-null to Ok and null to Err(NotFound) inline\n$output"
+        }
+        // PrivacyDeniedException → Err(PrivacyDenied) with the
+        // PrivacyOperation valueOf-mapped to EntOperation.
+        assert(
+            output.contains(
+                "catch (e: PrivacyDeniedException) { EntResult.Err(EntError.PrivacyDenied(e.entity, EntOperation.valueOf(e.operation.name), e.reason)) }",
+            ),
+        ) {
+            "byIdOrError should map PrivacyDeniedException to Err(PrivacyDenied)\n$output"
+        }
+        // Other Exception → routed through classifyDriverError with
+        // EntOperation.LOAD.
+        assert(
+            output.contains(
+                "catch (e: Exception) { EntResult.Err(classifyDriverError(driver, e, \"Car\", EntOperation.LOAD)) }",
+            ),
+        ) {
+            "byIdOrError should route uncaught Exception through classifyDriverError with LOAD operation\n$output"
         }
     }
 

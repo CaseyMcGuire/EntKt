@@ -132,7 +132,7 @@ class UpdateResultVariantsIntegrationTest {
 
         // The conflicting update did not partially apply — guy's email
         // is still its original value.
-        val reread = client.users.byId(guy.id)!!
+        val reread = client.users.byIdOrNull(guy.id)!!
         assertEquals("g@example.com", reread.email)
         assertEquals("G", reread.name)
     }

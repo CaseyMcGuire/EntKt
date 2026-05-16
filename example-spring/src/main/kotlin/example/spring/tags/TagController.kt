@@ -28,7 +28,7 @@ class TagController(private val client: EntClient) {
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: Int): TagResponse {
-        val tag = client.tags.byId(id)
+        val tag = client.tags.byIdOrNull(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return tag.toResponse()
     }
@@ -63,7 +63,7 @@ class TagController(private val client: EntClient) {
      */
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: Int): List<PostResponse> {
-        client.tags.byId(id)
+        client.tags.byIdOrNull(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.tags.query { where(Tag.id eq id) }
             .queryPosts()

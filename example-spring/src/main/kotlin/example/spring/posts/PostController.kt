@@ -32,7 +32,7 @@ class PostController(private val client: EntClient) {
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: Long): PostResponse {
-        val post = client.posts.byId(id)
+        val post = client.posts.byIdOrNull(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return post.toResponse()
     }
@@ -40,7 +40,7 @@ class PostController(private val client: EntClient) {
     @PostMapping
     fun create(@RequestBody req: CreatePostRequest): PostResponse {
         // Verify author exists
-        val author = client.users.byId(req.authorId)
+        val author = client.users.byIdOrNull(req.authorId)
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Author not found")
 
         val post = client.posts.create {
@@ -98,9 +98,9 @@ class PostController(private val client: EntClient) {
     /** Add a tag to a post. Idempotent — re-tagging is a no-op. */
     @PostMapping("/{id}/tags")
     fun addTag(@PathVariable id: Long, @RequestBody req: AddTagRequest): TagResponse {
-        val post = client.posts.byId(id)
+        val post = client.posts.byIdOrNull(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val tag = client.tags.byId(req.tagId)
+        val tag = client.tags.byIdOrNull(req.tagId)
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Tag not found")
         val alreadyLinked = client.postTags.query {
             where((PostTag.postId eq id) and (PostTag.tagId eq req.tagId))
@@ -117,7 +117,7 @@ class PostController(private val client: EntClient) {
     /** Remove a tag from a post. */
     @DeleteMapping("/{postId}/tags/{tagId}")
     fun removeTag(@PathVariable postId: Long, @PathVariable tagId: Int) {
-        client.posts.byId(postId)
+        client.posts.byIdOrNull(postId)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val deleted = client.postTags.deleteMany(
             (PostTag.postId eq postId) and (PostTag.tagId eq tagId),

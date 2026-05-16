@@ -39,14 +39,14 @@ class UserController(private val client: EntClient) {
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: UUID): UserResponse {
-        val user = client.users.byId(id)
+        val user = client.users.byIdOrNull(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return user.toResponse()
     }
 
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: UUID): List<PostResponse> {
-        client.users.byId(id) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        client.users.byIdOrNull(id) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.posts.query {
             where(Post.authorId eq id)
             orderBy(Post.createdAt.desc())
