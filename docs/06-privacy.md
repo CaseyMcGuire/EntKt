@@ -224,6 +224,7 @@ data class UserUpdatePrivacyContext(
     val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
     val candidate: UserWriteCandidate,  // full after-state = before + effectivePatch
+    val edgeChanges: UserEdgeChangesView, // per-edge intent + computed delta
 )
 ```
 
@@ -232,6 +233,26 @@ data class UserUpdatePrivacyContext(
 use `candidate` for the *full after-state* including unchanged fields. Compare
 `requestedPatch` vs `effectivePatch` to distinguish caller intent from
 framework-added defaults.
+
+`edgeChanges` is a per-entity aggregator with one `EdgeChanges<TargetIdType>`
+field per helper-eligible `throughLink` M2M edge on the schema. Each carries
+`requestedSet?` / `requestedAdds` / `requestedRemoves` (caller intent — the
+literal call log; same-id paired add+remove is preserved on both intent
+sets) and the computed database delta `added` / `removed` (after diffing
+intent against the current junction rows). Schemas without helper-eligible
+M2M edges still get an empty `${Entity}EdgeChangesView` so the context shape
+is uniform. Rule patterns:
+
+- *Authorize the database effect:* read `edgeChanges.tags.added` and
+  `edgeChanges.tags.removed` — the actual junction row inserts and deletes
+  that will fire after this rule allows.
+- *Reject intent regardless of effect:* read `edgeChanges.tags.requestedRemoves`
+  — a `remove(unknownId)` shows up here even though `removed` may be empty.
+
+See [Edges → Link-table M2M mutators](03-edges.md#link-table-m2m-mutators)
+for the mutator API and [Hooks → The Update Hook Context](05-hooks.md#the-update-hook-context)
+for `ctx.pendingEdges` (the before-hook intent surface that the
+`edgeChanges` delta is computed from).
 
 By the time rules see the patches, the post-hook required-not-null check
 has already run, so a dirty + null required field would have thrown

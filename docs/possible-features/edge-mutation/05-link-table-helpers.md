@@ -2,7 +2,86 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+**V1 landed in commits `a0483a8..b3646c5` (7 phases).** Generated
+update builders for helper-eligible `throughLink` edges now expose
+`add(id)` / `remove(id)` / `set(ids)`, with the full pipeline
+(transaction + capability preflight, mixed-mode defense, three-way
+owner-row read primitive choice, junction reads, EdgeChanges through
+privacy / validation, junction writes, edge-only owner-UPDATE
+suppression) wired in. User-facing docs for the new surface live in
+[Edges → Link-table M2M mutators](../../03-edges.md#link-table-m2m-mutators)
+and the per-context updates in
+[Hooks](../../05-hooks.md#the-update-hook-context) /
+[Privacy](../../06-privacy.md#updateprivacycontext) /
+[Validation](../../07-validation.md#updatevalidationcontext).
+End-to-end coverage is in
+`integration-tests/src/test/kotlin/entkt/integrationtest/LinkTableM2MIntegrationTest.kt`
+(17 scenarios against `LockSupportInMemoryDriver`).
+
+Implementation decisions (the design questions called out in the
+phase plan):
+
+- **Decision A** — hybrid runtime types. Generic `PendingEdgeOps<ID>`
+  and `EdgeChanges<ID>` in `entkt.runtime`, wrapped in generated
+  per-entity `${Entity}PendingEdgeOps` / `${Entity}EdgeChangesView`
+  aggregators. Empty aggregator class for schemas with zero
+  helper-eligible M2M edges so the hook / privacy / validation
+  context shape is uniform across all entities.
+- **Decision B** — sidecar (B2). `EdgeChanges` is delivered through
+  a distinct `edgeChanges` parameter on update privacy and
+  validation contexts. The `WriteCandidate` stays scalar/FK-only,
+  unchanged across create / update / delete pipelines.
+- **Decision C** — mutator name follows the source edge. `tags` →
+  `TagsEdgeMutator` (not `TagEdgeMutator`). Two M2M edges to the
+  same target type on one source schema don't collide.
+- **Decision D** — public nested class with `internal` constructor.
+  `PostUpdate.TagsEdgeMutator` is reachable as
+  `update { tags.add(...) }`, but the constructor is module-private.
+- **Decision E** — generated `_hasPendingLinkTableM2MOps()` helper
+  on the update class, ORing each mutator's `hasOps()` flag.
+- **Decision F** — `LockSupportInMemoryDriver` extracted to
+  `integration-tests/src/test/kotlin/entkt/integrationtest/support/`
+  and shared between `UpdateConsistencyIntegrationTest` (RFC #4) and
+  `LinkTableM2MIntegrationTest` (RFC #5).
+
+Two notes on intent vs effect semantics that came up during
+implementation:
+
+- The mutator stores `_adds` and `_removes` as separate
+  `MutableList<ID>` collections (not as a single interleaved op log).
+  `EdgeChanges` cancellation is therefore **set-based**: same-id
+  paired `add(x); remove(x)` cancels at the database layer
+  regardless of call order, including the case where `x` was not
+  previously linked. A strictly ordered op-log walk would distinguish
+  `remove(x); add(x)` on an unlinked `x` as a net add, but the RFC's
+  test list explicitly allows "potentially empty when operations
+  cancel" for either ordering, so the set-based interpretation is
+  conforming. Intent fields (`requestedAdds` / `requestedRemoves`)
+  preserve the literal call log on both sides.
+- The defense-in-depth mixed-mode check at save preflight catches
+  state that bypassed the per-call mutator throw (e.g. reflection
+  writing the op lists directly). It throws the same
+  `IllegalStateException` shape as the per-call check, but only
+  fires **after** the transaction and capability preflights — so a
+  malformed save outside a transaction surfaces
+  `TransactionRequiredException` first, not `IllegalStateException`.
+
+Deferred to follow-ups (out of V1 scope):
+
+- **Postgres concurrency test** against the real
+  `pg_advisory_xact_lock` / `SELECT ... FOR UPDATE` primitives.
+  Belongs alongside RFC #4's mixed-mode race coverage in
+  `postgres/src/test/`.
+- **Create-time M2M** (RFC §Update-Only V1). Owner id may not be
+  known for `AUTO_*` strategies until after the insert; specifying
+  the create-time write ordering for multi-write helpers is a
+  separate design.
+- **Target-side locking** (RFC §Open Questions). V1 declined; the
+  endpoint-delete race on requested-present targets is handled by
+  application-level cooperation (see the §Target Loading And
+  Existence section).
+- **Reverse traversal via `throughLinkInverse(...)`** (referenced
+  by RFC #3). Separate RFC.
 
 Split out from [Edge Mutation API](00-overview.md).
 

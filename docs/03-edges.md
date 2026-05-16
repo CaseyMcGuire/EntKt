@@ -126,10 +126,12 @@ the write model with one of two markers (see
 comparison):
 
 - `.throughEntity<Junction>(sourceEdge, targetEdge)` — junction is a
-  domain entity, mutated through its generated repo.
+  domain entity, mutated through its generated repo
+  (e.g. `client.userGroups.create { ... }.save()`).
 - `.throughLink<Junction>(sourceEdge, targetEdge)` — junction is pure
-  relationship storage; direct edge helpers become eligible once the
-  link-table-helper RFC lands.
+  relationship storage. The generated update builder gets direct
+  id-only mutators on the M2M edge (see
+  [Link-table M2M mutators](#link-table-m2m-mutators) below).
 
 ```kotlin
 class User : EntSchema("users") {
@@ -199,6 +201,71 @@ on schema `Y` — see
 query traversal of a one-sided declaration still works (it lowers to
 `Predicate.HasM2MEdgeFrom` against the source schema's own forward
 edge metadata, no reverse-edge entry needed on the target).
+
+### Link-table M2M mutators
+
+`throughLink` edges expose direct id-only mutators on the generated
+update builder. `throughEntity` edges do not — their writes go through
+the junction repo.
+
+```kotlin
+client.withTransaction { tx ->
+    tx.posts.update(post.id) {
+        tags.add(tagA.id)        // stage a single new link
+        tags.remove(oldTag.id)   // stage a delete
+    }.save()
+}
+```
+
+The full API on each helper-eligible edge:
+
+| Method | Effect | Notes |
+|---|---|---|
+| `tags.add(id)` | Stage a new link from this owner to the target id | id is typed as the target's id scalar (e.g. `Long`, `UUID`); no entity-arg overload |
+| `tags.remove(id)` | Stage a delete of the (owner, target) link | No-op at the database layer if no such link exists; intent surface still records the call |
+| `tags.set(ids)` | Replace the entire link set with the given ids | Mutually exclusive with `add` / `remove` in the same mutation |
+
+**Same-mutation rules.**
+- `set(...)` and `add(...)` / `remove(...)` are mutually exclusive
+  for a given edge in one save. Mixing them throws
+  `IllegalStateException` fail-fast at the offending call site
+  (the error message names the edge).
+- Duplicate ids in `add` / `remove` / `set` dedupe internally.
+- Same-id paired `add(x); remove(x)` (in either order) cancels at
+  the database layer — no junction-row write fires for `x`.
+
+**Transaction and capability requirements.** A link-table M2M update
+requires a transaction-scoped client and a driver that supports
+either `readRowForUpdate` (true row lock) or
+`serializeOwnerEdgeAndRead` (cooperative serialization). The bare
+`InMemoryDriver` reports both as `false`; `PostgresDriver` reports
+both as `true`. A missing transaction throws
+`TransactionRequiredException`; a driver without either capability
+throws `UnsupportedDriverCapabilityException`. Both preflights fire
+before any owner-row read, hook, or driver write. See
+[Drivers — Locking (RFC #4)](10-drivers.md#locking-rfc-4) for the
+capability surface.
+
+**Edge-only updates** (`update(id) { tags.add(x) }` with no scalar
+fields touched) are still owner update operations — `beforeSave`,
+`beforeUpdate`, privacy, validation, and `afterUpdate` all fire.
+If scalar / FK fields stay empty after hooks and update defaults,
+the owner-row `UPDATE` is skipped (no phantom write); only the
+junction inserts and `DELETE`s emit. If an `updateDefault` like
+`updatedAt = updateDefaultNow()` populates a scalar value, the
+owner UPDATE fires alongside the junction writes.
+
+**Returned entity state.** `save()` returns the owner entity with
+scalar / FK fields reflecting the saved owner row. The M2M edge
+itself is returned in the normal unloaded state — to inspect the
+new link set, requery with eager loading (`with{Edge}`).
+
+**Hook visibility.** Before hooks see the captured pending edge
+ops via `ctx.pendingEdges.tags` (a read-only `PendingEdgeOps<ID>`).
+Privacy and validation rules see the full intent + computed
+database delta via `ctx.edgeChanges.tags` (an `EdgeChanges<ID>`
+with `added` / `removed` deltas). See
+[Hooks → The Update Hook Context](05-hooks.md#the-update-hook-context).
 
 ### Self-referential M2M
 

@@ -165,6 +165,7 @@ data class PostUpdateValidationContext(
     val requestedPatch: PostUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: PostUpdatePatch, // after framework update defaults
     val candidate: PostWriteCandidate,   // full after-state = before + effectivePatch
+    val edgeChanges: PostEdgeChangesView, // per-edge intent + computed delta
 )
 ```
 
@@ -172,6 +173,16 @@ data class PostUpdateValidationContext(
 (`Unset` or `Set(value)`). Validators that want to know *what changed* should
 read the patches; validators that check invariants on the *full after-state*
 should read `candidate`.
+
+`edgeChanges` is the same per-entity aggregator that update privacy rules
+receive — one `EdgeChanges<TargetIdType>` per helper-eligible `throughLink`
+M2M edge, carrying both caller intent (`requestedSet?` / `requestedAdds` /
+`requestedRemoves`) and the computed database delta (`added` / `removed`).
+See [Privacy → UpdatePrivacyContext](06-privacy.md#updateprivacycontext)
+for the field semantics. A typical validator pattern: reject `remove` calls
+that name unknown / forbidden target ids by inspecting
+`ctx.edgeChanges.tags.requestedRemoves` — the literal call log surfaces
+the id even when the database effect is a no-op.
 
 By the time validation runs, the post-hook required-not-null check has
 already fired, so a dirty + null required field would have thrown

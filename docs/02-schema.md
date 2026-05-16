@@ -222,7 +222,7 @@ write to. Pick the write model with one of two markers:
 | Marker | When to use |
 |---|---|
 | `.throughEntity<Junction>(sourceEdge, targetEdge)` | Junction carries payload, hooks, privacy, or validation. Callers mutate it through the generated junction repo (e.g. `client.userGroups.create { ... }.save()`). |
-| `.throughLink<Junction>(sourceEdge, targetEdge)` | Junction is pure relationship storage (id + the two FK columns; no payload, no hooks, no privacy). Direct edge helpers (`add`, `remove`, `set`) become eligible once the link-table-helper RFC lands. |
+| `.throughLink<Junction>(sourceEdge, targetEdge)` | Junction is pure relationship storage (id + the two FK columns; no payload, no hooks, no privacy). Generated update builders get direct id-only edge helpers: `tags.add(tagId)` / `tags.remove(tagId)` / `tags.set(listOf(...))`. See [Edges → Many-to-Many](03-edges.md#many-to-many) for the full mutator API and the transaction/capability requirements. |
 
 The two refs always name the junction's `belongsTo` edges in the
 order **source first, target second** — `sourceEdge` points back at
