@@ -161,4 +161,46 @@ class HelperEligibleM2MTest {
         val names = mapOf<EntSchema, String>(target to "HeTag")
         assertEquals(emptyList(), helperEligibleM2MEdges(target, names))
     }
+
+    @Test
+    fun `snake_case edge names become camelCase properties and PascalCase mutator class names`() {
+        // Edge names from the schema DSL are typically snake_case
+        // (`manyToMany<Tag>("primary_tags")`). The codebase elsewhere
+        // applies toCamelCase / toPascalCase before splicing into
+        // generated Kotlin identifiers; the mutator should follow the
+        // same convention rather than leaking `primary_tags` /
+        // `Primary_tagsEdgeMutator`.
+        val post = SnakePost()
+        val label = SnakeLabel()
+        val pl = SnakePostLabel()
+        finalize(post, label, pl)
+        val names = mapOf<EntSchema, String>(post to "SnakePost", label to "SnakeLabel", pl to "SnakePostLabel")
+
+        val eligible = helperEligibleM2MEdges(post, names).single()
+        assertEquals("primary_tags", eligible.edgeName, "edgeName is the raw schema name (for metadata lookup)")
+        assertEquals(
+            "primaryTags", eligible.mutatorPropertyName,
+            "mutatorPropertyName must be camelCase for idiomatic Kotlin DSL",
+        )
+        assertEquals(
+            "PrimaryTagsEdgeMutator", eligible.mutatorClassSimpleName,
+            "mutatorClassSimpleName must be PascalCase for idiomatic Kotlin",
+        )
+    }
+}
+
+// snake_case edge name fixture for the case-conversion test above.
+private class SnakePost : EntSchema("snake_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<SnakeLabel>("primary_tags")
+        .throughLink<SnakePostLabel>(SnakePostLabel::post, SnakePostLabel::label)
+}
+private class SnakeLabel : EntSchema("snake_labels") {
+    override fun id() = EntId.long()
+}
+private class SnakePostLabel : EntSchema("snake_post_labels") {
+    override fun id() = EntId.long()
+    val post = belongsTo<SnakePost>("post").onDelete(OnDelete.CASCADE)
+    val label = belongsTo<SnakeLabel>("label").onDelete(OnDelete.CASCADE)
+    val pair = index("idx_snake_post_labels_pair", post.fk, label.fk).unique()
 }

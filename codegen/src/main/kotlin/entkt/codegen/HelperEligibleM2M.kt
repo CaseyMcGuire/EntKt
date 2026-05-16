@@ -24,7 +24,11 @@ import entkt.schema.ManyToManyThrough
  *
  * The mutator is named after the source edge (`tags` →
  * `TagsEdgeMutator`, not `TagEdgeMutator`) so two M2M edges to the
- * same target type on the same source schema do not collide.
+ * same target type on the same source schema do not collide. Edge
+ * names go through `toCamelCase` (property) and `toPascalCase`
+ * (class) so a schema-side `manyToMany<Tag>("primary_tags")`
+ * generates idiomatic `val primaryTags: PrimaryTagsEdgeMutator`
+ * instead of leaking snake_case into the generated Kotlin API.
  */
 internal data class HelperEligibleM2M(
     val edge: Edge,
@@ -76,8 +80,8 @@ internal fun helperEligibleM2MEdges(
         HelperEligibleM2M(
             edge = edge,
             edgeName = edge.name,
-            mutatorPropertyName = edge.name,
-            mutatorClassSimpleName = edge.name.replaceFirstChar { it.uppercase() } + "EdgeMutator",
+            mutatorPropertyName = toCamelCase(edge.name),
+            mutatorClassSimpleName = toPascalCase(edge.name) + "EdgeMutator",
             junctionTable = junctionTable,
             junctionSourceColumn = junctionSourceColumn,
             junctionTargetColumn = junctionTargetColumn,
