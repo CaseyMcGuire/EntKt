@@ -328,4 +328,65 @@ interface Driver {
                 "(in auto-commit) or have no transaction boundary to bind to."
         }
     }
+
+    /**
+     * Map a [throwable] thrown from this driver to a structured
+     * [EntError] when the driver recognizes it. Returning `null`
+     * signals "I don't know what this is" — the caller (typically the
+     * `classifyDriverError` helper) will fall back to wrapping it in
+     * [EntError.DriverFailure].
+     *
+     * Generated `*OrError()` wrappers call this AFTER the more
+     * specific catch arms (privacy / validation / EntException) but
+     * BEFORE a generic Throwable fallback, so:
+     *  - the framework's own exceptions (TransactionRequiredException,
+     *    UnsupportedDriverCapabilityException, EntException subclasses)
+     *    are never offered to the classifier — they always propagate
+     *    as themselves, per the RFC Status carve-out;
+     *  - everything else (PSQLException, IllegalStateException from
+     *    driver-side validators, etc.) gets one shot at being
+     *    classified, then falls through to DriverFailure.
+     *
+     * Implementations should:
+     *  - return `EntError.ConstraintViolation` for UNIQUE/FK/CHECK
+     *    violations, populating `constraint`/`field`/`code` from
+     *    whatever metadata the underlying exception carries
+     *    (PostgreSQL's SQLSTATE, the InMemory driver's message
+     *    prefix, etc.);
+     *  - leave [EntError.Conflict] for a future optimistic-locking
+     *    surface — returning `null` for serialization failures is
+     *    fine in V1;
+     *  - return `null` for any throwable the driver doesn't
+     *    recognize, including IO/network errors — the
+     *    `classifyDriverError` fallback will wrap those as
+     *    [EntError.DriverFailure].
+     *
+     * The default returns `null` so existing third-party drivers
+     * inherit the "raw exception propagates as DriverFailure" V1
+     * behavior without having to opt in.
+     */
+    fun classifyException(
+        throwable: Throwable,
+        entity: String,
+        operation: EntOperation,
+    ): EntError? = null
 }
+
+/**
+ * Wrap an arbitrary [throwable] from a generated `*OrError()` catch
+ * arm into an [EntError], using the [driver]'s own classifier first
+ * and falling back to [EntError.DriverFailure].
+ *
+ * The cause is preserved on `EntError.DriverFailure.cause` so the
+ * matching [EntDriverException] forwards it to the JVM exception
+ * chain — `printStackTrace()` and friends still see the original
+ * driver exception.
+ */
+public fun classifyDriverError(
+    driver: Driver,
+    throwable: Throwable,
+    entity: String,
+    operation: EntOperation,
+): EntError =
+    driver.classifyException(throwable, entity, operation)
+        ?: EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)

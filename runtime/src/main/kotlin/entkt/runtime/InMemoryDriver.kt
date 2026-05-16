@@ -489,6 +489,74 @@ class InMemoryDriver : Driver {
         }
     }
 
+    /**
+     * Map IllegalStateException thrown by this driver's own constraint
+     * validators (FK / unique / PK / parent-update / ON DELETE
+     * RESTRICT) to a structured [EntError.ConstraintViolation]. The
+     * SQLSTATE-style codes ("23505" / "23503") align with the Postgres
+     * driver's mapping so callers can branch uniformly on `code`
+     * regardless of which driver produced the error.
+     *
+     * Message-prefix matching is coupled to the literal strings in
+     * `validateUniqueConstraints`, `validateForeignKeyReferences`,
+     * `validateNoChildReferencesDangling`, and the ON DELETE RESTRICT
+     * branch. Those strings live in this file; the same-file colocation
+     * keeps the coupling local.
+     *
+     * Returns `null` for any other Throwable, including framework
+     * exceptions and IO failures — `classifyDriverError` wraps those
+     * as [EntError.DriverFailure].
+     */
+    override fun classifyException(
+        throwable: Throwable,
+        entity: String,
+        operation: EntOperation,
+    ): EntError? {
+        if (throwable !is IllegalStateException) return null
+        val msg = throwable.message ?: return null
+        // Order matters: more-specific prefixes first ("Unique index
+        // violation" before "Unique violation"; "Primary key violation"
+        // already disjoint by prefix).
+        return when {
+            msg.startsWith("Primary key violation:") -> EntError.ConstraintViolation(
+                entity = entity,
+                operation = operation,
+                constraint = "primary_key",
+                code = "23505",
+                message = msg,
+            )
+            msg.startsWith("Unique index violation") -> EntError.ConstraintViolation(
+                entity = entity,
+                operation = operation,
+                constraint = "unique_index",
+                code = "23505",
+                message = msg,
+            )
+            msg.startsWith("Unique violation:") -> EntError.ConstraintViolation(
+                entity = entity,
+                operation = operation,
+                constraint = "unique",
+                code = "23505",
+                message = msg,
+            )
+            msg.startsWith("FK violation:") -> EntError.ConstraintViolation(
+                entity = entity,
+                operation = operation,
+                constraint = "foreign_key",
+                code = "23503",
+                message = msg,
+            )
+            msg.startsWith("foreign key constraint:") -> EntError.ConstraintViolation(
+                entity = entity,
+                operation = operation,
+                constraint = "foreign_key_restrict",
+                code = "23503",
+                message = msg,
+            )
+            else -> null
+        }
+    }
+
     override fun explainQuery(
         table: String,
         predicates: List<Predicate>,
@@ -966,6 +1034,15 @@ private class InMemoryTransactionalDriver(
     // to implement transaction-scoped lock tracking to honestly
     // advertise true row-lock semantics; in-memory is not that
     // driver — concurrent-correctness tests belong on Postgres.
+
+    // Delegate exception classification to root. The validators
+    // throw from root's write paths, so root knows the message
+    // shapes. The tx wrapper just needs to forward.
+    override fun classifyException(
+        throwable: Throwable,
+        entity: String,
+        operation: EntOperation,
+    ): EntError? = root.classifyException(throwable, entity, operation)
 }
 
 /**

@@ -953,6 +953,49 @@ class PostgresDriver(
     private fun quote(identifier: String): String =
         "\"${identifier.replace("\"", "\"\"")}\""
 
+    // ---------- Driver exception classification (Result Variants RFC Phase 2) ----------
+
+    /**
+     * Map a [PSQLException] thrown by this driver to a structured
+     * [EntError]. SQLSTATE classes covered in V1:
+     *
+     *  - `23xxx` (integrity constraint violation): UNIQUE (`23505`),
+     *    FOREIGN KEY (`23503`), CHECK (`23514`), NOT NULL (`23502`),
+     *    EXCLUSION (`23P01`) — all map to
+     *    [EntError.ConstraintViolation] with the SQLSTATE preserved
+     *    as `code`. When the server attached `ServerErrorMessage`
+     *    metadata (typical for constraint errors), `constraint` and
+     *    `field` are populated from it; otherwise they're `null`.
+     *
+     * Serialization-failure SQLSTATEs (`40001`, `40P01`) deliberately
+     * return `null` in V1 — they're the natural fit for
+     * [EntError.Conflict] but that variant has no generated path
+     * surfacing it yet (the optimistic-locking RFC will land that).
+     * Returning null falls through to `EntError.DriverFailure`, which
+     * is the right shape until Conflict has a real consumer.
+     *
+     * Returns `null` for anything that isn't a PSQLException —
+     * `classifyDriverError` will wrap those as `DriverFailure`.
+     */
+    override fun classifyException(
+        throwable: Throwable,
+        entity: String,
+        operation: entkt.runtime.EntOperation,
+    ): entkt.runtime.EntError? {
+        if (throwable !is org.postgresql.util.PSQLException) return null
+        val state = throwable.sqlState ?: return null
+        if (!state.startsWith("23")) return null
+        val server = throwable.serverErrorMessage
+        return entkt.runtime.EntError.ConstraintViolation(
+            entity = entity,
+            operation = operation,
+            constraint = server?.constraint,
+            field = server?.column,
+            code = state,
+            message = throwable.message ?: "constraint violation",
+        )
+    }
+
     // ---------- Transaction-scoped driver ----------
 
     /**
@@ -1061,5 +1104,14 @@ class PostgresDriver(
         override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
             checkOpen(); return root.serializeOwnerEdgeAndReadWith(conn, table, id)
         }
+
+        // Exception classification delegates to root — the PSQLException
+        // shape is the same whether thrown from a tx-scoped or root-
+        // scoped statement.
+        override fun classifyException(
+            throwable: Throwable,
+            entity: String,
+            operation: entkt.runtime.EntOperation,
+        ): entkt.runtime.EntError? = root.classifyException(throwable, entity, operation)
     }
 }
