@@ -1,11 +1,13 @@
 package entkt.codegen
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LIST
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -31,6 +33,8 @@ private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision"
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
 private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime", "UnsupportedDriverCapabilityException")
+private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val ILLEGAL_STATE_EXCEPTION = ClassName("kotlin", "IllegalStateException")
 
 
 internal class UpdateGenerator(
@@ -66,6 +70,13 @@ internal class UpdateGenerator(
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeUpdateHookType = hookListType(updateHookCtxClass)
         val afterUpdateHookType = hookListType(entityClass)
+
+        // Helper-eligible link-table M2M edges (RFC #5). Each gets a
+        // nested mutator class on the Update builder and a public
+        // property bound to it. The mutator is NOT propagated to the
+        // hook-facing `${schemaName}UpdateMutationView` — hooks see
+        // pending edge ops through a read-only sidecar added in Phase 3.
+        val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
         // The Update builder implements only the shared Mutation
         // interface, not UpdateMutationView. The view (and its
@@ -178,12 +189,29 @@ internal class UpdateGenerator(
                     edgeFks = edgeFks,
                 ),
             )
+            // RFC #5 Phase 2: link-table M2M mutator properties. Public
+            // DSL surface — callers reach add/remove/set through
+            // `update(id) { tags.add(tagId) }`. Constructor is internal
+            // so only this builder instantiates the mutator.
+            .also { builder ->
+                for (edge in helperEligibleEdges) {
+                    builder.addProperty(buildEdgeMutatorProperty(edge, updateClass))
+                }
+            }
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks))
             .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
             .addFunction(buildSaveOrErrorFunction(schemaName))
+            // RFC #5 Phase 2: nested mutator class declarations. Nested
+            // inside the Update builder so two entities with the same
+            // edge name don't collide on the mutator class symbol.
+            .also { builder ->
+                for (edge in helperEligibleEdges) {
+                    builder.addType(buildEdgeMutatorType(edge))
+                }
+            }
             .build()
 
         return FileSpec.builder(packageName, className)
@@ -519,6 +547,122 @@ internal class UpdateGenerator(
             )
         }
         return builder.build()
+    }
+
+    /**
+     * RFC #5 Phase 2: build the public `val ${edge}: ${Edge}EdgeMutator`
+     * property on the Update builder. The mutator's constructor is
+     * `internal`, so only this builder instantiates it; the public DSL
+     * surface is `update(id) { tags.add(tagId) }`.
+     */
+    private fun buildEdgeMutatorProperty(
+        edge: HelperEligibleM2M,
+        updateClass: ClassName,
+    ): PropertySpec {
+        val mutatorClass = updateClass.nestedClass(edge.mutatorClassSimpleName)
+        return PropertySpec.builder(edge.mutatorPropertyName, mutatorClass)
+            .initializer("%T()", mutatorClass)
+            .build()
+    }
+
+    /**
+     * RFC #5 Phase 2: build the nested `${Edge}EdgeMutator` class that
+     * carries the per-edge op log and exposes the public id-only
+     * `add(id)` / `remove(id)` / `set(ids)` mutator surface.
+     *
+     * The op-log fields (`_requestedSet`, `_adds`, `_removes`) are
+     * `internal` so the enclosing Update builder (in the same module)
+     * can read them when computing `EdgeChanges` in Phase 5. The
+     * constructor is `internal` so callers cannot construct a
+     * standalone mutator outside the builder.
+     *
+     * Mixed replacement (`set(...)`) and delta (`add(...)` /
+     * `remove(...)`) calls on the same edge in one mutation throw
+     * `IllegalStateException` fail-fast at the incompatible call site.
+     * A defense-in-depth check at save preflight (Phase 4) re-runs the
+     * same rule against the captured state.
+     */
+    private fun buildEdgeMutatorType(edge: HelperEligibleM2M): TypeSpec {
+        val idType = edge.targetIdTypeName
+        val listOfId = LIST.parameterizedBy(idType)
+        val mutableListOfId = MUTABLE_LIST.parameterizedBy(idType)
+        val mixedModeMessage = "edge '${edge.edgeName}': cannot mix replacement (set) and " +
+            "delta (add/remove) operations in one mutation"
+
+        return TypeSpec.classBuilder(edge.mutatorClassSimpleName)
+            .addKdoc(
+                "Link-table M2M mutator for `%L` (RFC #5). Public DSL surface\n" +
+                    "is `add(id)` / `remove(id)` / `set(ids)`; mixed replacement +\n" +
+                    "delta calls on the same edge in one mutation throw\n" +
+                    "`IllegalStateException` at the call site.",
+                edge.edgeName,
+            )
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addModifiers(KModifier.INTERNAL)
+                    .build(),
+            )
+            // Op log. `internal` so the enclosing Update builder can
+            // read them in Phase 5 when computing EdgeChanges.
+            .addProperty(
+                PropertySpec.builder("_requestedSet", listOfId.copy(nullable = true))
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("null")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("_adds", mutableListOfId)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("mutableListOf()")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("_removes", mutableListOfId)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("mutableListOf()")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("add")
+                    .addParameter("id", idType)
+                    .addStatement(
+                        "if (_requestedSet != null) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
+                    )
+                    .addStatement("_adds.add(id)")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("remove")
+                    .addParameter("id", idType)
+                    .addStatement(
+                        "if (_requestedSet != null) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
+                    )
+                    .addStatement("_removes.add(id)")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("set")
+                    .addParameter("ids", listOfId)
+                    .addStatement(
+                        "if (_adds.isNotEmpty() || _removes.isNotEmpty()) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
+                    )
+                    .addStatement("_requestedSet = ids")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("hasOps")
+                    .addModifiers(KModifier.INTERNAL)
+                    .returns(BOOLEAN)
+                    .addStatement(
+                        "return _requestedSet != null || _adds.isNotEmpty() || _removes.isNotEmpty()",
+                    )
+                    .build(),
+            )
+            .build()
     }
 
     /**

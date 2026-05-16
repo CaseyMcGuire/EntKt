@@ -770,4 +770,290 @@ class UpdateGeneratorTest {
     // NOTE: The old test `updateDefault Now on non-TIME field is rejected` has been
     // removed because the typed builder API now prevents this at compile time —
     // updateDefaultNow() only exists on TimeFieldBuilder.
+
+    // ---------- RFC #5 Phase 2: link-table M2M mutator generation ----------
+
+    @Test
+    fun `update builder for schema with throughLink M2M edge gets a nested mutator class`() {
+        val (post, tag, postTag, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Nested mutator class is emitted on the Update builder.
+        assert(output.contains("public class TagsEdgeMutator internal constructor()")) {
+            "Should generate nested TagsEdgeMutator class with internal constructor\n$output"
+        }
+        // Public property bound on the Update builder.
+        assert(output.contains("public val tags: M2MPostUpdate.TagsEdgeMutator = M2MPostUpdate.TagsEdgeMutator()") ||
+               output.contains("public val tags: TagsEdgeMutator = TagsEdgeMutator()")) {
+            "Should bind `val tags = TagsEdgeMutator()` on the Update builder\n$output"
+        }
+    }
+
+    @Test
+    fun `mutator exposes id-only add remove set with the target id type`() {
+        val (post, tag, postTag, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Target id is UUID (from EntId.uuid() on M2MTag). The mutator
+        // signatures should use UUID, not Long (the source's id type)
+        // and not the M2MTag entity type.
+        assert(output.contains("public fun add(id: UUID)")) {
+            "Mutator add() should accept the target's id scalar type (UUID)\n$output"
+        }
+        assert(output.contains("public fun remove(id: UUID)")) {
+            "Mutator remove() should accept the target's id scalar type (UUID)\n$output"
+        }
+        assert(output.contains("public fun `set`(ids: List<UUID>)") ||
+               output.contains("public fun set(ids: List<UUID>)")) {
+            "Mutator set() should accept List<UUID>\n$output"
+        }
+        // Compile-time check: no entity-arg overload.
+        assert(!output.contains("public fun add(tag: M2MTag)") &&
+               !output.contains("public fun add(target: M2MTag)")) {
+            "Mutator must not have entity-arg overloads\n$output"
+        }
+    }
+
+    @Test
+    fun `mutator fail-fast rejects mixed replacement and delta at the call site`() {
+        val (post, tag, postTag, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // add() / remove() reject if requestedSet was already populated.
+        assert(output.contains("public fun add(id: UUID) { if (_requestedSet != null) throw IllegalStateException")) {
+            "add() should fail-fast when replacement is already staged\n$output"
+        }
+        assert(output.contains("public fun remove(id: UUID) { if (_requestedSet != null) throw IllegalStateException")) {
+            "remove() should fail-fast when replacement is already staged\n$output"
+        }
+        // set() rejects if delta state is already populated.
+        assert(output.contains("if (_adds.isNotEmpty() || _removes.isNotEmpty()) throw IllegalStateException")) {
+            "set() should fail-fast when delta operations are already staged\n$output"
+        }
+        // Error message names the edge so the call site can identify it.
+        assert(output.contains("edge 'tags': cannot mix replacement (set) and delta (add/remove)")) {
+            "Mixed-mode error message should name the edge\n$output"
+        }
+    }
+
+    @Test
+    fun `mutator op log fields are internal so the enclosing Update class can read them`() {
+        val (post, tag, postTag, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // _requestedSet, _adds, _removes are internal — Phase 5 needs to
+        // read them from the enclosing Update builder for EdgeChanges
+        // computation. `private` would make them invisible to the outer
+        // class.
+        assert(output.contains("internal var _requestedSet: List<UUID>?")) {
+            "_requestedSet must be internal so the enclosing Update class can read it\n$output"
+        }
+        assert(output.contains("internal val _adds: MutableList<UUID>")) {
+            "_adds must be internal\n$output"
+        }
+        assert(output.contains("internal val _removes: MutableList<UUID>")) {
+            "_removes must be internal\n$output"
+        }
+        assert(output.contains("internal fun hasOps(): Boolean")) {
+            "hasOps() must be internal — wired into Phase 4's M2M preflight\n$output"
+        }
+    }
+
+    @Test
+    fun `throughEntity M2M edge does NOT get a mutator`() {
+        val (team, member, membership, names) = makeEntityM2MSchemas()
+        val output = generator.generate("M2MTeam", team, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // throughEntity edges are mutated through the junction repo, not
+        // through direct mutators. Confirm no mutator class is generated.
+        assert(!output.contains("EdgeMutator")) {
+            "throughEntity M2M edges must not get direct mutator codegen\n$output"
+        }
+        assert(!output.contains("public val members:")) {
+            "throughEntity M2M edges must not get a mutator property on the Update builder\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder without any M2M edges has no mutator scaffolding`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(!output.contains("EdgeMutator")) {
+            "Schemas without helper-eligible M2M edges should produce no mutator scaffolding\n$output"
+        }
+    }
+
+    @Test
+    fun `UpdateMutationView is not extended with the mutator property — hooks must not see it`() {
+        val (post, tag, postTag, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The private `_mutationView` adapter implements
+        // M2MPostUpdateMutationView. It forwards scalar fields and FKs
+        // through `override var ...` and exposes `override fun unsetX()`
+        // for each. Hooks read pending edge ops through the Phase 3
+        // `pendingEdges` sidecar; they must not reach into the mutator,
+        // so there must be NO `override var tags` / `override fun unsetTags`
+        // in the adapter — the only way the view interface could expose
+        // the mutator property.
+        assert(output.contains("_mutationView: M2MPostUpdateMutationView")) {
+            "Expected _mutationView adapter typed as M2MPostUpdateMutationView\n$output"
+        }
+        assert(!output.contains("override var tags") &&
+               !output.contains("override val tags")) {
+            "Hook-facing mutation view must not forward the M2M mutator property `tags`\n$output"
+        }
+        assert(!output.contains("override fun unsetTags")) {
+            "Hook-facing mutation view must not expose unsetTags() — `tags` isn't a patch field\n$output"
+        }
+    }
+
+    @Test
+    fun `two helper-eligible M2M edges on one schema each get their own mutator class`() {
+        val (doc, label, docTag, docLabel, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Both mutator classes are generated as separate nested classes.
+        assert(output.contains("public class TagsEdgeMutator")) {
+            "Expected TagsEdgeMutator nested class\n$output"
+        }
+        assert(output.contains("public class LabelsEdgeMutator")) {
+            "Expected LabelsEdgeMutator nested class\n$output"
+        }
+        // Both properties bound on the Update builder.
+        assert(output.contains("public val tags:") && output.contains("TagsEdgeMutator()")) {
+            "Expected `val tags = TagsEdgeMutator()`\n$output"
+        }
+        assert(output.contains("public val labels:") && output.contains("LabelsEdgeMutator()")) {
+            "Expected `val labels = LabelsEdgeMutator()`\n$output"
+        }
+    }
+}
+
+// ---------- RFC #5 Phase 2 test schemas ----------
+
+// helper-eligible throughLink (Long-id source, UUID-id target)
+private class M2MPost : EntSchema("m2m_posts") {
+    override fun id() = EntId.long()
+    val title = string("title")
+    val tags = manyToMany<M2MTag>("tags")
+        .throughLink<M2MPostTag>(M2MPostTag::post, M2MPostTag::tag)
+}
+private class M2MTag : EntSchema("m2m_tags") {
+    override fun id() = EntId.uuid()
+    val name = string("name")
+}
+private class M2MPostTag : EntSchema("m2m_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<M2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag = belongsTo<M2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_m2m_post_tags_pair", post.fk, tag.fk).unique()
+}
+
+private data class LinkSchemas(
+    val post: M2MPost,
+    val tag: M2MTag,
+    val postTag: M2MPostTag,
+    val names: Map<EntSchema, String>,
+)
+private fun makeLinkM2MSchemas(): LinkSchemas {
+    val post = M2MPost()
+    val tag = M2MTag()
+    val postTag = M2MPostTag()
+    finalize(post, tag, postTag)
+    return LinkSchemas(
+        post, tag, postTag,
+        mapOf(post to "M2MPost", tag to "M2MTag", postTag to "M2MPostTag"),
+    )
+}
+
+// throughEntity (must NOT get mutator codegen)
+private class M2MTeam : EntSchema("m2m_teams") {
+    override fun id() = EntId.long()
+    val members = manyToMany<M2MMember>("members")
+        .throughEntity<M2MTeamMembership>(M2MTeamMembership::team, M2MTeamMembership::member)
+}
+private class M2MMember : EntSchema("m2m_members") {
+    override fun id() = EntId.long()
+}
+private class M2MTeamMembership : EntSchema("m2m_memberships") {
+    override fun id() = EntId.long()
+    val joinedAt = time("joined_at")
+    val team = belongsTo<M2MTeam>("team")
+    val member = belongsTo<M2MMember>("member")
+}
+private data class EntitySchemas(
+    val team: M2MTeam,
+    val member: M2MMember,
+    val membership: M2MTeamMembership,
+    val names: Map<EntSchema, String>,
+)
+private fun makeEntityM2MSchemas(): EntitySchemas {
+    val team = M2MTeam()
+    val member = M2MMember()
+    val membership = M2MTeamMembership()
+    finalize(team, member, membership)
+    return EntitySchemas(
+        team, member, membership,
+        mapOf(team to "M2MTeam", member to "M2MMember", membership to "M2MTeamMembership"),
+    )
+}
+
+// Two helper-eligible throughLink edges on one source — same target type,
+// different property names. Mutator naming follows the source edge
+// (decision C) so the two don't collide.
+private class M2MDoc : EntSchema("m2m_docs") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<M2MLabel>("tags")
+        .throughLink<M2MDocTag>(M2MDocTag::doc, M2MDocTag::tag)
+    val labels = manyToMany<M2MLabel>("labels")
+        .throughLink<M2MDocLabel>(M2MDocLabel::doc, M2MDocLabel::label)
+}
+private class M2MLabel : EntSchema("m2m_labels") {
+    override fun id() = EntId.long()
+}
+private class M2MDocTag : EntSchema("m2m_doc_tags") {
+    override fun id() = EntId.long()
+    val doc = belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag = belongsTo<M2MLabel>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_m2m_doc_tags_pair", doc.fk, tag.fk).unique()
+}
+private class M2MDocLabel : EntSchema("m2m_doc_labels") {
+    override fun id() = EntId.long()
+    val doc = belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val label = belongsTo<M2MLabel>("label").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_m2m_doc_labels_pair", doc.fk, label.fk).unique()
+}
+private data class MultiEdgeSchemas(
+    val doc: M2MDoc,
+    val label: M2MLabel,
+    val docTag: M2MDocTag,
+    val docLabel: M2MDocLabel,
+    val names: Map<EntSchema, String>,
+)
+private fun makeMultiEdgeSchemas(): MultiEdgeSchemas {
+    val doc = M2MDoc()
+    val label = M2MLabel()
+    val docTag = M2MDocTag()
+    val docLabel = M2MDocLabel()
+    finalize(doc, label, docTag, docLabel)
+    return MultiEdgeSchemas(
+        doc, label, docTag, docLabel,
+        mapOf(
+            doc to "M2MDoc",
+            label to "M2MLabel",
+            docTag to "M2MDocTag",
+            docLabel to "M2MDocLabel",
+        ),
+    )
 }
