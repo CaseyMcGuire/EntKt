@@ -312,7 +312,7 @@ class UpdateGeneratorTest {
         // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client, entity, snapshot, _mutationView) hook(ctx) }",
+                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client, entity, snapshot, pendingEdges, _mutationView) hook(ctx) }",
             ),
         ) {
             "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
@@ -936,6 +936,104 @@ class UpdateGeneratorTest {
         }
         assert(output.contains("public val labels:") && output.contains("LabelsEdgeMutator()")) {
             "Expected `val labels = LabelsEdgeMutator()`\n$output"
+        }
+    }
+
+    // ---------- RFC #5 Phase 3: PendingEdgeOps hook surface ----------
+
+    @Test
+    fun `update builder emits a _buildPendingEdgeOps that dedupes op log into PendingEdgeOps`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The private helper builds the per-entity aggregator from each
+        // mutator's op log, deduping the lists into sets. Same-id paired
+        // add+remove is preserved across both intent fields because each
+        // list goes into its own set independently (no cancellation).
+        assert(output.contains("private fun _buildPendingEdgeOps(): M2MPostPendingEdgeOps")) {
+            "Expected private _buildPendingEdgeOps helper returning the aggregator\n$output"
+        }
+        assert(output.contains("requestedSet = this.tags._requestedSet?.toSet()")) {
+            "Expected dedup of _requestedSet to Set<ID>?\n$output"
+        }
+        assert(output.contains("requestedAdds = this.tags._adds.toSet()")) {
+            "Expected dedup of _adds to Set<ID>\n$output"
+        }
+        assert(output.contains("requestedRemoves = this.tags._removes.toSet()")) {
+            "Expected dedup of _removes to Set<ID>\n$output"
+        }
+    }
+
+    @Test
+    fun `_buildPendingEdgeOps short-circuits to empty aggregator for schemas without helper-eligible edges`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Schema has no helper-eligible M2M edges, so the helper just
+        // returns the empty aggregator instance. The aggregator type
+        // still exists (uniform hook context shape across entities).
+        assert(output.contains("private fun _buildPendingEdgeOps(): UserPendingEdgeOps")) {
+            "Helper must be emitted even for entities without M2M edges\n$output"
+        }
+        // KotlinPoet collapses single-`return` block bodies to an
+        // expression body, so accept either form.
+        assert(output.contains("return UserPendingEdgeOps()") ||
+               output.contains("_buildPendingEdgeOps(): UserPendingEdgeOps = UserPendingEdgeOps()")) {
+            "Empty-aggregator path should short-circuit to the no-arg constructor\n$output"
+        }
+    }
+
+    @Test
+    fun `save pipeline captures pendingEdges snapshot after owner-row read and before hooks`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Pin the ordering: owner-row load → fromRow → pendingEdges
+        // snapshot → beforeSave hooks. Capturing after the load means a
+        // missing-row return doesn't waste a snapshot; capturing before
+        // hooks means hooks see the snapshot.
+        val fromRowIdx = output.indexOf("entity = M2MPost.fromRow(row0)")
+        val captureIdx = output.indexOf("val pendingEdges = _buildPendingEdgeOps()")
+        val beforeSaveIdx = output.indexOf("for (hook in beforeSaveHooks) hook(this)")
+        assert(fromRowIdx != -1 && captureIdx != -1 && beforeSaveIdx != -1) {
+            "Missing one of the pipeline anchors\n$output"
+        }
+        assert(fromRowIdx < captureIdx) {
+            "pendingEdges snapshot must be captured AFTER owner-row load\n$output"
+        }
+        assert(captureIdx < beforeSaveIdx) {
+            "pendingEdges snapshot must be captured BEFORE beforeSave hooks fire\n$output"
+        }
+    }
+
+    @Test
+    fun `update hook context constructor receives pendingEdges`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The 5-arg form: (client, entity, snapshot, pendingEdges, _mutationView).
+        assert(output.contains("M2MPostUpdateHookContext(client, entity, snapshot, pendingEdges, _mutationView)")) {
+            "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
+        }
+    }
+
+    @Test
+    fun `mutation view adapter forwards pendingEdges via _buildPendingEdgeOps`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The adapter implements the view interface's pendingEdges
+        // getter by calling the outer builder's _buildPendingEdgeOps().
+        // Mutators are read-only to hooks, so rebuilding on each read
+        // is stable for the duration of the hook block.
+        assert(output.contains("override val pendingEdges: M2MPostPendingEdgeOps get() = this@M2MPostUpdate._buildPendingEdgeOps()")) {
+            "Adapter pendingEdges getter must delegate to outer _buildPendingEdgeOps()\n$output"
         }
     }
 }

@@ -18,6 +18,7 @@ private val PRIVACY_RULE = ClassName("entkt.runtime", "PrivacyRule")
 private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
+private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
 
 /**
  * Emits per-entity privacy infrastructure:
@@ -49,12 +50,20 @@ internal class PrivacyGenerator(
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
         val createMutationViewClass = ClassName(packageName, "${schemaName}CreateMutationView")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
+        val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
 
         // Backing FK columns flow through `edgeFks` for write candidates
         // and update patches so their type/nullability come from the
         // relationship, not the scalar field declaration.
         val fields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
+
+        // Helper-eligible link-table M2M edges (RFC #5 Phase 3). Each
+        // contributes a typed `PendingEdgeOps<ID>` field on the per-entity
+        // aggregator surfaced through the update hook context and the
+        // update mutation view. Empty list → empty aggregator (uniform
+        // hook context shape across entities).
+        val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
         val fileBuilder = FileSpec.builder(packageName, "${schemaName}Privacy")
 
@@ -97,6 +106,14 @@ internal class PrivacyGenerator(
         // UpdatePatch
         fileBuilder.addType(buildUpdatePatch(patchClass, fields, edgeFks))
 
+        // PendingEdgeOps aggregator (RFC #5 Phase 3). One typed
+        // `PendingEdgeOps<TargetIdType>` per helper-eligible M2M edge,
+        // exposed read-only on the update hook context and the update
+        // mutation view. Schemas without helper-eligible M2M edges still
+        // get a type — a no-fields class — so hook authors can write
+        // `ctx.pendingEdges` without entity-conditional types.
+        fileBuilder.addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
+
         // UpdateHookContext (received by beforeUpdate hooks)
         fileBuilder.addType(
             buildUpdateHookContext(
@@ -105,6 +122,7 @@ internal class PrivacyGenerator(
                 entityClass = entityClass,
                 patchClass = patchClass,
                 mutationClass = updateMutationViewClass,
+                pendingEdgesClass = pendingEdgeOpsClass,
             ),
         )
 
@@ -287,6 +305,7 @@ internal class PrivacyGenerator(
         entityClass: ClassName,
         patchClass: ClassName,
         mutationClass: ClassName,
+        pendingEdgesClass: ClassName,
     ): TypeSpec = TypeSpec.classBuilder(ctxClass)
         .addModifiers(KModifier.DATA)
         .primaryConstructor(
@@ -294,12 +313,14 @@ internal class PrivacyGenerator(
                 .addParameter("client", clientClass)
                 .addParameter("before", entityClass)
                 .addParameter("patch", patchClass)
+                .addParameter("pendingEdges", pendingEdgesClass)
                 .addParameter("mutation", mutationClass)
                 .build(),
         )
         .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
         .addProperty(PropertySpec.builder("patch", patchClass).initializer("patch").build())
+        .addProperty(PropertySpec.builder("pendingEdges", pendingEdgesClass).initializer("pendingEdges").build())
         .addProperty(PropertySpec.builder("mutation", mutationClass).initializer("mutation").build())
         .build()
 
@@ -371,6 +392,50 @@ internal class PrivacyGenerator(
             return TypeSpec.classBuilder(patchClass).build()
         }
         return TypeSpec.classBuilder(patchClass)
+            .addModifiers(KModifier.DATA)
+            .primaryConstructor(ctor.build())
+            .addProperties(props)
+            .build()
+    }
+
+    /**
+     * Per-entity aggregator of pending link-table M2M edge ops surfaced
+     * read-only to update hooks (RFC #5 Phase 3). One typed
+     * `PendingEdgeOps<TargetIdType>` field per helper-eligible edge,
+     * defaulting to an empty instance so callers can construct the
+     * aggregator with no overrides.
+     *
+     * For schemas with zero helper-eligible M2M edges, the aggregator
+     * is an empty class (`class ${Schema}PendingEdgeOps`) — `data class`
+     * doesn't allow zero parameters, but the type still exists so the
+     * update hook context can carry a non-null `pendingEdges` field
+     * with a uniform shape across entities.
+     */
+    private fun buildPendingEdgeOpsAggregator(
+        aggregatorClass: ClassName,
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): TypeSpec {
+        if (helperEligibleEdges.isEmpty()) {
+            return TypeSpec.classBuilder(aggregatorClass)
+                .primaryConstructor(FunSpec.constructorBuilder().build())
+                .build()
+        }
+        val ctor = FunSpec.constructorBuilder()
+        val props = mutableListOf<PropertySpec>()
+        for (edge in helperEligibleEdges) {
+            val pendingEdgeOpsType = PENDING_EDGE_OPS.parameterizedBy(edge.targetIdTypeName)
+            ctor.addParameter(
+                ParameterSpec.builder(edge.mutatorPropertyName, pendingEdgeOpsType)
+                    .defaultValue("%T()", PENDING_EDGE_OPS)
+                    .build(),
+            )
+            props.add(
+                PropertySpec.builder(edge.mutatorPropertyName, pendingEdgeOpsType)
+                    .initializer(edge.mutatorPropertyName)
+                    .build(),
+            )
+        }
+        return TypeSpec.classBuilder(aggregatorClass)
             .addModifiers(KModifier.DATA)
             .primaryConstructor(ctor.build())
             .addProperties(props)

@@ -216,4 +216,102 @@ class PrivacyGeneratorTest {
             "PolicyScope should take validationConfig\n$output"
         }
     }
+
+    // ---------- RFC #5 Phase 3: PendingEdgeOps aggregator on UpdateHookContext ----------
+
+    @Test
+    fun `emits empty PendingEdgeOps aggregator for schemas without helper-eligible edges`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Aggregator type exists so the hook context has uniform shape.
+        // It's a plain class (not data) because Kotlin rejects zero-param
+        // data classes. The no-arg constructor lets the hook context
+        // default-construct it.
+        assert(output.contains("public class UserPendingEdgeOps()")) {
+            "Empty aggregator should be a no-fields class with explicit no-arg constructor\n$output"
+        }
+        assert(!output.contains("public data class UserPendingEdgeOps")) {
+            "Empty aggregator must not be a data class\n$output"
+        }
+    }
+
+    @Test
+    fun `emits typed PendingEdgeOps aggregator with one field per helper-eligible edge`() {
+        val output = makeLinkM2MOutput()
+
+        // Data class with typed `tags: PendingEdgeOps<UUID>` field
+        // defaulting to empty (so callers can construct without args).
+        assert(output.contains("public data class PrivM2MPostPendingEdgeOps")) {
+            "Non-empty aggregator should be a data class\n$output"
+        }
+        assert(output.contains("public val tags: PendingEdgeOps<UUID>")) {
+            "Should expose `tags: PendingEdgeOps<UUID>` field for the M2M target id type\n$output"
+        }
+        assert(output.contains("PendingEdgeOps()")) {
+            "Aggregator constructor should default each field to empty PendingEdgeOps\n$output"
+        }
+    }
+
+    @Test
+    fun `UpdateHookContext gains a pendingEdges field`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // pendingEdges sits between patch (read-only data) and mutation
+        // (the writable view) so the read-only sidecar is grouped with
+        // the other read-only fields.
+        assert(output.contains("pendingEdges: UserPendingEdgeOps")) {
+            "UpdateHookContext should expose `pendingEdges: UserPendingEdgeOps`\n$output"
+        }
+        assert(output.contains("public val pendingEdges: UserPendingEdgeOps")) {
+            "UpdateHookContext.pendingEdges should be a public val\n$output"
+        }
+    }
+
+    @Test
+    fun `UpdateHookContext for entity with M2M edge is typed against per-entity aggregator`() {
+        val output = makeLinkM2MOutput()
+
+        // The pendingEdges field is typed to the per-entity aggregator,
+        // not the generic PendingEdgeOps<ID>.
+        assert(output.contains("pendingEdges: PrivM2MPostPendingEdgeOps")) {
+            "PrivM2MPostUpdateHookContext should expose `pendingEdges: PrivM2MPostPendingEdgeOps`\n$output"
+        }
+    }
+}
+
+// ---------- RFC #5 Phase 3 test schemas (PrivacyGeneratorTest) ----------
+
+private class PrivM2MPost : EntSchema("m2m_priv_posts") {
+    override fun id() = EntId.long()
+    val title = string("title")
+    val tags = manyToMany<PrivM2MTag>("tags")
+        .throughLink<PrivM2MPostTagJunction>(PrivM2MPostTagJunction::post, PrivM2MPostTagJunction::tag)
+}
+private class PrivM2MTag : EntSchema("m2m_priv_tags") {
+    override fun id() = EntId.uuid()
+    val name = string("name")
+}
+private class PrivM2MPostTagJunction : EntSchema("m2m_priv_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<PrivM2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag = belongsTo<PrivM2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_m2m_priv_post_tags_pair", post.fk, tag.fk).unique()
+}
+
+private fun makeLinkM2MOutput(): String {
+    val post = PrivM2MPost()
+    val tag = PrivM2MTag()
+    val postTag = PrivM2MPostTagJunction()
+    finalize(post, tag, postTag)
+    val names = mapOf<EntSchema, String>(post to "PrivM2MPost", tag to "PrivM2MTag", postTag to "PrivM2MPostTagJunction")
+    return PrivacyGenerator("com.example.ent")
+        .generate("PrivM2MPost", post, names)
+        .toString()
+        .replace("\\s+".toRegex(), " ")
 }

@@ -35,6 +35,7 @@ private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "Transac
 private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime", "UnsupportedDriverCapabilityException")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val ILLEGAL_STATE_EXCEPTION = ClassName("kotlin", "IllegalStateException")
+private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
 
 
 internal class UpdateGenerator(
@@ -187,6 +188,7 @@ internal class UpdateGenerator(
                     mutationClass = mutationClass,
                     mutableFields = mutableFields,
                     edgeFks = edgeFks,
+                    pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
                 ),
             )
             // RFC #5 Phase 2: link-table M2M mutator properties. Public
@@ -200,6 +202,7 @@ internal class UpdateGenerator(
             }
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
+            .addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
             .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks))
             .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
@@ -370,6 +373,7 @@ internal class UpdateGenerator(
         mutationClass: ClassName,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
+        pendingEdgeOpsClass: ClassName,
     ): PropertySpec {
         val updateClassName = "${schemaName}Update"
         val adapter = TypeSpec.anonymousClassBuilder()
@@ -392,6 +396,20 @@ internal class UpdateGenerator(
         for (fk in edgeFks) {
             adapter.addFunction(buildAdapterUnsetFunction(updateClassName, fk.propertyName))
         }
+        // RFC #5 Phase 3: read-only `pendingEdges` forwarder. Hooks
+        // cannot mutate the underlying op log (no mutator surface on
+        // the view), so the getter rebuilds the immutable aggregator on
+        // each read — the result is stable during the hook block.
+        adapter.addProperty(
+            PropertySpec.builder("pendingEdges", pendingEdgeOpsClass)
+                .addModifiers(KModifier.OVERRIDE)
+                .getter(
+                    FunSpec.getterBuilder()
+                        .addStatement("return this@%L._buildPendingEdgeOps()", updateClassName)
+                        .build(),
+                )
+                .build(),
+        )
         return PropertySpec.builder("_mutationView", updateMutationViewClass)
             .addModifiers(KModifier.PRIVATE)
             .initializer("%L", adapter.build())
@@ -666,6 +684,56 @@ internal class UpdateGenerator(
     }
 
     /**
+     * RFC #5 Phase 3: build `_buildPendingEdgeOps()`, a private method
+     * that snapshots each per-edge mutator's op log into the per-entity
+     * `${Schema}PendingEdgeOps` aggregator. The result is the read-only
+     * view that hooks see through `ctx.pendingEdges` and
+     * `ctx.mutation.pendingEdges`.
+     *
+     * Dedup happens at snapshot time: `_requestedSet: List<ID>?` becomes
+     * `requestedSet: Set<ID>?`, and the mutable add/remove lists become
+     * sets. Same-id paired add+remove is preserved across both intent
+     * fields (RFC's literal-call-log rule) because each list goes into
+     * its own set independently — no cancellation.
+     *
+     * For schemas with no helper-eligible M2M edges the aggregator is
+     * empty (no constructor parameters), so this just returns
+     * `${Schema}PendingEdgeOps()`.
+     */
+    private fun buildBuildPendingEdgeOpsFunction(
+        schemaName: String,
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): FunSpec {
+        val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
+        val builder = FunSpec.builder("_buildPendingEdgeOps")
+            .addModifiers(KModifier.PRIVATE)
+            .returns(pendingEdgeOpsClass)
+
+        if (helperEligibleEdges.isEmpty()) {
+            builder.addStatement("return %T()", pendingEdgeOpsClass)
+            return builder.build()
+        }
+
+        val code = CodeBlock.builder()
+        code.add("return %T(\n", pendingEdgeOpsClass)
+        for (edge in helperEligibleEdges) {
+            val prop = edge.mutatorPropertyName
+            code.add(
+                "  %L = %T(\n" +
+                    "    requestedSet = this.%L._requestedSet?.toSet(),\n" +
+                    "    requestedAdds = this.%L._adds.toSet(),\n" +
+                    "    requestedRemoves = this.%L._removes.toSet(),\n" +
+                    "  ),\n",
+                prop, PENDING_EDGE_OPS,
+                prop, prop, prop,
+            )
+        }
+        code.add(")\n")
+        builder.addCode(code.build())
+        return builder.build()
+    }
+
+    /**
      * `save()` writes the builder's changes to the driver and returns
      * the refreshed entity — or `null` when the row has been deleted
      * out from under us. `saveOrNull()` is an explicit alias;
@@ -816,6 +884,15 @@ internal class UpdateGenerator(
         builder.endControlFlow()
         builder.addStatement("entity = %T.fromRow(row0)", entityClass)
 
+        // ---- Pending edge ops snapshot (RFC #5 Phase 3). Captured once
+        // after the owner-row read and before any hook fires. The
+        // underlying op log is read-only to hooks (the mutator surface
+        // is not on the hook-facing view), so a single snapshot is
+        // stable across the whole hook block. Surfaced to update hooks
+        // as `ctx.pendingEdges` and also reachable through
+        // `ctx.mutation.pendingEdges` for consistency. ----
+        builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
+
         // ---- beforeSave hooks (shared with create — receive Mutation interface). ----
         builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
 
@@ -827,7 +904,7 @@ internal class UpdateGenerator(
         builder.beginControlFlow("for (hook in beforeUpdateHooks)")
         builder.addStatement("val snapshot = _buildRequestedPatch()")
         builder.addStatement(
-            "val ctx = %T(client, entity, snapshot, _mutationView)",
+            "val ctx = %T(client, entity, snapshot, pendingEdges, _mutationView)",
             updateHookCtxClass,
         )
         builder.addStatement("hook(ctx)")

@@ -76,6 +76,7 @@ internal class MutationGenerator(
         val interfaceName = "${schemaName}Mutation"
         val createViewName = "${schemaName}CreateMutationView"
         val updateViewName = "${schemaName}UpdateMutationView"
+        val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
         // Backing FK columns flow through `edgeFks` so the interface
         // exposes them with relationship nullability (required → non-null).
         val fields = scalarFields(schema)
@@ -144,6 +145,15 @@ internal class MutationGenerator(
         for (fk in mutableEdgeFks) {
             updateView.addFunction(unsetSpec(fk.propertyName))
         }
+        // RFC #5 Phase 3: read-only `pendingEdges` aggregator on the
+        // hook-facing view. Hooks read pending link-table M2M edge ops
+        // through `ctx.mutation.pendingEdges` (or `ctx.pendingEdges`);
+        // they cannot mutate the underlying op log — the view does NOT
+        // expose the per-edge mutator surface (`add`/`remove`/`set`).
+        updateView.addProperty(
+            PropertySpec.builder("pendingEdges", pendingEdgeOpsClass)
+                .build(),
+        )
 
         return FileSpec.builder(packageName, interfaceName)
             .addType(mutationInterface.build())
