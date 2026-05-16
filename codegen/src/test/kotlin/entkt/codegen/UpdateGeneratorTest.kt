@@ -1036,6 +1036,158 @@ class UpdateGeneratorTest {
             "Adapter pendingEdges getter must delegate to outer _buildPendingEdgeOps()\n$output"
         }
     }
+
+    // ---------- RFC #5 Phase 4: M2M save-time preflight ----------
+
+    @Test
+    fun `update builder emits _hasPendingLinkTableM2MOps that ORs mutator hasOps flags`() {
+        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Two helper-eligible edges → ORed across both mutators.
+        assert(output.contains("private fun _hasPendingLinkTableM2MOps(): Boolean")) {
+            "Expected _hasPendingLinkTableM2MOps helper\n$output"
+        }
+        // KotlinPoet collapses single-`return` block bodies to expression
+        // bodies — accept either form.
+        assert(output.contains("return this.tags.hasOps() || this.labels.hasOps()") ||
+               output.contains("_hasPendingLinkTableM2MOps(): Boolean = this.tags.hasOps() || this.labels.hasOps()")) {
+            "Expected OR across each helper-eligible mutator's hasOps()\n$output"
+        }
+    }
+
+    @Test
+    fun `update builder emits _checkLinkTableM2MMixedMode as the defense-in-depth backstop`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The defense-in-depth check re-runs the same per-call rule
+        // against the captured op log. Same error message as the
+        // per-call mutator throw.
+        assert(output.contains("private fun _checkLinkTableM2MMixedMode()")) {
+            "Expected _checkLinkTableM2MMixedMode helper\n$output"
+        }
+        assert(output.contains(
+            "if (this.tags._requestedSet != null && (this.tags._adds.isNotEmpty() || this.tags._removes.isNotEmpty())) throw IllegalStateException",
+        )) {
+            "Expected per-edge mixed-mode check naming both replacement and delta state\n$output"
+        }
+        assert(output.contains("edge 'tags': cannot mix replacement (set) and delta (add/remove)")) {
+            "Defense-in-depth error message must match the per-call message\n$output"
+        }
+    }
+
+    @Test
+    fun `save pipeline enforces M2M preflight after Pessimistic preflight and before owner-row read`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The M2M preflight slots between the Pessimistic preflight
+        // (already emitted by RFC #4) and the owner-row read. Pinning
+        // ordering by string indices.
+        val pessIdx = output.indexOf("if (consistency == UpdateConsistency.Pessimistic)")
+        val m2mIdx = output.indexOf("if (_hasPendingLinkTableM2MOps())")
+        val readIdx = output.indexOf("val row0 = if (consistency == UpdateConsistency.Pessimistic)")
+        assert(pessIdx != -1 && m2mIdx != -1 && readIdx != -1) {
+            "Missing one of the preflight anchors\n$output"
+        }
+        assert(pessIdx < m2mIdx) {
+            "Pessimistic preflight must come before M2M preflight\n$output"
+        }
+        assert(m2mIdx < readIdx) {
+            "M2M preflight must come before the owner-row read\n$output"
+        }
+    }
+
+    @Test
+    fun `M2M preflight throws TransactionRequiredException then UnsupportedDriverCapabilityException then mixed-mode`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        val m2mIdx = output.indexOf("if (_hasPendingLinkTableM2MOps())")
+        assert(m2mIdx != -1) { "Missing M2M preflight block\n$output" }
+        val m2mBlock = output.substring(m2mIdx, (m2mIdx + 1500).coerceAtMost(output.length))
+
+        // Order inside the block: inTransaction → capability → mixed-mode.
+        val txIdx = m2mBlock.indexOf("if (!driver.inTransaction)")
+        val capIdx = m2mBlock.indexOf("if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization)")
+        val mixedIdx = m2mBlock.indexOf("_checkLinkTableM2MMixedMode()")
+        assert(txIdx != -1 && capIdx != -1 && mixedIdx != -1) {
+            "Missing one of: tx check, capability check, mixed-mode call\n$m2mBlock"
+        }
+        assert(txIdx < capIdx) {
+            "TransactionRequiredException must fire before the capability check\n$m2mBlock"
+        }
+        assert(capIdx < mixedIdx) {
+            "UnsupportedDriverCapabilityException must fire before mixed-mode defense\n$m2mBlock"
+        }
+
+        // Exception types + diagnostic messages.
+        assert(m2mBlock.contains(
+            "throw TransactionRequiredException(\"M2MPost link-table M2M update requires a transaction-scoped client\")",
+        )) {
+            "Tx-required message should name the schema and the M2M-update path\n$m2mBlock"
+        }
+        assert(m2mBlock.contains(
+            "throw UnsupportedDriverCapabilityException(\"M2MPost link-table M2M update requires a driver with supportsReadRowForUpdate or supportsOwnerEdgeSerialization\")",
+        )) {
+            "Capability message should mention both acceptable capabilities\n$m2mBlock"
+        }
+    }
+
+    @Test
+    fun `M2M preflight accepts driver-family fallback — either readRowForUpdate or ownerEdgeSerialization is enough`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The capability check uses && to require BOTH flags to be
+        // false before throwing — i.e. it accepts when EITHER is true.
+        // (The plan's "looser" fallback contrasts with the Pessimistic
+        // preflight, which strictly requires supportsReadRowForUpdate.)
+        assert(output.contains("if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization)")) {
+            "Capability check should accept either readRowForUpdate or ownerEdgeSerialization\n$output"
+        }
+        assert(!output.contains("if (!driver.supportsReadRowForUpdate || !driver.supportsOwnerEdgeSerialization)")) {
+            "Capability check must NOT require both flags — || would over-constrain the fallback\n$output"
+        }
+    }
+
+    @Test
+    fun `schemas without helper-eligible M2M edges emit no M2M preflight helpers or block`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // No mutator scaffolding → no M2M preflight helpers and no
+        // _hasPendingLinkTableM2MOps() gate in save().
+        assert(!output.contains("_hasPendingLinkTableM2MOps")) {
+            "Schemas without helper-eligible M2M edges should not get the M2M ops helper\n$output"
+        }
+        assert(!output.contains("_checkLinkTableM2MMixedMode")) {
+            "Schemas without helper-eligible M2M edges should not get the mixed-mode helper\n$output"
+        }
+    }
+
+    @Test
+    fun `mixed-mode defense fires per helper-eligible edge — two edges yield two checks`() {
+        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // One check per edge, each naming the offending edge.
+        assert(output.contains("edge 'tags': cannot mix")) {
+            "Defense-in-depth should check the tags edge\n$output"
+        }
+        assert(output.contains("edge 'labels': cannot mix")) {
+            "Defense-in-depth should check the labels edge\n$output"
+        }
+    }
 }
 
 // ---------- RFC #5 Phase 2 test schemas ----------

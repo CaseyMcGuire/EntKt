@@ -203,7 +203,17 @@ internal class UpdateGenerator(
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
-            .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks))
+            // RFC #5 Phase 4: M2M preflight helpers. Only emitted when
+            // the schema has at least one helper-eligible link-table
+            // M2M edge — schemas without M2M skip the helpers and the
+            // save-pipeline preflight block entirely.
+            .also { builder ->
+                if (helperEligibleEdges.isNotEmpty()) {
+                    builder.addFunction(buildHasPendingLinkTableM2MOpsFunction(helperEligibleEdges))
+                    builder.addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
+                }
+            }
+            .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks, helperEligibleEdges))
             .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
             .addFunction(buildSaveOrErrorFunction(schemaName))
@@ -684,6 +694,56 @@ internal class UpdateGenerator(
     }
 
     /**
+     * RFC #5 Phase 4: build `_hasPendingLinkTableM2MOps()`. ORs each
+     * helper-eligible mutator's `hasOps()` flag — the gate for the
+     * M2M preflight in save(). Generated only when the schema has at
+     * least one helper-eligible link-table M2M edge.
+     */
+    private fun buildHasPendingLinkTableM2MOpsFunction(
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): FunSpec {
+        val builder = FunSpec.builder("_hasPendingLinkTableM2MOps")
+            .addModifiers(KModifier.PRIVATE)
+            .returns(BOOLEAN)
+        // helperEligibleEdges is non-empty (caller-side guard).
+        val expr = helperEligibleEdges.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasOps()" }
+        builder.addStatement("return %L", expr)
+        return builder.build()
+    }
+
+    /**
+     * RFC #5 Phase 4: build `_checkLinkTableM2MMixedMode()`, the
+     * defense-in-depth check that re-runs the per-mutator-call mixed-mode
+     * rule against the captured op-log state at save preflight. The per-call
+     * check on the mutator methods is the fail-fast surface; this is the
+     * backstop for setter-bypassing paths (reflection writing the op
+     * lists directly, or future bulk-write helpers). Throws the same
+     * `IllegalStateException` message shape as the per-call check.
+     *
+     * Generated only when the schema has at least one helper-eligible
+     * link-table M2M edge.
+     */
+    private fun buildCheckLinkTableM2MMixedModeFunction(
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): FunSpec {
+        val builder = FunSpec.builder("_checkLinkTableM2MMixedMode")
+            .addModifiers(KModifier.PRIVATE)
+        for (edge in helperEligibleEdges) {
+            val mixedModeMessage = "edge '${edge.edgeName}': cannot mix replacement (set) and " +
+                "delta (add/remove) operations in one mutation"
+            builder.addStatement(
+                "if (this.%L._requestedSet != null && (this.%L._adds.isNotEmpty() || this.%L._removes.isNotEmpty())) throw %T(%S)",
+                edge.mutatorPropertyName,
+                edge.mutatorPropertyName,
+                edge.mutatorPropertyName,
+                ILLEGAL_STATE_EXCEPTION,
+                mixedModeMessage,
+            )
+        }
+        return builder.build()
+    }
+
+    /**
      * RFC #5 Phase 3: build `_buildPendingEdgeOps()`, a private method
      * that snapshots each per-edge mutator's op log into the per-entity
      * `${Schema}PendingEdgeOps` aggregator. The result is the read-only
@@ -803,6 +863,11 @@ internal class UpdateGenerator(
         // All FKs including immutable. Used by candidate construction so
         // immutable FK values come from `entity.before` unchanged.
         allEdgeFks: List<EdgeFk>,
+        // RFC #5 Phase 4: helper-eligible link-table M2M edges. When
+        // non-empty, save() emits an M2M preflight block (tx +
+        // capability + defense-in-depth mixed-mode) before the
+        // owner-row read.
+        helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
@@ -861,6 +926,36 @@ internal class UpdateGenerator(
         )
         builder.endControlFlow()
         builder.endControlFlow()
+
+        // ---- M2M preflight (RFC #5 Phase 4). When the schema has any
+        // helper-eligible link-table M2M edge AND the caller has staged
+        // ops on at least one of them, require a transaction-scoped
+        // client and a driver that supports either true row-lock or
+        // cooperative owner-edge serialization. After both pass, the
+        // defense-in-depth mixed-mode check re-runs the per-call rule
+        // against the captured op log. Order matters: a missing
+        // transaction surfaces TransactionRequiredException first, not
+        // IllegalStateException from a corrupted mixed-mode state. ----
+        if (helperEligibleEdges.isNotEmpty()) {
+            builder.beginControlFlow("if (_hasPendingLinkTableM2MOps())")
+            builder.beginControlFlow("if (!driver.inTransaction)")
+            builder.addStatement(
+                "throw %T(%S)",
+                TRANSACTION_REQUIRED_EXCEPTION,
+                "$schemaName link-table M2M update requires a transaction-scoped client",
+            )
+            builder.endControlFlow()
+            builder.beginControlFlow("if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization)")
+            builder.addStatement(
+                "throw %T(%S)",
+                UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
+                "$schemaName link-table M2M update requires a driver with " +
+                    "supportsReadRowForUpdate or supportsOwnerEdgeSerialization",
+            )
+            builder.endControlFlow()
+            builder.addStatement("_checkLinkTableM2MMixedMode()")
+            builder.endControlFlow()
+        }
 
         // ---- Internal current-row load. Pessimistic uses
         // readRowForUpdate so the row is held under a true row lock
