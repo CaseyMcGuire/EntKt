@@ -453,6 +453,7 @@ internal class RepoGenerator(
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdatePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
+        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         return FunSpec.builder("evaluateUpdatePrivacy")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
@@ -460,13 +461,14 @@ internal class RepoGenerator(
             .addParameter("requestedPatch", patchClass)
             .addParameter("effectivePatch", patchClass)
             .addParameter("candidate", candidateClass)
+            .addParameter("edgeChanges", edgeChangesViewClass)
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.System) return", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !privacyConfig.updateDerivesFromCreate) return")
                 .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
                 .addStatement(
-                    "val ctx = %T(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate)",
+                    "val ctx = %T(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
                     updateCtxClass,
                 )
                 .beginControlFlow("for (rule in rules)")
@@ -712,18 +714,20 @@ internal class RepoGenerator(
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdateValidationContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
+        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         return FunSpec.builder("evaluateUpdateValidation")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("before", entityClass)
             .addParameter("requestedPatch", patchClass)
             .addParameter("effectivePatch", patchClass)
             .addParameter("candidate", candidateClass)
+            .addParameter("edgeChanges", edgeChangesViewClass)
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return")
                 .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.System))", PRIVACY_CONTEXT, VIEWER)
                 .addStatement(
-                    "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate)",
+                    "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
                     updateCtxClass,
                 )
                 .addStatement("val violations = mutableListOf<%T.Invalid>()", VALIDATION_DECISION)

@@ -134,4 +134,120 @@ class EdgeOpsTest {
         assertTrue(intEc.hasDatabaseEffect)
         assertTrue(stringEc.hasDatabaseEffect)
     }
+
+    // ---------- computeEdgeChanges ----------
+
+    @Test
+    fun `replacement mode — added is requestedSet minus current, removed is current minus requestedSet`() {
+        // The RFC's canonical replacement example: current=[a,c],
+        // tags.set([a,b]) → added=[b], removed=[c].
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(requestedSet = setOf("a", "b")),
+            setOf("a", "c"),
+        )
+        assertEquals(setOf("a", "b"), ec.requestedSet)
+        assertEquals(setOf("b"), ec.added)
+        assertEquals(setOf("c"), ec.removed)
+        // Intent fields stay empty in replacement mode — mixed-mode is
+        // rejected at the mutator call site, so requestedAdds /
+        // requestedRemoves cannot coexist with requestedSet.
+        assertEquals(emptySet(), ec.requestedAdds)
+        assertEquals(emptySet(), ec.requestedRemoves)
+    }
+
+    @Test
+    fun `replacement mode with empty requestedSet removes everything currently linked`() {
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(requestedSet = emptySet()),
+            setOf("a", "b"),
+        )
+        assertEquals(emptySet(), ec.requestedSet)
+        assertEquals(emptySet(), ec.added)
+        assertEquals(setOf("a", "b"), ec.removed)
+    }
+
+    @Test
+    fun `delta mode add only — added is requestedAdds minus current`() {
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(requestedAdds = setOf("a", "b")),
+            setOf("a"),
+        )
+        // "a" already linked → not in added; "b" new → in added.
+        assertEquals(setOf("a", "b"), ec.requestedAdds)
+        assertEquals(setOf("b"), ec.added)
+        assertEquals(emptySet(), ec.removed)
+    }
+
+    @Test
+    fun `delta mode remove only — removed is requestedRemoves intersect current`() {
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(requestedRemoves = setOf("a", "x")),
+            setOf("a"),
+        )
+        // "a" currently linked → in removed; "x" not linked → no-op delete.
+        // Intent surface still carries "x" (literal call log).
+        assertEquals(setOf("a", "x"), ec.requestedRemoves)
+        assertEquals(emptySet(), ec.added)
+        assertEquals(setOf("a"), ec.removed)
+    }
+
+    @Test
+    fun `delta mode same-id paired add and remove cancel in computed delta`() {
+        // The RFC's canonical cancellation example: current=[a],
+        // tags.remove(a); tags.add(a) → added=[], removed=[].
+        // Intent fields preserve both calls (literal call log).
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(
+                requestedAdds = setOf("a"),
+                requestedRemoves = setOf("a"),
+            ),
+            setOf("a"),
+        )
+        assertEquals(setOf("a"), ec.requestedAdds)
+        assertEquals(setOf("a"), ec.requestedRemoves)
+        assertEquals(emptySet(), ec.added)
+        assertEquals(emptySet(), ec.removed)
+    }
+
+    @Test
+    fun `delta mode same-id paired cancel when id was not previously linked is also a no-op`() {
+        // Set-based cancellation: paired add+remove of an id NOT
+        // previously linked yields no DB op regardless of call order.
+        // (Diverges from a strict ordered op-log walk, which would
+        // distinguish remove-then-add as net-add. RFC test list
+        // explicitly allows "potentially empty when operations cancel"
+        // for either ordering.)
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(
+                requestedAdds = setOf("z"),
+                requestedRemoves = setOf("z"),
+            ),
+            emptySet(),
+        )
+        assertEquals(setOf("z"), ec.requestedAdds)
+        assertEquals(setOf("z"), ec.requestedRemoves)
+        assertEquals(emptySet(), ec.added)
+        assertEquals(emptySet(), ec.removed)
+    }
+
+    @Test
+    fun `delta mode mixed — adds, removes, and a paired cancel each follow its own rule`() {
+        // current=[c], add(a); add(c); remove(b); add(b); remove(b)
+        //   → requestedAdds={a,b,c}, requestedRemoves={b}, paired={b}
+        //   → added = ({a,c} - {c}) = {a}     // c was already linked → skip
+        //     removed = ({} intersect {c}) = {}
+        // Wait — that's not right. requestedRemoves={b}, paired={b} so
+        // unpaired_removes = {} → removed={}. Let me redo.
+        val ec = computeEdgeChanges(
+            PendingEdgeOps(
+                requestedAdds = setOf("a", "b", "c"),
+                requestedRemoves = setOf("b"),
+            ),
+            setOf("c"),
+        )
+        // unpaired_adds = {a,b,c} - {b} = {a,c}; added = {a,c} - {c} = {a}
+        // unpaired_removes = {b} - {b} = {}; removed = {} intersect {c} = {}
+        assertEquals(setOf("a"), ec.added)
+        assertEquals(emptySet(), ec.removed)
+    }
 }

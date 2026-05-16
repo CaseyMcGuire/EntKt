@@ -86,3 +86,59 @@ public data class EdgeChanges<ID>(
     /** `true` when the save will issue at least one junction-row write. */
     val hasDatabaseEffect: Boolean get() = added.isNotEmpty() || removed.isNotEmpty()
 }
+
+/**
+ * Compute the database-delta [EdgeChanges] for one link-table M2M edge
+ * given the caller's [pending] intent (captured in
+ * [PendingEdgeOps]) and the [current] set of target ids already linked
+ * to the owner (read from the junction table). Called from generated
+ * `${Schema}Update.save()` after the canonical patch is built and the
+ * junction rows are read; the result feeds into the privacy / validation
+ * `edgeChanges` sidecar surfaced through
+ * `${Schema}EdgeChangesView` (RFC #5 Phase 5).
+ *
+ * **Replacement mode** (`pending.requestedSet != null`): the requested
+ * set is the final intended membership, so the delta is
+ * `added = requestedSet - current` and `removed = current - requestedSet`.
+ * The intent fields `requestedAdds` / `requestedRemoves` stay empty
+ * because mixed replacement+delta is rejected at the mutator call
+ * site (RFC #5 Phase 2).
+ *
+ * **Delta mode** (`pending.requestedAdds` / `requestedRemoves`
+ * populated): same-id paired add+remove cancels at the database-effect
+ * layer regardless of which call came first. `added` includes ids the
+ * caller asked to add that are not already linked and are not paired
+ * with a remove; `removed` includes ids the caller asked to remove
+ * that are currently linked and are not paired with an add. The intent
+ * fields are passed through verbatim (literal call log preserved per
+ * RFC, so a validator inspecting `requestedRemoves` still sees ids
+ * regardless of whether they end up in `removed`).
+ *
+ * The cancel-by-set rule diverges from a strictly ordered op-log walk
+ * for the case where the caller did `remove(x); add(x)` and `x` was
+ * not previously linked — an ordered walk would yield a net add,
+ * while this rule yields a no-op. The RFC's test list explicitly
+ * allows "potentially empty when the operations cancel" for either
+ * ordering, so this set-based interpretation is conforming.
+ */
+public fun <ID> computeEdgeChanges(
+    pending: PendingEdgeOps<ID>,
+    current: Set<ID>,
+): EdgeChanges<ID> {
+    return if (pending.requestedSet != null) {
+        val rs = pending.requestedSet
+        EdgeChanges(
+            requestedSet = rs,
+            added = rs - current,
+            removed = current - rs,
+        )
+    } else {
+        val canceled = pending.requestedAdds intersect pending.requestedRemoves
+        EdgeChanges(
+            requestedAdds = pending.requestedAdds,
+            requestedRemoves = pending.requestedRemoves,
+            added = (pending.requestedAdds - canceled) - current,
+            removed = (pending.requestedRemoves - canceled) intersect current,
+        )
+    }
+}

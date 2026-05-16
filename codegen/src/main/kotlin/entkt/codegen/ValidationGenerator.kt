@@ -39,6 +39,7 @@ internal class ValidationGenerator(
         val clientClass = ClassName(packageName, "EntClient")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
+        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         val configClass = ClassName(packageName, "${schemaName}ValidationConfig")
         val scopeClass = ClassName(packageName, "${schemaName}ValidationScope")
 
@@ -66,7 +67,12 @@ internal class ValidationGenerator(
 
         // Operation context data classes
         fileBuilder.addType(buildCreateContext(entityClass, clientClass, candidateClass, createCtx))
-        fileBuilder.addType(buildUpdateContext(entityClass, clientClass, candidateClass, patchClass, updateCtx))
+        fileBuilder.addType(
+            buildUpdateContext(
+                entityClass, clientClass, candidateClass, patchClass,
+                edgeChangesViewClass, updateCtx,
+            ),
+        )
         fileBuilder.addType(buildDeleteContext(entityClass, clientClass, candidateClass, deleteCtx))
 
         // ValidationConfig
@@ -115,6 +121,7 @@ internal class ValidationGenerator(
         clientClass: ClassName,
         candidateClass: ClassName,
         patchClass: ClassName,
+        edgeChangesViewClass: ClassName,
         ctxClass: ClassName,
     ): TypeSpec = TypeSpec.classBuilder(ctxClass)
         .addModifiers(KModifier.DATA)
@@ -125,6 +132,7 @@ internal class ValidationGenerator(
                 .addParameter("requestedPatch", patchClass)
                 .addParameter("effectivePatch", patchClass)
                 .addParameter("candidate", candidateClass)
+                .addParameter("edgeChanges", edgeChangesViewClass)
                 .build(),
         )
         .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
@@ -132,6 +140,7 @@ internal class ValidationGenerator(
         .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
         .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
         .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
+        .addProperty(PropertySpec.builder("edgeChanges", edgeChangesViewClass).initializer("edgeChanges").build())
         .build()
 
     private fun buildDeleteContext(

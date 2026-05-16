@@ -385,19 +385,25 @@ class UpdateGeneratorTest {
         // UPDATE privacy on it (real authorization decision against
         // `before`), then throws NoChanges. Validation/driver/after-hooks/
         // load-privacy are skipped.
-        val emptyCheck = output.indexOf("val requestedPatch = _buildRequestedPatch() if (dirtyFields.isEmpty())")
+        // Phase 5: edgeChanges sidecar is computed between the
+        // canonical patch build and the empty-branch check.
+        val emptyCheck = output.indexOf(
+            "val edgeChanges = _buildEdgeChanges(pendingEdges) if (dirtyFields.isEmpty())",
+        )
         assert(emptyCheck != -1) {
-            "Hook-cleared check must run after _buildRequestedPatch and before update defaults\n$output"
+            "Hook-cleared check must run after _buildRequestedPatch+_buildEdgeChanges and before update defaults\n$output"
         }
 
         // The privacy call inside the empty branch uses the unchanged
         // candidate (built from `before`) with empty patches.
-        val emptyBlock = output.substring(emptyCheck, (emptyCheck + 700).coerceAtMost(output.length))
+        val emptyBlock = output.substring(emptyCheck, (emptyCheck + 800).coerceAtMost(output.length))
         assert(emptyBlock.contains("val effectivePatch = requestedPatch")) {
             "Hook-cleared branch must use requested as effective (skip update defaults)\n$output"
         }
-        assert(emptyBlock.contains("evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)")) {
-            "Hook-cleared branch should run UPDATE privacy on the unchanged candidate\n$output"
+        assert(emptyBlock.contains(
+            "evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+        )) {
+            "Hook-cleared branch should run UPDATE privacy on the unchanged candidate with edgeChanges sidecar\n$output"
         }
         assert(emptyBlock.contains("throw EntNoChangesException")) {
             "Hook-cleared branch should throw EntNoChangesException after UPDATE privacy\n$output"
@@ -428,8 +434,10 @@ class UpdateGeneratorTest {
         // The TOP empty-check is at index 0-ish; we want the SECOND occurrence
         // (after the byId load + hook loop) to come before the effective patch
         // construction. Find it via the canonical preceding marker.
+        // Phase 5: _buildEdgeChanges call sits between _buildRequestedPatch
+        // and the post-hook empty check.
         val postHookEmptyPos = output.indexOf(
-            "val requestedPatch = _buildRequestedPatch() if (dirtyFields.isEmpty())",
+            "val edgeChanges = _buildEdgeChanges(pendingEdges) if (dirtyFields.isEmpty())",
         )
         assert(postHookEmptyPos != -1) { "Expected post-hook empty check\n$output" }
         assert(postHookEmptyPos < effectivePatchPos) {
@@ -1186,6 +1194,152 @@ class UpdateGeneratorTest {
         }
         assert(output.contains("edge 'labels': cannot mix")) {
             "Defense-in-depth should check the labels edge\n$output"
+        }
+    }
+
+    // ---------- RFC #5 Phase 5: three-way owner-row read + junction reads + EdgeChanges ----------
+
+    @Test
+    fun `M2M-capable schema emits three-way owner-row read primitive choice`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Four-arm read:
+        //   Pessimistic                            → readRowForUpdate
+        //   M2M pending + supportsReadRowForUpdate → readRowForUpdate
+        //   M2M pending + !supportsReadRowForUpdate→ serializeOwnerEdgeAndRead
+        //   ReadCurrent (no M2M pending)           → byId
+        assert(output.contains("val row0 = if (consistency == UpdateConsistency.Pessimistic)")) {
+            "Pessimistic branch should fire first\n$output"
+        }
+        assert(output.contains("else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")) {
+            "M2M+RRFU branch should reuse readRowForUpdate\n$output"
+        }
+        assert(output.contains("else if (_hasPendingLinkTableM2MOps())")) {
+            "M2M+!RRFU branch should fall through to serializeOwnerEdgeAndRead\n$output"
+        }
+        assert(output.contains("driver.serializeOwnerEdgeAndRead(M2MPost.TABLE, id) ?: return null")) {
+            "Cooperative serialization primitive should be called for the !RRFU+M2M path\n$output"
+        }
+        assert(output.contains("driver.byId(M2MPost.TABLE, id) ?: return null")) {
+            "byId fallback path should remain for ReadCurrent without M2M pending\n$output"
+        }
+    }
+
+    @Test
+    fun `schemas without helper-eligible M2M edges keep the existing two-way owner-row read`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // No M2M → only the existing Pessimistic vs ReadCurrent branch.
+        // The serializeOwnerEdgeAndRead path must NOT appear and the
+        // M2M-pending guard must NOT appear in the owner-row read.
+        assert(!output.contains("serializeOwnerEdgeAndRead")) {
+            "Non-M2M schemas should not reference serializeOwnerEdgeAndRead\n$output"
+        }
+        assert(!output.contains("_hasPendingLinkTableM2MOps()")) {
+            "Non-M2M schemas should have no M2M ops gate at all\n$output"
+        }
+    }
+
+    @Test
+    fun `_buildEdgeChanges reads junction state per edge and delegates to runtime computeEdgeChanges`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Helper signature: takes the captured pendingEdges snapshot,
+        // returns the per-entity EdgeChangesView.
+        assert(output.contains(
+            "private fun _buildEdgeChanges(pendingEdges: M2MPostPendingEdgeOps): M2MPostEdgeChangesView",
+        )) {
+            "Expected _buildEdgeChanges helper taking pendingEdges and returning the view\n$output"
+        }
+
+        // Per-edge junction read, guarded by per-mutator hasOps() so we
+        // skip the round-trip when nothing was staged.
+        assert(output.contains(
+            "val _current_tags: Set<UUID> = if (this.tags.hasOps()) { " +
+                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf(\"post_id\", Op.EQ, this.id)), emptyList(), null, null) " +
+                ".map { it[\"tag_id\"] as UUID } .toSet() } else emptySet()",
+        )) {
+            "Expected per-edge junction read that lowers to Predicate.Leaf(sourceCol, Op.EQ, this.id)\n$output"
+        }
+
+        // The aggregator call delegates per-edge to runtime
+        // computeEdgeChanges(pendingEdges.tags, _current_tags).
+        assert(output.contains(
+            "return M2MPostEdgeChangesView( tags = computeEdgeChanges(pendingEdges.tags, _current_tags), )",
+        )) {
+            "Expected aggregator to delegate per-edge to runtime computeEdgeChanges\n$output"
+        }
+    }
+
+    @Test
+    fun `_buildEdgeChanges short-circuits to empty view when schema has no helper-eligible edges`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // No junction reads, no computeEdgeChanges calls, just an empty view.
+        assert(output.contains("private fun _buildEdgeChanges(pendingEdges: UserPendingEdgeOps): UserEdgeChangesView")) {
+            "Helper must still be emitted for uniform shape\n$output"
+        }
+        assert(output.contains("return UserEdgeChangesView()") ||
+               output.contains("_buildEdgeChanges(pendingEdges: UserPendingEdgeOps): UserEdgeChangesView = UserEdgeChangesView()")) {
+            "Empty path should short-circuit to no-arg view constructor\n$output"
+        }
+        assert(!output.contains("computeEdgeChanges")) {
+            "No-M2M helper must not reference runtime computeEdgeChanges\n$output"
+        }
+        assert(!output.contains("driver.query")) {
+            "No-M2M helper must not emit junction reads\n$output"
+        }
+    }
+
+    @Test
+    fun `save pipeline computes edgeChanges between requestedPatch and the empty-branch check`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        val patchIdx = output.indexOf("val requestedPatch = _buildRequestedPatch()")
+        val edgeChangesIdx = output.indexOf("val edgeChanges = _buildEdgeChanges(pendingEdges)")
+        val emptyIdx = output.indexOf("if (dirtyFields.isEmpty()) { val effectivePatch = requestedPatch")
+        assert(patchIdx != -1 && edgeChangesIdx != -1 && emptyIdx != -1) {
+            "Missing one of: requestedPatch / edgeChanges / empty branch\n$output"
+        }
+        assert(patchIdx < edgeChangesIdx) {
+            "edgeChanges must be computed after the canonical requested patch\n$output"
+        }
+        assert(edgeChangesIdx < emptyIdx) {
+            "edgeChanges must be computed BEFORE the empty branch so both branches see it\n$output"
+        }
+    }
+
+    @Test
+    fun `both evaluateUpdate call sites pass edgeChanges through`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Phase 5 threads edgeChanges into both the empty-branch
+        // privacy evaluation AND the non-empty branch's privacy +
+        // validation evaluations. Two occurrences of evaluateUpdatePrivacy,
+        // one of evaluateUpdateValidation, all with the sidecar.
+        val privacyCall = "evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)"
+        val privacyOccurrences = output.split(privacyCall).size - 1
+        assert(privacyOccurrences == 2) {
+            "Expected exactly 2 evaluateUpdatePrivacy calls with edgeChanges (empty + non-empty branches), got $privacyOccurrences\n$output"
+        }
+        assert(output.contains(
+            "evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+        )) {
+            "Validation evaluator should receive edgeChanges sidecar\n$output"
         }
     }
 }

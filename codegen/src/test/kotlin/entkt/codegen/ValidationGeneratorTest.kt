@@ -187,6 +187,27 @@ class ValidationGeneratorTest {
         }
     }
 
+    // ---------- RFC #5 Phase 5: edgeChanges sidecar on UpdateValidationContext ----------
+
+    @Test
+    fun `UpdateValidationContext references edgeChanges sidecar of the per-entity view type`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // ValidationGenerator references UserEdgeChangesView; the type
+        // itself is emitted by PrivacyGenerator. Both generators are
+        // independently invoked, so the sibling-file reference compiles
+        // when the full ent package is generated.
+        assert(output.contains("edgeChanges: UserEdgeChangesView")) {
+            "UpdateValidationContext should expose `edgeChanges: UserEdgeChangesView`\n$output"
+        }
+        assert(output.contains("public val edgeChanges: UserEdgeChangesView")) {
+            "UpdateValidationContext.edgeChanges should be a public val\n$output"
+        }
+    }
+
     /**
      * Checks whether the specific context class declaration contains "privacy"
      * in its constructor parameters.

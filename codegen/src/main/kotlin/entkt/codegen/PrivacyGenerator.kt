@@ -19,6 +19,7 @@ private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
+private val EDGE_CHANGES = ClassName("entkt.runtime", "EdgeChanges")
 
 /**
  * Emits per-entity privacy infrastructure:
@@ -51,6 +52,7 @@ internal class PrivacyGenerator(
         val createMutationViewClass = ClassName(packageName, "${schemaName}CreateMutationView")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
+        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
 
         // Backing FK columns flow through `edgeFks` for write candidates
         // and update patches so their type/nullability come from the
@@ -96,7 +98,10 @@ internal class PrivacyGenerator(
         fileBuilder.addType(buildLoadContext(schemaName, entityClass, clientClass, loadCtx))
         fileBuilder.addType(buildCreateContext(schemaName, clientClass, candidateClass, createCtx))
         fileBuilder.addType(
-            buildUpdateContext(schemaName, entityClass, clientClass, candidateClass, patchClass, updateCtx),
+            buildUpdateContext(
+                schemaName, entityClass, clientClass, candidateClass, patchClass,
+                edgeChangesViewClass, updateCtx,
+            ),
         )
         fileBuilder.addType(buildDeleteContext(schemaName, entityClass, clientClass, candidateClass, deleteCtx))
 
@@ -113,6 +118,14 @@ internal class PrivacyGenerator(
         // get a type — a no-fields class — so hook authors can write
         // `ctx.pendingEdges` without entity-conditional types.
         fileBuilder.addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
+
+        // EdgeChangesView aggregator (RFC #5 Phase 5, decision B2).
+        // One typed `EdgeChanges<TargetIdType>` per helper-eligible M2M
+        // edge — the privacy/validation sidecar that surfaces both
+        // caller intent and computed database delta. Same empty-class
+        // fallback for schemas without helper-eligible edges so the
+        // privacy/validation context shape is uniform.
+        fileBuilder.addType(buildEdgeChangesViewAggregator(edgeChangesViewClass, helperEligibleEdges))
 
         // UpdateHookContext (received by beforeUpdate hooks)
         fileBuilder.addType(
@@ -211,6 +224,7 @@ internal class PrivacyGenerator(
         clientClass: ClassName,
         candidateClass: ClassName,
         patchClass: ClassName,
+        edgeChangesViewClass: ClassName,
         ctxClass: ClassName,
     ): TypeSpec = TypeSpec.classBuilder(ctxClass)
         .addModifiers(KModifier.DATA)
@@ -222,6 +236,7 @@ internal class PrivacyGenerator(
                 .addParameter("requestedPatch", patchClass)
                 .addParameter("effectivePatch", patchClass)
                 .addParameter("candidate", candidateClass)
+                .addParameter("edgeChanges", edgeChangesViewClass)
                 .build(),
         )
         .addProperty(PropertySpec.builder("privacy", PRIVACY_CONTEXT).initializer("privacy").build())
@@ -230,6 +245,7 @@ internal class PrivacyGenerator(
         .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
         .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
         .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
+        .addProperty(PropertySpec.builder("edgeChanges", edgeChangesViewClass).initializer("edgeChanges").build())
         .build()
 
     private fun buildDeleteContext(
@@ -431,6 +447,45 @@ internal class PrivacyGenerator(
             )
             props.add(
                 PropertySpec.builder(edge.mutatorPropertyName, pendingEdgeOpsType)
+                    .initializer(edge.mutatorPropertyName)
+                    .build(),
+            )
+        }
+        return TypeSpec.classBuilder(aggregatorClass)
+            .addModifiers(KModifier.DATA)
+            .primaryConstructor(ctor.build())
+            .addProperties(props)
+            .build()
+    }
+
+    /**
+     * Per-entity aggregator of computed `EdgeChanges<TargetIdType>`
+     * surfaced on update privacy and validation contexts (RFC #5 Phase 5,
+     * decision B2). Mirrors [buildPendingEdgeOpsAggregator]'s shape but
+     * carries the full [EdgeChanges] (caller intent + computed
+     * `added`/`removed` deltas) per edge. Empty class for schemas with
+     * zero helper-eligible M2M edges so the context shape is uniform.
+     */
+    private fun buildEdgeChangesViewAggregator(
+        aggregatorClass: ClassName,
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): TypeSpec {
+        if (helperEligibleEdges.isEmpty()) {
+            return TypeSpec.classBuilder(aggregatorClass)
+                .primaryConstructor(FunSpec.constructorBuilder().build())
+                .build()
+        }
+        val ctor = FunSpec.constructorBuilder()
+        val props = mutableListOf<PropertySpec>()
+        for (edge in helperEligibleEdges) {
+            val edgeChangesType = EDGE_CHANGES.parameterizedBy(edge.targetIdTypeName)
+            ctor.addParameter(
+                ParameterSpec.builder(edge.mutatorPropertyName, edgeChangesType)
+                    .defaultValue("%T()", EDGE_CHANGES)
+                    .build(),
+            )
+            props.add(
+                PropertySpec.builder(edge.mutatorPropertyName, edgeChangesType)
                     .initializer(edge.mutatorPropertyName)
                     .build(),
             )

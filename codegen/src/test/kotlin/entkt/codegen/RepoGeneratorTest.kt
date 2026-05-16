@@ -471,6 +471,44 @@ class RepoGeneratorTest {
         }
     }
 
+    // ---------- RFC #5 Phase 5: edgeChanges parameter on evaluateUpdate signatures ----------
+
+    @Test
+    fun `evaluateUpdatePrivacy takes edgeChanges of the per-entity view type`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Parameter list ends with `edgeChanges: ${Schema}EdgeChangesView`.
+        // The context constructor call threads it through verbatim.
+        assert(output.contains("edgeChanges: CarEdgeChangesView")) {
+            "evaluateUpdatePrivacy should accept edgeChanges: CarEdgeChangesView\n$output"
+        }
+        assert(output.contains(
+            "CarUpdatePrivacyContext(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
+        )) {
+            "Constructor call should thread edgeChanges through as the final positional arg\n$output"
+        }
+    }
+
+    @Test
+    fun `evaluateUpdateValidation takes edgeChanges of the per-entity view type`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("edgeChanges: CarEdgeChangesView")) {
+            "evaluateUpdateValidation should accept edgeChanges: CarEdgeChangesView\n$output"
+        }
+        assert(output.contains(
+            "CarUpdateValidationContext(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
+        )) {
+            "Validation context constructor call should thread edgeChanges through\n$output"
+        }
+    }
+
     @Test
     fun `delete enforces delete validation after privacy`() {
         val car = Car()

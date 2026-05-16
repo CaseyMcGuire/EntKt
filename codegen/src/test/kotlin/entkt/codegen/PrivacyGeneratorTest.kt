@@ -283,6 +283,66 @@ class PrivacyGeneratorTest {
             "PrivM2MPostUpdateHookContext should expose `pendingEdges: PrivM2MPostPendingEdgeOps`\n$output"
         }
     }
+
+    // ---------- RFC #5 Phase 5: EdgeChangesView sidecar on UpdatePrivacyContext ----------
+
+    @Test
+    fun `emits empty EdgeChangesView for schemas without helper-eligible edges`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Uniform-shape pattern: plain class with a no-arg constructor
+        // when there are no fields, so the privacy/validation context
+        // can default-construct it.
+        assert(output.contains("public class UserEdgeChangesView()")) {
+            "Empty EdgeChangesView should be a no-fields class\n$output"
+        }
+        assert(!output.contains("public data class UserEdgeChangesView")) {
+            "Empty EdgeChangesView must not be a data class\n$output"
+        }
+    }
+
+    @Test
+    fun `emits typed EdgeChangesView with one EdgeChanges field per helper-eligible edge`() {
+        val output = makeLinkM2MOutput()
+
+        // Data class with typed `tags: EdgeChanges<UUID>` defaulting to
+        // empty.
+        assert(output.contains("public data class PrivM2MPostEdgeChangesView")) {
+            "Non-empty EdgeChangesView should be a data class\n$output"
+        }
+        assert(output.contains("public val tags: EdgeChanges<UUID>")) {
+            "Should expose `tags: EdgeChanges<UUID>` for the M2M target id type\n$output"
+        }
+        assert(output.contains("EdgeChanges()")) {
+            "EdgeChangesView constructor should default each field to an empty EdgeChanges\n$output"
+        }
+    }
+
+    @Test
+    fun `UpdatePrivacyContext gains an edgeChanges sidecar field`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("edgeChanges: UserEdgeChangesView")) {
+            "UpdatePrivacyContext should expose `edgeChanges: UserEdgeChangesView`\n$output"
+        }
+        assert(output.contains("public val edgeChanges: UserEdgeChangesView")) {
+            "UpdatePrivacyContext.edgeChanges should be a public val\n$output"
+        }
+    }
+
+    @Test
+    fun `UpdatePrivacyContext for M2M-capable schema is typed against the per-entity view`() {
+        val output = makeLinkM2MOutput()
+        assert(output.contains("edgeChanges: PrivM2MPostEdgeChangesView")) {
+            "PrivM2MPostUpdatePrivacyContext should expose `edgeChanges: PrivM2MPostEdgeChangesView`\n$output"
+        }
+    }
 }
 
 // ---------- RFC #5 Phase 3 test schemas (PrivacyGeneratorTest) ----------

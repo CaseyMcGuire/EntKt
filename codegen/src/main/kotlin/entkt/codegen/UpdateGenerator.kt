@@ -36,6 +36,9 @@ private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime",
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val ILLEGAL_STATE_EXCEPTION = ClassName("kotlin", "IllegalStateException")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
+private val COMPUTE_EDGE_CHANGES = MemberName("entkt.runtime", "computeEdgeChanges")
+private val PREDICATE = ClassName("entkt.query", "Predicate")
+private val OP_CLASS = ClassName("entkt.query", "Op")
 
 
 internal class UpdateGenerator(
@@ -203,6 +206,7 @@ internal class UpdateGenerator(
             .addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
+            .addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
             // RFC #5 Phase 4: M2M preflight helpers. Only emitted when
             // the schema has at least one helper-eligible link-table
             // M2M edge — schemas without M2M skip the helpers and the
@@ -794,6 +798,72 @@ internal class UpdateGenerator(
     }
 
     /**
+     * RFC #5 Phase 5: build `_buildEdgeChanges()`, the private method
+     * that reads current junction rows for each helper-eligible edge
+     * with pending ops and computes the per-entity `${Schema}EdgeChangesView`
+     * sidecar surfaced through update privacy and validation contexts.
+     *
+     * Per-edge logic:
+     *  - When the edge has no pending ops, skip the junction read and
+     *    emit an empty `EdgeChanges()` so the database round-trip is
+     *    only paid for edges the caller actually touched.
+     *  - When the edge has pending ops, read the junction table for
+     *    rows whose source FK matches the owner id, deduplicate the
+     *    target ids into a set, and delegate to
+     *    [entkt.runtime.computeEdgeChanges] for the actual added /
+     *    removed delta.
+     *
+     * For schemas with zero helper-eligible M2M edges the function just
+     * returns `${Schema}EdgeChangesView()` (no junction work).
+     */
+    private fun buildBuildEdgeChangesFunction(
+        schemaName: String,
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): FunSpec {
+        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
+        val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
+        val builder = FunSpec.builder("_buildEdgeChanges")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("pendingEdges", pendingEdgeOpsClass)
+            .returns(edgeChangesViewClass)
+
+        if (helperEligibleEdges.isEmpty()) {
+            builder.addStatement("return %T()", edgeChangesViewClass)
+            return builder.build()
+        }
+
+        val code = CodeBlock.builder()
+        for (edge in helperEligibleEdges) {
+            val prop = edge.mutatorPropertyName
+            val currentVar = "_current_${prop}"
+            val targetIdType = edge.targetIdTypeName
+            // Read current junction state only when the edge has pending ops.
+            code.add(
+                "val %L: Set<%T> = if (this.%L.hasOps()) {\n" +
+                    "  driver.query(%S, listOf(%T.Leaf(%S, %T.EQ, this.id)), emptyList(), null, null)\n" +
+                    "    .map { it[%S] as %T }\n" +
+                    "    .toSet()\n" +
+                    "} else emptySet()\n",
+                currentVar, targetIdType, prop,
+                edge.junctionTable, PREDICATE, edge.junctionSourceColumn, OP_CLASS,
+                edge.junctionTargetColumn, targetIdType,
+            )
+        }
+        code.add("return %T(\n", edgeChangesViewClass)
+        for (edge in helperEligibleEdges) {
+            val prop = edge.mutatorPropertyName
+            val currentVar = "_current_${prop}"
+            code.add(
+                "  %L = %M(pendingEdges.%L, %L),\n",
+                prop, COMPUTE_EDGE_CHANGES, prop, currentVar,
+            )
+        }
+        code.add(")\n")
+        builder.addCode(code.build())
+        return builder.build()
+    }
+
+    /**
      * `save()` writes the builder's changes to the driver and returns
      * the refreshed entity — or `null` when the row has been deleted
      * out from under us. `saveOrNull()` is an explicit alias;
@@ -957,26 +1027,65 @@ internal class UpdateGenerator(
             builder.endControlFlow()
         }
 
-        // ---- Internal current-row load. Pessimistic uses
-        // readRowForUpdate so the row is held under a true row lock
-        // through the rest of the save; ReadCurrent uses byId (the
-        // RFC #1 staleness-permitting path). Both bypass LOAD
-        // privacy; missing rows short-circuit before hooks/privacy/
-        // validation run. ----
-        builder.beginControlFlow(
-            "val row0 = if (consistency == %T.Pessimistic)",
-            UPDATE_CONSISTENCY,
-        )
-        builder.addStatement(
-            "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
-            entityClass,
-        )
-        builder.nextControlFlow("else")
-        builder.addStatement(
-            "driver.byId(%T.TABLE, id) ?: return null",
-            entityClass,
-        )
-        builder.endControlFlow()
+        // ---- Internal current-row load. The primitive choice is per
+        // driver, not per consistency mode (RFC #4 Many-To-Many Pipeline):
+        //
+        //   - Pessimistic                                 → readRowForUpdate (true row lock)
+        //   - ReadCurrent + M2M pending + RRFU            → readRowForUpdate
+        //   - ReadCurrent + M2M pending + !RRFU + OES     → serializeOwnerEdgeAndRead
+        //   - ReadCurrent + no M2M                        → byId (no lock)
+        //
+        // RRFU = supportsReadRowForUpdate, OES = supportsOwnerEdgeSerialization.
+        // The M2M preflight above already rejected the case where
+        // neither capability is supported when M2M ops are pending, so
+        // reaching the else-else branch is safe even without an
+        // explicit OES check (we just call serializeOwnerEdgeAndRead).
+        //
+        // All four paths bypass LOAD privacy; missing rows short-circuit
+        // before hooks/privacy/validation run. ----
+        if (helperEligibleEdges.isNotEmpty()) {
+            builder.beginControlFlow(
+                "val row0 = if (consistency == %T.Pessimistic)",
+                UPDATE_CONSISTENCY,
+            )
+            builder.addStatement(
+                "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
+                entityClass,
+            )
+            builder.nextControlFlow("else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")
+            builder.addStatement(
+                "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
+                entityClass,
+            )
+            builder.nextControlFlow("else if (_hasPendingLinkTableM2MOps())")
+            builder.addStatement(
+                "driver.serializeOwnerEdgeAndRead(%T.TABLE, id) ?: return null",
+                entityClass,
+            )
+            builder.nextControlFlow("else")
+            builder.addStatement(
+                "driver.byId(%T.TABLE, id) ?: return null",
+                entityClass,
+            )
+            builder.endControlFlow()
+        } else {
+            // No helper-eligible M2M edges → keep the existing two-way
+            // branch unchanged so non-M2M schemas pay no new branches.
+            builder.beginControlFlow(
+                "val row0 = if (consistency == %T.Pessimistic)",
+                UPDATE_CONSISTENCY,
+            )
+            builder.addStatement(
+                "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
+                entityClass,
+            )
+            builder.nextControlFlow("else")
+            builder.addStatement(
+                "driver.byId(%T.TABLE, id) ?: return null",
+                entityClass,
+            )
+            builder.endControlFlow()
+        }
         builder.addStatement("entity = %T.fromRow(row0)", entityClass)
 
         // ---- Pending edge ops snapshot (RFC #5 Phase 3). Captured once
@@ -1016,6 +1125,14 @@ internal class UpdateGenerator(
         // ---- Build the canonical requested patch after all before hooks. ----
         builder.addStatement("val requestedPatch = _buildRequestedPatch()")
 
+        // ---- RFC #5 Phase 5: read current junction state and compute
+        // per-edge EdgeChanges sidecar. The helper short-circuits to an
+        // empty aggregator when no mutator has pending ops, so the
+        // junction database round-trips only happen when there's work.
+        // Built before the hook-cleared empty branch so privacy/validation
+        // rules in both branches see the same EdgeChanges view. ----
+        builder.addStatement("val edgeChanges = _buildEdgeChanges(pendingEdges)")
+
         // ---- Hook-cleared empty path (must run BEFORE update defaults). ----
         // Per the RFC, "hook-cleared empty updates skip update defaults".
         // dirtyFields.isEmpty() here ⇔ requested patch is all Unset.
@@ -1034,7 +1151,7 @@ internal class UpdateGenerator(
             edgeFks = allEdgeFks,
         )
         builder.addStatement(
-            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
+            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
         builder.addStatement(
@@ -1108,11 +1225,11 @@ internal class UpdateGenerator(
             edgeFks = allEdgeFks,
         )
         builder.addStatement(
-            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate)",
+            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
         builder.addStatement(
-            "client.%L.evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate)",
+            "client.%L.evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
 
