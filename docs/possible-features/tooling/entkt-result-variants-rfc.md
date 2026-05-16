@@ -8,15 +8,17 @@ classifier extension point: it returns `EntError.ConstraintViolation` for
 SQLSTATE `23xxx` on `PostgresDriver` and for the `InMemoryDriver`'s own
 validator message-prefixes; `classifyDriverError(...)` falls back to
 `EntError.DriverFailure(cause = throwable)` for unrecognized exceptions.
-The create path generates the full `saveOrError()` / `saveOrThrow()` trio
-that wraps `EntException` / `PrivacyDeniedException` / `ValidationException`
-into their matching `EntError` variants and routes uncaught `Exception`
-through `classifyDriverError`, so unique/FK/check constraint failures
-surface as `Err(ConstraintViolation)` and uncategorized driver exceptions
-as `Err(DriverFailure)`. The update path generates `saveOrError()` /
-`saveOrThrow()` but does **not** yet route uncaught exceptions through
-`classifyDriverError` — that wiring is deferred and is flagged in the
-update-table footnotes below. Transaction requirement and
+Both the create and update paths generate the full
+`saveOrError()` / `saveOrThrow()` trio. `saveOrError()` is canonical
+on both sides and `saveOrThrow()` is a thin
+`saveOrError().getOrThrow()` wrapper, so the mapping table
+(NotFound / NoChanges / PrivacyDenied / ValidationFailed /
+ConstraintViolation / DriverFailure) lives in one place per generator.
+Both wrap `EntException` / `PrivacyDeniedException` /
+`ValidationException` into their matching `EntError` variants and route
+uncaught `Exception` through `classifyDriverError`, so unique/FK/check
+constraint failures surface as `Err(ConstraintViolation)` and
+uncategorized driver exceptions as `Err(DriverFailure)`. Transaction requirement and
 unsupported-driver-capability failures are **not** `EntError` variants by
 design — they're deterministic programming/configuration errors, so
 `TransactionRequiredException` and `UnsupportedDriverCapabilityException`
@@ -484,11 +486,8 @@ introducing a second alias.
 | Owner row missing | throws `EntNotFoundException` | `Err(NotFound)` |
 | Privacy denied | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
 | Validation failed | throws `EntValidationException` | `Err(ValidationFailed)` |
-| Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` ¹ |
-| Driver failure | throws `EntDriverException` | `Err(DriverFailure)` ¹ |
-
-¹ Deferred wiring — see Status. V1 currently propagates the underlying
-constraint/driver exception through both `saveOrThrow` and `saveOrError`.
+| Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` |
+| Driver failure | throws `EntDriverException` | `Err(DriverFailure)` |
 
 `NoChanges` is the empty-patch outcome defined by
 [ID-Based Update Roots](../edge-mutation/01-id-based-update-roots.md).

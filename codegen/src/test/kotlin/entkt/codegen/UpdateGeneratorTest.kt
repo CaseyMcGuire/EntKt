@@ -467,8 +467,16 @@ class UpdateGeneratorTest {
         assert(output.contains("public fun saveOrError(): EntResult<User>")) {
             "Should generate saveOrError(): EntResult<User>\n$output"
         }
-        assert(output.contains("EntResult.Ok(saveOrThrow())")) {
-            "saveOrError should call saveOrThrow and wrap the success in Ok\n$output"
+        // saveOrError is the canonical entry point — saveOrThrow
+        // wraps it. The Ok arm wraps save()'s non-null return; null
+        // from save() (missing owner row) becomes Err(NotFound)
+        // inline rather than throwing.
+        assert(
+            output.contains(
+                "save()?.let { EntResult.Ok(it) } ?: EntResult.Err(EntError.NotFound(\"User\", EntOperation.UPDATE, id))",
+            ),
+        ) {
+            "saveOrError should map save() non-null to Ok and null to Err(NotFound) inline\n$output"
         }
         assert(output.contains("catch (e: EntException) { EntResult.Err(e.error) }")) {
             "saveOrError should catch EntException and unwrap to Err(EntError)\n$output"
@@ -498,24 +506,36 @@ class UpdateGeneratorTest {
         ) {
             "saveOrError should wrap ValidationException into EntError.ValidationFailed, mapping each Invalid via toValidationViolation()\n$output"
         }
+        // Phase 4: trailing Exception catch routes anything not
+        // matched above through Phase 2's classifier — emitting
+        // ConstraintViolation for SQLSTATE 23xxx (Postgres) /
+        // recognized validator-message prefixes (InMemoryDriver), and
+        // DriverFailure with the raw cause otherwise.
+        assert(
+            output.contains(
+                "catch (e: Exception) { EntResult.Err(classifyDriverError(driver, e, \"User\", EntOperation.UPDATE)) }",
+            ),
+        ) {
+            "saveOrError should route uncaught Exception through classifyDriverError with UPDATE operation\n$output"
+        }
     }
 
     @Test
-    fun `saveOrThrow throws EntNotFoundException for missing rows`() {
+    fun `saveOrThrow wraps saveOrError and throws via getOrThrow`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // saveOrThrow turns the OrNull `null` (from the internal byId
-        // returning no row) into a structured EntNotFoundException.
-        // KotlinPoet may emit either an expression body or a block body.
+        // Phase 4: saveOrThrow no longer inlines the NotFound throw —
+        // it delegates to saveOrError().getOrThrow(), which throws
+        // EntNotFoundException via EntError.NotFound.toException().
+        // This keeps the mapping table (NotFound, NoChanges, Privacy,
+        // Validation, Constraint, Driver) in one place.
         assert(
-            output.contains(
-                "save() ?: throw EntNotFoundException(EntError.NotFound(\"User\", EntOperation.UPDATE, id))",
-            ),
+            output.contains("public fun saveOrThrow(): User = saveOrError().getOrThrow()"),
         ) {
-            "saveOrThrow should throw EntNotFoundException carrying EntError.NotFound\n$output"
+            "saveOrThrow should delegate to saveOrError().getOrThrow()\n$output"
         }
     }
 

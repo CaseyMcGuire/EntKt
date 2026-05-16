@@ -13,6 +13,7 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
@@ -26,7 +27,6 @@ private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
 private val FIELD_PATCH_OR_ELSE = MemberName("entkt.runtime", "orElse")
 private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
 private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
-private val ENT_NOT_FOUND_EXCEPTION = ClassName("entkt.runtime", "EntNotFoundException")
 private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime", "EntNoChangesException")
 private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
 private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
@@ -1695,22 +1695,24 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Non-null variant: throws [EntNotFoundException] when the owner row
-     * has vanished (the `OrNull` `save()` returns `null` for that case
-     * — `saveOrThrow()` lifts it into a structured failure). For
-     * syntactically empty updates the underlying `save()` already
-     * throws [EntNoChangesException], which propagates here unchanged.
+     * Throwing variant: delegates to [saveOrError] and unwraps via
+     * [EntResult.getOrThrow] so callers get a structured
+     * [EntException] subclass for every recognized failure surface,
+     * including driver-classified constraint failures from Phase 2.
+     *
+     * Implemented as a wrapper per the RFC's "throwing APIs should be
+     * implemented as wrappers over xOrError()" guideline — keeps the
+     * NotFound, NoChanges, privacy, validation, and driver-classifier
+     * mapping in one place rather than duplicating between the trio's
+     * throwing and result variants.
      */
     private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         return FunSpec.builder("saveOrThrow")
             .returns(entityClass)
             .addStatement(
-                "return save() ?: throw %T(%T.NotFound(%S, %T.UPDATE, id))",
-                ENT_NOT_FOUND_EXCEPTION,
-                ENT_ERROR,
-                schemaName,
-                ENT_OPERATION,
+                "return saveOrError().%M()",
+                MemberName("entkt.runtime", "getOrThrow"),
             )
             .build()
     }
@@ -1718,11 +1720,29 @@ internal class UpdateGenerator(
     /**
      * Structured-result variant: returns [EntResult.Ok] on success or
      * [EntResult.Err] for any recognized failure thrown by the save
-     * path. Wraps `NotFound` / `NoChanges` (carried by [EntException])
-     * plus the existing [PrivacyDeniedException] and
-     * [ValidationException] into their matching [EntError] variants.
-     * Constraint violations and driver/transaction errors still
-     * propagate as their underlying exception types.
+     * path. Wraps the OrNull `save()` returning `null` for the
+     * vanished-owner-row case into `Err(NotFound)`, `NoChanges`
+     * (carried by [EntException]) and the existing
+     * [PrivacyDeniedException] and [ValidationException] into their
+     * matching [EntError] variants.
+     *
+     * The trailing `catch (e: Exception)` arm routes uncaught
+     * exceptions through [classifyDriverError] so the driver-level
+     * classifier (Phase 2) emits `Err(ConstraintViolation)` for
+     * SQLSTATE 23xxx (Postgres) / recognized validator message
+     * prefixes (InMemoryDriver), falling back to `Err(DriverFailure)`
+     * with the raw cause attached.
+     *
+     * [Exception] (not [Throwable]) is the floor: [Error] subclasses
+     * (OOME, StackOverflowError) propagate untouched.
+     * `TransactionRequiredException` and
+     * `UnsupportedDriverCapabilityException` are deliberate
+     * programming/configuration errors and not surfaced as
+     * [EntResult.Err] — they extend `RuntimeException` but the
+     * classifier returns the `DriverFailure` fallback for them, which
+     * may be acceptable for top-level error reporting but is not the
+     * RFC-intended shape. (See Open Questions in the RFC for why
+     * these stay non-EntError.)
      */
     private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
@@ -1736,7 +1756,14 @@ internal class UpdateGenerator(
             .addCode(
                 CodeBlock.builder()
                     .add("return try {\n")
-                    .add("  %T.Ok(saveOrThrow())\n", resultClass)
+                    .add(
+                        "  save()?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.UPDATE, id))\n",
+                        resultClass,
+                        resultClass,
+                        ENT_ERROR,
+                        schemaName,
+                        ENT_OPERATION,
+                    )
                     .add("} catch (e: %T) {\n", entExceptionClass)
                     .add("  %T.Err(e.error)\n", resultClass)
                     .add("} catch (e: %T) {\n", privacyDeniedClass)
@@ -1759,6 +1786,14 @@ internal class UpdateGenerator(
                         ENT_ERROR,
                         ENT_OPERATION,
                         MemberName("entkt.runtime", "toValidationViolation"),
+                    )
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.UPDATE))\n",
+                        resultClass,
+                        MemberName("entkt.runtime", "classifyDriverError"),
+                        schemaName,
+                        ENT_OPERATION,
                     )
                     .add("}\n")
                     .build(),
