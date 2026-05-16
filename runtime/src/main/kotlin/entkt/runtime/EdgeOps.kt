@@ -18,14 +18,26 @@ package entkt.runtime
  *   mutation throw `IllegalStateException` at the call site, so this
  *   type cannot represent the mixed shape.
  * - [requestedAdds]: deduplicated ids the caller passed to `add(...)`.
- *   Present only in delta mode. Same-id cancellations (a paired
- *   `remove(...)`) do NOT remove from this set — the field is the
- *   literal call log (deduped). A validator that wants to reject
- *   `remove(unknownId)` can read it regardless of whether the eventual
- *   database effect cancels out.
+ *   Present only in delta mode. A validator that wants to reject
+ *   `remove(unknownId)` reads [requestedRemoves] for intent regardless
+ *   of whether the eventual database effect deletes anything.
  * - [requestedRemoves]: deduplicated ids the caller passed to
- *   `remove(...)`. Same delta-mode + literal-call-log semantics as
- *   [requestedAdds].
+ *   `remove(...)`. Same delta-mode semantics as [requestedAdds].
+ *
+ * **Invariants (generated-code guarantee).** The generated mutator
+ * rejects same-id mixed-direction calls (`add(x); remove(x)` and the
+ * reverse) at the call site, so when an instance flows through the
+ * generated pipeline:
+ *
+ *  - `requestedSet == null` XOR `requestedAdds + requestedRemoves` is
+ *    non-empty (replacement and delta are mutually exclusive).
+ *  - `requestedAdds intersect requestedRemoves` is always empty.
+ *
+ * The data class itself does NOT enforce these invariants in its
+ * constructor — instances are immutable value carriers and any caller
+ * (including a test) can construct an inconsistent value. Downstream
+ * consumers that operate on trusted generated input (`computeEdgeChanges`)
+ * assert the invariants explicitly.
  */
 public data class PendingEdgeOps<ID>(
     val requestedSet: Set<ID>? = null,
@@ -52,10 +64,11 @@ public data class PendingEdgeOps<ID>(
  * the generated per-entity `${Entity}EdgeChangesView` sidecar.
  *
  * - [requestedSet] / [requestedAdds] / [requestedRemoves]: caller
- *   intent. Identical semantics and dedup rules to [PendingEdgeOps] —
- *   same-id cancellations do NOT remove from these sets, so a
- *   validator that wants to reject `remove(unknownId)` reads
- *   [requestedRemoves] regardless of whether [removed] ends up empty.
+ *   intent. Same semantics, dedup rules, and disjoint-by-construction
+ *   invariants as [PendingEdgeOps] (same-id mixed-direction rejected
+ *   at the mutator call site). A validator that wants to reject
+ *   `remove(unknownId)` reads [requestedRemoves] for intent regardless
+ *   of whether [removed] ends up empty.
  * - [added]: target ids that will be inserted into the junction
  *   table — the deduplicated database delta, computed against the
  *   current junction rows.
@@ -67,9 +80,14 @@ public data class PendingEdgeOps<ID>(
  * [removed] are computed against the current junction rows.
  *
  * In delta mode (`add(...)` / `remove(...)` calls) [requestedSet] is
- * null; [requestedAdds] / [requestedRemoves] reflect the literal calls
- * and [added] / [removed] are the net database delta after canceling
- * paired add/remove operations on the same id.
+ * null; [requestedAdds] and [requestedRemoves] reflect the literal
+ * calls and are disjoint by construction, so [added] and [removed]
+ * are straight set algebra (`requestedAdds - current` and
+ * `requestedRemoves ∩ current` respectively) — no cancellation logic.
+ *
+ * Same invariant-enforcement note as [PendingEdgeOps]: the data class
+ * doesn't validate its constructor; trusted-input consumers
+ * ([computeEdgeChanges]) assert the invariants explicitly.
  */
 public data class EdgeChanges<ID>(
     val requestedSet: Set<ID>? = null,
@@ -119,11 +137,36 @@ public data class EdgeChanges<ID>(
  * that isn't currently linked is a database no-op but still appears
  * in `requestedRemoves`, so a validator inspecting intent can reject
  * it.
+ *
+ * **Invariant checks.** [PendingEdgeOps]'s data class doesn't validate
+ * its constructor, so this function enforces the two invariants the
+ * generated mutator guarantees in normal usage:
+ *
+ *  1. Replacement / delta are mutually exclusive — `requestedSet`
+ *     non-null implies both intent sets are empty.
+ *  2. `requestedAdds` and `requestedRemoves` are disjoint.
+ *
+ * Either failing throws `IllegalArgumentException` (via `require`).
+ * In generated-code call sites these can't fire — the mutator's
+ * call-site checks and the save-preflight defense-in-depth
+ * `_checkLinkTableM2MMixedMode` already reject the corresponding
+ * states. The guards make the public utility safe for direct callers
+ * (tests, ad-hoc usage) that construct `PendingEdgeOps` manually.
  */
 public fun <ID> computeEdgeChanges(
     pending: PendingEdgeOps<ID>,
     current: Set<ID>,
 ): EdgeChanges<ID> {
+    require(
+        pending.requestedSet == null ||
+            (pending.requestedAdds.isEmpty() && pending.requestedRemoves.isEmpty()),
+    ) {
+        "PendingEdgeOps: requestedSet is mutually exclusive with requestedAdds / requestedRemoves"
+    }
+    require((pending.requestedAdds intersect pending.requestedRemoves).isEmpty()) {
+        "PendingEdgeOps: requestedAdds and requestedRemoves must be disjoint " +
+            "(overlap = ${pending.requestedAdds intersect pending.requestedRemoves})"
+    }
     return if (pending.requestedSet != null) {
         val rs = pending.requestedSet
         EdgeChanges(

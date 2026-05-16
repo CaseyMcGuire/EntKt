@@ -2,6 +2,7 @@ package entkt.runtime
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -195,6 +196,35 @@ class EdgeOpsTest {
         assertEquals(setOf("a", "x"), ec.requestedRemoves)
         assertEquals(emptySet(), ec.added)
         assertEquals(setOf("a"), ec.removed)
+    }
+
+    @Test
+    fun `computeEdgeChanges rejects requestedSet alongside non-empty intent sets`() {
+        // Defense-in-depth for direct callers: the data class doesn't
+        // enforce mutual exclusivity in its constructor, but the
+        // utility does. Generated-code call sites can't trip this —
+        // the mutator's per-call check throws first.
+        val mixedReplacement = PendingEdgeOps(
+            requestedSet = setOf("a"),
+            requestedAdds = setOf("b"),
+        )
+        val ex = assertFailsWith<IllegalArgumentException> {
+            computeEdgeChanges(mixedReplacement, emptySet())
+        }
+        assertTrue(ex.message!!.contains("mutually exclusive"))
+    }
+
+    @Test
+    fun `computeEdgeChanges rejects overlapping requestedAdds and requestedRemoves`() {
+        val overlap = PendingEdgeOps(
+            requestedAdds = setOf("a", "b"),
+            requestedRemoves = setOf("b", "c"),
+        )
+        val ex = assertFailsWith<IllegalArgumentException> {
+            computeEdgeChanges(overlap, emptySet())
+        }
+        assertTrue(ex.message!!.contains("disjoint"))
+        assertTrue(ex.message!!.contains("b"))
     }
 
     @Test
