@@ -621,18 +621,48 @@ class PostgresDriver(
                 Op.IN -> lowerInList(col, leaf.value, type, negated = false)
                 Op.NOT_IN -> lowerInList(col, leaf.value, type, negated = true)
                 Op.CONTAINS -> {
-                    params.add(Param(FieldType.STRING, "%${leaf.value as String}%"))
-                    "$col LIKE ?"
+                    // Escape `%`, `_`, and `\` in the caller's value
+                    // before splicing it into the LIKE pattern, then
+                    // declare the escape char explicitly. Without this,
+                    // a caller passing `%` matches almost everything
+                    // (LIKE wildcard injection) and the behavior diverges
+                    // from InMemoryDriver's literal-substring semantics.
+                    params.add(Param(FieldType.STRING, "%${escapeLikePattern(leaf.value as String)}%"))
+                    "$col LIKE ? ESCAPE '\\'"
                 }
                 Op.HAS_PREFIX -> {
-                    params.add(Param(FieldType.STRING, "${leaf.value as String}%"))
-                    "$col LIKE ?"
+                    params.add(Param(FieldType.STRING, "${escapeLikePattern(leaf.value as String)}%"))
+                    "$col LIKE ? ESCAPE '\\'"
                 }
                 Op.HAS_SUFFIX -> {
-                    params.add(Param(FieldType.STRING, "%${leaf.value as String}"))
-                    "$col LIKE ?"
+                    params.add(Param(FieldType.STRING, "%${escapeLikePattern(leaf.value as String)}"))
+                    "$col LIKE ? ESCAPE '\\'"
                 }
             }
+        }
+
+        /**
+         * Escape `%`, `_`, and `\` in [value] so it can be safely
+         * spliced into a `LIKE` pattern. Used by CONTAINS / HAS_PREFIX
+         * / HAS_SUFFIX lowering, paired with `LIKE ? ESCAPE '\\'`.
+         *
+         * Without this, raw caller input flowing into the pattern lets
+         * a value like `%` match almost everything (LIKE wildcard
+         * injection) and diverges from InMemoryDriver's literal-
+         * substring semantics (`String.contains` etc.).
+         *
+         * The escape char `\` is escaped first so the inserted escapes
+         * in the next steps aren't double-escaped.
+         */
+        private fun escapeLikePattern(value: String): String {
+            val sb = StringBuilder(value.length + 8)
+            for (ch in value) {
+                when (ch) {
+                    '\\', '%', '_' -> sb.append('\\').append(ch)
+                    else -> sb.append(ch)
+                }
+            }
+            return sb.toString()
         }
 
         private fun lowerInList(

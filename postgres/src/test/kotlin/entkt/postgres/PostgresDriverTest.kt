@@ -368,6 +368,65 @@ class PostgresDriverTest {
     }
 
     @Test
+    fun `contains hasPrefix hasSuffix treat percent and underscore as literal characters`() {
+        // Wildcard-injection regression guard: caller input flows raw
+        // into the LIKE pattern would mean a search for "%" matches
+        // everything and "_" matches every single-char column. After
+        // escaping `%`, `_`, and `\`, the predicate behaves exactly
+        // like InMemoryDriver's literal-substring semantics.
+        val driver = fresh()
+        // Rows with literal special characters.
+        driver.insert("users", mapOf<String, Any?>("name" to "50% off"))
+        driver.insert("users", mapOf<String, Any?>("name" to "alice"))
+        driver.insert("users", mapOf<String, Any?>("name" to "a_b"))
+        driver.insert("users", mapOf<String, Any?>("name" to "ab"))
+        driver.insert("users", mapOf<String, Any?>("name" to "back\\slash"))
+
+        // contains "%" matches only the row with a literal percent.
+        val containsPct = driver.query(
+            "users",
+            listOf(Predicate.Leaf("name", Op.CONTAINS, "%")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("50% off"), containsPct.map { it["name"] }.toSet())
+
+        // contains "_" matches only the row with a literal underscore,
+        // not every two-character name (which an unescaped `_` wildcard
+        // would catch).
+        val containsUnderscore = driver.query(
+            "users",
+            listOf(Predicate.Leaf("name", Op.CONTAINS, "_")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("a_b"), containsUnderscore.map { it["name"] }.toSet())
+
+        // The escape char itself: contains "\\" (one literal backslash)
+        // matches only the row containing it.
+        val containsBackslash = driver.query(
+            "users",
+            listOf(Predicate.Leaf("name", Op.CONTAINS, "\\")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("back\\slash"), containsBackslash.map { it["name"] }.toSet())
+
+        // hasPrefix with a wildcard-looking value: only literal matches.
+        val prefixPct = driver.query(
+            "users",
+            listOf(Predicate.Leaf("name", Op.HAS_PREFIX, "50%")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("50% off"), prefixPct.map { it["name"] }.toSet())
+
+        // hasSuffix with a wildcard-looking value: only literal matches.
+        val suffixPct = driver.query(
+            "users",
+            listOf(Predicate.Leaf("name", Op.HAS_SUFFIX, "% off")),
+            emptyList(), null, null,
+        )
+        assertEquals(setOf("50% off"), suffixPct.map { it["name"] }.toSet())
+    }
+
+    @Test
     fun `query handles IN and NOT_IN`() {
         val driver = fresh()
         driver.insert("users", mapOf<String, Any?>("name" to "Alice", "age" to 30))
