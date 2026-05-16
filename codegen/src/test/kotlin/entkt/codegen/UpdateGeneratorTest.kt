@@ -486,12 +486,17 @@ class UpdateGeneratorTest {
         // ValidationException → EntError.ValidationFailed (operation
         // is hardcoded UPDATE since ValidationException doesn't carry
         // its own operation field and this is the update generator).
+        // Phase 1 of the result-variants RFC pivots the wire-level
+        // violation type from ValidationDecision.Invalid (rule-DSL
+        // shape) to ValidationViolation (consumer shape), so the
+        // catch arm maps via the runtime toValidationViolation()
+        // extension.
         assert(
             output.contains(
-                "catch (e: ValidationException) { EntResult.Err(EntError.ValidationFailed(e.entity, EntOperation.UPDATE, e.violations)) }",
+                "catch (e: ValidationException) { EntResult.Err(EntError.ValidationFailed(e.entity, EntOperation.UPDATE, e.violations.map { it.toValidationViolation() })) }",
             ),
         ) {
-            "saveOrError should wrap ValidationException into EntError.ValidationFailed\n$output"
+            "saveOrError should wrap ValidationException into EntError.ValidationFailed, mapping each Invalid via toValidationViolation()\n$output"
         }
     }
 

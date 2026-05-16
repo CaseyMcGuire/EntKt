@@ -1748,10 +1748,17 @@ internal class UpdateGenerator(
                     )
                     .add("} catch (e: %T) {\n", validationClass)
                     .add(
-                        "  %T.Err(%T.ValidationFailed(e.entity, %T.UPDATE, e.violations))\n",
+                        // Map the legacy ValidationDecision.Invalid (the
+                        // validation-rule DSL's native shape) into the
+                        // canonical EntError.ValidationFailed wire-level
+                        // ValidationViolation type — the two carry the
+                        // same three fields, and toValidationViolation
+                        // is a stable mapper exposed from the runtime.
+                        "  %T.Err(%T.ValidationFailed(e.entity, %T.UPDATE, e.violations.map { it.%M() }))\n",
                         resultClass,
                         ENT_ERROR,
                         ENT_OPERATION,
+                        MemberName("entkt.runtime", "toValidationViolation"),
                     )
                     .add("}\n")
                     .build(),
