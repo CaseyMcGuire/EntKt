@@ -236,12 +236,13 @@ framework-added defaults.
 
 `edgeChanges` is a per-entity aggregator with one `EdgeChanges<TargetIdType>`
 field per helper-eligible `throughLink` M2M edge on the schema. Each carries
-`requestedSet?` / `requestedAdds` / `requestedRemoves` (caller intent — the
-literal call log; same-id paired add+remove is preserved on both intent
-sets) and the computed database delta `added` / `removed` (after diffing
-intent against the current junction rows). Schemas without helper-eligible
-M2M edges still get an empty `${Entity}EdgeChangesView` so the context shape
-is uniform. Rule patterns:
+`requestedSet?` / `requestedAdds` / `requestedRemoves` (caller intent —
+deduplicated; `requestedAdds` and `requestedRemoves` are disjoint by
+construction since the mutator rejects same-id mixed-direction at the
+call site) and the computed database delta `added` / `removed` (after
+diffing intent against the current junction rows). Schemas without
+helper-eligible M2M edges still get an empty `${Entity}EdgeChangesView`
+so the context shape is uniform. Rule patterns:
 
 - *Authorize the database effect:* read `edgeChanges.tags.added` and
   `edgeChanges.tags.removed` — the actual junction row inserts and deletes

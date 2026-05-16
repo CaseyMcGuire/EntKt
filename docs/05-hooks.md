@@ -85,8 +85,10 @@ four fields:
   underlying op log — the mutator surface is deliberately absent
   from `ctx.mutation`). Each per-edge `PendingEdgeOps` carries
   `requestedSet?`, `requestedAdds`, `requestedRemoves` — the
-  caller's intent fields, with same-id paired add+remove
-  *preserved* on both sets (literal call log). Schemas without
+  caller's intent fields. `requestedAdds` and `requestedRemoves`
+  are disjoint by construction (the mutator rejects same-id
+  mixed-direction at the call site, so `add(x); remove(x)` throws
+  before either set could receive `x`). Schemas without
   helper-eligible M2M edges still get an empty
   `${Entity}PendingEdgeOps` so the context shape is uniform.
   Privacy and validation rules see the post-junction-read

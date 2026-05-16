@@ -130,19 +130,44 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
-    fun `add then remove of the same id is a database no-op`() {
-        // RFC's canonical "operations cancel" example — `remove(x); add(x)`
-        // with x not previously linked yields no junction writes.
+    fun `add then remove of the same id throws IllegalStateException at the second call site`() {
+        // RFC #5 §Generated Builder Shape: same-id mixed-direction
+        // (add(x); remove(x) or the reverse) is rejected at the
+        // builder call site so requestedAdds and requestedRemoves stay
+        // disjoint by construction.
         val (client, real) = lockingClient()
         val (post, tagA, _) = seedPostAndTags(client)
 
-        client.withTransaction { tx ->
-            tx.posts.update(post.id) {
-                tags.add(tagA.id)
-                tags.remove(tagA.id)
-            }.save()
+        val ex = client.withTransaction { tx ->
+            assertFailsWith<IllegalStateException> {
+                tx.posts.update(post.id) {
+                    tags.add(tagA.id)
+                    tags.remove(tagA.id) // throws here
+                }.save()
+            }
         }
+        assertTrue(ex.message!!.contains("edge 'tags'"))
+        assertTrue(ex.message!!.contains("cannot remove(id) after add(id)"))
+        // No junction rows were written.
+        assertEquals(emptyList(), linkedTagIds(real, post.id))
+    }
 
+    @Test
+    fun `remove then add of the same id throws IllegalStateException at the second call site`() {
+        // The reverse ordering is symmetric.
+        val (client, real) = lockingClient()
+        val (post, tagA, _) = seedPostAndTags(client)
+
+        val ex = client.withTransaction { tx ->
+            assertFailsWith<IllegalStateException> {
+                tx.posts.update(post.id) {
+                    tags.remove(tagA.id)
+                    tags.add(tagA.id) // throws here
+                }.save()
+            }
+        }
+        assertTrue(ex.message!!.contains("edge 'tags'"))
+        assertTrue(ex.message!!.contains("cannot add(id) after remove(id)"))
         assertEquals(emptyList(), linkedTagIds(real, post.id))
     }
 
@@ -269,23 +294,30 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
-    fun `pendingEdges preserves same-id paired add+remove on intent fields`() {
+    fun `pendingEdges requestedAdds and requestedRemoves stay disjoint — paired calls cannot reach pending state`() {
+        // The mutator's call-site rejection means hooks never see a
+        // PendingEdgeOps with the same id in both intent sets. This
+        // test pins the disjoint-by-construction invariant by sending
+        // distinct add and remove ids; for the same-id case see
+        // `add then remove of the same id throws` above.
         val observed = mutableListOf<Pair<Set<Long>, Set<Long>>>()
         val (client, _) = lockingClientWithHook { ctx ->
             observed.add(ctx.pendingEdges.tags.requestedAdds to ctx.pendingEdges.tags.requestedRemoves)
         }
-        val (post, tagA, _) = seedPostAndTags(client)
+        val (post, tagA, tagB) = seedPostAndTags(client)
 
         client.withTransaction { tx ->
             tx.posts.update(post.id) {
                 tags.add(tagA.id)
-                tags.remove(tagA.id)
+                tags.remove(tagB.id)
             }.save()
         }
 
         val (adds, removes) = observed.single()
         assertEquals(setOf(tagA.id), adds)
-        assertEquals(setOf(tagA.id), removes)
+        assertEquals(setOf(tagB.id), removes)
+        // No overlap.
+        assertTrue((adds intersect removes).isEmpty())
     }
 
     // ---------- Edge-only updates ----------

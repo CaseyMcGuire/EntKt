@@ -49,11 +49,14 @@ class EdgeOpsTest {
     }
 
     @Test
-    fun `PendingEdgeOps preserves same-id in both add and remove sets`() {
-        // The intent fields are the literal call log (deduped). A
-        // paired add+remove on the same id does NOT cancel out at the
-        // intent layer — it cancels only in the computed EdgeChanges
-        // delta. RFC #5 contract.
+    fun `PendingEdgeOps data class itself doesn't enforce disjoint-by-construction — the mutator does`() {
+        // The disjoint-requestedAdds-vs-requestedRemoves invariant
+        // (RFC #5) is enforced at the *mutator* call site so the data
+        // class never receives a violating snapshot in normal use.
+        // The data class itself is a plain immutable value with no
+        // validation in its constructor, so a directly-constructed
+        // instance can still hold overlapping sets — useful for
+        // testing downstream code without going through the mutator.
         val ops = PendingEdgeOps(
             requestedAdds = setOf(7L),
             requestedRemoves = setOf(7L),
@@ -86,14 +89,17 @@ class EdgeOpsTest {
     }
 
     @Test
-    fun `EdgeChanges with cancelled add+remove reports intent but no database effect`() {
-        // The RFC's canonical "operations cancel" case: caller did
-        // remove(aId); add(aId). Intent surface shows aId in both
-        // sets, database effect is empty.
+    fun `EdgeChanges data class doesn't enforce disjoint-requestedAdds-vs-requestedRemoves — the mutator does`() {
+        // Same shape note as PendingEdgeOps: in normal use the
+        // mutator's call-site rejection keeps requestedAdds and
+        // requestedRemoves disjoint, so this combination doesn't
+        // arise. EdgeChanges is a plain data class that doesn't
+        // validate its constructor; downstream code that consumes
+        // EdgeChanges from a trusted source can rely on the
+        // disjoint invariant.
         val ec = EdgeChanges(
             requestedAdds = setOf(7L),
             requestedRemoves = setOf(7L),
-            // added / removed left empty — the computed delta
         )
         assertTrue(ec.hasChanges)
         assertFalse(ec.hasDatabaseEffect)
@@ -192,62 +198,24 @@ class EdgeOpsTest {
     }
 
     @Test
-    fun `delta mode same-id paired add and remove cancel in computed delta`() {
-        // The RFC's canonical cancellation example: current=[a],
-        // tags.remove(a); tags.add(a) → added=[], removed=[].
-        // Intent fields preserve both calls (literal call log).
-        val ec = computeEdgeChanges(
-            PendingEdgeOps(
-                requestedAdds = setOf("a"),
-                requestedRemoves = setOf("a"),
-            ),
-            setOf("a"),
-        )
-        assertEquals(setOf("a"), ec.requestedAdds)
-        assertEquals(setOf("a"), ec.requestedRemoves)
-        assertEquals(emptySet(), ec.added)
-        assertEquals(emptySet(), ec.removed)
-    }
-
-    @Test
-    fun `delta mode same-id paired cancel when id was not previously linked is also a no-op`() {
-        // Set-based cancellation: paired add+remove of an id NOT
-        // previously linked yields no DB op regardless of call order.
-        // (Diverges from a strict ordered op-log walk, which would
-        // distinguish remove-then-add as net-add. RFC test list
-        // explicitly allows "potentially empty when operations cancel"
-        // for either ordering.)
-        val ec = computeEdgeChanges(
-            PendingEdgeOps(
-                requestedAdds = setOf("z"),
-                requestedRemoves = setOf("z"),
-            ),
-            emptySet(),
-        )
-        assertEquals(setOf("z"), ec.requestedAdds)
-        assertEquals(setOf("z"), ec.requestedRemoves)
-        assertEquals(emptySet(), ec.added)
-        assertEquals(emptySet(), ec.removed)
-    }
-
-    @Test
-    fun `delta mode mixed — adds, removes, and a paired cancel each follow its own rule`() {
-        // current=[c], add(a); add(c); remove(b); add(b); remove(b)
-        //   → requestedAdds={a,b,c}, requestedRemoves={b}, paired={b}
-        //   → added = ({a,c} - {c}) = {a}     // c was already linked → skip
-        //     removed = ({} intersect {c}) = {}
-        // Wait — that's not right. requestedRemoves={b}, paired={b} so
-        // unpaired_removes = {} → removed={}. Let me redo.
+    fun `delta mode with disjoint adds and removes computes straight set algebra`() {
+        // Per RFC #5: requestedAdds and requestedRemoves are disjoint
+        // by construction (mutator rejects same-id mixed-direction at
+        // the call site). computeEdgeChanges therefore doesn't need
+        // cancellation logic — just set algebra.
         val ec = computeEdgeChanges(
             PendingEdgeOps(
                 requestedAdds = setOf("a", "b", "c"),
-                requestedRemoves = setOf("b"),
+                requestedRemoves = setOf("d"),
             ),
-            setOf("c"),
+            setOf("c", "d"),
         )
-        // unpaired_adds = {a,b,c} - {b} = {a,c}; added = {a,c} - {c} = {a}
-        // unpaired_removes = {b} - {b} = {}; removed = {} intersect {c} = {}
-        assertEquals(setOf("a"), ec.added)
-        assertEquals(emptySet(), ec.removed)
+        // added = requestedAdds - current = {a,b,c} - {c,d} = {a,b}
+        // removed = requestedRemoves ∩ current = {d} ∩ {c,d} = {d}
+        assertEquals(setOf("a", "b"), ec.added)
+        assertEquals(setOf("d"), ec.removed)
+        // Intent fields pass through verbatim.
+        assertEquals(setOf("a", "b", "c"), ec.requestedAdds)
+        assertEquals(setOf("d"), ec.requestedRemoves)
     }
 }

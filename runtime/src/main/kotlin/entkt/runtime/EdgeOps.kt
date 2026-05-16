@@ -101,25 +101,24 @@ public data class EdgeChanges<ID>(
  * set is the final intended membership, so the delta is
  * `added = requestedSet - current` and `removed = current - requestedSet`.
  * The intent fields `requestedAdds` / `requestedRemoves` stay empty
- * because mixed replacement+delta is rejected at the mutator call
+ * because the mutator rejects mixed replacement+delta at the call
  * site (RFC #5 Phase 2).
  *
  * **Delta mode** (`pending.requestedAdds` / `requestedRemoves`
- * populated): same-id paired add+remove cancels at the database-effect
- * layer regardless of which call came first. `added` includes ids the
- * caller asked to add that are not already linked and are not paired
- * with a remove; `removed` includes ids the caller asked to remove
- * that are currently linked and are not paired with an add. The intent
- * fields are passed through verbatim (literal call log preserved per
- * RFC, so a validator inspecting `requestedRemoves` still sees ids
- * regardless of whether they end up in `removed`).
+ * populated): the two intent sets are disjoint by construction — the
+ * mutator rejects same-id mixed-direction calls (`add(x)` after
+ * `remove(x)` and the reverse) at the call site, so no id can appear
+ * in both sets. The database delta is straight set algebra:
  *
- * The cancel-by-set rule diverges from a strictly ordered op-log walk
- * for the case where the caller did `remove(x); add(x)` and `x` was
- * not previously linked — an ordered walk would yield a net add,
- * while this rule yields a no-op. The RFC's test list explicitly
- * allows "potentially empty when the operations cancel" for either
- * ordering, so this set-based interpretation is conforming.
+ *  - `added = requestedAdds - current` — ids the caller asked to add
+ *    that are not already linked
+ *  - `removed = requestedRemoves ∩ current` — ids the caller asked to
+ *    remove that are currently linked
+ *
+ * The intent fields pass through verbatim. A `remove(x)` for an id
+ * that isn't currently linked is a database no-op but still appears
+ * in `requestedRemoves`, so a validator inspecting intent can reject
+ * it.
  */
 public fun <ID> computeEdgeChanges(
     pending: PendingEdgeOps<ID>,
@@ -133,12 +132,11 @@ public fun <ID> computeEdgeChanges(
             removed = current - rs,
         )
     } else {
-        val canceled = pending.requestedAdds intersect pending.requestedRemoves
         EdgeChanges(
             requestedAdds = pending.requestedAdds,
             requestedRemoves = pending.requestedRemoves,
-            added = (pending.requestedAdds - canceled) - current,
-            removed = (pending.requestedRemoves - canceled) intersect current,
+            added = pending.requestedAdds - current,
+            removed = pending.requestedRemoves intersect current,
         )
     }
 }

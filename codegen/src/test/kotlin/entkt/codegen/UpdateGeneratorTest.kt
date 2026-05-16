@@ -848,6 +848,30 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `mutator fail-fast rejects same-id mixed-direction delta at the call site`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // RFC #5 same-id mixed-direction rule: add(x) after remove(x)
+        // and the reverse both throw at the second call. The two
+        // delta sets stay disjoint by construction.
+        assert(output.contains("if (_removes.contains(id)) throw IllegalStateException")) {
+            "add() should reject when _removes already contains the id\n$output"
+        }
+        assert(output.contains("if (_adds.contains(id)) throw IllegalStateException")) {
+            "remove() should reject when _adds already contains the id\n$output"
+        }
+        // Error messages name both the edge and the conflicting direction.
+        assert(output.contains("edge 'tags': cannot add(id) after remove(id) for the same id")) {
+            "add-after-remove message should name the edge and direction\n$output"
+        }
+        assert(output.contains("edge 'tags': cannot remove(id) after add(id) for the same id")) {
+            "remove-after-add message should name the edge and direction\n$output"
+        }
+    }
+
+    @Test
     fun `mutator op log fields are internal so the enclosing Update class can read them`() {
         val (post, tag, postTag, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()

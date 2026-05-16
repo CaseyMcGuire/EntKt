@@ -230,9 +230,12 @@ The full API on each helper-eligible edge:
   for a given edge in one save. Mixing them throws
   `IllegalStateException` fail-fast at the offending call site
   (the error message names the edge).
+- Same-id mixed-direction is also rejected at the call site —
+  `add(x); remove(x)` (or `remove(x); add(x)`) throws
+  `IllegalStateException` at the second call. The two delta sets
+  are disjoint by construction; no cancellation logic runs
+  downstream.
 - Duplicate ids in `add` / `remove` / `set` dedupe internally.
-- Same-id paired `add(x); remove(x)` (in either order) cancels at
-  the database layer — no junction-row write fires for `x`.
 
 **Transaction and capability requirements.** A link-table M2M update
 requires a transaction-scoped client and a driver that supports

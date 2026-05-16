@@ -609,11 +609,23 @@ internal class UpdateGenerator(
      * constructor is `internal` so callers cannot construct a
      * standalone mutator outside the builder.
      *
-     * Mixed replacement (`set(...)`) and delta (`add(...)` /
-     * `remove(...)`) calls on the same edge in one mutation throw
-     * `IllegalStateException` fail-fast at the incompatible call site.
-     * A defense-in-depth check at save preflight (Phase 4) re-runs the
-     * same rule against the captured state.
+     * Two mixed-mode rules fire at the call site (per RFC #5 spec
+     * §Generated Builder Shape):
+     *
+     *  1. **Replacement vs delta** — `set(...)` and `add(...)` /
+     *     `remove(...)` are mutually exclusive within one mutation for
+     *     a given edge.
+     *  2. **Same-id mixed-direction** — within delta mode, an id may
+     *     be the subject of `add(...)` calls *or* `remove(...)` calls,
+     *     but not both. `add(a); remove(a)` and the reverse both
+     *     throw at the second call.
+     *
+     * Both throw `IllegalStateException` with a message naming the
+     * edge and the conflicting operations. A defense-in-depth check
+     * at save preflight (Phase 4) re-runs the replacement-vs-delta
+     * rule against the captured state; same-id mixed-direction is
+     * unreachable in pending state since both call-site checks fire
+     * before either set could receive a conflicting id.
      */
     private fun buildEdgeMutatorType(edge: HelperEligibleM2M): TypeSpec {
         val idType = edge.targetIdTypeName
@@ -621,13 +633,19 @@ internal class UpdateGenerator(
         val mutableListOfId = MUTABLE_LIST.parameterizedBy(idType)
         val mixedModeMessage = "edge '${edge.edgeName}': cannot mix replacement (set) and " +
             "delta (add/remove) operations in one mutation"
+        val sameIdAddAfterRemoveMessage = "edge '${edge.edgeName}': cannot add(id) after " +
+            "remove(id) for the same id in one mutation"
+        val sameIdRemoveAfterAddMessage = "edge '${edge.edgeName}': cannot remove(id) after " +
+            "add(id) for the same id in one mutation"
 
         return TypeSpec.classBuilder(edge.mutatorClassSimpleName)
             .addKdoc(
                 "Link-table M2M mutator for `%L` (RFC #5). Public DSL surface\n" +
-                    "is `add(id)` / `remove(id)` / `set(ids)`; mixed replacement +\n" +
-                    "delta calls on the same edge in one mutation throw\n" +
-                    "`IllegalStateException` at the call site.",
+                    "is `add(id)` / `remove(id)` / `set(ids)`. Two mixed-mode rules\n" +
+                    "fire fail-fast at the call site: replacement-vs-delta (`set` and\n" +
+                    "`add`/`remove` are mutually exclusive) and same-id mixed-direction\n" +
+                    "(`add(x)` after `remove(x)` and the reverse are rejected). Both\n" +
+                    "throw `IllegalStateException`.",
                 edge.edgeName,
             )
             .primaryConstructor(
@@ -636,7 +654,10 @@ internal class UpdateGenerator(
                     .build(),
             )
             // Op log. `internal` so the enclosing Update builder can
-            // read them in Phase 5 when computing EdgeChanges.
+            // read them in Phase 5 when computing EdgeChanges. The two
+            // delta lists stay disjoint by construction — the per-call
+            // same-id checks below reject any sequence that would put
+            // the same id in both.
             .addProperty(
                 PropertySpec.builder("_requestedSet", listOfId.copy(nullable = true))
                     .addModifiers(KModifier.INTERNAL)
@@ -663,6 +684,10 @@ internal class UpdateGenerator(
                         "if (_requestedSet != null) throw %T(%S)",
                         ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
                     )
+                    .addStatement(
+                        "if (_removes.contains(id)) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, sameIdAddAfterRemoveMessage,
+                    )
                     .addStatement("_adds.add(id)")
                     .build(),
             )
@@ -672,6 +697,10 @@ internal class UpdateGenerator(
                     .addStatement(
                         "if (_requestedSet != null) throw %T(%S)",
                         ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
+                    )
+                    .addStatement(
+                        "if (_adds.contains(id)) throw %T(%S)",
+                        ILLEGAL_STATE_EXCEPTION, sameIdRemoveAfterAddMessage,
                     )
                     .addStatement("_removes.add(id)")
                     .build(),
