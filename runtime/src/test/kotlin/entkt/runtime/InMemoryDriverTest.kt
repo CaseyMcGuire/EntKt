@@ -1197,4 +1197,128 @@ class InMemoryDriverTest {
         assertEquals(1, remaining.size)
         assertEquals("B", remaining.single()["parent_code"])
     }
+
+    // ---------- Unique constraint enforcement ----------
+
+    private fun uniqueColumnSchema(): EntitySchema = EntitySchema(
+        table = "uq_users",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("email", FieldType.STRING, nullable = false, unique = true),
+            ColumnMetadata("nickname", FieldType.STRING, nullable = true, unique = true),
+        ),
+        edges = emptyMap(),
+    )
+
+    @Test
+    fun `insert rejects duplicate value on a single-column unique`() {
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        driver.insert("uq_users", mapOf("email" to "a@example.com"))
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.insert("uq_users", mapOf("email" to "a@example.com"))
+        }
+        assertTrue(ex.message!!.contains("Unique violation"))
+        assertTrue(ex.message!!.contains("uq_users.email"))
+        // First row persisted, second rejected.
+        assertEquals(1L, driver.count("uq_users", emptyList()))
+    }
+
+    @Test
+    fun `insert allows multiple NULL values on a nullable unique column`() {
+        // NULLS DISTINCT semantics — Postgres default. Multiple NULL
+        // values in a nullable UNIQUE column do not collide.
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        driver.insert("uq_users", mapOf("email" to "a@example.com", "nickname" to null))
+        driver.insert("uq_users", mapOf("email" to "b@example.com", "nickname" to null))
+        assertEquals(2L, driver.count("uq_users", emptyList()))
+    }
+
+    @Test
+    fun `update rejects a value that would collide with another row`() {
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        val a = driver.insert("uq_users", mapOf("email" to "a@example.com"))
+        val b = driver.insert("uq_users", mapOf("email" to "b@example.com"))
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.update("uq_users", b["id"]!!, mapOf("email" to "a@example.com"))
+        }
+        assertTrue(ex.message!!.contains("Unique violation"))
+        // Both rows still present with original emails — no partial update.
+        val byId = driver.query("uq_users", emptyList(), emptyList(), null, null)
+            .associateBy { it["id"] }
+        assertEquals("a@example.com", byId[a["id"]]!!["email"])
+        assertEquals("b@example.com", byId[b["id"]]!!["email"])
+    }
+
+    @Test
+    fun `update of a unique column to the row's own current value is allowed`() {
+        // The collision scan excludes the row being updated, so a
+        // no-op rewrite (or unrelated column update) doesn't false-positive.
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        val a = driver.insert("uq_users", mapOf("email" to "a@example.com"))
+        // Same email — should succeed (the existing row is excluded from the scan).
+        driver.update("uq_users", a["id"]!!, mapOf("email" to "a@example.com"))
+        assertEquals(1L, driver.count("uq_users", emptyList()))
+    }
+
+    @Test
+    fun `insertMany rejects within-batch duplicate on a single-column unique`() {
+        // Two rows in the same batch share an email. Both should fail
+        // — pre-existing-rows alone wouldn't catch the duplicate, but
+        // accumulating built rows during the batch does.
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.insertMany("uq_users", listOf(
+                mapOf("email" to "a@example.com"),
+                mapOf("email" to "a@example.com"),
+            ))
+        }
+        assertTrue(ex.message!!.contains("Unique violation"))
+        // Atomic-on-failure: neither row persisted.
+        assertEquals(0L, driver.count("uq_users", emptyList()))
+    }
+
+    private fun compositeUniqueSchema(): EntitySchema = EntitySchema(
+        table = "post_tags",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_LONG,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+            ColumnMetadata("post_id", FieldType.LONG, nullable = false),
+            ColumnMetadata("tag_id", FieldType.LONG, nullable = false),
+        ),
+        edges = emptyMap(),
+        indexes = listOf(
+            IndexMetadata(
+                columns = listOf("post_id", "tag_id"),
+                unique = true,
+                name = "idx_post_tags_pair",
+            ),
+        ),
+    )
+
+    @Test
+    fun `composite unique index rejects duplicate pair on insert`() {
+        // M2M junction's canonical shape: unique composite index on
+        // (post_id, tag_id). Same pair inserted twice violates.
+        val driver = InMemoryDriver().apply { register(compositeUniqueSchema()) }
+        driver.insert("post_tags", mapOf("post_id" to 1L, "tag_id" to 10L))
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.insert("post_tags", mapOf("post_id" to 1L, "tag_id" to 10L))
+        }
+        assertTrue(ex.message!!.contains("Unique index violation"))
+        assertTrue(ex.message!!.contains("post_tags"))
+        assertTrue(ex.message!!.contains("idx_post_tags_pair"))
+        assertEquals(1L, driver.count("post_tags", emptyList()))
+    }
+
+    @Test
+    fun `composite unique index allows distinct pairs on insert`() {
+        val driver = InMemoryDriver().apply { register(compositeUniqueSchema()) }
+        driver.insert("post_tags", mapOf("post_id" to 1L, "tag_id" to 10L))
+        driver.insert("post_tags", mapOf("post_id" to 1L, "tag_id" to 11L)) // same post, different tag
+        driver.insert("post_tags", mapOf("post_id" to 2L, "tag_id" to 10L)) // same tag, different post
+        assertEquals(3L, driver.count("post_tags", emptyList()))
+    }
 }

@@ -54,6 +54,7 @@ class InMemoryDriver : Driver {
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         validateForeignKeyReferences(table, schema, values)
+        validateUniqueConstraints(table, schema, values, excludingRow = null, baselineRow = null)
         val rows = tables.getValue(table)
 
         val row = values.toMutableMap()
@@ -81,6 +82,11 @@ class InMemoryDriver : Driver {
         val rows = tables.getValue(table)
         synchronized(rows) {
             val existing = rows.firstOrNull { it[schema.idColumn] == id } ?: return null
+            // Pass the existing row as both the excluding row (don't
+            // match it against itself) and the baseline (so the
+            // composite-index check uses unchanged columns from the
+            // existing row as part of the effective tuple).
+            validateUniqueConstraints(table, schema, values, excludingRow = existing, baselineRow = existing)
             for ((k, v) in values) {
                 if (k == schema.idColumn) continue // never let an update rewrite the id
                 existing[k] = v
@@ -146,7 +152,11 @@ class InMemoryDriver : Driver {
         val schema = schemas[table] ?: error("Unregistered table: $table")
         val rows = tables.getValue(table)
         // Build all rows first, then add atomically — if any row fails
-        // (e.g. missing id for EXPLICIT strategy, dangling FK), none are persisted.
+        // (e.g. missing id for EXPLICIT strategy, dangling FK,
+        // unique violation), none are persisted. Uniqueness is checked
+        // against pre-existing rows + previously-built rows in this
+        // batch (matches Postgres per-row constraint check semantics).
+        val accumulated = mutableListOf<MutableMap<String, Any?>>()
         val built = values.map { v ->
             validateForeignKeyReferences(table, schema, v)
             val row = v.toMutableMap()
@@ -157,6 +167,13 @@ class InMemoryDriver : Driver {
                     else -> error("insert into $table requires an id (strategy=${schema.idStrategy})")
                 }
             }
+            validateUniqueConstraints(
+                table, schema, row,
+                excludingRow = null,
+                baselineRow = null,
+                additionalRows = accumulated,
+            )
+            accumulated.add(row)
             row
         }
         synchronized(rows) { rows.addAll(built) }
@@ -173,12 +190,106 @@ class InMemoryDriver : Driver {
             // Collect matches before mutating so edge predicates that
             // reference the same table see a consistent snapshot.
             val matched = rows.filter { row -> predicates.all { evaluate(row, it, table) } }
+            // Per-row uniqueness check before any mutation — if any
+            // row's post-update state would collide with another row,
+            // throw without persisting any of them. Each match uses
+            // its own existing row as baseline (so the composite-
+            // index check sees the effective tuple = new values for
+            // written columns + existing values for unchanged ones).
+            for (row in matched) {
+                validateUniqueConstraints(
+                    table, schema, values,
+                    excludingRow = row,
+                    baselineRow = row,
+                )
+            }
             for (row in matched) {
                 for (k in cols) {
                     row[k] = values[k]
                 }
             }
             return matched.size
+        }
+    }
+
+    /**
+     * Reject writes that would violate single-column
+     * [ColumnMetadata.unique] or composite [IndexMetadata] (with
+     * `unique = true`) constraints. Brings InMemoryDriver to parity
+     * with PostgresDriver's DDL-enforced UNIQUE constraints so tests
+     * catch what prod would reject.
+     *
+     * NULL semantics match Postgres's default (`NULLS DISTINCT`): a
+     * NULL value never collides with another NULL. Skip the check
+     * when:
+     *  - the unique column isn't in [values] (not being written),
+     *  - the effective value is NULL (single-column case),
+     *  - any column in a composite index resolves to NULL (composite case).
+     *
+     * Partial unique indexes ([IndexMetadata.where] non-null) are not
+     * enforced in-memory in V1 — the WHERE clause is a Postgres-side
+     * SQL string the in-memory driver can't evaluate. Tests covering
+     * partial-index uniqueness must run against Postgres.
+     *
+     * [excludingRow] is the row being updated, skipped from the
+     * collision scan so it doesn't match against itself.
+     * [baselineRow] supplies values for columns NOT in [values] when
+     * computing the effective tuple for composite indexes during
+     * updates. [additionalRows] supplies in-flight rows for the
+     * batch case (insertMany) — pre-existing-rows + previously-
+     * built-rows-in-this-batch.
+     */
+    private fun validateUniqueConstraints(
+        table: String,
+        schema: EntitySchema,
+        values: Map<String, Any?>,
+        excludingRow: Map<String, Any?>?,
+        baselineRow: Map<String, Any?>?,
+        additionalRows: List<Map<String, Any?>> = emptyList(),
+    ) {
+        val rows = tables.getValue(table)
+        // Effective value for a column = explicit write wins, else
+        // baseline (update path), else null (insert path).
+        fun effective(col: String): Any? = if (col in values) values[col] else baselineRow?.get(col)
+
+        // Single-column UNIQUE constraints. Skip columns that aren't
+        // being written — uniqueness can't change.
+        for (col in schema.columns) {
+            if (!col.unique) continue
+            if (col.name !in values) continue
+            val newValue = values[col.name] ?: continue
+            val conflict = synchronized(rows) {
+                rows.any { it !== excludingRow && it[col.name] == newValue }
+            } || additionalRows.any { it !== excludingRow && it[col.name] == newValue }
+            if (conflict) {
+                throw IllegalStateException(
+                    "Unique violation: $table.${col.name} = $newValue already exists",
+                )
+            }
+        }
+
+        // Composite UNIQUE indexes. Skip partial indexes (deferred to
+        // Postgres) and skip indexes where no indexed column is being
+        // written (uniqueness can't change).
+        for (idx in schema.indexes) {
+            if (!idx.unique) continue
+            if (idx.where != null) continue
+            if (idx.columns.none { it in values }) continue
+            val newTuple = idx.columns.map { effective(it) }
+            // NULL in any indexed column → uniqueness doesn't bind
+            // (NULLS DISTINCT default).
+            if (newTuple.any { it == null }) continue
+            fun matches(other: Map<String, Any?>): Boolean =
+                idx.columns.all { col -> other[col] == effective(col) }
+            val conflict = synchronized(rows) {
+                rows.any { it !== excludingRow && matches(it) }
+            } || additionalRows.any { it !== excludingRow && matches(it) }
+            if (conflict) {
+                throw IllegalStateException(
+                    "Unique index violation on $table${idx.columns.joinToString(prefix = "(", postfix = ")")}" +
+                        " = $newTuple already exists (index: ${idx.name})",
+                )
+            }
         }
     }
 
