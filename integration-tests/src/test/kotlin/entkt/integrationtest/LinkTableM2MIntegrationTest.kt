@@ -538,8 +538,9 @@ class LinkTableM2MIntegrationTest {
 
         val (fromCtx, fromMutationView) = assertNotNull(observed)
         // Object identity, not just structural equality.
-        assertTrue(
-            fromCtx === fromMutationView,
+        kotlin.test.assertSame(
+            fromCtx,
+            fromMutationView,
             "ctx.pendingEdges.tags and ctx.mutation.pendingEdges.tags must be the same instance",
         )
     }
