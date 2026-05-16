@@ -712,7 +712,15 @@ internal class UpdateGenerator(
                         "if (_adds.isNotEmpty() || _removes.isNotEmpty()) throw %T(%S)",
                         ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
                     )
-                    .addStatement("_requestedSet = ids")
+                    // Defensive copy at entry: store our own immutable
+                    // snapshot of the caller's list rather than aliasing
+                    // it. Without this, a caller who passes a MutableList
+                    // and mutates it between `tags.set(...)` and `save()`
+                    // would silently change the persisted relationship —
+                    // surprising for a replacement operation and
+                    // inconsistent with `add(...)` / `remove(...)`, which
+                    // copy by value (Long/UUID id).
+                    .addStatement("_requestedSet = ids.toList()")
                     .build(),
             )
             .addFunction(

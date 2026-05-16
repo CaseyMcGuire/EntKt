@@ -210,6 +210,33 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
+    fun `set takes a defensive copy — mutating the input list after the call does not change the saved set`() {
+        // Without the defensive copy, the mutator would alias the
+        // caller's MutableList. Mutating the list between tags.set(...)
+        // and save() would then change the persisted relationship,
+        // because _buildPendingEdgeOps's `toSet()` only fires at save
+        // time and would see the post-mutation contents.
+        val (client, real) = lockingClient()
+        val (post, tagA, tagB) = seedPostAndTags(client)
+        val tagC = client.tags.create { name = "c" }.save()
+
+        val ids = mutableListOf(tagA.id)
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) {
+                tags.set(ids)
+                // Mutate the caller's list AFTER the set() call. With the
+                // defensive copy, _requestedSet holds an independent
+                // snapshot containing only tagA; without it, the save
+                // would persist [tagA, tagB, tagC].
+                ids.add(tagB.id)
+                ids.add(tagC.id)
+            }.save()
+        }
+
+        assertEquals(listOf(tagA.id), linkedTagIds(real, post.id))
+    }
+
+    @Test
     fun `set with duplicate ids dedupes before writing`() {
         val (client, real) = lockingClient()
         val (post, tagA, _) = seedPostAndTags(client)

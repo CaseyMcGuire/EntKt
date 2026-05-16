@@ -872,6 +872,27 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `set takes a defensive copy so caller-side list mutation cannot change the saved set`() {
+        // Defensive `_requestedSet = ids.toList()` guards against the
+        // caller passing a MutableList, calling `tags.set(ids)`, then
+        // mutating `ids` before save() — which would otherwise
+        // silently change the persisted relationship since the
+        // mutator aliased the caller's list.
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("_requestedSet = ids.toList()")) {
+            "set() must defensively copy the input list, not alias it\n$output"
+        }
+        assert(!output.contains("_requestedSet = ids \n") &&
+               !output.contains("_requestedSet = ids }") &&
+               !Regex("""_requestedSet = ids[^.]""").containsMatchIn(output)) {
+            "Direct `_requestedSet = ids` (without .toList()) must be gone\n$output"
+        }
+    }
+
+    @Test
     fun `mutator op log fields are internal so the enclosing Update class can read them`() {
         val (post, tag, postTag, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
