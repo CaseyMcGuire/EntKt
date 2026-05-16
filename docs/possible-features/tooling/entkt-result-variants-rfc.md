@@ -211,6 +211,13 @@ fun <T, R> EntResult<T>.map(transform: (T) -> R): EntResult<R>
 fun <T, R> EntResult<T>.flatMap(transform: (T) -> EntResult<R>): EntResult<R>
 ```
 
+`getOrNullForAbsenceOnly()` collapses `EntResult<T>` to `T?` narrowly: it
+returns the value on `Ok`, returns `null` only for `EntError.NotFound` (the
+"expected absence" case), and throws the matching `EntException` for every
+other `Err` variant (privacy denial, validation failure, constraint violation,
+conflict, driver failure, no changes). This mirrors the `*OrNull` API contract
+for direct calls — `null` means absence, not arbitrary failure.
+
 A coroutine-free V1 can still support result composition through `map` and
 `flatMap`.
 
@@ -311,7 +318,8 @@ fun UserCreate.saveOrThrow(): User =
 ```kotlin
 sealed class EntException(
     open val error: EntError,
-) : RuntimeException(error.message)
+    cause: Throwable? = null,
+) : RuntimeException(error.message, cause)
 
 class EntNotFoundException(
     override val error: EntError.NotFound,
@@ -339,7 +347,7 @@ class EntConflictException(
 
 class EntDriverException(
     override val error: EntError.DriverFailure,
-) : EntException(error)
+) : EntException(error, cause = error.cause)
 ```
 
 Existing exception types can either be adapted to wrap `EntError`, or retained
@@ -421,26 +429,49 @@ absence.
 ```kotlin
 client.users.update(user.id) { ... }.saveOrThrow(): User
 client.users.update(user.id) { ... }.saveOrError(): EntResult<User>
-client.users.update(user.id) { ... }.saveIfExistsOrNull(): User?
 ```
 
-`saveIfExistsOrNull()` is optional. If generated, `null` means only that the row
-being updated no longer exists. Privacy, validation, constraints, conflicts, and
-driver failures remain errors.
+For the missing-owner-row "expected absence" case, RFC #1 already defines
+`saveOrNull(): User?` — V1 uses that single name across both RFCs rather than
+introducing a second alias.
+
+| Outcome | `saveOrThrow` | `saveOrError` |
+|---|---|---|
+| Updated successfully | returns entity | `Ok(entity)` |
+| No requested changes (empty patch) | throws `NoChanges` | `Err(NoChanges)` |
+| Owner row missing | throws `NotFound` | `Err(NotFound)` |
+| Privacy denied | throws `PrivacyDenied` | `Err(PrivacyDenied)` |
+| Validation failed | throws `ValidationFailed` | `Err(ValidationFailed)` |
+| Unique/FK/check constraint failed | throws `ConstraintViolation` | `Err(ConstraintViolation)` |
+| Driver failure | throws `DriverFailure` | `Err(DriverFailure)` |
+
+`NoChanges` is the empty-patch outcome defined by
+[ID-Based Update Roots](../edge-mutation/01-id-based-update-roots.md).
+`saveOrThrow()` throws `EntNoChangesException`, `saveOrError()` returns
+`Err(EntError.NoChanges)`, and `saveOrNull()` throws — `NoChanges` is not
+expected absence, so `OrNull` does not collapse it to `null`.
 
 ### Delete
 
 ```kotlin
 client.users.deleteOrThrow(user): Unit
 client.users.deleteOrError(user): EntResult<Unit>
-client.users.deleteByIdOrNull(id): Boolean?
 client.users.deleteByIdOrError(id): EntResult<Boolean>
 ```
 
-For `deleteByIdOrError`, returning `Ok(false)` versus `Err(NotFound)` is an open
-design choice. Prefer one convention and use it consistently.
+V1 does not generate `deleteByIdOrNull(id): Boolean?`. A three-valued
+`Boolean?` return for a delete API conflates "deleted vs no-op vs
+privacy-denied" in a way the explicit `EntResult<Boolean>` shape from
+`deleteByIdOrError` handles cleanly; callers who want a null-on-missing
+variant can wrap `deleteByIdOrError` themselves.
 
-A recommended convention:
+`deleteByIdOrError(id)` returns `Ok(true)` when a row was deleted, `Ok(false)`
+when no row existed (idempotent no-op), and `Err(PrivacyDenied)` /
+`Err(ValidationFailed)` / `Err(ConstraintViolation)` / `Err(DriverFailure)` for
+the corresponding failures. Missing-row is not framed as an error: the
+"OrError" suffix surfaces *exceptional* outcomes, and an idempotent delete that
+hits no row isn't exceptional. Callers who want "delete required row" semantics
+wrap the result (e.g. `deleteByIdOrError(id).getOrThrow().let { existed -> if (!existed) throw ... }`).
 
 ```kotlin
 deleteByIdOrError(id): EntResult<Boolean>
@@ -486,7 +517,15 @@ for the `OnDelete.CASCADE` requirement and
 [Link-Table M2M Mutation Helpers — Target Loading And Existence](../edge-mutation/05-link-table-helpers.md)
 for the full endpoint-cascade race discussion.
 
-A serialization or compare-and-set failure should be represented as:
+**V1 status:** `Err(Conflict)` is not a reachable outcome for V1 owner-edge
+mutations. Generated link-table M2M helpers either serialize correctly (the
+owner-row lock or cooperative serializer holds the edge until commit, per
+[Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md))
+or fail at preflight with `TransactionRequiredException` /
+`UnsupportedDriverCapabilityException`. The shape below is reserved for a
+future optimistic-concurrency / compare-and-set mode building on RFC #1's
+"Future Optimistic Locking" sketch — where a versioned write detects a stale
+snapshot and surfaces `Err(Conflict)`:
 
 ```kotlin
 EntError.Conflict(
@@ -542,12 +581,23 @@ client.withTransactionOrError { tx ->
 }: EntResult<Post>
 ```
 
-Inside `withTransactionOrError`, `bind()` should abort the transaction and
-return the first `EntError`.
+Inside `withTransactionOrError`, `bind()` aborts the transaction and surfaces
+the first `EntError`. The block returns the inner success value `T`, **not**
+`EntResult<T>`. Early exit on `Err` is expressed exclusively through `.bind()`;
+the helper does **not** support a "block returns `EntResult<T>` and the
+framework flattens" form. Allowing the block to return an `EntResult` directly
+would leave a normal `Err` return as an accidental commit of earlier writes —
+the exact "bad pattern" above — and would force the helper signature to either
+inspect the return value (a second rollback mechanism on top of `bind()`) or
+collapse to `EntResult<EntResult<T>>`. Specifying one shape avoids both.
 
-Possible implementation shape:
+Implementation shape:
 
 ```kotlin
+fun <T> EntClient.withTransactionOrError(
+    block: EntResultScope.(EntClient) -> T,
+): EntResult<T>
+
 class EntResultScope internal constructor() {
     fun <T> EntResult<T>.bind(): T = when (this) {
         is EntResult.Ok -> value
@@ -556,18 +606,13 @@ class EntResultScope internal constructor() {
 }
 ```
 
-The framework catches `AbortEntResultTransaction`, rolls back, and returns
-`EntResult.Err(error)`.
+The framework catches `AbortEntResultTransaction`, rolls back the transaction,
+and returns `EntResult.Err(error)`. On normal block completion, the framework
+commits and returns `EntResult.Ok(value)`.
 
-Alternative non-throwing composition:
-
-```kotlin
-client.withTransactionOrError { tx ->
-    tx.users.create { ... }.saveOrError().flatMap { user ->
-        tx.posts.create { authorId = user.id }.saveOrError()
-    }
-}
-```
+`flatMap` on `EntResult` remains useful for chaining results *outside*
+`withTransactionOrError` (see Result API → Composition). It does not compose
+inside the helper because the block's return type is `T`, not `EntResult<T>`.
 
 ## Bulk Operation Semantics
 
@@ -626,18 +671,15 @@ visibleAllOrError()
 
 saveOrThrow()
 saveOrError()
-saveIfExistsOrNull()
 
 deleteOrThrow(entity)
 deleteOrError(entity)
 deleteByIdOrError(id)
-deleteByIdOrNull(id)
 ```
 
 Avoid broad names with ambiguous failure behavior:
 
 ```kotlin
-saveOrNull()       // ambiguous for mutations
 queryOrNull()      // unclear whether privacy denial is null
 trySave()          // unclear whether result is null, Boolean, or error
 safeSave()         // unclear what “safe” means
@@ -677,8 +719,12 @@ Before implementation, add tests for the following.
 - `saveOrError` returns `Err(PrivacyDenied)` for denied creates/updates/deletes.
 - `saveOrError` maps unique constraint failures to `ConstraintViolation`.
 - `saveOrError` maps foreign-key failures to `ConstraintViolation`.
+- `saveOrError` returns `Err(NoChanges)` for syntactically empty update saves
+  (per [ID-Based Update Roots](../edge-mutation/01-id-based-update-roots.md)).
+- `saveOrThrow` throws `EntNoChangesException` for syntactically empty update
+  saves; `saveOrNull` throws rather than returning `null` because `NoChanges`
+  is not expected absence.
 - `saveOrThrow` throws the matching structured exception.
-- `saveIfExistsOrNull` returns `null` only when the target row is missing.
 
 ### Transactions
 
@@ -695,11 +741,19 @@ Before implementation, add tests for the following.
   and shrink the final set; this scope matches the Recommended wording above
   and
   [Link-Table M2M Mutation Helpers — Target Loading And Existence](../edge-mutation/05-link-table-helpers.md).
-- Concurrent owner-edge mutations either serialize correctly or return
-  `Err(Conflict)`.
+- V1 has no path that returns `Err(Conflict)` for owner-edge mutations —
+  concurrent generated M2M helpers always serialize correctly per
+  [Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md).
+  Tests asserting `Err(Conflict)` for serialization conflicts are deferred to
+  a future optimistic-concurrency RFC that introduces the path.
 - Later serialized relationship mutations may change the set again.
-- `add`, `remove`, and `set` expose privacy, validation, and constraint errors
-  through `saveOrError`.
+- `add`, `remove`, and `set` expose privacy and validation errors through
+  `saveOrError`. Owner-row unique/check constraint errors also surface as
+  `Err(ConstraintViolation)`. The edge-only-owner-deleted FK-violation path
+  is a V1 carve-out — see
+  [Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md) —
+  where the raw driver exception propagates through `saveOrError` until RFC #5
+  wires the constraint mapping for that case.
 
 ### Error Mapping
 
@@ -711,37 +765,25 @@ Before implementation, add tests for the following.
 
 ## Open Questions
 
-1. Should `byIdOrNull(id)` return `null` for privacy denial, or should only
-   `visibleByIdOrNull(id)` do that?
-
-   Recommendation: keep `byIdOrNull` strict and add `visibleByIdOrNull` for the
-   invisibility-as-absence case.
-
-2. Should `deleteByIdOrError(id)` return `Ok(false)` or `Err(NotFound)` when no
-   row exists?
-
-   Recommendation: return `Ok(false)` if the operation is framed as “attempt to
-   delete,” and `Err(NotFound)` if the operation is framed as “delete required
-   row.” EntKt may expose both if needed.
-
-3. Should `EntError.DriverFailure` include raw SQL and bind args?
+1. Should `EntError.DriverFailure` include raw SQL and bind args?
 
    Recommendation: no by default. Observability hooks can expose redacted query
    details separately. Error objects should avoid leaking sensitive data.
 
-4. Should `EntResult` be named `EntResult`, `EntOutcome`, or `OperationResult`?
+2. Should `EntResult` be named `EntResult`, `EntOutcome`, or `OperationResult`?
 
    Recommendation: `EntResult` is concise and easy to recognize.
 
-5. Should result APIs be generated for every operation or only selected ones?
+3. Should result APIs be generated for every operation or only selected ones?
 
    Recommendation: generate them for all public repo/query/mutation operations
    once the error model is stable.
 
-6. Should nullable mutation APIs exist at all?
+4. Should nullable mutation APIs exist at all?
 
-   Recommendation: avoid broad nullable mutation APIs. Add narrow variants like
-   `saveIfExistsOrNull()` only where absence is a meaningful successful outcome.
+   Recommendation: avoid broad nullable mutation APIs. For updates, RFC #1's
+   `saveOrNull()` already covers the "expected absence" case (missing owner
+   row).
 
 ## Example End State
 

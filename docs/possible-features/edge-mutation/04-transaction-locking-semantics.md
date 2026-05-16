@@ -842,25 +842,29 @@ junction writes. The visible behavior splits by save shape:
 - **Edge-only updates (no scalar/FK changes)**: there is no owner `UPDATE` to
   detect the missing row. Junction `INSERT`(s) in step 13 reference the now-gone
   owner id and the database surfaces a foreign-key violation; junction `DELETE`(s)
-  for a non-existent owner are no-ops and don't surface anything. **V1 does not
-  catch this FK violation**: the driver's raw exception propagates through both
-  throwing and `saveOrError()` paths (e.g. a `org.postgresql.util.PSQLException`
-  for the Postgres driver). `EntError` does not have a `ConstraintViolation`
-  variant in V1 and generated `saveOrError()` only catches `EntException` /
-  `PrivacyDeniedException` / `ValidationException`; constraint errors fall
-  outside those. Callers who need a clean `NotFound` for the
-  owner-deleted-post-read case on edge-only saves select
-  `UpdateConsistency.Pessimistic`, which holds the owner row across the
-  junction writes and rejects the concurrent delete.
+  for a non-existent owner are no-ops and don't surface anything. The
+  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md) defines the
+  target mapping for this case — `Err(EntError.ConstraintViolation)` under
+  `saveOrError()`, `EntConstraintViolationException` on throwing paths — but
+  **that wiring is not implemented in V1** because the generated link-table
+  M2M save path itself doesn't exist yet (it's part of RFC #5's implementation
+  delivery). Until RFC #5 lands and wires constraint mapping into the
+  edge-only-junction-INSERT case, the driver's raw exception propagates through
+  both throwing and `saveOrError()` paths (e.g. a
+  `org.postgresql.util.PSQLException` for the Postgres driver). Callers who
+  need a clean `NotFound` for the owner-deleted-post-read case on edge-only
+  saves select `UpdateConsistency.Pessimistic`, which holds the owner row
+  across the junction writes and rejects the concurrent delete.
 
 Two follow-up improvements are deferred and intentionally out of V1 scope:
 
-1. **A structured `EntError.ConstraintViolation` result variant** plus an
-   `EntConstraintViolationException` wrapper, so generated `saveOrError()`
-   maps the FK violation to `Err(EntError.ConstraintViolation)` instead of
-   propagating the raw driver exception. This needs a driver-side capability
-   to identify constraint failures and a runtime mapping; both are
-   non-trivial and outside this RFC's scope.
+1. **Wiring the FK violation to the existing
+   `EntError.ConstraintViolation` variant** — the Result Variants RFC
+   already defines the variant and the `EntConstraintViolationException`
+   wrapper. What's missing is the driver-side capability to identify
+   constraint failures from the raw exception and the runtime mapping that
+   surfaces them through `saveOrError()`. Both are non-trivial and outside
+   this RFC's scope.
 2. **Remapping this specific FK violation to `NotFound`** (so an edge-only
    `ReadCurrent` M2M save matches the mixed-update shape's behavior). On
    top of (1), this requires the driver to introspect *which* constraint
@@ -1040,9 +1044,10 @@ Before implementation, add tests for:
   affects 0 rows); an *edge-only* update surfaces the FK violation from the
   step-13 junction `INSERT`(s). V1 does not catch that FK violation — the
   driver's raw exception propagates through both throwing and `saveOrError()`
-  paths (`EntError.ConstraintViolation` and a structured `saveOrError()`
-  mapping for it are deferred follow-up work; see the "Post-read owner
-  deletion under `ReadCurrent`" section above for details). Callers who
+  paths (the `EntError.ConstraintViolation` variant is defined by the Result
+  Variants RFC, but the M2M-specific `saveOrError()` mapping for this path is
+  deferred follow-up work; see the "Post-read owner deletion under
+  `ReadCurrent`" section above for details). Callers who
   need a clean `NotFound` here select `Pessimistic`. (On drivers with
   `supportsReadRowForUpdate`, step 4 uses the true row lock for *both*
   modes, so the post-read DELETE is blocked until the save commits and the
