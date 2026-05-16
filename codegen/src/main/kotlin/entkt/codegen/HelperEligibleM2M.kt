@@ -36,6 +36,16 @@ internal data class HelperEligibleM2M(
     val junctionTargetColumn: String,
     val targetIdType: FieldType,
     val targetIdTypeName: TypeName,
+    /**
+     * Id-minting strategy for the junction table — one of `"AUTO_INT"`,
+     * `"AUTO_LONG"`, or `"CLIENT_UUID"`. Junction-shape rule 5
+     * (`validateThroughLinkJunctions`) rejects `EXPLICIT`, so the
+     * helpers never have to deal with caller-supplied junction ids.
+     * Phase 6's junction-insert codegen branches on this: AUTO_* lets
+     * the driver mint the id, CLIENT_UUID mints client-side via
+     * `UUID.randomUUID()`.
+     */
+    val junctionIdStrategy: String,
 )
 
 /**
@@ -62,6 +72,7 @@ internal fun helperEligibleM2MEdges(
         val junctionTargetColumn = join.junctionTargetColumn
             ?: error("resolveM2MEdgeJoin returned null junctionTargetColumn for M2M edge '${edge.name}'")
         val targetId = edge.target.id()
+        val junction = (m2m.through as ManyToManyThrough.LinkTable).junction
         HelperEligibleM2M(
             edge = edge,
             edgeName = edge.name,
@@ -72,6 +83,7 @@ internal fun helperEligibleM2MEdges(
             junctionTargetColumn = junctionTargetColumn,
             targetIdType = targetId.type,
             targetIdTypeName = targetId.type.toTypeName(),
+            junctionIdStrategy = idStrategyName(junction),
         )
     }
 }

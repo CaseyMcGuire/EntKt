@@ -28,8 +28,11 @@ These pages are design notes, not committed API contracts.
 ## Query APIs
 
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
+- [Query Observability Diagnostics](query/query-observability-diagnostics.md)
+- [Read-Path Interceptors](query/read-path-interceptors.md)
 - [Cursor Pagination](query/cursor-pagination.md)
 - [Projection / Select API](query/projection-select-api.md)
+- [Phantom-Typed Query Scopes](query/phantom-typed-query-scopes.md)
 - [Aggregations](query/aggregations.md)
 - [Indexed Query Helpers](query/indexed-query-helpers.md)
 

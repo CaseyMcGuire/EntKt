@@ -39,6 +39,7 @@ private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
 private val COMPUTE_EDGE_CHANGES = MemberName("entkt.runtime", "computeEdgeChanges")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
+private val UUID_CLASS = ClassName("java.util", "UUID")
 
 
 internal class UpdateGenerator(
@@ -1141,7 +1142,21 @@ internal class UpdateGenerator(
         // (a real authorization decision against the loaded `before`),
         // then throw NoChanges. Validation, driver write, after-hooks,
         // and returned LOAD privacy are skipped.
-        builder.beginControlFlow("if (dirtyFields.isEmpty())")
+        //
+        // RFC #5 Phase 6: an M2M-only update (caller cleared all dirty
+        // scalar fields via hooks but staged link-table M2M ops) is
+        // NOT a no-op — it still emits junction writes. Gate this
+        // empty-scalar NoChanges branch on `!_hasPendingLinkTableM2MOps()`
+        // so M2M-only updates fall through to the non-empty path,
+        // where update defaults can synthesize a scalar UPDATE (e.g.
+        // `updatedAt = updateDefaultNow()`) if any apply, and junction
+        // writes fire below.
+        val emptyBranchCondition = if (helperEligibleEdges.isNotEmpty()) {
+            "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps())"
+        } else {
+            "if (dirtyFields.isEmpty())"
+        }
+        builder.beginControlFlow(emptyBranchCondition)
         builder.addStatement("val effectivePatch = requestedPatch")
         builder.addStatement("val privacy = client.currentPrivacyContext()")
         emitCandidateConstruction(
@@ -1234,11 +1249,84 @@ internal class UpdateGenerator(
         )
 
         // ---- Driver write + after hooks + return load privacy. ----
-        builder.addStatement(
-            "val row = driver.update(%T.TABLE, id, values) ?: return null",
-            entityClass,
-        )
-        builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)
+        // RFC #5 Phase 6: for M2M-capable schemas, the owner UPDATE is
+        // conditional. An edge-only update (caller staged M2M ops,
+        // hooks cleared every scalar field, no update defaults apply)
+        // produces an empty `values` map — issuing a no-op UPDATE
+        // would be wrong (the RFC explicitly says "generated code must
+        // not issue an empty owner-row update"). When values is empty
+        // the loaded `before` row IS the after state, since no scalar
+        // / FK changes were committed.
+        if (helperEligibleEdges.isNotEmpty()) {
+            builder.beginControlFlow("val updatedEntity = if (values.isNotEmpty())")
+            builder.addStatement(
+                "val row = driver.update(%T.TABLE, id, values) ?: return null",
+                entityClass,
+            )
+            builder.addStatement("%T.fromRow(row)", entityClass)
+            builder.nextControlFlow("else")
+            // Edge-only path: `entity` is the loaded `before` row, which
+            // is also the after-state since no scalar / FK changes were
+            // written. Junction writes follow below.
+            builder.addStatement("entity")
+            builder.endControlFlow()
+        } else {
+            builder.addStatement(
+                "val row = driver.update(%T.TABLE, id, values) ?: return null",
+                entityClass,
+            )
+            builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)
+        }
+
+        // ---- RFC #5 Phase 6: junction writes. After the owner-row
+        // update (or skipped, for edge-only saves), apply the per-edge
+        // computed `added` / `removed` deltas from `edgeChanges`.
+        // Inserts go one row at a time (junction id minted per-row);
+        // deletes go in one `deleteMany` per edge for efficiency.
+        // Junction-shape rule 5 (validateThroughLinkJunctions) rejects
+        // EXPLICIT junction id strategies, so we only need AUTO_INT /
+        // AUTO_LONG (driver mints) and CLIENT_UUID (mint here). ----
+        if (helperEligibleEdges.isNotEmpty()) {
+            for (edge in helperEligibleEdges) {
+                val prop = edge.mutatorPropertyName
+                // INSERT each added id. Mint UUID client-side for
+                // CLIENT_UUID junctions; AUTO_* junctions let the driver
+                // assign the id (no "id" key in the map).
+                builder.beginControlFlow("if (edgeChanges.%L.added.isNotEmpty())", prop)
+                builder.beginControlFlow("for (_targetId in edgeChanges.%L.added)", prop)
+                when (edge.junctionIdStrategy) {
+                    "CLIENT_UUID" -> builder.addStatement(
+                        "driver.insert(%S, mapOf(%S to %T.randomUUID(), %S to id, %S to _targetId))",
+                        edge.junctionTable, "id", UUID_CLASS,
+                        edge.junctionSourceColumn, edge.junctionTargetColumn,
+                    )
+                    "AUTO_INT", "AUTO_LONG" -> builder.addStatement(
+                        "driver.insert(%S, mapOf(%S to id, %S to _targetId))",
+                        edge.junctionTable,
+                        edge.junctionSourceColumn, edge.junctionTargetColumn,
+                    )
+                    else -> error(
+                        "Unexpected junction id strategy '${edge.junctionIdStrategy}' for " +
+                            "M2M edge '${edge.edgeName}' — validateThroughLinkJunctions should " +
+                            "have rejected EXPLICIT junctions",
+                    )
+                }
+                builder.endControlFlow()
+                builder.endControlFlow()
+                // DELETE removed ids in one round-trip per edge. The
+                // predicate AND-pair (sourceCol = id, targetCol IN removed)
+                // restricts the delete to this owner's junction rows.
+                builder.beginControlFlow("if (edgeChanges.%L.removed.isNotEmpty())", prop)
+                builder.addStatement(
+                    "driver.deleteMany(%S, listOf(%T.Leaf(%S, %T.EQ, id), %T.Leaf(%S, %T.IN, edgeChanges.%L.removed.toList())))",
+                    edge.junctionTable,
+                    PREDICATE, edge.junctionSourceColumn, OP_CLASS,
+                    PREDICATE, edge.junctionTargetColumn, OP_CLASS, prop,
+                )
+                builder.endControlFlow()
+            }
+        }
+
         builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
         builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, updatedEntity)", repoPropName)
         builder.addStatement("return updatedEntity")

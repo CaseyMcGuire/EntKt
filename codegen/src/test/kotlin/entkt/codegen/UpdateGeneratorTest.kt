@@ -1309,7 +1309,11 @@ class UpdateGeneratorTest {
 
         val patchIdx = output.indexOf("val requestedPatch = _buildRequestedPatch()")
         val edgeChangesIdx = output.indexOf("val edgeChanges = _buildEdgeChanges(pendingEdges)")
-        val emptyIdx = output.indexOf("if (dirtyFields.isEmpty()) { val effectivePatch = requestedPatch")
+        // Phase 6 gates the empty-branch condition on M2M-pending so
+        // M2M-only updates proceed past it.
+        val emptyIdx = output.indexOf(
+            "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch",
+        )
         assert(patchIdx != -1 && edgeChangesIdx != -1 && emptyIdx != -1) {
             "Missing one of: requestedPatch / edgeChanges / empty branch\n$output"
         }
@@ -1342,6 +1346,186 @@ class UpdateGeneratorTest {
             "Validation evaluator should receive edgeChanges sidecar\n$output"
         }
     }
+
+    // ---------- RFC #5 Phase 6: junction writes + edge-only owner-UPDATE suppression ----------
+
+    @Test
+    fun `M2M-only update no longer throws NoChanges — empty-branch condition gates on M2M pending`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Phase 5 had: if (dirtyFields.isEmpty()) { ... throw NoChanges }
+        // Phase 6: gate the throw on `!_hasPendingLinkTableM2MOps()` so
+        // M2M-only updates fall through to the non-empty branch where
+        // junction writes fire.
+        assert(output.contains("if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch")) {
+            "Empty-scalar NoChanges branch must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
+        }
+        // Schemas WITHOUT helper-eligible M2M keep the unguarded form
+        // so non-M2M flow is untouched.
+        val user = User()
+        finalize(user, Car())
+        val userOutput = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(!userOutput.contains("_hasPendingLinkTableM2MOps")) {
+            "Non-M2M schemas should still use the original `if (dirtyFields.isEmpty())` form\n$userOutput"
+        }
+    }
+
+    @Test
+    fun `M2M-capable owner UPDATE is guarded on values isNotEmpty — edge-only saves skip the driver write`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The owner UPDATE only fires when `values` has at least one
+        // Set entry. An edge-only save (caller staged M2M ops, no
+        // update defaults populated `values`) skips the driver write
+        // and reuses `entity` as the after-state.
+        assert(output.contains(
+            "val updatedEntity = if (values.isNotEmpty()) { val row = driver.update(M2MPost.TABLE, id, values) ?: return null M2MPost.fromRow(row) } else { entity }",
+        )) {
+            "Owner UPDATE should be guarded on values.isNotEmpty(); edge-only path reuses `entity`\n$output"
+        }
+    }
+
+    @Test
+    fun `non-M2M schemas keep the unconditional owner UPDATE`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // No helper-eligible M2M edges → no `if (values.isNotEmpty())`
+        // guard, just the original direct driver.update call.
+        assert(!output.contains("val updatedEntity = if (values.isNotEmpty())")) {
+            "Non-M2M schemas should NOT gate the owner UPDATE\n$output"
+        }
+        assert(output.contains("val row = driver.update(User.TABLE, id, values) ?: return null val updatedEntity = User.fromRow(row)")) {
+            "Non-M2M schemas should keep the unconditional UPDATE shape\n$output"
+        }
+    }
+
+    @Test
+    fun `junction inserts iterate added per-edge and use sourceCol+targetCol shape — AUTO_LONG junction omits id key`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The test junction (M2MPostTag) uses EntId.long() = AUTO_LONG,
+        // so the driver mints the junction id and the values map only
+        // carries the two FK columns.
+        assert(output.contains(
+            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { driver.insert(\"m2m_post_tags\", mapOf(\"post_id\" to id, \"tag_id\" to _targetId)) } }",
+        )) {
+            "AUTO_LONG junction inserts should omit the id key (driver mints) and iterate added\n$output"
+        }
+    }
+
+    @Test
+    fun `junction deletes use one deleteMany per edge with AND-paired source EQ and target IN predicates`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // One round-trip per edge: deleteMany(table, [sourceCol=ownerId, targetCol IN removed]).
+        assert(output.contains(
+            "if (edgeChanges.tags.removed.isNotEmpty()) { driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf(\"post_id\", Op.EQ, id), Predicate.Leaf(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) }",
+        )) {
+            "Deletes should use one deleteMany per edge with AND-paired source EQ + target IN predicates\n$output"
+        }
+    }
+
+    @Test
+    fun `CLIENT_UUID junction insert mints id client-side via UUID randomUUID`() {
+        val (post, _, _, names) = makeClientUuidJunctionSchemas()
+        val output = generator.generate("UuidJunctionPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // CLIENT_UUID junction → values map carries an "id" key with
+        // UUID.randomUUID() in addition to the two FK columns.
+        assert(output.contains(
+            "driver.insert(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to id, \"tag_id\" to _targetId))",
+        )) {
+            "CLIENT_UUID junction inserts should mint id via UUID.randomUUID() in the values map\n$output"
+        }
+    }
+
+    @Test
+    fun `multi-edge schema emits independent junction writes per edge`() {
+        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Each helper-eligible edge gets its own insert + deleteMany
+        // pair, scoped by the per-edge junction table and FK columns.
+        assert(output.contains("driver.insert(\"m2m_doc_tags\", mapOf(\"doc_id\" to id, \"tag_id\" to _targetId))")) {
+            "Expected per-edge insert for the tags edge\n$output"
+        }
+        assert(output.contains("driver.insert(\"m2m_doc_labels\", mapOf(\"doc_id\" to id, \"label_id\" to _targetId))")) {
+            "Expected per-edge insert for the labels edge\n$output"
+        }
+        assert(output.contains("driver.deleteMany(\"m2m_doc_tags\"")) {
+            "Expected per-edge deleteMany for the tags edge\n$output"
+        }
+        assert(output.contains("driver.deleteMany(\"m2m_doc_labels\"")) {
+            "Expected per-edge deleteMany for the labels edge\n$output"
+        }
+    }
+
+    @Test
+    fun `non-M2M schemas emit no junction writes`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(!output.contains("edgeChanges.")) {
+            "Non-M2M schemas should not reference any edgeChanges.{edge}.added/removed accessors\n$output"
+        }
+        assert(!output.contains("driver.insert(")) {
+            "Non-M2M schemas should not emit any driver.insert (the owner UPDATE is driver.update)\n$output"
+        }
+    }
+}
+
+// ---------- RFC #5 Phase 6 test schemas (CLIENT_UUID junction) ----------
+
+private class UuidJunctionPost : EntSchema("uuid_junction_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<UuidJunctionTag>("tags")
+        .throughLink<UuidJunctionPostTag>(UuidJunctionPostTag::post, UuidJunctionPostTag::tag)
+}
+private class UuidJunctionTag : EntSchema("uuid_junction_tags") {
+    override fun id() = EntId.long()
+}
+private class UuidJunctionPostTag : EntSchema("uuid_junction_post_tags") {
+    // CLIENT_UUID junction id: caller (or codegen) mints UUID client-side.
+    override fun id() = EntId.uuid()
+    val post = belongsTo<UuidJunctionPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag = belongsTo<UuidJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_uuid_junction_post_tags_pair", post.fk, tag.fk).unique()
+}
+private data class ClientUuidJunctionSchemas(
+    val post: UuidJunctionPost,
+    val tag: UuidJunctionTag,
+    val postTag: UuidJunctionPostTag,
+    val names: Map<EntSchema, String>,
+)
+private fun makeClientUuidJunctionSchemas(): ClientUuidJunctionSchemas {
+    val post = UuidJunctionPost()
+    val tag = UuidJunctionTag()
+    val postTag = UuidJunctionPostTag()
+    finalize(post, tag, postTag)
+    return ClientUuidJunctionSchemas(
+        post, tag, postTag,
+        mapOf(
+            post to "UuidJunctionPost",
+            tag to "UuidJunctionTag",
+            postTag to "UuidJunctionPostTag",
+        ),
+    )
 }
 
 // ---------- RFC #5 Phase 2 test schemas ----------
