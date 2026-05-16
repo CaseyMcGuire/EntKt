@@ -1030,7 +1030,7 @@ class UpdateGeneratorTest {
         // hooks means hooks see the snapshot.
         val fromRowIdx = output.indexOf("entity = M2MPost.fromRow(row0)")
         val captureIdx = output.indexOf("val pendingEdges = _buildPendingEdgeOps()")
-        val beforeSaveIdx = output.indexOf("for (hook in beforeSaveHooks) hook(this)")
+        val beforeSaveIdx = output.indexOf("for (hook in beforeSaveHooks) hook(_mutationView)")
         assert(fromRowIdx != -1 && captureIdx != -1 && beforeSaveIdx != -1) {
             "Missing one of the pipeline anchors\n$output"
         }
@@ -1039,6 +1039,47 @@ class UpdateGeneratorTest {
         }
         assert(captureIdx < beforeSaveIdx) {
             "pendingEdges snapshot must be captured BEFORE beforeSave hooks fire\n$output"
+        }
+    }
+
+    @Test
+    fun `beforeSave on M2M-capable update receives the restricted mutation view, not the concrete update builder`() {
+        // Cast-attack mitigation: a hook receiving the shared
+        // ${Schema}Mutation interface could otherwise cast to
+        // ${Schema}Update and reach the public `tags` mutator, calling
+        // `tags.add(...)` AFTER the immutable pendingEdges snapshot was
+        // captured. That created snapshot/live divergence — junction
+        // writes silently dropped, edgeChanges stale, M2M preflight
+        // bypassed. Passing `_mutationView` (the anonymous adapter)
+        // instead of `this` means the runtime object isn't an
+        // ${Schema}Update, so the cast fails at runtime.
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("for (hook in beforeSaveHooks) hook(_mutationView)")) {
+            "beforeSave on update saves must receive _mutationView, not `this`\n$output"
+        }
+        assert(!output.contains("for (hook in beforeSaveHooks) hook(this)")) {
+            "Old `hook(this)` shape must be gone — it exposes the cast attack\n$output"
+        }
+    }
+
+    @Test
+    fun `beforeSave on non-M2M update also receives the restricted mutation view for uniform behavior`() {
+        // Apply the fix uniformly across all update schemas. The
+        // adapter is generated whether or not the schema has
+        // helper-eligible M2M edges, so there's no reason to keep the
+        // old `hook(this)` shape on non-M2M schemas — and uniformity
+        // means a schema gaining a throughLink edge later doesn't
+        // silently change the hook surface.
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("for (hook in beforeSaveHooks) hook(_mutationView)")) {
+            "Non-M2M schemas should also pass the restricted view to beforeSave\n$output"
         }
     }
 

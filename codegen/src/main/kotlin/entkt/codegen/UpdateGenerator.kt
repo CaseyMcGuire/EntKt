@@ -1141,7 +1141,19 @@ internal class UpdateGenerator(
         builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
 
         // ---- beforeSave hooks (shared with create — receive Mutation interface). ----
-        builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
+        // Pass the restricted `_mutationView` adapter rather than `this`
+        // (the concrete update builder). The hook's parameter type is
+        // ${Schema}Mutation, but the runtime object would otherwise be
+        // ${Schema}Update — letting a hook do
+        // `(m as ${Schema}Update).tags.add(x)` after the pendingEdges
+        // snapshot was already captured. The adapter implements
+        // ${Schema}UpdateMutationView (which extends ${Schema}Mutation)
+        // and deliberately omits the M2M mutator surface, so the cast
+        // fails at runtime — closing the snapshot/live divergence hole
+        // that would otherwise let hook-staged M2M ops bypass the M2M
+        // preflight, miss junction writes, and skew the edgeChanges
+        // view that privacy and validation see.
+        builder.addStatement("for (hook in beforeSaveHooks) hook(_mutationView)")
 
         // ---- beforeUpdate hooks (receive a per-hook context with snapshot). ----
         // `patch` in the context is a snapshot built *before* the hook

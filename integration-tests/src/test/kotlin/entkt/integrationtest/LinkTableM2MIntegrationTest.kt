@@ -275,6 +275,54 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
+    fun `beforeSave hook on update cannot cast to PostUpdate to reach the tags mutator`() {
+        // Cast-attack mitigation: the beforeSave hook receives the
+        // restricted PostUpdateMutationView adapter, not the concrete
+        // PostUpdate. A hook attempting to cast to PostUpdate to reach
+        // the public tags mutator throws ClassCastException at the
+        // cast site, surfacing the misuse before any snapshot/live
+        // divergence can occur.
+        //
+        // The hook only attempts the cast on the update path because
+        // beforeSave is shared between create and update; on create
+        // the runtime object is PostCreate, where the cast would also
+        // fail but for a different (and uninteresting) reason.
+        val real = InMemoryDriver()
+        val locking = LockSupportInMemoryDriver(real)
+        val client = EntClient(locking) {
+            hooks {
+                posts {
+                    beforeSave { mutation ->
+                        val klass = mutation::class.java.name
+                        if (klass.contains("PostUpdate")) {
+                            @Suppress("UNUSED_VARIABLE")
+                            val pu = mutation as entkt.integrationtest.ent.PostUpdate
+                        }
+                    }
+                }
+            }
+        }
+        val (post, tagA, _) = seedPostAndTags(client)
+
+        val ex = client.withTransaction { tx ->
+            assertFailsWith<ClassCastException> {
+                tx.posts.update(post.id) {
+                    tags.add(tagA.id)
+                }.save()
+            }
+        }
+        // The cast site, not the mutator call, is the source.
+        assertTrue(
+            ex.message!!.contains("PostUpdate") || ex.message!!.contains("cannot be cast"),
+            "Expected ClassCastException about PostUpdate; got: ${ex.message}",
+        )
+        // The cast attack also can't smuggle in writes: the runtime
+        // object is the restricted adapter, so the only way to mutate
+        // the M2M op log is through the public DSL block — already
+        // covered by other tests.
+    }
+
+    @Test
     fun `before hooks see the captured pendingEdges snapshot`() {
         val observed = mutableListOf<Set<Long>>()
         val (client, _) = lockingClientWithHook { ctx ->
