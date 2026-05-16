@@ -1259,6 +1259,16 @@ internal class UpdateGenerator(
         // captured value (Phase 8 / P3) so the two views are object-
         // identity equal, not just structurally equal. ----
         builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
+        // RFC #5 Phase 8 (P3-residual): wrap the post-assignment region
+        // in try/finally so every save exit path (return null on
+        // missing rows, throw EntNoChangesException, return
+        // updatedEntity, or any exception out of hooks/privacy/
+        // validation/driver writes) clears _capturedPendingEdges. A
+        // hook that stashes ctx.mutation can then no longer read
+        // pendingEdges after save returns — the adapter's getter
+        // throws the "accessed outside a save()" error consistently
+        // with its documented contract.
+        builder.beginControlFlow("try")
         builder.addStatement("_capturedPendingEdges = pendingEdges")
 
         // ---- beforeSave hooks (shared with create — receive Mutation interface). ----
@@ -1508,6 +1518,9 @@ internal class UpdateGenerator(
         builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
         builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, updatedEntity)", repoPropName)
         builder.addStatement("return updatedEntity")
+        builder.nextControlFlow("finally")
+        builder.addStatement("_capturedPendingEdges = null")
+        builder.endControlFlow()
 
         return builder.build()
     }

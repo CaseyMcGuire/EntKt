@@ -446,6 +446,79 @@ class LinkTableM2MIntegrationTest {
     }
 
     @Test
+    fun `escaped ctx_mutation cannot read pendingEdges after save returns`() {
+        // Without the try/finally clearing _capturedPendingEdges, a
+        // hook stashing ctx.mutation could read pendingEdges after
+        // save() returned — contradicting the getter's own contract
+        // ("accessed outside a save() — the captured snapshot is only
+        // populated during save() between the owner-row read and the
+        // afterUpdate hook block"). The Phase 8 follow-up wraps the
+        // save body in try/finally and clears the captured field on
+        // every exit, so post-save reads now throw consistently.
+        var stashed: entkt.integrationtest.ent.PostUpdateMutationView? = null
+        val (client, _) = lockingClientWithHook { ctx ->
+            stashed = ctx.mutation
+        }
+        val (post, tagA, _) = seedPostAndTags(client)
+
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) {
+                tags.add(tagA.id)
+            }.save()
+        }
+
+        val view = assertNotNull(stashed)
+        val ex = assertFailsWith<IllegalStateException> {
+            view.pendingEdges
+        }
+        assertTrue(
+            ex.message!!.contains("outside a save"),
+            "Post-save read should error with the documented contract message; got: ${ex.message}",
+        )
+    }
+
+    @Test
+    fun `escaped ctx_mutation also throws after a save that returns null`() {
+        // The finally must clear on the missing-row return-null path
+        // too, not just on normal completion. Use a fresh Update
+        // builder (different id) so the missing-row branch runs.
+        var stashed: entkt.integrationtest.ent.PostUpdateMutationView? = null
+        val (client, _) = lockingClientWithHook { ctx ->
+            stashed = ctx.mutation
+        }
+        val (post, tagA, _) = seedPostAndTags(client)
+
+        // Issue an update against a missing id so save() returns null
+        // from the owner-row read short-circuit. NOTE: that
+        // short-circuit happens BEFORE the try-block (the
+        // _capturedPendingEdges assignment is the first statement
+        // inside try), so the field was never populated for that
+        // call — the existing `?: error(...)` getter handles it.
+        // For coverage of the finally-clearing path specifically,
+        // run a normal save first to populate the field, stash the
+        // mutation, then run a second save that returns null. The
+        // finally on the first save clears the field; the second
+        // save's missing-row return doesn't reach the try-block
+        // assignment so nothing further is needed.
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) {
+                tags.add(tagA.id)
+            }.save()
+        }
+        client.withTransaction { tx ->
+            tx.posts.update(id = 9_999_999L) {
+                tags.add(tagA.id)
+            }.save()
+        }
+
+        val view = assertNotNull(stashed)
+        val ex = assertFailsWith<IllegalStateException> {
+            view.pendingEdges
+        }
+        assertTrue(ex.message!!.contains("outside a save"))
+    }
+
+    @Test
     fun `ctx_pendingEdges and ctx_mutation_pendingEdges are the same object instance`() {
         // Phase 8 (P3): both surfaces route through the captured
         // _capturedPendingEdges field, so they're object-identity

@@ -1207,18 +1207,54 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `save populates _capturedPendingEdges immediately after building the snapshot`() {
+    fun `save populates _capturedPendingEdges immediately inside the try block`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The same snapshot value flows into the field and into the
-        // hook context constructor — guaranteeing object identity
-        // between ctx.pendingEdges and ctx.mutation.pendingEdges.
+        // Phase 8 follow-up (P3-residual): the assignment is the
+        // FIRST statement inside the try, so the finally that clears
+        // it covers every observable exit. Snapshot value flows into
+        // the field and into the hook context constructor —
+        // guaranteeing object identity between ctx.pendingEdges and
+        // ctx.mutation.pendingEdges.
         assert(output.contains(
-            "val pendingEdges = _buildPendingEdgeOps() _capturedPendingEdges = pendingEdges",
+            "val pendingEdges = _buildPendingEdgeOps() try { _capturedPendingEdges = pendingEdges",
         )) {
-            "save() must populate _capturedPendingEdges with the same snapshot it threads into hooks\n$output"
+            "save() must enter try { } immediately after the snapshot and assign _capturedPendingEdges first\n$output"
+        }
+    }
+
+    @Test
+    fun `save clears _capturedPendingEdges in a finally that wraps every exit path`() {
+        // The try/finally must wrap the entire post-assignment region
+        // so all exits clear the field — including the `return null`
+        // on driver.update failure, `throw EntNoChangesException`
+        // (top-of-save and hook-cleared branches), `return
+        // updatedEntity`, and any exception escaping hooks /
+        // privacy / validation / driver writes. Without the finally,
+        // a hook stashing ctx.mutation could read pendingEdges
+        // post-save — contradicting the getter's own contract.
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The finally appears once, after `return updatedEntity`
+        // (the success exit). Kotlin's try/finally semantics cover
+        // all other in-block exits (return null, throw, propagating
+        // exceptions) without needing extra structure.
+        assert(output.contains("return updatedEntity } finally { _capturedPendingEdges = null }")) {
+            "Save must clear _capturedPendingEdges in a finally that follows the success return\n$output"
+        }
+        // Symmetry guard: also fires for non-M2M schemas, since the
+        // _capturedPendingEdges field exists uniformly across all
+        // Update classes (per Phase 8 design).
+        val user = User()
+        finalize(user, Car())
+        val userOutput = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(userOutput.contains("return updatedEntity } finally { _capturedPendingEdges = null }")) {
+            "Non-M2M schemas must also clear _capturedPendingEdges in finally\n$userOutput"
         }
     }
 
