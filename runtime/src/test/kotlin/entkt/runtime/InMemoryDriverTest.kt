@@ -1318,6 +1318,116 @@ class InMemoryDriverTest {
     }
 
     @Test
+    fun `updateMany rejects when matched rows would collide on a unique column`() {
+        // Pre-update each matched row's email is distinct, so the
+        // old per-row check passed against the pre-update snapshot —
+        // but mutating them all to "x@y" creates duplicate emails.
+        // Postgres rejects per-row as each is written; the in-memory
+        // approximation catches the batch upfront.
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        driver.insert("uq_users", mapOf("email" to "a@example.com"))
+        driver.insert("uq_users", mapOf("email" to "b@example.com"))
+
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.updateMany(
+                "uq_users",
+                mapOf("email" to "x@y.com"),
+                emptyList(), // matches both rows
+            )
+        }
+        assertTrue(ex.message!!.contains("Unique violation"))
+        assertTrue(ex.message!!.contains("uq_users.email"))
+        assertTrue(ex.message!!.contains("would create duplicate"))
+        // Neither row mutated.
+        val rows = driver.query("uq_users", emptyList(), emptyList(), null, null)
+            .map { it["email"] }
+            .sortedBy { it as String }
+        assertEquals(listOf("a@example.com", "b@example.com"), rows)
+    }
+
+    @Test
+    fun `updateMany silently ignores attempts to rewrite the id column — early no-op return`() {
+        // updateMany filters `id` out of `cols` ("never let an update
+        // rewrite the id"). If the caller passes only id-column
+        // writes, cols becomes empty and updateMany returns 0 without
+        // touching any row — and without firing the batch unique
+        // check. This is an existing contract; pin it so the batch
+        // check doesn't get added there by accident later.
+        val schema = EntitySchema(
+            table = "um_id_only_test",
+            idColumn = "id",
+            idStrategy = IdStrategy.EXPLICIT,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("grp", FieldType.INT, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        val driver = InMemoryDriver().apply { register(schema) }
+        driver.insert("um_id_only_test", mapOf("id" to 1L, "grp" to 0))
+        driver.insert("um_id_only_test", mapOf("id" to 2L, "grp" to 0))
+
+        val result = driver.updateMany("um_id_only_test", mapOf("id" to 99L), emptyList())
+        assertEquals(0, result)
+        // Rows untouched.
+        assertEquals(2L, driver.count("um_id_only_test", emptyList()))
+    }
+
+    @Test
+    fun `updateMany rejects when matched rows would collide on a composite unique index`() {
+        // Composite-index variant of the unique-collision case. Two
+        // matched rows both get post_id=1, tag_id=10 after update,
+        // creating a duplicate tuple.
+        val schema = EntitySchema(
+            table = "um_post_tags",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata("post_id", FieldType.LONG, nullable = false),
+                ColumnMetadata("tag_id", FieldType.LONG, nullable = false),
+            ),
+            edges = emptyMap(),
+            indexes = listOf(
+                IndexMetadata(
+                    columns = listOf("post_id", "tag_id"),
+                    unique = true,
+                    name = "idx_um_post_tags_pair",
+                ),
+            ),
+        )
+        val driver = InMemoryDriver().apply { register(schema) }
+        driver.insert("um_post_tags", mapOf("post_id" to 1L, "tag_id" to 10L))
+        driver.insert("um_post_tags", mapOf("post_id" to 1L, "tag_id" to 11L))
+
+        // Update both matched rows' tag_id to 10. Post-update both
+        // rows would have (post_id=1, tag_id=10).
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.updateMany("um_post_tags", mapOf("tag_id" to 10L), emptyList())
+        }
+        assertTrue(ex.message!!.contains("Unique index violation"))
+        assertTrue(ex.message!!.contains("idx_um_post_tags_pair"))
+    }
+
+    @Test
+    fun `updateMany matching one row still works`() {
+        // Regression guard: batch-internal check only fires when
+        // matched.size > 1. A single-row updateMany should behave
+        // identically to update.
+        val driver = InMemoryDriver().apply { register(uniqueColumnSchema()) }
+        driver.insert("uq_users", mapOf("email" to "a@example.com"))
+        driver.insert("uq_users", mapOf("email" to "b@example.com"))
+
+        // Predicate that matches exactly one row.
+        val matched = driver.updateMany(
+            "uq_users",
+            mapOf("email" to "renamed@x.com"),
+            listOf(Predicate.Leaf("email", Op.EQ, "a@example.com")),
+        )
+        assertEquals(1, matched)
+    }
+
+    @Test
     fun `insertMany rejects within-batch duplicate on a single-column unique`() {
         // Two rows in the same batch share an email. Both should fail
         // — pre-existing-rows alone wouldn't catch the duplicate, but

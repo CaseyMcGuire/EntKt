@@ -191,12 +191,56 @@ class InMemoryDriver : Driver {
             // Collect matches before mutating so edge predicates that
             // reference the same table see a consistent snapshot.
             val matched = rows.filter { row -> predicates.all { evaluate(row, it, table) } }
-            // Per-row uniqueness check before any mutation — if any
-            // row's post-update state would collide with another row,
-            // throw without persisting any of them. Each match uses
-            // its own existing row as baseline (so the composite-
-            // index check sees the effective tuple = new values for
-            // written columns + existing values for unchanged ones).
+
+            // Batch-internal unique violation: if `values` writes a
+            // non-null value to a unique-or-PK column AND multiple
+            // matched rows would receive that value, the batch itself
+            // is the violation — even if each row's post-update state
+            // is fine against the *pre-update* snapshot, the
+            // post-update state would have duplicates. Postgres rejects
+            // per-row as each is written; we approximate by rejecting
+            // upfront when the batch shape guarantees a collision.
+            if (matched.size > 1) {
+                for (col in schema.columns) {
+                    if (!(col.unique || col.primaryKey)) continue
+                    if (col.name !in values) continue
+                    val newValue = values[col.name] ?: continue
+                    val kind = if (col.primaryKey) "Primary key" else "Unique"
+                    throw IllegalStateException(
+                        "$kind violation: updateMany would set $table.${col.name} = $newValue " +
+                            "on ${matched.size} matched rows, which would create duplicate values",
+                    )
+                }
+                // Composite unique indexes — same batch-internal
+                // concern. The effective tuple per matched row uses
+                // each row's own baseline for unwritten columns, so
+                // two matched rows can still differ on the composite
+                // tuple. Build the per-row tuple and check for in-
+                // batch duplicates against rows that resolve to the
+                // same tuple.
+                for (idx in schema.indexes) {
+                    if (!idx.unique) continue
+                    if (idx.where != null) continue
+                    if (idx.columns.none { it in values }) continue
+                    val tuples = matched.map { row ->
+                        idx.columns.map { col -> if (col in values) values[col] else row[col] }
+                    }
+                    if (tuples.any { it.any { v -> v == null } }) continue
+                    val dupes = tuples.groupingBy { it }.eachCount().filterValues { it > 1 }
+                    if (dupes.isNotEmpty()) {
+                        throw IllegalStateException(
+                            "Unique index violation: updateMany would create duplicate tuple(s) " +
+                                "${dupes.keys} on $table${idx.columns.joinToString(prefix = "(", postfix = ")")} " +
+                                "across ${matched.size} matched rows (index: ${idx.name})",
+                        )
+                    }
+                }
+            }
+
+            // Per-row uniqueness check against the pre-update snapshot
+            // — catches collisions with rows OUTSIDE the matched set.
+            // The batch-internal check above caught matched-vs-matched
+            // collisions; this catches matched-vs-untouched.
             for (row in matched) {
                 validateUniqueConstraints(
                     table, schema, values,
