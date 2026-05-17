@@ -195,6 +195,45 @@ class QueryResultVariantsIntegrationTest {
         assertEquals("Third", result.value[0].title)
     }
 
+    @Test
+    fun `visibleAllOrError maps eager-edge LOAD denial to Err(PrivacyDenied), not DriverFailure`() {
+        // Article LOAD allows all; the *eager-loaded* User edge denies.
+        // The visible-filter on Article doesn't drop the row (Article
+        // is allowed), but loadEdges then raises PrivacyDeniedException
+        // when LOAD-checking the eager User target. Before the catch
+        // arm was added, this misclassified as Err(DriverFailure).
+        val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
+            override fun configure(scope: UserPolicyScope) = scope.run {
+                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
+            }
+        }
+        val driver = InMemoryDriver()
+        EntClient.SCHEMAS.forEach(driver::register)
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies {
+                articles(AllowAllArticles)
+                users(denyAllUsers)
+            }
+        }
+        // Seed via System (privacy bypass) so we have a User row to
+        // eager-load.
+        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.articles.create { title = "X"; published = true; authorId = author.id }.saveOrThrow()
+        }
+
+        val result = client.articles.query { withAuthor() }.visibleAllOrError()
+        assertTrue(result is EntResult.Err)
+        val error = result.error
+        assertTrue(
+            error is EntError.PrivacyDenied,
+            "expected PrivacyDenied for eager-edge denial; got $error",
+        )
+        assertEquals(EntOperation.LOAD, error.operation)
+        assertEquals("user hidden", error.reason)
+    }
+
     // ---- firstOrNull (unchanged contract — null only for empty match) ----
 
     @Test

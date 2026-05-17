@@ -6,8 +6,19 @@
 `EntException` hierarchy are defined. `Driver.classifyException(...)` is the
 classifier extension point: it returns `EntError.ConstraintViolation` for
 SQLSTATE `23xxx` on `PostgresDriver` and for the `InMemoryDriver`'s own
-validator message-prefixes; `classifyDriverError(...)` falls back to
-`EntError.DriverFailure(cause = throwable)` for unrecognized exceptions.
+validator message-prefixes. `classifyDriverError(...)` is the runtime
+helper generated `*OrError` blocks call to wrap unrecognized exceptions —
+its fallback rules are:
+
+  - `TransactionRequiredException` /
+    `UnsupportedDriverCapabilityException` → re-throw (RFC-defined
+    configuration errors, not surfaced as `EntError`)
+  - unrecognized `IllegalStateException` / `IllegalArgumentException`
+    (those the driver classifier returned `null` for) → re-throw as
+    programming bugs (e.g. a hook violating an invariant, a generated
+    misuse path) rather than hide them as `DriverFailure`
+  - everything else unrecognized → wrap as
+    `EntError.DriverFailure(cause = throwable)`
 Both the create and update paths generate the full
 `saveOrError()` / `saveOrThrow()` trio. `saveOrError()` is canonical
 on both sides and `saveOrThrow()` is a thin

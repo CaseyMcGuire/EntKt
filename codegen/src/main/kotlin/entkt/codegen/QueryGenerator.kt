@@ -356,6 +356,20 @@ internal class QueryGenerator(
                         if (hasEdges) "loadEdges(visible, privacy)" else "visible",
                     )
                     .add("  }\n")
+                    // The visible-filter swallows PrivacyDeniedException
+                    // on the owner-row LOAD path (try/catch inside the
+                    // filter lambda → drop the row), but eager edge
+                    // loading via loadEdges(...) re-raises target-side
+                    // PrivacyDeniedException from a privacy-restricted
+                    // related entity. Without an explicit catch here,
+                    // that would fall through to the generic Exception
+                    // arm and be misclassified as Err(DriverFailure).
+                    // Same shape as allOrError / firstOrError.
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",

@@ -333,19 +333,27 @@ interface Driver {
      * Map a [throwable] thrown from this driver to a structured
      * [EntError] when the driver recognizes it. Returning `null`
      * signals "I don't know what this is" — the caller (typically the
-     * `classifyDriverError` helper) will fall back to wrapping it in
-     * [EntError.DriverFailure].
+     * `classifyDriverError` helper) decides the fallback based on the
+     * throwable type (see that function's KDoc for the full rules).
      *
-     * Generated `*OrError()` wrappers call this AFTER the more
-     * specific catch arms (privacy / validation / EntException) but
-     * BEFORE a generic Throwable fallback, so:
+     * Generated `*OrError()` wrappers call `classifyDriverError`
+     * (which delegates here) AFTER the more specific catch arms
+     * (privacy / validation / EntException) but BEFORE a generic
+     * Throwable fallback. So:
      *  - the framework's own exceptions (TransactionRequiredException,
      *    UnsupportedDriverCapabilityException, EntException subclasses)
      *    are never offered to the classifier — they always propagate
      *    as themselves, per the RFC Status carve-out;
-     *  - everything else (PSQLException, IllegalStateException from
-     *    driver-side validators, etc.) gets one shot at being
-     *    classified, then falls through to DriverFailure.
+     *  - PSQLException, IllegalStateException from driver-side
+     *    validators, etc. get one shot at being classified;
+     *  - if the classifier returns `null` for an unrecognized
+     *    `IllegalStateException` or `IllegalArgumentException`,
+     *    `classifyDriverError` re-throws it as a programming bug
+     *    rather than wrapping as DriverFailure — only "genuinely
+     *    unrecognized" exceptions (SQLException, IOException, etc.)
+     *    become Err(DriverFailure);
+     *  - all other unrecognized throwables fall through to
+     *    Err(DriverFailure) with the cause attached.
      *
      * Implementations should:
      *  - return `EntError.ConstraintViolation` for UNIQUE/FK/CHECK
@@ -357,13 +365,15 @@ interface Driver {
      *    surface — returning `null` for serialization failures is
      *    fine in V1;
      *  - return `null` for any throwable the driver doesn't
-     *    recognize, including IO/network errors — the
-     *    `classifyDriverError` fallback will wrap those as
-     *    [EntError.DriverFailure].
+     *    recognize. Keep in mind that returning `null` for an
+     *    `IllegalStateException` carrying real driver-failure
+     *    semantics (vs. a programming-bug invariant violation) will
+     *    surface as a thrown exception rather than `DriverFailure`
+     *    — recognize and classify those explicitly if you need the
+     *    Err shape.
      *
      * The default returns `null` so existing third-party drivers
-     * inherit the "raw exception propagates as DriverFailure" V1
-     * behavior without having to opt in.
+     * inherit the documented fallback behavior without having to opt in.
      */
     fun classifyException(
         throwable: Throwable,
