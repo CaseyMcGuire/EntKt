@@ -113,15 +113,19 @@ class TransactionRequirementIntegrationTest {
         val strict = EntClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
+        // deleteByIdOrError catches the TransactionRequiredException
+        // through its `catch (Exception)` arm — `classifyDriverError`
+        // recognizes it as a configuration error and re-throws,
+        // so the exception still escapes intact.
         val ex = assertFailsWith<TransactionRequiredException> {
-            strict.users.deleteById(user.id)
+            strict.users.deleteByIdOrError(user.id)
         }
         assertEquals(true, ex.message!!.contains("RequiredForAllWrites"))
         assertEquals(true, ex.message!!.contains("delete"))
     }
 
     @Test
-    fun `RequiredForAllWrites rejects deleteById for a missing id (preflight runs before the byId read)`() {
+    fun `RequiredForAllWrites rejects deleteByIdOrError for a missing id (preflight runs before the byId read)`() {
         // Without the preflight, a missing-id deleteById would silently
         // return false outside a transaction because the byId read
         // returns null before the per-entity delete fires its own
@@ -132,7 +136,7 @@ class TransactionRequirementIntegrationTest {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         val ex = assertFailsWith<TransactionRequiredException> {
-            strict.users.deleteById(9999L)
+            strict.users.deleteByIdOrError(9999L)
         }
         assertEquals(true, ex.message!!.contains("RequiredForAllWrites"))
         assertEquals(true, ex.message!!.contains("delete"))

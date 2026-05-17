@@ -1,5 +1,6 @@
 package example.spring.posts
 
+import entkt.runtime.getOrThrow
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.PostTag
@@ -66,7 +67,7 @@ class PostController(private val client: EntClient) {
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Long) {
-        if (!client.posts.deleteById(id)) {
+        if (!client.posts.deleteByIdOrError(id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }

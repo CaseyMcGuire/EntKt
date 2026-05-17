@@ -44,7 +44,18 @@ returns `cap` rows and the caller didn't explicitly set a smaller
 queryLimit). `visibleAll` and `firstVisibleOrNull` are silent on
 cap-exhaustion per the RFC's optimistic-read shape — the caller
 sees the partial / `null` outcome and decides whether to re-query.
-The `withTransactionOrError` helper and bulk `*OrError` variants are
+Delete APIs are landed: repo-level `deleteOrThrow(entity): Unit`,
+`deleteOrError(entity): EntResult<Unit>`, and
+`deleteByIdOrError(id): EntResult<Boolean>`. The legacy
+Boolean-returning `delete(entity)` and `deleteById(id)` are removed
+(not deprecated). The Boolean information from `delete(entity)` is
+intentionally dropped on the entity-based path (the RFC's stance is
+that "did the row actually exist?" isn't typically interesting when
+the caller already had the entity in hand); the id-based path keeps
+the Boolean via `EntResult<Boolean>` because `Ok(true)` /
+`Ok(false)` cleanly distinguishes deleted from idempotent no-op,
+which is the natural shape for that operation. The
+`withTransactionOrError` helper and bulk `*OrError` variants are
 not yet generated.
 
 ## Summary

@@ -164,66 +164,85 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo exposes delete taking the entity and deleteById taking the id`() {
+    fun `repo exposes the delete family — removes delete(entity) and deleteById(id)`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun delete(entity: Car): Boolean")) {
-            "Should have delete(entity)\n$output"
+        // Per the Result Variants RFC the legacy Boolean-returning
+        // public delete(entity) and deleteById(id) are removed in
+        // favor of the structured *OrThrow / *OrError variants.
+        assert(!output.contains("public fun delete(entity:")) {
+            "Boolean-returning delete(entity) should be removed in favor of deleteOrThrow / deleteOrError\n$output"
         }
-        assert(output.contains("fun deleteById(id: Int): Boolean")) {
-            "Should have deleteById taking the schema id type\n$output"
+        assert(!output.contains("public fun deleteById(id:")) {
+            "Boolean-returning deleteById(id) should be removed in favor of deleteByIdOrError\n$output"
+        }
+        // KotlinPoet omits the explicit `: Unit` return type in
+        // generated output, so match on the parameter shape only.
+        assert(output.contains("public fun deleteOrThrow(entity: Car)")) {
+            "Should generate deleteOrThrow(entity: Car)\n$output"
+        }
+        assert(output.contains("public fun deleteOrError(entity: Car): EntResult<Unit>")) {
+            "Should generate deleteOrError(entity): EntResult<Unit>\n$output"
+        }
+        assert(output.contains("public fun deleteByIdOrError(id: Int): EntResult<Boolean>")) {
+            "Should generate deleteByIdOrError(id): EntResult<Boolean>\n$output"
         }
     }
 
     @Test
-    fun `delete calls hooks around driver delete`() {
+    fun `deleteLoaded (private) calls hooks around driver delete`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
+        // deleteLoaded is the private workhorse used by deleteOrError
+        // (and the bulk deleteMany). The hooks and driver call still
+        // live there.
         assert(output.contains("for (hook in beforeDeleteHooks) hook(entity)")) {
-            "delete should call beforeDelete hooks\n$output"
+            "deleteLoaded should call beforeDelete hooks\n$output"
         }
         assert(output.contains("driver.delete(Car.TABLE, entity.id)")) {
-            "delete should call driver.delete with entity.id\n$output"
+            "deleteLoaded should call driver.delete with entity.id\n$output"
         }
         assert(output.contains("if (deleted) for (hook in afterDeleteHooks) hook(entity)")) {
-            "delete should call afterDelete hooks on success\n$output"
+            "deleteLoaded should call afterDelete hooks on success\n$output"
         }
     }
 
     @Test
-    fun `deleteById fetches entity then delegates to deleteLoaded (skipping the public delete preflight)`() {
-        // The public `delete(entity)` runs the transaction-requirement
-        // preflight at its own entry; deleteById has already run it
-        // before the byId, so it skips the public entry by going
-        // straight to the private `deleteLoaded` helper. Avoids
-        // double-checking the requirement.
+    fun `deleteByIdOrError fetches via driver, returns Ok(false) on missing, and delegates to deleteLoaded`() {
+        // The public `delete(entity)` has been removed — deleteByIdOrError
+        // runs its own preflight and goes straight to the private
+        // `deleteLoaded` helper after the byId read, avoiding any
+        // double preflight that calling a hypothetical public
+        // delete(entity) would introduce.
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         assert(output.contains("driver.byId(Car.TABLE, id)")) {
-            "deleteById should fetch entity via driver (bypassing LOAD privacy)\n$output"
+            "deleteByIdOrError should fetch entity via driver (bypassing LOAD privacy)\n$output"
         }
-        assert(output.contains("return deleteLoaded(entity)")) {
-            "deleteById should delegate to deleteLoaded(entity), not the public delete (avoids double preflight)\n$output"
+        assert(output.contains("deleteLoaded(Car.fromRow(row))") || output.contains("deleteLoaded(entity)")) {
+            "deleteByIdOrError should delegate to deleteLoaded\n$output"
         }
-        assert(!output.contains("return delete(entity)")) {
-            "deleteById should not call public delete(entity) — that would re-run the preflight\n$output"
+        // KotlinPoet may wrap "EntResult.Ok(false)" across lines; check that the
+        // missing-id Ok(false) branch is emitted at all.
+        assert(output.contains("EntResult.Ok(false)")) {
+            "deleteByIdOrError should return Ok(false) when the row is missing\n$output"
         }
     }
 
     @Test
-    fun `deleteById uses the correct id type for UUID schemas`() {
+    fun `deleteByIdOrError uses the correct id type for UUID schemas`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("fun deleteById(id: UUID): Boolean")) {
-            "deleteById should use UUID for User's id type\n$output"
+        assert(output.contains("public fun deleteByIdOrError(id: UUID): EntResult<Boolean>")) {
+            "deleteByIdOrError should use UUID for User's id type\n$output"
         }
     }
 

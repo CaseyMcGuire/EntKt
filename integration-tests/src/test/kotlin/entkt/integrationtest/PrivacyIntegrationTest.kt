@@ -11,6 +11,10 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.postgres.PostgresDriver
+import entkt.runtime.EntError
+import entkt.runtime.EntOperation
+import entkt.runtime.EntPrivacyDeniedException
+import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
@@ -333,8 +337,7 @@ class PrivacyIntegrationTest {
             where(Article.authorId eq alice.id)
         }.allOrThrow().first()
 
-        val deleted = client.articles.delete(article)
-        assertTrue(deleted)
+        client.articles.deleteOrThrow(article)
     }
 
     // ---- visibleCount() ----
@@ -480,13 +483,16 @@ class PrivacyIntegrationTest {
             }.firstOrNull()
             assertNotNull(article)
 
-            val failure = assertFailsWith<PrivacyDeniedException> {
-                scoped.articles.delete(article)
+            // deleteOrThrow → deleteOrError().getOrThrow() converts
+            // the raw PrivacyDeniedException into the structured
+            // EntPrivacyDeniedException at the throw boundary.
+            val failure = assertFailsWith<EntPrivacyDeniedException> {
+                scoped.articles.deleteOrThrow(article)
             }
             article to failure
         }
-        assertEquals(PrivacyOperation.DELETE, ex.operation)
-        assertEquals("only the author can delete", ex.reason)
+        assertEquals(EntOperation.DELETE, ex.privacyDenied.operation)
+        assertEquals("only the author can delete", ex.privacyDenied.reason)
 
         // Verify the article still exists
         val still = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
@@ -507,8 +513,7 @@ class PrivacyIntegrationTest {
             }.firstOrNull()
             assertNotNull(article)
 
-            val deleted = scoped.articles.delete(article)
-            assertTrue(deleted)
+            scoped.articles.deleteOrThrow(article)
             article.id
         }
 
@@ -692,8 +697,8 @@ class PrivacyIntegrationTest {
         }
         assertNotNull(article)
 
-        assertFailsWith<PrivacyDeniedException> {
-            client.articles.delete(article)
+        assertFailsWith<EntPrivacyDeniedException> {
+            client.articles.deleteOrThrow(article)
         }
     }
 
@@ -710,12 +715,11 @@ class PrivacyIntegrationTest {
             }.firstOrNull()
             assertNotNull(article)
 
-            val deleted = scoped.articles.delete(article)
-            assertTrue(deleted)
+            scoped.articles.deleteOrThrow(article)
         }
     }
 
-    // ---- deleteById: bypass LOAD, enforce DELETE ----
+    // ---- deleteByIdOrError: bypass LOAD, enforce DELETE ----
 
     @Test
     fun `deleteById bypasses LOAD privacy but enforces DELETE`() {
@@ -730,13 +734,15 @@ class PrivacyIntegrationTest {
             }.firstOrNull()!!.id
         }
 
-        // Bob can't load the draft (anonymous/non-owner), but deleteById
-        // bypasses LOAD. However, DELETE privacy should still deny Bob.
+        // Bob can't load the draft (anonymous/non-owner), but
+        // deleteByIdOrError bypasses LOAD. However, DELETE privacy
+        // should still deny Bob.
         client.withPrivacyContext(PrivacyContext(Viewer.User(bob.id))) { scoped ->
-            val ex = assertFailsWith<PrivacyDeniedException> {
-                scoped.articles.deleteById(draftId)
-            }
-            assertEquals(PrivacyOperation.DELETE, ex.operation)
+            val result = scoped.articles.deleteByIdOrError(draftId)
+            assertTrue(result is EntResult.Err)
+            val error = result.error
+            assertTrue(error is EntError.PrivacyDenied)
+            assertEquals(EntOperation.DELETE, error.operation)
         }
 
         // Verify the draft still exists
@@ -759,10 +765,11 @@ class PrivacyIntegrationTest {
             }.firstOrNull()!!.id
         }
 
-        // Alice can deleteById her own draft — LOAD bypassed, DELETE allowed
+        // Alice can deleteByIdOrError her own draft — LOAD bypassed, DELETE allowed
         client.withPrivacyContext(PrivacyContext(Viewer.User(alice.id))) { scoped ->
-            val deleted = scoped.articles.deleteById(draftId)
-            assertTrue(deleted)
+            val result = scoped.articles.deleteByIdOrError(draftId)
+            assertTrue(result is EntResult.Ok)
+            assertTrue(result.value)
         }
 
         val gone = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
@@ -772,12 +779,13 @@ class PrivacyIntegrationTest {
     }
 
     @Test
-    fun `deleteById returns false for nonexistent ID`() {
+    fun `deleteByIdOrError returns Ok(false) for nonexistent ID`() {
         val client = freshClient(Viewer.System)
         seedData(client)
 
-        val deleted = client.articles.deleteById(99999)
-        assertFalse(deleted)
+        val result = client.articles.deleteByIdOrError(99999)
+        assertTrue(result is EntResult.Ok)
+        assertFalse(result.value)
     }
 
     // ---- Bulk convenience methods ----

@@ -12,6 +12,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.postgres.PostgresDriver
+import entkt.runtime.EntValidationException
 import entkt.runtime.EntityPolicy
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
@@ -324,10 +325,10 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.save()
 
-        val ex = assertFailsWith<ValidationException> {
-            client.articles.delete(article)
+        val ex = assertFailsWith<EntValidationException> {
+            client.articles.deleteOrThrow(article)
         }
-        assertTrue(ex.message!!.contains("cannot delete a published"))
+        assertTrue(ex.validationFailed.violations.any { it.message.contains("cannot delete a published") })
     }
 
     @Test
@@ -341,8 +342,7 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.save()
 
-        val deleted = client.articles.delete(article)
-        assertTrue(deleted)
+        client.articles.deleteOrThrow(article)
     }
 
     // ---- Privacy runs before validation ----
@@ -418,8 +418,8 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.save()
 
-        assertFailsWith<ValidationException> {
-            client.articles.delete(article)
+        assertFailsWith<EntValidationException> {
+            client.articles.deleteOrThrow(article)
         }
     }
 

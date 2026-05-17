@@ -1,5 +1,6 @@
 package example.spring.tags
 
+import entkt.runtime.getOrThrow
 import example.ent.EntClient
 import example.ent.Tag
 import example.spring.posts.PostResponse
@@ -44,7 +45,7 @@ class TagController(private val client: EntClient) {
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Int) {
-        if (!client.tags.deleteById(id)) {
+        if (!client.tags.deleteByIdOrError(id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }

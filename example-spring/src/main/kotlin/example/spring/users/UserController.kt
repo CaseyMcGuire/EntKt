@@ -1,5 +1,6 @@
 package example.spring.users
 
+import entkt.runtime.getOrThrow
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.User
@@ -81,7 +82,7 @@ class UserController(private val client: EntClient) {
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: UUID) {
-        if (!client.users.deleteById(id)) {
+        if (!client.users.deleteByIdOrError(id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }

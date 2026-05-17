@@ -181,9 +181,10 @@ internal class RepoGenerator(
             .addFunction(buildByIdOrThrow(schemaName, entityClass, idType))
             .addFunction(buildVisibleByIdOrNull(entityClass, idType))
             .addFunction(buildByIdOrError(schemaName, entityClass, idType))
-            .addFunction(buildDelete(schemaName, entityClass, candidateClass))
+            .addFunction(buildDeleteOrThrow(schemaName, entityClass))
+            .addFunction(buildDeleteOrError(schemaName, entityClass))
             .addFunction(buildDeleteLoaded(entityClass))
-            .addFunction(buildDeleteById(schemaName, entityClass, idType, candidateClass))
+            .addFunction(buildDeleteByIdOrError(schemaName, entityClass, idType))
             .also { builder ->
                 if (idStrategyName(schema) != "EXPLICIT") {
                     builder.addFunction(buildCreateMany(entityClass, createLambda))
@@ -343,25 +344,72 @@ internal class RepoGenerator(
     }
 
     /**
-     * Public `delete(entity)` entry — runs the transaction-requirement
-     * preflight, then delegates to [buildDeleteLoaded] for the rest of
-     * the pipeline. The internal callers ([buildDeleteById],
-     * [buildDeleteMany]) skip this and go straight to `deleteLoaded`
-     * after their own preflight to avoid double-checking the
-     * requirement.
+     * `deleteOrThrow(entity): Unit` — strict delete. Throws structured
+     * EntException subclasses for every failure surface; on the happy
+     * path the row is gone (or was already gone concurrently — see
+     * the note in [buildDeleteOrError] for why "already gone" is
+     * silent here).
      */
-    private fun buildDelete(
-        schemaName: String,
-        entityClass: ClassName,
-        candidateClass: ClassName,
-    ): FunSpec {
-        return FunSpec.builder("delete")
+    private fun buildDeleteOrThrow(schemaName: String, entityClass: ClassName): FunSpec {
+        return FunSpec.builder("deleteOrThrow")
             .addParameter("entity", entityClass)
-            .returns(Boolean::class)
-            // Transaction-requirement preflight (RFC #4) — fires before
-            // the privacy context load and any other observable work.
-            .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
-            .addStatement("return deleteLoaded(entity)")
+            .returns(UNIT)
+            .addStatement(
+                "deleteOrError(entity).%M()",
+                MemberName("entkt.runtime", "getOrThrow"),
+            )
+            .build()
+    }
+
+    /**
+     * `deleteOrError(entity): EntResult<Unit>` — structured-result
+     * delete. Returns `Ok(Unit)` on a successful delete OR a
+     * silent no-op (the entity already vanished concurrently); the
+     * Boolean "was-deleted?" signal is intentionally dropped here
+     * because the caller passed an entity it had in hand — the RFC's
+     * stance is that this is not exceptional.
+     *
+     * Failure mapping mirrors saveOrError: PrivacyDenied →
+     * Err(PrivacyDenied); delete-side ValidationException →
+     * Err(ValidationFailed); EntException carried through; any other
+     * Exception routed through [classifyDriverError] so SQLSTATE
+     * 23xxx (e.g. an FK-from-other-rows constraint blocking the
+     * delete) surfaces as Err(ConstraintViolation).
+     */
+    private fun buildDeleteOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val resultType = ENT_RESULT.parameterizedBy(UNIT)
+        return FunSpec.builder("deleteOrError")
+            .addParameter("entity", entityClass)
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
+                    .add("  deleteLoaded(entity)\n")
+                    .add("  %T.Ok(Unit)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", VALIDATION_EXCEPTION)
+                    .add(
+                        "  %T.Err(%T.ValidationFailed(e.entity, %T.DELETE, e.violations.map { it.%M() }))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                        MemberName("entkt.runtime", "toValidationViolation"),
+                    )
+                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
+                    .add("  %T.Err(e.error)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.DELETE))\n",
+                        ENT_RESULT,
+                        MemberName("entkt.runtime", "classifyDriverError"),
+                        schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
             .build()
     }
 
@@ -393,31 +441,67 @@ internal class RepoGenerator(
             .build()
     }
 
-    private fun buildDeleteById(
+    /**
+     * `deleteByIdOrError(id): EntResult<Boolean>` — structured-result
+     * idempotent delete-by-id. Returns `Ok(true)` when a row was
+     * actually deleted, `Ok(false)` when no row existed (idempotent
+     * no-op — missing-row is not framed as an error here per the
+     * RFC's "OrError suffix surfaces *exceptional* outcomes"
+     * principle). Failure variants are the same set saveOrError /
+     * deleteOrError produce.
+     *
+     * Reads via the bare driver, bypassing repo-level LOAD privacy —
+     * the delete-side privacy rule runs inside `deleteLoaded` and is
+     * the authoritative check.
+     */
+    private fun buildDeleteByIdOrError(
         schemaName: String,
         entityClass: ClassName,
         idType: com.squareup.kotlinpoet.TypeName,
-        candidateClass: ClassName,
     ): FunSpec {
-        // deleteById must not call privacy-enforcing byId
-        return FunSpec.builder("deleteById")
+        val resultType = ENT_RESULT.parameterizedBy(Boolean::class.asClassName())
+        return FunSpec.builder("deleteByIdOrError")
             .addParameter("id", idType)
-            .returns(Boolean::class)
-            // Transaction-requirement preflight (RFC #4) — fires before
-            // the byId read so a missing-id call under
-            // RequiredForAllWrites still throws (instead of silently
-            // returning false because the row doesn't exist).
-            .addStatement("client.checkTransactionRequirement(%S)", "$schemaName delete")
-            .addStatement(
-                "val entity = driver.byId(%T.TABLE, id)?.let { %T.fromRow(it) } ?: return false",
-                entityClass,
-                entityClass,
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
+                    .add(
+                        "  val row = driver.byId(%T.TABLE, id)\n",
+                        entityClass,
+                    )
+                    .add("  if (row == null) {\n")
+                    .add("    %T.Ok(false)\n", ENT_RESULT)
+                    .add("  } else {\n")
+                    .add(
+                        "    %T.Ok(deleteLoaded(%T.fromRow(row)))\n",
+                        ENT_RESULT, entityClass,
+                    )
+                    .add("  }\n")
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", VALIDATION_EXCEPTION)
+                    .add(
+                        "  %T.Err(%T.ValidationFailed(e.entity, %T.DELETE, e.violations.map { it.%M() }))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                        MemberName("entkt.runtime", "toValidationViolation"),
+                    )
+                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
+                    .add("  %T.Err(e.error)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.DELETE))\n",
+                        ENT_RESULT,
+                        MemberName("entkt.runtime", "classifyDriverError"),
+                        schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
             )
-            // Skip the public `delete(entity)` entry — it would re-run
-            // the same preflight we just ran above. Go straight to the
-            // private `deleteLoaded` so the per-call observable work
-            // (privacy / hooks / driver.delete) happens once.
-            .addStatement("return deleteLoaded(entity)")
             .build()
     }
 
