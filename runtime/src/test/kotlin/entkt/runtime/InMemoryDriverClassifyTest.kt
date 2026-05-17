@@ -192,4 +192,33 @@ class InMemoryDriverClassifyTest {
         val unrecognized = IllegalStateException("some other internal invariant failed")
         assertNull(driver.classifyException(unrecognized, "X", EntOperation.LOAD))
     }
+
+    @Test
+    fun `classifyDriverError re-throws TransactionRequiredException instead of wrapping`() {
+        // Per the Result Variants RFC, TransactionRequiredException is
+        // a deterministic programming/configuration error and must
+        // *not* be surfaced as Err(DriverFailure). The classifier
+        // re-throws it so it escapes saveOrError / readOrError /
+        // deleteOrError the same way it escapes the *OrThrow paths.
+        val driver = InMemoryDriver()
+        val trx = TransactionRequiredException("test-op requires a transaction")
+        try {
+            classifyDriverError(driver, trx, "X", EntOperation.UPDATE)
+            kotlin.test.fail("expected re-throw")
+        } catch (e: TransactionRequiredException) {
+            assertEquals(trx, e)
+        }
+    }
+
+    @Test
+    fun `classifyDriverError re-throws UnsupportedDriverCapabilityException instead of wrapping`() {
+        val driver = InMemoryDriver()
+        val udc = UnsupportedDriverCapabilityException("test cap missing")
+        try {
+            classifyDriverError(driver, udc, "X", EntOperation.UPDATE)
+            kotlin.test.fail("expected re-throw")
+        } catch (e: UnsupportedDriverCapabilityException) {
+            assertEquals(udc, e)
+        }
+    }
 }

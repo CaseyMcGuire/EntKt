@@ -381,12 +381,27 @@ interface Driver {
  * matching [EntDriverException] forwards it to the JVM exception
  * chain — `printStackTrace()` and friends still see the original
  * driver exception.
+ *
+ * **Re-throws deterministic programming/configuration errors.**
+ * [TransactionRequiredException] and
+ * [UnsupportedDriverCapabilityException] are not surfaced as
+ * `EntError` — per the Result Variants RFC they're errors in how
+ * the caller configured the client / drivers, not failures in the
+ * operation. Generated `*OrError()` blocks call this from a `catch
+ * (Exception)` arm that catches both kinds of throwable; this
+ * function re-throws the configuration errors so they escape the
+ * `*OrError` path the same way they escape `*OrThrow`. The result
+ * type stays `EntError` because that's still the contract for the
+ * happy classification path.
  */
 public fun classifyDriverError(
     driver: Driver,
     throwable: Throwable,
     entity: String,
     operation: EntOperation,
-): EntError =
-    driver.classifyException(throwable, entity, operation)
+): EntError {
+    if (throwable is TransactionRequiredException) throw throwable
+    if (throwable is UnsupportedDriverCapabilityException) throw throwable
+    return driver.classifyException(throwable, entity, operation)
         ?: EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)
+}
