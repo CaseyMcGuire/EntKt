@@ -6,6 +6,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
@@ -121,6 +122,20 @@ internal class ClientGenerator(
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("%T.ReadCurrent", UPDATE_CONSISTENCY)
+                    .build()
+            )
+            .addProperty(
+                // Cap on the per-call storage scan that visible-only
+                // read APIs (visibleAll / visibleAllOrError /
+                // firstVisibleOrNull) issue against the driver when
+                // no privacy pushdown is available. Default 100 rows.
+                // A bigger value lets the in-process filter find more
+                // visible rows but pulls more denied rows into memory;
+                // narrow the predicate before raising it.
+                PropertySpec.builder("visibleOverfetchLimit", INT)
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("100")
                     .build()
             )
             .addFunction(
@@ -330,6 +345,15 @@ internal class ClientGenerator(
                     .initializer("%T.ReadCurrent", UPDATE_CONSISTENCY)
                     .build()
             )
+            .addProperty(
+                // Bounds the storage scan visibleAll / visibleAllOrError
+                // / firstVisibleOrNull issue against the driver when
+                // privacy pushdown is unavailable. Default 100 rows.
+                PropertySpec.builder("visibleOverfetchLimit", INT)
+                    .mutable(true)
+                    .initializer("100")
+                    .build()
+            )
             .addFunction(
                 FunSpec.builder("hooks")
                     .addParameter("block", hooksBlockLambda)
@@ -373,6 +397,7 @@ internal class ClientGenerator(
         block.addStatement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
         block.addStatement("transactionRequirement = cfg.transactionRequirement")
         block.addStatement("defaultUpdateConsistency = cfg.defaultUpdateConsistency")
+        block.addStatement("visibleOverfetchLimit = cfg.visibleOverfetchLimit")
         return block.build()
     }
 
@@ -388,6 +413,7 @@ internal class ClientGenerator(
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -486,6 +512,7 @@ internal class ClientGenerator(
         body.addStatement("scoped.privacyContextProvider = { context }")
         body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
         body.addStatement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("scoped.visibleOverfetchLimit = this.visibleOverfetchLimit")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -518,6 +545,7 @@ internal class ClientGenerator(
         body.addStatement("fixed.privacyContextProvider = { context }")
         body.addStatement("fixed.transactionRequirement = this.transactionRequirement")
         body.addStatement("fixed.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("fixed.visibleOverfetchLimit = this.visibleOverfetchLimit")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("fixed.%L.copyHooksFrom(this.%L)", propName, propName)

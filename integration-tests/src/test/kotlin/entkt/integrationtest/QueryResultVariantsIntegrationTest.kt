@@ -307,4 +307,113 @@ class QueryResultVariantsIntegrationTest {
 
         assertNull(client.articles.query { where(Article.title eq "X") }.firstVisibleOrNull())
     }
+
+    // ---- visibleOverfetchLimit / cap ----
+
+    /** Build a client whose cap is intentionally small so cap-exhaustion is easy to trigger. */
+    private fun freshClientWithCap(
+        cap: Int,
+        viewer: Viewer,
+        articlePolicy: EntityPolicy<Article, ArticlePolicyScope>,
+    ): EntClient {
+        val driver = InMemoryDriver()
+        EntClient.SCHEMAS.forEach(driver::register)
+        return EntClient(driver) {
+            privacyContext { PrivacyContext(viewer) }
+            policies {
+                articles(articlePolicy)
+                users(OpenUser)
+            }
+            visibleOverfetchLimit = cap
+        }
+    }
+
+    private fun seedNArticles(client: EntClient, n: Int) {
+        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            repeat(n) { i ->
+                sys.articles.create {
+                    title = "Article-$i"
+                    published = true
+                    authorId = author.id
+                }.saveOrThrow()
+            }
+        }
+    }
+
+    @Test
+    fun `visibleAll caps the storage scan at visibleOverfetchLimit`() {
+        val client = freshClientWithCap(
+            cap = 3,
+            viewer = Viewer.User(1L),
+            articlePolicy = AllowAllArticles,
+        )
+        seedNArticles(client, n = 10)
+
+        // 10 rows exist but the cap pulls only 3.
+        val visible = client.articles.query().visibleAll()
+        assertEquals(3, visible.size)
+    }
+
+    @Test
+    fun `visibleAllOrError returns Err(OverfetchCapExceeded) when cap is hit`() {
+        val client = freshClientWithCap(
+            cap = 3,
+            viewer = Viewer.User(1L),
+            articlePolicy = AllowAllArticles,
+        )
+        seedNArticles(client, n = 10)
+
+        val result = client.articles.query().visibleAllOrError()
+        assertTrue(result is EntResult.Err)
+        val error = result.error
+        assertTrue(error is EntError.OverfetchCapExceeded)
+        assertEquals("Article", error.entity)
+        assertEquals(EntOperation.QUERY, error.operation)
+        assertEquals(3, error.cap)
+    }
+
+    @Test
+    fun `visibleAllOrError returns Ok when query naturally fits inside the cap`() {
+        val client = freshClientWithCap(
+            cap = 100,
+            viewer = Viewer.User(1L),
+            articlePolicy = AllowAllArticles,
+        )
+        seedNArticles(client, n = 3)
+
+        val result = client.articles.query().visibleAllOrError()
+        assertTrue(result is EntResult.Ok)
+        assertEquals(3, result.value.size)
+    }
+
+    @Test
+    fun `visibleAllOrError respects user queryLimit when smaller than cap`() {
+        val client = freshClientWithCap(
+            cap = 100,
+            viewer = Viewer.User(1L),
+            articlePolicy = AllowAllArticles,
+        )
+        seedNArticles(client, n = 10)
+
+        // queryLimit 2 < cap 100 → no cap exhaustion, return at most 2.
+        val result = client.articles.query { limit(2) }.visibleAllOrError()
+        assertTrue(result is EntResult.Ok)
+        assertEquals(2, result.value.size)
+    }
+
+    @Test
+    fun `firstVisibleOrNull cap-exhaustion is silent (returns null)`() {
+        // All articles deny, cap = 3 — firstVisibleOrNull scans 3
+        // rows, finds none visible, returns null. No Err surface
+        // here per the RFC's optimistic-read shape.
+        val client = freshClientWithCap(
+            cap = 3,
+            viewer = Viewer.User(1L),
+            articlePolicy = denyAllArticles,
+        )
+        seedNArticles(client, n = 10)
+
+        assertNull(client.articles.query().firstVisibleOrNull())
+    }
 }

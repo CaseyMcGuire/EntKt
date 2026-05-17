@@ -143,7 +143,7 @@ internal class QueryGenerator(
             .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
             .addFunction(buildAllOrError(schemaName, entityClass))
             .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
-            .addFunction(buildVisibleAllOrError(schemaName, entityClass))
+            .addFunction(buildVisibleAllOrError(schemaName, entityClass, hasEdges))
             .addFunction(buildFirstOrNull(schemaName, entityClass, hasEdges))
             .addFunction(buildFirstOrThrow(schemaName, entityClass))
             .addFunction(buildFirstOrError(schemaName, entityClass))
@@ -230,10 +230,13 @@ internal class QueryGenerator(
      * triggering an exception. Driver failures still propagate as
      * raw exceptions; use [visibleAllOrError] for the structured form.
      *
-     * V1 has no overfetch cap wired here yet — every matching row is
-     * pulled and filtered in-process. The cap (`EntClientConfig
-     * .visibleOverfetchLimit`) will bound the storage scan in a
-     * future sub-phase.
+     * Bounded by `EntClientConfig.visibleOverfetchLimit` (default
+     * 100): the storage scan is capped at `min(queryLimit ?: cap,
+     * cap)` rows so a few visible rows hidden behind many denied
+     * ones don't pull an unbounded result set into memory. Cap
+     * exhaustion is silent on this path — the caller gets whatever
+     * was visible within the budget; `visibleAllOrError` is the
+     * variant that surfaces cap-exhausted as an explicit Err.
      */
     private fun buildVisibleAll(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -242,8 +245,9 @@ internal class QueryGenerator(
             .returns(listType)
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
             .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
                 entityClass,
             )
             .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
@@ -274,19 +278,63 @@ internal class QueryGenerator(
 
     /**
      * `visibleAllOrError(): EntResult<List<T>>` — structured-result
-     * filter-only bulk read. Wraps [visibleAll]; the only failure
-     * surface is driver exceptions (privacy denial never escapes
-     * `visibleAll` because it's filtered to a `false` decision).
+     * filter-only bulk read.
+     *
+     * Returns `Err(OverfetchCapExceeded)` when the storage scan hit
+     * `EntClientConfig.visibleOverfetchLimit` (meaning more matching
+     * rows may exist beyond the cap that we didn't filter). The
+     * detection is conservative: "rows returned == cap" triggers
+     * the Err even if the actual row count is exactly `cap` —
+     * callers either re-query with a larger cap, paginate via
+     * `queryOffset`, or accept the partial result. Otherwise wraps
+     * [visibleAll]; the only other failure surface is driver
+     * exceptions (privacy denial never escapes `visibleAll` because
+     * it's filtered to a `false` decision).
      */
-    private fun buildVisibleAllOrError(schemaName: String, entityClass: ClassName): FunSpec {
+    private fun buildVisibleAllOrError(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val listType = List::class.asClassName().parameterizedBy(entityClass)
         val resultType = ENT_RESULT.parameterizedBy(listType)
-        return FunSpec.builder("visibleAllOrError")
+        val builder = FunSpec.builder("visibleAllOrError")
             .returns(resultType)
             .addCode(
                 CodeBlock.builder()
                     .add("return try {\n")
-                    .add("  %T.Ok(visibleAll())\n", ENT_RESULT)
+                    .add("  val c = requireClient()\n")
+                    .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add("  val cap = c.visibleOverfetchLimit\n")
+                    .add("  val scanLimit = minOf(queryLimit ?: cap, cap)\n")
+                    .add(
+                        "  val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)\n",
+                        entityClass,
+                    )
+                    .add(
+                        "  val results = rows.map { %T.fromRow(it) }\n",
+                        entityClass,
+                    )
+                    .add("  val visible = if (!c.%L.hasLoadPrivacy()) results else results.filter { e ->\n", repoPropName)
+                    .add(
+                        "    try { c.%L.evaluateLoadPrivacy(privacy, e); true } catch (_: %T) { false }\n",
+                        repoPropName, PRIVACY_DENIED,
+                    )
+                    .add("  }\n")
+                    // Cap exhaustion: we asked the driver for `cap`
+                    // rows and got exactly that many. Possible
+                    // false positive if there were exactly `cap`
+                    // rows total — see KDoc.
+                    .add("  val capturedLimit = queryLimit\n")
+                    .add("  if (rows.size >= cap && (capturedLimit == null || capturedLimit > cap)) {\n")
+                    .add(
+                        "    %T.Err(%T.OverfetchCapExceeded(%S, %T.QUERY, cap))\n",
+                        ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
+                    )
+                    .add("  } else {\n")
+                    .add(
+                        "    %T.Ok(%L)\n",
+                        ENT_RESULT,
+                        if (hasEdges) "loadEdges(visible, privacy)" else "visible",
+                    )
+                    .add("  }\n")
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
@@ -295,7 +343,7 @@ internal class QueryGenerator(
                     .add("}\n")
                     .build(),
             )
-            .build()
+        return builder.build()
     }
 
     /**
@@ -374,14 +422,16 @@ internal class QueryGenerator(
     /**
      * `firstVisibleOrNull(): T?` — scans matched rows in storage
      * order and returns the first row LOAD privacy allows. Returns
-     * `null` if no matched row is visible. Driver failures still
-     * propagate as raw exceptions.
+     * `null` if no matched row is visible OR if the cap was
+     * exhausted before finding one. Driver failures still propagate
+     * as raw exceptions.
      *
-     * V1 has no overfetch cap wired here yet — scanning is bounded
-     * only by the query's `queryLimit` (if set) or the natural end
-     * of the storage match. The cap (`EntClientConfig
-     * .visibleOverfetchLimit`) will bound the scan in a future
-     * sub-phase.
+     * Bounded by `EntClientConfig.visibleOverfetchLimit` (default
+     * 100): scans at most `min(queryLimit ?: cap, cap)` rows from
+     * storage. Per the RFC, cap-exhaustion is silent here — the
+     * "no visible row found within the work budget" outcome is
+     * indistinguishable from genuine absence, which is fine for the
+     * optimistic-read shape this method advertises.
      */
     private fun buildFirstVisibleOrNull(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -389,8 +439,9 @@ internal class QueryGenerator(
             .returns(entityClass.copy(nullable = true))
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
             .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
                 entityClass,
             )
         builder.addCode(

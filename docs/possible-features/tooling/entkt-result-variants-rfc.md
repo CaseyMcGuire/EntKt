@@ -35,12 +35,17 @@ the query side `firstOrThrow` / `firstOrNull` / `firstVisibleOrNull` /
 `firstOrError`, plus `allOrThrow` / `allOrError` / `visibleAll` /
 `visibleAllOrError`. The legacy `all()` is removed in favor of
 `allOrThrow()` for the same explicit-naming reason. The
-`EntClientConfig.visibleOverfetchLimit` cap is **not yet wired** —
-V1 `visibleAll` / `firstVisibleOrNull` scan the full storage match
-without an upper bound; the cap will land alongside
-`EntError.OverfetchCapExceeded` in a follow-up sub-phase. The
-`withTransactionOrError` helper and bulk `*OrError` variants are
-also not yet generated.
+`EntClientConfig.visibleOverfetchLimit` cap (default 100) is wired
+into `visibleAll` / `visibleAllOrError` / `firstVisibleOrNull`: the
+storage scan is bounded by `min(queryLimit ?: cap, cap)`.
+`visibleAllOrError` surfaces cap-exhaustion as
+`Err(OverfetchCapExceeded)` (conservatively: any time the driver
+returns `cap` rows and the caller didn't explicitly set a smaller
+queryLimit). `visibleAll` and `firstVisibleOrNull` are silent on
+cap-exhaustion per the RFC's optimistic-read shape — the caller
+sees the partial / `null` outcome and decides whether to re-query.
+The `withTransactionOrError` helper and bulk `*OrError` variants are
+not yet generated.
 
 ## Summary
 
