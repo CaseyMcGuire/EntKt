@@ -2,7 +2,7 @@
 
 ## Status
 
-**Partially implemented.** The core `EntResult` / `EntError` types and the
+**Implemented.** The core `EntResult` / `EntError` types and the
 `EntException` hierarchy are defined. `Driver.classifyException(...)` is the
 classifier extension point: it returns `EntError.ConstraintViolation` for
 SQLSTATE `23xxx` on `PostgresDriver` and for the `InMemoryDriver`'s own
@@ -81,6 +81,20 @@ removed (not deprecated). Per-row Err short-circuits with the first
 failure; the caller's tx isn't auto-rolled-back — composing with
 `withTransactionOrError` + `bind()` is the idiomatic
 all-or-nothing pattern.
+
+End-to-end Postgres integration coverage
+(`SqlstateConstraintMappingPostgresIntegrationTest`) pins SQLSTATE
+23505 / 23503 surfaces as `Err(ConstraintViolation)` with the
+SQLSTATE code and ServerErrorMessage constraint metadata against
+the generated create/update *OrError paths on a real Postgres
+container.
+
+The remaining RFC entries — bulk batch-result helpers
+(`createManyBatchOrError` returning `EntBatchResult<T>`) and the
+optimistic-locking `Err(Conflict)` path — are deferred per the
+RFC's own scoping ("V1 status: Err(Conflict) is not a reachable
+outcome for V1 owner-edge mutations… reserved for a future
+optimistic-concurrency RFC").
 
 ## Summary
 
