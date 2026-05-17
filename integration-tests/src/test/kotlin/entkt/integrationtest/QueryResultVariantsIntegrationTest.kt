@@ -196,6 +196,49 @@ class QueryResultVariantsIntegrationTest {
     }
 
     @Test
+    fun `visibleAllOrError eager-edge denial wins over cap exhaustion`() {
+        // Setup: many articles (10), small cap (3), eager-loaded
+        // user is denied. Before the fix, cap exhaustion fired BEFORE
+        // loadEdges was called, so Err(OverfetchCapExceeded) shadowed
+        // the eager-edge PrivacyDenied — caller couldn't tell that
+        // their query was reading rows whose targets they can't see.
+        // After the fix, loadEdges runs first; its PrivacyDenied
+        // wins the Err.
+        val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
+            override fun configure(scope: UserPolicyScope) = scope.run {
+                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
+            }
+        }
+        val driver = InMemoryDriver()
+        EntClient.SCHEMAS.forEach(driver::register)
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies {
+                articles(AllowAllArticles)
+                users(denyAllUsers)
+            }
+            visibleOverfetchLimit = 3
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            repeat(10) { i ->
+                sys.articles.create {
+                    title = "A-$i"
+                    published = true
+                    authorId = author.id
+                }.saveOrThrow()
+            }
+        }
+
+        val result = client.articles.query { withAuthor() }.visibleAllOrError()
+        assertTrue(result is EntResult.Err)
+        assertTrue(
+            result.error is EntError.PrivacyDenied,
+            "Eager-edge PrivacyDenied should win over OverfetchCapExceeded; got ${result.error}",
+        )
+    }
+
+    @Test
     fun `visibleAllOrError maps eager-edge LOAD denial to Err(PrivacyDenied), not DriverFailure`() {
         // Article LOAD allows all; the *eager-loaded* User edge denies.
         // The visible-filter on Article doesn't drop the row (Article

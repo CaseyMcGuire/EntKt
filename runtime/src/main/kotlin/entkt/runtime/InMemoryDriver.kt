@@ -850,15 +850,57 @@ class InMemoryDriver : Driver {
 
     private fun evaluateLeaf(row: Map<String, Any?>, leaf: Predicate.Leaf): Boolean {
         val value = row[leaf.field]
+        // Three-valued logic to match Postgres semantics: NULL on
+        // either side of a comparison (other than IS_NULL /
+        // IS_NOT_NULL) produces NULL → predicate doesn't match. Used
+        // to be Kotlin == / Comparable comparisons that treated null
+        // as a normal value, which diverged from Postgres on NEQ,
+        // NOT_IN, lt/lte — and silently let tests pass in-memory but
+        // fail / change behavior on Postgres.
         return when (leaf.op) {
-            Op.EQ -> value == leaf.value
-            Op.NEQ -> value != leaf.value
-            Op.GT -> compare(value, leaf.value) > 0
-            Op.GTE -> compare(value, leaf.value) >= 0
-            Op.LT -> compare(value, leaf.value) < 0
-            Op.LTE -> compare(value, leaf.value) <= 0
-            Op.IN -> (leaf.value as Collection<*>).contains(value)
-            Op.NOT_IN -> !(leaf.value as Collection<*>).contains(value)
+            Op.EQ -> when {
+                value == null || leaf.value == null -> false
+                else -> value == leaf.value
+            }
+            Op.NEQ -> when {
+                value == null || leaf.value == null -> false
+                else -> value != leaf.value
+            }
+            Op.GT -> when {
+                value == null || leaf.value == null -> false
+                else -> compare(value, leaf.value) > 0
+            }
+            Op.GTE -> when {
+                value == null || leaf.value == null -> false
+                else -> compare(value, leaf.value) >= 0
+            }
+            Op.LT -> when {
+                value == null || leaf.value == null -> false
+                else -> compare(value, leaf.value) < 0
+            }
+            Op.LTE -> when {
+                value == null || leaf.value == null -> false
+                else -> compare(value, leaf.value) <= 0
+            }
+            Op.IN -> when {
+                value == null -> false
+                else -> (leaf.value as Collection<*>).contains(value)
+            }
+            // `NULL NOT IN (...)` is NULL in SQL. For `value IN list`
+            // where the list contains a NULL but value is non-null,
+            // Postgres also returns NULL (not false). We model that
+            // by returning false for value-NULL or list-contains-NULL
+            // cases.
+            Op.NOT_IN -> when (value) {
+                null -> false
+                else -> {
+                    val list = leaf.value as Collection<*>
+                    when {
+                        list.contains(null) -> false
+                        else -> !list.contains(value)
+                    }
+                }
+            }
             Op.IS_NULL -> value == null
             Op.IS_NOT_NULL -> value != null
             Op.CONTAINS -> (value as? String)?.contains(leaf.value as String) == true
@@ -923,17 +965,40 @@ class InMemoryDriver : Driver {
         return (a as Comparable<Any>).compareTo(b)
     }
 
+    /**
+     * Compare rows for ordering. NULLS LAST in both ASC and DESC
+     * (simpler-than-Postgres choice — Postgres defaults to NULLS
+     * FIRST on DESC, but our test-side gap from that nuance is
+     * narrow). The null-placement decision is made *before* applying
+     * direction so the direction negation doesn't accidentally flip
+     * null to the front on DESC.
+     */
     private fun comparatorFor(orderBy: List<OrderField>): Comparator<Map<String, Any?>> {
         return Comparator { left, right ->
             for (of in orderBy) {
-                val cmp = compare(left[of.field], right[of.field])
-                if (cmp != 0) {
-                    return@Comparator if (of.direction == OrderDirection.ASC) cmp else -cmp
+                val l = left[of.field]
+                val r = right[of.field]
+                // Nulls last regardless of direction — return directly
+                // so the trailing direction-negation only applies to
+                // the non-null comparison.
+                when {
+                    l == null && r == null -> {} // tie on this key, fall through to next
+                    l == null -> return@Comparator 1
+                    r == null -> return@Comparator -1
+                    else -> {
+                        val cmp = compareNonNull(l, r)
+                        if (cmp != 0) {
+                            return@Comparator if (of.direction == OrderDirection.ASC) cmp else -cmp
+                        }
+                    }
                 }
             }
             0
         }
     }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun compareNonNull(a: Any, b: Any): Int = (a as Comparable<Any>).compareTo(b)
 }
 
 /**

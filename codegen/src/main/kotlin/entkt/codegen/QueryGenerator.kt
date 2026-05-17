@@ -150,7 +150,8 @@ internal class QueryGenerator(
             .addFunction(buildFirstVisibleOrNull(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleCount(schemaName, entityClass))
             .addFunction(buildRawCount(schemaName, entityClass))
-            .addFunction(buildExists(schemaName, entityClass))
+            .addFunction(buildRawExists(entityClass))
+            .addFunction(buildVisibleExists(schemaName, entityClass))
             .addFunctions(buildExplainMethods(entityClass, schema, schemaNames))
             .addFunctions(traversalMethods)
             .build()
@@ -388,6 +389,19 @@ internal class QueryGenerator(
                         "    val visible = results.filter { e -> try { c.%L.evaluateLoadPrivacy(privacy, e); true } catch (_: %T) { false } }\n",
                         repoPropName, PRIVACY_DENIED,
                     )
+                    // Eager-load BEFORE checking the cap, so eager
+                    // target privacy denial (which raises
+                    // PrivacyDeniedException) wins over cap
+                    // exhaustion. Privacy denial is a hard signal
+                    // (caller should know about the mismatch); cap
+                    // exhaustion is a heuristic ("you should
+                    // paginate"). If both apply, the hard signal
+                    // surfaces through the dedicated
+                    // catch (PrivacyDeniedException) arm below.
+                    .add(
+                        "    val finalRows = %L\n",
+                        if (hasEdges) "loadEdges(visible, privacy)" else "visible",
+                    )
                     // Cap exhaustion (privacy path only): we asked
                     // the driver for `cap` rows and got at least that
                     // many. Suppress the Err only when the caller
@@ -399,11 +413,7 @@ internal class QueryGenerator(
                         ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
                     )
                     .add("    } else {\n")
-                    .add(
-                        "      %T.Ok(%L)\n",
-                        ENT_RESULT,
-                        if (hasEdges) "loadEdges(visible, privacy)" else "visible",
-                    )
+                    .add("      %T.Ok(finalRows)\n", ENT_RESULT)
                     .add("    }\n")
                     .add("  }\n")
                     // Eager-edge LOAD denial via loadEdges(...) can
@@ -632,24 +642,87 @@ internal class QueryGenerator(
     }
 
     /**
-     * Terminal op: check whether at least one matching row exists.
-     * Fetches one row and evaluates LOAD privacy on it. Throws
-     * [PrivacyDeniedException] if the row is denied.
+     * `rawExists(): Boolean` — fast existence check that skips
+     * privacy entirely. Returns true iff at least one storage row
+     * matches the predicate. Use this for "does this row exist at
+     * all?" semantics (uniqueness checks before insert, idempotency
+     * keys, etc.) where privacy of the caller is not the relevant
+     * question.
+     *
+     * Replaces the legacy `exists()` that fetched one row and threw
+     * `PrivacyDeniedException` if it was denied — neither "do any
+     * rows exist?" nor "is there a row I can see?" was the answer
+     * you got, which surprised callers. Use [visibleExists] for the
+     * privacy-aware variant.
      */
-    private fun buildExists(schemaName: String, entityClass: ClassName): FunSpec {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        return FunSpec.builder("exists")
+    private fun buildRawExists(entityClass: ClassName): FunSpec {
+        return FunSpec.builder("rawExists")
             .returns(BOOLEAN)
-            .addStatement("val c = requireClient()")
-            .addStatement("val privacy = c.currentPrivacyContext()")
+            .addKdoc(
+                "Fast existence check; skips LOAD privacy. Returns true iff at least one\n" +
+                "storage row matches the predicate. Pair with [visibleExists] for the\n" +
+                "privacy-aware variant.",
+            )
+            .addStatement("requireClient()")
             .addStatement(
-                "val row = driver.query(%T.TABLE, predicates, orderFields, 1, queryOffset).firstOrNull() ?: return false",
+                "return driver.query(%T.TABLE, predicates, emptyList(), 1, queryOffset).isNotEmpty()",
                 entityClass,
             )
-            .addStatement("val entity = %T.fromRow(row)", entityClass)
-            .addStatement("if (c.%L.hasLoadPrivacy()) c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName, repoPropName)
-            .addStatement("return true")
             .build()
+    }
+
+    /**
+     * `visibleExists(): Boolean` — privacy-aware existence check.
+     * Returns true iff at least one storage row matches the
+     * predicate AND the current viewer can LOAD it. Scans storage
+     * order, bounded by `EntClientConfig.visibleOverfetchLimit`
+     * (same cap as `firstVisibleOrNull`), and returns true on the
+     * first visible row. Cap-exhausted-with-no-visible is silent
+     * (returns false), matching the optimistic-read shape used by
+     * `firstVisibleOrNull`.
+     *
+     * No-privacy fast path: when the repo has no LOAD rules, falls
+     * through to [rawExists] semantics (single-row probe, no cap).
+     */
+    private fun buildVisibleExists(schemaName: String, entityClass: ClassName): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val builder = FunSpec.builder("visibleExists")
+            .returns(BOOLEAN)
+            .addKdoc(
+                "Privacy-aware existence check. Returns true iff at least one storage row\n" +
+                "matches AND the viewer can LOAD it. Bounded by `visibleOverfetchLimit` on\n" +
+                "the privacy path; cap-exhausted-with-no-visible returns false silently.",
+            )
+            .addStatement("val c = requireClient()")
+            .addStatement("val privacy = c.currentPrivacyContext()")
+        builder.addCode(
+            CodeBlock.builder()
+                // No-privacy fast path: single-row probe, no cap.
+                .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+                .addStatement(
+                    "return driver.query(%T.TABLE, predicates, emptyList(), 1, queryOffset).isNotEmpty()",
+                    entityClass,
+                )
+                .endControlFlow()
+                // Privacy path: cap the scan, return true on first
+                // visible row, false if cap exhausted or no rows.
+                .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
+                .addStatement(
+                    "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
+                    entityClass,
+                )
+                .beginControlFlow("for (row in rows)")
+                .addStatement("val entity = %T.fromRow(row)", entityClass)
+                .beginControlFlow("try")
+                .addStatement("c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName)
+                .addStatement("return true")
+                .nextControlFlow("catch (_: %T)", PRIVACY_DENIED)
+                .endControlFlow()
+                .endControlFlow()
+                .addStatement("return false")
+                .build()
+        )
+        return builder.build()
     }
 
     /**

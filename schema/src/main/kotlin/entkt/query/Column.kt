@@ -22,20 +22,24 @@ open class Column<T>(val name: String) {
         Predicate.Leaf(name, Op.IN, values.toList())
     open infix fun notIn(values: Collection<T>): Predicate =
         Predicate.Leaf(name, Op.NOT_IN, values.toList())
-
-    fun asc(): OrderField = OrderField(name, OrderDirection.ASC)
-    fun desc(): OrderField = OrderField(name, OrderDirection.DESC)
 }
 
 /**
- * A column whose type admits ordering. Adds the range predicates on top
- * of the base equality ops.
+ * A column whose type admits ordering. Adds the range predicates and
+ * the `asc()` / `desc()` order builders on top of the base equality
+ * ops. The asc/desc helpers are scoped here (not on [Column]) so that
+ * non-comparable columns (e.g. `BytesColumn` — `ByteArray` doesn't
+ * implement `Comparable`) reject `orderBy(col.asc())` at compile time
+ * instead of crashing inside the in-memory comparator at runtime.
  */
 open class ComparableColumn<T : Comparable<T>>(name: String) : Column<T>(name) {
     infix fun gt(value: T): Predicate = Predicate.Leaf(name, Op.GT, value)
     infix fun gte(value: T): Predicate = Predicate.Leaf(name, Op.GTE, value)
     infix fun lt(value: T): Predicate = Predicate.Leaf(name, Op.LT, value)
     infix fun lte(value: T): Predicate = Predicate.Leaf(name, Op.LTE, value)
+
+    fun asc(): OrderField = OrderField(name, OrderDirection.ASC)
+    fun desc(): OrderField = OrderField(name, OrderDirection.DESC)
 }
 
 /**
@@ -70,6 +74,15 @@ open class EnumColumn<E : Enum<E>>(name: String) : Column<E>(name) {
         Predicate.Leaf(name, Op.IN, values.map { it.name })
     override infix fun notIn(values: Collection<E>): Predicate =
         Predicate.Leaf(name, Op.NOT_IN, values.map { it.name })
+
+    // Enums serialize to their .name string; ordering is alphabetical
+    // on the name (not by ordinal). Declared here so EnumColumn can
+    // be used in orderBy(...) — the asc/desc helpers moved off the
+    // Column base to ComparableColumn, but enums aren't a
+    // ComparableColumn at the type level (the value type is E :
+    // Enum<E>, and we store the .name).
+    fun asc(): OrderField = OrderField(name, OrderDirection.ASC)
+    fun desc(): OrderField = OrderField(name, OrderDirection.DESC)
 }
 
 class NullableColumn<T>(name: String) : Column<T>(name), Nullable

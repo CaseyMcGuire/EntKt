@@ -403,37 +403,55 @@ class PrivacyIntegrationTest {
     // ---- exists() ----
 
     @Test
-    fun `exists throws when the matched row is denied`() {
+    fun `visibleExists returns false when the only matching row is denied`() {
+        // The legacy `exists()` threw PrivacyDeniedException for this
+        // case (fetched the first row and checked LOAD on it). The
+        // new visibleExists silently returns false because the cap-
+        // exhausted-with-no-visible outcome matches "no visible row
+        // exists" — same optimistic-read shape as firstVisibleOrNull.
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
-        assertFailsWith<PrivacyDeniedException> {
-            client.articles.query {
-                where(Article.published eq false)
-            }.exists()
-        }
+        val result = client.articles.query {
+            where(Article.published eq false)
+        }.visibleExists()
+        assertFalse(result)
     }
 
     @Test
-    fun `exists returns true when the matched row is allowed`() {
+    fun `visibleExists returns true when at least one matching row is allowed`() {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
         val result = client.articles.query {
             where(Article.published eq true)
-        }.exists()
+        }.visibleExists()
         assertTrue(result)
     }
 
     @Test
-    fun `exists returns false when no rows match`() {
+    fun `visibleExists returns false when no rows match`() {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
         val result = client.articles.query {
             where(Article.title eq "nonexistent")
-        }.exists()
+        }.visibleExists()
         assertFalse(result)
+    }
+
+    @Test
+    fun `rawExists ignores LOAD privacy and returns true if any storage row matches`() {
+        // The denied-draft case that visibleExists returns false for:
+        // rawExists doesn't care about privacy, so it sees the
+        // existing-in-storage row and returns true.
+        val client = freshClient(Viewer.Anonymous)
+        seedData(client)
+
+        val result = client.articles.query {
+            where(Article.published eq false)
+        }.rawExists()
+        assertTrue(result)
     }
 
     // ---- CREATE privacy ----

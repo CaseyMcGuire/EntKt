@@ -200,19 +200,33 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `generates exists terminal method`() {
+    fun `generates rawExists and visibleExists terminal methods — legacy exists() removed`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun exists(): Boolean")) {
-            "Should generate exists(): Boolean\n$output"
+        // The legacy `exists()` that fetched the first row and threw
+        // PrivacyDeniedException if it was denied has been removed
+        // (neither "any row exists?" nor "row I can see exists?" was
+        // the answer you got).
+        assert(!output.contains("public fun exists(): Boolean")) {
+            "Legacy exists() should be removed in favor of rawExists / visibleExists\n$output"
         }
-        assert(output.contains("driver.query(Car.TABLE, predicates, orderFields, 1, queryOffset)")) {
-            "exists() should fetch one row via driver.query\n$output"
+        assert(output.contains("public fun rawExists(): Boolean")) {
+            "Should generate rawExists(): Boolean\n$output"
         }
+        assert(output.contains("public fun visibleExists(): Boolean")) {
+            "Should generate visibleExists(): Boolean\n$output"
+        }
+        // rawExists bypasses LOAD privacy — it just probes one
+        // storage row via driver.query and checks emptiness.
+        assert(output.contains("driver.query(Car.TABLE, predicates, emptyList(), 1, queryOffset)")) {
+            "rawExists should probe via driver.query with limit=1, no privacy\n$output"
+        }
+        // visibleExists still calls evaluateLoadPrivacy on the
+        // privacy path.
         assert(output.contains("evaluateLoadPrivacy")) {
-            "exists() should evaluate LOAD privacy\n$output"
+            "visibleExists should evaluate LOAD privacy on the privacy path\n$output"
         }
     }
 

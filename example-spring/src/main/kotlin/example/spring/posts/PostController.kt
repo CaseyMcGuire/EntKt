@@ -105,7 +105,7 @@ class PostController(private val client: EntClient) {
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Tag not found")
         val alreadyLinked = client.postTags.query {
             where((PostTag.postId eq id) and (PostTag.tagId eq req.tagId))
-        }.exists()
+        }.rawExists()
         if (!alreadyLinked) {
             client.postTags.create {
                 this.postId = post.id
