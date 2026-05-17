@@ -402,8 +402,30 @@ sealed interface EntError {
         val cause: Throwable,
         override val message: String = cause.message ?: "driver failure",
     ) : EntError
+
+    data class WriteSucceededLoadDenied(
+        override val entity: String,
+        override val operation: EntOperation,  // CREATE or UPDATE
+        val id: Any?,
+        val reason: String,
+        override val message: String =
+            "$entity write succeeded but post-write LOAD denied: $reason",
+    ) : EntError
 }
 ```
+
+`WriteSucceededLoadDenied` is the "you wrote it but you can't see it"
+outcome on `create { ... }.saveOrError()` / `update(id) { ... }.saveOrError()`:
+the database write committed (or staged inside the open transaction),
+the after-write hooks ran, and then the returned-entity LOAD privacy
+check denied the viewer. Without this distinct variant, the post-write
+denial would collapse to `Err(PrivacyDenied(CREATE/UPDATE))` and
+callers treating `Err` as "the operation didn't happen" would be wrong
+— the row is in the DB. The `id` is always populated (the codegen
+wraps at a scope where the hydrated entity is in scope), so callers
+can audit or schedule compensating work for the row they can't see.
+The helper does not roll back the surrounding tx; composing with
+`withTransactionOrError + .bind()` is the all-or-nothing path.
 
 Validation violations should preserve field and code metadata.
 

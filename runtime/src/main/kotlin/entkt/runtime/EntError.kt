@@ -152,6 +152,44 @@ sealed interface EntError {
     ) : EntError
 
     /**
+     * The mutation's database write committed (or, inside a still-open
+     * transaction, is staged to commit), but the post-write LOAD
+     * privacy check on the returned entity denied the viewer. The
+     * caller cannot read what they just wrote.
+     *
+     * This is **distinct from [PrivacyDenied]**: a `PrivacyDenied(CREATE)`
+     * means the write was rejected before it happened, but a
+     * `WriteSucceededLoadDenied(CREATE)` means the write happened and
+     * the caller just can't see the result. Without the separate
+     * variant, both would land as `PrivacyDenied` and callers treating
+     * `Err` as "operation didn't happen" would be wrong for the second
+     * case.
+     *
+     * Surfaced by `create { ... }.saveOrError()` and
+     * `update(id) { ... }.saveOrError()` only; the DELETE path has no
+     * post-write LOAD check.
+     *
+     * The [id] is the newly-written entity's id (always populated by
+     * codegen — the wrap happens at a scope where the hydrated entity
+     * is in scope). Useful for callers who want to schedule
+     * compensating work or audit the write they can't see.
+     *
+     * **Transaction semantics:** the helper does not roll back; if
+     * the caller was inside a plain `withTransaction { ... }` the row
+     * commits even though `Err` was returned. Inside
+     * `withTransactionOrError { ... }.bind()` the abort rolls back as
+     * usual. Same caveat as `createManyOrError` per-row Err.
+     */
+    data class WriteSucceededLoadDenied(
+        override val entity: String,
+        override val operation: EntOperation,
+        val id: Any?,
+        val reason: String,
+        override val message: String =
+            "$entity write succeeded but post-write LOAD denied: $reason",
+    ) : EntError
+
+    /**
      * Convert this error to the matching [EntException] subclass.
      * Used by [EntResult.getOrThrow] and the RFC's example handler;
      * also useful for code that receives an `EntResult` from a
@@ -167,6 +205,7 @@ sealed interface EntError {
         is Conflict -> EntConflictException(this)
         is DriverFailure -> EntDriverException(this)
         is OverfetchCapExceeded -> EntOverfetchCapExceededException(this)
+        is WriteSucceededLoadDenied -> EntWriteSucceededLoadDeniedException(this)
     }
 }
 

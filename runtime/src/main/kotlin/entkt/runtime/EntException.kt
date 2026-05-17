@@ -61,3 +61,22 @@ class EntDriverException(
 class EntOverfetchCapExceededException(
     val overfetchCapExceeded: EntError.OverfetchCapExceeded,
 ) : EntException(overfetchCapExceeded)
+
+/**
+ * Thrown when a generated `create { ... }.saveOrThrow()` or
+ * `update(id) { ... }.saveOrThrow()` had its database write succeed
+ * but the post-write LOAD privacy check denied the viewer.
+ *
+ * The write IS committed (or staged inside the open transaction);
+ * the caller just can't read what they wrote. The [id] is preserved
+ * on `writeSucceededLoadDenied.id` so the caller can audit or
+ * schedule compensating work for the row they can't see.
+ *
+ * Surfaced by `getOrThrow()` on a `Err(WriteSucceededLoadDenied)`
+ * result; the distinct exception type lets callers `catch` it
+ * separately from `EntPrivacyDeniedException` (which means
+ * "the write was rejected up-front and did not happen").
+ */
+class EntWriteSucceededLoadDeniedException(
+    val writeSucceededLoadDenied: EntError.WriteSucceededLoadDenied,
+) : EntException(writeSucceededLoadDenied)

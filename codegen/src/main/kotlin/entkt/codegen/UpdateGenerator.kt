@@ -1544,7 +1544,27 @@ internal class UpdateGenerator(
         }
 
         builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
+        // Post-write LOAD privacy check — wrap a denial into the
+        // structured EntWriteSucceededLoadDeniedException so
+        // saveOrError can distinguish "write happened but you can't
+        // see it" (Err(WriteSucceededLoadDenied)) from "write
+        // rejected up-front" (Err(PrivacyDenied(UPDATE))). Without
+        // the wrap, both would collapse to PrivacyDenied and
+        // callers couldn't tell whether the write actually
+        // happened.
+        builder.beginControlFlow("try")
         builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, updatedEntity)", repoPropName)
+        builder.nextControlFlow(
+            "catch (e: %T)",
+            ClassName("entkt.runtime", "PrivacyDeniedException"),
+        )
+        builder.addStatement(
+            "throw %T(%T.WriteSucceededLoadDenied(e.entity, %T.UPDATE, updatedEntity.id, e.reason))",
+            ClassName("entkt.runtime", "EntWriteSucceededLoadDeniedException"),
+            ENT_ERROR,
+            ENT_OPERATION,
+        )
+        builder.endControlFlow()
         builder.addStatement("return updatedEntity")
         builder.nextControlFlow("finally")
         builder.addStatement("_capturedPendingEdges = null")

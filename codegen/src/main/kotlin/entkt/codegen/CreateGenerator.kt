@@ -494,9 +494,24 @@ internal class CreateGenerator(
     }
 
     /**
-     * Emit LOAD privacy enforcement on the returned entity. If denied,
-     * the write has already succeeded but the caller gets a
-     * [PrivacyDeniedException] explaining why they cannot see it.
+     * Emit LOAD privacy enforcement on the just-written entity. The
+     * write has already succeeded; if LOAD denies, the caller can't
+     * read what they wrote.
+     *
+     * Wraps the raw `PrivacyDeniedException` (which carries
+     * `operation = LOAD`) into the structured
+     * [EntWriteSucceededLoadDeniedException] carrying the new entity
+     * id. This makes the "write happened but you can't see it" case
+     * distinguishable from "write rejected up-front" — the former
+     * surfaces as `Err(WriteSucceededLoadDenied)` through
+     * `saveOrError`, the latter as `Err(PrivacyDenied(CREATE))`.
+     * Without the wrap, both would collapse to `PrivacyDenied` and
+     * callers couldn't tell whether the write actually happened.
+     *
+     * The wrap throws a [EntException] subclass, which the existing
+     * `saveOrError` `catch (EntException) { Err(e.error) }` arm
+     * picks up unchanged — no per-generator wiring needed at the
+     * catch site.
      */
     private fun emitLoadPrivacyOnReturn(
         builder: FunSpec.Builder,
@@ -504,7 +519,17 @@ internal class CreateGenerator(
         entityVar: String,
     ) {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        builder.beginControlFlow("try")
         builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, %L)", repoPropName, entityVar)
+        builder.nextControlFlow("catch (e: %T)", PRIVACY_DENIED_EXCEPTION)
+        builder.addStatement(
+            "throw %T(%T.WriteSucceededLoadDenied(e.entity, %T.CREATE, %L.id, e.reason))",
+            ClassName("entkt.runtime", "EntWriteSucceededLoadDeniedException"),
+            ENT_ERROR,
+            ENT_OPERATION,
+            entityVar,
+        )
+        builder.endControlFlow()
     }
 
     /**
