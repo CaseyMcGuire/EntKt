@@ -1,0 +1,150 @@
+package entkt.integrationtest
+
+import entkt.integrationtest.ent.Article
+import entkt.integrationtest.ent.ArticleLoadPrivacyRule
+import entkt.integrationtest.ent.ArticlePolicyScope
+import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.User
+import entkt.integrationtest.ent.UserLoadPrivacyRule
+import entkt.integrationtest.ent.UserPolicyScope
+import entkt.runtime.EntError
+import entkt.runtime.EntOperation
+import entkt.runtime.EntResult
+import entkt.runtime.EntityPolicy
+import entkt.runtime.InMemoryDriver
+import entkt.runtime.PrivacyContext
+import entkt.runtime.PrivacyDecision
+import entkt.runtime.TransactionRequiredException
+import entkt.runtime.Viewer
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+
+/**
+ * End-to-end coverage for `createManyOrError` (Phase 6c).
+ *
+ * The legacy throwing `createMany(*blocks): List<T>` is removed; this
+ * suite pins the structured-result variant's contract:
+ *
+ *  - Transaction-required: throws TransactionRequiredException outside
+ *    a tx, regardless of the client-level TransactionRequirement
+ *    (the helper's all-or-nothing semantics require a tx).
+ *  - Zero-blocks: returns Ok(emptyList()) without preflight.
+ *  - Per-row failure: returns Err for the first failing block; the
+ *    caller's tx is *not* rolled back by this helper (caller decides
+ *    via bind() inside withTransactionOrError).
+ */
+class CreateManyOrErrorIntegrationTest {
+
+    private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
+        override fun configure(scope: ArticlePolicyScope) = scope.run {
+            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+        }
+    }
+
+    private object OpenUser : EntityPolicy<User, UserPolicyScope> {
+        override fun configure(scope: UserPolicyScope) = scope.run {
+            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+        }
+    }
+
+    private fun freshClient(): EntClient {
+        val driver = InMemoryDriver()
+        EntClient.SCHEMAS.forEach(driver::register)
+        return EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+        }
+    }
+
+    @Test
+    fun `zero-block call returns Ok(emptyList()) outside any tx`() {
+        val client = freshClient()
+        val result = client.users.createManyOrError()
+        assertTrue(result is EntResult.Ok)
+        assertTrue(result.value.isEmpty())
+    }
+
+    @Test
+    fun `single-block call outside a tx throws TransactionRequiredException`() {
+        val client = freshClient()
+        val ex = assertFailsWith<TransactionRequiredException> {
+            client.users.createManyOrError({
+                name = "A"
+                email = "a@example.com"
+            })
+        }
+        assertTrue(ex.message!!.contains("createManyOrError"))
+        // No row inserted — the preflight rejected before any block ran.
+        assertEquals(0L, client.users.query().rawCount())
+    }
+
+    @Test
+    fun `multi-block call inside a tx returns Ok with all created entities`() {
+        val client = freshClient()
+
+        val result = client.withTransaction { tx ->
+            tx.users.createManyOrError(
+                { name = "A"; email = "a@example.com" },
+                { name = "B"; email = "b@example.com" },
+                { name = "C"; email = "c@example.com" },
+            )
+        }
+
+        assertTrue(result is EntResult.Ok)
+        val users = result.value
+        assertEquals(3, users.size)
+        assertEquals(setOf("A", "B", "C"), users.map { it.name }.toSet())
+
+        // Rows persisted via the committed tx.
+        assertEquals(3L, client.users.query().rawCount())
+    }
+
+    @Test
+    fun `per-row failure returns Err for the first failing block`() {
+        val client = freshClient()
+        // Seed a user so block 2 trips the unique-email constraint.
+        client.users.create { name = "Existing"; email = "dup@example.com" }.saveOrThrow()
+
+        val result = client.withTransaction { tx ->
+            tx.users.createManyOrError(
+                { name = "A"; email = "a@example.com" },
+                { name = "B"; email = "dup@example.com" },  // unique violation
+                { name = "C"; email = "c@example.com" },
+            )
+        }
+
+        assertTrue(result is EntResult.Err)
+        val error = result.error
+        assertTrue(error is EntError.ConstraintViolation)
+        assertEquals(EntOperation.CREATE, error.operation)
+        assertEquals("User", error.entity)
+        assertEquals("23505", error.code)
+    }
+
+    @Test
+    fun `Err inside withTransactionOrError + bind() rolls back the entire tx`() {
+        val client = freshClient()
+        client.users.create { name = "Existing"; email = "dup@example.com" }.saveOrThrow()
+
+        // Combine createManyOrError with withTransactionOrError +
+        // bind() — the classic all-or-nothing usage. bind() on the
+        // Err triggers the rollback at the boundary.
+        val result = client.withTransactionOrError<List<User>> { tx ->
+            tx.users.createManyOrError(
+                { name = "A"; email = "a@example.com" },
+                { name = "B"; email = "dup@example.com" },
+            ).bind()
+        }
+
+        assertTrue(result is EntResult.Err)
+        assertTrue(result.error is EntError.ConstraintViolation)
+
+        // Rollback verified: only the originally-seeded user survives.
+        assertEquals(1L, client.users.query().rawCount())
+    }
+}

@@ -791,32 +791,40 @@ class PrivacyIntegrationTest {
     // ---- Bulk convenience methods ----
 
     @Test
-    fun `createMany enforces per-row CREATE privacy`() {
+    fun `createManyOrError surfaces per-row CREATE privacy denial as Err`() {
         val client = freshClient(Viewer.Anonymous)
         val user = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
             sys.users.create { name = "U"; email = "u@test.com" }.save()
         }
 
-        // Anonymous can't create — should fail on the first item
-        assertFailsWith<PrivacyDeniedException> {
-            client.articles.createMany(
+        // Anonymous can't create — first item fails, helper returns
+        // Err with the matching EntError.PrivacyDenied. createManyOrError
+        // requires a tx, so wrap in withTransaction.
+        val result = client.withTransaction { tx ->
+            tx.articles.createManyOrError(
                 { title = "A"; published = true; authorId = user.id },
                 { title = "B"; published = true; authorId = user.id },
             )
         }
+        assertTrue(result is EntResult.Err)
+        assertTrue(result.error is EntError.PrivacyDenied)
     }
 
     @Test
-    fun `createMany succeeds for authenticated viewer`() {
+    fun `createManyOrError succeeds for authenticated viewer (inside tx)`() {
         val client = freshClient(Viewer.User(1L))
         val user = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
             sys.users.create { name = "U"; email = "u@test.com" }.save()
         }
 
-        val articles = client.articles.createMany(
-            { title = "A"; published = true; authorId = user.id },
-            { title = "B"; published = false; authorId = user.id },
-        )
+        val result = client.withTransaction { tx ->
+            tx.articles.createManyOrError(
+                { title = "A"; published = true; authorId = user.id },
+                { title = "B"; published = false; authorId = user.id },
+            )
+        }
+        assertTrue(result is EntResult.Ok)
+        val articles = result.value
         assertEquals(2, articles.size)
         assertEquals("A", articles[0].title)
         assertEquals("B", articles[1].title)

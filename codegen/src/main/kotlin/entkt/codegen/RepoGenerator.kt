@@ -187,7 +187,7 @@ internal class RepoGenerator(
             .addFunction(buildDeleteByIdOrError(schemaName, entityClass, idType))
             .also { builder ->
                 if (idStrategyName(schema) != "EXPLICIT") {
-                    builder.addFunction(buildCreateMany(entityClass, createLambda))
+                    builder.addFunction(buildCreateManyOrError(schemaName, entityClass, createLambda))
                 }
             }
             .addFunction(buildDeleteMany(schemaName, entityClass, candidateClass))
@@ -783,47 +783,89 @@ internal class RepoGenerator(
         return builder.build()
     }
 
-    private fun buildCreateMany(
+    /**
+     * `createManyOrError(*blocks): EntResult<List<T>>` — transaction-
+     * required structured-result bulk create. Per the RFC:
+     *
+     *  - Outside any transaction → throws
+     *    `TransactionRequiredException` at preflight (before any
+     *    per-row write). The check is harder than the regular
+     *    transactionRequirement: this is the helper's own
+     *    "transaction-required" contract, fires regardless of the
+     *    client-level `TransactionRequirement` setting.
+     *
+     *  - Inside a transaction → runs each block's `create().save()`;
+     *    first per-row failure (Err of any kind) short-circuits and
+     *    returns that Err. The caller's transaction is *not* rolled
+     *    back by this helper; the caller decides via `bind()` inside
+     *    `withTransactionOrError`, which propagates the Err and
+     *    triggers the rollback at the boundary.
+     *
+     *  - Zero blocks → `Ok(emptyList())` without any preflight or
+     *    write, mirroring the existing classify-empty-syntactically
+     *    rule from RFC #4.
+     *
+     * The legacy throwing `createMany(*blocks): List<T>` is REMOVED
+     * (not deprecated) per the "don't deprecate, remove" directive.
+     */
+    private fun buildCreateManyOrError(
+        schemaName: String,
         entityClass: ClassName,
         createLambda: LambdaTypeName,
     ): FunSpec {
-        // Classify by actual write count: 0 or 1 blocks = single-write
-        // (matches the per-block create() preflight); 2+ blocks =
-        // multi-write so RequiredForMultiWrite fires for the aggregate
-        // call even though each per-block create() preflight runs as
-        // single-write. RequiredForAllWrites fires either way (the
-        // multi-write flag doesn't change that branch). Without this
-        // outer preflight, RequiredForMultiWrite would silently
-        // accept a 5-block createMany outside a transaction because
-        // each delegated `create().save()` looks single-write to its
-        // own preflight.
-        //
-        // Zero-block calls short-circuit *before* the preflight,
-        // returning emptyList(). Vararg size is statically known on
-        // call entry — no I/O is needed to decide there's nothing to
-        // write — so this mirrors how update(id) { } reports NoChanges
-        // before the transaction-requirement check (per the RFC's
-        // "classify syntactically empty before any other observable
-        // work, including transaction requirement checks" rule). The
-        // contrast is deliberate against deleteMany(predicate), which
-        // requires a query to learn it has no work and therefore
-        // classifies by operation shape, not result size.
-        return FunSpec.builder("createMany")
+        val resultType = ENT_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
+        return FunSpec.builder("createManyOrError")
             .addParameter(
                 ParameterSpec.builder("blocks", createLambda)
                     .addModifiers(KModifier.VARARG)
                     .build()
             )
-            .returns(LIST.parameterizedBy(entityClass))
-            .addStatement("if (blocks.isEmpty()) return emptyList()")
+            .returns(resultType)
             .addStatement(
-                "client.checkTransactionRequirement(%S, multiWrite = blocks.size > 1)",
-                // Operation label intentionally distinct from "create" so
-                // diagnostics show the multi-write entry point, not the
-                // delegated single-write path that runs per block.
-                "${entityClass.simpleName} createMany",
+                "if (blocks.isEmpty()) return %T.Ok(emptyList())",
+                ENT_RESULT,
             )
-            .addStatement("return blocks.map { create(it).save() }")
+            // Hard transaction requirement: createManyOrError's
+            // all-or-nothing contract only holds inside a tx. We
+            // check driver.inTransaction directly instead of going
+            // through checkTransactionRequirement — the latter
+            // honors the client-level TransactionRequirement
+            // (Optional / RequiredForMultiWrite / RequiredForAllWrites)
+            // which can be configured to *not* require a tx, and
+            // we can't allow that for this helper.
+            .beginControlFlow("if (!driver.inTransaction)")
+            .addStatement(
+                "throw %T(%S)",
+                ClassName("entkt.runtime", "TransactionRequiredException"),
+                "$schemaName createManyOrError requires a transaction-scoped client",
+            )
+            .endControlFlow()
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  val results = blocks.map { create(it).saveOrError() }\n")
+                    // First Err wins; collect into a single Err result.
+                    .add("  val firstErr = results.firstOrNull { it is %T.Err }\n", ENT_RESULT)
+                    .add("  if (firstErr != null) {\n")
+                    .add("    firstErr as %T.Err\n", ENT_RESULT)
+                    .add("  } else {\n")
+                    .add(
+                        "    %T.Ok(results.map { (it as %T.Ok).value })\n",
+                        ENT_RESULT, ENT_RESULT,
+                    )
+                    .add("  }\n")
+                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
+                    .add("  %T.Err(e.error)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.CREATE))\n",
+                        ENT_RESULT,
+                        MemberName("entkt.runtime", "classifyDriverError"),
+                        schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
             .build()
     }
 

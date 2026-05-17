@@ -339,24 +339,34 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo exposes createMany with vararg blocks`() {
+    fun `repo exposes createManyOrError with vararg blocks — legacy createMany is removed`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun createMany(vararg blocks: CarCreate.() -> Unit): List<Car>")) {
-            "Should have createMany with vararg blocks\n$output"
+        // The legacy throwing `createMany(*blocks): List<Car>` is
+        // removed in favor of the structured-result variant per the
+        // Result Variants RFC. createManyOrError is transaction-
+        // required (preflight throws TransactionRequiredException
+        // outside a tx, regardless of the client's TransactionRequirement).
+        assert(!output.contains("public fun createMany(")) {
+            "Boolean-returning createMany should be removed\n$output"
+        }
+        assert(output.contains("fun createManyOrError(vararg blocks: CarCreate.() -> Unit): EntResult<List<Car>>")) {
+            "Should have createManyOrError with vararg blocks returning EntResult<List<Car>>\n$output"
         }
     }
 
     @Test
-    fun `createMany delegates to create and save for hook support`() {
+    fun `createManyOrError delegates to create and saveOrError for hook support`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("create(it).save()")) {
-            "createMany should delegate to create(block).save() so hooks fire\n$output"
+        // Each per-block create() goes through the normal saveOrError
+        // pipeline (hooks, privacy, validation, classification).
+        assert(output.contains("create(it).saveOrError()")) {
+            "createManyOrError should delegate to create(block).saveOrError() so hooks fire\n$output"
         }
     }
 

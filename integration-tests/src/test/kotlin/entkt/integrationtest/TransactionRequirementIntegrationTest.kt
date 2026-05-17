@@ -206,88 +206,41 @@ class TransactionRequirementIntegrationTest {
     }
 
     @Test
-    fun `zero-block createMany short-circuits before the transaction-requirement preflight`() {
-        // A `createMany()` with no blocks has nothing to write, and
-        // the vararg size is statically known on call entry — no I/O
-        // is needed to decide there's nothing to do. Mirrors how
-        // `update(id) { }` reports NoChanges before the preflight
-        // ("classify syntactically empty before any other observable
-        // work, including transaction requirement checks"). So even
-        // under the strictest requirement, an empty createMany returns
-        // emptyList() outside a transaction rather than throwing.
+    fun `zero-block createManyOrError short-circuits to Ok(emptyList()) outside a tx`() {
+        // createManyOrError is harder than the regular
+        // TransactionRequirement: it ALWAYS requires a tx (otherwise
+        // its all-or-nothing contract doesn't hold). The empty-blocks
+        // short-circuit fires before the tx check, mirroring the
+        // "classify syntactically empty before any other observable
+        // work" rule from RFC #4.
         val driver = freshDriver()
-        val client = EntClient(driver) {
-            transactionRequirement = TransactionRequirement.RequiredForAllWrites
-        }
-        val users = client.users.createMany()
-        assertEquals(0, users.size)
+        val client = EntClient(driver)
+        val result = client.users.createManyOrError()
+        assertEquals(entkt.runtime.EntResult.Ok<List<entkt.integrationtest.ent.User>>(emptyList()), result)
     }
 
     @Test
-    fun `zero-block createMany short-circuits under RequiredForMultiWrite too`() {
+    fun `createManyOrError throws TransactionRequiredException outside a tx (even with one block)`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
-            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
-        }
-        val users = client.users.createMany()
-        assertEquals(0, users.size)
-    }
-
-    @Test
-    fun `RequiredForMultiWrite accepts single-block createMany outside a transaction`() {
-        // createMany classifies by actual write count: 1 block = 1
-        // delegated `create().save()` = single-write, so the
-        // RequiredForMultiWrite preflight passes outside a transaction.
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
-        }
-        val users = client.users.createMany({
-            name = "Alice"
-            email = "alice@example.com"
-        })
-        assertEquals(1, users.size)
-    }
-
-    @Test
-    fun `RequiredForMultiWrite rejects multi-block createMany outside a transaction`() {
-        // 2+ blocks = 2+ delegated writes = multi-write. Without an
-        // outer createMany preflight, RequiredForMultiWrite would
-        // silently accept this — each per-block create() preflight
-        // sees only its own single write. Surface it as a TX-required
-        // error before any block runs, by classifying at the createMany
-        // entry.
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
-        }
+        val client = EntClient(driver)
         val ex = assertFailsWith<TransactionRequiredException> {
-            client.users.createMany(
-                {
-                    name = "Alice"
-                    email = "alice-${java.util.UUID.randomUUID()}@example.com"
-                },
-                {
-                    name = "Bob"
-                    email = "bob-${java.util.UUID.randomUUID()}@example.com"
-                },
-            )
+            client.users.createManyOrError({
+                name = "Alice"
+                email = "alice@example.com"
+            })
         }
-        assertEquals(true, ex.message!!.contains("RequiredForMultiWrite"))
-        assertEquals(true, ex.message!!.contains("createMany"))
-        // No row was inserted — the preflight rejected before any per-block
-        // create() ran.
+        assertEquals(true, ex.message!!.contains("createManyOrError"))
+        // No row was inserted — the preflight rejected before any
+        // per-block create() ran.
         assertEquals(0L, driver.count("users", emptyList()))
     }
 
     @Test
-    fun `RequiredForMultiWrite accepts multi-block createMany inside a transaction`() {
+    fun `createManyOrError accepts multi-block calls inside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
-            transactionRequirement = TransactionRequirement.RequiredForMultiWrite
-        }
-        val users = client.withTransaction { tx ->
-            tx.users.createMany(
+        val client = EntClient(driver)
+        val result = client.withTransaction { tx ->
+            tx.users.createManyOrError(
                 {
                     name = "Alice"
                     email = "alice-${java.util.UUID.randomUUID()}@example.com"
@@ -298,7 +251,8 @@ class TransactionRequirementIntegrationTest {
                 },
             )
         }
-        assertEquals(2, users.size)
+        require(result is entkt.runtime.EntResult.Ok)
+        assertEquals(2, result.value.size)
     }
 
     @Test

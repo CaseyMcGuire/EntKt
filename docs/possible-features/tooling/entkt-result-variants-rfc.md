@@ -66,8 +66,21 @@ and how the helper converts the abort back into
 `EntResult.Err(error)` for the outer caller. The runtime guard for
 the "block returns `EntResult<*>`" footgun runs *inside* the driver
 block, so a forgotten `.bind()` triggers rollback rather than
-silently committing earlier writes. Bulk `*OrError` variants are
-not yet generated.
+silently committing earlier writes.
+
+`createManyOrError(*blocks): EntResult<List<T>>` is generated for
+every schema that doesn't use the explicit-id strategy. It's the
+only repo-level write helper with its own hard transaction
+requirement: it throws `TransactionRequiredException` outside a tx
+regardless of the client-level `TransactionRequirement`, because
+the all-or-nothing contract only holds inside a tx. Zero-block
+calls short-circuit to `Ok(emptyList())` before the preflight
+(per the "classify syntactically empty before any other observable
+work" rule). The legacy throwing `createMany(*blocks): List<T>` is
+removed (not deprecated). Per-row Err short-circuits with the first
+failure; the caller's tx isn't auto-rolled-back — composing with
+`withTransactionOrError` + `bind()` is the idiomatic
+all-or-nothing pattern.
 
 ## Summary
 
