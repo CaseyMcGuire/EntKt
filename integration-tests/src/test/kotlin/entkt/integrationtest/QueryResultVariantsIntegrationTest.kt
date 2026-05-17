@@ -461,4 +461,68 @@ class QueryResultVariantsIntegrationTest {
 
         assertNull(client.articles.query().firstVisibleOrNull())
     }
+
+    // ---- No-LOAD-privacy fast paths (cap is skipped entirely) ----
+
+    /**
+     * Builds a fresh InMemoryDriver-backed client whose Article
+     * policy has NO LOAD privacy rules — the "visible" APIs collapse
+     * to "all" because there's nothing to filter in-process.
+     */
+    private fun freshClientNoPrivacy(cap: Int): EntClient {
+        val noLoadPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                // No `load(...)` rules — repo.hasLoadPrivacy() == false.
+            }
+        }
+        val driver = InMemoryDriver()
+        EntClient.SCHEMAS.forEach(driver::register)
+        return EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies {
+                articles(noLoadPolicy)
+                users(OpenUser)
+            }
+            visibleOverfetchLimit = cap
+        }
+    }
+
+    @Test
+    fun `visibleAll returns every row when the repo has no LOAD privacy (cap is skipped)`() {
+        val client = freshClientNoPrivacy(cap = 3)
+        seedNArticles(client, n = 10)
+
+        // 10 rows exist; the no-privacy fast path skips the cap so
+        // all 10 come back. Without the fix, this would return 3.
+        val visible = client.articles.query().visibleAll()
+        assertEquals(10, visible.size)
+    }
+
+    @Test
+    fun `visibleAllOrError returns Ok with every row and no OverfetchCapExceeded when repo has no LOAD privacy`() {
+        val client = freshClientNoPrivacy(cap = 3)
+        seedNArticles(client, n = 10)
+
+        // Without the fix, the cap-exhaustion check would fire and
+        // return Err(OverfetchCapExceeded) — but there's nothing to
+        // filter, so "exhaustion" has no meaning here.
+        val result = client.articles.query().visibleAllOrError()
+        assertTrue(result is EntResult.Ok)
+        assertEquals(10, result.value.size)
+    }
+
+    @Test
+    fun `firstVisibleOrNull fetches at most one row when repo has no LOAD privacy`() {
+        // Indirect verification: with cap=3 and 10 rows, the fix
+        // changes the driver query limit from 3 to 1. We can't
+        // observe the driver limit directly, but we can confirm the
+        // result is correct (first row by storage order) and equals
+        // what allOrThrow returns first.
+        val client = freshClientNoPrivacy(cap = 3)
+        seedNArticles(client, n = 10)
+
+        val firstVisible = client.articles.query().firstVisibleOrNull()
+        val firstAll = client.articles.query().allOrThrow().first()
+        assertEquals(firstAll.id, firstVisible?.id)
+    }
 }

@@ -13,12 +13,20 @@ its fallback rules are:
   - `TransactionRequiredException` /
     `UnsupportedDriverCapabilityException` → re-throw (RFC-defined
     configuration errors, not surfaced as `EntError`)
-  - unrecognized `IllegalStateException` / `IllegalArgumentException`
-    (those the driver classifier returned `null` for) → re-throw as
-    programming bugs (e.g. a hook violating an invariant, a generated
-    misuse path) rather than hide them as `DriverFailure`
-  - everything else unrecognized → wrap as
-    `EntError.DriverFailure(cause = throwable)`
+  - unrecognized `java.sql.SQLException` (or subclass — `PSQLException`,
+    H2's `JdbcSQLException`, etc.) → wrap as
+    `EntError.DriverFailure(cause = throwable)`; these are bona-fide
+    driver-level failures the framework just doesn't have a specific
+    classification for (connection errors, timeouts, parse failures)
+  - everything else unrecognized — `IllegalStateException` /
+    `IllegalArgumentException` from hook misuse, `NullPointerException`
+    from a hook bug, custom `RuntimeException`s from validation code,
+    etc. → re-throw as programming bugs. The `*OrError` body wraps
+    hooks, privacy rules, validation rules, entity hydration, and
+    return-LOAD-privacy checks — not just driver calls — so the
+    catch-all has to distinguish "driver failed" from "some user code
+    inside the operation threw" to avoid hiding application bugs as
+    infrastructure failures.
 Both the create and update paths generate the full
 `saveOrError()` / `saveOrThrow()` trio. `saveOrError()` is canonical
 on both sides and `saveOrThrow()` is a thin

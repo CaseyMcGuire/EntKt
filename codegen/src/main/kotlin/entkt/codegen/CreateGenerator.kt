@@ -320,12 +320,10 @@ internal class CreateGenerator(
 
         // ---- Validate and bind each property to a local. ----
         // Required fields throw `ValidationException` on missing input.
-        // (On the update side this is caught by `saveOrError()` and
-        // wrapped into `EntError.ValidationFailed`; on the create side
-        // there is no `saveOrError()` today — the exception propagates
-        // as-is. Create-side result variants are deferred to the
-        // Result Variants RFC.) Short-circuits on the first missing
-        // required field — collecting all violations across required +
+        // The generated `saveOrError()` catches it and wraps into
+        // `EntError.ValidationFailed`; `save()` callers see the raw
+        // exception. Short-circuits on the first missing required
+        // field — collecting all violations across required +
         // validator rules is left as a future improvement.
         for (field in allFields) {
             val prop = toCamelCase(field.name)
@@ -385,12 +383,10 @@ internal class CreateGenerator(
                 // than the property getter's IllegalStateException.
                 // The property getter stays as ISE for hook/property
                 // reads, where an early read is a usage error.
-                // (Create has no `saveOrError()` today — the
-                // ValidationException propagates from `save()` as-is.
-                // Create-side result variants are deferred to the
-                // Result Variants RFC. The thrown shape is correct so
-                // the wrapping lands automatically once that surface
-                // is added.)
+                // (The generated `saveOrError()` catches the
+                // ValidationException and wraps into
+                // `EntError.ValidationFailed`; `save()` callers see
+                // the raw exception.)
                 fk.required -> builder.addStatement(
                     "val %L = this.%L ?: throw %T(%S, listOf(%T(%S, field = %S)))",
                     fk.propertyName,
@@ -561,10 +557,16 @@ internal class CreateGenerator(
      *    `DriverFailure` with the raw cause attached.
      *
      * [Exception] (not [Throwable]) is the floor: [Error] subclasses
-     * (OOME, StackOverflowError) propagate untouched. The driver
-     * classifier is the integration point for Phase 2's
-     * SQLSTATE/message-prefix mapping, so adding new constraint codes
-     * to a driver does not require regenerating consumer code.
+     * (OOME, StackOverflowError) propagate untouched. Programming
+     * bugs from hooks/rules (`IllegalStateException`,
+     * `IllegalArgumentException`, vanilla `RuntimeException`,
+     * `NullPointerException`, etc.) re-throw via
+     * [classifyDriverError] rather than being wrapped — only
+     * `SQLException` (and subclasses like `PSQLException`) fall back
+     * to `DriverFailure`. The driver classifier is the integration
+     * point for Phase 2's SQLSTATE/message-prefix mapping, so adding
+     * new constraint codes to a driver does not require regenerating
+     * consumer code.
      */
     private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
@@ -634,12 +636,9 @@ private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision"
  * Emit inline validation checks for a single field's validators.
  * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
  * Each failed validator throws [ValidationException] with a single-element
- * violations list. On the update path this is caught by `saveOrError()`
- * and wrapped into `EntError.ValidationFailed`. The create path does
- * not generate `saveOrError()` today (deferred to the Result Variants
- * RFC), so the exception propagates from `create { … }.save()` as-is —
- * but the thrown shape is already correct so the wrapping lands
- * automatically once that surface is added.
+ * violations list. On both the create and update paths, the generated
+ * `saveOrError()` catches it and wraps into `EntError.ValidationFailed`;
+ * callers using the lower-level `save()` see the raw exception.
  */
 internal fun emitFieldValidation(
     builder: FunSpec.Builder,

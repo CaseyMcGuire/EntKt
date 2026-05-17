@@ -1735,14 +1735,16 @@ internal class UpdateGenerator(
      *
      * [Exception] (not [Throwable]) is the floor: [Error] subclasses
      * (OOME, StackOverflowError) propagate untouched.
-     * `TransactionRequiredException` and
-     * `UnsupportedDriverCapabilityException` are deliberate
-     * programming/configuration errors and not surfaced as
-     * [EntResult.Err] — they extend `RuntimeException` but the
-     * classifier returns the `DriverFailure` fallback for them, which
-     * may be acceptable for top-level error reporting but is not the
-     * RFC-intended shape. (See Open Questions in the RFC for why
-     * these stay non-EntError.)
+     * `TransactionRequiredException` / `UnsupportedDriverCapabilityException`
+     * are deterministic programming/configuration errors and re-thrown
+     * by [classifyDriverError] rather than wrapped — they escape
+     * `saveOrError` as themselves, the same way they escape
+     * `saveOrThrow`. Genuine programming bugs from hooks/rules (e.g.
+     * `IllegalStateException`, `IllegalArgumentException`, vanilla
+     * `RuntimeException`) also re-throw: the classifier only wraps
+     * `SQLException` (and subclasses like `PSQLException`) as
+     * `DriverFailure`. See `classifyDriverError`'s KDoc for the
+     * complete fallback ruleset.
      */
     private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)

@@ -385,38 +385,49 @@ interface Driver {
 /**
  * Wrap an arbitrary [throwable] from a generated `*OrError()` catch
  * arm into an [EntError], using the [driver]'s own classifier first
- * and falling back to [EntError.DriverFailure].
+ * and falling back to [EntError.DriverFailure] only for genuine
+ * driver-level failures.
  *
  * The cause is preserved on `EntError.DriverFailure.cause` so the
  * matching [EntDriverException] forwards it to the JVM exception
  * chain — `printStackTrace()` and friends still see the original
  * driver exception.
  *
- * **Re-throws deterministic programming/configuration errors.** The
- * generated `*OrError()` blocks catch (Exception) for the catch-all
- * driver path, which would otherwise wrap genuine programming bugs
- * (a hook throwing `IllegalStateException`, an
- * `IllegalArgumentException` from a generated misuse path, a
- * `TransactionRequiredException` from the preflight, an
- * `UnsupportedDriverCapabilityException` from a missing capability)
- * as `Err(DriverFailure)` — hiding application bugs as infrastructure
- * failures. To prevent that, this function re-throws the following
- * categories BEFORE falling back to `DriverFailure`:
+ * **Default is "fail loud on bugs".** The generated `*OrError()`
+ * blocks wrap the entire operation body in `try / catch (Exception)`,
+ * which includes hooks, privacy rules, validation rules, entity
+ * hydration, and the return LOAD-privacy check — not just driver
+ * calls. A naive catch-all would wrap any exception thrown anywhere
+ * in that body as `Err(DriverFailure)`, hiding application bugs as
+ * infrastructure failures.
  *
- *  - [TransactionRequiredException] / [UnsupportedDriverCapabilityException]
- *    — RFC-defined configuration errors
- *  - [IllegalStateException] / [IllegalArgumentException] that the
- *    driver's own classifier does not recognize — programming bugs
- *    (the driver's classifier wins first; e.g. the InMemoryDriver
- *    classifier matches its `"Unique violation:" / "FK violation:"`
- *    message-prefixed `IllegalStateException`s and returns
- *    `ConstraintViolation`, so only *unrecognized* programming
- *    exceptions escape)
+ * To prevent that, this function classifies according to the
+ * following rules:
  *
- * The result type stays `EntError` because that's still the contract
- * for the happy classification path. Callers who genuinely want the
- * programming-error fallback wrapped as `DriverFailure` can implement
- * a custom classifier; the default is "fail loud on bugs".
+ *  1. [TransactionRequiredException] / [UnsupportedDriverCapabilityException]
+ *     re-throw — RFC-defined configuration errors, not surfaced as
+ *     `EntError`.
+ *  2. The driver's own `classifyException` runs next; whatever it
+ *     returns wins (typically `ConstraintViolation` for SQLSTATE
+ *     23xxx on Postgres, or for the InMemoryDriver's own validator
+ *     message-prefixes).
+ *  3. If the driver returned `null` and the throwable is a
+ *     [java.sql.SQLException] (or subclass — covers `PSQLException`,
+ *     H2's `JdbcSQLException`, etc.), wrap as `DriverFailure`. These
+ *     are bona-fide driver-level failures the framework just doesn't
+ *     have a specific classification for (e.g. connection errors,
+ *     timeouts, query parse failures).
+ *  4. Anything else — `IllegalStateException` / `IllegalArgumentException`
+ *     from hook misuse, `NullPointerException` from a hook bug,
+ *     custom `RuntimeException`s from validation code, etc. —
+ *     re-throws as a programming bug. This matches `EntResult`'s
+ *     KDoc contract that programming errors propagate rather than
+ *     collapse to `Err`.
+ *
+ * Callers who genuinely want the programming-error wrap-as-DriverFailure
+ * behavior can implement a custom `Driver.classifyException` that
+ * returns `EntError.DriverFailure` for the throwable types they want
+ * to swallow; the default is conservative.
  */
 public fun classifyDriverError(
     driver: Driver,
@@ -428,12 +439,12 @@ public fun classifyDriverError(
     if (throwable is UnsupportedDriverCapabilityException) throw throwable
     val classified = driver.classifyException(throwable, entity, operation)
     if (classified != null) return classified
-    // Driver didn't recognize this throwable. If it's a textbook
-    // programming bug — IllegalState / IllegalArgument that *no*
-    // driver classifier picked up — re-throw so it escapes the
-    // *OrError path as the original exception, the same way it
-    // would escape *OrThrow if there were no try/catch in play.
-    if (throwable is IllegalStateException) throw throwable
-    if (throwable is IllegalArgumentException) throw throwable
-    return EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)
+    // Driver didn't recognize this throwable. If it's a known
+    // JDBC/SQL driver-level exception, fall back to DriverFailure;
+    // otherwise re-throw because it's almost certainly application
+    // code (hook/rule/etc.) inside the *OrError body, not the driver.
+    if (throwable is java.sql.SQLException) {
+        return EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)
+    }
+    throw throwable
 }

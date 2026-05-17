@@ -80,9 +80,32 @@ class PostgresDriverClassifyTest {
     fun `non-PSQLException returns null from classifier`() {
         val notPsql = RuntimeException("network down")
         assertNull(driver.classifyException(notPsql, "X", EntOperation.LOAD))
-        // classifyDriverError still produces DriverFailure for it via the fallback.
-        val classified = classifyDriverError(driver, notPsql, "X", EntOperation.LOAD)
+        // Per the tightened classifyDriverError contract, non-SQLException
+        // throwables are re-thrown as programming bugs rather than
+        // wrapped as DriverFailure. The Postgres classifier returns
+        // null (it's not a PSQLException), and the runtime helper
+        // then re-throws because RuntimeException isn't in the
+        // SQLException family.
+        try {
+            classifyDriverError(driver, notPsql, "X", EntOperation.LOAD)
+            kotlin.test.fail("expected re-throw")
+        } catch (e: RuntimeException) {
+            assertSame(notPsql, e)
+        }
+    }
+
+    @Test
+    fun `SQLException without SQLSTATE 23xxx falls back to DriverFailure`() {
+        // The Postgres classifier only matches SQLSTATE 23xxx;
+        // anything else (a SocketException wrapped as SQLException,
+        // a 08xxx connection error, etc.) returns null from the
+        // driver classifier but is still a genuine driver-level
+        // failure — so it wraps as DriverFailure rather than
+        // re-throwing.
+        val sql = java.sql.SQLException("connection lost", "08006")
+        val classified = classifyDriverError(driver, sql, "X", EntOperation.LOAD)
         assertTrue(classified is EntError.DriverFailure)
+        assertSame(sql, (classified as EntError.DriverFailure).cause)
     }
 
     // ---------- Test fixtures ----------

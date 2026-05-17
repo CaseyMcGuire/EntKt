@@ -164,15 +164,36 @@ class InMemoryDriverClassifyTest {
     }
 
     @Test
-    fun `classifyDriverError falls back to DriverFailure for unrecognized throwables`() {
+    fun `classifyDriverError falls back to DriverFailure only for SQLException-family throwables`() {
+        // Genuine JDBC/SQL driver failures (connection reset, query
+        // timeout, etc.) come through as SQLException — those are
+        // the only unrecognized throwables that wrap as
+        // Err(DriverFailure). Anything else re-throws (see the next
+        // test).
         val driver = InMemoryDriver()
-        val arbitrary = RuntimeException("connection reset")
-        val classified = classifyDriverError(driver, arbitrary, "TestEntity", EntOperation.UPDATE)
+        val sqlEx = java.sql.SQLException("connection reset")
+        val classified = classifyDriverError(driver, sqlEx, "TestEntity", EntOperation.UPDATE)
         assertTrue(classified is EntError.DriverFailure)
         val df = classified as EntError.DriverFailure
         assertEquals("TestEntity", df.entity)
         assertEquals(EntOperation.UPDATE, df.operation)
-        assertEquals(arbitrary, df.cause)
+        assertEquals(sqlEx, df.cause)
+    }
+
+    @Test
+    fun `classifyDriverError re-throws non-SQLException RuntimeException as programming bug`() {
+        // A vanilla RuntimeException (e.g. from a hook bug, validation
+        // rule throwing the wrong type, etc.) isn't a recognized
+        // driver-level failure — it re-throws so the bug escapes the
+        // *OrError path instead of being misclassified as DriverFailure.
+        val driver = InMemoryDriver()
+        val bug = RuntimeException("application bug")
+        try {
+            classifyDriverError(driver, bug, "X", EntOperation.UPDATE)
+            kotlin.test.fail("expected re-throw")
+        } catch (e: RuntimeException) {
+            assertEquals(bug, e)
+        }
     }
 
     @Test

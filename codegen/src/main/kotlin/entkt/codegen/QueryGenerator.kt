@@ -246,13 +246,20 @@ internal class QueryGenerator(
      * triggering an exception. Driver failures still propagate as
      * raw exceptions; use [visibleAllOrError] for the structured form.
      *
-     * Bounded by `EntClientConfig.visibleOverfetchLimit` (default
-     * 100): the storage scan is capped at `min(queryLimit ?: cap,
-     * cap)` rows so a few visible rows hidden behind many denied
-     * ones don't pull an unbounded result set into memory. Cap
-     * exhaustion is silent on this path — the caller gets whatever
-     * was visible within the budget; `visibleAllOrError` is the
-     * variant that surfaces cap-exhausted as an explicit Err.
+     * **When the repo has LOAD privacy rules**, the storage scan is
+     * bounded by `EntClientConfig.visibleOverfetchLimit` (default
+     * 100): the driver fetches at most `min(queryLimit ?: cap, cap)`
+     * rows so a few visible rows hidden behind many denied ones
+     * don't pull an unbounded result set into memory. Cap exhaustion
+     * is silent on this path — the caller gets whatever was visible
+     * within the budget; `visibleAllOrError` is the variant that
+     * surfaces cap-exhausted as an explicit Err.
+     *
+     * **When the repo has no LOAD privacy rules**, the cap is
+     * skipped entirely — there's nothing to filter in-process, so
+     * "visible all" is just "all," and the caller's `queryLimit`
+     * (if any) is the only bound. Otherwise a no-privacy entity
+     * would silently truncate at the cap which is surprising.
      */
     private fun buildVisibleAll(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -261,15 +268,17 @@ internal class QueryGenerator(
             .returns(listType)
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
-            .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
-            .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
-                entityClass,
-            )
-            .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
         builder.addCode(
             CodeBlock.builder()
+                // No-privacy fast path: skip the overfetch cap entirely
+                // and pass the user's queryLimit through unchanged.
+                // "visible all" == "all" when there's nothing to filter.
                 .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+                .addStatement(
+                    "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                    entityClass,
+                )
+                .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
                 .also {
                     if (hasEdges) {
                         it.addStatement("return loadEdges(results, privacy)")
@@ -278,6 +287,14 @@ internal class QueryGenerator(
                     }
                 }
                 .endControlFlow()
+                // With LOAD privacy: apply the overfetch cap so the
+                // in-process filter has bounded work to do.
+                .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
+                .addStatement(
+                    "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
+                    entityClass,
+                )
+                .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
                 .addStatement(
                     "val visible = results.filter { e -> try { c.%L.evaluateLoadPrivacy(privacy, e); true } catch (_: %T) { false } }",
                     repoPropName, PRIVACY_DENIED,
@@ -296,16 +313,27 @@ internal class QueryGenerator(
      * `visibleAllOrError(): EntResult<List<T>>` — structured-result
      * filter-only bulk read.
      *
-     * Returns `Err(OverfetchCapExceeded)` when the storage scan hit
+     * **When the repo has LOAD privacy rules**, returns
+     * `Err(OverfetchCapExceeded)` when the storage scan hit
      * `EntClientConfig.visibleOverfetchLimit` (meaning more matching
      * rows may exist beyond the cap that we didn't filter). The
-     * detection is conservative: "rows returned == cap" triggers
-     * the Err even if the actual row count is exactly `cap` —
-     * callers either re-query with a larger cap, paginate via
-     * `queryOffset`, or accept the partial result. Otherwise wraps
-     * [visibleAll]; the only other failure surface is driver
-     * exceptions (privacy denial never escapes `visibleAll` because
-     * it's filtered to a `false` decision).
+     * detection is conservative: "rows returned >= cap" triggers
+     * the Err even if the actual row count is exactly `cap`, and
+     * `limit(cap)` is not "strictly smaller than cap" so it still
+     * triggers — callers either re-query with a larger cap, paginate
+     * via `queryOffset`, or accept the partial result.
+     *
+     * **When the repo has no LOAD privacy rules**, the cap is
+     * skipped entirely — there's nothing to filter in-process, so
+     * cap-exhaustion is meaningless. The user's `queryLimit` (if
+     * any) is the only bound, and `Err(OverfetchCapExceeded)` is
+     * never returned. This avoids the surprise of a no-privacy
+     * entity being told its 100-row read "exceeded the cap".
+     *
+     * Privacy denial from eager edge loading via `loadEdges(...)`
+     * surfaces as `Err(PrivacyDenied)`. (The owner-row visible
+     * filter swallows denial by dropping the row, but eager target
+     * denial can re-raise.)
      */
     private fun buildVisibleAllOrError(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -318,53 +346,61 @@ internal class QueryGenerator(
                     .add("return try {\n")
                     .add("  val c = requireClient()\n")
                     .add("  val privacy = c.currentPrivacyContext()\n")
-                    .add("  val cap = c.visibleOverfetchLimit\n")
-                    .add("  val scanLimit = minOf(queryLimit ?: cap, cap)\n")
+                    // No-privacy fast path: skip the overfetch cap
+                    // entirely. With no in-process filter, "visible
+                    // all" reduces to "all" and the user's queryLimit
+                    // is the only bound. Cap-exhaustion has no
+                    // semantic meaning here.
+                    .add("  if (!c.%L.hasLoadPrivacy()) {\n", repoPropName)
                     .add(
-                        "  val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)\n",
+                        "    val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)\n",
                         entityClass,
                     )
-                    .add(
-                        "  val results = rows.map { %T.fromRow(it) }\n",
-                        entityClass,
-                    )
-                    .add("  val visible = if (!c.%L.hasLoadPrivacy()) results else results.filter { e ->\n", repoPropName)
-                    .add(
-                        "    try { c.%L.evaluateLoadPrivacy(privacy, e); true } catch (_: %T) { false }\n",
-                        repoPropName, PRIVACY_DENIED,
-                    )
-                    .add("  }\n")
-                    // Cap exhaustion: we asked the driver for `cap`
-                    // rows and got at least that many. Per the RFC,
-                    // suppress the Err only when the caller bounded
-                    // the scan to something *strictly smaller* than
-                    // the cap — `limit(cap)` is not smaller, so an
-                    // explicit limit equal to cap still triggers the
-                    // Err (the cap could have been the limiting
-                    // factor either way). Possible false positive if
-                    // there were exactly `cap` rows total — see KDoc.
-                    .add("  val capturedLimit = queryLimit\n")
-                    .add("  if (rows.size >= cap && (capturedLimit == null || capturedLimit >= cap)) {\n")
-                    .add(
-                        "    %T.Err(%T.OverfetchCapExceeded(%S, %T.QUERY, cap))\n",
-                        ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
-                    )
-                    .add("  } else {\n")
+                    .add("    val results = rows.map { %T.fromRow(it) }\n", entityClass)
                     .add(
                         "    %T.Ok(%L)\n",
                         ENT_RESULT,
+                        if (hasEdges) "loadEdges(results, privacy)" else "results",
+                    )
+                    .add("  } else {\n")
+                    .add("    val cap = c.visibleOverfetchLimit\n")
+                    .add("    val scanLimit = minOf(queryLimit ?: cap, cap)\n")
+                    .add(
+                        "    val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)\n",
+                        entityClass,
+                    )
+                    .add(
+                        "    val results = rows.map { %T.fromRow(it) }\n",
+                        entityClass,
+                    )
+                    .add(
+                        "    val visible = results.filter { e -> try { c.%L.evaluateLoadPrivacy(privacy, e); true } catch (_: %T) { false } }\n",
+                        repoPropName, PRIVACY_DENIED,
+                    )
+                    // Cap exhaustion (privacy path only): we asked
+                    // the driver for `cap` rows and got at least that
+                    // many. Suppress the Err only when the caller
+                    // bounded the scan strictly smaller than the cap.
+                    .add("    val capturedLimit = queryLimit\n")
+                    .add("    if (rows.size >= cap && (capturedLimit == null || capturedLimit >= cap)) {\n")
+                    .add(
+                        "      %T.Err(%T.OverfetchCapExceeded(%S, %T.QUERY, cap))\n",
+                        ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
+                    )
+                    .add("    } else {\n")
+                    .add(
+                        "      %T.Ok(%L)\n",
+                        ENT_RESULT,
                         if (hasEdges) "loadEdges(visible, privacy)" else "visible",
                     )
+                    .add("    }\n")
                     .add("  }\n")
-                    // The visible-filter swallows PrivacyDeniedException
-                    // on the owner-row LOAD path (try/catch inside the
-                    // filter lambda → drop the row), but eager edge
-                    // loading via loadEdges(...) re-raises target-side
-                    // PrivacyDeniedException from a privacy-restricted
-                    // related entity. Without an explicit catch here,
-                    // that would fall through to the generic Exception
-                    // arm and be misclassified as Err(DriverFailure).
-                    // Same shape as allOrError / firstOrError.
+                    // Eager-edge LOAD denial via loadEdges(...) can
+                    // re-raise PrivacyDeniedException. Without this
+                    // explicit catch arm it would fall through to the
+                    // generic Exception arm and be misclassified as
+                    // Err(DriverFailure). Same shape as allOrError /
+                    // firstOrError.
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
                         "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
@@ -461,12 +497,18 @@ internal class QueryGenerator(
      * exhausted before finding one. Driver failures still propagate
      * as raw exceptions.
      *
-     * Bounded by `EntClientConfig.visibleOverfetchLimit` (default
-     * 100): scans at most `min(queryLimit ?: cap, cap)` rows from
-     * storage. Per the RFC, cap-exhaustion is silent here — the
-     * "no visible row found within the work budget" outcome is
+     * **When the repo has LOAD privacy rules**, scanning is bounded
+     * by `EntClientConfig.visibleOverfetchLimit` (default 100): at
+     * most `min(queryLimit ?: cap, cap)` rows are pulled from
+     * storage. Per the RFC, cap-exhaustion is silent — the "no
+     * visible row found within the work budget" outcome is
      * indistinguishable from genuine absence, which is fine for the
      * optimistic-read shape this method advertises.
+     *
+     * **When the repo has no LOAD privacy rules**, only one row is
+     * fetched (limit 1) — there's no in-process filter that might
+     * skip rows, so the first row from storage is the answer.
+     * Skipping the cap avoids pulling 100 rows just to return one.
      */
     private fun buildFirstVisibleOrNull(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -474,21 +516,31 @@ internal class QueryGenerator(
             .returns(entityClass.copy(nullable = true))
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
-            .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
-            .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
-                entityClass,
-            )
         builder.addCode(
             CodeBlock.builder()
+                // No-privacy fast path: only fetch 1 row. Nothing to
+                // skip on the filter side, so the first storage row is
+                // the answer. Skipping the cap-sized scan avoids
+                // pulling up to 100 rows just to return one.
                 .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
-                .addStatement("val row = rows.firstOrNull() ?: return null")
+                .addStatement(
+                    "val row = driver.query(%T.TABLE, predicates, orderFields, 1, queryOffset).firstOrNull() ?: return null",
+                    entityClass,
+                )
                 .addStatement("val entity = %T.fromRow(row)", entityClass)
                 .also {
                     if (hasEdges) it.addStatement("return loadEdges(listOf(entity), privacy).first()")
                     else it.addStatement("return entity")
                 }
                 .endControlFlow()
+                // With LOAD privacy: cap the scan so the in-process
+                // filter has bounded work even when many storage rows
+                // are denied.
+                .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
+                .addStatement(
+                    "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
+                    entityClass,
+                )
                 .beginControlFlow("for (row in rows)")
                 .addStatement("val entity = %T.fromRow(row)", entityClass)
                 .beginControlFlow("try")
