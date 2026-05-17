@@ -319,11 +319,16 @@ internal class QueryGenerator(
                     )
                     .add("  }\n")
                     // Cap exhaustion: we asked the driver for `cap`
-                    // rows and got exactly that many. Possible
-                    // false positive if there were exactly `cap`
-                    // rows total — see KDoc.
+                    // rows and got at least that many. Per the RFC,
+                    // suppress the Err only when the caller bounded
+                    // the scan to something *strictly smaller* than
+                    // the cap — `limit(cap)` is not smaller, so an
+                    // explicit limit equal to cap still triggers the
+                    // Err (the cap could have been the limiting
+                    // factor either way). Possible false positive if
+                    // there were exactly `cap` rows total — see KDoc.
                     .add("  val capturedLimit = queryLimit\n")
-                    .add("  if (rows.size >= cap && (capturedLimit == null || capturedLimit > cap)) {\n")
+                    .add("  if (rows.size >= cap && (capturedLimit == null || capturedLimit >= cap)) {\n")
                     .add(
                         "    %T.Err(%T.OverfetchCapExceeded(%S, %T.QUERY, cap))\n",
                         ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,

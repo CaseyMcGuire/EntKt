@@ -105,7 +105,7 @@ class CreateManyOrErrorIntegrationTest {
     }
 
     @Test
-    fun `per-row failure returns Err for the first failing block`() {
+    fun `per-row failure returns Err for the first failing block AND short-circuits the rest`() {
         val client = freshClient()
         // Seed a user so block 2 trips the unique-email constraint.
         client.users.create { name = "Existing"; email = "dup@example.com" }.saveOrThrow()
@@ -114,7 +114,7 @@ class CreateManyOrErrorIntegrationTest {
             tx.users.createManyOrError(
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "dup@example.com" },  // unique violation
-                { name = "C"; email = "c@example.com" },
+                { name = "C"; email = "c@example.com" },  // must NOT run
             )
         }
 
@@ -124,6 +124,36 @@ class CreateManyOrErrorIntegrationTest {
         assertEquals(EntOperation.CREATE, error.operation)
         assertEquals("User", error.entity)
         assertEquals("23505", error.code)
+
+        // Short-circuit verified: C was never attempted, so the
+        // c@example.com row is absent. (A was written and the
+        // surrounding plain withTransaction committed because the
+        // helper returned Err normally — see the next test for the
+        // all-or-nothing pattern via withTransactionOrError + bind.)
+        assertEquals(0L, client.users.query { where(User.email eq "c@example.com") }.rawCount())
+        assertEquals(2L, client.users.query().rawCount())  // Existing + A
+    }
+
+    @Test
+    fun `plain withTransaction leaks earlier writes — helper does NOT roll back on its own`() {
+        // Pins the documented limitation: inside a plain
+        // withTransaction { tx -> tx.users.createManyOrError(...) },
+        // an Err return is a normal return, the outer tx commits,
+        // and earlier successful rows survive. Use
+        // withTransactionOrError + .bind() for all-or-nothing.
+        val client = freshClient()
+        client.users.create { name = "Existing"; email = "dup@example.com" }.saveOrThrow()
+
+        client.withTransaction { tx ->
+            tx.users.createManyOrError(
+                { name = "A"; email = "a@example.com" },
+                { name = "B"; email = "dup@example.com" },
+            )
+        }
+
+        // "A" was committed alongside Existing — the helper short-
+        // circuited at B, but didn't roll A back.
+        assertEquals(2L, client.users.query().rawCount())
     }
 
     @Test

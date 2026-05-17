@@ -794,16 +794,33 @@ internal class RepoGenerator(
      *    "transaction-required" contract, fires regardless of the
      *    client-level `TransactionRequirement` setting.
      *
-     *  - Inside a transaction → runs each block's `create().save()`;
-     *    first per-row failure (Err of any kind) short-circuits and
-     *    returns that Err. The caller's transaction is *not* rolled
-     *    back by this helper; the caller decides via `bind()` inside
-     *    `withTransactionOrError`, which propagates the Err and
-     *    triggers the rollback at the boundary.
+     *  - Inside a transaction → runs each block's `create().saveOrError()`
+     *    in order; the **first per-row `Err` short-circuits the rest** —
+     *    no subsequent blocks execute. The returned `Err` carries that
+     *    block's error.
      *
      *  - Zero blocks → `Ok(emptyList())` without any preflight or
      *    write, mirroring the existing classify-empty-syntactically
      *    rule from RFC #4.
+     *
+     * **All-or-nothing is the caller's responsibility.** The helper
+     * short-circuits but does not own the transaction — it cannot
+     * roll back the rows already written by earlier blocks. Inside a
+     * plain `withTransaction { tx -> tx.users.createManyOrError(...) }`,
+     * if block 3 fails and the helper returns `Err`, blocks 1 and 2
+     * are still committed because the outer `withTransaction` sees a
+     * normal `Err` return (not an exception). The idiomatic
+     * all-or-nothing composition is:
+     *
+     * ```
+     * client.withTransactionOrError { tx ->
+     *   tx.users.createManyOrError(...).bind()  // bind() throws on Err
+     * }                                          // → tx rolls back
+     * ```
+     *
+     * where `.bind()` raises `AbortEntResultTransaction` on `Err`,
+     * which `withTransactionOrError` catches outside the driver block
+     * to trigger rollback.
      *
      * The legacy throwing `createMany(*blocks): List<T>` is REMOVED
      * (not deprecated) per the "don't deprecate, remove" directive.
@@ -843,17 +860,21 @@ internal class RepoGenerator(
             .addCode(
                 CodeBlock.builder()
                     .add("return try {\n")
-                    .add("  val results = blocks.map { create(it).saveOrError() }\n")
-                    // First Err wins; collect into a single Err result.
-                    .add("  val firstErr = results.firstOrNull { it is %T.Err }\n", ENT_RESULT)
-                    .add("  if (firstErr != null) {\n")
-                    .add("    firstErr as %T.Err\n", ENT_RESULT)
-                    .add("  } else {\n")
-                    .add(
-                        "    %T.Ok(results.map { (it as %T.Ok).value })\n",
-                        ENT_RESULT, ENT_RESULT,
-                    )
+                    // Short-circuit loop: stop at the first Err so we
+                    // don't run subsequent blocks. The pre-fix version
+                    // used blocks.map { ... } which ran every block
+                    // before checking for an Err — that leaks
+                    // intervening successful writes when used inside
+                    // a plain withTransaction { } (which commits on
+                    // normal Err return).
+                    .add("  val out = %T<%T>(blocks.size)\n", ArrayList::class.asClassName(), entityClass)
+                    .add("  var firstErr: %T.Err? = null\n", ENT_RESULT)
+                    .add("  for (block in blocks) {\n")
+                    .add("    val r = create(block).saveOrError()\n")
+                    .add("    if (r is %T.Err) { firstErr = r; break }\n", ENT_RESULT)
+                    .add("    out.add((r as %T.Ok).value)\n", ENT_RESULT)
                     .add("  }\n")
+                    .add("  firstErr ?: %T.Ok(out.toList())\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
                     .add("  %T.Err(e.error)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())

@@ -364,9 +364,21 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         // Each per-block create() goes through the normal saveOrError
-        // pipeline (hooks, privacy, validation, classification).
-        assert(output.contains("create(it).saveOrError()")) {
+        // pipeline (hooks, privacy, validation, classification). The
+        // short-circuit loop wraps each `create(block).saveOrError()`
+        // so the pattern lands as `create(block).saveOrError()` inside
+        // a `for (block in blocks)` body.
+        assert(output.contains("create(block).saveOrError()")) {
             "createManyOrError should delegate to create(block).saveOrError() so hooks fire\n$output"
+        }
+        // Short-circuit on first Err: verifies the implementation
+        // doesn't run subsequent blocks after a failure (the prior
+        // blocks.map { ... } shape ran every block before checking).
+        assert(output.contains("for (block in blocks)") || output.contains("for(block in blocks)")) {
+            "createManyOrError should iterate blocks explicitly so it can break on first Err\n$output"
+        }
+        assert(output.contains("firstErr = r; break") || output.contains("firstErr = r\n        break")) {
+            "createManyOrError should break out of the loop on the first Err\n$output"
         }
     }
 

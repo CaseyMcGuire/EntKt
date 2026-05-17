@@ -750,13 +750,29 @@ createManyOrError(...): EntResult<List<User>>
 **`createManyOrError` requires a transaction-scoped client in V1.** Outside a
 transaction, generated code throws `TransactionRequiredException` at preflight
 (before any per-row write), mirroring the link-table M2M helpers' multi-write
-contract. The transactional requirement guarantees all-or-nothing semantics:
-on first failure, the helper rolls back and returns `Err(...)`, and the
-returned `Err` is sound for retry logic because no rows survived. A future
-follow-up may add a separate non-transactional `createManyBatchOrError(...)`
-returning `EntBatchResult<T>` (defined below) for callers that explicitly want
-partial-success semantics; that variant is deferred until the use case is
-concrete.
+contract. **The helper short-circuits on first failure** — once a per-block
+`saveOrError()` returns `Err`, no subsequent blocks execute, and the helper
+returns that `Err`. The transaction requirement is what makes
+all-or-nothing semantics *achievable*, but the helper does not own the
+transaction and so cannot roll it back on its own; callers compose with
+`withTransactionOrError` + `.bind()` to get the rollback at the boundary:
+
+```kotlin
+client.withTransactionOrError { tx ->
+    tx.users.createManyOrError(...).bind()  // bind() throws on Err
+}                                            // → tx rolls back
+```
+
+Inside a plain `withTransaction { tx -> tx.users.createManyOrError(...) }`,
+the helper returns `Err` normally; the outer `withTransaction` sees a
+non-exception return and commits, leaving the earlier successful rows
+behind. Callers that want all-or-nothing must use the
+`withTransactionOrError` + `.bind()` composition.
+
+A future follow-up may add a separate non-transactional
+`createManyBatchOrError(...)` returning `EntBatchResult<T>` (defined below)
+for callers that explicitly want partial-success semantics; that variant
+is deferred until the use case is concrete.
 
 If callers need all per-item failures and partial success, the deferred
 batch-result shape is:
@@ -776,10 +792,13 @@ data class EntBatchFailure(
 )
 ```
 
-Because V1 `createManyOrError` requires a transaction-scoped client, partial
-writes cannot escape — the helper either commits all rows or rolls all rows
-back. Callers wanting per-row outcomes wait on the deferred
-`createManyBatchOrError` / `EntBatchResult` shape above.
+V1 `createManyOrError` requires a transaction-scoped client and
+short-circuits on first failure, but does not own the transaction —
+true all-or-nothing requires composing with `withTransactionOrError` +
+`.bind()` so the abort rolls back the surrounding transaction.
+Callers wanting per-row outcomes (where some succeed and some fail and
+all are committed) wait on the deferred `createManyBatchOrError` /
+`EntBatchResult` shape above.
 
 ## Naming Guidelines
 
