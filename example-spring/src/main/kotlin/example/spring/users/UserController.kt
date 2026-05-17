@@ -33,7 +33,7 @@ class UserController(private val client: EntClient) {
             if (includePosts) {
                 withPosts { orderBy(Post.createdAt.desc()) }
             }
-        }.all()
+        }.allOrThrow()
         return users.map { it.toResponse(includePosts) }
     }
 
@@ -50,7 +50,7 @@ class UserController(private val client: EntClient) {
         val posts = client.posts.query {
             where(Post.authorId eq id)
             orderBy(Post.createdAt.desc())
-        }.all()
+        }.allOrThrow()
         return posts.map { it.toResponse() }
     }
 

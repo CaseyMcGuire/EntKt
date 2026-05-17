@@ -188,7 +188,7 @@ class PrivacyIntegrationTest {
         return system
     }
 
-    // ---- LOAD: query.all() ----
+    // ---- LOAD: query.allOrThrow() ----
 
     @Test
     fun `all throws when any result entity is denied`() {
@@ -197,7 +197,7 @@ class PrivacyIntegrationTest {
 
         // Anonymous can see published but not drafts — should throw
         assertFailsWith<PrivacyDeniedException> {
-            client.articles.query().all()
+            client.articles.query().allOrThrow()
         }
     }
 
@@ -209,7 +209,7 @@ class PrivacyIntegrationTest {
         // Query only published — all allowed
         val articles = client.articles.query {
             where(Article.published eq true)
-        }.all()
+        }.allOrThrow()
         assertEquals(2, articles.size)
         assertTrue(articles.all { it.published })
     }
@@ -223,7 +223,7 @@ class PrivacyIntegrationTest {
         val articles = client.withPrivacyContext(PrivacyContext(Viewer.User(alice.id))) { scoped ->
             scoped.articles.query {
                 where(Article.authorId eq alice.id)
-            }.all()
+            }.allOrThrow()
         }
         assertEquals(2, articles.size)
     }
@@ -308,7 +308,7 @@ class PrivacyIntegrationTest {
         val client = freshClient(Viewer.System)
         seedData(client)
 
-        val all = client.articles.query().all()
+        val all = client.articles.query().allOrThrow()
         assertEquals(4, all.size)
     }
 
@@ -331,7 +331,7 @@ class PrivacyIntegrationTest {
 
         val article = client.articles.query {
             where(Article.authorId eq alice.id)
-        }.all().first()
+        }.allOrThrow().first()
 
         val deleted = client.articles.delete(article)
         assertTrue(deleted)
@@ -527,18 +527,18 @@ class PrivacyIntegrationTest {
 
         // Anonymous: drafts throw
         assertFailsWith<PrivacyDeniedException> {
-            client.articles.query().all()
+            client.articles.query().allOrThrow()
         }
 
         // Elevate to System within a block
         val all = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.query().all()
+            sys.articles.query().allOrThrow()
         }
         assertEquals(4, all.size)
 
         // Back to anonymous: still throws
         assertFailsWith<PrivacyDeniedException> {
-            client.articles.query().all()
+            client.articles.query().allOrThrow()
         }
     }
 
@@ -553,7 +553,7 @@ class PrivacyIntegrationTest {
         val articles = client.articles.query {
             where(Article.published eq true)
             withAuthor()
-        }.all()
+        }.allOrThrow()
         assertEquals(2, articles.size)
         for (article in articles) {
             assertNotNull(article.edges.author)
@@ -573,7 +573,7 @@ class PrivacyIntegrationTest {
                 where(Article.authorId eq alice.id)
                 where(Article.published eq true)
                 withAuthor()
-            }.all()
+            }.allOrThrow()
             assertEquals(1, articles.size)
             assertNotNull(articles[0].edges.author)
 
@@ -584,7 +584,7 @@ class PrivacyIntegrationTest {
                 scoped.articles.query {
                     where(Article.published eq true)
                     withAuthor()
-                }.all()
+                }.allOrThrow()
             }
         }
     }
@@ -829,7 +829,7 @@ class PrivacyIntegrationTest {
         // Verify Alice's published article still exists (Bob's may or may not
         // depending on iteration order, but at least one survived)
         val remaining = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.query { where(Article.published eq true) }.all()
+            sys.articles.query { where(Article.published eq true) }.allOrThrow()
         }
         assertTrue(remaining.isNotEmpty())
     }
@@ -845,7 +845,7 @@ class PrivacyIntegrationTest {
         }
 
         val remaining = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
-            sys.articles.query { where(Article.authorId eq alice.id) }.all()
+            sys.articles.query { where(Article.authorId eq alice.id) }.allOrThrow()
         }
         assertTrue(remaining.isEmpty())
     }
@@ -871,7 +871,7 @@ class PrivacyIntegrationTest {
         client.articles.create { title = "Draft"; published = false; authorId = user.id }.save()
 
         // Without load policy, all() returns everything — no enforcement
-        val all = client.articles.query().all()
+        val all = client.articles.query().allOrThrow()
         assertEquals(1, all.size)
     }
 }

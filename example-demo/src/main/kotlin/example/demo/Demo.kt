@@ -10,7 +10,7 @@ import java.time.Instant
  * Demonstrates the full entkt API against the example schemas, running
  * on the in-process [InMemoryDriver]. Every builder call in here
  * actually hits the driver — `create().save()` inserts rows,
- * `update(entity).save()` writes them back, `query().all()` filters
+ * `update(entity).save()` writes them back, `query().allOrThrow()` filters
  * and returns typed entities, and edge predicates traverse through
  * the registered schema metadata.
  *
@@ -68,17 +68,17 @@ fun main() {
     println()
 
     // ---------- byId ----------
-    banner("client.users.byId(alice.id)")
-    val fetched = client.users.byId(alice.id)
+    banner("client.users.byIdOrNull(alice.id)")
+    val fetched = client.users.byIdOrNull(alice.id)
     println("Fetched: $fetched")
     println()
 
     // ---------- Query with typed column refs ----------
-    banner("client.users.query { where(...); orderBy(...) }.all()")
+    banner("client.users.query { where(...); orderBy(...) }.allOrThrow()")
     val adults = client.users.query {
         where(User.age gte 18)
         orderBy(User.age.desc())
-    }.all()
+    }.allOrThrow()
     println("Adults by age desc: ${adults.map { it.name to it.age }}")
     println()
 
@@ -89,7 +89,7 @@ fun main() {
             (User.active eq true) and
                 ((User.age gte 65) or (User.email hasSuffix "@admin.example.com")),
         )
-    }.all()
+    }.allOrThrow()
     println("Matches: ${specialUsers.map { it.name }}")
     println()
 
@@ -117,19 +117,19 @@ fun main() {
     println()
 
     // ---------- Edge predicate: users with a published post ----------
-    banner("client.users.query { where(User.posts.has { published eq true }) }.all()")
+    banner("client.users.query { where(User.posts.has { published eq true }) }.allOrThrow()")
     val authorsWithPublished = client.users.query {
         where(User.posts.has { where(Post.published eq true) })
-    }.all()
+    }.allOrThrow()
     println("Authors with published posts: ${authorsWithPublished.map { it.name }}")
     println()
 
     // ---------- Traversal: users who are active, then their posts ----------
-    banner("client.users.query { active eq true }.queryPosts().all()")
+    banner("client.users.query { active eq true }.queryPosts().allOrThrow()")
     val postsOfActiveUsers = client.users
         .query { where(User.active eq true) }
         .queryPosts()
-        .all()
+        .allOrThrow()
     println("Posts of active users: ${postsOfActiveUsers.map { it.title }}")
     println()
 

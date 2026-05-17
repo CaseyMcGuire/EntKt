@@ -22,7 +22,7 @@ class TagController(private val client: EntClient) {
     fun list(): List<TagResponse> {
         val tags = client.tags.query {
             orderBy(Tag.name.asc())
-        }.all()
+        }.allOrThrow()
         return tags.map { it.toResponse() }
     }
 
@@ -67,7 +67,7 @@ class TagController(private val client: EntClient) {
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.tags.query { where(Tag.id eq id) }
             .queryPosts()
-            .all()
+            .allOrThrow()
         return posts.map { it.toResponse() }
     }
 }

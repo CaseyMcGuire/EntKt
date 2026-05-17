@@ -52,7 +52,7 @@ class FriendshipController(private val client: EntClient) {
                 (Friendship.requesterId eq id) or (Friendship.recipientId eq id),
             )
             where(Friendship.status eq FriendshipStatus.ACCEPTED)
-        }.all()
+        }.allOrThrow()
 
         val friendIds = accepted.map { f ->
             if (f.requesterId == id) f.recipientId else f.requesterId
@@ -69,6 +69,6 @@ class FriendshipController(private val client: EntClient) {
         return client.friendships.query {
             where(Friendship.recipientId eq id)
             where(Friendship.status eq FriendshipStatus.PENDING)
-        }.all().map { it.toResponse() }
+        }.allOrThrow().map { it.toResponse() }
     }
 }

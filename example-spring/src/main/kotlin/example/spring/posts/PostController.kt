@@ -26,7 +26,7 @@ class PostController(private val client: EntClient) {
         val posts = client.posts.query {
             if (published != null) where(Post.published eq published)
             orderBy(Post.createdAt.desc())
-        }.all()
+        }.allOrThrow()
         return posts.map { it.toResponse() }
     }
 

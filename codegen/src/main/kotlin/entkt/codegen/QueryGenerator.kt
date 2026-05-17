@@ -29,6 +29,11 @@ private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val PRIVACY_DENIED = ClassName("entkt.runtime", "PrivacyDeniedException")
 private val QUERY_EXPLANATION = ClassName("entkt.runtime", "QueryExplanation")
+private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
+private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
+private val MEMBER_GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime", "getOrThrow")
+private val MEMBER_CLASSIFY = com.squareup.kotlinpoet.MemberName("entkt.runtime", "classifyDriverError")
 
 internal class QueryGenerator(
     private val packageName: String,
@@ -135,8 +140,14 @@ internal class QueryGenerator(
             // returns its `results` parameter unchanged.
             .addFunction(buildLoadEdges(entityClass, schema, schemaNames))
             .addFunction(buildRequireClient(schemaName))
-            .addFunction(buildAll(schemaName, entityClass, hasEdges))
+            .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
+            .addFunction(buildAllOrError(schemaName, entityClass))
+            .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
+            .addFunction(buildVisibleAllOrError(schemaName, entityClass))
             .addFunction(buildFirstOrNull(schemaName, entityClass, hasEdges))
+            .addFunction(buildFirstOrThrow(schemaName, entityClass))
+            .addFunction(buildFirstOrError(schemaName, entityClass))
+            .addFunction(buildFirstVisibleOrNull(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleCount(schemaName, entityClass))
             .addFunction(buildRawCount(schemaName, entityClass))
             .addFunction(buildExists(schemaName, entityClass))
@@ -150,12 +161,15 @@ internal class QueryGenerator(
     }
 
     /**
-     * Terminal op: execute the query and return every matching entity,
-     * throwing if any entity is denied by LOAD privacy rules.
+     * `allOrThrow(): List<T>` — strict bulk read. Returns every
+     * matching entity; if **any** matched row is denied by LOAD
+     * privacy the operation fails with [PrivacyDeniedException].
+     * Replaces the legacy `all()` name to make the throw-on-denial
+     * contract explicit at the call site.
      */
-    private fun buildAll(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+    private fun buildAllOrThrow(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        val builder = FunSpec.builder("all")
+        val builder = FunSpec.builder("allOrThrow")
             .returns(List::class.asClassName().parameterizedBy(entityClass))
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
@@ -179,6 +193,112 @@ internal class QueryGenerator(
     }
 
     /**
+     * `allOrError(): EntResult<List<T>>` — structured-result bulk
+     * read. Wraps [allOrThrow]'s privacy / driver exceptions into the
+     * matching [EntError] variant. The `catch (Exception)` arm routes
+     * through [classifyDriverError] for the constraint/driver split.
+     */
+    private fun buildAllOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val listType = List::class.asClassName().parameterizedBy(entityClass)
+        val resultType = ENT_RESULT.parameterizedBy(listType)
+        return FunSpec.builder("allOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  %T.Ok(allOrThrow())\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `visibleAll(): List<T>` — filter-only bulk read. Returns the
+     * subset of matching rows the current viewer can LOAD. Rows that
+     * fail LOAD privacy are dropped from the result instead of
+     * triggering an exception. Driver failures still propagate as
+     * raw exceptions; use [visibleAllOrError] for the structured form.
+     *
+     * V1 has no overfetch cap wired here yet — every matching row is
+     * pulled and filtered in-process. The cap (`EntClientConfig
+     * .visibleOverfetchLimit`) will bound the storage scan in a
+     * future sub-phase.
+     */
+    private fun buildVisibleAll(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val listType = List::class.asClassName().parameterizedBy(entityClass)
+        val builder = FunSpec.builder("visibleAll")
+            .returns(listType)
+            .addStatement("val c = requireClient()")
+            .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement(
+                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                entityClass,
+            )
+            .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
+        builder.addCode(
+            CodeBlock.builder()
+                .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+                .also {
+                    if (hasEdges) {
+                        it.addStatement("return loadEdges(results, privacy)")
+                    } else {
+                        it.addStatement("return results")
+                    }
+                }
+                .endControlFlow()
+                .addStatement(
+                    "val visible = results.filter { e -> try { c.%L.evaluateLoadPrivacy(privacy, e); true } catch (_: %T) { false } }",
+                    repoPropName, PRIVACY_DENIED,
+                )
+                .build()
+        )
+        if (hasEdges) {
+            builder.addStatement("return loadEdges(visible, privacy)")
+        } else {
+            builder.addStatement("return visible")
+        }
+        return builder.build()
+    }
+
+    /**
+     * `visibleAllOrError(): EntResult<List<T>>` — structured-result
+     * filter-only bulk read. Wraps [visibleAll]; the only failure
+     * surface is driver exceptions (privacy denial never escapes
+     * `visibleAll` because it's filtered to a `false` decision).
+     */
+    private fun buildVisibleAllOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val listType = List::class.asClassName().parameterizedBy(entityClass)
+        val resultType = ENT_RESULT.parameterizedBy(listType)
+        return FunSpec.builder("visibleAllOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  %T.Ok(visibleAll())\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
      * Terminal op: ask the driver for one row and stop, enforcing LOAD
      * privacy on the result.
      */
@@ -199,6 +319,104 @@ internal class QueryGenerator(
         } else {
             builder.addStatement("return entity")
         }
+        return builder.build()
+    }
+
+    /**
+     * `firstOrThrow(): T` — strict first-row read. Throws structured
+     * EntException subclasses for every failure surface (NotFound on
+     * empty match, PrivacyDenied on denial, DriverFailure on
+     * uncategorized exceptions). Wraps [firstOrError].
+     */
+    private fun buildFirstOrThrow(schemaName: String, entityClass: ClassName): FunSpec {
+        return FunSpec.builder("firstOrThrow")
+            .returns(entityClass)
+            .addStatement("return firstOrError().%M()", MEMBER_GET_OR_THROW)
+            .build()
+    }
+
+    /**
+     * `firstOrError(): EntResult<T>` — structured-result first-row
+     * read. Empty match → Err(NotFound); privacy denial →
+     * Err(PrivacyDenied); other uncaught Exception routed through
+     * [classifyDriverError].
+     *
+     * NotFound carries `id = null` because a query-level "first row"
+     * has no identifying id to attribute the miss to.
+     */
+    private fun buildFirstOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val resultType = ENT_RESULT.parameterizedBy(entityClass)
+        return FunSpec.builder("firstOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add(
+                        "  firstOrNull()?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.QUERY))\n",
+                        ENT_RESULT, ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `firstVisibleOrNull(): T?` — scans matched rows in storage
+     * order and returns the first row LOAD privacy allows. Returns
+     * `null` if no matched row is visible. Driver failures still
+     * propagate as raw exceptions.
+     *
+     * V1 has no overfetch cap wired here yet — scanning is bounded
+     * only by the query's `queryLimit` (if set) or the natural end
+     * of the storage match. The cap (`EntClientConfig
+     * .visibleOverfetchLimit`) will bound the scan in a future
+     * sub-phase.
+     */
+    private fun buildFirstVisibleOrNull(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val builder = FunSpec.builder("firstVisibleOrNull")
+            .returns(entityClass.copy(nullable = true))
+            .addStatement("val c = requireClient()")
+            .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement(
+                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                entityClass,
+            )
+        builder.addCode(
+            CodeBlock.builder()
+                .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+                .addStatement("val row = rows.firstOrNull() ?: return null")
+                .addStatement("val entity = %T.fromRow(row)", entityClass)
+                .also {
+                    if (hasEdges) it.addStatement("return loadEdges(listOf(entity), privacy).first()")
+                    else it.addStatement("return entity")
+                }
+                .endControlFlow()
+                .beginControlFlow("for (row in rows)")
+                .addStatement("val entity = %T.fromRow(row)", entityClass)
+                .beginControlFlow("try")
+                .addStatement("c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName)
+                .also {
+                    if (hasEdges) it.addStatement("return loadEdges(listOf(entity), privacy).first()")
+                    else it.addStatement("return entity")
+                }
+                .nextControlFlow("catch (_: %T)", PRIVACY_DENIED)
+                .endControlFlow()
+                .endControlFlow()
+                .addStatement("return null")
+                .build()
+        )
         return builder.build()
     }
 

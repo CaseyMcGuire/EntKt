@@ -26,8 +26,21 @@ throw on every path including `saveOrError()` (see
 [Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md)
 for the Option 3 contract). The result tables below describe the V1
 target shape; rows that depend on still-deferred wiring are flagged with
-footnotes. Read-side `*OrError`, the `withTransactionOrError` helper, and
-bulk `*OrError` variants are not yet generated.
+footnotes.
+
+Read APIs are landed: `byIdOrThrow` / `byIdOrNull` / `visibleByIdOrNull`
+/ `byIdOrError` at the repo level (the legacy `byId` is removed in
+favor of `byIdOrNull` — `byId` is not deprecated, it's gone); and on
+the query side `firstOrThrow` / `firstOrNull` / `firstVisibleOrNull` /
+`firstOrError`, plus `allOrThrow` / `allOrError` / `visibleAll` /
+`visibleAllOrError`. The legacy `all()` is removed in favor of
+`allOrThrow()` for the same explicit-naming reason. The
+`EntClientConfig.visibleOverfetchLimit` cap is **not yet wired** —
+V1 `visibleAll` / `firstVisibleOrNull` scan the full storage match
+without an upper bound; the cap will land alongside
+`EntError.OverfetchCapExceeded` in a follow-up sub-phase. The
+`withTransactionOrError` helper and bulk `*OrError` variants are
+also not yet generated.
 
 ## Summary
 
