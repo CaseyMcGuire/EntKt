@@ -108,12 +108,23 @@ SQLSTATE code and ServerErrorMessage constraint metadata against
 the generated create/update *OrError paths on a real Postgres
 container.
 
-The remaining RFC entries — bulk batch-result helpers
-(`createManyBatchOrError` returning `EntBatchResult<T>`) and the
-optimistic-locking `Err(Conflict)` path — are deferred per the
-RFC's own scoping ("V1 status: Err(Conflict) is not a reachable
-outcome for V1 owner-edge mutations… reserved for a future
-optimistic-concurrency RFC").
+Remaining deferred work:
+
+- Bulk batch-result helpers (`createManyBatchOrError` returning
+  `EntBatchResult<T>`) — the partial-success bulk shape; the V1
+  `createManyOrError` is short-circuit + transaction-required as
+  documented above.
+- Optimistic-locking `Err(Conflict)` path — V1 has no path that
+  produces `Conflict` for owner-edge mutations; reserved for a
+  future optimistic-concurrency RFC (per its own scoping note).
+- Edge-only-owner-deleted FK mapping — when an M2M helper's
+  junction insert races a parallel delete of the owner row, the
+  resulting FK violation still propagates as the raw driver
+  exception through `saveOrError`. The classifier integration for
+  that specific path is tracked under RFC #5 / the Transaction And
+  Locking Semantics RFC's "Deferred follow-ups" section. Once
+  wired, it'll surface as `Err(ConstraintViolation)` like every
+  other constraint failure.
 
 ## Summary
 
@@ -403,6 +414,15 @@ sealed interface EntError {
         override val message: String = cause.message ?: "driver failure",
     ) : EntError
 
+    data class OverfetchCapExceeded(
+        override val entity: String,
+        override val operation: EntOperation,
+        val cap: Int,
+        override val message: String = "Visible-only read exhausted overfetch cap " +
+            "(visibleOverfetchLimit=$cap) before producing a complete result; " +
+            "raise the cap on EntClientConfig or narrow the predicate",
+    ) : EntError
+
     data class WriteSucceededLoadDenied(
         override val entity: String,
         override val operation: EntOperation,  // CREATE or UPDATE
@@ -481,6 +501,14 @@ class EntConflictException(
 class EntDriverException(
     override val error: EntError.DriverFailure,
 ) : EntException(error, cause = error.cause)
+
+class EntOverfetchCapExceededException(
+    override val error: EntError.OverfetchCapExceeded,
+) : EntException(error)
+
+class EntWriteSucceededLoadDeniedException(
+    override val error: EntError.WriteSucceededLoadDenied,
+) : EntException(error)
 ```
 
 Existing exception types can either be adapted to wrap `EntError`, or retained
@@ -503,12 +531,19 @@ Recommended behavior:
 |---|---|---|---|---|
 | Row exists and is visible | returns row | returns row | returns row | `Ok(row)` |
 | Row does not exist | throws `EntNotFoundException` | `null` | `null` | `Err(NotFound)` |
-| Row exists but LOAD privacy denies | throws `EntPrivacyDeniedException` | throws `EntPrivacyDeniedException` | `null` | `Err(PrivacyDenied)` |
-| Driver failure | throws `EntDriverException` | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` ¹ |
+| Row exists but LOAD privacy denies | throws `EntPrivacyDeniedException` | throws `PrivacyDeniedException` ¹ | `null` | `Err(PrivacyDenied)` |
+| Constraint-coded driver failure | throws `EntConstraintViolationException` | throws `EntConstraintViolationException` | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` |
+| Other driver failure | throws `EntDriverException` | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` |
 
-¹ Deferred wiring — see Status. V1 currently propagates the underlying driver
-exception (e.g., `org.postgresql.util.PSQLException`) rather than wrapping it
-in `EntDriverException` or surfacing it as `Err(DriverFailure)`.
+¹ `byIdOrNull` throws the raw `PrivacyDeniedException` (the
+*OrNull-family convention — these methods predate the structured
+exception hierarchy, and the structured variant is reserved for
+*OrThrow-family methods that wrap *OrError via `getOrThrow()`).
+`byIdOrThrow` / `visibleByIdOrNull` / `byIdOrError` all go through
+`classifyDriverError` for the driver-failure path, so SQLSTATE 23xxx
+surfaces as ConstraintViolation and other JDBC failures as
+DriverFailure — landed in Phase 5a (was footnote-deferred in earlier
+RFC drafts).
 
 ### First Row
 
@@ -607,10 +642,21 @@ absence.
 | Outcome | `saveOrThrow` | `saveOrError` |
 |---|---|---|
 | Created successfully | returns entity | `Ok(entity)` |
-| Privacy denied | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
+| Privacy denied (pre-write CREATE check) | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
 | Validation failed | throws `EntValidationException` | `Err(ValidationFailed)` |
 | Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` |
+| Write committed, post-write LOAD denied | throws `EntWriteSucceededLoadDeniedException` | `Err(WriteSucceededLoadDenied)` |
 | Driver failure | throws `EntDriverException` | `Err(DriverFailure)` |
+
+The post-write LOAD-denied row is distinct from `PrivacyDenied(CREATE)`:
+the latter means the write was rejected up-front and did NOT happen;
+the former means the database row IS committed and the caller just
+can't read what they wrote. The variant separation prevents callers
+treating `Err` as "the operation didn't happen" from being silently
+wrong on the post-write case. The `WriteSucceededLoadDenied.id`
+carries the newly-written entity's id. The helper does not roll back
+on its own — for transactional rollback, compose with
+`withTransactionOrError + .bind()`.
 
 ### Update
 
@@ -628,10 +674,15 @@ introducing a second alias.
 | Updated successfully | returns entity | `Ok(entity)` |
 | No requested changes (empty patch) | throws `EntNoChangesException` | `Err(NoChanges)` |
 | Owner row missing | throws `EntNotFoundException` | `Err(NotFound)` |
-| Privacy denied | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
+| Privacy denied (pre-write UPDATE check) | throws `EntPrivacyDeniedException` | `Err(PrivacyDenied)` |
 | Validation failed | throws `EntValidationException` | `Err(ValidationFailed)` |
 | Unique/FK/check constraint failed | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` |
+| Write committed, post-write LOAD denied | throws `EntWriteSucceededLoadDeniedException` | `Err(WriteSucceededLoadDenied)` |
 | Driver failure | throws `EntDriverException` | `Err(DriverFailure)` |
+
+The post-write LOAD-denied row follows the same Create rationale: the
+update commits, the caller can't see the updated entity. The
+`WriteSucceededLoadDenied.id` carries the updated row's id.
 
 `NoChanges` is the empty-patch outcome defined by
 [ID-Based Update Roots](../edge-mutation/01-id-based-update-roots.md).
