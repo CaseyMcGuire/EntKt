@@ -382,17 +382,31 @@ interface Driver {
  * chain — `printStackTrace()` and friends still see the original
  * driver exception.
  *
- * **Re-throws deterministic programming/configuration errors.**
- * [TransactionRequiredException] and
- * [UnsupportedDriverCapabilityException] are not surfaced as
- * `EntError` — per the Result Variants RFC they're errors in how
- * the caller configured the client / drivers, not failures in the
- * operation. Generated `*OrError()` blocks call this from a `catch
- * (Exception)` arm that catches both kinds of throwable; this
- * function re-throws the configuration errors so they escape the
- * `*OrError` path the same way they escape `*OrThrow`. The result
- * type stays `EntError` because that's still the contract for the
- * happy classification path.
+ * **Re-throws deterministic programming/configuration errors.** The
+ * generated `*OrError()` blocks catch (Exception) for the catch-all
+ * driver path, which would otherwise wrap genuine programming bugs
+ * (a hook throwing `IllegalStateException`, an
+ * `IllegalArgumentException` from a generated misuse path, a
+ * `TransactionRequiredException` from the preflight, an
+ * `UnsupportedDriverCapabilityException` from a missing capability)
+ * as `Err(DriverFailure)` — hiding application bugs as infrastructure
+ * failures. To prevent that, this function re-throws the following
+ * categories BEFORE falling back to `DriverFailure`:
+ *
+ *  - [TransactionRequiredException] / [UnsupportedDriverCapabilityException]
+ *    — RFC-defined configuration errors
+ *  - [IllegalStateException] / [IllegalArgumentException] that the
+ *    driver's own classifier does not recognize — programming bugs
+ *    (the driver's classifier wins first; e.g. the InMemoryDriver
+ *    classifier matches its `"Unique violation:" / "FK violation:"`
+ *    message-prefixed `IllegalStateException`s and returns
+ *    `ConstraintViolation`, so only *unrecognized* programming
+ *    exceptions escape)
+ *
+ * The result type stays `EntError` because that's still the contract
+ * for the happy classification path. Callers who genuinely want the
+ * programming-error fallback wrapped as `DriverFailure` can implement
+ * a custom classifier; the default is "fail loud on bugs".
  */
 public fun classifyDriverError(
     driver: Driver,
@@ -402,6 +416,14 @@ public fun classifyDriverError(
 ): EntError {
     if (throwable is TransactionRequiredException) throw throwable
     if (throwable is UnsupportedDriverCapabilityException) throw throwable
-    return driver.classifyException(throwable, entity, operation)
-        ?: EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)
+    val classified = driver.classifyException(throwable, entity, operation)
+    if (classified != null) return classified
+    // Driver didn't recognize this throwable. If it's a textbook
+    // programming bug — IllegalState / IllegalArgument that *no*
+    // driver classifier picked up — re-throw so it escapes the
+    // *OrError path as the original exception, the same way it
+    // would escape *OrThrow if there were no try/catch in play.
+    if (throwable is IllegalStateException) throw throwable
+    if (throwable is IllegalArgumentException) throw throwable
+    return EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)
 }

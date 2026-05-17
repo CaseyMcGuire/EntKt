@@ -199,8 +199,11 @@ class PrivacyIntegrationTest {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
-        // Anonymous can see published but not drafts — should throw
-        assertFailsWith<PrivacyDeniedException> {
+        // Anonymous can see published but not drafts — should throw.
+        // allOrThrow wraps allOrError().getOrThrow() so the throw is
+        // the structured EntPrivacyDeniedException, not the raw
+        // PrivacyDeniedException.
+        assertFailsWith<EntPrivacyDeniedException> {
             client.articles.query().allOrThrow()
         }
     }
@@ -530,8 +533,9 @@ class PrivacyIntegrationTest {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
-        // Anonymous: drafts throw
-        assertFailsWith<PrivacyDeniedException> {
+        // Anonymous: drafts throw — allOrThrow wraps via getOrThrow
+        // so the throw is the structured EntPrivacyDeniedException.
+        assertFailsWith<EntPrivacyDeniedException> {
             client.articles.query().allOrThrow()
         }
 
@@ -542,7 +546,7 @@ class PrivacyIntegrationTest {
         assertEquals(4, all.size)
 
         // Back to anonymous: still throws
-        assertFailsWith<PrivacyDeniedException> {
+        assertFailsWith<EntPrivacyDeniedException> {
             client.articles.query().allOrThrow()
         }
     }
@@ -585,7 +589,7 @@ class PrivacyIntegrationTest {
             // Now query ALL published articles with eager author. Bob's article is
             // published (allowed), but eager-loading Bob as the author should throw
             // because RestrictiveUserPolicy only allows viewing yourself.
-            assertFailsWith<PrivacyDeniedException> {
+            assertFailsWith<EntPrivacyDeniedException> {
                 scoped.articles.query {
                     where(Article.published eq true)
                     withAuthor()

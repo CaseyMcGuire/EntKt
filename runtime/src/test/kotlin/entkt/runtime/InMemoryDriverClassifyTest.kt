@@ -221,4 +221,54 @@ class InMemoryDriverClassifyTest {
             assertEquals(udc, e)
         }
     }
+
+    @Test
+    fun `classifyDriverError re-throws unrecognized IllegalStateException as programming bug`() {
+        // A hook throwing IllegalStateException for application
+        // reasons (not a driver-recognized constraint violation)
+        // should escape *OrError as the original exception, not be
+        // hidden as Err(DriverFailure). The driver's classifier
+        // returning null is the signal that this is NOT a known
+        // driver-level failure.
+        val driver = InMemoryDriver()
+        val bug = IllegalStateException("hook misuse: invariant violated")
+        try {
+            classifyDriverError(driver, bug, "X", EntOperation.CREATE)
+            kotlin.test.fail("expected re-throw")
+        } catch (e: IllegalStateException) {
+            assertEquals(bug, e)
+        }
+    }
+
+    @Test
+    fun `classifyDriverError re-throws IllegalArgumentException as programming bug`() {
+        val driver = InMemoryDriver()
+        val bug = IllegalArgumentException("bad input to generated code")
+        try {
+            classifyDriverError(driver, bug, "X", EntOperation.CREATE)
+            kotlin.test.fail("expected re-throw")
+        } catch (e: IllegalArgumentException) {
+            assertEquals(bug, e)
+        }
+    }
+
+    @Test
+    fun `classifyDriverError still wraps driver-recognized IllegalStateException as ConstraintViolation`() {
+        // The InMemoryDriver classifier matches its own validator
+        // message-prefixed IllegalStateExceptions (e.g. "FK
+        // violation:") and returns ConstraintViolation — this is the
+        // existing Phase 2 behavior. The new re-throw guard sits
+        // *after* the driver's classifier, so driver-recognized
+        // exceptions still get wrapped instead of being misread as
+        // programming bugs.
+        val (parents, children) = fkSchemas()
+        val driver = InMemoryDriver().apply { register(parents); register(children) }
+        val classified = try {
+            driver.insert("cls_children", mapOf("parent_id" to 999L))
+            null
+        } catch (e: Throwable) {
+            classifyDriverError(driver, e, "X", EntOperation.CREATE)
+        }
+        assertTrue(classified is EntError.ConstraintViolation)
+    }
 }

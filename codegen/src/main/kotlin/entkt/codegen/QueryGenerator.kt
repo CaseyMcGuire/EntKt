@@ -141,7 +141,7 @@ internal class QueryGenerator(
             .addFunction(buildLoadEdges(entityClass, schema, schemaNames))
             .addFunction(buildRequireClient(schemaName))
             .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
-            .addFunction(buildAllOrError(schemaName, entityClass))
+            .addFunction(buildAllOrError(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleAllOrError(schemaName, entityClass, hasEdges))
             .addFunction(buildFirstOrNull(schemaName, entityClass, hasEdges))
@@ -163,42 +163,44 @@ internal class QueryGenerator(
     /**
      * `allOrThrow(): List<T>` — strict bulk read. Returns every
      * matching entity; if **any** matched row is denied by LOAD
-     * privacy the operation fails with [PrivacyDeniedException].
-     * Replaces the legacy `all()` name to make the throw-on-denial
-     * contract explicit at the call site.
+     * privacy the operation fails with [EntPrivacyDeniedException]
+     * (structured EntException family). Driver failures throw
+     * [EntDriverException] / [EntConstraintViolationException] per
+     * the classifier.
+     *
+     * Implemented as a `allOrError().getOrThrow()` wrapper per the
+     * RFC's "throwing APIs should be implemented as wrappers over
+     * xOrError()" guideline — keeps the privacy / driver mapping in
+     * one place and guarantees the structured-exception contract
+     * across the *OrThrow family.
      */
     private fun buildAllOrThrow(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        val builder = FunSpec.builder("allOrThrow")
+        return FunSpec.builder("allOrThrow")
             .returns(List::class.asClassName().parameterizedBy(entityClass))
-            .addStatement("val c = requireClient()")
-            .addStatement("val privacy = c.currentPrivacyContext()")
             .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
-                entityClass,
+                "return allOrError().%M()",
+                MEMBER_GET_OR_THROW,
             )
-            .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
-        builder.addCode(CodeBlock.builder()
-            .beginControlFlow("if (c.%L.hasLoadPrivacy())", repoPropName)
-            .addStatement("for (entity in results) c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName)
-            .endControlFlow()
             .build()
-        )
-        if (hasEdges) {
-            builder.addStatement("return loadEdges(results, privacy)")
-        } else {
-            builder.addStatement("return results")
-        }
-        return builder.build()
     }
 
     /**
      * `allOrError(): EntResult<List<T>>` — structured-result bulk
-     * read. Wraps [allOrThrow]'s privacy / driver exceptions into the
-     * matching [EntError] variant. The `catch (Exception)` arm routes
-     * through [classifyDriverError] for the constraint/driver split.
+     * read. The canonical entry point for the throw/result pair:
+     * maps every failure surface into the matching [EntError] variant,
+     * and `allOrThrow` delegates here.
+     *
+     * Failure mapping:
+     *  - any matched row denied by LOAD privacy →
+     *    `Err(PrivacyDenied)` (the first denial wins via the
+     *    underlying `evaluateLoadPrivacy` raise)
+     *  - other uncaught Exception → routed through
+     *    [classifyDriverError] so SQLSTATE 23xxx surfaces as
+     *    `Err(ConstraintViolation)` and the fallback is
+     *    `Err(DriverFailure)`
      */
-    private fun buildAllOrError(schemaName: String, entityClass: ClassName): FunSpec {
+    private fun buildAllOrError(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val listType = List::class.asClassName().parameterizedBy(entityClass)
         val resultType = ENT_RESULT.parameterizedBy(listType)
         return FunSpec.builder("allOrError")
@@ -206,7 +208,21 @@ internal class QueryGenerator(
             .addCode(
                 CodeBlock.builder()
                     .add("return try {\n")
-                    .add("  %T.Ok(allOrThrow())\n", ENT_RESULT)
+                    .add("  val c = requireClient()\n")
+                    .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add(
+                        "  val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)\n",
+                        entityClass,
+                    )
+                    .add("  val results = rows.map { %T.fromRow(it) }\n", entityClass)
+                    .add("  if (c.%L.hasLoadPrivacy()) {\n", repoPropName)
+                    .add("    for (entity in results) c.%L.evaluateLoadPrivacy(privacy, entity)\n", repoPropName)
+                    .add("  }\n")
+                    .add(
+                        "  %T.Ok(%L)\n",
+                        ENT_RESULT,
+                        if (hasEdges) "loadEdges(results, privacy)" else "results",
+                    )
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
                         "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",

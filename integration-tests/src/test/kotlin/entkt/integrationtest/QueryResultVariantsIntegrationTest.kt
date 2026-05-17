@@ -111,13 +111,19 @@ class QueryResultVariantsIntegrationTest {
     }
 
     @Test
-    fun `allOrThrow throws PrivacyDeniedException when any row is denied`() {
+    fun `allOrThrow throws EntPrivacyDeniedException when any row is denied`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("First"))
         seedThree(client)
 
-        assertFailsWith<PrivacyDeniedException> {
+        // allOrThrow wraps allOrError().getOrThrow(), so the throw is
+        // the structured EntPrivacyDeniedException (not the raw
+        // PrivacyDeniedException). This is consistent with the rest
+        // of the *OrThrow family (byIdOrThrow / firstOrThrow /
+        // saveOrThrow / deleteOrThrow).
+        val ex = assertFailsWith<EntPrivacyDeniedException> {
             client.articles.query().allOrThrow()
         }
+        assertEquals(EntOperation.LOAD, ex.privacyDenied.operation)
     }
 
     // ---- allOrError ----
