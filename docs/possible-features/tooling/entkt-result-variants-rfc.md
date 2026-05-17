@@ -54,8 +54,19 @@ that "did the row actually exist?" isn't typically interesting when
 the caller already had the entity in hand); the id-based path keeps
 the Boolean via `EntResult<Boolean>` because `Ok(true)` /
 `Ok(false)` cleanly distinguishes deleted from idempotent no-op,
-which is the natural shape for that operation. The
-`withTransactionOrError` helper and bulk `*OrError` variants are
+which is the natural shape for that operation.
+
+`EntClient.withTransactionOrError { block }: EntResult<T>` is wired:
+the block runs with an `EntResultScope` receiver so callers compose
+operations via `EntResult<T>.bind()`. `bind()` throws
+`AbortEntResultTransaction(error)` on `Err`, which the helper catches
+outside `driver.withTransaction` — that's how the driver-level
+rollback fires (driver's `withTransaction` rolls back on any throw)
+and how the helper converts the abort back into
+`EntResult.Err(error)` for the outer caller. The runtime guard for
+the "block returns `EntResult<*>`" footgun runs *inside* the driver
+block, so a forgotten `.bind()` triggers rollback rather than
+silently committing earlier writes. Bulk `*OrError` variants are
 not yet generated.
 
 ## Summary

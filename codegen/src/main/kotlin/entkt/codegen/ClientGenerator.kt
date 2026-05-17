@@ -200,6 +200,7 @@ internal class ClientGenerator(
                     .build()
             )
             .addFunction(buildWithTransaction(clientClass, configClass, t, sorted))
+            .addFunction(buildWithTransactionOrError(clientClass, t, sorted))
             .addType(buildCompanionObject(sorted))
             .build()
 
@@ -435,6 +436,107 @@ internal class ClientGenerator(
                 ),
             )
             .returns(t)
+            .addCode(body.build())
+            .build()
+    }
+
+    /**
+     * Generates the structured-result transaction helper:
+     *
+     *   fun <T> withTransactionOrError(
+     *     block: EntResultScope.(EntClient) -> T,
+     *   ): EntResult<T>
+     *
+     * The block runs inside an `EntResultScope` so it can call
+     * `EntResult.bind()` on individual operations. `bind()` either
+     * unwraps the Ok or throws `AbortEntResultTransaction` carrying
+     * the first Err. The helper:
+     *
+     *  - catches `AbortEntResultTransaction` inside the
+     *    `driver.withTransaction` block and re-throws as a wrapper,
+     *    so the driver rolls the transaction back (driver's
+     *    withTransaction commits on normal return, rolls back on
+     *    any throw)
+     *  - converts the abort back to `EntResult.Err(error)` outside
+     *    the driver block so the caller gets a structured result
+     *    instead of an exception
+     *  - guards against the "block returns EntResult<T>" footgun:
+     *    if T happens to be EntResult<*>, the block's normal-return
+     *    `Ok(Err(...))` would silently commit earlier writes. The
+     *    runtime check throws IllegalStateException AFTER the
+     *    transaction has rolled back, so the silent-commit bad
+     *    pattern becomes a deterministic programming error caught
+     *    at the first run.
+     */
+    private fun buildWithTransactionOrError(
+        clientClass: ClassName,
+        t: TypeVariableName,
+        schemas: List<SchemaInput>,
+    ): FunSpec {
+        val entResultClass = ClassName("entkt.runtime", "EntResult")
+        val entResultScopeClass = ClassName("entkt.runtime", "EntResultScope")
+        val abortClass = ClassName("entkt.runtime", "AbortEntResultTransaction")
+        val resultType = entResultClass.parameterizedBy(t)
+        val body = CodeBlock.builder()
+
+        // Track the abort across the driver block. The driver's
+        // withTransaction commits on normal return — to roll back on
+        // bind() abort, we re-throw the abort so the driver sees a
+        // throw and rolls back, then we catch it outside the driver
+        // block and convert to EntResult.Err.
+        body.addStatement("var aborted: %T? = null", abortClass)
+        body.addStatement("var raw: %T? = null", t)
+        body.beginControlFlow("try")
+        body.beginControlFlow("driver.withTransaction { txDriver ->")
+        body.addStatement("val tx = %T(txDriver)", clientClass)
+        body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
+        body.addStatement("tx.transactionRequirement = this.transactionRequirement")
+        body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
+            body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
+            body.addStatement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
+        }
+        body.addStatement("val scope = %T()", entResultScopeClass)
+        body.addStatement("val blockResult = with(scope) { block(tx) }")
+        // Runtime guard inside the driver block so the
+        // EntResult-returning bad pattern triggers a rollback. If we
+        // checked after `driver.withTransaction` returns, the commit
+        // would already have happened.
+        body.beginControlFlow("if (blockResult is %T<*>)", entResultClass)
+        body.addStatement(
+            "throw IllegalStateException(%S)",
+            "withTransactionOrError block returned EntResult<*>; use .bind() inside the block instead of returning EntResult directly",
+        )
+        body.endControlFlow()
+        body.addStatement("raw = blockResult")
+        body.endControlFlow()
+        body.nextControlFlow("catch (e: %T)", abortClass)
+        body.addStatement("aborted = e")
+        body.endControlFlow()
+
+        // After the driver block completes (committed) or was rolled
+        // back by the re-thrown abort, decide the return value.
+        body.beginControlFlow("if (aborted != null)")
+        body.addStatement("return %T.Err(aborted!!.error)", entResultClass)
+        body.endControlFlow()
+
+        @Suppress("UNCHECKED_CAST")
+        body.addStatement("return %T.Ok(raw as %T)", entResultClass, t)
+
+        // Wrap the type variable in EntResultScope's extension shape.
+        val scopedBlock = LambdaTypeName.get(
+            receiver = entResultScopeClass,
+            parameters = listOf(ParameterSpec.unnamed(clientClass)),
+            returnType = t,
+        )
+
+        return FunSpec.builder("withTransactionOrError")
+            .addTypeVariable(t)
+            .addParameter("block", scopedBlock)
+            .returns(resultType)
             .addCode(body.build())
             .build()
     }
