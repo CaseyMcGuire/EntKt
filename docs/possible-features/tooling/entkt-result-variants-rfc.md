@@ -506,18 +506,54 @@ Recommended behavior:
 - Privacy denial remains explicit unless the method name says `visible`.
 
 **Visible-only API contract (V1).** `firstVisibleOrNull()` /
-`visibleAll()` / `visibleAllOrError()` filter storage-matched rows through
-LOAD privacy before returning. When the privacy mode supports server-side
-predicate pushdown, generated code uses that and all returned rows are
-visible by construction. When pushdown is unavailable, the engine performs
-an **in-process filter after the storage predicate**, with a configurable
-client-level overfetch cap (default 100 rows). If the cap is exhausted
-without finding a visible row, `firstVisibleOrNull()` returns `null` and
-`visibleAllOrError()` returns `Err(DriverFailure)` with an
-"overfetch cap exceeded" message. Pagination across visible-only results is
-the caller's responsibility for `visibleAll()` — there is no implicit
+`visibleAll()` / `visibleAllOrError()` filter storage-matched **root**
+rows through LOAD privacy before returning. When the privacy mode
+supports server-side predicate pushdown, generated code uses that and
+all returned root rows are visible by construction. When pushdown is
+unavailable, the engine performs an **in-process filter after the
+storage predicate**, with a configurable client-level overfetch cap
+(default 100 rows). If the cap is exhausted without finding a visible
+row, `firstVisibleOrNull()` returns `null` and `visibleAllOrError()`
+returns `Err(EntError.OverfetchCapExceeded)` carrying the cap value.
+The cap is skipped entirely when the root repo has no LOAD privacy
+rules — there's nothing to filter in-process, so the user's
+`queryLimit` (if any) is the only bound and cap-exhaustion has no
+semantic meaning. Pagination across visible-only results is the
+caller's responsibility for `visibleAll()` — there is no implicit
 pagination loop. The overfetch cap is exposed on `EntClientConfig` as
 `visibleOverfetchLimit`.
+
+**Visible filtering is root-only.** Eager-loaded edge targets via
+`withAuthor()` / `withTags()` / etc. still enforce target LOAD privacy
+strictly — a denied target throws `PrivacyDeniedException` from
+`visibleAll()` / `firstVisibleOrNull()`, and surfaces as
+`Err(PrivacyDenied)` from `visibleAllOrError()`. The "visible" name
+guarantees the *root entity* survives privacy filtering; it does not
+recursively apply to the eager subgraph.
+
+The rationale is that eager loading is an explicit opt-in: writing
+`withAuthor()` says "also give me the author," so a denied author is a
+meaningful privacy mismatch the caller probably wants to know about.
+Silently dropping the root row in that case would create "ghost row"
+ambiguity — the caller couldn't tell whether the missing rows are gone
+because of root denial, because of eager-target denial, or because the
+predicate just didn't match.
+
+Callers who want silent filtering of denied eager targets can chain
+visible queries on the target side instead of using `with...()`:
+
+```kotlin
+val articles = client.articles.query().visibleAll()
+val authorsById = client.users.query {
+    where(User.id inList articles.map { it.authorId })
+}.visibleAll().associateBy { it.id }
+// articles whose author is denied silently drop out of the join
+```
+
+A future opt-in like `withVisibleAuthor()` / `withVisibleTags()` could
+give the "silently drop the root row on target denial" semantic as an
+explicit per-edge choice without changing the default — that surface
+is deferred until the use case is concrete (see Open Questions).
 
 ### Many Rows
 
@@ -956,6 +992,18 @@ Before implementation, add tests for the following.
    Recommendation: avoid broad nullable mutation APIs. For updates, RFC #1's
    `saveOrNull()` already covers the "expected absence" case (missing owner
    row).
+
+5. Should visible-only reads extend their filtering to eager-loaded edge
+   targets, or stay root-only?
+
+   Recommendation for V1: stay root-only. Eager loading is an explicit
+   opt-in (`withAuthor()` / `withTags()`); a denied target is a meaningful
+   privacy mismatch the caller probably wants to know about, so it should
+   throw / surface as `Err(PrivacyDenied)` rather than silently dropping
+   the root row. Callers who want the silent-drop semantic can chain
+   separate visible queries on the target side. A future per-edge opt-in
+   like `withVisibleAuthor()` could give that shape without changing the
+   default — defer until the use case is concrete.
 
 ## Example End State
 

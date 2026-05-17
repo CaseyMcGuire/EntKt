@@ -234,6 +234,38 @@ class QueryResultVariantsIntegrationTest {
         assertEquals("user hidden", error.reason)
     }
 
+    @Test
+    fun `visibleAll throws raw PrivacyDeniedException on eager-edge denial (visible filtering is root-only)`() {
+        // Per the RFC's "Visible-only API contract" section:
+        // visibleAll's filter applies only to the root entity. Eager-
+        // loaded edge targets via withAuthor() / withTags() / etc.
+        // still enforce target LOAD privacy strictly — a denied
+        // target throws PrivacyDeniedException rather than silently
+        // dropping the root row. This pins the documented carve-out.
+        val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
+            override fun configure(scope: UserPolicyScope) = scope.run {
+                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
+            }
+        }
+        val driver = InMemoryDriver()
+        EntClient.SCHEMAS.forEach(driver::register)
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies {
+                articles(AllowAllArticles)
+                users(denyAllUsers)
+            }
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.articles.create { title = "X"; published = true; authorId = author.id }.saveOrThrow()
+        }
+
+        kotlin.test.assertFailsWith<PrivacyDeniedException> {
+            client.articles.query { withAuthor() }.visibleAll()
+        }
+    }
+
     // ---- firstOrNull (unchanged contract — null only for empty match) ----
 
     @Test

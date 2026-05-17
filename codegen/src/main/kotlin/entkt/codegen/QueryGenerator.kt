@@ -241,10 +241,19 @@ internal class QueryGenerator(
 
     /**
      * `visibleAll(): List<T>` — filter-only bulk read. Returns the
-     * subset of matching rows the current viewer can LOAD. Rows that
-     * fail LOAD privacy are dropped from the result instead of
-     * triggering an exception. Driver failures still propagate as
-     * raw exceptions; use [visibleAllOrError] for the structured form.
+     * subset of matching **root** rows the current viewer can LOAD.
+     * Root rows that fail LOAD privacy are dropped from the result
+     * instead of triggering an exception. Driver failures still
+     * propagate as raw exceptions; use [visibleAllOrError] for the
+     * structured form.
+     *
+     * **Visible filtering is root-only.** Eager-loaded edge targets
+     * via `with...()` still enforce target LOAD privacy strictly —
+     * a denied target throws `PrivacyDeniedException` from this
+     * call, the same way it does for `allOrThrow`. The rationale
+     * (and the workaround — chain visible queries on the target
+     * side) is documented in the RFC's "Visible-only API contract"
+     * section.
      *
      * **When the repo has LOAD privacy rules**, the storage scan is
      * bounded by `EntClientConfig.visibleOverfetchLimit` (default
@@ -313,6 +322,13 @@ internal class QueryGenerator(
      * `visibleAllOrError(): EntResult<List<T>>` — structured-result
      * filter-only bulk read.
      *
+     * **Visible filtering is root-only.** Eager-loaded edge targets
+     * via `with...()` still enforce target LOAD privacy strictly —
+     * a denied target surfaces as `Err(PrivacyDenied)` from this
+     * call, not as a silent root-row drop. See the RFC's
+     * "Visible-only API contract" section for the rationale and the
+     * chain-visible-queries workaround.
+     *
      * **When the repo has LOAD privacy rules**, returns
      * `Err(OverfetchCapExceeded)` when the storage scan hit
      * `EntClientConfig.visibleOverfetchLimit` (meaning more matching
@@ -329,11 +345,6 @@ internal class QueryGenerator(
      * any) is the only bound, and `Err(OverfetchCapExceeded)` is
      * never returned. This avoids the surprise of a no-privacy
      * entity being told its 100-row read "exceeded the cap".
-     *
-     * Privacy denial from eager edge loading via `loadEdges(...)`
-     * surfaces as `Err(PrivacyDenied)`. (The owner-row visible
-     * filter swallows denial by dropping the row, but eager target
-     * denial can re-raise.)
      */
     private fun buildVisibleAllOrError(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -491,11 +502,19 @@ internal class QueryGenerator(
     }
 
     /**
-     * `firstVisibleOrNull(): T?` — scans matched rows in storage
-     * order and returns the first row LOAD privacy allows. Returns
-     * `null` if no matched row is visible OR if the cap was
-     * exhausted before finding one. Driver failures still propagate
-     * as raw exceptions.
+     * `firstVisibleOrNull(): T?` — scans matched **root** rows in
+     * storage order and returns the first row LOAD privacy allows.
+     * Returns `null` if no matched root row is visible OR if the cap
+     * was exhausted before finding one. Driver failures still
+     * propagate as raw exceptions.
+     *
+     * **Visible filtering is root-only.** Eager-loaded edge targets
+     * via `with...()` still enforce target LOAD privacy strictly —
+     * a denied target throws `PrivacyDeniedException` from this
+     * call. The "visible" name guarantees the *root entity*
+     * survives privacy filtering; it does not recursively apply to
+     * the eager subgraph. See the RFC's "Visible-only API contract"
+     * for the rationale and the chain-visible-queries workaround.
      *
      * **When the repo has LOAD privacy rules**, scanning is bounded
      * by `EntClientConfig.visibleOverfetchLimit` (default 100): at
