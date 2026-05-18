@@ -126,11 +126,15 @@ trace.privacyChecks
 trace.interceptorApplications
 ```
 
-This complements `explain()`:
+This complements the explain family:
 
-- `explain()` describes planned generated behavior without executing the query
-- tracing records actual driver calls, loader batches, cache hits, and privacy
-  checks during execution
+- `explainAllOrThrow()` / `explainFirstOrError()` / `explainVisibleCount()`
+  / etc. describe planned generated behavior for one terminal without
+  executing the query (see
+  [Read-Path Interceptors → Explain Interaction](read-path-interceptors.md)
+  for the full method list and per-terminal mirroring rule)
+- tracing records actual driver calls, loader batches, cache hits, and
+  privacy checks during execution
 
 ## Query Count Estimates
 
@@ -165,11 +169,18 @@ LIMIT ?
 Default output should not include raw bind values because predicates may
 contain emails, tokens, names, or other sensitive data.
 
-Potential opt-in:
+Potential opt-in — every explain method takes the same
+`includeBindValues` flag:
 
 ```kotlin
-query.explain(includeBindValues = true)
+query.explainAllOrThrow(includeBindValues = true)
+client.users.explainByIdOrNull(id, includeBindValues = true)
 ```
+
+(The bind-values argument is uniform across the explain surface —
+all `explain*` methods accept it. The interceptors RFC's
+[Explain Interaction](read-path-interceptors.md) enumerates the
+method names; this RFC owns the bind-values opt-in.)
 
 ## Loader And Eager-Load Diagnostics
 

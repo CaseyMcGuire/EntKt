@@ -71,17 +71,31 @@ interface InterceptScope<E : Any> {
      *  defensive policies that want to inspect predicate counts
      *  before deciding whether to add or reject.
      *
-     *  **Live, not snapshot.** Each read of `shape` reflects every
-     *  mutation made through this scope (or prior interceptors'
-     *  scopes) up to that moment. If interceptor A calls
-     *  `scope.addPredicate(X)` and then reads `scope.shape`, the
-     *  read sees X in `predicates` and an incremented
-     *  `interceptorPredicateCount`. Same rule for `limit`
-     *  changes (`requireLimitAtMost` / `setDefaultLimitIfAbsent`)
-     *  and `annotations` (`addAnnotation`). The framework
-     *  re-derives the view on each property access from the
-     *  underlying mutable spec — there's no stale snapshot to
-     *  invalidate.
+     *  **Property access is recomputed; captured values are
+     *  snapshots.** The `shape` *property* is recomputed on each
+     *  access — every read re-derives from the underlying mutable
+     *  spec. So:
+     *
+     *  ```kotlin
+     *  scope.addPredicate(X)
+     *  scope.shape.predicates  // contains X — read-after-write works
+     *  ```
+     *
+     *  But because `QueryShape<E>` is a data value, capturing the
+     *  result into a local freezes a snapshot at capture time:
+     *
+     *  ```kotlin
+     *  val snap = scope.shape
+     *  scope.addPredicate(Y)
+     *  snap.predicates         // does NOT contain Y — local is frozen
+     *  scope.shape.predicates  // contains Y — fresh re-derive
+     *  ```
+     *
+     *  The same rule applies to `limit` / `annotations` /
+     *  `predicates` and to the attribution counts. The framework
+     *  does not invalidate or update captured `QueryShape` values
+     *  — application code that wants the latest state must re-read
+     *  through the `scope.shape` accessor.
      *
      *  See [QueryShape]. */
     val shape: QueryShape<E>
@@ -1020,6 +1034,31 @@ application code):
   bridging queries and edge-predicate EXISTS subqueries — the flag
   set is per-step, not inherited.
 
+  **Setting flags on a target step.** Eager-load methods accept
+  the same configuration block the root `query { ... }` takes, so
+  any flag the public DSL exposes works inside an eager-load:
+
+  ```kotlin
+  // Root post query: withDeleted only on Post.
+  client.posts.query {
+      withDeleted()                    // → root step's flags = {withDeleted}
+      withAuthor()                     // → Author step's flags = {} (no propagation)
+  }.allOrThrow()
+
+  // Same root, this time also withDeleted on the eager Author target.
+  client.posts.query {
+      withDeleted()                    // root step's flags = {withDeleted}
+      withAuthor {
+          withDeleted()                // Author step's flags = {withDeleted}
+      }
+  }.allOrThrow()
+  ```
+
+  Traversal steps work the same way — `client.users.query()
+  .queryPosts { withDeleted() }` enables the flag on the bridging
+  `Post` step only. Each step's `QueryContext.flags` reflects its
+  own configuration block, never the parent's.
+
   The flag exists so
   future internal paths have a documented escape hatch; introducing a new
   bypass requires explicit opt-in by the affected interceptor and an
@@ -1177,10 +1216,28 @@ underlying `QueryPlan` — the differences between *OrThrow /
 *OrNull / *OrError live in the *result wrap* the terminal would
 apply, and explain dry-runs without that wrap. Keeping per-
 variant names makes the call-site mirroring intuitive at the cost
-of mild API surface duplication. There is no `explain*OrError` /
-`explain*OrThrow` *wrap* — explain always returns a `QueryPlan`
-directly (with rejection metadata when applicable; see below).
-Callers branching on rejection use `plan.rejected` /
+of mild API surface duplication.
+
+**Explain never returns `EntResult` and never wraps execution
+errors.** The contract is uniform across the family regardless of
+which terminal variant the name mirrors:
+
+- Every `explain*` method returns `QueryPlan` directly. There is
+  no `EntResult<QueryPlan>` shape and no `explain*OrError` /
+  `explain*OrThrow` *wrap* — the result-shape suffix in the name
+  is purely for call-site discoverability.
+- Execution errors that the terminal would surface (driver
+  failures, classifier-recognized constraint violations,
+  `Err(DriverFailure)` / `Err(ConstraintViolation)` / etc.) do
+  NOT appear on explain — explain doesn't call the driver. Only
+  *interceptor* outcomes (rejection metadata, added predicates,
+  limit clamps, annotations) land on the plan.
+- Non-reject interceptor exceptions still propagate from explain
+  unchanged per the "Non-reject interceptor exceptions" rule —
+  explain is not a swallow-all wrapper.
+
+Rejection metadata appears on the plan when applicable (see
+below). Callers branching on rejection use `plan.rejected` /
 `plan.requireNotRejected()`.
 
 **Reject behavior.** If an interceptor calls `scope.reject(...)`
@@ -1307,6 +1364,19 @@ Before implementation, add tests for:
   interceptor #2's `shape.predicates`. The view is read-only;
   attempts to mutate the returned list / map have no effect on
   the underlying spec.
+
+- **Same-interceptor read-after-write sees own mutations.**
+  Within a single interceptor's `intercept(...)` call, calling
+  `scope.addPredicate(X)` and then reading `scope.shape.predicates`
+  must show X — the property accessor re-derives. Similarly
+  `scope.addAnnotation("k", "v")` then `scope.shape.annotations`
+  must include `"k" → "v"`, and `scope.requireLimitAtMost(50)`
+  then `scope.shape.limit` must reflect the clamp. But capturing
+  the result into a local before the mutation freezes a snapshot:
+  `val snap = scope.shape; scope.addPredicate(X); snap.predicates`
+  must NOT contain X (the local was captured pre-mutation). Pin
+  both sides — `scope.shape.predicates` post-mutation contains X;
+  the captured local does not — in the same test.
 
 - **Predicate attribution metadata is correct across the chain.**
   Pin that `shape.callerPredicateCount` reflects only
