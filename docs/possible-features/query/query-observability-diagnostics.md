@@ -49,15 +49,26 @@ query execution strategy.
 
 ## Proposed API
 
-Add a dry-run-style query explanation surface:
+Add a dry-run-style query explanation surface. The exact method
+name mirrors the terminal it models — there is no bare `.explain()`
+because it would be ambiguous about which terminal it dry-runs
+(every terminal has its own intercepted query context). Use the
+per-terminal explain method:
 
 ```kotlin
 val explanation = client.posts.query {
     where(Post.published eq true)
     withAuthor()
     limit(20)
-}.explain()
+}.explainAllOrThrow()
 ```
+
+The full explain surface (one per terminal-API name) is
+enumerated in
+[Read-Path Interceptors](read-path-interceptors.md) — see
+"Explain Interaction" for `explainFirstOrError` /
+`explainVisibleAll` / `explainRawCount` /
+`explainVisibleByIdOrNull` / etc.
 
 Possible text output:
 

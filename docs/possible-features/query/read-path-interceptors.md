@@ -273,17 +273,31 @@ data class UntypedQueryShape(
      *  by-id, source-id on edge traversal, junction constraints,
      *  eager-load parent-id `IN`, etc.). */
     val structuralPredicateCount: Int,
-    /** Number of predicates added by prior interceptors (framework
-     *  / per-entity / earlier globals) via `scope.addPredicate(...)`. */
+    /** Number of predicates added by prior interceptors (framework /
+     *  per-entity) via `scope.addPredicate(...)`. Global interceptors
+     *  do NOT contribute here — `GlobalInterceptScope` omits
+     *  `addPredicate` (entity-typing isn't available globally), so
+     *  globals can only affect limits / annotations / rejections. */
     val interceptorPredicateCount: Int,
     val limit: Int?,
+    /** The caller-authored limit (`query { limit(N) }`) BEFORE any
+     *  interceptor's `setDefaultLimitIfAbsent` / `requireLimitAtMost`
+     *  applied. `null` if the caller didn't set a limit, regardless
+     *  of whether a prior interceptor filled one in. Enables
+     *  attribution-aware policies like "public callers must
+     *  explicitly set a limit" that would otherwise be defeated by
+     *  a prior interceptor's default-filling. */
+    val callerLimit: Int?,
     val offset: Int?,
     val hasOrderBy: Boolean,
     /** Effective annotation map written by framework + per-entity +
-     *  prior global interceptors. The current global interceptor can
-     *  add more via `scope.addAnnotation`; mutations land on a
-     *  separate write surface and become visible to the *next*
-     *  interceptor's view per the live-shape rule. */
+     *  prior global interceptors AND the current interceptor's own
+     *  `scope.addAnnotation` calls so far. Each `shape.annotations`
+     *  read re-derives from the underlying spec per the live-shape
+     *  rule — calling `scope.addAnnotation("k", "v")` then reading
+     *  `scope.shape.annotations` shows `"k" → "v"` immediately,
+     *  not after the current interceptor returns. Same rule
+     *  governs the entity scope. */
     val annotations: Map<String, String>,
 ) {
     val hasCallerPredicates: Boolean get() = callerPredicateCount > 0
@@ -323,6 +337,14 @@ data class QueryShape<E : Any>(
     val predicates: List<Predicate<E>>,
     val orderBy: List<OrderField<E>>,
     val limit: Int?,
+    /** The caller-authored limit (`query { limit(N) }`) BEFORE any
+     *  interceptor's `setDefaultLimitIfAbsent` / `requireLimitAtMost`
+     *  applied. `null` if the caller didn't set a limit, regardless
+     *  of whether a prior interceptor filled one in. Same attribution
+     *  story as [callerPredicateCount] — enables policies like
+     *  "public callers must explicitly set a limit" that would
+     *  otherwise be defeated by a prior interceptor's default. */
+    val callerLimit: Int?,
     val offset: Int?,
     val flags: Set<QueryFlag>,
     val annotations: Map<String, String>,
@@ -338,9 +360,10 @@ data class QueryShape<E : Any>(
      *     etc. Structural predicates are neither caller-authored nor
      *     interceptor-added — they're what makes the read this
      *     specific operation rather than a bare table scan.
-     *   - **interceptor** — added by framework / per-entity / global
+     *   - **interceptor** — added by framework / per-entity
      *     interceptors via `scope.addPredicate(...)` earlier in the
-     *     chain.
+     *     chain. (Globals omit `addPredicate` — entity-typing isn't
+     *     available globally — so they don't contribute here.)
      *
      *  Exposed here so an entity interceptor can branch on
      *  "reject if no caller predicates" / "skip my predicate if a
@@ -493,7 +516,7 @@ call:
 **Edge-predicate existence semantics.** `has` / `hasWhere` compile
 to `EXISTS` subqueries against the target table. Target-entity
 interceptors (e.g. soft-delete, tenant scoping) apply inside that
-subquery — so `has(Post.author)` after `softDelete()` is installed
+subquery — so `Post.author.has()` after `softDelete()` is installed
 on `User` means "has a *non-soft-deleted* author," not "has any
 author row that physically exists." This is the intended behavior
 (an entity scoped out by a target interceptor isn't really
@@ -1118,28 +1141,47 @@ built. The returned `QueryPlan` reflects every interceptor
 mutation (added predicates, clamped limits, annotations) in apply
 order so the caller can see what the driver *would* have received.
 
-The exact explain surface, one method per terminal:
+The exact explain surface, one method per *terminal-API name* —
+the explain mirror keeps the source name verbatim
+(`explainFirstVisibleOrNull`, not `explainFirstVisible`) so
+discovery via "type `explain` + the terminal name I'd call" is
+trivial:
 
 ```kotlin
-query.explainAll(): QueryPlan
-query.explainFirst(): QueryPlan
+// Row-shaped reads (one explain per source-side variant).
+query.explainAllOrThrow(): QueryPlan
+query.explainAllOrError(): QueryPlan
 query.explainVisibleAll(): QueryPlan
-query.explainFirstVisible(): QueryPlan
+query.explainVisibleAllOrError(): QueryPlan
+
+query.explainFirstOrThrow(): QueryPlan
+query.explainFirstOrNull(): QueryPlan
+query.explainFirstOrError(): QueryPlan
+query.explainFirstVisibleOrNull(): QueryPlan
+
+// Aggregate reads.
 query.explainRawCount(): QueryPlan
 query.explainVisibleCount(): QueryPlan
 query.explainRawExists(): QueryPlan
 query.explainVisibleExists(): QueryPlan
 
-// Repo-level explains for by-id reads.
-client.users.explainById(id): QueryPlan
-client.users.explainVisibleById(id): QueryPlan
+// Repo-level explains for by-id reads (one per source variant).
+client.users.explainByIdOrThrow(id): QueryPlan
+client.users.explainByIdOrNull(id): QueryPlan
+client.users.explainVisibleByIdOrNull(id): QueryPlan
+client.users.explainByIdOrError(id): QueryPlan
 ```
 
-There is no `explain*OrError` / `explain*OrThrow` variant —
-explain always returns a `QueryPlan` (with rejection metadata
-when applicable; see below) rather than collapsing through the
-result wrap. Callers branching on rejection use
-`plan.rejected` / `plan.requireNotRejected()`.
+All explain variants for a given operation produce the same
+underlying `QueryPlan` — the differences between *OrThrow /
+*OrNull / *OrError live in the *result wrap* the terminal would
+apply, and explain dry-runs without that wrap. Keeping per-
+variant names makes the call-site mirroring intuitive at the cost
+of mild API surface duplication. There is no `explain*OrError` /
+`explain*OrThrow` *wrap* — explain always returns a `QueryPlan`
+directly (with rejection metadata when applicable; see below).
+Callers branching on rejection use `plan.rejected` /
+`plan.requireNotRejected()`.
 
 **Reject behavior.** If an interceptor calls `scope.reject(...)`
 during an explain, the returned `QueryPlan` carries rejection
@@ -1273,11 +1315,39 @@ Before implementation, add tests for:
   prior `scope.addPredicate(...)` call. Given:
   caller adds 2 predicates → framework soft-delete adds 1 → entity
   interceptor A adds 1 → entity interceptor B is now running and
-  sees `callerPredicateCount = 2`, `interceptorPredicateCount = 2`,
-  `predicates.size = 4`, `hasCallerPredicates = true`. After B
-  adds its own predicate, the next interceptor in the chain sees
+  sees `callerPredicateCount = 2`, `structuralPredicateCount = 0`,
+  `interceptorPredicateCount = 2`, `predicates.size = 4`,
+  `hasCallerPredicates = true`. After B adds its own predicate,
+  the next interceptor in the chain sees
   `interceptorPredicateCount = 3`. The same accounting applies to
   `UntypedQueryShape` for global interceptors.
+
+- **Structural predicates are counted in the structural bucket,
+  not folded into caller or interceptor.** Pin a `byIdOrError(42)`
+  read where the generated code adds a structural `id = 42`
+  predicate before any interceptor runs. With no caller
+  predicates and one structural predicate, the first interceptor
+  in the chain sees `callerPredicateCount = 0`,
+  `structuralPredicateCount = 1`, `interceptorPredicateCount = 0`,
+  `predicates.size = 1`, `hasCallerPredicates = false`. Same pin
+  for an edge traversal like
+  `client.users.query().queryPosts().allOrThrow()` — the bridging
+  read on `Post` carries a structural source-id constraint that
+  must appear in `structuralPredicateCount` (not caller / not
+  interceptor). The identity
+  `caller + structural + interceptor == predicates.size` must
+  hold on every read shape.
+
+- **`callerLimit` reflects caller-authored limit only.** Pin a
+  case where the caller writes `query { limit(50) }`: the first
+  interceptor sees `shape.callerLimit = 50` AND `shape.limit = 50`.
+  Then pin a case where the caller writes `query { ... }` (no
+  limit) and a framework interceptor calls
+  `setDefaultLimitIfAbsent(100)`: the next interceptor sees
+  `shape.callerLimit = null` AND `shape.limit = 100`. The
+  "public callers must set a limit" policy branches on
+  `callerLimit == null`, not on `limit == null` (which would be
+  defeated by the default).
 
 - **GlobalInterceptScope.shape uses the erased UntypedQueryShape.**
   A global interceptor sees `predicateCount`, `hasCallerPredicates`,
