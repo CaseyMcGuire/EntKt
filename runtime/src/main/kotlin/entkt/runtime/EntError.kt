@@ -190,6 +190,27 @@ sealed interface EntError {
     ) : EntError
 
     /**
+     * A read-path interceptor called `scope.reject(...)` to refuse
+     * the query before driver execution. The [interceptor] field
+     * carries the rejecting interceptor's stable registration name
+     * (or `"framework:<id>"` for framework-owned interceptors) so
+     * callers and tests can branch on which interceptor refused.
+     *
+     * Surfaced through `*OrError` reads as `Err(QueryRejected)`
+     * and through `*OrThrow` / non-result `visible*` reads as
+     * [EntQueryRejectedException]. See the Read-Path Interceptors
+     * RFC for the full per-API outcome mapping.
+     */
+    data class QueryRejected(
+        override val entity: String,
+        override val operation: EntOperation,
+        val reason: String,
+        val code: String? = null,
+        val interceptor: String,
+        override val message: String = reason,
+    ) : EntError
+
+    /**
      * Convert this error to the matching [EntException] subclass.
      * Used by [EntResult.getOrThrow] and the RFC's example handler;
      * also useful for code that receives an `EntResult` from a
@@ -206,6 +227,7 @@ sealed interface EntError {
         is DriverFailure -> EntDriverException(this)
         is OverfetchCapExceeded -> EntOverfetchCapExceededException(this)
         is WriteSucceededLoadDenied -> EntWriteSucceededLoadDeniedException(this)
+        is QueryRejected -> EntQueryRejectedException(this)
     }
 }
 

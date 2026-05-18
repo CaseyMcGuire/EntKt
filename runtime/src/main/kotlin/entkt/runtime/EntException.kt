@@ -80,3 +80,19 @@ class EntOverfetchCapExceededException(
 class EntWriteSucceededLoadDeniedException(
     val writeSucceededLoadDenied: EntError.WriteSucceededLoadDenied,
 ) : EntException(writeSucceededLoadDenied)
+
+/**
+ * Thrown when a read-path interceptor calls `scope.reject(...)`
+ * to refuse a query. The wrapped [queryRejected] carries the
+ * rejecting interceptor's name, the reason, and an optional
+ * machine-readable code so callers can branch on
+ * `ex.queryRejected.code` rather than parsing the message.
+ *
+ * Generated `*OrThrow` and non-result `visible*` reads throw
+ * this; generated `*OrError` reads convert it to
+ * `Err(EntError.QueryRejected)`. See the Read-Path Interceptors
+ * RFC's Rejection Semantics for the full mapping.
+ */
+class EntQueryRejectedException(
+    val queryRejected: EntError.QueryRejected,
+) : EntException(queryRejected)
