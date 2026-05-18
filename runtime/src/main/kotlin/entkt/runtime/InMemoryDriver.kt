@@ -860,11 +860,11 @@ class InMemoryDriver : Driver {
         return when (leaf.op) {
             Op.EQ -> when {
                 value == null || leaf.value == null -> false
-                else -> value == leaf.value
+                else -> valuesEqual(value, leaf.value)
             }
             Op.NEQ -> when {
                 value == null || leaf.value == null -> false
-                else -> value != leaf.value
+                else -> !valuesEqual(value, leaf.value)
             }
             Op.GT -> when {
                 value == null || leaf.value == null -> false
@@ -884,7 +884,7 @@ class InMemoryDriver : Driver {
             }
             Op.IN -> when {
                 value == null -> false
-                else -> (leaf.value as Collection<*>).contains(value)
+                else -> collectionContainsValue(leaf.value as Collection<*>, value)
             }
             // `NULL NOT IN (...)` is NULL in SQL. For `value IN list`
             // where the list contains a NULL but value is non-null,
@@ -897,7 +897,7 @@ class InMemoryDriver : Driver {
                     val list = leaf.value as Collection<*>
                     when {
                         list.contains(null) -> false
-                        else -> !list.contains(value)
+                        else -> !collectionContainsValue(list, value)
                     }
                 }
             }
@@ -964,6 +964,26 @@ class InMemoryDriver : Driver {
         if (b == null) return 1
         return (a as Comparable<Any>).compareTo(b)
     }
+
+    /**
+     * Value equality that handles `ByteArray` content equality. Kotlin's
+     * default `==` on `ByteArray` is reference equality, which breaks
+     * `EQ` / `NEQ` / `IN` / `NOT_IN` predicates against byte payloads —
+     * content equality matches Postgres `bytea` behavior.
+     */
+    private fun valuesEqual(a: Any?, b: Any?): Boolean = when {
+        a == null || b == null -> a === b
+        a is ByteArray && b is ByteArray -> a.contentEquals(b)
+        else -> a == b
+    }
+
+    /**
+     * `Collection.contains` for predicate operands. Uses [valuesEqual]
+     * for element comparison so a `ByteArray`-typed `IN` / `NOT_IN`
+     * predicate matches by content instead of reference.
+     */
+    private fun collectionContainsValue(list: Collection<*>, value: Any): Boolean =
+        list.any { valuesEqual(it, value) }
 
     /**
      * Compare rows for ordering. NULLS LAST in both ASC and DESC

@@ -17,7 +17,8 @@ val users = client.users.query {
 
 `.all()` returns a `List<User>`. Use `.firstOrNull()` for single results,
 `.visibleCount()` for a privacy-aware count, `.rawCount()` for a fast
-aggregate count, or `.exists()` to check whether a match exists.
+aggregate count, or `.rawExists()` / `.visibleExists()` to check whether
+a match exists (raw skips LOAD privacy; visible applies it).
 
 ## Predicates
 
@@ -149,17 +150,37 @@ val totalActiveUsers = client.users.query {
 }.rawCount()  // → Long
 ```
 
-### `exists()` -- privacy-aware existence check
+### `rawExists()` -- fast existence check, skips privacy
 
-Fetches one matching row and evaluates LOAD privacy on it. Returns
-`true` if the row is allowed, `false` if no matching row exists, or
-throws `PrivacyDeniedException` if the row is denied.
+Returns `true` iff at least one storage row matches the predicate. Skips
+LOAD privacy entirely — useful for "does this row exist at all?" checks
+(uniqueness checks before insert, idempotency keys, etc.) where privacy
+of the caller is not the relevant question.
+
+```kotlin
+val emailTaken = client.users.query {
+    where(User.email eq "alice@example.com")
+}.rawExists()  // → Boolean
+```
+
+### `visibleExists()` -- privacy-aware existence check
+
+Returns `true` iff at least one storage row matches the predicate **and**
+the current viewer can LOAD it. Scans storage order, bounded by
+`EntClientConfig.visibleOverfetchLimit`, and returns `true` on the first
+visible row. Cap-exhausted-with-no-visible silently returns `false`.
 
 ```kotlin
 val hasAdmins = client.users.query {
     where(User.role eq "admin")
-}.exists()  // → Boolean
+}.visibleExists()  // → Boolean
 ```
+
+The legacy `exists()` that fetched one row and threw
+`PrivacyDeniedException` when it was denied has been removed — neither
+"any row exists?" nor "row I can see exists?" was the answer you got,
+which surprised callers. Pick `rawExists` for the privacy-skipping
+existence probe or `visibleExists` for the privacy-aware variant.
 
 ## Edge Traversal
 
