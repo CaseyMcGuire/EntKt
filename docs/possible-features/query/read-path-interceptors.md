@@ -1354,8 +1354,13 @@ Before implementation, add tests for:
   `hasInterceptorPredicates`, `limit`, `offset`, `hasOrderBy`,
   `annotations`, plus `entity: KClass<*>` and `table: String`.
   Pin the example `RejectUnscopedAggregates` from the RFC: a
-  `rawCount()` with zero predicates rejects as
-  `Err(QueryRejected(code = "broad_aggregate"))`.
+  `rawCount()` with zero **caller** predicates rejects as
+  `Err(QueryRejected(code = "broad_aggregate"))`. Soft-delete
+  installed on the entity adds a non-caller predicate to
+  `predicateCount`, so the example must branch on
+  `!hasCallerPredicates`, not `predicateCount == 0`. Pin both
+  directions in the same test (rejects when caller adds no
+  `where(...)`; passes when caller adds at least one).
 
 - **Explain runs interceptors in dry-run mode and surfaces
   rejection metadata without throwing.** `query.explainAll()` on a
