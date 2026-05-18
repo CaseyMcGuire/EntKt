@@ -53,10 +53,32 @@ abstract class EntSchema(val tableName: String) {
     companion object {
         private val VALID_NAME = Regex("^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
 
+        // Kotlin "hard" keywords — names the parser cannot accept as
+        // identifiers without backtick-escaping. Codegen uses raw
+        // identifier emission (`%L`) for fields/properties/params,
+        // so a schema field named `class` would generate
+        // `val class = this.class` and fail to compile. Rejecting
+        // here at schema-validation time is louder than discovering
+        // the failure several layers downstream in user-visible
+        // generated code. List sourced from Kotlin's grammar
+        // (KotlinSpec section "Hard keywords").
+        private val KOTLIN_HARD_KEYWORDS: Set<String> = setOf(
+            "as", "break", "class", "continue", "do", "else", "false",
+            "for", "fun", "if", "in", "interface", "is", "null",
+            "object", "package", "return", "super", "this", "throw",
+            "true", "try", "typealias", "typeof", "val", "var", "when",
+            "while",
+        )
+
         @PublishedApi internal fun validateName(name: String, kind: String) {
             require(VALID_NAME.matches(name)) {
                 "$kind name '$name' is not valid — names must be lowercase snake_case " +
                     "(letters, digits, single underscores; no leading/trailing/consecutive underscores)"
+            }
+            require(name !in KOTLIN_HARD_KEYWORDS) {
+                "$kind name '$name' is a Kotlin reserved keyword — codegen emits this " +
+                    "identifier without backtick-escaping, so the generated code would fail to " +
+                    "compile. Rename the $kind."
             }
         }
     }

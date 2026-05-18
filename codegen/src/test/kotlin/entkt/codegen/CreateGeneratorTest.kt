@@ -404,6 +404,65 @@ class CreateGeneratorTest {
     }
 
     @Test
+    fun `string default with dollar sign is escaped (not interpolated as a Kotlin template)`() {
+        // Pre-fix: the hand-rolled escaper only handled \ and "; a
+        // default like "price is $10" generated `"price is $10"`
+        // which the Kotlin compiler reads as a template referencing
+        // an identifier `10` (fails to compile) or — worse — a default
+        // like "hello $name" would compile and silently reference
+        // whatever `name` is in scope. KotlinPoet's %S handles dollar
+        // signs by escaping them with `${'$'}` or backslash.
+        val schema = object : EntSchema("dollar_defaults") {
+            override fun id() = EntId.int()
+            val label = string("label").default("price is \$10")
+        }
+        finalize(schema)
+        val output = generator.generate("DollarDefault", schema).toString()
+
+        // The exact escape KotlinPoet chooses is implementation
+        // detail — what matters is the raw text "$10" doesn't appear
+        // bare inside a double-quoted string literal where it would
+        // be misread as a template.
+        assert(!output.contains("\"price is \$10\"")) {
+            "Default with \$ must be escaped to avoid Kotlin string-template misread\n$output"
+        }
+    }
+
+    @Test
+    fun `string default with embedded newline survives as a valid Kotlin literal`() {
+        // Pre-fix: a default containing \n (the actual newline char,
+        // not the escape sequence) rendered as a literal newline in
+        // the middle of a `"..."` literal in the generated source,
+        // which won't compile.
+        //
+        // KotlinPoet's %S handles this two ways: short multi-line
+        // strings often render as `"line\nline"` (escaped newline);
+        // longer ones render as `"""line one\nline two""".trimMargin()`
+        // (triple-quoted with margin markers). Both compile. Assert
+        // the output uses one of those representations and does NOT
+        // contain an unterminated `"line one` literal that would only
+        // appear if a raw newline broke a single-quoted string.
+        val schema = object : EntSchema("newline_defaults") {
+            override fun id() = EntId.int()
+            val label = string("label").default("line one\nline two")
+        }
+        finalize(schema)
+        val output = generator.generate("NewlineDefault", schema).toString()
+
+        val escapedNewline = output.contains("\\n")
+        val triplyQuoted = output.contains("\"\"\"") && output.contains("trimMargin")
+        assert(escapedNewline || triplyQuoted) {
+            "Default with newline must be escaped (either \\n or triple-quoted + trimMargin); got\n$output"
+        }
+        // Sanity: the would-be-broken single-quoted form must NOT
+        // appear (no `"line one\n` followed by literal newline →
+        // unterminated string).
+        assert(!output.contains("\"line one\nline two\"")) {
+            "Generated source contains a single-quoted string with a raw newline in the middle — invalid Kotlin\n$output"
+        }
+    }
+
+    @Test
     fun `generates the full save result-variant trio`() {
         val car = Car()
         finalize(car, User())

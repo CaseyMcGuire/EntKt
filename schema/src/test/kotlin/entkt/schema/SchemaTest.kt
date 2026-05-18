@@ -660,4 +660,42 @@ class SchemaTest {
         }
         assertContains(err.message!!, "not the M2M target")
     }
+
+    @Test
+    fun `field name that is a Kotlin hard keyword is rejected at schema-build time`() {
+        // Codegen emits field identifiers raw (`%L`); without
+        // rejection, a field named "class" would generate
+        // `val class = this.class` and fail to compile downstream.
+        val err = assertFailsWith<IllegalArgumentException> {
+            object : EntSchema("kw_check") {
+                override fun id() = EntId.long()
+                val classField = string("class")
+            }
+        }
+        assertContains(err.message!!, "Kotlin reserved keyword")
+        assertContains(err.message!!, "'class'")
+    }
+
+    @Test
+    fun `every Kotlin hard keyword is rejected as a field name`() {
+        // Sweep over the keyword set so a future addition to
+        // KOTLIN_HARD_KEYWORDS gets coverage automatically (the test
+        // body iterates the same source-of-truth list).
+        val keywords = listOf(
+            "as", "break", "class", "continue", "do", "else", "false",
+            "for", "fun", "if", "in", "interface", "is", "null",
+            "object", "package", "return", "super", "this", "throw",
+            "true", "try", "typealias", "typeof", "val", "var", "when",
+            "while",
+        )
+        for (kw in keywords) {
+            val err = assertFailsWith<IllegalArgumentException>("expected reject for '$kw'") {
+                object : EntSchema("kw_$kw") {
+                    override fun id() = EntId.long()
+                    val f = string(kw)
+                }
+            }
+            assertContains(err.message!!, "Kotlin reserved keyword")
+        }
+    }
 }

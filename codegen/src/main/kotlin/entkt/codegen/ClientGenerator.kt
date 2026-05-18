@@ -132,10 +132,27 @@ internal class ClientGenerator(
                 // A bigger value lets the in-process filter find more
                 // visible rows but pulls more denied rows into memory;
                 // narrow the predicate before raising it.
+                //
+                // Validated via a custom setter: zero/negative values
+                // are nonsense for the cap-exhaustion check (`rows.size
+                // >= cap` is always true for cap <= 0, so
+                // visibleAllOrError would return Err(OverfetchCapExceeded)
+                // for every query — and visibleAll would silently
+                // truncate to zero rows). Reject at the setter.
                 PropertySpec.builder("visibleOverfetchLimit", INT)
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("100")
+                    .setter(
+                        FunSpec.setterBuilder()
+                            .addParameter("value", INT)
+                            .addStatement(
+                                "require(value > 0) { %S + value }",
+                                "visibleOverfetchLimit must be positive; was ",
+                            )
+                            .addStatement("field = value")
+                            .build()
+                    )
                     .build()
             )
             .addFunction(
@@ -350,9 +367,22 @@ internal class ClientGenerator(
                 // Bounds the storage scan visibleAll / visibleAllOrError
                 // / firstVisibleOrNull issue against the driver when
                 // privacy pushdown is unavailable. Default 100 rows.
+                // Validated via custom setter — see the matching
+                // property on EntClient for why zero/negative is
+                // rejected.
                 PropertySpec.builder("visibleOverfetchLimit", INT)
                     .mutable(true)
                     .initializer("100")
+                    .setter(
+                        FunSpec.setterBuilder()
+                            .addParameter("value", INT)
+                            .addStatement(
+                                "require(value > 0) { %S + value }",
+                                "visibleOverfetchLimit must be positive; was ",
+                            )
+                            .addStatement("field = value")
+                            .build()
+                    )
                     .build()
             )
             .addFunction(

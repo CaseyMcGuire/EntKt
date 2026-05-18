@@ -450,10 +450,9 @@ internal class CreateGenerator(
     private fun fkDefaultCodeBlock(fk: EdgeFk): CodeBlock {
         // Field-backed FK defaults come from the backing field's
         // `.default(...)`. Only Int/Long are reachable today (UUID and
-        // bytes have no DSL default), and both fit through the literal
-        // branch of `kotlinLiteral`.
-        val value = fk.default!!
-        return CodeBlock.of("%L", kotlinLiteral(value))
+        // bytes have no DSL default), and both render via the
+        // KotlinPoet primitive literal path.
+        return primitiveLiteralCodeBlock(fk.default!!)
     }
 
     private fun defaultCodeBlock(field: Field): CodeBlock {
@@ -471,15 +470,24 @@ internal class CreateGenerator(
                 val enumType = field.resolvedTypeName()
                 CodeBlock.of("%T.%L", enumType, value.name)
             }
-            else -> CodeBlock.of("%L", kotlinLiteral(value))
+            else -> primitiveLiteralCodeBlock(value)
         }
     }
 
-    private fun kotlinLiteral(value: Any): String = when (value) {
-        is String -> "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
-        is Boolean -> value.toString()
-        is Number -> value.toString()
-        else -> value.toString()
+    /**
+     * Render a primitive default value as a Kotlin source literal.
+     * Strings go through KotlinPoet's `%S` format, which handles
+     * everything the prior hand-rolled escaper missed — `$` (string
+     * template interpolation), `\n` / `\r` / `\t` (literal control
+     * chars in the source string), unicode escapes — by emitting a
+     * properly-quoted Kotlin literal. Numbers and booleans render
+     * via `%L` since they have no escape concerns.
+     */
+    private fun primitiveLiteralCodeBlock(value: Any): CodeBlock = when (value) {
+        is String -> CodeBlock.of("%S", value)
+        is Boolean -> CodeBlock.of("%L", value)
+        is Number -> CodeBlock.of("%L", value)
+        else -> CodeBlock.of("%L", value)
     }
 
     private fun buildCandidateArgs(allFields: List<Field>, edgeFks: List<EdgeFk>): List<String> {
