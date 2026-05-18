@@ -117,14 +117,14 @@ Remaining deferred work:
 - Optimistic-locking `Err(Conflict)` path — V1 has no path that
   produces `Conflict` for owner-edge mutations; reserved for a
   future optimistic-concurrency RFC (per its own scoping note).
-- Edge-only-owner-deleted FK mapping — when an M2M helper's
-  junction insert races a parallel delete of the owner row, the
-  resulting FK violation still propagates as the raw driver
-  exception through `saveOrError`. The classifier integration for
-  that specific path is tracked under RFC #5 / the Transaction And
-  Locking Semantics RFC's "Deferred follow-ups" section. Once
-  wired, it'll surface as `Err(ConstraintViolation)` like every
-  other constraint failure.
+(Edge-only-owner-deleted FK paths were previously listed as
+deferred; that's no longer accurate. The generated `saveOrError`
+catch chain already wraps `save()` in
+`catch (Exception) { Err(classifyDriverError(...)) }`, and the
+junction-insert `PSQLException` raised in the owner-deleted race
+falls into that arm. The classifier maps SQLSTATE 23503 to
+`Err(ConstraintViolation)` like every other FK violation — no
+separate deferred wiring needed.)
 
 ## Summary
 
@@ -465,53 +465,58 @@ fun UserCreate.saveOrThrow(): User =
     saveOrError().getOrThrow()
 ```
 
-`EntError` values should map to structured exceptions:
+`EntError` values map to structured exceptions through a flat
+hierarchy: an `abstract` base class carrying the generic `error:
+EntError`, and one concrete subclass per variant carrying a typed
+narrowing property (`notFound`, `privacyDenied`, etc.) so callers
+that hold a specific `EntException` subclass don't have to cast
+through the base `error` field:
 
 ```kotlin
-sealed class EntException(
-    open val error: EntError,
+abstract class EntException(
+    val error: EntError,
     cause: Throwable? = null,
 ) : RuntimeException(error.message, cause)
 
-class EntNotFoundException(
-    override val error: EntError.NotFound,
-) : EntException(error)
+class EntNotFoundException(val notFound: EntError.NotFound) :
+    EntException(notFound)
 
-class EntNoChangesException(
-    override val error: EntError.NoChanges,
-) : EntException(error)
+class EntNoChangesException(val noChanges: EntError.NoChanges) :
+    EntException(noChanges)
 
-class EntPrivacyDeniedException(
-    override val error: EntError.PrivacyDenied,
-) : EntException(error)
+class EntPrivacyDeniedException(val privacyDenied: EntError.PrivacyDenied) :
+    EntException(privacyDenied)
 
-class EntValidationException(
-    override val error: EntError.ValidationFailed,
-) : EntException(error)
+class EntValidationException(val validationFailed: EntError.ValidationFailed) :
+    EntException(validationFailed)
 
 class EntConstraintViolationException(
-    override val error: EntError.ConstraintViolation,
-) : EntException(error)
+    val constraintViolation: EntError.ConstraintViolation,
+) : EntException(constraintViolation)
 
-class EntConflictException(
-    override val error: EntError.Conflict,
-) : EntException(error)
+class EntConflictException(val conflict: EntError.Conflict) :
+    EntException(conflict)
 
-class EntDriverException(
-    override val error: EntError.DriverFailure,
-) : EntException(error, cause = error.cause)
+class EntDriverException(val driverFailure: EntError.DriverFailure) :
+    EntException(driverFailure, cause = driverFailure.cause)
 
 class EntOverfetchCapExceededException(
-    override val error: EntError.OverfetchCapExceeded,
-) : EntException(error)
+    val overfetchCapExceeded: EntError.OverfetchCapExceeded,
+) : EntException(overfetchCapExceeded)
 
 class EntWriteSucceededLoadDeniedException(
-    override val error: EntError.WriteSucceededLoadDenied,
-) : EntException(error)
+    val writeSucceededLoadDenied: EntError.WriteSucceededLoadDenied,
+) : EntException(writeSucceededLoadDenied)
 ```
 
-Existing exception types can either be adapted to wrap `EntError`, or retained
-with conversion helpers during a compatibility window.
+The base is `abstract` (not `sealed`) so third-party drivers can
+define additional `EntException` subclasses for their own
+classifier paths without modifying the runtime; the typed
+narrowing properties on the concrete subclasses (`notFound`,
+`privacyDenied`, `validationFailed`, `constraintViolation`,
+`driverFailure`, `overfetchCapExceeded`,
+`writeSucceededLoadDenied`) match the runtime API the framework
+ships today.
 
 ## Read API Semantics
 
@@ -530,19 +535,25 @@ Recommended behavior:
 |---|---|---|---|---|
 | Row exists and is visible | returns row | returns row | returns row | `Ok(row)` |
 | Row does not exist | throws `EntNotFoundException` | `null` | `null` | `Err(NotFound)` |
-| Row exists but LOAD privacy denies | throws `EntPrivacyDeniedException` | throws `PrivacyDeniedException` ¹ | `null` | `Err(PrivacyDenied)` |
-| Constraint-coded driver failure | throws `EntConstraintViolationException` | throws `EntConstraintViolationException` | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` |
-| Other driver failure | throws `EntDriverException` | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` |
+| Row exists but LOAD privacy denies | throws `EntPrivacyDeniedException` | throws raw `PrivacyDeniedException` ¹ | `null` | `Err(PrivacyDenied)` |
+| Constraint-coded driver failure | throws `EntConstraintViolationException` | throws raw driver exception ¹ | throws raw driver exception ¹ | `Err(ConstraintViolation)` |
+| Other driver failure | throws `EntDriverException` | throws raw driver exception ¹ | throws raw driver exception ¹ | `Err(DriverFailure)` |
 
-¹ `byIdOrNull` throws the raw `PrivacyDeniedException` (the
-*OrNull-family convention — these methods predate the structured
-exception hierarchy, and the structured variant is reserved for
-*OrThrow-family methods that wrap *OrError via `getOrThrow()`).
-`byIdOrThrow` / `visibleByIdOrNull` / `byIdOrError` all go through
-`classifyDriverError` for the driver-failure path, so SQLSTATE 23xxx
-surfaces as ConstraintViolation and other JDBC failures as
-DriverFailure — landed in Phase 5a (was footnote-deferred in earlier
-RFC drafts).
+¹ `byIdOrNull` and `visibleByIdOrNull` throw the raw underlying
+exception types (`PrivacyDeniedException`, `PSQLException`,
+`SQLException`, etc.) rather than the structured `EntException`
+family. This is the *OrNull-family convention: these methods are
+the "single-call read with absence semantics" surface and predate
+the structured hierarchy; the structured wrap is reserved for
+*OrThrow-family methods that wrap *OrError via `getOrThrow()`.
+`byIdOrThrow` and `byIdOrError` both route the driver-failure
+path through `classifyDriverError` (landed in Phase 5a) — so
+SQLSTATE 23xxx surfaces as `EntConstraintViolationException` /
+`Err(ConstraintViolation)` and other JDBC failures as
+`EntDriverException` / `Err(DriverFailure)`. Callers who want
+structured exceptions for absence-style reads should use
+`byIdOrThrow` or `byIdOrError`; the *OrNull variants stay raw by
+design.
 
 ### First Row
 
@@ -631,60 +642,45 @@ unreadable rows.
 ```kotlin
 query.rawCount(): Long
 query.visibleCount(): Long
-query.rawCountOrError(): EntResult<Long>
-query.visibleCountOrError(): EntResult<Long>
 
 query.rawExists(): Boolean
 query.visibleExists(): Boolean
-query.rawExistsOrError(): EntResult<Boolean>
-query.visibleExistsOrError(): EntResult<Boolean>
 ```
 
-Aggregate variants of the read family. They follow the same
-`raw*` / `visible*` distinction as the row APIs (`raw*` skips LOAD
-privacy; `visible*` materializes rows and applies LOAD privacy)
-and the same `*OrError` wrap for structured failure.
-
-There is no `*OrNull` count or exists variant — zero / `false` is
-the natural expected-absence result, so collapsing absence into
-`null` adds no signal.
-
-| Outcome | `rawCount` | `visibleCount` | `rawCountOrError` | `visibleCountOrError` |
-|---|---|---|---|---|
-| Counted successfully | returns `Long` | returns `Long` | `Ok(count)` | `Ok(count)` |
-| Interceptor `reject(...)` | throws `EntQueryRejectedException` | throws `EntQueryRejectedException` | `Err(QueryRejected)` | `Err(QueryRejected)` |
-| Driver failure | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` | `Err(DriverFailure)` |
-| Constraint-coded driver failure | throws `EntConstraintViolationException` | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` | `Err(ConstraintViolation)` |
-
-| Outcome | `rawExists` | `visibleExists` | `rawExistsOrError` | `visibleExistsOrError` |
-|---|---|---|---|---|
-| Matched row exists | `true` | `true` if visible (cap-bounded scan) | `Ok(true)` | `Ok(true)` |
-| No matched row / no visible row | `false` | `false` (also returned on cap-exhausted-no-visible) | `Ok(false)` | `Ok(false)` |
-| Interceptor `reject(...)` | throws `EntQueryRejectedException` | throws `EntQueryRejectedException` | `Err(QueryRejected)` | `Err(QueryRejected)` |
-| Driver failure | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` | `Err(DriverFailure)` |
-
-`rawExists` and `visibleExists` replace the legacy single `exists()`
-that fetched one row and threw `PrivacyDeniedException` if it was
-denied — neither "does any row exist?" nor "is there a row I can
-see?" was the answer you got. The split makes each question
-explicit. `visibleExists` is bounded by
-`EntClientConfig.visibleOverfetchLimit` (same as
+`raw*` skips LOAD privacy; `visible*` materializes rows and
+applies LOAD privacy. `rawExists` and `visibleExists` replace the
+legacy single `exists()` that fetched one row and threw
+`PrivacyDeniedException` if it was denied — neither "does any row
+exist?" nor "is there a row I can see?" was the answer you got.
+The split makes each question explicit. `visibleExists` is bounded
+by `EntClientConfig.visibleOverfetchLimit` (same as
 `firstVisibleOrNull`); cap-exhausted-with-no-visible silently
 returns `false`, matching the optimistic-read shape.
 
 `*Count` / `*Exists` do not surface `PrivacyDenied` as a failure —
 `visibleCount` / `visibleExists` filter denied rows silently
 (that's the point of the `visible*` prefix), and `rawCount` /
-`rawExists` skip LOAD privacy entirely. Interceptor rejection and
-driver failures are the only structured failure surfaces.
+`rawExists` skip LOAD privacy entirely. Driver failures propagate
+as raw exceptions on these throwing APIs in V1.
 
-The interceptor-rejection rows come from the
-[Read-Path Interceptors RFC](../query/read-path-interceptors.md);
-the driver-failure rows come from Phase 2's `classifyDriverError`
-(same path the row APIs use). Pre-fix this RFC didn't document
-count / exists at all and readers had to chase
-the interceptor RFC to find the `*Or Error` shapes — the table here
-is now the canonical spec.
+**`*OrError` variants are deferred to the Read-Path Interceptors
+RFC.** The structured-result counterparts —
+`rawCountOrError(): EntResult<Long>` /
+`visibleCountOrError(): EntResult<Long>` /
+`rawExistsOrError(): EntResult<Boolean>` /
+`visibleExistsOrError(): EntResult<Boolean>` — are designed in the
+[Read-Path Interceptors RFC](../query/read-path-interceptors.md)
+because they only become useful once interceptor rejection
+(`Err(QueryRejected)`) is a real failure surface on aggregates.
+Without interceptors the only failure modes are driver-level
+(connection lost, timeout, etc.), so an `Err(DriverFailure)` /
+`Err(ConstraintViolation)` wrap would be the entire content of
+the variant — better to wait until interceptors land and the
+aggregate `*OrError` shape carries `QueryRejected` too. The
+interceptors RFC owns the full method/outcome tables for these
+variants. The runtime `EntError.QueryRejected` /
+`EntQueryRejectedException` types are likewise gated on
+interceptors implementation.
 
 ## Mutation API Semantics
 
@@ -1088,12 +1084,15 @@ Before implementation, add tests for the following.
   a future optimistic-concurrency RFC that introduces the path.
 - Later serialized relationship mutations may change the set again.
 - `add`, `remove`, and `set` expose privacy and validation errors through
-  `saveOrError`. Owner-row unique/check constraint errors also surface as
-  `Err(ConstraintViolation)`. The edge-only-owner-deleted FK-violation path
-  is a V1 carve-out — see
-  [Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md) —
-  where the raw driver exception propagates through `saveOrError` until RFC #5
-  wires the constraint mapping for that case.
+  `saveOrError`. Owner-row unique/check constraint errors surface as
+  `Err(ConstraintViolation)`. The edge-only-owner-deleted FK-violation
+  path also surfaces as `Err(ConstraintViolation)` via the `saveOrError`
+  catch chain — the junction-insert `PSQLException` falls into the
+  generic `catch (Exception)` arm and is classified by SQLSTATE 23503
+  the same way every other FK violation is. No special carve-out
+  needed; see
+  [Transaction And Locking Semantics](../edge-mutation/04-transaction-locking-semantics.md)
+  for the race semantics that produces the failure in the first place.
 
 ### Error Mapping
 
