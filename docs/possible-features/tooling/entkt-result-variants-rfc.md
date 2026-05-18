@@ -355,7 +355,6 @@ enum class EntOperation {
     UPDATE,
     DELETE,
     EDGE_MUTATION,
-    AGGREGATE,
 }
 
 sealed interface EntError {
