@@ -286,7 +286,8 @@ call:
   (`queryAuthor()`, `queryPosts()`, etc.), plus eager-load subqueries
   (`.with { ... }`). Loaded-entity field access (`post.author` on an
   already-loaded entity) does not hit storage and does not fire
-  interceptors.
+  interceptors. See "Multi-step traversal chains" below for which
+  interceptors fire on each step of a chained traversal.
 - edge predicates: `has`, `hasWhere` on the target entity
 
 Any generated read not on this list is a bug. **V1 is absolute: no
@@ -304,6 +305,53 @@ but is filtered out by interceptor predicates, the result is the same as
 "not found": `null` for `*OrNull`, `Err(NotFound)` for `*OrError`,
 `EntNotFoundException` for `*OrThrow`. No new driver method is required —
 by-id is a degenerate `first()` with an id predicate.
+
+**Multi-step traversal chains.** Given:
+
+```kotlin
+client.users.query()
+    .queryGroups()
+    .queryPosts()
+    .allOrThrow()
+```
+
+Each step in the chain is a separate read against a separate target
+entity, and each step's read fires the **target entity's**
+interceptors:
+
+1. `client.users.query()` — root read on `User`. User interceptors
+   run (`currentEntity = User`, `path = []`).
+2. `.queryGroups()` — bridging read on `Group` constrained to
+   groups reachable from the prior User result. Group interceptors
+   run, with `sourceEntity = User`, `edgeName = "groups"`,
+   `path = [User→groups→Group]`.
+3. `.queryPosts().allOrThrow()` — terminal read on `Post`
+   constrained to posts reachable from the prior Group result.
+   Post interceptors run, with `sourceEntity = Group`,
+   `edgeName = "posts"`, `path = [User→groups→Group,
+   Group→posts→Post]`.
+
+So User's interceptors do constrain the initial users *as the source
+of the chain*, Group's interceptors constrain the intermediate
+bridging query, and Post's interceptors constrain the terminal query
+— all three layers of tenant-scoping / soft-delete / max-limit
+guards apply uniformly. `QueryContext.path.size` lets a traversal-
+specific interceptor branch on its position in the chain
+(`path.isEmpty()` → root step; non-empty → bridging or terminal).
+
+V1 does NOT add a separate `QueryTraverser` middleware concept
+(Entgo's name for the equivalent surface). Instead, generated
+traversal code reuses the existing `QueryInterceptor<E>` registered
+for each entity, applied at each traversal step. This preserves
+the Entgo-style "every hop is constrained by its target's
+authorization" guarantee without introducing a second public
+middleware layer — one interceptor API, applied per-entity, fires
+at every relevant step. The trade-off: an interceptor that only
+wants to fire on "root reads of E" or "bridging reads from E to
+X" must inspect `context.path` itself rather than registering at a
+narrower surface; this keeps the registration model simple at the
+cost of slightly more conditional logic inside narrowly-scoped
+interceptors.
 
 **Limit semantics by read shape.** Limit operations
 (`setDefaultLimitIfAbsent`, `requireLimitAtMost`, `rejectIfLimitGreaterThan`)
@@ -825,6 +873,19 @@ Before implementation, add tests for:
   but a caller-authored `query { limit(N) }.visibleCount()` still
   honors `N` per the terminal API's normal semantics — pin both
   directions in the same test.
+
+- **Multi-step traversal chains apply per-entity interceptors at
+  each step.** Given a chain like
+  `client.users.query().queryGroups().queryPosts().allOrThrow()`,
+  assert that User's interceptors fire on the root user query,
+  Group's interceptors fire on the bridging group query (with
+  `sourceEntity = User`, `edgeName = "groups"`,
+  `path = [User→groups→Group]`), and Post's interceptors fire on
+  the terminal post query (with `sourceEntity = Group`,
+  `edgeName = "posts"`, `path.size == 2`). Tenant-scoping or
+  soft-delete added on each entity must constrain each respective
+  step — a row filtered out at step 2 (groups) must not appear in
+  step 3's `sourceEntity` set.
 - every documented read surface invokes interceptors: `byIdOrThrow`,
   `byIdOrNull`, `visibleByIdOrNull`, `byIdOrError`, `firstOrThrow`,
   `firstOrNull`, `firstVisibleOrNull`, `firstOrError`, `allOrThrow`,
