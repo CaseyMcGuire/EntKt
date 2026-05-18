@@ -626,6 +626,66 @@ is denied by LOAD privacy, the operation fails.
 `visibleAll()` should be a distinct API if EntKt supports silently excluding
 unreadable rows.
 
+### Count and Exists
+
+```kotlin
+query.rawCount(): Long
+query.visibleCount(): Long
+query.rawCountOrError(): EntResult<Long>
+query.visibleCountOrError(): EntResult<Long>
+
+query.rawExists(): Boolean
+query.visibleExists(): Boolean
+query.rawExistsOrError(): EntResult<Boolean>
+query.visibleExistsOrError(): EntResult<Boolean>
+```
+
+Aggregate variants of the read family. They follow the same
+`raw*` / `visible*` distinction as the row APIs (`raw*` skips LOAD
+privacy; `visible*` materializes rows and applies LOAD privacy)
+and the same `*OrError` wrap for structured failure.
+
+There is no `*OrNull` count or exists variant — zero / `false` is
+the natural expected-absence result, so collapsing absence into
+`null` adds no signal.
+
+| Outcome | `rawCount` | `visibleCount` | `rawCountOrError` | `visibleCountOrError` |
+|---|---|---|---|---|
+| Counted successfully | returns `Long` | returns `Long` | `Ok(count)` | `Ok(count)` |
+| Interceptor `reject(...)` | throws `EntQueryRejectedException` | throws `EntQueryRejectedException` | `Err(QueryRejected)` | `Err(QueryRejected)` |
+| Driver failure | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` | `Err(DriverFailure)` |
+| Constraint-coded driver failure | throws `EntConstraintViolationException` | throws `EntConstraintViolationException` | `Err(ConstraintViolation)` | `Err(ConstraintViolation)` |
+
+| Outcome | `rawExists` | `visibleExists` | `rawExistsOrError` | `visibleExistsOrError` |
+|---|---|---|---|---|
+| Matched row exists | `true` | `true` if visible (cap-bounded scan) | `Ok(true)` | `Ok(true)` |
+| No matched row / no visible row | `false` | `false` (also returned on cap-exhausted-no-visible) | `Ok(false)` | `Ok(false)` |
+| Interceptor `reject(...)` | throws `EntQueryRejectedException` | throws `EntQueryRejectedException` | `Err(QueryRejected)` | `Err(QueryRejected)` |
+| Driver failure | throws `EntDriverException` | throws `EntDriverException` | `Err(DriverFailure)` | `Err(DriverFailure)` |
+
+`rawExists` and `visibleExists` replace the legacy single `exists()`
+that fetched one row and threw `PrivacyDeniedException` if it was
+denied — neither "does any row exist?" nor "is there a row I can
+see?" was the answer you got. The split makes each question
+explicit. `visibleExists` is bounded by
+`EntClientConfig.visibleOverfetchLimit` (same as
+`firstVisibleOrNull`); cap-exhausted-with-no-visible silently
+returns `false`, matching the optimistic-read shape.
+
+`*Count` / `*Exists` do not surface `PrivacyDenied` as a failure —
+`visibleCount` / `visibleExists` filter denied rows silently
+(that's the point of the `visible*` prefix), and `rawCount` /
+`rawExists` skip LOAD privacy entirely. Interceptor rejection and
+driver failures are the only structured failure surfaces.
+
+The interceptor-rejection rows come from the
+[Read-Path Interceptors RFC](../query/read-path-interceptors.md);
+the driver-failure rows come from Phase 2's `classifyDriverError`
+(same path the row APIs use). Pre-fix this RFC didn't document
+count / exists at all and readers had to chase
+the interceptor RFC to find the `*Or Error` shapes — the table here
+is now the canonical spec.
+
 ## Mutation API Semantics
 
 ### Create

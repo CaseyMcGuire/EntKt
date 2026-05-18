@@ -112,13 +112,15 @@ interface InterceptScope<E : Any> {
      *  `"max_limit_exceeded"`, `"missing_tenant_scope"`) that callers
      *  and tests can branch on independently of [reason] message text.
      *  The framework records the rejecting interceptor's identity on
-     *  `QueryRejected.interceptor` automatically: the stable registration
-     *  name passed at registration time (preferred), the interceptor
-     *  class's `simpleName` if no name was registered, or
-     *  `"AnonymousInterceptor"` if neither is available (anonymous-class
-     *  interceptors with no registered name). Callers that branch on
-     *  `interceptor` in tests should register interceptors with explicit
-     *  names. */
+     *  `QueryRejected.interceptor`. For application registrations the
+     *  identity is the mandatory `name` argument passed at registration
+     *  (see Generated Registration); for framework-owned interceptors
+     *  installed via schema mixins (`softDelete()` etc.) the identity
+     *  is the framework's pre-assigned stable name (e.g.
+     *  `"framework:soft-delete"`). There is no simpleName /
+     *  AnonymousInterceptor fallback — every interceptor in the chain
+     *  has a name by construction, because both registration paths
+     *  require one. */
     fun reject(reason: String, code: String? = null): Nothing
 }
 ```
@@ -226,6 +228,25 @@ enum class ReadOperation {
     RAW_COUNT, VISIBLE_COUNT,
     RAW_EXISTS, VISIBLE_EXISTS,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
+}
+
+/**
+ * Flags carried on a [QueryContext]. V1 has two public members
+ * (`withDeleted`, `onlyDeleted`) consumed exclusively by the
+ * generated soft-delete interceptor. The framework also tracks an
+ * `internalSystemQuery` flag, but that lives in a separate
+ * package-private field on the internal query spec — it never
+ * appears in this enum and is never visible to interceptors. See
+ * "Flag visibility to interceptors" below.
+ *
+ * Future flags can be added here when a generated framework
+ * interceptor needs a call-site opt-in / opt-out signal; the
+ * declaration mechanism for application interceptors to honor
+ * specific flags is deferred (see Flags And Capabilities).
+ */
+enum class QueryFlag {
+    withDeleted,
+    onlyDeleted,
 }
 ```
 
@@ -376,18 +397,47 @@ rawCountOrError(): EntResult<Long>
 visibleCountOrError(): EntResult<Long>
 ```
 
-`rawCountOrError` preserves `rawCount` semantics: it is a driver-side aggregate
-that skips LOAD privacy and returns `Err(QueryRejected)` only if an interceptor
-rejects the read (or another structured driver/query failure occurs).
-`visibleCountOrError` preserves `visibleCount` semantics: it materializes rows,
-applies LOAD privacy, and returns the visible count as `Ok(count)` unless a
-structured failure occurs. There are no `*OrNull` count variants — zero is the
-natural expected-absence result.
+`rawCountOrError` preserves `rawCount` semantics: it is a driver-side
+aggregate that skips LOAD privacy. The failure surface is:
+
+- interceptor `reject(...)` → `Err(EntError.QueryRejected)`
+- driver failure → routes through `classifyDriverError` to its
+  normal structured shape (`Err(ConstraintViolation)` for SQLSTATE
+  23xxx, `Err(DriverFailure)` for other SQLException-family failures,
+  re-throw for programming bugs — see the Result Variants RFC's
+  `classifyDriverError` rules)
+
+`visibleCountOrError` preserves `visibleCount` semantics: it
+materializes rows, applies LOAD privacy, and returns the visible
+count as `Ok(count)`. Same failure surface as `rawCountOrError` —
+interceptor `reject` maps to `Err(QueryRejected)`; driver failures
+map to their own structured `EntError` variants per
+`classifyDriverError`. Privacy denial does NOT surface as a failure
+(that's the point of `visible*`: denied rows drop silently from
+the count).
+
+There are no `*OrNull` count variants — zero is the natural
+expected-absence result, so collapsing into `null` adds no signal.
 
 ### Rejection Semantics
 
-`scope.reject(reason)` aborts the query before driver execution. The framework
-converts this into a per-API outcome:
+`scope.reject(reason)` aborts the query before driver execution and
+**short-circuits the remaining interceptor chain**: no subsequent
+framework / entity / global interceptor's `intercept(...)` runs after
+the first `reject(...)`. The explain / observability output records
+interceptors that did run up to and including the rejecting one (with
+its rejection metadata — reason, code, interceptor name); interceptors
+that would have run after the reject point are not invoked and do not
+appear.
+
+Short-circuit is the natural choice because (a) running later
+interceptors can't change the outcome — once one interceptor has
+decided "no," no later annotation / predicate / limit operation
+matters — and (b) running them anyway opens an ordering footgun
+where a later interceptor's `addAnnotation` would silently overwrite
+the rejecting interceptor's metadata via last-writer-wins.
+
+The framework converts the rejection into a per-API outcome:
 
 - `*OrThrow` → throws `EntQueryRejectedException(EntError.QueryRejected(reason))`.
 - `*OrError` → returns `Err(EntError.QueryRejected(reason))`. This includes
@@ -735,6 +785,46 @@ Before implementation, add tests for:
 - LOAD privacy still runs after intercepted reads
 - explain output shows applied interceptors, added predicates, limit clamps,
   annotations, and rejections in apply order
+
+- **`QueryContext.flags` exposes only public flags.** An
+  application interceptor cannot observe the internal
+  `internalSystemQuery` flag through the context (it lives in a
+  separate package-private field). Test by constructing a query
+  internally with the flag set and asserting that an inspecting
+  application interceptor sees an empty / public-only `flags` set.
+
+- **Non-reject interceptor exceptions propagate unchanged.** If an
+  interceptor throws `IllegalStateException` / `NullPointerException`
+  / vanilla `RuntimeException` from `intercept(...)` (i.e. NOT via
+  `scope.reject(...)`), the exception escapes through both *OrThrow
+  and *OrError unchanged — NOT wrapped as `Err(DriverFailure)`,
+  `Err(QueryRejected)`, or any other structured error. Same
+  "fail loud on bugs" stance as `classifyDriverError`.
+
+- **Mandatory unique interceptor names.** Registering two
+  application interceptors with the same name (either two
+  per-entity registrations on the same entity, or two `global(...)`
+  registrations) fails at `EntClient` construction time with a
+  clear error. Anonymous-class interceptors registered without a
+  `name` also fail at construction (no simpleName /
+  AnonymousInterceptor fallback for application registrations).
+  Framework-owned interceptors (installed via schema mixins) are
+  exempt — their names are pre-assigned by the framework.
+
+- **Rejection short-circuits the chain.** Given three interceptors
+  A → B → C where B calls `scope.reject(...)`, only A and B run
+  (B sees the partial state from A; C never runs). The explain
+  output records A and B with their respective contributions and
+  B as the rejecting interceptor; C does not appear at all.
+
+- **Caller-set `limit` / `offset` preserved on
+  `visibleCount` / `visibleExists` (and `*OrError` variants).**
+  Interceptor limit operations
+  (`setDefaultLimitIfAbsent` / `requireLimitAtMost` /
+  `rejectIfLimitGreaterThan`) are silent no-ops on these shapes,
+  but a caller-authored `query { limit(N) }.visibleCount()` still
+  honors `N` per the terminal API's normal semantics — pin both
+  directions in the same test.
 - every documented read surface invokes interceptors: `byIdOrThrow`,
   `byIdOrNull`, `visibleByIdOrNull`, `byIdOrError`, `firstOrThrow`,
   `firstOrNull`, `firstVisibleOrNull`, `firstOrError`, `allOrThrow`,
