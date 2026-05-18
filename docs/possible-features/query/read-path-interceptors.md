@@ -283,13 +283,30 @@ interface InterceptScope<E : Any> {
 
 data class QueryShape<E : Any>(
     val table: String,
+    /** Full typed list of effective predicates (caller + framework
+     *  + per-entity interceptor + prior interceptors in this entity's
+     *  chain), in apply order. */
     val predicates: List<Predicate<E>>,
     val orderBy: List<OrderField<E>>,
     val limit: Int?,
     val offset: Int?,
     val flags: Set<QueryFlag>,
     val annotations: Map<String, String>,
-)
+    /** Predicate attribution metadata. The framework tracks each
+     *  predicate's source (caller-authored via `query { where(...) }`
+     *  vs interceptor-added via `scope.addPredicate(...)`) and
+     *  exposes the counts here so an entity interceptor can branch on
+     *  "reject if no caller predicates" / "skip my predicate if a
+     *  previous interceptor already added one" without having to
+     *  inspect typed Predicate references against an attribution map.
+     *  Sum of `callerPredicateCount + interceptorPredicateCount`
+     *  equals `predicates.size`. */
+    val callerPredicateCount: Int,
+    val interceptorPredicateCount: Int,
+) {
+    val hasCallerPredicates: Boolean get() = callerPredicateCount > 0
+    val hasInterceptorPredicates: Boolean get() = interceptorPredicateCount > 0
+}
 ```
 
 **Example: defensive rejection of unscoped broad reads.** The shape
@@ -708,8 +725,8 @@ data class QueryRejected(
     override val entity: String,
     override val operation: EntOperation,
     val reason: String,
-    val code: String? = null,           // stable machine-readable code, e.g. "max_limit_exceeded"
-    val interceptor: String? = null,    // mandatory registration name for application interceptors, or framework-assigned stable name (e.g. "framework:soft-delete"); set by the framework. No simpleName / AnonymousInterceptor fallback — see the reject() KDoc.
+    val code: String? = null,        // stable machine-readable code, e.g. "max_limit_exceeded"
+    val interceptor: String,         // mandatory registration name for application interceptors, or framework-assigned stable name (e.g. "framework:soft-delete"); set by the framework. Non-null by construction — every interceptor in the chain has a name (no simpleName / AnonymousInterceptor fallback, see the reject() KDoc).
     override val message: String = reason,
 ) : EntError
 
@@ -1149,6 +1166,19 @@ Before implementation, add tests for:
   interceptor #2's `shape.predicates`. The view is read-only;
   attempts to mutate the returned list / map have no effect on
   the underlying spec.
+
+- **Predicate attribution metadata is correct across the chain.**
+  Pin that `shape.callerPredicateCount` reflects only
+  caller-authored predicates (`query { where(...) }`) and
+  `shape.interceptorPredicateCount` increases by one for each
+  prior `scope.addPredicate(...)` call. Given:
+  caller adds 2 predicates → framework soft-delete adds 1 → entity
+  interceptor A adds 1 → entity interceptor B is now running and
+  sees `callerPredicateCount = 2`, `interceptorPredicateCount = 2`,
+  `predicates.size = 4`, `hasCallerPredicates = true`. After B
+  adds its own predicate, the next interceptor in the chain sees
+  `interceptorPredicateCount = 3`. The same accounting applies to
+  `UntypedQueryShape` for global interceptors.
 
 - **GlobalInterceptScope.shape uses the erased UntypedQueryShape.**
   A global interceptor sees `predicateCount`, `hasCallerPredicates`,
