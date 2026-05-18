@@ -277,3 +277,76 @@ public class InterceptorConfig internal constructor()
 public class AbortQueryRejected public constructor(
     public val rejected: EntError.QueryRejected,
 ) : RuntimeException("query rejected by interceptor '${rejected.interceptor}': ${rejected.reason}")
+
+/**
+ * Reserved-prefix string for framework-owned interceptor names.
+ * Application interceptors must NOT register with a name starting
+ * with this prefix.
+ */
+public const val FRAMEWORK_INTERCEPTOR_PREFIX: String = "framework:"
+
+/**
+ * DSL-side mutable holder generated `EntClientConfig` exposes
+ * through an `interceptors { ... }` block. Application code calls
+ * `posts(...)` / `users(...)` (one per entity) and `global(...)`
+ * to register; the generated init block then transfers these into
+ * the runtime EntClient's per-repo + global lists.
+ *
+ * Name validation runs at registration time:
+ *  - `name` is mandatory (the DSL methods require it as a
+ *    parameter, so this is enforced at compile time).
+ *  - Application names must not start with `framework:`
+ *    (validated here at construction; throws
+ *    IllegalArgumentException).
+ *  - Names must be unique within their scope (per-entity scopes
+ *    are independent; globals share one namespace) — validated
+ *    when the entry is added.
+ */
+public class EntInterceptorsConfig public constructor() {
+    private val perEntity: MutableMap<String, MutableList<RegisteredInterceptor<*>>> = linkedMapOf()
+    private val globalsList: MutableList<RegisteredGlobalInterceptor> = mutableListOf()
+
+    /**
+     * Add a per-entity interceptor scoped to [scopeKey] (the
+     * generated DSL passes the entity's repo property name like
+     * `"posts"`). Generated DSL calls this from per-entity helper
+     * methods.
+     */
+    public fun <E : Any> addEntity(
+        scopeKey: String,
+        name: String,
+        interceptor: QueryInterceptor<E>,
+    ) {
+        validateApplicationName(name, scopeKey)
+        val list = perEntity.getOrPut(scopeKey) { mutableListOf() }
+        require(list.none { it.name == name }) {
+            "Duplicate interceptor name '$name' for entity scope '$scopeKey'"
+        }
+        list.add(RegisteredInterceptor(name, interceptor))
+    }
+
+    public fun addGlobal(name: String, interceptor: GlobalQueryInterceptor) {
+        validateApplicationName(name, "global")
+        require(globalsList.none { it.name == name }) {
+            "Duplicate global interceptor name '$name'"
+        }
+        globalsList.add(RegisteredGlobalInterceptor(name, interceptor))
+    }
+
+    /** Used by the generated EntClient init block to populate per-repo lists. */
+    @Suppress("UNCHECKED_CAST")
+    public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<E>> =
+        (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<E>>
+
+    /** Used by the generated EntClient init block to populate the global list. */
+    public fun globals(): List<RegisteredGlobalInterceptor> = globalsList.toList()
+
+    private fun validateApplicationName(name: String, scope: String) {
+        require(name.isNotBlank()) { "Interceptor name must not be blank (scope='$scope')" }
+        require(!name.startsWith(FRAMEWORK_INTERCEPTOR_PREFIX)) {
+            "Interceptor name '$name' uses the reserved 'framework:' prefix " +
+                "(scope='$scope') — that prefix is reserved for framework-owned " +
+                "interceptors installed via schema mixins. Pick a different name."
+        }
+    }
+}

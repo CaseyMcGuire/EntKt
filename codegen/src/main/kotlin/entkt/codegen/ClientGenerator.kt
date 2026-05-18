@@ -75,8 +75,12 @@ internal class ClientGenerator(
         val policiesClass = ClassName(packageName, "EntClientPolicies")
         fileBuilder.addType(buildPoliciesClass(policiesClass, schemas))
 
+        // Generate EntClientInterceptors (per-entity + global registration DSL)
+        val interceptorsClass = ClassName(packageName, "EntClientInterceptors")
+        fileBuilder.addType(buildInterceptorsClass(interceptorsClass, schemas))
+
         // Generate EntClientConfig
-        fileBuilder.addType(buildConfigClass(configClass, hooksClass, policiesClass))
+        fileBuilder.addType(buildConfigClass(configClass, hooksClass, policiesClass, interceptorsClass))
 
         // Generate EntClient
         val configLambda = LambdaTypeName.get(
@@ -153,6 +157,22 @@ internal class ClientGenerator(
                             .addStatement("field = value")
                             .build()
                     )
+                    .build()
+            )
+            .addProperty(
+                // Per-entity interceptor registries, populated from
+                // EntClientConfig.interceptorsConfig in the init
+                // block, inherited unchanged by withTransaction /
+                // withPrivacyContext / fixed clones. Read by
+                // generated wrapper code at each terminal call to
+                // feed the InterceptorEngine.
+                PropertySpec.builder(
+                    "entityInterceptors",
+                    ClassName("entkt.runtime", "EntInterceptorsConfig"),
+                )
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("%T()", ClassName("entkt.runtime", "EntInterceptorsConfig"))
                     .build()
             )
             .addFunction(
@@ -313,6 +333,7 @@ internal class ClientGenerator(
         configClass: ClassName,
         hooksClass: ClassName,
         policiesClass: ClassName,
+        interceptorsClass: ClassName,
     ): TypeSpec {
         val hooksBlockLambda = LambdaTypeName.get(
             receiver = hooksClass,
@@ -320,6 +341,10 @@ internal class ClientGenerator(
         )
         val policiesBlockLambda = LambdaTypeName.get(
             receiver = policiesClass,
+            returnType = UNIT,
+        )
+        val interceptorsBlockLambda = LambdaTypeName.get(
+            receiver = interceptorsClass,
             returnType = UNIT,
         )
         val privacyProviderType = LambdaTypeName.get(returnType = PRIVACY_CONTEXT)
@@ -336,6 +361,12 @@ internal class ClientGenerator(
                 PropertySpec.builder("policiesConfig", policiesClass)
                     .addModifiers(KModifier.INTERNAL)
                     .initializer("%T()", policiesClass)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("interceptorsConfig", interceptorsClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", interceptorsClass)
                     .build()
             )
             .addProperty(
@@ -398,6 +429,12 @@ internal class ClientGenerator(
                     .build()
             )
             .addFunction(
+                FunSpec.builder("interceptors")
+                    .addParameter("block", interceptorsBlockLambda)
+                    .addStatement("interceptorsConfig.apply(block)")
+                    .build()
+            )
+            .addFunction(
                 FunSpec.builder("privacyContext")
                     .addParameter("provider", privacyProviderType)
                     .addStatement("privacyContextProviderConfig = provider")
@@ -429,6 +466,7 @@ internal class ClientGenerator(
         block.addStatement("transactionRequirement = cfg.transactionRequirement")
         block.addStatement("defaultUpdateConsistency = cfg.defaultUpdateConsistency")
         block.addStatement("visibleOverfetchLimit = cfg.visibleOverfetchLimit")
+        block.addStatement("entityInterceptors = cfg.interceptorsConfig.config")
         return block.build()
     }
 
@@ -445,6 +483,7 @@ internal class ClientGenerator(
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
+        body.addStatement("tx.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -523,6 +562,7 @@ internal class ClientGenerator(
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
+        body.addStatement("tx.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -591,6 +631,73 @@ internal class ClientGenerator(
             .build()
     }
 
+    /**
+     * `EntClientInterceptors` is the receiver of the
+     * `interceptors { ... }` config block. Holds an
+     * [EntInterceptorsConfig] internally and exposes one DSL
+     * method per entity (e.g. `posts(name = ..., interceptor)`)
+     * plus `global(name, interceptor)`.
+     *
+     * Generated DSL surface (per the RFC's Generated Registration
+     * section):
+     *
+     *     EntClient(driver) {
+     *         interceptors {
+     *             posts(TenantReadInterceptor(...), name = "tenant-scope")
+     *             global(EnforceMaxLimit(...), name = "global-max-limit")
+     *         }
+     *     }
+     *
+     * Name validation (mandatory, framework: prefix reserved,
+     * unique within scope) lives in EntInterceptorsConfig at the
+     * runtime layer; the generated DSL methods just forward.
+     */
+    private fun buildInterceptorsClass(
+        interceptorsClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): TypeSpec {
+        val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime", "EntInterceptorsConfig")
+        val QUERY_INTERCEPTOR = ClassName("entkt.runtime", "QueryInterceptor")
+        val GLOBAL_QUERY_INTERCEPTOR = ClassName("entkt.runtime", "GlobalQueryInterceptor")
+
+        val builder = TypeSpec.classBuilder(interceptorsClass)
+            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            .addProperty(
+                PropertySpec.builder("config", ENT_INTERCEPTORS_CONFIG)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T()", ENT_INTERCEPTORS_CONFIG)
+                    .build()
+            )
+
+        // Per-entity DSL methods: `posts(interceptor, name = "...")`.
+        for (input in schemas) {
+            val entityClass = ClassName(packageName, input.name)
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val interceptorType = QUERY_INTERCEPTOR.parameterizedBy(entityClass)
+            builder.addFunction(
+                FunSpec.builder(propName)
+                    .addParameter("interceptor", interceptorType)
+                    .addParameter("name", String::class)
+                    .addStatement(
+                        "config.addEntity(%S, name, interceptor)",
+                        propName,
+                    )
+                    .build()
+            )
+        }
+
+        // Global: `global(interceptor, name = "...")`.
+        builder.addFunction(
+            FunSpec.builder("global")
+                .addParameter("interceptor", GLOBAL_QUERY_INTERCEPTOR)
+                .addParameter("name", String::class)
+                .addStatement("config.addGlobal(name, interceptor)")
+                .build()
+        )
+
+        return builder.build()
+    }
+
     private fun buildPoliciesClass(
         policiesClass: ClassName,
         schemas: List<SchemaInput>,
@@ -645,6 +752,7 @@ internal class ClientGenerator(
         body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
         body.addStatement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("scoped.visibleOverfetchLimit = this.visibleOverfetchLimit")
+        body.addStatement("scoped.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -678,6 +786,7 @@ internal class ClientGenerator(
         body.addStatement("fixed.transactionRequirement = this.transactionRequirement")
         body.addStatement("fixed.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("fixed.visibleOverfetchLimit = this.visibleOverfetchLimit")
+        body.addStatement("fixed.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("fixed.%L.copyHooksFrom(this.%L)", propName, propName)
