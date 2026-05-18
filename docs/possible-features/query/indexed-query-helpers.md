@@ -91,9 +91,11 @@ The helpers should return existing generated query/repo results so
 privacy behavior remains unchanged:
 
 - `findBy...` should use normal read privacy
-- `queryBy...(...).all()` should use normal LOAD privacy
-- `visibleCount()`, `rawCount()`, and `exists()` keep their normal
-  semantics
+- `queryBy...(...).allOrThrow()` should use normal LOAD privacy
+- `visibleCount()`, `rawCount()`, `visibleExists()`, and
+  `rawExists()` keep their normal semantics — see
+  [`docs/04-queries.md`](../../04-queries.md) for the split that
+  replaced the legacy `exists()`
 
 ## Composite Index Prefixes
 
@@ -274,8 +276,9 @@ This ensures:
 
 - LOAD privacy still runs for returned entities
 - eager-load privacy still runs
-- `visibleCount()` and `exists()` keep their privacy semantics
-- `rawCount()` remains explicitly raw
+- `visibleCount()` and `visibleExists()` keep their privacy semantics
+- `rawCount()` and `rawExists()` remain explicitly raw (skip
+  LOAD privacy)
 
 ## Relationship To Schema Printer
 

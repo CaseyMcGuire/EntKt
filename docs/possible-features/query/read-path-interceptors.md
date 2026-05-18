@@ -69,7 +69,21 @@ interface InterceptScope<E : Any> {
      *  Useful for branching ("skip my predicate if a previous
      *  interceptor already added one for tenant scoping") and for
      *  defensive policies that want to inspect predicate counts
-     *  before deciding whether to add or reject. See [QueryShape]. */
+     *  before deciding whether to add or reject.
+     *
+     *  **Live, not snapshot.** Each read of `shape` reflects every
+     *  mutation made through this scope (or prior interceptors'
+     *  scopes) up to that moment. If interceptor A calls
+     *  `scope.addPredicate(X)` and then reads `scope.shape`, the
+     *  read sees X in `predicates` and an incremented
+     *  `interceptorPredicateCount`. Same rule for `limit`
+     *  changes (`requireLimitAtMost` / `setDefaultLimitIfAbsent`)
+     *  and `annotations` (`addAnnotation`). The framework
+     *  re-derives the view on each property access from the
+     *  underlying mutable spec — there's no stale snapshot to
+     *  invalidate.
+     *
+     *  See [QueryShape]. */
     val shape: QueryShape<E>
 
     /** Adds a predicate that is AND-ed with caller and prior-interceptor
@@ -215,8 +229,16 @@ interface GlobalQueryInterceptor {
 
 interface GlobalInterceptScope {
     /** Read-only erased view of the current query as seen by this
-     *  interceptor — includes mutations from framework and prior
-     *  per-entity interceptors. See [UntypedQueryShape]. */
+     *  interceptor — includes mutations from framework
+     *  interceptors, per-entity interceptors, AND any prior global
+     *  interceptors in registration order (per the Ordering
+     *  section: framework → per-entity → globals, and within
+     *  globals, registration order is the apply order). So global
+     *  interceptor #2 sees global #1's `addAnnotation` entries and
+     *  any limit clamps #1 applied. Live-not-snapshot per the same
+     *  rule as `InterceptScope<E>.shape` — each property access
+     *  re-derives from the underlying spec.
+     *  See [UntypedQueryShape]. */
     val shape: UntypedQueryShape
 
     fun requireLimitAtMost(max: Int)
@@ -240,21 +262,33 @@ interface GlobalInterceptScope {
 data class UntypedQueryShape(
     val table: String,
     val entity: KClass<*>,
-    /** Total number of effective predicates (caller + interceptor). */
+    /** Total number of effective predicates (caller + structural +
+     *  interceptor — see [QueryShape] for the three-bucket
+     *  definition). */
     val predicateCount: Int,
-    /** True iff at least one caller-authored predicate is present. */
-    val hasCallerPredicates: Boolean,
-    /** True iff at least one prior interceptor added a predicate. */
-    val hasInterceptorPredicates: Boolean,
+    /** Number of caller-authored predicates added via the public
+     *  DSL (`query { where(...) }`). */
+    val callerPredicateCount: Int,
+    /** Number of generated structural predicates (`id = ?` on
+     *  by-id, source-id on edge traversal, junction constraints,
+     *  eager-load parent-id `IN`, etc.). */
+    val structuralPredicateCount: Int,
+    /** Number of predicates added by prior interceptors (framework
+     *  / per-entity / earlier globals) via `scope.addPredicate(...)`. */
+    val interceptorPredicateCount: Int,
     val limit: Int?,
     val offset: Int?,
     val hasOrderBy: Boolean,
-    /** Annotation map as written by prior interceptors. Read-only
-     *  snapshot; the global interceptor can add more via
-     *  `scope.addAnnotation` but the existing entries are visible
-     *  here for inspection. */
+    /** Effective annotation map written by framework + per-entity +
+     *  prior global interceptors. The current global interceptor can
+     *  add more via `scope.addAnnotation`; mutations land on a
+     *  separate write surface and become visible to the *next*
+     *  interceptor's view per the live-shape rule. */
     val annotations: Map<String, String>,
-)
+) {
+    val hasCallerPredicates: Boolean get() = callerPredicateCount > 0
+    val hasInterceptorPredicates: Boolean get() = interceptorPredicateCount > 0
+}
 ```
 
 `GlobalInterceptScope` omits `addPredicate` because predicates require a
@@ -283,9 +317,9 @@ interface InterceptScope<E : Any> {
 
 data class QueryShape<E : Any>(
     val table: String,
-    /** Full typed list of effective predicates (caller + framework
-     *  + per-entity interceptor + prior interceptors in this entity's
-     *  chain), in apply order. */
+    /** Full typed list of effective predicates (caller + structural
+     *  + framework + per-entity interceptor + prior interceptors in
+     *  this entity's chain), in apply order. */
     val predicates: List<Predicate<E>>,
     val orderBy: List<OrderField<E>>,
     val limit: Int?,
@@ -293,15 +327,29 @@ data class QueryShape<E : Any>(
     val flags: Set<QueryFlag>,
     val annotations: Map<String, String>,
     /** Predicate attribution metadata. The framework tracks each
-     *  predicate's source (caller-authored via `query { where(...) }`
-     *  vs interceptor-added via `scope.addPredicate(...)`) and
-     *  exposes the counts here so an entity interceptor can branch on
+     *  predicate's source in one of three buckets:
+     *
+     *   - **caller** — added via the public DSL (`query { where(...) }`).
+     *   - **structural** — added by generated query code to express
+     *     the operation's intrinsic shape: the `id = ?` predicate on
+     *     a by-id read, the `source_id = ?` predicate on an edge
+     *     traversal, junction-table constraints on an M2M traversal,
+     *     the parent-id `IN` predicate on an eager-load subquery,
+     *     etc. Structural predicates are neither caller-authored nor
+     *     interceptor-added — they're what makes the read this
+     *     specific operation rather than a bare table scan.
+     *   - **interceptor** — added by framework / per-entity / global
+     *     interceptors via `scope.addPredicate(...)` earlier in the
+     *     chain.
+     *
+     *  Exposed here so an entity interceptor can branch on
      *  "reject if no caller predicates" / "skip my predicate if a
-     *  previous interceptor already added one" without having to
-     *  inspect typed Predicate references against an attribution map.
-     *  Sum of `callerPredicateCount + interceptorPredicateCount`
-     *  equals `predicates.size`. */
+     *  previous interceptor already added one" without inspecting
+     *  typed Predicate references against an attribution map.
+     *  Identity: `callerPredicateCount + structuralPredicateCount +
+     *  interceptorPredicateCount == predicates.size`. */
     val callerPredicateCount: Int,
+    val structuralPredicateCount: Int,
     val interceptorPredicateCount: Int,
 ) {
     val hasCallerPredicates: Boolean get() = callerPredicateCount > 0
@@ -319,9 +367,14 @@ class RejectUnscopedAggregates : GlobalQueryInterceptor {
         when (context.operation) {
             ReadOperation.RAW_COUNT,
             ReadOperation.RAW_EXISTS -> {
-                if (scope.shape.predicateCount == 0) {
+                // "Unscoped" = no caller-authored where(...). We
+                // check hasCallerPredicates (not predicateCount) so
+                // soft-delete and other structural / interceptor
+                // predicates don't satisfy the "caller scoped this
+                // query" requirement.
+                if (!scope.shape.hasCallerPredicates) {
                     scope.reject(
-                        "broad ${context.operation} without predicates is not allowed",
+                        "broad ${context.operation} requires a caller-authored predicate",
                         code = "broad_aggregate",
                     )
                 }
@@ -475,9 +528,17 @@ client.users.query()
     .allOrThrow()
 ```
 
-Each step in the chain is a separate read against a separate target
-entity, and each step's read fires the **target entity's**
-interceptors:
+Each step in the chain is a separate **logical intercepted query
+shape** against a separate target entity — each fires the
+**target entity's** interceptors with its own `QueryContext`. The
+framework may lower multiple logical steps into a single storage
+round-trip (a join, an EXISTS subquery, a `WHERE source_id IN
+(...)` predicate from a prior step's result) when the lowering is
+semantically equivalent and the interceptor contributions
+compose correctly — that's a driver-implementation choice, not
+part of the public contract. From an interceptor's perspective,
+each step is its own intercepted query with its own attribution
+and rejection surface; the storage shape is opaque.
 
 1. `client.users.query()` — root read on `User`. User interceptors
    run (`currentEntity = User`, `path = []`).
@@ -916,11 +977,27 @@ application code):
   framework paths that need to bypass specific interceptors. V1 has **no
   current framework opt-ins**: soft-delete, tenant scoping, max-limit, and
   every other framework- or application-defined interceptor runs on every
-  read regardless of this flag. In particular, eager-loaded subqueries do
-  **not** bypass soft-delete: a visible `Post` eager-loading `Author` is a
-  parent-target relationship across different entities, and the parent's
-  soft-delete status says nothing about the target's `Author.deletedAt`.
-  Soft-delete runs unconditionally on the target. The flag exists so
+  read regardless of this flag.
+
+  **Public flags do not propagate across query steps.**
+  `withDeleted` / `onlyDeleted` (and any future public flag) attach
+  to the specific `query { ... }` block that set them; they do NOT
+  carry over into eager-load subqueries (`.with { ... }`), edge
+  traversals (`queryAuthor()`, `queryPosts()`), or edge-predicate
+  subqueries (`has`, `hasWhere`) on target entities. A target
+  step's `QueryContext.flags` is empty unless that step's own
+  `query { ... }` (or eager-load configuration block) explicitly
+  set a flag. Worked example: a visible `Post` eager-loading
+  `Author` is a parent-target relationship across different
+  entities — the parent `Post.query { withDeleted() }` enabling
+  withDeleted on the post read says nothing about whether the
+  caller wanted withDeleted on the target author read; the eager
+  `Author` step's flags are empty, so soft-delete runs
+  unconditionally there. The same rule applies to traversal
+  bridging queries and edge-predicate EXISTS subqueries — the flag
+  set is per-step, not inherited.
+
+  The flag exists so
   future internal paths have a documented escape hatch; introducing a new
   bypass requires explicit opt-in by the affected interceptor and an
   audit-trail entry in the explain output.
@@ -1035,12 +1112,34 @@ re-throw via `classifyDriverError` because they're not in the
 
 ## Explain Interaction
 
-`query.explain()` and the `*OrError` / `*OrThrow`-variant explain
-methods run the interceptor chain in **dry-run mode** against the
-same `QuerySpec` the terminal they model would have built. The
-returned `QueryPlan` reflects every interceptor mutation (added
-predicates, clamped limits, annotations) in apply order so the
-caller can see what the driver *would* have received.
+Explain methods run the interceptor chain in **dry-run mode**
+against the same `QuerySpec` the terminal they model would have
+built. The returned `QueryPlan` reflects every interceptor
+mutation (added predicates, clamped limits, annotations) in apply
+order so the caller can see what the driver *would* have received.
+
+The exact explain surface, one method per terminal:
+
+```kotlin
+query.explainAll(): QueryPlan
+query.explainFirst(): QueryPlan
+query.explainVisibleAll(): QueryPlan
+query.explainFirstVisible(): QueryPlan
+query.explainRawCount(): QueryPlan
+query.explainVisibleCount(): QueryPlan
+query.explainRawExists(): QueryPlan
+query.explainVisibleExists(): QueryPlan
+
+// Repo-level explains for by-id reads.
+client.users.explainById(id): QueryPlan
+client.users.explainVisibleById(id): QueryPlan
+```
+
+There is no `explain*OrError` / `explain*OrThrow` variant —
+explain always returns a `QueryPlan` (with rejection metadata
+when applicable; see below) rather than collapsing through the
+result wrap. Callers branching on rejection use
+`plan.rejected` / `plan.requireNotRejected()`.
 
 **Reject behavior.** If an interceptor calls `scope.reject(...)`
 during an explain, the returned `QueryPlan` carries rejection
