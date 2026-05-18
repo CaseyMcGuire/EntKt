@@ -204,8 +204,10 @@ See [Request-Scoped Entity Loading](request-scoped-entity-loading.md).
 
 ## Interceptor Diagnostics
 
-If read-path interceptors are adopted, both `explain()` and execution tracing
-should show which interceptors ran and what they changed:
+If read-path interceptors are adopted, both the explain family
+(`explainAllOrThrow` / `explainFirstOrError` / `explainVisibleCount`
+/ etc.) and execution tracing should show which interceptors ran
+and what they changed:
 
 ```text
 interceptors:

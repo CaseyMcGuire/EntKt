@@ -1260,9 +1260,12 @@ structured rejection metadata.
 
 **Operation mapping.** Explain methods use the same
 `QueryContext.operation` as the terminal they model — e.g.
-`query.explainAll()` runs interceptors with `operation = ALL`,
-`query.explainVisibleCount()` with `operation = VISIBLE_COUNT`,
-etc. The `ReadOperation → EntOperation` mapping in
+`query.explainAllOrThrow()` runs interceptors with
+`operation = ALL`, `query.explainVisibleCount()` with
+`operation = VISIBLE_COUNT`, etc. Every `*OrThrow` / `*OrNull` /
+`*OrError` variant of a given operation maps to the same
+`ReadOperation` (the result-shape suffix doesn't change the
+operation kind). The `ReadOperation → EntOperation` mapping in
 "Rejection Semantics" applies identically.
 
 **Short-circuit.** The chain-short-circuit rule from
@@ -1433,7 +1436,7 @@ Before implementation, add tests for:
   `where(...)`; passes when caller adds at least one).
 
 - **Explain runs interceptors in dry-run mode and surfaces
-  rejection metadata without throwing.** `query.explainAll()` on a
+  rejection metadata without throwing.** `query.explainAllOrThrow()` on a
   query that an interceptor would reject returns a `QueryPlan` with
   `rejected = true`, `reason`, `code`, and `interceptor` populated;
   the explain call does NOT throw. Non-reject interceptor
