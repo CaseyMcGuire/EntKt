@@ -1,0 +1,512 @@
+package entkt.runtime
+
+import entkt.query.Op
+import entkt.query.OrderField
+import entkt.query.Predicate
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
+
+/**
+ * Phase 2 coverage: the engine that runs the interceptor chain
+ * against a [QuerySpecBuilder], plus the live-vs-snapshot behavior
+ * of `scope.shape`, the attribution buckets, and the
+ * `scope.reject(...) → AbortQueryRejected` short-circuit.
+ *
+ * No generated wiring yet — these tests construct builders /
+ * contexts manually and exercise the engine directly. Phase 4
+ * integration tests will pin end-to-end behavior on real generated
+ * read terminals.
+ */
+class InterceptorEngineTest {
+
+    private class Post
+
+    private fun builder(
+        caller: List<Predicate> = emptyList(),
+        structural: List<Predicate> = emptyList(),
+        callerLimit: Int? = null,
+    ): QuerySpecBuilder = QuerySpecBuilder(
+        table = "posts",
+        entity = Post::class,
+        callerPredicates = caller,
+        structuralPredicates = structural,
+        orderBy = emptyList(),
+        callerLimit = callerLimit,
+        offset = null,
+        flags = emptySet(),
+    )
+
+    private fun rootContext(operation: ReadOperation = ReadOperation.ALL): QueryContext =
+        QueryContext(
+            privacy = PrivacyContext(Viewer.System),
+            operation = operation,
+            rootEntity = Post::class,
+            currentEntity = Post::class,
+            sourceEntity = null,
+            edgeName = null,
+            path = emptyList(),
+            flags = emptySet(),
+        )
+
+    // ---- Shape live-vs-snapshot ----
+
+    @Test
+    fun `scope-shape sees own addPredicate immediately (live property)`() {
+        val pX = Predicate.Leaf("x", Op.EQ, 1)
+        val captured = mutableListOf<Int>()  // counts after each read
+        val interceptor = QueryInterceptor<Post> { scope, _ ->
+            captured.add(scope.shape.predicates.size)  // 0
+            scope.addPredicate(pX)
+            captured.add(scope.shape.predicates.size)  // 1
+        }
+        InterceptorEngine.apply(
+            builder = builder(),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(listOf(0, 1), captured)
+    }
+
+    @Test
+    fun `captured shape local does NOT reflect subsequent mutations (data-value snapshot)`() {
+        var snapCount = -1
+        var liveCount = -1
+        val interceptor = QueryInterceptor<Post> { scope, _ ->
+            val snap = scope.shape
+            scope.addPredicate(Predicate.Leaf("y", Op.EQ, 2))
+            snapCount = snap.predicates.size           // frozen
+            liveCount = scope.shape.predicates.size    // fresh read
+        }
+        InterceptorEngine.apply(
+            builder = builder(),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(0, snapCount, "captured shape is frozen at capture time")
+        assertEquals(1, liveCount, "fresh scope.shape read reflects the mutation")
+    }
+
+    @Test
+    fun `interceptor sees previous interceptors mutations through shape`() {
+        val pX = Predicate.Leaf("x", Op.EQ, 1)
+        val pY = Predicate.Leaf("y", Op.EQ, 2)
+        var bSawX = false
+        var bSawY = false
+        val a = QueryInterceptor<Post> { scope, _ -> scope.addPredicate(pX) }
+        val b = QueryInterceptor<Post> { scope, _ ->
+            bSawX = scope.shape.predicates.any { it == pX }
+            scope.addPredicate(pY)
+            bSawY = scope.shape.predicates.any { it == pY }
+        }
+        InterceptorEngine.apply(
+            builder = builder(),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(
+                RegisteredInterceptor("a", a),
+                RegisteredInterceptor("b", b),
+            ),
+            globalInterceptors = emptyList(),
+        )
+        assertTrue(bSawX)
+        assertTrue(bSawY)
+    }
+
+    // ---- Attribution ----
+
+    @Test
+    fun `attribution buckets count caller and interceptor predicates correctly`() {
+        var observedCaller = -1
+        var observedStructural = -1
+        var observedInterceptor = -1
+        val a = QueryInterceptor<Post> { scope, _ ->
+            scope.addPredicate(Predicate.Leaf("ax", Op.EQ, 0))
+        }
+        val b = QueryInterceptor<Post> { scope, _ ->
+            // Read attribution AFTER A's contribution is visible.
+            observedCaller = scope.shape.callerPredicateCount
+            observedStructural = scope.shape.structuralPredicateCount
+            observedInterceptor = scope.shape.interceptorPredicateCount
+        }
+        InterceptorEngine.apply(
+            builder = builder(
+                caller = listOf(
+                    Predicate.Leaf("c1", Op.EQ, 1),
+                    Predicate.Leaf("c2", Op.EQ, 2),
+                ),
+                structural = emptyList(),
+            ),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(
+                RegisteredInterceptor("a", a),
+                RegisteredInterceptor("b", b),
+            ),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(2, observedCaller)
+        assertEquals(0, observedStructural)
+        assertEquals(1, observedInterceptor)
+    }
+
+    @Test
+    fun `structural predicates land in structural bucket and identity holds`() {
+        var observed: QueryShape<Post>? = null
+        val interceptor = QueryInterceptor<Post> { scope, _ ->
+            observed = scope.shape
+        }
+        InterceptorEngine.apply(
+            builder = builder(
+                caller = emptyList(),
+                structural = listOf(Predicate.Leaf("id", Op.EQ, 42)),
+            ),
+            context = rootContext(operation = ReadOperation.BY_ID),
+            entity = "Post",
+            entOperation = EntOperation.LOAD,
+            entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
+            globalInterceptors = emptyList(),
+        )
+        val shape = observed!!
+        assertEquals(0, shape.callerPredicateCount)
+        assertEquals(1, shape.structuralPredicateCount)
+        assertEquals(0, shape.interceptorPredicateCount)
+        assertEquals(1, shape.predicates.size)
+        assertFalse(shape.hasCallerPredicates)
+    }
+
+    // ---- callerLimit ----
+
+    @Test
+    fun `callerLimit preserves the caller-authored limit through interceptor mutations`() {
+        var snapshot: QueryShape<Post>? = null
+        val defaulter = QueryInterceptor<Post> { scope, _ ->
+            scope.setDefaultLimitIfAbsent(100)
+        }
+        val inspector = QueryInterceptor<Post> { scope, _ ->
+            snapshot = scope.shape
+        }
+        // Case 1: caller set a limit.
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = 50),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(
+                RegisteredInterceptor("d", defaulter),
+                RegisteredInterceptor("i", inspector),
+            ),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(50, snapshot!!.callerLimit)
+        // setDefaultLimitIfAbsent must NOT clobber a caller-set limit.
+        assertEquals(50, snapshot!!.limit)
+
+        // Case 2: caller did not set a limit; default fires.
+        snapshot = null
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = null),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(
+                RegisteredInterceptor("d", defaulter),
+                RegisteredInterceptor("i", inspector),
+            ),
+            globalInterceptors = emptyList(),
+        )
+        assertNull(snapshot!!.callerLimit, "callerLimit stays null even after default fills in")
+        assertEquals(100, snapshot!!.limit)
+    }
+
+    // ---- Limit mutators ----
+
+    @Test
+    fun `requireLimitAtMost only narrows`() {
+        var observed: Int? = null
+        val cap = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(30) }
+        val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = 50),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("cap", cap), RegisteredInterceptor("t", tail)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(30, observed)
+    }
+
+    @Test
+    fun `requireLimitAtMost cannot raise a smaller existing limit`() {
+        var observed: Int? = null
+        val raiser = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(100) }
+        val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = 10),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("r", raiser), RegisteredInterceptor("t", tail)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(10, observed, "10 caller limit must not be raised to 100")
+    }
+
+    @Test
+    fun `setDefaultLimitIfAbsent is a no-op when a limit is already in place`() {
+        var observed: Int? = null
+        val def = QueryInterceptor<Post> { scope, _ -> scope.setDefaultLimitIfAbsent(100) }
+        val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = 25),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("d", def), RegisteredInterceptor("t", tail)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(25, observed)
+    }
+
+    @Test
+    fun `limit mutators reject negative arguments`() {
+        val cap = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(-1) }
+        val def = QueryInterceptor<Post> { scope, _ -> scope.setDefaultLimitIfAbsent(-1) }
+        val rej = QueryInterceptor<Post> { scope, _ -> scope.rejectIfLimitGreaterThan(-1) { "x" } }
+        for (interceptor in listOf(cap, def, rej)) {
+            assertFailsWith<IllegalArgumentException> {
+                InterceptorEngine.apply(
+                    builder = builder(),
+                    context = rootContext(),
+                    entity = "Post",
+                    entOperation = EntOperation.QUERY,
+                    entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
+                    globalInterceptors = emptyList(),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `rejectIfLimitGreaterThan rejects when unbounded and passes when within max`() {
+        val rejecter = QueryInterceptor<Post> { scope, _ ->
+            scope.rejectIfLimitGreaterThan(50) { "max 50" }
+        }
+        // Unbounded → reject with code max_limit_exceeded.
+        val ex = assertFailsWith<AbortQueryRejected> {
+            InterceptorEngine.apply(
+                builder = builder(callerLimit = null),
+                context = rootContext(),
+                entity = "Post",
+                entOperation = EntOperation.QUERY,
+                entityInterceptors = listOf(RegisteredInterceptor("rej", rejecter)),
+                globalInterceptors = emptyList(),
+            )
+        }
+        assertEquals("max_limit_exceeded", ex.rejected.code)
+        assertEquals("rej", ex.rejected.interceptor)
+        assertEquals("max 50", ex.rejected.reason)
+
+        // Within max → no rejection.
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = 25),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("rej", rejecter)),
+            globalInterceptors = emptyList(),
+        )
+
+        // Equal to max → not greater, no rejection.
+        InterceptorEngine.apply(
+            builder = builder(callerLimit = 50),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("rej", rejecter)),
+            globalInterceptors = emptyList(),
+        )
+    }
+
+    // ---- Annotations ----
+
+    @Test
+    fun `addAnnotation writes are visible to the same interceptor and to later ones`() {
+        var aSawOwn = ""
+        var bSawA = ""
+        val a = QueryInterceptor<Post> { scope, _ ->
+            scope.addAnnotation("k", "from-a")
+            aSawOwn = scope.shape.annotations["k"] ?: "missing"
+        }
+        val b = QueryInterceptor<Post> { scope, _ ->
+            bSawA = scope.shape.annotations["k"] ?: "missing"
+        }
+        InterceptorEngine.apply(
+            builder = builder(),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("a", a), RegisteredInterceptor("b", b)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals("from-a", aSawOwn)
+        assertEquals("from-a", bSawA)
+    }
+
+    @Test
+    fun `annotation last-writer-wins across interceptors`() {
+        val frozen = mutableMapOf<String, String>()
+        val a = QueryInterceptor<Post> { scope, _ -> scope.addAnnotation("k", "from-a") }
+        val b = QueryInterceptor<Post> { scope, _ ->
+            scope.addAnnotation("k", "from-b")
+            frozen.putAll(scope.shape.annotations)
+        }
+        InterceptorEngine.apply(
+            builder = builder(),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("a", a), RegisteredInterceptor("b", b)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals("from-b", frozen["k"])
+    }
+
+    // ---- Rejection ----
+
+    @Test
+    fun `reject throws AbortQueryRejected with the rejecting interceptors name and provided code`() {
+        val rejecter = QueryInterceptor<Post> { scope, _ ->
+            scope.reject("nope", code = "broad_aggregate")
+        }
+        val ex = assertFailsWith<AbortQueryRejected> {
+            InterceptorEngine.apply(
+                builder = builder(),
+                context = rootContext(),
+                entity = "Post",
+                entOperation = EntOperation.QUERY,
+                entityInterceptors = listOf(RegisteredInterceptor("guard", rejecter)),
+                globalInterceptors = emptyList(),
+            )
+        }
+        val r = ex.rejected
+        assertEquals("Post", r.entity)
+        assertEquals(EntOperation.QUERY, r.operation)
+        assertEquals("nope", r.reason)
+        assertEquals("broad_aggregate", r.code)
+        assertEquals("guard", r.interceptor)
+    }
+
+    @Test
+    fun `rejection short-circuits the remaining chain`() {
+        var bRan = false
+        var globalRan = false
+        val rejecter = QueryInterceptor<Post> { scope, _ -> scope.reject("nope") }
+        val b = QueryInterceptor<Post> { _, _ -> bRan = true }
+        val g = GlobalQueryInterceptor { _, _ -> globalRan = true }
+        assertFailsWith<AbortQueryRejected> {
+            InterceptorEngine.apply(
+                builder = builder(),
+                context = rootContext(),
+                entity = "Post",
+                entOperation = EntOperation.QUERY,
+                entityInterceptors = listOf(
+                    RegisteredInterceptor("rej", rejecter),
+                    RegisteredInterceptor("b", b),
+                ),
+                globalInterceptors = listOf(RegisteredGlobalInterceptor("g", g)),
+            )
+        }
+        assertFalse(bRan, "B must not run after the rejecting interceptor")
+        assertFalse(globalRan, "global must not run after the rejecting interceptor")
+    }
+
+    // ---- Globals see entity mutations + later globals see earlier globals ----
+
+    @Test
+    fun `global interceptors see all prior mutations including earlier globals`() {
+        val pX = Predicate.Leaf("x", Op.EQ, 1)
+        var g1ObservedPredicates = -1
+        var g2ObservedAnnotations: Map<String, String> = emptyMap()
+        val entityI = QueryInterceptor<Post> { scope, _ -> scope.addPredicate(pX) }
+        val g1 = GlobalQueryInterceptor { scope, _ ->
+            g1ObservedPredicates = scope.shape.predicateCount
+            scope.addAnnotation("from-g1", "yes")
+        }
+        val g2 = GlobalQueryInterceptor { scope, _ ->
+            g2ObservedAnnotations = scope.shape.annotations
+        }
+        InterceptorEngine.apply(
+            builder = builder(),
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("e", entityI)),
+            globalInterceptors = listOf(
+                RegisteredGlobalInterceptor("g1", g1),
+                RegisteredGlobalInterceptor("g2", g2),
+            ),
+        )
+        assertEquals(1, g1ObservedPredicates, "g1 should see the entity interceptor's predicate")
+        assertEquals("yes", g2ObservedAnnotations["from-g1"], "g2 should see g1's annotation")
+    }
+
+    // ---- Per-terminal-call spec isolation (the builder is freshly built each call) ----
+
+    @Test
+    fun `freeze returns the final snapshot with all mutations`() {
+        val b = builder(
+            caller = listOf(Predicate.Leaf("c", Op.EQ, 1)),
+            structural = listOf(Predicate.Leaf("s", Op.EQ, 2)),
+            callerLimit = 100,
+        )
+        val pX = Predicate.Leaf("x", Op.EQ, 3)
+        val interceptor = QueryInterceptor<Post> { scope, _ ->
+            scope.addPredicate(pX)
+            scope.requireLimitAtMost(50)
+            scope.addAnnotation("k", "v")
+        }
+        val frozen = InterceptorEngine.apply(
+            builder = b,
+            context = rootContext(),
+            entity = "Post",
+            entOperation = EntOperation.QUERY,
+            entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals("posts", frozen.table)
+        assertEquals(3, frozen.predicates.size)
+        assertEquals(50, frozen.limit)
+        assertEquals("v", frozen.annotations["k"])
+    }
+
+    @Test
+    fun `non-reject interceptor exceptions propagate unchanged through engine`() {
+        val bug = QueryInterceptor<Post> { _, _ -> error("hook bug") }
+        val ex = assertFailsWith<IllegalStateException> {
+            InterceptorEngine.apply(
+                builder = builder(),
+                context = rootContext(),
+                entity = "Post",
+                entOperation = EntOperation.QUERY,
+                entityInterceptors = listOf(RegisteredInterceptor("bug", bug)),
+                globalInterceptors = emptyList(),
+            )
+        }
+        assertEquals("hook bug", ex.message)
+    }
+}

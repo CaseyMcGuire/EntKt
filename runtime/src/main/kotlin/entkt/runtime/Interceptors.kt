@@ -19,7 +19,7 @@ import kotlin.reflect.KClass
  * ordering, or swap the table. The narrow public API on
  * [InterceptScope] enforces this at compile time.
  */
-interface QueryInterceptor<E : Any> {
+fun interface QueryInterceptor<E : Any> {
     fun intercept(scope: InterceptScope<E>, context: QueryContext)
 }
 
@@ -34,7 +34,7 @@ interface QueryInterceptor<E : Any> {
  * the entity-agnostic mutators (limit / annotate / reject) and can
  * inspect the current shape via [GlobalInterceptScope.shape].
  */
-interface GlobalQueryInterceptor {
+fun interface GlobalQueryInterceptor {
     fun intercept(scope: GlobalInterceptScope, context: QueryContext)
 }
 
