@@ -63,6 +63,15 @@ through the public API:
 
 ```kotlin
 interface InterceptScope<E : Any> {
+    /** Read-only view of the typed effective query state — full
+     *  caller + interceptor predicates / orderBy, current limit /
+     *  offset, current annotations, plus the public flag set.
+     *  Useful for branching ("skip my predicate if a previous
+     *  interceptor already added one for tenant scoping") and for
+     *  defensive policies that want to inspect predicate counts
+     *  before deciding whether to add or reject. See [QueryShape]. */
+    val shape: QueryShape<E>
+
     /** Adds a predicate that is AND-ed with caller and prior-interceptor
      *  predicates. Cannot remove existing predicates. */
     fun addPredicate(predicate: Predicate<E>)
@@ -70,7 +79,8 @@ interface InterceptScope<E : Any> {
     /** Clamps the effective limit to at most [max] on read shapes where
      *  limit operations apply. If no limit is present, sets [max]. If a
      *  smaller limit is already in place (caller or prior interceptor),
-     *  keeps it. */
+     *  keeps it. [max] must be `>= 0`; `0` is allowed (caller asks for
+     *  zero rows). Negative values fail with `IllegalArgumentException`. */
     fun requireLimitAtMost(max: Int)
 
     /** Sets a default limit on read shapes where limit operations
@@ -79,7 +89,8 @@ interface InterceptScope<E : Any> {
      *  have no meaning (`BY_ID`, `FIRST`, `RAW_COUNT`,
      *  `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`,
      *  `EAGER_LOAD`, `EDGE_PREDICATE`). See
-     *  "Limit semantics by read shape" for the full table. */
+     *  "Limit semantics by read shape" for the full table. [default]
+     *  must be `>= 0` (same rules as [requireLimitAtMost]). */
     fun setDefaultLimitIfAbsent(default: Int)
 
     /** Rejects the query (on read shapes where limit operations apply
@@ -94,6 +105,8 @@ interface InterceptScope<E : Any> {
      *  is null at the call site. See "Limit semantics by read
      *  shape" for the full table.
      *
+     *  [max] must be `>= 0` (same rules as [requireLimitAtMost]).
+     *
      *  The framework sets `QueryRejected.code = "max_limit_exceeded"`
      *  on rejections triggered by this method, so callers and tests can
      *  branch on the code without parsing [reason]. */
@@ -104,6 +117,13 @@ interface InterceptScope<E : Any> {
      *  Duplicate keys across interceptors use last-writer-wins per the
      *  framework → entity → global ordering. */
     fun addAnnotation(key: String, value: String)
+
+    // No `setOffset` / `requireOffsetAtMost` — interceptors cannot
+    // shape `offset`. The caller's offset is preserved unchanged.
+    // (Offset is a paging knob, not a safety knob; capping it at
+    // an interceptor layer would silently corrupt pagination.) Use
+    // a [reject] policy with an explicit code if huge offsets are
+    // a concern for query-plan cost.
 
     /** Rejects the query with the given reason. The framework converts
      *  this into the per-API outcome described in "Rejection Semantics".
@@ -141,7 +161,8 @@ data class QuerySpec<E : Any>(
 ```
 
 `QuerySpec` is not exposed to application interceptors in V1 — they only see
-`InterceptScope<E>`. Framework-owned interceptors (soft-delete, generated
+`InterceptScope<E>` (and the read-only `shape: QueryShape<E>` projection).
+Framework-owned interceptors (soft-delete, generated
 schema features) may operate on a private `QuerySpec` mutator path marked
 with an internal annotation; that path is not part of the public API and is
 reserved for generated code. Framework mutators must preserve the same
@@ -151,6 +172,27 @@ rejecting the query — unless the specific schema feature documents and
 justifies a wider operation (e.g. a future RFC for write-through
 interceptors). A framework interceptor that silently removes caller
 predicates or raises a caller-set limit is a bug.
+
+**Per-terminal-call spec — interceptors don't accumulate on the
+builder.** Interceptors operate on a fresh `QuerySpec` *copy*
+built from the query builder's caller-authored state at each
+terminal call. They never mutate the builder itself.
+
+```kotlin
+val q = client.posts.query { where(Post.published eq true) }
+q.allOrThrow()  // interceptors run on a fresh spec, append predicates X, Y
+q.allOrThrow()  // interceptors run on a fresh spec, append predicates X, Y again
+q.rawCount()    // interceptors run on a fresh spec — no X, Y accumulated
+```
+
+Reusing the same query object and invoking multiple terminal
+operations re-runs the interceptor chain from the original caller-
+authored state each time. Without this guarantee, interceptor-
+added predicates / limits / annotations would compound across
+terminal calls — a tenant-scope predicate would land twice on
+the second `allOrThrow()`, a clamped limit would clamp further on
+each call, etc. The per-call copy makes the chain idempotent
+across terminal reuse.
 
 Generated repositories apply configured interceptors before driver calls:
 
@@ -172,6 +214,11 @@ interface GlobalQueryInterceptor {
 }
 
 interface GlobalInterceptScope {
+    /** Read-only erased view of the current query as seen by this
+     *  interceptor — includes mutations from framework and prior
+     *  per-entity interceptors. See [UntypedQueryShape]. */
+    val shape: UntypedQueryShape
+
     fun requireLimitAtMost(max: Int)
     fun setDefaultLimitIfAbsent(default: Int)
     fun rejectIfLimitGreaterThan(max: Int, reason: () -> String)
@@ -179,12 +226,95 @@ interface GlobalInterceptScope {
     fun reject(reason: String, code: String? = null): Nothing
     // No addPredicate — entity-typing not available globally.
 }
+
+/**
+ * Read-only erased view of a query's current effective state, as
+ * seen by a global interceptor running after framework and per-
+ * entity interceptors. The predicate / order lists aren't typed
+ * (`Predicate<*>` can't be safely projected through a typeless
+ * surface), so the shape exposes shape *metadata* — counts and
+ * presence flags — sufficient for defensive policies like
+ * "reject unscoped broad rawCount" without leaking typed
+ * references through the global API.
+ */
+data class UntypedQueryShape(
+    val table: String,
+    val entity: KClass<*>,
+    /** Total number of effective predicates (caller + interceptor). */
+    val predicateCount: Int,
+    /** True iff at least one caller-authored predicate is present. */
+    val hasCallerPredicates: Boolean,
+    /** True iff at least one prior interceptor added a predicate. */
+    val hasInterceptorPredicates: Boolean,
+    val limit: Int?,
+    val offset: Int?,
+    val hasOrderBy: Boolean,
+    /** Annotation map as written by prior interceptors. Read-only
+     *  snapshot; the global interceptor can add more via
+     *  `scope.addAnnotation` but the existing entries are visible
+     *  here for inspection. */
+    val annotations: Map<String, String>,
+)
 ```
 
 `GlobalInterceptScope` omits `addPredicate` because predicates require a
 typed entity context; a single global interceptor can't safely add
 `Predicate<E>` when `E` varies per registered entity. Global interceptors
-operate on operations that are entity-agnostic (limit, annotate, reject).
+operate on operations that are entity-agnostic (limit, annotate, reject)
+and can use `shape` for read-only inspection of the post-pipeline
+query state.
+
+**Per-entity scope also exposes shape.** `InterceptScope<E>` carries a
+parallel `shape: QueryShape<E>` read-only view of the typed effective
+query (full typed `Predicate<E>` / `OrderField<E>` lists plus the same
+metadata). Per-entity interceptors don't strictly need it for
+predicate-shaping (they just `addPredicate(...)` whatever they want),
+but it's useful for branching: "skip my predicate if a previous
+interceptor already added one for tenant scoping," "reject if the
+query has no caller predicates," etc.
+
+```kotlin
+interface InterceptScope<E : Any> {
+    val shape: QueryShape<E>     // typed read-only view
+    fun addPredicate(predicate: Predicate<E>)
+    fun requireLimitAtMost(max: Int)
+    // ... etc.
+}
+
+data class QueryShape<E : Any>(
+    val table: String,
+    val predicates: List<Predicate<E>>,
+    val orderBy: List<OrderField<E>>,
+    val limit: Int?,
+    val offset: Int?,
+    val flags: Set<QueryFlag>,
+    val annotations: Map<String, String>,
+)
+```
+
+**Example: defensive rejection of unscoped broad reads.** The shape
+view enables policies that the limit operations alone can't express
+on count/exists shapes (where limit operations are silent no-ops):
+
+```kotlin
+class RejectUnscopedAggregates : GlobalQueryInterceptor {
+    override fun intercept(scope: GlobalInterceptScope, context: QueryContext) {
+        when (context.operation) {
+            ReadOperation.RAW_COUNT,
+            ReadOperation.RAW_EXISTS -> {
+                if (scope.shape.predicateCount == 0) {
+                    scope.reject(
+                        "broad ${context.operation} without predicates is not allowed",
+                        code = "broad_aggregate",
+                    )
+                }
+            }
+            else -> Unit
+        }
+    }
+}
+```
+
 Predicate-shaping concerns (tenant scoping, soft-delete) belong in
 per-entity `QueryInterceptor<E>` registrations.
 
@@ -289,6 +419,19 @@ call:
   interceptors. See "Multi-step traversal chains" below for which
   interceptors fire on each step of a chained traversal.
 - edge predicates: `has`, `hasWhere` on the target entity
+
+**Edge-predicate existence semantics.** `has` / `hasWhere` compile
+to `EXISTS` subqueries against the target table. Target-entity
+interceptors (e.g. soft-delete, tenant scoping) apply inside that
+subquery — so `has(Post.author)` after `softDelete()` is installed
+on `User` means "has a *non-soft-deleted* author," not "has any
+author row that physically exists." This is the intended behavior
+(an entity scoped out by a target interceptor isn't really
+"there" from the application's perspective), but it changes
+existence semantics in a way that's surprising if a reader assumes
+`has(edge)` is a pure foreign-key existence check. LOAD privacy
+does NOT run for edge predicates because no target entity is
+materialized — only interceptor-added predicates apply.
 
 Any generated read not on this list is a bug. **V1 is absolute: no
 generated read bypasses interceptors.** Tenant scoping, max limits,
@@ -401,6 +544,24 @@ gets it.
     `visibleAllOrError` / `queryAuthor()` / `queryPosts()` and friends.
     Max-limit guards constrain the underlying row scan, which is
     exactly the surface they're meant to protect.
+
+    **`visibleAll` / `visibleAllOrError` — limit caps storage
+    scan, not visible result count (V1).** When an effective
+    `limit(N)` reaches the visible-row path (set by the caller
+    OR by an interceptor's `setDefaultLimitIfAbsent` /
+    `requireLimitAtMost`), the limit constrains the storage rows
+    scanned before LOAD privacy filtering, NOT the number of
+    visible rows returned. So `query.limit(50).visibleAll()`
+    fetches at most 50 storage rows and returns the visible
+    subset — possibly fewer than 50 visible rows even when more
+    visible rows exist beyond denied ones in storage. This
+    matches what the codegen actually does today and what the
+    `EntClientConfig.visibleOverfetchLimit` cap is for. A future
+    paged-visible-scan API can introduce a separate
+    "visible-result limit" operation distinct from the
+    storage-scan budget; until then, callers that want exactly
+    N visible rows must paginate via `queryOffset` and accept
+    that the scan-budget shape is the V1 contract.
 
     **Cardinality note for `EDGE_TRAVERSAL`.** V1 treats every
     traversal — to-one (`queryAuthor()` from `belongsTo`) and
@@ -548,7 +709,7 @@ data class QueryRejected(
     override val operation: EntOperation,
     val reason: String,
     val code: String? = null,           // stable machine-readable code, e.g. "max_limit_exceeded"
-    val interceptor: String? = null,    // stable registration name (preferred) or simpleName fallback; set by the framework
+    val interceptor: String? = null,    // mandatory registration name for application interceptors, or framework-assigned stable name (e.g. "framework:soft-delete"); set by the framework. No simpleName / AnonymousInterceptor fallback — see the reject() KDoc.
     override val message: String = reason,
 ) : EntError
 
@@ -562,14 +723,16 @@ Add these alongside the existing variants in the
 
 ## Generated Registration
 
-Interceptors can be registered per entity or globally (across all
-entities) via the same DSL block. `global(...)` runs the interceptor
-on every read regardless of root entity:
+Interceptors register inside the existing `EntClient(driver) { ... }`
+block, alongside hooks / policies / privacyContext /
+transactionRequirement / visibleOverfetchLimit — consistent with the
+rest of the client config surface. The `interceptors { ... }` sub-
+block scopes per-entity registrations and `global(...)` registrations
+in one place:
 
 ```kotlin
-val client = EntClient(
-    driver = driver,
-    interceptors = EntInterceptors {
+val client = EntClient(driver) {
+    interceptors {
         // Per-entity: `TenantReadInterceptor` shapes Post queries only.
         posts(TenantReadInterceptor(Post.tenantId), name = "tenant-scope")
         users(MaxLimitInterceptor<User>(defaultLimit = 100, maxLimit = 500), name = "user-max-limit")
@@ -579,8 +742,8 @@ val client = EntClient(
         // see Global Interceptors section above).
         global(EnforceMaxLimit(maxLimit = 1000), name = "global-max-limit")
         global(QueryTracer(), name = "tracer")
-    },
-)
+    }
+}
 ```
 
 The `name` parameter is mandatory and must be unique within its
@@ -591,6 +754,18 @@ of `global(EnforceMaxLimit(...), name = "global-max-limit")` that
 rejects a query produces `Err(QueryRejected(... interceptor =
 "global-max-limit" ...))`. Stable names matter for telemetry,
 debugging, and test assertions.
+
+**The `framework:` prefix is reserved.** Application interceptor
+names must not start with `"framework:"` — that prefix is reserved
+for framework-owned interceptors installed via schema mixins
+(`framework:soft-delete`, future `framework:audit`, etc.).
+Registering an application interceptor with a `framework:`-prefixed
+name fails at `EntClient` construction time. Application names
+must also not collide with framework-owned interceptors on the
+same entity (e.g. naming an application interceptor
+`"soft-delete"` while the soft-delete mixin is installed is
+allowed because the framework version is `framework:soft-delete` —
+no collision after the prefix rule applies).
 
 A schema-level default can install framework-owned interceptors:
 
@@ -802,6 +977,85 @@ There is no interim untyped shape — building an untyped interceptor API
 first and migrating later would create churn for early adopters and break
 the safety claim above.
 
+## Implementation Notes
+
+**Interceptor execution and the result-variant catch chain.** The
+generated read `*OrError` paths wrap their body in
+`try { ... } catch (Exception) { Err(classifyDriverError(...)) }`
+(plus the dedicated `PrivacyDeniedException` arm). Per the Result
+Variants RFC, `classifyDriverError` re-throws unrecognized non-
+`SQLException` throwables — so an `IllegalStateException` /
+`NullPointerException` / vanilla `RuntimeException` from an
+interceptor's `intercept(...)` correctly escapes the `*OrError`
+catch and propagates to the caller. The "non-reject interceptor
+exceptions propagate unchanged" contract holds *because of* the
+`classifyDriverError` narrowing, not in spite of it.
+
+Implementation must NOT short-circuit `classifyDriverError` for
+interceptor exceptions (e.g. by catching `Exception` and wrapping
+directly to `Err(DriverFailure)`); a naive `catch (Exception)
+{ Err(...) }` would silently break the contract and bury
+application bugs as `DriverFailure`. The canonical shape is:
+
+```kotlin
+return try {
+    val spec = applyInterceptors(builder, context)  // may throw or reject
+    driver.query(spec)  // SQLException family lands here
+} catch (e: EntQueryRejectedException) {
+    Err(e.error)  // reject(...) reached here as a typed throw
+} catch (e: PrivacyDeniedException) {
+    Err(EntError.PrivacyDenied(...))
+} catch (e: Exception) {
+    Err(classifyDriverError(driver, e, entity, operation))  // narrowed
+}
+```
+
+`scope.reject(...)` lowers to `throw EntQueryRejectedException(...)`
+which the dedicated arm catches. Application interceptor bugs
+(non-EntException, non-reject) hit the final `Exception` arm and
+re-throw via `classifyDriverError` because they're not in the
+`SQLException` family. Two separate channels, one catch chain.
+
+## Explain Interaction
+
+`query.explain()` and the `*OrError` / `*OrThrow`-variant explain
+methods run the interceptor chain in **dry-run mode** against the
+same `QuerySpec` the terminal they model would have built. The
+returned `QueryPlan` reflects every interceptor mutation (added
+predicates, clamped limits, annotations) in apply order so the
+caller can see what the driver *would* have received.
+
+**Reject behavior.** If an interceptor calls `scope.reject(...)`
+during an explain, the returned `QueryPlan` carries rejection
+metadata (`rejected = true`, `reason`, `code`, `interceptor`)
+and **no driver subplan** — explain does NOT throw. The rationale:
+explain is the obvious debugging tool for "why did this query
+reject?", and throwing from explain would force a try/catch around
+every debug call. Callers that want exception-style explain can
+chain `plan.requireNotRejected()` or branch on
+`plan.rejected`.
+
+**Non-reject interceptor exception behavior.** Application bugs
+in interceptor code (anything other than `scope.reject(...)`)
+propagate from explain unchanged, same as in the terminal path
+— `IllegalStateException` from a hook bug, `NullPointerException`
+from misuse, etc. all escape `explain()` directly. Explain is not
+a "swallow exceptions" wrapper; only `reject(...)` produces
+structured rejection metadata.
+
+**Operation mapping.** Explain methods use the same
+`QueryContext.operation` as the terminal they model — e.g.
+`query.explainAll()` runs interceptors with `operation = ALL`,
+`query.explainVisibleCount()` with `operation = VISIBLE_COUNT`,
+etc. The `ReadOperation → EntOperation` mapping in
+"Rejection Semantics" applies identically.
+
+**Short-circuit.** The chain-short-circuit rule from
+"Rejection Semantics" applies in explain too: once an interceptor
+rejects, no subsequent interceptor runs (in dry-run mode or
+otherwise). The explain output records interceptors up to and
+including the rejecting one.
+
 ## Test Requirements
 
 Before implementation, add tests for:
@@ -886,6 +1140,60 @@ Before implementation, add tests for:
   soft-delete added on each entity must constrain each respective
   step — a row filtered out at step 2 (groups) must not appear in
   step 3's `sourceEntity` set.
+
+- **InterceptScope.shape exposes the effective query state.**
+  An interceptor can read `scope.shape.predicates`,
+  `scope.shape.limit`, `scope.shape.annotations`, etc. and branch
+  on them. Mutations from earlier interceptors in the chain are
+  reflected — predicates added by interceptor #1 appear in
+  interceptor #2's `shape.predicates`. The view is read-only;
+  attempts to mutate the returned list / map have no effect on
+  the underlying spec.
+
+- **GlobalInterceptScope.shape uses the erased UntypedQueryShape.**
+  A global interceptor sees `predicateCount`, `hasCallerPredicates`,
+  `hasInterceptorPredicates`, `limit`, `offset`, `hasOrderBy`,
+  `annotations`, plus `entity: KClass<*>` and `table: String`.
+  Pin the example `RejectUnscopedAggregates` from the RFC: a
+  `rawCount()` with zero predicates rejects as
+  `Err(QueryRejected(code = "broad_aggregate"))`.
+
+- **Explain runs interceptors in dry-run mode and surfaces
+  rejection metadata without throwing.** `query.explainAll()` on a
+  query that an interceptor would reject returns a `QueryPlan` with
+  `rejected = true`, `reason`, `code`, and `interceptor` populated;
+  the explain call does NOT throw. Non-reject interceptor
+  exceptions DO propagate from explain unchanged.
+
+- **`framework:` prefix is reserved.** Registering an application
+  interceptor with `name = "framework:foo"` fails at `EntClient`
+  construction with a clear error.
+
+- **Per-terminal-call spec isolation.** `val q = client.posts.query
+  { ... }; q.allOrThrow(); q.allOrThrow()` — interceptor-added
+  predicates / clamped limits / annotations do NOT compound across
+  the two terminal calls. Each call sees the same fresh starting
+  spec.
+
+- **Edge-predicate existence semantics under soft-delete.** With
+  `softDelete()` installed on `User`, `client.posts.query
+  { where(Post.author.has()) }.allOrThrow()` returns only posts
+  whose author is NOT soft-deleted. Without the soft-delete
+  installation, the same query returns posts whose author row
+  physically exists regardless of `deletedAt`. Pin both
+  directions in one test pair.
+
+- **Interceptor limit argument validation.** Negative arguments to
+  `requireLimitAtMost(-1)` / `setDefaultLimitIfAbsent(-1)` /
+  `rejectIfLimitGreaterThan(-1, ...)` fail with
+  `IllegalArgumentException`. Zero is allowed.
+
+- **Interceptors cannot shape `offset`.** `InterceptScope` has no
+  `setOffset` / `requireOffsetAtMost` method; the caller's offset
+  is preserved unchanged through the interceptor chain. Pin by
+  calling `query { offset(50) }.allOrThrow()` with an interceptor
+  that wants to clamp offset; the offset must still reach the
+  driver as 50.
 - every documented read surface invokes interceptors: `byIdOrThrow`,
   `byIdOrNull`, `visibleByIdOrNull`, `byIdOrError`, `firstOrThrow`,
   `firstOrNull`, `firstVisibleOrNull`, `firstOrError`, `allOrThrow`,
@@ -900,14 +1208,13 @@ Before implementation, add tests for:
   `*OrError` returns `Err(EntError.QueryRejected)`, `*OrNull` and `visible*`
   throw (they do not collapse rejection to `null`)
 - `QueryRejected.code` carries the optional machine-readable code (e.g.
-  `"max_limit_exceeded"`); `QueryRejected.interceptor` follows a fallback
-  chain — the stable registration name passed at registration time
-  (preferred), the interceptor class's `simpleName` if no name was
-  registered, or `"AnonymousInterceptor"` if neither is available. Callers
-  and tests can branch on these fields independently of `reason` message
-  text; tests that branch on `interceptor` should register interceptors
-  with explicit `name = "..."` to avoid coupling to refactor-fragile
-  `simpleName` values
+  `"max_limit_exceeded"`); `QueryRejected.interceptor` is the mandatory
+  registration name for application interceptors or the framework-
+  assigned stable name (e.g. `"framework:soft-delete"`) for
+  framework-owned interceptors. Both registration paths require a
+  name, so there is no simpleName / AnonymousInterceptor fallback.
+  Callers and tests can branch on these fields independently of
+  `reason` message text
 - `rejectIfLimitGreaterThan(...)` produces rejections with
   `code == "max_limit_exceeded"` automatically
 - `internalSystemQuery` has no effect in V1 — it is a reserved capability
