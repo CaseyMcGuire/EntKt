@@ -32,6 +32,13 @@ private val QUERY_EXPLANATION = ClassName("entkt.runtime", "QueryExplanation")
 private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
 private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
 private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
+private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime", "EntQueryRejectedException")
+private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime", "AbortQueryRejected")
+private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime", "FrozenQuerySpec")
+private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime", "QuerySpecBuilder")
+private val QUERY_CONTEXT = ClassName("entkt.runtime", "QueryContext")
+private val READ_OPERATION = ClassName("entkt.runtime", "ReadOperation")
+private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime", "InterceptorEngine")
 private val MEMBER_GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime", "getOrThrow")
 private val MEMBER_CLASSIFY = com.squareup.kotlinpoet.MemberName("entkt.runtime", "classifyDriverError")
 
@@ -140,6 +147,7 @@ internal class QueryGenerator(
             // returns its `results` parameter unchanged.
             .addFunction(buildLoadEdges(entityClass, schema, schemaNames))
             .addFunction(buildRequireClient(schemaName))
+            .addFunction(buildRunReadInterceptors(schemaName, entityClass))
             .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
             .addFunction(buildAllOrError(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
@@ -212,7 +220,11 @@ internal class QueryGenerator(
                     .add("  val c = requireClient()\n")
                     .add("  val privacy = c.currentPrivacyContext()\n")
                     .add(
-                        "  val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)\n",
+                        "  val spec = runReadInterceptors(%T.ALL, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add(
+                        "  val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)\n",
                         entityClass,
                     )
                     .add("  val results = rows.map { %T.fromRow(it) }\n", entityClass)
@@ -224,6 +236,8 @@ internal class QueryGenerator(
                         ENT_RESULT,
                         if (hasEdges) "loadEdges(results, privacy)" else "results",
                     )
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
                         "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
@@ -278,14 +292,18 @@ internal class QueryGenerator(
             .returns(listType)
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.ALL, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
         builder.addCode(
             CodeBlock.builder()
                 // No-privacy fast path: skip the overfetch cap entirely
-                // and pass the user's queryLimit through unchanged.
+                // and pass the spec's (post-interceptor) limit through.
                 // "visible all" == "all" when there's nothing to filter.
                 .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
                 .addStatement(
-                    "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                    "val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)",
                     entityClass,
                 )
                 .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
@@ -297,11 +315,13 @@ internal class QueryGenerator(
                     }
                 }
                 .endControlFlow()
-                // With LOAD privacy: apply the overfetch cap so the
-                // in-process filter has bounded work to do.
-                .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
+                // With LOAD privacy: apply the overfetch cap. The
+                // post-interceptor effective limit (spec.limit) is the
+                // input to the cap math, so an interceptor's
+                // requireLimitAtMost can tighten the scan further.
+                .addStatement("val scanLimit = minOf(spec.limit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
                 .addStatement(
-                    "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
+                    "val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, scanLimit, spec.offset)",
                     entityClass,
                 )
                 .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
@@ -358,14 +378,18 @@ internal class QueryGenerator(
                     .add("return try {\n")
                     .add("  val c = requireClient()\n")
                     .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add(
+                        "  val spec = runReadInterceptors(%T.ALL, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
                     // No-privacy fast path: skip the overfetch cap
                     // entirely. With no in-process filter, "visible
-                    // all" reduces to "all" and the user's queryLimit
-                    // is the only bound. Cap-exhaustion has no
-                    // semantic meaning here.
+                    // all" reduces to "all" and the spec's (post-
+                    // interceptor) limit is the only bound. Cap-
+                    // exhaustion has no semantic meaning here.
                     .add("  if (!c.%L.hasLoadPrivacy()) {\n", repoPropName)
                     .add(
-                        "    val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)\n",
+                        "    val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)\n",
                         entityClass,
                     )
                     .add("    val results = rows.map { %T.fromRow(it) }\n", entityClass)
@@ -376,9 +400,9 @@ internal class QueryGenerator(
                     )
                     .add("  } else {\n")
                     .add("    val cap = c.visibleOverfetchLimit\n")
-                    .add("    val scanLimit = minOf(queryLimit ?: cap, cap)\n")
+                    .add("    val scanLimit = minOf(spec.limit ?: cap, cap)\n")
                     .add(
-                        "    val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)\n",
+                        "    val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, scanLimit, spec.offset)\n",
                         entityClass,
                     )
                     .add(
@@ -406,7 +430,10 @@ internal class QueryGenerator(
                     // the driver for `cap` rows and got at least that
                     // many. Suppress the Err only when the caller
                     // bounded the scan strictly smaller than the cap.
-                    .add("    val capturedLimit = queryLimit\n")
+                    // Uses spec.limit (post-interceptor) so a
+                    // requireLimitAtMost(N<cap) clamp still
+                    // suppresses the Err.
+                    .add("    val capturedLimit = spec.limit\n")
                     .add("    if (rows.size >= cap && (capturedLimit == null || capturedLimit >= cap)) {\n")
                     .add(
                         "      %T.Err(%T.OverfetchCapExceeded(%S, %T.QUERY, cap))\n",
@@ -422,6 +449,8 @@ internal class QueryGenerator(
                     // generic Exception arm and be misclassified as
                     // Err(DriverFailure). Same shape as allOrError /
                     // firstOrError.
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
                         "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
@@ -449,7 +478,14 @@ internal class QueryGenerator(
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
             .addStatement(
-                "val row = driver.query(%T.TABLE, predicates, orderFields, 1, queryOffset).firstOrNull()",
+                "val spec = runReadInterceptors(%T.FIRST, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            // `first` semantics: cap at 1 unconditionally — an
+            // interceptor clamp can only further restrict, never
+            // raise above 1.
+            .addStatement(
+                "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, 1, spec.offset).firstOrNull()",
                 entityClass,
             )
             .addStatement("val entity = row?.let { %T.fromRow(it) } ?: return null", entityClass)
@@ -495,6 +531,8 @@ internal class QueryGenerator(
                         "  firstOrNull()?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.QUERY))\n",
                         ENT_RESULT, ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
                     )
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
                         "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
@@ -545,6 +583,10 @@ internal class QueryGenerator(
             .returns(entityClass.copy(nullable = true))
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.FIRST, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
         builder.addCode(
             CodeBlock.builder()
                 // No-privacy fast path: only fetch 1 row. Nothing to
@@ -553,7 +595,7 @@ internal class QueryGenerator(
                 // pulling up to 100 rows just to return one.
                 .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
                 .addStatement(
-                    "val row = driver.query(%T.TABLE, predicates, orderFields, 1, queryOffset).firstOrNull() ?: return null",
+                    "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, 1, spec.offset).firstOrNull() ?: return null",
                     entityClass,
                 )
                 .addStatement("val entity = %T.fromRow(row)", entityClass)
@@ -564,10 +606,11 @@ internal class QueryGenerator(
                 .endControlFlow()
                 // With LOAD privacy: cap the scan so the in-process
                 // filter has bounded work even when many storage rows
-                // are denied.
-                .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
+                // are denied. Uses spec.limit so a
+                // requireLimitAtMost(N<cap) clamp tightens further.
+                .addStatement("val scanLimit = minOf(spec.limit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
                 .addStatement(
-                    "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
+                    "val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, scanLimit, spec.offset)",
                     entityClass,
                 )
                 .beginControlFlow("for (row in rows)")
@@ -602,7 +645,11 @@ internal class QueryGenerator(
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
             .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates, orderFields, queryLimit, queryOffset)",
+                "val spec = runReadInterceptors(%T.VISIBLE_COUNT, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement(
+                "val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)",
                 entityClass,
             )
             .addStatement("val results = rows.map { %T.fromRow(it) }", entityClass)
@@ -636,8 +683,11 @@ internal class QueryGenerator(
             .addKdoc("Count matching rows. This is a raw aggregate that does not evaluate LOAD privacy.\n" +
                 "Use [visibleCount] for a privacy-aware count.")
             .returns(LONG)
-            .addStatement("requireClient()")
-            .addStatement("return driver.count(%T.TABLE, predicates)", entityClass)
+            .addStatement(
+                "val spec = runReadInterceptors(%T.RAW_COUNT, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement("return driver.count(%T.TABLE, spec.predicates)", entityClass)
             .build()
     }
 
@@ -663,9 +713,16 @@ internal class QueryGenerator(
                 "storage row matches the predicate. Pair with [visibleExists] for the\n" +
                 "privacy-aware variant.",
             )
-            .addStatement("requireClient()")
             .addStatement(
-                "return driver.query(%T.TABLE, predicates, emptyList(), 1, queryOffset).isNotEmpty()",
+                "val spec = runReadInterceptors(%T.RAW_EXISTS, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            // exists is fixed at limit-1 — interceptor clamps can
+            // only further restrict (to 0) so honor spec.limit if
+            // it's been set lower than 1.
+            .addStatement("val limit = minOf(1, spec.limit ?: 1)")
+            .addStatement(
+                "return driver.query(%T.TABLE, spec.predicates, emptyList(), limit, spec.offset).isNotEmpty()",
                 entityClass,
             )
             .build()
@@ -695,20 +752,25 @@ internal class QueryGenerator(
             )
             .addStatement("val c = requireClient()")
             .addStatement("val privacy = c.currentPrivacyContext()")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.VISIBLE_EXISTS, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
         builder.addCode(
             CodeBlock.builder()
                 // No-privacy fast path: single-row probe, no cap.
                 .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+                .addStatement("val limit = minOf(1, spec.limit ?: 1)")
                 .addStatement(
-                    "return driver.query(%T.TABLE, predicates, emptyList(), 1, queryOffset).isNotEmpty()",
+                    "return driver.query(%T.TABLE, spec.predicates, emptyList(), limit, spec.offset).isNotEmpty()",
                     entityClass,
                 )
                 .endControlFlow()
                 // Privacy path: cap the scan, return true on first
                 // visible row, false if cap exhausted or no rows.
-                .addStatement("val scanLimit = minOf(queryLimit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
+                .addStatement("val scanLimit = minOf(spec.limit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)")
                 .addStatement(
-                    "val rows = driver.query(%T.TABLE, predicates, orderFields, scanLimit, queryOffset)",
+                    "val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, scanLimit, spec.offset)",
                     entityClass,
                 )
                 .beginControlFlow("for (row in rows)")
@@ -889,6 +951,73 @@ internal class QueryGenerator(
             .addStatement(
                 "return client ?: error(%S)",
                 "$schemaName query requires a client for privacy enforcement",
+            )
+            .build()
+    }
+
+    /**
+     * Helper: builds a [QuerySpecBuilder] seeded with the caller's
+     * authored state on this query (predicates / orderFields /
+     * queryLimit / queryOffset) plus any structural predicates the
+     * terminal contributes, then runs the per-entity + global
+     * interceptor chain via [InterceptorEngine.apply].
+     *
+     * Returns the [FrozenQuerySpec] terminals should hand to the
+     * driver. Translates the internal [AbortQueryRejected] marker into
+     * the user-facing [EntQueryRejectedException] at the boundary so
+     * downstream terminal code only ever sees the public type.
+     */
+    private fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val readOp = READ_OPERATION
+        val structuralListType = List::class.asClassName().parameterizedBy(predicateClass)
+        return FunSpec.builder("runReadInterceptors")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("operation", readOp)
+            .addParameter("entOperation", ENT_OPERATION)
+            .addParameter(
+                ParameterSpec.builder("structuralPredicates", structuralListType)
+                    .defaultValue("emptyList()")
+                    .build()
+            )
+            .returns(FROZEN_QUERY_SPEC)
+            .addCode(
+                CodeBlock.builder()
+                    .addStatement("val c = requireClient()")
+                    .addStatement("val privacy = c.currentPrivacyContext()")
+                    .add("val builder = %T(\n", QUERY_SPEC_BUILDER)
+                    .add("  table = %T.TABLE,\n", entityClass)
+                    .add("  entity = %T::class,\n", entityClass)
+                    .add("  callerPredicates = predicates,\n")
+                    .add("  structuralPredicates = structuralPredicates,\n")
+                    .add("  orderBy = orderFields,\n")
+                    .add("  callerLimit = queryLimit,\n")
+                    .add("  offset = queryOffset,\n")
+                    .add("  flags = emptySet(),\n")
+                    .add(")\n")
+                    .add("val context = %T(\n", QUERY_CONTEXT)
+                    .add("  privacy = privacy,\n")
+                    .add("  operation = operation,\n")
+                    .add("  rootEntity = %T::class,\n", entityClass)
+                    .add("  currentEntity = %T::class,\n", entityClass)
+                    .add("  sourceEntity = null,\n")
+                    .add("  edgeName = null,\n")
+                    .add("  path = emptyList(),\n")
+                    .add("  flags = emptySet(),\n")
+                    .add(")\n")
+                    .add("return try {\n")
+                    .add("  %T.apply(\n", INTERCEPTOR_ENGINE)
+                    .add("    builder = builder,\n")
+                    .add("    context = context,\n")
+                    .add("    entity = %S,\n", schemaName)
+                    .add("    entOperation = entOperation,\n")
+                    .add("    entityInterceptors = c.entityInterceptors.entityInterceptorsFor(%S),\n", repoPropName)
+                    .add("    globalInterceptors = c.entityInterceptors.globals(),\n")
+                    .add("  )\n")
+                    .add("} catch (e: %T) {\n", ABORT_QUERY_REJECTED)
+                    .add("  throw %T(e.rejected)\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("}\n")
+                    .build()
             )
             .build()
     }

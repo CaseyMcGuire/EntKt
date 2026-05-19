@@ -194,8 +194,8 @@ class QueryGeneratorTest {
         assert(output.contains("fun rawCount(): Long")) {
             "Should generate rawCount(): Long\n$output"
         }
-        assert(output.contains("driver.count(Car.TABLE, predicates)")) {
-            "rawCount() should delegate to driver.count\n$output"
+        assert(output.contains("driver.count(Car.TABLE, spec.predicates)")) {
+            "rawCount() should delegate to driver.count with the post-interceptor spec\n$output"
         }
     }
 
@@ -219,9 +219,11 @@ class QueryGeneratorTest {
             "Should generate visibleExists(): Boolean\n$output"
         }
         // rawExists bypasses LOAD privacy — it just probes one
-        // storage row via driver.query and checks emptiness.
-        assert(output.contains("driver.query(Car.TABLE, predicates, emptyList(), 1, queryOffset)")) {
-            "rawExists should probe via driver.query with limit=1, no privacy\n$output"
+        // storage row via driver.query and checks emptiness. Uses
+        // the post-interceptor spec so interceptor predicates
+        // (e.g. tenant_id = X) are honored on the existence probe.
+        assert(output.contains("driver.query(Car.TABLE, spec.predicates, emptyList(), limit, spec.offset)")) {
+            "rawExists should probe via driver.query with the post-interceptor spec\n$output"
         }
         // visibleExists still calls evaluateLoadPrivacy on the
         // privacy path.

@@ -33,6 +33,13 @@ private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationExcepti
 private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
 private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
 private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
+private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime", "EntQueryRejectedException")
+private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime", "AbortQueryRejected")
+private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime", "QuerySpecBuilder")
+private val QUERY_CONTEXT = ClassName("entkt.runtime", "QueryContext")
+private val READ_OPERATION = ClassName("entkt.runtime", "ReadOperation")
+private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime", "InterceptorEngine")
+private val OP = ClassName("entkt.query", "Op")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -233,9 +240,57 @@ internal class RepoGenerator(
         entityClass: ClassName,
         idType: com.squareup.kotlinpoet.TypeName,
     ): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val body = CodeBlock.builder()
         body.addStatement("val privacy = client.currentPrivacyContext()")
-        body.addStatement("val entity = driver.byId(%T.TABLE, id)?.let { %T.fromRow(it) } ?: return null", entityClass, entityClass)
+        // Run interceptors with a structural `id = X` predicate so
+        // per-entity interceptors (e.g. tenant-scope) and globals
+        // (e.g. max-limit / audit) see the same shape they would
+        // for a query terminal. Fast path: when no interceptors
+        // are registered for this scope, the chain runs zero
+        // bodies and we hit the driver immediately.
+        body.add("val structural = listOf<%T>(%T.Leaf(%S, %T.EQ, id))\n", PREDICATE, PREDICATE, "id", OP)
+        body.add("val builder = %T(\n", QUERY_SPEC_BUILDER)
+        body.add("  table = %T.TABLE,\n", entityClass)
+        body.add("  entity = %T::class,\n", entityClass)
+        body.add("  callerPredicates = emptyList(),\n")
+        body.add("  structuralPredicates = structural,\n")
+        body.add("  orderBy = emptyList(),\n")
+        body.add("  callerLimit = null,\n")
+        body.add("  offset = null,\n")
+        body.add("  flags = emptySet(),\n")
+        body.add(")\n")
+        body.add("val context = %T(\n", QUERY_CONTEXT)
+        body.add("  privacy = privacy,\n")
+        body.add("  operation = %T.BY_ID,\n", READ_OPERATION)
+        body.add("  rootEntity = %T::class,\n", entityClass)
+        body.add("  currentEntity = %T::class,\n", entityClass)
+        body.add("  sourceEntity = null,\n")
+        body.add("  edgeName = null,\n")
+        body.add("  path = emptyList(),\n")
+        body.add("  flags = emptySet(),\n")
+        body.add(")\n")
+        body.add("val spec = try {\n")
+        body.add("  %T.apply(\n", INTERCEPTOR_ENGINE)
+        body.add("    builder = builder,\n")
+        body.add("    context = context,\n")
+        body.add("    entity = %S,\n", schemaName)
+        body.add("    entOperation = %T.LOAD,\n", ENT_OPERATION)
+        body.add("    entityInterceptors = client.entityInterceptors.entityInterceptorsFor(%S),\n", repoPropName)
+        body.add("    globalInterceptors = client.entityInterceptors.globals(),\n")
+        body.add("  )\n")
+        body.add("} catch (e: %T) {\n", ABORT_QUERY_REJECTED)
+        body.add("  throw %T(e.rejected)\n", ENT_QUERY_REJECTED_EXCEPTION)
+        body.add("}\n")
+        // Use driver.query (not driver.byId) because interceptors
+        // may have added predicates (e.g. tenant_id = X) that
+        // byId's PK lookup wouldn't honor.
+        body.addStatement(
+            "val row = driver.query(%T.TABLE, spec.predicates, emptyList(), 1, null).firstOrNull()",
+            entityClass,
+        )
+        body.addStatement("if (row == null) return null")
+        body.addStatement("val entity = %T.fromRow(row)", entityClass)
         body.addStatement("evaluateLoadPrivacy(privacy, entity)")
         body.addStatement("return entity")
         return FunSpec.builder("byIdOrNull")
@@ -324,6 +379,8 @@ internal class RepoGenerator(
                         "  byIdOrNull(id)?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.LOAD, id))\n",
                         ENT_RESULT, ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
                     )
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
                         "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",

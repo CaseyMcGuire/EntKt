@@ -21,7 +21,7 @@ import entkt.query.Predicate
  * owned interceptors may operate on this type via a future
  * package-private extension; that path isn't part of V1.
  */
-public class QuerySpecBuilder internal constructor(
+public class QuerySpecBuilder public constructor(
     public val table: String,
     public val entity: kotlin.reflect.KClass<*>,
     callerPredicates: List<Predicate>,
