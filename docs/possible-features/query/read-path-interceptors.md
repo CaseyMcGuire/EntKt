@@ -1315,9 +1315,22 @@ whole picture. This is the inverse of the "global runs first" alternative;
 choosing "global last" makes outer policies strictly more powerful (they see
 everything every other interceptor produced).
 
-The applied order must be visible in explain output, including the
-interceptor name and the operations it performed on the scope (added
-predicates, limit clamps, annotations, rejections).
+In V1, explain output reflects the **resulting** post-chain shape —
+the predicates / orderBy / limit / offset that reach the driver,
+the merged `annotations` from every interceptor that ran (source +
+target + edge-predicate steps), and the rejection metadata
+(`rejected = true` + `rejection: EntError.QueryRejected`) when an
+interceptor short-circuited the chain. The merged-effects view is
+enough for the soft-delete / tenant-scope / max-limit use cases
+that motivated this RFC.
+
+V1 explicitly does **not** carry a per-interceptor *trace* —
+which interceptor fired, in which order, with what mutation. A
+richer `QueryPlan.trace: List<InterceptorStep>` API is plausible
+follow-up if observability consumers need step-by-step
+attribution beyond `annotations`, but it's deferred until a
+concrete use case emerges. See the "Test Requirements" section
+below for the explain-output contract V1 actually delivers.
 
 ## Privacy Semantics
 
