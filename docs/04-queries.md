@@ -420,10 +420,19 @@ own `QueryContext`:
 
 Eager-load subqueries (`with{Edge} { ... }`) fire the target's
 interceptors with `operation = EAGER_LOAD`. `has { ... }` /
-`hasWhere { ... }` edge predicates fire the target's interceptors
-with `operation = EDGE_PREDICATE`, narrowing the EXISTS subquery
-(so `User.articles.has()` after a soft-delete interceptor is
-installed on `Article` does NOT count soft-deleted articles).
+`hasWhere { ... }` edge predicates on 1:1 / 1:N edges fire the
+target's interceptors with `operation = EDGE_PREDICATE`, narrowing
+the EXISTS subquery (so `User.articles.has()` after a soft-delete
+interceptor is installed on `Article` does NOT count soft-deleted
+articles).
+
+> **V1 limitation: M2M `has` / `hasWhere`.** The edge-predicate
+> walker doesn't yet route through `Predicate.HasM2MEdgeFrom`, so
+> target-entity interceptors on an M2M target are bypassed when
+> reached via the `has`/`hasWhere` form. Use the traversal form
+> (`queryX()`) for M2M paths until that gap closes — the
+> traversal path fires source interceptors with `EDGE_TRAVERSAL`
+> per the rules above.
 
 ### See also
 
