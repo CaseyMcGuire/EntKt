@@ -240,6 +240,18 @@ when an entity opts into the mixin.
 
 ### `deleteMany`
 
+> **Implementation status — `DELETE_CANDIDATES`.** Both the
+> `ReadOperation.DELETE_CANDIDATES` enum value and the
+> `deleteMany` candidate-fetch interceptor-chain hookup are
+> spec-only today. The shipped runtime `ReadOperation` enum runs
+> through `EAGER_LOAD` and stops; generated `deleteMany(...)`
+> still queries the driver directly without `runReadInterceptors`.
+> Both land together with this soft-delete RFC's implementation
+> per the parallel spec-only callout in
+> [Read-Path Interceptors](../query/read-path-interceptors.md#dependency-on-typed-query-scopes).
+> Treat every `DELETE_CANDIDATES` reference in this section as
+> spec-only until that work lands.
+
 `deleteMany(vararg predicates)` builds its candidate set by
 running a query for matching rows, then per-entity-deletes each
 one. For soft-deletable entities V1 picks the following
