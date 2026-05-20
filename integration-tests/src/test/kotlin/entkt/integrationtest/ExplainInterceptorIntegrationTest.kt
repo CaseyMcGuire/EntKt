@@ -12,22 +12,28 @@ import entkt.runtime.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Phase 8 coverage: every explain method runs the interceptor chain
- * with the operation that matches its terminal counterpart, and the
- * resulting [QueryPlan] reflects every predicate, limit, and offset
- * mutation the chain produced.
+ * Coverage for the explain API per the Read-Path Interceptors RFC.
+ * Pins:
  *
- *  - explain() → ALL
- *  - explainFirst() → FIRST (clamped at 1)
- *  - explainExists() → RAW_EXISTS (clamped at 1)
- *  - explainVisibleCount() → VISIBLE_COUNT
- *  - explainRawCount() → RAW_COUNT
- *
- * Rejection on an explain method surfaces as EntQueryRejectedException
- * (same throw model as non-result terminals like `rawCount`).
+ *  - Every per-terminal explain method (`explainAllOrThrow`,
+ *    `explainAllOrError`, `explainVisibleAll`, `explainVisibleAllOrError`,
+ *    `explainFirstOrThrow`, `explainFirstOrNull`, `explainFirstOrError`,
+ *    `explainFirstVisibleOrNull`, `explainRawCount`, `explainVisibleCount`,
+ *    `explainRawExists`, `explainVisibleExists`, plus repo-level
+ *    `explainByIdOrThrow` / `explainByIdOrNull` /
+ *    `explainVisibleByIdOrNull` / `explainByIdOrError`) runs interceptors
+ *    with the right ReadOperation.
+ *  - Rejection produces a `QueryPlan` with `rejected = true` and the
+ *    rejection metadata — NOT a thrown exception. Callers that want
+ *    exception-style explain chain `requireNotRejected()`.
+ *  - Post-interceptor predicates / annotations / limits surface in the
+ *    plan.
  */
 class ExplainInterceptorIntegrationTest {
 
@@ -35,81 +41,102 @@ class ExplainInterceptorIntegrationTest {
         EntClient.SCHEMAS.forEach(::register)
     }
 
+    // ---------- Operation routing per explain method ----------
+
     @Test
-    fun `explain runs interceptors with operation = ALL`() {
+    fun `explainAllOrThrow runs interceptors with operation = ALL`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             interceptors {
-                posts(
-                    QueryInterceptor { _, ctx -> ops.add(ctx.operation) },
-                    name = "observer",
-                )
+                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
-        client.posts.query().explain()
+        client.posts.query().explainAllOrThrow()
         assertEquals(listOf(ReadOperation.ALL), ops)
     }
 
     @Test
-    fun `explainFirst runs interceptors with operation = FIRST`() {
+    fun `every All-shaped explain method routes ALL`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             interceptors {
-                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "observer")
+                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
-        client.posts.query().explainFirst()
-        assertEquals(listOf(ReadOperation.FIRST), ops)
+        client.posts.query().explainAllOrThrow()
+        client.posts.query().explainAllOrError()
+        client.posts.query().explainVisibleAll()
+        client.posts.query().explainVisibleAllOrError()
+        assertEquals(List(4) { ReadOperation.ALL }, ops)
     }
 
     @Test
-    fun `explainExists runs interceptors with operation = RAW_EXISTS`() {
+    fun `every First-shaped explain method routes FIRST`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             interceptors {
-                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "observer")
+                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
-        client.posts.query().explainExists()
-        assertEquals(listOf(ReadOperation.RAW_EXISTS), ops)
+        client.posts.query().explainFirstOrThrow()
+        client.posts.query().explainFirstOrNull()
+        client.posts.query().explainFirstOrError()
+        client.posts.query().explainFirstVisibleOrNull()
+        assertEquals(List(4) { ReadOperation.FIRST }, ops)
     }
 
     @Test
-    fun `explainVisibleCount runs interceptors with operation = VISIBLE_COUNT`() {
+    fun `aggregate explain methods route their own operations`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             interceptors {
-                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "observer")
-            }
-        }
-        client.posts.query().explainVisibleCount()
-        assertEquals(listOf(ReadOperation.VISIBLE_COUNT), ops)
-    }
-
-    @Test
-    fun `explainRawCount runs interceptors with operation = RAW_COUNT`() {
-        val driver = freshDriver()
-        val ops = mutableListOf<ReadOperation>()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
-            interceptors {
-                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "observer")
+                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
         client.posts.query().explainRawCount()
-        assertEquals(listOf(ReadOperation.RAW_COUNT), ops)
+        client.posts.query().explainVisibleCount()
+        client.posts.query().explainRawExists()
+        client.posts.query().explainVisibleExists()
+        assertEquals(
+            listOf(
+                ReadOperation.RAW_COUNT,
+                ReadOperation.VISIBLE_COUNT,
+                ReadOperation.RAW_EXISTS,
+                ReadOperation.VISIBLE_EXISTS,
+            ),
+            ops,
+        )
     }
 
     @Test
-    fun `explain output reflects an interceptor-added predicate`() {
+    fun `every explainByIdX variant runs interceptors with BY_ID`() {
+        val driver = freshDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
+            }
+        }
+        client.posts.explainByIdOrThrow(1L)
+        client.posts.explainByIdOrNull(1L)
+        client.posts.explainVisibleByIdOrNull(1L)
+        client.posts.explainByIdOrError(1L)
+        assertEquals(List(4) { ReadOperation.BY_ID }, ops)
+    }
+
+    // ---------- Predicate & annotation surfacing ----------
+
+    @Test
+    fun `explain output reflects interceptor-added predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
@@ -122,10 +149,9 @@ class ExplainInterceptorIntegrationTest {
                 )
             }
         }
-        val plan = client.posts.query().explain()
-        // The plan's root description should mention the interceptor-
-        // added predicate's field, since explain renders the post-
-        // interceptor spec.
+        val plan = client.posts.query().explainAllOrThrow()
+        assertFalse(plan.rejected)
+        assertNotNull(plan.root)
         assertTrue(
             plan.root.toString().contains("title"),
             "explain plan should mention interceptor-added title predicate; was: ${plan.root}",
@@ -133,7 +159,7 @@ class ExplainInterceptorIntegrationTest {
     }
 
     @Test
-    fun `explainRawCount reflects an interceptor-added predicate`() {
+    fun `explainRawCount reflects interceptor-added predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
@@ -147,6 +173,7 @@ class ExplainInterceptorIntegrationTest {
             }
         }
         val plan = client.posts.query().explainRawCount()
+        assertNotNull(plan.root)
         assertTrue(
             plan.root.toString().contains("title"),
             "explainRawCount plan should mention interceptor predicate; was: ${plan.root}",
@@ -154,25 +181,48 @@ class ExplainInterceptorIntegrationTest {
     }
 
     @Test
-    fun `interceptor reject surfaces as EntQueryRejectedException from explain`() {
+    fun `explain plans carry annotations`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             interceptors {
                 posts(
-                    QueryInterceptor { scope, _ -> scope.reject("denied", code = "ex_rej") },
+                    QueryInterceptor { scope, _ ->
+                        scope.addAnnotation("tenant", "acme")
+                    },
+                    name = "annotator",
+                )
+            }
+        }
+        val plan = client.posts.query().explainAllOrThrow()
+        assertEquals("acme", plan.annotations["tenant"])
+    }
+
+    // ---------- Rejection mapping (plan, not throw) ----------
+
+    @Test
+    fun `interceptor reject produces a rejected plan with metadata, not a throw`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                posts(
+                    QueryInterceptor { scope, _ -> scope.reject("nope", code = "ex_rej") },
                     name = "rejector",
                 )
             }
         }
-        val ex = assertFailsWith<EntQueryRejectedException> {
-            client.posts.query().explain()
-        }
-        assertEquals("ex_rej", ex.queryRejected.code)
+        val plan = client.posts.query().explainAllOrThrow()
+        assertTrue(plan.rejected)
+        assertEquals("nope", plan.rejectedReason)
+        assertEquals("ex_rej", plan.rejectedCode)
+        assertEquals("rejector", plan.rejectedInterceptor)
+        // No driver subplan on rejection.
+        assertNull(plan.root)
     }
 
     @Test
-    fun `interceptor reject surfaces from explainRawCount, explainFirst, explainExists, explainVisibleCount`() {
+    fun `every explain variant returns a rejected plan, never throws, on reject`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
@@ -183,23 +233,83 @@ class ExplainInterceptorIntegrationTest {
                 )
             }
         }
-        assertFailsWith<EntQueryRejectedException> { client.posts.query().explainRawCount() }
-        assertFailsWith<EntQueryRejectedException> { client.posts.query().explainFirst() }
-        assertFailsWith<EntQueryRejectedException> { client.posts.query().explainExists() }
-        assertFailsWith<EntQueryRejectedException> { client.posts.query().explainVisibleCount() }
+        // Verify NO throw on any explain variant.
+        listOf(
+            client.posts.query().explainAllOrThrow(),
+            client.posts.query().explainAllOrError(),
+            client.posts.query().explainVisibleAll(),
+            client.posts.query().explainVisibleAllOrError(),
+            client.posts.query().explainFirstOrThrow(),
+            client.posts.query().explainFirstOrNull(),
+            client.posts.query().explainFirstOrError(),
+            client.posts.query().explainFirstVisibleOrNull(),
+            client.posts.query().explainRawCount(),
+            client.posts.query().explainVisibleCount(),
+            client.posts.query().explainRawExists(),
+            client.posts.query().explainVisibleExists(),
+            client.posts.explainByIdOrThrow(1L),
+            client.posts.explainByIdOrNull(1L),
+            client.posts.explainVisibleByIdOrNull(1L),
+            client.posts.explainByIdOrError(1L),
+        ).forEach { plan ->
+            assertTrue(plan.rejected, "expected rejected plan, got root=${plan.root}")
+            assertEquals("rejector", plan.rejectedInterceptor)
+        }
     }
 
     @Test
-    fun `with no interceptors registered explain produces a plan with no extra predicates`() {
+    fun `requireNotRejected throws on rejected plan and returns same plan otherwise`() {
+        val driver = freshDriver()
+
+        // Rejected case: throws.
+        val rejectingClient = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                posts(QueryInterceptor { scope, _ -> scope.reject("nope") }, name = "rej")
+            }
+        }
+        val rejected = rejectingClient.posts.query().explainAllOrThrow()
+        val ex = assertFailsWith<EntQueryRejectedException> { rejected.requireNotRejected() }
+        assertEquals("nope", ex.queryRejected.reason)
+        assertEquals("rej", ex.queryRejected.interceptor)
+
+        // Happy case: identity.
+        val driver2 = freshDriver()
+        val happyClient = EntClient(driver2) { privacyContext { PrivacyContext(Viewer.System) } }
+        val plan = happyClient.posts.query().explainAllOrThrow()
+        assertFalse(plan.rejected)
+        assertTrue(plan === plan.requireNotRejected())
+    }
+
+    @Test
+    fun `rejected plan render includes the rejection metadata`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                posts(
+                    QueryInterceptor { scope, _ -> scope.reject("no broad scans", code = "broad") },
+                    name = "scan-guard",
+                )
+            }
         }
-        val plan = client.posts.query().explain()
-        // No interceptor predicates means the root's predicates list is
-        // exactly what the caller wrote (empty here).
+        val rendered = client.posts.query().explainAllOrThrow().render()
+        assertTrue(rendered.contains("REJECTED by 'scan-guard'"), "render() should describe the rejector; was:\n$rendered")
+        assertTrue(rendered.contains("code=broad"), "render() should include the code; was:\n$rendered")
+        assertTrue(rendered.contains("no broad scans"), "render() should include the reason; was:\n$rendered")
+    }
+
+    // ---------- Sanity ----------
+
+    @Test
+    fun `with no interceptors explainAllOrThrow produces a plan with no synthetic predicates`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val plan = client.posts.query().explainAllOrThrow()
+        assertFalse(plan.rejected)
+        assertNotNull(plan.root)
         assertTrue(
-            !plan.root.toString().contains("title"),
+            !plan.root!!.toString().contains("title"),
             "with no interceptors the plan should not have synthetic predicates; was: ${plan.root}",
         )
     }

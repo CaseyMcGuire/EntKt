@@ -1033,6 +1033,117 @@ internal class QueryGenerator(
      * - `explainVisibleCount()` → models `visibleCount()`: configured limit/offset, no eager edges
      * - `explainRawCount()` → models `rawCount()`: COUNT query, no eager edges
      */
+    /**
+     * Shared explain wrapper: runs the interceptor chain for
+     * [operationName], converts an interceptor `scope.reject(...)`
+     * into a rejected [QueryPlan] via `QueryPlan.rejected(...)`
+     * instead of throwing, and otherwise calls [bodyOnSuccess] with
+     * the `spec` local in scope to produce the QueryPlan body. The
+     * caller's body is responsible for the final `buildQueryPlan(...)`
+     * (or `QueryPlan(driver.explainCount(...))`) expression.
+     */
+    private fun explainBody(operationName: String, bodyOnSuccess: CodeBlock): CodeBlock {
+        val queryPlan = ClassName("entkt.runtime", "QueryPlan")
+        return CodeBlock.builder()
+            .add("return try {\n")
+            .add(
+                "  val spec = runReadInterceptors(%T.%L, %T.QUERY)\n",
+                READ_OPERATION, operationName, ENT_OPERATION,
+            )
+            .add("  ")
+            .add(bodyOnSuccess)
+            .add("\n")
+            .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+            .add("  %T.rejected(e.queryRejected)\n", queryPlan)
+            .add("}\n")
+            .build()
+    }
+
+    private fun buildRowShapedExplain(
+        queryPlan: ClassName,
+        name: String,
+        terminalName: String,
+    ): FunSpec {
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
+                "Interceptors run with operation = ALL. Eager edge subplans show structure,\n" +
+                "not multiplicity — nested eager loads may execute once per parent group at\n" +
+                "runtime. On interceptor rejection, returns a plan with `rejected = true`\n" +
+                "carrying the rejection metadata; explain does NOT throw."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("ALL", CodeBlock.of("buildQueryPlan(spec, true)")))
+            .build()
+    }
+
+    private fun buildFirstShapedExplain(
+        queryPlan: ClassName,
+        name: String,
+        terminalName: String,
+    ): FunSpec {
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
+                "Interceptors run with operation = FIRST; limit operations are silent\n" +
+                "no-ops per the RFC's limit-shape rules. Plan limit is hardwired to 1.\n" +
+                "On interceptor rejection, returns a plan with `rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("FIRST", CodeBlock.of("buildQueryPlan(spec.copy(limit = 1), true)")))
+            .build()
+    }
+
+    private fun buildVisibleCountExplain(queryPlan: ClassName, name: String): FunSpec {
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shape [visibleCount] would execute.\n" +
+                "Interceptors run with operation = VISIBLE_COUNT; limit operations are\n" +
+                "silent no-ops per the RFC. On interceptor rejection, returns a plan with\n" +
+                "`rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("VISIBLE_COUNT", CodeBlock.of("buildQueryPlan(spec, false)")))
+            .build()
+    }
+
+    private fun buildExistsShapedExplain(
+        queryPlan: ClassName,
+        name: String,
+        terminalName: String,
+        operationName: String,
+    ): FunSpec {
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
+                "Interceptors run with operation = $operationName; limit operations are\n" +
+                "silent no-ops per the RFC. Plan limit is hardwired to 1.\n" +
+                "On interceptor rejection, returns a plan with `rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody(operationName, CodeBlock.of("buildQueryPlan(spec.copy(limit = 1), false)")))
+            .build()
+    }
+
+    private fun buildRawCountExplain(queryPlan: ClassName, entityClass: ClassName): FunSpec {
+        // explainRawCount uses driver.explainCount (a COUNT(*) plan)
+        // rather than the row-fetch buildQueryPlan path.
+        val body = CodeBlock.of(
+            "%T(driver.explainCount(%T.TABLE, spec.predicates), annotations = spec.annotations)",
+            queryPlan, entityClass,
+        )
+        return FunSpec.builder("explainRawCount")
+            .addKdoc(
+                "Return a [QueryPlan] describing the COUNT query [rawCount] would execute.\n" +
+                "Interceptors run with operation = RAW_COUNT; predicate contributions show\n" +
+                "up in the plan, limit operations are silent no-ops per the RFC.\n" +
+                "On interceptor rejection, returns a plan with `rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("RAW_COUNT", body))
+            .build()
+    }
+
     private fun buildExplainMethods(
         entityClass: ClassName,
         schema: EntSchema,
@@ -1044,84 +1155,29 @@ internal class QueryGenerator(
 
         val methods = mutableListOf<FunSpec>()
 
-        // explain() → models all()
-        methods += FunSpec.builder("explain")
-            .addKdoc("Return a [QueryPlan] describing the query shapes [allOrThrow] would execute.\n" +
-                "Eager edge subplans show structure, not multiplicity — nested\n" +
-                "eager loads may execute once per parent group at runtime.\n" +
-                "Interceptors run with operation = ALL; their predicate and\n" +
-                "limit contributions show up in the plan.")
-            .returns(queryPlan)
-            .addStatement(
-                "val spec = runReadInterceptors(%T.ALL, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement("return buildQueryPlan(spec, true)")
-            .build()
+        // Row-shaped reads (ALL operation, eager edges included).
+        // All four *AllOrThrow / *AllOrError / *VisibleAll /
+        // *VisibleAllOrError variants share the same underlying
+        // plan — the runtime *result-wrap* differs (throw vs Err
+        // vs filter-rows vs filter-rows-and-Err) but the driver
+        // call shape is identical, so explain dry-runs the same
+        // way for all four.
+        methods += buildRowShapedExplain(queryPlan, "explainAllOrThrow", "allOrThrow")
+        methods += buildRowShapedExplain(queryPlan, "explainAllOrError", "allOrError")
+        methods += buildRowShapedExplain(queryPlan, "explainVisibleAll", "visibleAll")
+        methods += buildRowShapedExplain(queryPlan, "explainVisibleAllOrError", "visibleAllOrError")
 
-        // explainFirst() → models firstOrNull()
-        methods += FunSpec.builder("explainFirst")
-            .addKdoc("Return a [QueryPlan] describing the query shapes [firstOrNull] would execute.\n" +
-                "Interceptors run with operation = FIRST; limit operations are\n" +
-                "silent no-ops per the RFC's limit-shape rules.")
-            .returns(queryPlan)
-            .addStatement(
-                "val spec = runReadInterceptors(%T.FIRST, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            // first() is hardwired to limit 1; honor interceptor
-            // requireLimitAtMost(0) by min'ing with the spec.
-            .addStatement("val limit = minOf(1, spec.limit ?: 1)")
-            .addStatement(
-                "return buildQueryPlan(spec.copy(limit = limit), true)",
-            )
-            .build()
+        // First-row reads (FIRST operation, eager edges included, limit 1).
+        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrThrow", "firstOrThrow")
+        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrNull", "firstOrNull")
+        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrError", "firstOrError")
+        methods += buildFirstShapedExplain(queryPlan, "explainFirstVisibleOrNull", "firstVisibleOrNull")
 
-        // explainExists() → models rawExists()
-        methods += FunSpec.builder("explainExists")
-            .addKdoc("Return a [QueryPlan] describing the query shape [rawExists] would execute.\n" +
-                "Interceptors run with operation = RAW_EXISTS; limit operations\n" +
-                "are silent no-ops.")
-            .returns(queryPlan)
-            .addStatement(
-                "val spec = runReadInterceptors(%T.RAW_EXISTS, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement("val limit = minOf(1, spec.limit ?: 1)")
-            .addStatement(
-                "return buildQueryPlan(spec.copy(limit = limit), false)",
-            )
-            .build()
-
-        // explainVisibleCount() → models visibleCount()
-        methods += FunSpec.builder("explainVisibleCount")
-            .addKdoc("Return a [QueryPlan] describing the query shape [visibleCount] would execute.\n" +
-                "Interceptors run with operation = VISIBLE_COUNT; limit operations\n" +
-                "are silent no-ops per the RFC.")
-            .returns(queryPlan)
-            .addStatement(
-                "val spec = runReadInterceptors(%T.VISIBLE_COUNT, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement("return buildQueryPlan(spec, false)")
-            .build()
-
-        // explainRawCount() → models rawCount()
-        methods += FunSpec.builder("explainRawCount")
-            .addKdoc("Return a [QueryPlan] describing the query [rawCount] would execute.\n" +
-                "Interceptors run with operation = RAW_COUNT; predicate\n" +
-                "contributions show up in the plan, limit operations are silent\n" +
-                "no-ops per the RFC.")
-            .returns(queryPlan)
-            .addStatement(
-                "val spec = runReadInterceptors(%T.RAW_COUNT, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement(
-                "return %T(driver.explainCount(%T.TABLE, spec.predicates), annotations = spec.annotations)",
-                queryPlan, entityClass,
-            )
-            .build()
+        // Aggregate reads.
+        methods += buildVisibleCountExplain(queryPlan, "explainVisibleCount")
+        methods += buildExistsShapedExplain(queryPlan, "explainRawExists", "rawExists", "RAW_EXISTS")
+        methods += buildExistsShapedExplain(queryPlan, "explainVisibleExists", "visibleExists", "VISIBLE_EXISTS")
+        methods += buildRawCountExplain(queryPlan, entityClass)
 
         // Internal buildQueryPlan helper. Takes the post-interceptor
         // FrozenQuerySpec rather than raw limit/offset so the explain
@@ -1246,6 +1302,14 @@ internal class QueryGenerator(
             edgeStepClass, sourceClass, info.edge.name, info.targetClass,
         )
 
+        // A rejected eager sub-explain becomes a rejected entry
+        // in `edges` rather than failing the whole parent plan —
+        // the root + sibling eager subplans still appear, the
+        // caller can inspect `plan.eagerQueries["X"]?.rejected` to
+        // see which step rejected. Per the RFC's
+        // explain-doesn't-throw contract, rejection metadata lives
+        // on the plan, not as an exception.
+        val queryPlanLocal = ClassName("entkt.runtime", "QueryPlan")
         if (info.edge.kind is EdgeKind.ManyToMany) {
             // M2M: junction table explain stands alone (no
             // interceptors on the junction), then the target-table
@@ -1254,26 +1318,42 @@ internal class QueryGenerator(
                 "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
                 info.join.junctionTable, PREDICATE, info.join.junctionSourceColumn, OP, QUERY_EXPLANATION,
             )
-            body.addStatement(
-                "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))",
+            body.add("edges[%S] = try {\n", info.edge.name)
+            body.add(
+                "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
                 READ_OPERATION, ENT_OPERATION, PREDICATE, "id", OP, QUERY_EXPLANATION,
             )
-            body.addStatement(
-                "edges[%S] = subQuery.buildQueryPlan(subSpec, includeEager = true, junctionExplain = junctionExplain)",
-                info.edge.name,
+            // Strip limit/offset before handing to buildQueryPlan:
+            // the runtime eager fetch uses null/null limit/offset
+            // and paginates per-group in Kotlin (see
+            // emit*EagerBlock), so passing spec.limit/spec.offset
+            // here would render LIMIT/OFFSET in the explain that
+            // doesn't match what the driver actually receives at
+            // runtime. Predicates / orderBy / annotations DO flow
+            // through accurately.
+            body.add(
+                "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, junctionExplain = junctionExplain)\n",
             )
+            body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+            body.add("  %T.rejected(e.queryRejected)\n", queryPlanLocal)
+            body.add("}\n")
         } else {
             // Direct edge: single query with IN on the join column.
             // hasMany/hasOne: IN on targetColumn (FK on target side).
             // belongsTo: IN on targetColumn ("id" on target side).
-            body.addStatement(
-                "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))",
+            body.add("edges[%S] = try {\n", info.edge.name)
+            body.add(
+                "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
                 READ_OPERATION, ENT_OPERATION, PREDICATE, info.join.targetColumn, OP, QUERY_EXPLANATION,
             )
-            body.addStatement(
-                "edges[%S] = subQuery.buildQueryPlan(subSpec, includeEager = true)",
-                info.edge.name,
+            // See M2M branch above for why limit/offset are
+            // stripped here.
+            body.add(
+                "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true)\n",
             )
+            body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+            body.add("  %T.rejected(e.queryRejected)\n", queryPlanLocal)
+            body.add("}\n")
         }
 
         body.endControlFlow()

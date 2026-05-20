@@ -167,7 +167,7 @@ class ReadInterceptorReviewFixesIntegrationTest {
             }
         }
 
-        client.users.query().withArticles().explain()
+        client.users.query().withArticles().explainAllOrThrow()
 
         // The eager subquery for "articles" should have fired
         // Article's interceptors with EAGER_LOAD (not ALL).
@@ -195,14 +195,15 @@ class ReadInterceptorReviewFixesIntegrationTest {
                 )
             }
         }
-        val plan = client.users.query().withArticles().explain()
+        val plan = client.users.query().withArticles().explainAllOrThrow()
 
         val articlesEdge = plan.eagerQueries["articles"]
         assertNotNull(articlesEdge, "explain plan should include an 'articles' edge subplan")
         // The eager subplan's root description should mention the
         // interceptor-added 'published' predicate.
+        assertNotNull(articlesEdge.root, "eager subplan should have a driver root")
         assertTrue(
-            articlesEdge.root.toString().contains("published"),
+            articlesEdge.root!!.toString().contains("published"),
             "eager-load explain subplan should reflect target interceptor predicates; was: ${articlesEdge.root}",
         )
     }
@@ -264,7 +265,7 @@ class ReadInterceptorReviewFixesIntegrationTest {
                 )
             }
         }
-        val plan = client.posts.query().explain()
+        val plan = client.posts.query().explainAllOrThrow()
         assertEquals("acme", plan.annotations["tenant"])
         assertEquals("abc-123", plan.annotations["audit-id"])
 

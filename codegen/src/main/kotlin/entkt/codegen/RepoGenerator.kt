@@ -188,6 +188,10 @@ internal class RepoGenerator(
             .addFunction(buildByIdOrThrow(schemaName, entityClass, idType))
             .addFunction(buildVisibleByIdOrNull(entityClass, idType))
             .addFunction(buildByIdOrError(schemaName, entityClass, idType))
+            .addFunction(buildExplainByIdOrThrow(schemaName, entityClass, idType))
+            .addFunction(buildExplainByIdOrNull(schemaName, entityClass, idType))
+            .addFunction(buildExplainVisibleByIdOrNull(schemaName, entityClass, idType))
+            .addFunction(buildExplainByIdOrError(schemaName, entityClass, idType))
             .addFunction(buildDeleteOrThrow(schemaName, entityClass))
             .addFunction(buildDeleteOrError(schemaName, entityClass))
             .addFunction(buildDeleteLoaded(entityClass))
@@ -384,6 +388,82 @@ internal class RepoGenerator(
             )
             .build()
     }
+
+    /**
+     * Shared by-id explain wrapper. Builds a *Query instance, runs
+     * its interceptor chain with operation = BY_ID, and either
+     * delegates to the query's [buildQueryPlan] for a happy-path
+     * plan or returns a rejected [QueryPlan] via
+     * `QueryPlan.rejected(...)`. All four `explainById*` variants
+     * produce the same plan — the result-shape suffix in the name
+     * is for call-site discovery, not plan content (per the RFC).
+     */
+    private fun buildByIdExplainMethod(
+        name: String,
+        terminalName: String,
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec {
+        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
+        val queryPlan = ClassName("entkt.runtime", "QueryPlan")
+        return FunSpec.builder(name)
+            .addParameter("id", idType)
+            .returns(queryPlan)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query [$terminalName] would\n" +
+                "execute. Interceptors run with operation = BY_ID; limit operations\n" +
+                "are silent no-ops per the RFC. On interceptor rejection, returns\n" +
+                "a plan with `rejected = true` carrying the rejection metadata;\n" +
+                "explain does NOT throw."
+            )
+            .addCode(
+                CodeBlock.builder()
+                    .add("val q = %T(driver, client)\n", queryClass)
+                    .add("return try {\n")
+                    .add("  val spec = q.runReadInterceptors(\n")
+                    .add("    operation = %T.BY_ID,\n", READ_OPERATION)
+                    .add("    entOperation = %T.LOAD,\n", ENT_OPERATION)
+                    .add(
+                        "    extraStructural = listOf(%T.Leaf(%S, %T.EQ, id)),\n",
+                        PREDICATE, "id", OP,
+                    )
+                    .add("  )\n")
+                    // By-id is a single-row PK lookup; hardwire
+                    // limit = 1 / offset = null in the plan so the
+                    // explain output matches the runtime call.
+                    .add("  q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false)\n")
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.rejected(e.queryRejected)\n", queryPlan)
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    private fun buildExplainByIdOrThrow(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec = buildByIdExplainMethod("explainByIdOrThrow", "byIdOrThrow", schemaName, entityClass, idType)
+
+    private fun buildExplainByIdOrNull(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec = buildByIdExplainMethod("explainByIdOrNull", "byIdOrNull", schemaName, entityClass, idType)
+
+    private fun buildExplainVisibleByIdOrNull(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec = buildByIdExplainMethod("explainVisibleByIdOrNull", "visibleByIdOrNull", schemaName, entityClass, idType)
+
+    private fun buildExplainByIdOrError(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec = buildByIdExplainMethod("explainByIdOrError", "byIdOrError", schemaName, entityClass, idType)
 
     /**
      * `deleteOrThrow(entity): Unit` — strict delete. Throws structured

@@ -233,16 +233,35 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `generates explain terminal method`() {
+    fun `generates per-terminal explain mirrors`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun explain(): QueryPlan")) {
-            "Should generate explain(): QueryPlan\n$output"
+        // Per RFC: every terminal gets its own explain method
+        // named after the terminal (no shared "explain()" entry).
+        for (name in listOf(
+            "fun explainAllOrThrow(): QueryPlan",
+            "fun explainAllOrError(): QueryPlan",
+            "fun explainVisibleAll(): QueryPlan",
+            "fun explainVisibleAllOrError(): QueryPlan",
+            "fun explainFirstOrThrow(): QueryPlan",
+            "fun explainFirstOrNull(): QueryPlan",
+            "fun explainFirstOrError(): QueryPlan",
+            "fun explainFirstVisibleOrNull(): QueryPlan",
+            "fun explainRawCount(): QueryPlan",
+            "fun explainVisibleCount(): QueryPlan",
+            "fun explainRawExists(): QueryPlan",
+            "fun explainVisibleExists(): QueryPlan",
+        )) {
+            assert(output.contains(name)) { "Should generate $name\n$output" }
         }
         assert(output.contains("driver.explainQuery(Car.TABLE, spec.predicates, spec.orderBy,")) {
-            "explain() should delegate to driver.explainQuery with the post-interceptor spec\n$output"
+            "row-shaped explain should delegate to driver.explainQuery with the post-interceptor spec\n$output"
+        }
+        // Rejection produces a rejected plan, not a throw.
+        assert(output.contains("QueryPlan.rejected(e.queryRejected)")) {
+            "explain methods should map EntQueryRejectedException to a rejected QueryPlan\n$output"
         }
     }
 

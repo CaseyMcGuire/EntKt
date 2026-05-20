@@ -144,13 +144,30 @@ public data class FrozenQuerySpec public constructor(
 
 /**
  * Whether limit operations have meaningful effect on the given
- * [ReadOperation]. Per the read-path interceptors RFC, limit
- * operations apply normally only for `ALL` and `EDGE_TRAVERSAL`
- * shapes; every other shape silent-no-ops them (BY_ID and FIRST
- * have intrinsic single-row shapes, aggregates don't materialize
- * row sets, EAGER_LOAD is per-parent-vs-batched-ambiguous, and
- * EDGE_PREDICATE compiles to EXISTS where row counts are
- * meaningless).
+ * [ReadOperation]. V1 honors limit operations only for `ALL` —
+ * every other shape silent-no-ops them.
+ *
+ * Rationale per shape:
+ * - `BY_ID`, `FIRST`: intrinsic single-row result shape; clamping
+ *   has no observable effect (limit is hard-coded to 1 / pk-lookup).
+ * - `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`:
+ *   aggregates / existence checks; the row limit either has no
+ *   meaning (aggregates that don't materialize rows) or would
+ *   silently corrupt the answer (counting "first N scanned rows"
+ *   rather than all matching rows).
+ * - `EAGER_LOAD`: per-parent-vs-batched semantics are ambiguous;
+ *   the runtime fetches with null limit and paginates per-group
+ *   in Kotlin.
+ * - `EDGE_PREDICATE`: compiles to EXISTS; row count has no
+ *   meaning inside an EXISTS subquery.
+ * - `EDGE_TRAVERSAL`: the source-step predicates fold into a
+ *   bridging `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge`
+ *   predicate, which itself compiles to EXISTS — there is no
+ *   row-limit slot on the bridge predicate. Honoring limit
+ *   operations on EDGE_TRAVERSAL would require lowering source-
+ *   with-limit into a CTE or IN-from-subquery, which is a
+ *   structural change beyond V1. **V1 deferral:** limit operations
+ *   are silent no-op on EDGE_TRAVERSAL until that lowering lands.
  *
  * Used by [InterceptScopeImpl] / [GlobalInterceptScopeImpl] to
  * gate `requireLimitAtMost` / `setDefaultLimitIfAbsent` /
@@ -158,11 +175,11 @@ public data class FrozenQuerySpec public constructor(
  * doesn't corrupt `visibleCount` (which would otherwise count the
  * first 100 scanned rows rather than all visible rows), and a
  * `rejectIfLimitGreaterThan(10)` doesn't reject every `byIdOrNull` /
- * `rawCount` / `rawExists` call just because they have null
- * effective limits.
+ * `rawCount` / `rawExists` / traversal call just because they have
+ * null effective limits.
  */
 internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation) {
-    ReadOperation.ALL, ReadOperation.EDGE_TRAVERSAL -> true
+    ReadOperation.ALL -> true
     ReadOperation.BY_ID,
     ReadOperation.FIRST,
     ReadOperation.RAW_COUNT,
@@ -170,7 +187,8 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
     ReadOperation.RAW_EXISTS,
     ReadOperation.VISIBLE_EXISTS,
     ReadOperation.EAGER_LOAD,
-    ReadOperation.EDGE_PREDICATE -> false
+    ReadOperation.EDGE_PREDICATE,
+    ReadOperation.EDGE_TRAVERSAL -> false
 }
 
 /**
