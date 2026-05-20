@@ -256,8 +256,18 @@ class QueryGeneratorTest {
         assert(output.contains("eagerCars?.let { subQuery ->")) {
             "explain() should iterate eager edges\n$output"
         }
-        assert(output.contains("driver.explainQuery(Car.TABLE,")) {
-            "explain() should use null limit/offset for eager edges\n$output"
+        // After Phase 5b + the eager-load explain interceptor fix,
+        // the parent's eager block runs EAGER_LOAD interceptors on
+        // the sub-query and delegates the actual driver.explainQuery
+        // call to the sub-query's own buildQueryPlan. So the parent
+        // *Query no longer directly references the target table in
+        // driver.explainQuery; instead it builds a subSpec and
+        // delegates.
+        assert(output.contains("subQuery.runReadInterceptors(ReadOperation.EAGER_LOAD")) {
+            "eager explain should fire target interceptors with EAGER_LOAD before building the plan\n$output"
+        }
+        assert(output.contains("subQuery.buildQueryPlan(subSpec")) {
+            "eager explain should delegate plan construction to the sub-query's buildQueryPlan\n$output"
         }
         assert(output.contains("edges[\"cars\"]")) {
             "explain() should store edge subquery under edge name\n$output"

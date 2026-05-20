@@ -20,12 +20,24 @@ data class QueryPlan(
     val root: QueryExplanation,
     val junctionQuery: QueryExplanation? = null,
     val eagerQueries: Map<String, QueryPlan> = emptyMap(),
+    /**
+     * Annotations attached by interceptors at this step via
+     * `scope.addAnnotation(key, value)`. Surfaces in [render] under
+     * the node's `[annotations: ...]` suffix so observability /
+     * tracing consumers can inspect why an interceptor chose a
+     * particular shape (e.g. `"tenant" -> "acme"`,
+     * `"query-source" -> "internal-cron"`). Last writer wins on
+     * duplicate keys across interceptors in the same chain. Always
+     * a snapshot of the post-interceptor [FrozenQuerySpec.annotations]
+     * the driver received.
+     */
+    val annotations: Map<String, String> = emptyMap(),
 ) {
     /**
      * Render the full query tree as a human-readable string.
      *
      * ```
-     * Root: SELECT * FROM "posts" WHERE "published" = ?  args: [true]
+     * Root: SELECT * FROM "posts" WHERE "published" = ?  args: [true]  [annotations: tenant=acme]
      *   Edge "author":
      *     SELECT * FROM "users" WHERE "id" IN (?)  args: [<parent IDs>]
      *   Edge "tags":
@@ -37,12 +49,14 @@ data class QueryPlan(
 
     private fun renderTo(sb: StringBuilder, indent: Int, label: String) {
         val pad = "  ".repeat(indent)
+        val annotationSuffix = if (annotations.isEmpty()) "" else
+            "  [annotations: " + annotations.entries.joinToString(", ") { "${it.key}=${it.value}" } + "]"
         if (junctionQuery != null) {
-            sb.appendLine("$pad$label:")
+            sb.appendLine("$pad$label:$annotationSuffix")
             sb.appendLine("${pad}  Junction: ${junctionQuery.describe()}")
             sb.appendLine("${pad}  ${root.describe()}")
         } else {
-            sb.appendLine("$pad$label: ${root.describe()}")
+            sb.appendLine("$pad$label: ${root.describe()}$annotationSuffix")
         }
         for ((name, plan) in eagerQueries) {
             plan.renderTo(sb, indent + 1, "Edge \"$name\"")

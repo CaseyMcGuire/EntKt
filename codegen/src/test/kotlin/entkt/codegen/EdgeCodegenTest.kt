@@ -2066,7 +2066,11 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("subQuery.orderFields, null, null)")) {
+        // Batch fetch passes null,null limit/offset to the driver
+        // (per-group pagination is applied below in Kotlin). The
+        // orderBy comes from spec.orderBy after EAGER_LOAD
+        // interceptors have run.
+        assert(output.contains("subSpec.orderBy, null, null)")) {
             "Batch query should not pass limit/offset to driver\n$output"
         }
         assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
@@ -2080,7 +2084,7 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("subQuery.orderFields, null, null)")) {
+        assert(output.contains("subSpec.orderBy, null, null)")) {
             "Target query should not pass limit/offset to driver\n$output"
         }
         assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {

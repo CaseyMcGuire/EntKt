@@ -240,48 +240,33 @@ internal class RepoGenerator(
         entityClass: ClassName,
         idType: com.squareup.kotlinpoet.TypeName,
     ): FunSpec {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
         val body = CodeBlock.builder()
         body.addStatement("val privacy = client.currentPrivacyContext()")
-        // Run interceptors with a structural `id = X` predicate so
-        // per-entity interceptors (e.g. tenant-scope) and globals
-        // (e.g. max-limit / audit) see the same shape they would
-        // for a query terminal. Fast path: when no interceptors
-        // are registered for this scope, the chain runs zero
-        // bodies and we hit the driver immediately.
-        body.add("val structural = listOf<%T>(%T.Leaf(%S, %T.EQ, id))\n", PREDICATE, PREDICATE, "id", OP)
-        body.add("val builder = %T(\n", QUERY_SPEC_BUILDER)
-        body.add("  table = %T.TABLE,\n", entityClass)
-        body.add("  entity = %T::class,\n", entityClass)
-        body.add("  callerPredicates = emptyList(),\n")
-        body.add("  structuralPredicates = structural,\n")
-        body.add("  orderBy = emptyList(),\n")
-        body.add("  callerLimit = null,\n")
-        body.add("  offset = null,\n")
-        body.add("  flags = emptySet(),\n")
-        body.add(")\n")
-        body.add("val context = %T(\n", QUERY_CONTEXT)
-        body.add("  privacy = privacy,\n")
+        // Route the by-id read through the generated *Query's
+        // runReadInterceptors so we get the same predicate-walk
+        // post-processing the query terminals get. In particular,
+        // if a by-id interceptor adds `Edge.has { ... }`, the
+        // walker fires the target entity's EDGE_PREDICATE
+        // interceptors on the inner — without this route the
+        // target soft-delete / tenant interceptors would be silently
+        // bypassed on by-id reads. extraStructural carries the
+        // `id = X` predicate; the walker skips structural
+        // predicates so the id leaf is never re-walked.
+        body.add(
+            "val q = %T(driver, client)\n",
+            queryClass,
+        )
+        body.add(
+            "val spec = q.runReadInterceptors(\n",
+        )
         body.add("  operation = %T.BY_ID,\n", READ_OPERATION)
-        body.add("  rootEntity = %T::class,\n", entityClass)
-        body.add("  currentEntity = %T::class,\n", entityClass)
-        body.add("  sourceEntity = null,\n")
-        body.add("  edgeName = null,\n")
-        body.add("  path = emptyList(),\n")
-        body.add("  flags = emptySet(),\n")
+        body.add("  entOperation = %T.LOAD,\n", ENT_OPERATION)
+        body.add(
+            "  extraStructural = listOf(%T.Leaf(%S, %T.EQ, id)),\n",
+            PREDICATE, "id", OP,
+        )
         body.add(")\n")
-        body.add("val spec = try {\n")
-        body.add("  %T.apply(\n", INTERCEPTOR_ENGINE)
-        body.add("    builder = builder,\n")
-        body.add("    context = context,\n")
-        body.add("    entity = %S,\n", schemaName)
-        body.add("    entOperation = %T.LOAD,\n", ENT_OPERATION)
-        body.add("    entityInterceptors = client.entityInterceptors.entityInterceptorsFor(%S),\n", repoPropName)
-        body.add("    globalInterceptors = client.entityInterceptors.globals(),\n")
-        body.add("  )\n")
-        body.add("} catch (e: %T) {\n", ABORT_QUERY_REJECTED)
-        body.add("  throw %T(e.rejected)\n", ENT_QUERY_REJECTED_EXCEPTION)
-        body.add("}\n")
         // Use driver.query (not driver.byId) because interceptors
         // may have added predicates (e.g. tenant_id = X) that
         // byId's PK lookup wouldn't honor.

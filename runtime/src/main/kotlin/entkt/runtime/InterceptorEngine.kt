@@ -143,16 +143,55 @@ public data class FrozenQuerySpec public constructor(
 )
 
 /**
+ * Whether limit operations have meaningful effect on the given
+ * [ReadOperation]. Per the read-path interceptors RFC, limit
+ * operations apply normally only for `ALL` and `EDGE_TRAVERSAL`
+ * shapes; every other shape silent-no-ops them (BY_ID and FIRST
+ * have intrinsic single-row shapes, aggregates don't materialize
+ * row sets, EAGER_LOAD is per-parent-vs-batched-ambiguous, and
+ * EDGE_PREDICATE compiles to EXISTS where row counts are
+ * meaningless).
+ *
+ * Used by [InterceptScopeImpl] / [GlobalInterceptScopeImpl] to
+ * gate `requireLimitAtMost` / `setDefaultLimitIfAbsent` /
+ * `rejectIfLimitGreaterThan` — so a `global { requireLimitAtMost(100) }`
+ * doesn't corrupt `visibleCount` (which would otherwise count the
+ * first 100 scanned rows rather than all visible rows), and a
+ * `rejectIfLimitGreaterThan(10)` doesn't reject every `byIdOrNull` /
+ * `rawCount` / `rawExists` call just because they have null
+ * effective limits.
+ */
+internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation) {
+    ReadOperation.ALL, ReadOperation.EDGE_TRAVERSAL -> true
+    ReadOperation.BY_ID,
+    ReadOperation.FIRST,
+    ReadOperation.RAW_COUNT,
+    ReadOperation.VISIBLE_COUNT,
+    ReadOperation.RAW_EXISTS,
+    ReadOperation.VISIBLE_EXISTS,
+    ReadOperation.EAGER_LOAD,
+    ReadOperation.EDGE_PREDICATE -> false
+}
+
+/**
  * Concrete [InterceptScope] implementation backed by a
  * [QuerySpecBuilder]. Forwards mutator calls to the builder and
  * re-derives [shape] on every access (live, not snapshot — captured
  * locals freeze a [QueryShape] data value at capture time).
+ *
+ * Limit mutators (`requireLimitAtMost` / `setDefaultLimitIfAbsent` /
+ * `rejectIfLimitGreaterThan`) silently no-op when [readOperation]
+ * is a shape on which limit operations have no meaning — see
+ * [limitOpsApply] for the per-operation table. This honors the RFC's
+ * "silent no-op on shapes where row limits have no meaning" contract
+ * documented on the [InterceptScope] mutator KDocs.
  */
 internal class InterceptScopeImpl<E : Any>(
     private val builder: QuerySpecBuilder,
     private val rejectingInterceptor: String,
     private val entity: String,
     private val entOperation: EntOperation,
+    private val readOperation: ReadOperation,
 ) : InterceptScope<E> {
     override val shape: QueryShape<E> get() = builder.typedShape()
 
@@ -162,16 +201,19 @@ internal class InterceptScopeImpl<E : Any>(
 
     override fun requireLimitAtMost(max: Int) {
         require(max >= 0) { "requireLimitAtMost: max must be non-negative; was $max" }
+        if (!limitOpsApply(readOperation)) return
         builder.clampLimit(max)
     }
 
     override fun setDefaultLimitIfAbsent(default: Int) {
         require(default >= 0) { "setDefaultLimitIfAbsent: default must be non-negative; was $default" }
+        if (!limitOpsApply(readOperation)) return
         builder.setDefaultLimit(default)
     }
 
     override fun rejectIfLimitGreaterThan(max: Int, reason: () -> String) {
         require(max >= 0) { "rejectIfLimitGreaterThan: max must be non-negative; was $max" }
+        if (!limitOpsApply(readOperation)) return
         val effective = builder.effectiveLimit
         if (effective == null || effective > max) {
             reject(reason(), code = "max_limit_exceeded")
@@ -201,21 +243,25 @@ internal class GlobalInterceptScopeImpl(
     private val rejectingInterceptor: String,
     private val entity: String,
     private val entOperation: EntOperation,
+    private val readOperation: ReadOperation,
 ) : GlobalInterceptScope {
     override val shape: UntypedQueryShape get() = builder.untypedShape()
 
     override fun requireLimitAtMost(max: Int) {
         require(max >= 0) { "requireLimitAtMost: max must be non-negative; was $max" }
+        if (!limitOpsApply(readOperation)) return
         builder.clampLimit(max)
     }
 
     override fun setDefaultLimitIfAbsent(default: Int) {
         require(default >= 0) { "setDefaultLimitIfAbsent: default must be non-negative; was $default" }
+        if (!limitOpsApply(readOperation)) return
         builder.setDefaultLimit(default)
     }
 
     override fun rejectIfLimitGreaterThan(max: Int, reason: () -> String) {
         require(max >= 0) { "rejectIfLimitGreaterThan: max must be non-negative; was $max" }
+        if (!limitOpsApply(readOperation)) return
         val effective = builder.effectiveLimit
         if (effective == null || effective > max) {
             reject(reason(), code = "max_limit_exceeded")
@@ -288,11 +334,11 @@ public object InterceptorEngine {
         globalInterceptors: List<RegisteredGlobalInterceptor>,
     ): FrozenQuerySpec {
         for (registered in entityInterceptors) {
-            val scope = InterceptScopeImpl<E>(builder, registered.name, entity, entOperation)
+            val scope = InterceptScopeImpl<E>(builder, registered.name, entity, entOperation, context.operation)
             registered.interceptor.intercept(scope, context)
         }
         for (registered in globalInterceptors) {
-            val scope = GlobalInterceptScopeImpl(builder, registered.name, entity, entOperation)
+            val scope = GlobalInterceptScopeImpl(builder, registered.name, entity, entOperation, context.operation)
             registered.interceptor.intercept(scope, context)
         }
         return builder.freeze()

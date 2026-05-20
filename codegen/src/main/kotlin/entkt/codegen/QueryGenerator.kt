@@ -1117,18 +1117,33 @@ internal class QueryGenerator(
                 "val spec = runReadInterceptors(%T.RAW_COUNT, %T.QUERY)",
                 READ_OPERATION, ENT_OPERATION,
             )
-            .addStatement("return %T(driver.explainCount(%T.TABLE, spec.predicates))", queryPlan, entityClass)
+            .addStatement(
+                "return %T(driver.explainCount(%T.TABLE, spec.predicates), annotations = spec.annotations)",
+                queryPlan, entityClass,
+            )
             .build()
 
-        // Private buildQueryPlan helper. Takes the post-interceptor
+        // Internal buildQueryPlan helper. Takes the post-interceptor
         // FrozenQuerySpec rather than raw limit/offset so the explain
-        // output reflects every predicate, limit, and offset
-        // contribution from the chain (including
-        // requireLimitAtMost / addPredicate / setDefaultLimitIfAbsent).
+        // output reflects every predicate, limit, offset, and
+        // annotation contribution from the chain. `internal` (not
+        // private) so a parent query's eager-explain block can call
+        // it on a sibling *Query — that's how eager-load plans get
+        // built with the right EAGER_LOAD-step spec instead of
+        // re-running the sub-query through its own root explain().
+        // [junctionExplain] is non-null only on the M2M eager path
+        // where the parent block has computed the junction table's
+        // explain (junction is internal-only, not subject to
+        // interceptors).
         val helper = FunSpec.builder("buildQueryPlan")
-            .addModifiers(KModifier.PRIVATE)
+            .addModifiers(KModifier.INTERNAL)
             .addParameter("spec", FROZEN_QUERY_SPEC)
             .addParameter("includeEager", BOOLEAN)
+            .addParameter(
+                ParameterSpec.builder("junctionExplain", QUERY_EXPLANATION.copy(nullable = true))
+                    .defaultValue("null")
+                    .build()
+            )
             .returns(queryPlan)
             .addStatement(
                 "val root = driver.explainQuery(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)",
@@ -1136,14 +1151,23 @@ internal class QueryGenerator(
             )
 
         if (!hasEager) {
-            helper.addStatement("return %T(root)", queryPlan)
+            helper.addStatement(
+                "return %T(root, junctionQuery = junctionExplain, annotations = spec.annotations)",
+                queryPlan,
+            )
         } else {
-            helper.addStatement("if (!includeEager) return %T(root)", queryPlan)
+            helper.addStatement(
+                "if (!includeEager) return %T(root, junctionQuery = junctionExplain, annotations = spec.annotations)",
+                queryPlan,
+            )
             helper.addStatement("val edges = mutableMapOf<String, %T>()", queryPlan)
             for (info in resolvableEdges) {
-                helper.addCode(buildEagerExplainBlock(info, queryPlan))
+                helper.addCode(buildEagerExplainBlock(info, queryPlan, entityClass))
             }
-            helper.addStatement("return %T(root, eagerQueries = edges)", queryPlan)
+            helper.addStatement(
+                "return %T(root, junctionQuery = junctionExplain, eagerQueries = edges, annotations = spec.annotations)",
+                queryPlan,
+            )
         }
         methods += helper.build()
 
@@ -1180,39 +1204,75 @@ internal class QueryGenerator(
 
     /**
      * Emit the explain block for a single eager edge. Mirrors the
-     * runtime behavior in [buildLoadEdges]:
-     * - Adds the IN predicate on the correct column (with a
-     *   placeholder value so the driver renders the column name)
-     * - Uses null limit/offset (runtime fetches all, paginates in memory)
-     * - M2M edges include the junction table query with its own IN predicate
-     * - Nested eager loads are pulled from the subquery's own explain()
+     * runtime EAGER_LOAD flow in `emit*EagerBlock` so the plan
+     * reflects what actually runs:
+     *
+     * 1. Set up the sub-query's traversal context (sourceEntity /
+     *    edgeName / path) — same as runtime.
+     * 2. Run `subQuery.runReadInterceptors(EAGER_LOAD, QUERY,
+     *    listOf(IN-predicate))`. The target's interceptors fire with
+     *    `context.operation == EAGER_LOAD` (not ALL as the previous
+     *    `subQuery.explain()` route would have done), and the
+     *    resulting spec contains every target-side interceptor's
+     *    predicates + annotations.
+     * 3. Hand the spec to the sub-query's own `buildQueryPlan` so
+     *    the rendered plan shows the post-interceptor shape, plus
+     *    recursively-walked nested eager edges via the same path.
+     *
+     * For M2M edges the junction-table explain is computed in this
+     * block (junction tables aren't entities and don't have
+     * interceptors), then handed to the sub-query's `buildQueryPlan`
+     * as the optional junction explain.
+     *
+     * The IN predicate uses [QueryExplanation.EXPLAIN_PLACEHOLDER]
+     * as the value so the driver renders the actual column name
+     * (e.g. `"author_id" IN (?)`) rather than collapsing an empty
+     * IN list to FALSE.
      */
-    private fun buildEagerExplainBlock(info: ExplainableEdge, queryPlan: ClassName): CodeBlock {
-        // Use a non-empty placeholder so the driver renders the actual
-        // column name in the SQL (e.g. "author_id" IN (?)) instead of
-        // collapsing an empty IN to FALSE which hides the join shape.
+    private fun buildEagerExplainBlock(
+        info: ExplainableEdge,
+        queryPlan: ClassName,
+        sourceClass: ClassName,
+    ): CodeBlock {
+        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
         val body = CodeBlock.builder()
         body.beginControlFlow("%L?.let { subQuery ->", info.eagerPropName)
-        body.addStatement("val nested = subQuery.explain()")
+        // Mirror runtime emit*EagerBlock context setup so the
+        // sub-query's interceptors see the right QueryContext.
+        body.addStatement("subQuery.traversalSourceEntity = %T::class", sourceClass)
+        body.addStatement("subQuery.traversalEdgeName = %S", info.edge.name)
+        body.addStatement(
+            "subQuery.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
+            edgeStepClass, sourceClass, info.edge.name, info.targetClass,
+        )
 
         if (info.edge.kind is EdgeKind.ManyToMany) {
-            // M2M: junction table query with IN on source FK column,
-            // then target table query with IN on id
+            // M2M: junction table explain stands alone (no
+            // interceptors on the junction), then the target-table
+            // plan uses the post-EAGER_LOAD spec with an IN on "id".
             body.addStatement(
                 "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
                 info.join.junctionTable, PREDICATE, info.join.junctionSourceColumn, OP, QUERY_EXPLANATION,
             )
             body.addStatement(
-                "edges[%S] = %T(driver.explainQuery(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER), subQuery.orderFields, null, null), junctionExplain, nested.eagerQueries)",
-                info.edge.name, queryPlan, info.targetClass, PREDICATE, "id", OP, QUERY_EXPLANATION,
+                "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))",
+                READ_OPERATION, ENT_OPERATION, PREDICATE, "id", OP, QUERY_EXPLANATION,
+            )
+            body.addStatement(
+                "edges[%S] = subQuery.buildQueryPlan(subSpec, includeEager = true, junctionExplain = junctionExplain)",
+                info.edge.name,
             )
         } else {
-            // Direct edge: single query with IN on the join column
-            // hasMany/hasOne: IN on targetColumn (FK on target side)
-            // belongsTo: IN on targetColumn ("id" on target side)
+            // Direct edge: single query with IN on the join column.
+            // hasMany/hasOne: IN on targetColumn (FK on target side).
+            // belongsTo: IN on targetColumn ("id" on target side).
             body.addStatement(
-                "edges[%S] = %T(driver.explainQuery(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER), subQuery.orderFields, null, null), eagerQueries = nested.eagerQueries)",
-                info.edge.name, queryPlan, info.targetClass, PREDICATE, info.join.targetColumn, OP, QUERY_EXPLANATION,
+                "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))",
+                READ_OPERATION, ENT_OPERATION, PREDICATE, info.join.targetColumn, OP, QUERY_EXPLANATION,
+            )
+            body.addStatement(
+                "edges[%S] = subQuery.buildQueryPlan(subSpec, includeEager = true)",
+                info.edge.name,
             )
         }
 
