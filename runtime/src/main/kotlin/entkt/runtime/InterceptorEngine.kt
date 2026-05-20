@@ -30,6 +30,16 @@ public class QuerySpecBuilder public constructor(
     callerLimit: Int?,
     public val offset: Int?,
     public val flags: Set<QueryFlag>,
+    /**
+     * Annotations to seed the builder with before any interceptor
+     * runs. Generated code populates this from the source step's
+     * `FrozenQuerySpec.annotations` on traversal terminals, so a
+     * source-step `scope.addAnnotation(...)` surfaces on the final
+     * terminal's `QueryPlan.annotations`. Interceptors on this step
+     * can overwrite these via `scope.addAnnotation` (last-writer-wins).
+     * Empty on root reads.
+     */
+    initialAnnotations: Map<String, String> = emptyMap(),
 ) {
     private val predicates: MutableList<Tagged> = mutableListOf<Tagged>().apply {
         addAll(callerPredicates.map { Tagged(it, Source.CALLER) })
@@ -38,7 +48,9 @@ public class QuerySpecBuilder public constructor(
     private val orderByList: MutableList<OrderField> = orderBy.toMutableList()
     private var currentLimit: Int? = callerLimit
     public val callerLimit: Int? = callerLimit
-    private val annotationsMap: MutableMap<String, String> = LinkedHashMap()
+    private val annotationsMap: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
+        putAll(initialAnnotations)
+    }
 
     /** Appends an interceptor-tagged predicate. */
     internal fun addInterceptorPredicate(predicate: Predicate) {
@@ -126,6 +138,30 @@ public class QuerySpecBuilder public constructor(
     private enum class Source { CALLER, STRUCTURAL, INTERCEPTOR }
     private data class Tagged(val predicate: Predicate, val source: Source)
 }
+
+/**
+ * Result of a deferred traversal-source step. Produced by the
+ * lambda that generated `queryX()` methods stash on the target
+ * query: at terminal time the target's `runReadInterceptors`
+ * invokes the lambda, runs the source entity's interceptor chain
+ * with operation = `EDGE_TRAVERSAL`, and folds the post-interceptor
+ * source predicates into [bridge] (the `HasEdgeWith` /
+ * `HasM2MEdgeFrom` / `HasEdge` predicate that constrains the
+ * target). [annotations] carry forward any
+ * `scope.addAnnotation(...)` contributions made by source-step
+ * interceptors so they surface on the final terminal's
+ * `QueryPlan.annotations`.
+ *
+ * The deferred-invocation design is what lets `*OrError` terminals
+ * catch traversal-source rejections — if the source's
+ * `runReadInterceptors` throws `EntQueryRejectedException`, it
+ * propagates out of this lambda and into the terminal's `try/catch`
+ * which converts to `Err(QueryRejected)`.
+ */
+public data class TraversalSourceResult public constructor(
+    val bridge: Predicate,
+    val annotations: Map<String, String>,
+)
 
 /**
  * The final immutable spec the driver receives. Distinct from the
@@ -332,6 +368,23 @@ public data class RegisteredGlobalInterceptor internal constructor(
  * rejects (caught by the wrapper).
  */
 public object InterceptorEngine {
+    /**
+     * Cap on edge-predicate walker recursion. A pathological cycle
+     * in target interceptors (e.g. Post adds Post.author.has() and
+     * User adds User.posts.has() — each interceptor's addPredicate
+     * triggers the walker on the other entity, recursing
+     * indefinitely) trips this limit and surfaces as a clear
+     * IllegalStateException rather than a StackOverflowError.
+     *
+     * Each walker level appends one [EdgeStep] to `parentPath`, so
+     * this is effectively the maximum chained edge-predicate depth
+     * in a single terminal call. 32 is generous for legitimate
+     * traversal trees (which rarely go beyond 3-4 hops) while
+     * tripping immediately on cycles. Internally referenced by
+     * generated `runEdgePredicateInterceptors`.
+     */
+    public const val EDGE_PREDICATE_MAX_DEPTH: Int = 32
+
     /**
      * Run the interceptor chain on [builder] with [context] for the
      * given per-entity ([entityInterceptors]) and global

@@ -224,6 +224,47 @@ This keeps soft-delete API-compatible with hard-delete: code
 written against the result-variants contract works unchanged
 when an entity opts into the mixin.
 
+### `deleteMany`
+
+`deleteMany(vararg predicates)` builds its candidate set by
+running a query for matching rows, then per-entity-deletes each
+one. For soft-deletable entities V1 picks the following
+contract:
+
+1. **Candidate query filters `deleted_at IS NULL` by default.**
+   `client.posts.deleteMany(Post.tenantId eq tenantId)` skips
+   already-soft-deleted rows at the candidate-fetch step, so
+   the per-entity DELETE privacy / validation / hooks pipeline
+   does NOT fire on rows that are already in the deleted state.
+   Running delete hooks on rows that wouldn't have anything to
+   do is wasteful (privacy especially — DELETE privacy rules
+   typically inspect the entity's current state, which on a
+   soft-deleted row is "already deleted"). This matches the
+   default-filter semantics every other read terminal applies.
+
+2. **Callers can override with `withDeleted()` on the
+   candidate set.** A future `deleteMany { withDeleted(); ... }`
+   block-form variant ships if a use case emerges
+   (re-deleting already-soft-deleted rows for audit-trail
+   reasons, mass-purging via hard-delete-after-soft, etc.).
+   In V1 the only way to act on already-soft-deleted rows is
+   via the `hardDelete*` family with an explicit
+   `withDeleted()` query.
+
+3. **Returned count is "rows newly soft-deleted by this
+   call."** Same shape as hard-delete's `deleteMany` Int
+   return — `count++` per matching row whose UPDATE actually
+   modified the row. Rows that race into the deleted state
+   between the candidate fetch and the per-row UPDATE
+   (`WHERE id = ? AND deleted_at IS NULL` matches zero
+   concurrently) silently don't count, mirroring the hard-delete
+   "row vanished concurrently" no-op.
+
+`hardDeleteMany` mirrors the existing hard-delete `deleteMany`
+contract verbatim: the candidate query does NOT filter
+`deleted_at`, every matching row (live or soft-deleted) is
+physically removed, and the count is rows actually deleted.
+
 ### Hard delete
 
 A separate hard-delete API for the rare case where physical
@@ -277,6 +318,22 @@ The `afterUpdate` hook receives the entity with `deleted_at = null`.
 | `restoreOrThrow(entity)` | returns Unit (no-op, mirroring deleteOrThrow on already-deleted) |
 | `restoreOrError(entity)` | `Ok(Unit)` |
 | `restoreByIdOrError(id)` | `Ok(false)` (mirroring deleteByIdOrError on missing — same signal whether the id is unassigned or the row is already live) |
+
+**No-op pipeline behavior.** When the row is already live, the
+restore is a no-op (the `WHERE deleted_at IS NOT NULL` clause
+matches zero rows). UPDATE privacy / update validation /
+`beforeUpdate` / `afterUpdate` **do NOT fire on the no-op
+path** — the framework probes for the row's current state
+first and short-circuits the pipeline before any hook runs.
+Same shape as `deleteOrThrow` on an already-soft-deleted row:
+no observable change → no hook firing. This avoids running an
+entity author's update validation rule (e.g. "title must be ≥
+3 chars") against a row that's already in the target state.
+
+For the `restoreByIdOrError(id)` variant, the same short-
+circuit applies: a missing id returns `Ok(false)` without
+running any pipeline, an already-live row returns `Ok(false)`
+without running the update pipeline.
 
 Restore conflicts with active uniqueness constraints are
 discussed in [Uniqueness](#uniqueness) below.
@@ -400,6 +457,18 @@ Before implementation, add tests for:
 - restore that would violate a partial-unique constraint
   surfaces as `Err(ConstraintViolation)` / throws
   `EntConstraintViolationException`
+- `restoreOrThrow(entity)` on an already-live row is a no-op:
+  UPDATE privacy / update validation / `beforeUpdate` /
+  `afterUpdate` do NOT fire (short-circuited before pipeline)
+- `restoreByIdOrError(id)` returns `Ok(false)` for both
+  missing ids and already-live rows, no pipeline runs in
+  either case
+- `deleteMany(vararg predicates)` skips already-soft-deleted
+  rows at candidate-fetch (no delete pipeline runs for them);
+  the returned count is "rows newly soft-deleted by this call"
+- `hardDeleteMany(vararg predicates)` does NOT filter
+  `deleted_at` — both live and soft-deleted matches are
+  physically removed
 - eager-load (`with{Edge}`) on a soft-deletable target
   excludes deleted target rows
 - non-M2M edge predicates (`SomeEdge.has { }` /

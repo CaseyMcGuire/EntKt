@@ -158,7 +158,14 @@ interface QueryInterceptor<E : Any> {
 `InterceptScope<E>` exposes only the operations that preserve the "reduce or
 reject" safety property (see Privacy Semantics below). Interceptors cannot
 remove caller predicates, change ordering, raise the limit, or swap the table
-through the public API:
+through the public API. The `<E>` type parameter constrains the
+*registration site* (a `QueryInterceptor<Post>` can only be
+registered against `posts`) — but per
+[Dependency On Typed Query Scopes](#dependency-on-typed-query-scopes),
+the V1 untyped `Predicate` type means `<E>` does not
+compile-time-prevent an interceptor from constructing a predicate
+that references a different entity's columns. Treat that as a
+convention until the phantom-typed scopes RFC lands.
 
 ```kotlin
 interface InterceptScope<E : Any> {
@@ -211,17 +218,19 @@ interface InterceptScope<E : Any> {
     fun requireLimitAtMost(max: Int)
 
     /** Sets a default limit on read shapes where limit operations
-     *  apply (`ALL`, `EDGE_TRAVERSAL`). No-op if a limit is already
-     *  in place, AND a silent no-op on read shapes where row limits
-     *  have no meaning (`BY_ID`, `FIRST`, `RAW_COUNT`,
+     *  apply (V1: `ALL` only — `EDGE_TRAVERSAL` is a V1 deferral,
+     *  see "Limit semantics by read shape"). No-op if a limit is
+     *  already in place, AND a silent no-op on read shapes where
+     *  row limits have no meaning (`BY_ID`, `FIRST`, `RAW_COUNT`,
      *  `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`,
-     *  `EAGER_LOAD`, `EDGE_PREDICATE`). See
-     *  "Limit semantics by read shape" for the full table. [default]
-     *  must be `>= 0` (same rules as [requireLimitAtMost]). */
+     *  `EAGER_LOAD`, `EDGE_PREDICATE`, `EDGE_TRAVERSAL` in V1).
+     *  See "Limit semantics by read shape" for the full table.
+     *  [default] must be `>= 0` (same rules as
+     *  [requireLimitAtMost]). */
     fun setDefaultLimitIfAbsent(default: Int)
 
     /** Rejects the query (on read shapes where limit operations apply
-     *  — `ALL`, `EDGE_TRAVERSAL`) if the effective limit (after any
+     *  — V1: `ALL` only) if the effective limit (after any
      *  prior interceptor's [setDefaultLimitIfAbsent] /
      *  [requireLimitAtMost]) is null (unbounded) or exceeds [max].
      *  Use this for strict-reject max-limit policies instead of
@@ -568,7 +577,7 @@ enum class ReadOperation {
 
 /**
  * Flags carried on a [QueryContext]. V1 has two public members
- * (`withDeleted`, `onlyDeleted`) consumed exclusively by the
+ * (`withDeleted`, `onlyDeleted`) reserved for the future
  * generated soft-delete interceptor. The framework also tracks an
  * `internalSystemQuery` flag, but that lives in a separate
  * package-private field on the internal query spec — it never
@@ -585,6 +594,26 @@ enum class QueryFlag {
     onlyDeleted,
 }
 ```
+
+**V1 implementation status of public flags.** The framework
+plumbing for flags is in place — `QueryFlag` is a real enum
+with `withDeleted` / `onlyDeleted` members, `QueryContext.flags`
+and `QuerySpecBuilder.flags` are wired, and the engine passes
+flags through unchanged. But the **public DSL methods**
+(`query { withDeleted() }` / `query { onlyDeleted() }`) and
+the framework interceptor that consumes them
+(`framework:soft-delete`) **do not exist in V1**. Generated
+`runReadInterceptors` always seeds `flags = emptySet()` today.
+
+That's intentional: those flags belong semantically to the
+[Soft Delete RFC](../schema/soft-delete.md) and ship when it
+does. The infrastructure is here so the soft-delete RFC can
+implement its mixin without revisiting the interceptor
+framework. Application interceptors should NOT read
+`context.flags` in V1 — they will always observe an empty
+set. Code that needs flag-aware behavior should wait for the
+soft-delete RFC, which will also document the per-flag
+contract.
 
 For root reads, `currentEntity == rootEntity`, `sourceEntity` and `edgeName`
 are null, and `path` is empty. For edge-traversal and eager-load subqueries,
@@ -728,6 +757,16 @@ based on the operation's `ReadOperation`:
     eager batch, and the answer depends on the implementation strategy).
   - `EDGE_PREDICATE` — `has` / `hasWhere` compile to `EXISTS` subqueries
     where a row limit has no meaning.
+  - `EDGE_TRAVERSAL` — **V1 deferral.** Source-step interceptor
+    limit operations don't have a row-limit slot on the bridging
+    `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge` predicate, which
+    compiles to EXISTS. Honoring limit ops here would require
+    lowering source-with-limit into a CTE or IN-from-subquery —
+    structural work beyond V1. The framework silent-no-ops these
+    so an interceptor's `requireLimitAtMost(N)` set during
+    `queryX()` doesn't silently fail to constrain anything. A
+    future RFC introducing the CTE lowering can flip
+    `EDGE_TRAVERSAL` back into "apply normally."
   - `VISIBLE_COUNT`, `VISIBLE_EXISTS` — these materialize rows to apply
     LOAD privacy, but applying a row limit silently corrupts the answer
     (`setDefaultLimitIfAbsent(100)` on `visibleCount()` would mean
@@ -754,10 +793,9 @@ scan, count what's left); a caller writing `query { limit(100) }
 gets it.
 
 - **Apply normally** (limit operations shape the result set):
-  - `ALL`, `EDGE_TRAVERSAL` — `allOrThrow` / `allOrError` / `visibleAll` /
-    `visibleAllOrError` / `queryAuthor()` / `queryPosts()` and friends.
-    Max-limit guards constrain the underlying row scan, which is
-    exactly the surface they're meant to protect.
+  - `ALL` — `allOrThrow` / `allOrError` / `visibleAll` /
+    `visibleAllOrError`. Max-limit guards constrain the underlying
+    row scan, which is exactly the surface they're meant to protect.
 
     **`visibleAll` / `visibleAllOrError` — limit caps storage
     scan, not visible result count (V1).** When an effective
@@ -776,20 +814,6 @@ gets it.
     storage-scan budget; until then, callers that want exactly
     N visible rows must paginate via `queryOffset` and accept
     that the scan-budget shape is the V1 contract.
-
-    **Cardinality note for `EDGE_TRAVERSAL`.** V1 treats every
-    traversal — to-one (`queryAuthor()` from `belongsTo`) and
-    to-many (`queryPosts()` from `hasMany` / M2M) — as potentially
-    multi-row for limit purposes, because the traversal returns a
-    query handle on the target entity, not the resolved row.
-    `setDefaultLimitIfAbsent(100)` on a to-one traversal is
-    redundant (the result is bounded to 1 anyway) and
-    `requireLimitAtMost(50)` is trivially satisfied — neither
-    affects the answer, but neither rejects either, so this is
-    safe-by-default. Splitting `EDGE_TRAVERSAL` into
-    `EDGE_TRAVERSAL_TO_ONE` (silent no-op like `BY_ID`) vs
-    `EDGE_TRAVERSAL_TO_MANY` (apply normally) is plausible but
-    deferred until a use case shows up that wants the distinction.
 
 A future RFC can add explicit scan-budget operations (semantically
 distinct from row-limit operations) for the no-op cases where bounding
@@ -1220,17 +1244,33 @@ soft-delete interceptors can still be denied by privacy.
 
 ## Dependency On Typed Query Scopes
 
-This RFC **depends on**
-[Phantom-Typed Query Scopes](phantom-typed-query-scopes.md). V1 ships once
-typed predicates land — the `Predicate<E>` references in `QuerySpec` and
-`InterceptScope` are the phantom-typed surface. A `QueryInterceptor<User>`
-can only add `Predicate<User>` values to a `User` query; the compiler
-rejects predicates against other entities. That keeps interceptor code
-aligned with the same query-scope safety as normal call-site queries.
+This RFC's safety story **depends on**
+[Phantom-Typed Query Scopes](phantom-typed-query-scopes.md) — but
+**V1 ships before that dependency lands**. The current
+`Predicate` type is untyped (no `Predicate<E>`), so a
+`QueryInterceptor<Post>` can technically construct a predicate
+that references columns on a different entity and pass it to
+`scope.addPredicate(...)`. The `<E>` type parameter on
+`QueryInterceptor<E>` / `InterceptScope<E>` / `QueryShape<E>`
+constrains the *registration site* (you can only register a
+`QueryInterceptor<Post>` against `posts`) but **does not**
+constrain the body of `addPredicate(...)` itself. The
+"interceptor for E can only add E predicates" safety property
+is documented but not compiler-enforced today.
 
-There is no interim untyped shape — building an untyped interceptor API
-first and migrating later would create churn for early adopters and break
-the safety claim above.
+When Phantom-Typed Query Scopes lands, the codegen layer can
+flip `addPredicate(Predicate)` to `addPredicate(Predicate<E>)`
+without breaking any call site that's been disciplined about
+its predicate construction — application code that's already
+been writing `User.active eq true` style typed-column DSL
+predicates is forward-compatible. Until then, treat the
+safety property as a **convention** that good interceptors
+follow (and that code review should enforce), not a
+compile-time guarantee.
+
+The same caveat applies to `OrderField` references on
+`QueryShape<E>` — untyped today, slated to flip to
+`OrderField<E>` once the typed-scopes RFC lands.
 
 ## Implementation Notes
 

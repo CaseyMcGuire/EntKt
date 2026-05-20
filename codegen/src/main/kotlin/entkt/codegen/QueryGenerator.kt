@@ -168,8 +168,27 @@ internal class QueryGenerator(
                     .initializer("emptyList()")
                     .build()
             )
+            // Deferred source-step lambda, populated by generated
+            // queryX() methods when this query is the *target* of a
+            // traversal. The lambda is invoked at *terminal time*
+            // (inside runReadInterceptors' try/catch) so a source-step
+            // rejection from `scope.reject(...)` propagates through
+            // the same EntQueryRejectedException path as target-step
+            // rejection — making `*OrError` terminals on the target
+            // able to catch traversal-source rejection too. Returns
+            // the bridging predicate to inject as STRUCTURAL into the
+            // target's QuerySpecBuilder, plus the source-step
+            // annotations to seed the target's spec with so
+            // observability consumers see source annotations on the
+            // final QueryPlan.
             .addProperty(
-                PropertySpec.builder("traversalStructural", predicateClass.copy(nullable = true))
+                PropertySpec.builder(
+                    "deferredSourceStep",
+                    LambdaTypeName.get(
+                        receiver = null,
+                        returnType = ClassName("entkt.runtime", "TraversalSourceResult"),
+                    ).copy(nullable = true),
+                )
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("null")
@@ -1113,15 +1132,135 @@ internal class QueryGenerator(
         terminalName: String,
         operationName: String,
     ): FunSpec {
+        // The runtime uses `minOf(1, spec.limit ?: 1)` so a caller
+        // who pre-set `limit(0)` actually fetches 0 rows. Mirror
+        // that in the plan so explain matches the driver call.
         return FunSpec.builder(name)
             .addKdoc(
                 "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
                 "Interceptors run with operation = $operationName; limit operations are\n" +
-                "silent no-ops per the RFC. Plan limit is hardwired to 1.\n" +
-                "On interceptor rejection, returns a plan with `rejected = true`."
+                "silent no-ops per the RFC. Plan limit mirrors the runtime's\n" +
+                "`minOf(1, spec.limit ?: 1)` — usually 1, but 0 when the caller passed\n" +
+                "`query { limit(0) }`. On interceptor rejection, returns a plan with\n" +
+                "`rejected = true`."
             )
             .returns(queryPlan)
-            .addCode(explainBody(operationName, CodeBlock.of("buildQueryPlan(spec.copy(limit = 1), false)")))
+            .addCode(
+                explainBody(
+                    operationName,
+                    CodeBlock.of("buildQueryPlan(spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null), false)"),
+                ),
+            )
+            .build()
+    }
+
+    /**
+     * Visible row-shaped explain — branches on `hasLoadPrivacy()`
+     * so the plan matches the runtime driver call. On the privacy
+     * path the runtime overfetches up to `visibleOverfetchLimit`,
+     * filtering denied rows in Kotlin; on the no-privacy path the
+     * caller's `spec.limit` passes through unchanged.
+     */
+    private fun buildVisibleRowShapedExplain(
+        queryPlan: ClassName,
+        name: String,
+        terminalName: String,
+        repoPropName: String,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+            .addStatement("val c = requireClient()")
+            .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+            .addStatement("buildQueryPlan(spec, true)")
+            .nextControlFlow("else")
+            .addStatement("val cap = c.visibleOverfetchLimit")
+            .addStatement("val scanLimit = minOf(spec.limit ?: cap, cap)")
+            .addStatement("buildQueryPlan(spec.copy(limit = scanLimit), true)")
+            .endControlFlow()
+            .build()
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
+                "Interceptors run with operation = ALL. On the no-privacy fast path the\n" +
+                "plan uses `spec.limit` directly; on the privacy path the plan uses\n" +
+                "`minOf(spec.limit ?: cap, cap)` where `cap` is\n" +
+                "`EntClientConfig.visibleOverfetchLimit`, matching the runtime overfetch\n" +
+                "behavior. On interceptor rejection, returns a plan with `rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("ALL", body))
+            .build()
+    }
+
+    /**
+     * `explainFirstVisibleOrNull` — on the no-privacy fast path
+     * fetches a single row; on the privacy path scans up to
+     * `visibleOverfetchLimit` to give the in-process filter
+     * something to work with. Mirror that branching in explain.
+     */
+    private fun buildFirstVisibleExplain(
+        queryPlan: ClassName,
+        name: String,
+        terminalName: String,
+        repoPropName: String,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+            .addStatement("val c = requireClient()")
+            .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+            .addStatement("buildQueryPlan(spec.copy(limit = 1), true)")
+            .nextControlFlow("else")
+            .addStatement("val cap = c.visibleOverfetchLimit")
+            .addStatement("val scanLimit = minOf(spec.limit ?: cap, cap)")
+            .addStatement("buildQueryPlan(spec.copy(limit = scanLimit), true)")
+            .endControlFlow()
+            .build()
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
+                "Interceptors run with operation = FIRST. On the no-privacy fast path the\n" +
+                "plan uses `limit = 1`; on the privacy path the plan uses\n" +
+                "`minOf(spec.limit ?: cap, cap)` where `cap` is\n" +
+                "`EntClientConfig.visibleOverfetchLimit`, matching the runtime cap-bounded\n" +
+                "scan. On interceptor rejection, returns a plan with `rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("FIRST", body))
+            .build()
+    }
+
+    /**
+     * `explainVisibleExists` — same shape as the runtime: probe
+     * with `limit = minOf(1, spec.limit ?: 1)` on the no-privacy
+     * path; on the privacy path scan up to `visibleOverfetchLimit`
+     * so the in-process filter can find a visible row.
+     */
+    private fun buildVisibleExistsExplain(
+        queryPlan: ClassName,
+        name: String,
+        terminalName: String,
+        repoPropName: String,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+            .addStatement("val c = requireClient()")
+            .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+            .addStatement("buildQueryPlan(spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null), false)")
+            .nextControlFlow("else")
+            .addStatement("val cap = c.visibleOverfetchLimit")
+            .addStatement("val scanLimit = minOf(spec.limit ?: cap, cap)")
+            .addStatement("buildQueryPlan(spec.copy(limit = scanLimit), false)")
+            .endControlFlow()
+            .build()
+        return FunSpec.builder(name)
+            .addKdoc(
+                "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
+                "Interceptors run with operation = VISIBLE_EXISTS. On the no-privacy fast path\n" +
+                "the plan uses `minOf(1, spec.limit ?: 1)` (mirroring the runtime, so\n" +
+                "`query { limit(0) }.visibleExists()` shows `limit = 0`); on the privacy\n" +
+                "path the plan uses `minOf(spec.limit ?: cap, cap)` with\n" +
+                "`EntClientConfig.visibleOverfetchLimit`. On interceptor rejection,\n" +
+                "returns a plan with `rejected = true`."
+            )
+            .returns(queryPlan)
+            .addCode(explainBody("VISIBLE_EXISTS", body))
             .build()
     }
 
@@ -1155,28 +1294,31 @@ internal class QueryGenerator(
 
         val methods = mutableListOf<FunSpec>()
 
+        val repoPropName = pluralize(entityClass.simpleName.replaceFirstChar { it.lowercase() })
+
         // Row-shaped reads (ALL operation, eager edges included).
-        // All four *AllOrThrow / *AllOrError / *VisibleAll /
-        // *VisibleAllOrError variants share the same underlying
-        // plan — the runtime *result-wrap* differs (throw vs Err
-        // vs filter-rows vs filter-rows-and-Err) but the driver
-        // call shape is identical, so explain dry-runs the same
-        // way for all four.
+        // The non-visible variants always fetch spec.limit; the
+        // visible variants apply the overfetch cap on the
+        // privacy path. *OrThrow / *OrError pairs share the same
+        // driver-call shape — the result-wrap differs (throw vs
+        // Err) but the explain plan content is identical.
         methods += buildRowShapedExplain(queryPlan, "explainAllOrThrow", "allOrThrow")
         methods += buildRowShapedExplain(queryPlan, "explainAllOrError", "allOrError")
-        methods += buildRowShapedExplain(queryPlan, "explainVisibleAll", "visibleAll")
-        methods += buildRowShapedExplain(queryPlan, "explainVisibleAllOrError", "visibleAllOrError")
+        methods += buildVisibleRowShapedExplain(queryPlan, "explainVisibleAll", "visibleAll", repoPropName)
+        methods += buildVisibleRowShapedExplain(queryPlan, "explainVisibleAllOrError", "visibleAllOrError", repoPropName)
 
-        // First-row reads (FIRST operation, eager edges included, limit 1).
+        // First-row reads. Non-visible variants fetch with limit 1.
+        // firstVisibleOrNull on the privacy path scans up to the
+        // overfetch cap rather than 1 — so its explain branches.
         methods += buildFirstShapedExplain(queryPlan, "explainFirstOrThrow", "firstOrThrow")
         methods += buildFirstShapedExplain(queryPlan, "explainFirstOrNull", "firstOrNull")
         methods += buildFirstShapedExplain(queryPlan, "explainFirstOrError", "firstOrError")
-        methods += buildFirstShapedExplain(queryPlan, "explainFirstVisibleOrNull", "firstVisibleOrNull")
+        methods += buildFirstVisibleExplain(queryPlan, "explainFirstVisibleOrNull", "firstVisibleOrNull", repoPropName)
 
         // Aggregate reads.
         methods += buildVisibleCountExplain(queryPlan, "explainVisibleCount")
         methods += buildExistsShapedExplain(queryPlan, "explainRawExists", "rawExists", "RAW_EXISTS")
-        methods += buildExistsShapedExplain(queryPlan, "explainVisibleExists", "visibleExists", "VISIBLE_EXISTS")
+        methods += buildVisibleExistsExplain(queryPlan, "explainVisibleExists", "visibleExists", repoPropName)
         methods += buildRawCountExplain(queryPlan, entityClass)
 
         // Internal buildQueryPlan helper. Takes the post-interceptor
@@ -1402,13 +1544,33 @@ internal class QueryGenerator(
                 CodeBlock.builder()
                     .addStatement("val c = requireClient()")
                     .addStatement("val privacy = c.currentPrivacyContext()")
-                    // Merge any in-place structural predicate from
-                    // a prior traversal step (HasEdgeWith /
-                    // HasM2MEdgeFrom / HasEdge) with extras the
-                    // caller passed in (used by byId-style
-                    // structural ids — query terminals pass none).
+                    // Resolve the deferred source step (if any) at
+                    // terminal time. The lambda runs the source
+                    // entity's interceptor chain — a source-step
+                    // rejection throws EntQueryRejectedException
+                    // here, which the terminal's own try/catch
+                    // (allOrError / firstOrError / byIdOrError /
+                    // *OrError aggregate variants) converts to
+                    // `Err(QueryRejected)`. Eager invocation at
+                    // queryX() time would have raised the throw
+                    // before the *OrError terminal could catch it.
+                    .addStatement("val sourceResult = deferredSourceStep?.invoke()")
+                    // Source annotations seed the builder so they
+                    // surface on the final terminal's
+                    // QueryPlan.annotations — interceptors at this
+                    // step can overwrite via scope.addAnnotation
+                    // (last-writer-wins).
                     .addStatement(
-                        "val structural = listOfNotNull(traversalStructural) + extraStructural",
+                        "val initialAnnotations = sourceResult?.annotations ?: emptyMap<%T, %T>()",
+                        String::class.asClassName(),
+                        String::class.asClassName(),
+                    )
+                    // Bridging predicate from the source step
+                    // (HasEdgeWith / HasM2MEdgeFrom / HasEdge) goes
+                    // in as STRUCTURAL alongside caller-passed
+                    // extras (byId's id leaf, eager-load's IN clause).
+                    .addStatement(
+                        "val structural = listOfNotNull(sourceResult?.bridge) + extraStructural",
                     )
                     // rootEntity walks back along the traversal
                     // path; if no traversal context, this query IS
@@ -1427,6 +1589,7 @@ internal class QueryGenerator(
                     .add("  callerLimit = queryLimit,\n")
                     .add("  offset = queryOffset,\n")
                     .add("  flags = emptySet(),\n")
+                    .add("  initialAnnotations = initialAnnotations,\n")
                     .add(")\n")
                     .add("val context = %T(\n", QUERY_CONTEXT)
                     .add("  privacy = privacy,\n")
@@ -1463,9 +1626,16 @@ internal class QueryGenerator(
                     // — they were either already processed by the
                     // prior step's interceptors (traversal source
                     // step) or are framework-synthetic plumbing.
-                    .addStatement("val skipWalk: Set<%T> = (listOfNotNull(traversalStructural) + extraStructural).toSet()", predicateClass)
+                    // Skip-list uses identity (`===`), not equality
+                    // (`==`). A caller-authored predicate that happens
+                    // to be structurally equal to a framework-injected
+                    // structural (e.g. an application HasEdgeWith that
+                    // matches a traversal-bridging HasEdgeWith by
+                    // value) must still be walked through the
+                    // edge-predicate processor.
+                    .addStatement("val skipWalk: List<%T> = listOfNotNull(sourceResult?.bridge) + extraStructural", predicateClass)
                     .addStatement(
-                        "val walked = frozen.predicates.map { p -> if (p in skipWalk) p else runEdgePredicateInterceptors(p, traversalPath) }",
+                        "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath) }",
                     )
                     .addStatement("return frozen.copy(predicates = walked)")
                     .build()
@@ -1505,6 +1675,28 @@ internal class QueryGenerator(
         val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
         val body = CodeBlock.builder()
         body.addStatement("val c = requireClient()")
+        // Recursion guard: cap the edge-predicate walker at
+        // EDGE_PREDICATE_MAX_DEPTH steps so an interceptor cycle
+        // (e.g. Post adds Post.author.has() AND User adds
+        // User.posts.has(), or any longer cycle) surfaces as a
+        // clear error rather than a StackOverflowError. Generous
+        // limit so legitimate deep traversal trees (rare in
+        // practice) still work; pathological cycles trip it
+        // immediately because each level appends an EdgeStep to
+        // parentPath.
+        body.add(
+            "check(parentPath.size <= %T.EDGE_PREDICATE_MAX_DEPTH) {\n",
+            INTERCEPTOR_ENGINE,
+        )
+        body.add("  %P\n",
+            "edge-predicate interceptor recursion exceeded depth " +
+                "\${entkt.runtime.InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH} on path " +
+                "\${parentPath.joinToString(\" → \") { \"\${it.source.simpleName}.\${it.edgeName}\" }}. " +
+                "Likely cause: interceptors on two entities each add a HasEdge[With] predicate that " +
+                "references back to the other (e.g. Post adds Post.author.has(), User adds " +
+                "User.posts.has()). Fix the interceptor cycle or bump InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH.",
+        )
+        body.add("}\n")
         body.add("return when (predicate) {\n")
         body.add(
             "  is %T.And -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath), runEdgePredicateInterceptors(predicate.right, parentPath))\n",
@@ -2115,28 +2307,18 @@ internal class QueryGenerator(
         val methodName = "query${toPascalCase(edge.name)}"
         val sourceTable = source.tableName
         val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val traversalSourceResult = ClassName("entkt.runtime", "TraversalSourceResult")
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
-            // Fire SOURCE interceptors with EDGE_TRAVERSAL before
-            // materializing the bridging predicate. The post-
-            // interceptor predicates fold into the HasM2MEdgeFrom's
-            // sourceFilter so source-side tenant-scope / soft-delete
-            // narrowing applies to the bridging EXISTS subquery.
-            .addStatement(
-                "val sourceSpec = runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement(
-                "val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
-                predicateClass,
-            )
-            .addStatement(
-                "val structural = %T.HasM2MEdgeFrom(%S, %S, parent)",
-                predicateClass,
-                sourceTable,
-                edge.name,
-            )
+            // Construct the target query and stash a deferred
+            // source-step lambda — the source's interceptor chain
+            // does NOT fire here; it fires at the terminal's call
+            // site inside the terminal's try/catch (see KDoc on
+            // `deferredSourceStep`). This is what lets
+            // `.queryX().allOrError()` catch source-step rejections
+            // as `Err(QueryRejected)` instead of having queryX()
+            // throw before allOrError() can run.
             .addStatement("val target = %T(driver, client)", targetQueryClass)
             .addStatement("target.traversalSourceEntity = %T::class", sourceEntityClass)
             .addStatement("target.traversalEdgeName = %S", edge.name)
@@ -2144,7 +2326,30 @@ internal class QueryGenerator(
                 "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
                 edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
-            .addStatement("target.traversalStructural = structural")
+            .addStatement("val sourceQ = this")
+            .addCode(
+                CodeBlock.builder()
+                    .add("target.deferredSourceStep = {\n")
+                    .add(
+                        "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add(
+                        "  val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                        predicateClass,
+                    )
+                    .add("  %T(\n", traversalSourceResult)
+                    .add(
+                        "    bridge = %T.HasM2MEdgeFrom(%S, %S, parent),\n",
+                        predicateClass,
+                        sourceTable,
+                        edge.name,
+                    )
+                    .add("    annotations = sourceSpec.annotations,\n")
+                    .add("  )\n")
+                    .add("}\n")
+                    .build()
+            )
             .addStatement("return target")
             .build()
     }
@@ -2176,30 +2381,18 @@ internal class QueryGenerator(
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
         val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val traversalSourceResult = ClassName("entkt.runtime", "TraversalSourceResult")
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
-            // Fire SOURCE interceptors with EDGE_TRAVERSAL before
-            // materializing the bridging predicate. The post-
-            // interceptor predicates fold into the HasEdgeWith
-            // inner so source-side narrowing applies to the
-            // EXISTS subquery used to bridge to the target.
-            .addStatement(
-                "val sourceSpec = runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement(
-                "val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
-                predicateClass,
-            )
-            .addStatement(
-                "val structural: %T = if (parent != null) %T.HasEdgeWith(%S, parent) else %T.HasEdge(%S)",
-                predicateClass,
-                predicateClass,
-                inverse.name,
-                predicateClass,
-                inverse.name,
-            )
+            // Construct the target query and stash a deferred
+            // source-step lambda — the source's interceptor chain
+            // does NOT fire here; it fires at the terminal's call
+            // site inside the terminal's try/catch (see KDoc on
+            // `deferredSourceStep`). This lets
+            // `.queryX().allOrError()` catch source-step rejections
+            // as `Err(QueryRejected)` instead of having queryX()
+            // throw before allOrError() can run.
             .addStatement("val target = %T(driver, client)", targetQueryClass)
             .addStatement("target.traversalSourceEntity = %T::class", sourceEntityClass)
             .addStatement("target.traversalEdgeName = %S", edge.name)
@@ -2207,7 +2400,33 @@ internal class QueryGenerator(
                 "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
                 edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
-            .addStatement("target.traversalStructural = structural")
+            .addStatement("val sourceQ = this")
+            .addCode(
+                CodeBlock.builder()
+                    .add("target.deferredSourceStep = {\n")
+                    .add(
+                        "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add(
+                        "  val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                        predicateClass,
+                    )
+                    .add(
+                        "  val bridge: %T = if (parent != null) %T.HasEdgeWith(%S, parent) else %T.HasEdge(%S)\n",
+                        predicateClass,
+                        predicateClass,
+                        inverse.name,
+                        predicateClass,
+                        inverse.name,
+                    )
+                    .add(
+                        "  %T(bridge = bridge, annotations = sourceSpec.annotations)\n",
+                        traversalSourceResult,
+                    )
+                    .add("}\n")
+                    .build()
+            )
             .addStatement("return target")
             .build()
     }
