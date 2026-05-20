@@ -132,8 +132,7 @@ public class QuerySpecBuilder public constructor(
  * mutable [QuerySpecBuilder] so the framework can hand it across a
  * module boundary without exposing the builder API.
  */
-@ConsistentCopyVisibility
-public data class FrozenQuerySpec internal constructor(
+public data class FrozenQuerySpec public constructor(
     val table: String,
     val predicates: List<Predicate>,
     val orderBy: List<OrderField>,

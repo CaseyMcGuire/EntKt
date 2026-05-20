@@ -130,6 +130,51 @@ internal class QueryGenerator(
                     .initializer("null")
                     .build()
             )
+            // Traversal context, populated by generated queryX()
+            // methods when this query is the *target* of a
+            // traversal step. Read by runReadInterceptors to set
+            // the QueryContext's sourceEntity / edgeName / path
+            // and to inject the HasEdgeWith / HasM2MEdgeFrom /
+            // HasEdge structural predicate that ties this target
+            // query back to its source. Defaults are the "root
+            // read" shape (no source, empty path, no structural
+            // predicate).
+            .addProperty(
+                PropertySpec.builder(
+                    "traversalSourceEntity",
+                    ClassName("kotlin.reflect", "KClass")
+                        .parameterizedBy(com.squareup.kotlinpoet.STAR)
+                        .copy(nullable = true),
+                )
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("null")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("traversalEdgeName", String::class.asClassName().copy(nullable = true))
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("null")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder(
+                    "traversalPath",
+                    List::class.asClassName().parameterizedBy(ClassName("entkt.runtime", "EdgeStep")),
+                )
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("emptyList()")
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("traversalStructural", predicateClass.copy(nullable = true))
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("null")
+                    .build()
+            )
             .addProperties(eagerEdgeSpecs.map { it.property })
             .addFunction(buildWhere(queryClass))
             .addFunction(buildOrderBy(queryClass))
@@ -148,6 +193,7 @@ internal class QueryGenerator(
             .addFunction(buildLoadEdges(entityClass, schema, schemaNames))
             .addFunction(buildRequireClient(schemaName))
             .addFunction(buildRunReadInterceptors(schemaName, entityClass))
+            .addFunction(buildRunEdgePredicateInterceptors(schemaName, entityClass, schema, schemaNames))
             .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
             .addFunction(buildAllOrError(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
@@ -972,11 +1018,11 @@ internal class QueryGenerator(
         val readOp = READ_OPERATION
         val structuralListType = List::class.asClassName().parameterizedBy(predicateClass)
         return FunSpec.builder("runReadInterceptors")
-            .addModifiers(KModifier.PRIVATE)
+            .addModifiers(KModifier.INTERNAL)
             .addParameter("operation", readOp)
             .addParameter("entOperation", ENT_OPERATION)
             .addParameter(
-                ParameterSpec.builder("structuralPredicates", structuralListType)
+                ParameterSpec.builder("extraStructural", structuralListType)
                     .defaultValue("emptyList()")
                     .build()
             )
@@ -985,11 +1031,27 @@ internal class QueryGenerator(
                 CodeBlock.builder()
                     .addStatement("val c = requireClient()")
                     .addStatement("val privacy = c.currentPrivacyContext()")
+                    // Merge any in-place structural predicate from
+                    // a prior traversal step (HasEdgeWith /
+                    // HasM2MEdgeFrom / HasEdge) with extras the
+                    // caller passed in (used by byId-style
+                    // structural ids — query terminals pass none).
+                    .addStatement(
+                        "val structural = listOfNotNull(traversalStructural) + extraStructural",
+                    )
+                    // rootEntity walks back along the traversal
+                    // path; if no traversal context, this query IS
+                    // the root. Otherwise the first EdgeStep's
+                    // source is the chain's origin.
+                    .addStatement(
+                        "val root = traversalPath.firstOrNull()?.source ?: %T::class",
+                        entityClass,
+                    )
                     .add("val builder = %T(\n", QUERY_SPEC_BUILDER)
                     .add("  table = %T.TABLE,\n", entityClass)
                     .add("  entity = %T::class,\n", entityClass)
                     .add("  callerPredicates = predicates,\n")
-                    .add("  structuralPredicates = structuralPredicates,\n")
+                    .add("  structuralPredicates = structural,\n")
                     .add("  orderBy = orderFields,\n")
                     .add("  callerLimit = queryLimit,\n")
                     .add("  offset = queryOffset,\n")
@@ -998,14 +1060,14 @@ internal class QueryGenerator(
                     .add("val context = %T(\n", QUERY_CONTEXT)
                     .add("  privacy = privacy,\n")
                     .add("  operation = operation,\n")
-                    .add("  rootEntity = %T::class,\n", entityClass)
+                    .add("  rootEntity = root,\n")
                     .add("  currentEntity = %T::class,\n", entityClass)
-                    .add("  sourceEntity = null,\n")
-                    .add("  edgeName = null,\n")
-                    .add("  path = emptyList(),\n")
+                    .add("  sourceEntity = traversalSourceEntity,\n")
+                    .add("  edgeName = traversalEdgeName,\n")
+                    .add("  path = traversalPath,\n")
                     .add("  flags = emptySet(),\n")
                     .add(")\n")
-                    .add("return try {\n")
+                    .add("val frozen = try {\n")
                     .add("  %T.apply(\n", INTERCEPTOR_ENGINE)
                     .add("    builder = builder,\n")
                     .add("    context = context,\n")
@@ -1017,8 +1079,168 @@ internal class QueryGenerator(
                     .add("} catch (e: %T) {\n", ABORT_QUERY_REJECTED)
                     .add("  throw %T(e.rejected)\n", ENT_QUERY_REJECTED_EXCEPTION)
                     .add("}\n")
+                    // Walk the post-interceptor predicate tree and
+                    // run EDGE_PREDICATE interceptors on any
+                    // HasEdgeWith / HasEdge subpredicates. The
+                    // target entity's interceptors get a chance to
+                    // narrow the EXISTS subquery (so e.g. soft-
+                    // deleted target rows don't contribute to the
+                    // existence check). Structural predicates we
+                    // injected (traversalStructural from a queryX
+                    // step, or extraStructural for eager-load's IN
+                    // predicate / byId's id = X) are NOT re-walked
+                    // — they were either already processed by the
+                    // prior step's interceptors (traversal source
+                    // step) or are framework-synthetic plumbing.
+                    .addStatement("val skipWalk: Set<%T> = (listOfNotNull(traversalStructural) + extraStructural).toSet()", predicateClass)
+                    .addStatement(
+                        "val walked = frozen.predicates.map { p -> if (p in skipWalk) p else runEdgePredicateInterceptors(p, traversalPath) }",
+                    )
+                    .addStatement("return frozen.copy(predicates = walked)")
                     .build()
             )
+            .build()
+    }
+
+    /**
+     * Walk a [Predicate] tree and rewrite [Predicate.HasEdgeWith] /
+     * [Predicate.HasEdge] sub-nodes by firing the target entity's
+     * interceptors against the inner predicate with
+     * [ReadOperation.EDGE_PREDICATE]. Boolean combinators (And / Or)
+     * recurse; leaves return unchanged.
+     *
+     * HasEdge with no inner upgrades to HasEdgeWith when target
+     * interceptors add predicates; stays HasEdge otherwise.
+     * Important for the soft-delete shape — `User.articles.has()`
+     * must filter out soft-deleted articles to give correct
+     * existence semantics.
+     *
+     * [HasM2MEdgeFrom] is NOT rewritten in V1 — the dispatch keyed
+     * by source-table (rather than this query's outgoing edge name)
+     * needs a separate global registry. Workaround: use the
+     * traversal form (`queryX()`) for M2M, which fires source
+     * interceptors via Phase 5a.
+     *
+     * The dispatch `when` on the edge name is generated per-source-
+     * entity from the schema's outgoing edges. Edges whose targets
+     * aren't visible to codegen fall through unchanged.
+     */
+    private fun buildRunEdgePredicateInterceptors(
+        schemaName: String,
+        entityClass: ClassName,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): FunSpec {
+        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val body = CodeBlock.builder()
+        body.addStatement("val c = requireClient()")
+        body.add("return when (predicate) {\n")
+        body.add(
+            "  is %T.And -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath), runEdgePredicateInterceptors(predicate.right, parentPath))\n",
+            predicateClass, predicateClass,
+        )
+        body.add(
+            "  is %T.Or -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath), runEdgePredicateInterceptors(predicate.right, parentPath))\n",
+            predicateClass, predicateClass,
+        )
+        body.add("  is %T.HasEdgeWith -> {\n", predicateClass)
+        body.add("    val processedInner = when (predicate.edge) {\n")
+        for (edge in schema.edges()) {
+            val targetName = schemaNames[edge.target] ?: continue
+            val targetClass = ClassName(packageName, targetName)
+            val targetQueryClass = ClassName(packageName, "${targetName}Query")
+            // The edge name in HasEdgeWith corresponds to an edge
+            // on THIS query's entity (the source). Dispatch by
+            // this entity's outgoing edge names.
+            body.add(
+                "      %S -> {\n",
+                edge.name,
+            )
+            // Reuse this source query's driver — the target
+            // query never touches it on this code path (we only
+            // call runReadInterceptors, which is pure transform),
+            // but its primary constructor requires one.
+            body.add(
+                "        val targetQ = %T(driver, c)\n",
+                targetQueryClass,
+            )
+            body.add("        targetQ.predicates = listOf(predicate.inner)\n")
+            body.add("        targetQ.traversalSourceEntity = %T::class\n", entityClass)
+            body.add("        targetQ.traversalEdgeName = predicate.edge\n")
+            body.add(
+                "        targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
+                edgeStepClass, entityClass, targetClass,
+            )
+            body.add(
+                "        val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            body.add(
+                "        spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) } ?: predicate.inner\n",
+                predicateClass,
+            )
+            body.add("      }\n")
+        }
+        body.add("      else -> predicate.inner\n")
+        body.add("    }\n")
+        body.add("    %T.HasEdgeWith(predicate.edge, processedInner)\n", predicateClass)
+        body.add("  }\n")
+        // HasEdge (no inner): if any target interceptor adds
+        // predicates, upgrade to HasEdgeWith with the interceptor-
+        // contributed predicates as the inner. If interceptors add
+        // nothing, keep as HasEdge. Important for soft-delete on the
+        // target — `User.articles.has()` must still filter out
+        // soft-deleted articles, otherwise the existence check is
+        // wrong.
+        body.add("  is %T.HasEdge -> {\n", predicateClass)
+        body.add("    when (predicate.edge) {\n")
+        for (edge in schema.edges()) {
+            val targetName = schemaNames[edge.target] ?: continue
+            val targetClass = ClassName(packageName, targetName)
+            val targetQueryClass = ClassName(packageName, "${targetName}Query")
+            body.add(
+                "      %S -> {\n",
+                edge.name,
+            )
+            body.add(
+                "        val targetQ = %T(driver, c)\n",
+                targetQueryClass,
+            )
+            body.add("        targetQ.traversalSourceEntity = %T::class\n", entityClass)
+            body.add("        targetQ.traversalEdgeName = predicate.edge\n")
+            body.add(
+                "        targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
+                edgeStepClass, entityClass, targetClass,
+            )
+            body.add(
+                "        val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            body.add(
+                "        val combined = spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                predicateClass,
+            )
+            body.add(
+                "        if (combined != null) %T.HasEdgeWith(predicate.edge, combined) else predicate\n",
+                predicateClass,
+            )
+            body.add("      }\n")
+        }
+        body.add("      else -> predicate\n")
+        body.add("    }\n")
+        body.add("  }\n")
+        body.add("  else -> predicate\n")
+        body.add("}\n")
+
+        return FunSpec.builder("runEdgePredicateInterceptors")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("predicate", predicateClass)
+            .addParameter(
+                "parentPath",
+                List::class.asClassName().parameterizedBy(edgeStepClass),
+            )
+            .returns(predicateClass)
+            .addCode(body.build())
             .build()
     }
 
@@ -1151,19 +1373,19 @@ internal class QueryGenerator(
             when (edge.kind) {
                 is EdgeKind.ManyToMany -> {
                     val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: continue
-                    emitM2MEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
+                    emitM2MEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName)
                 }
                 is EdgeKind.BelongsTo -> {
                     val join = resolveEdgeJoin(edge, schema) ?: continue
-                    emitToOneEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName, schema, schemaNames)
+                    emitToOneEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName, schema, schemaNames)
                 }
                 is EdgeKind.HasOne -> {
                     val join = resolveEdgeJoin(edge, schema) ?: continue
-                    emitHasOneEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
+                    emitHasOneEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName)
                 }
                 is EdgeKind.HasMany -> {
                     val join = resolveEdgeJoin(edge, schema) ?: continue
-                    emitToManyEagerBlock(body, eagerPropName, edgePropName, join, targetClass, targetName)
+                    emitToManyEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName)
                 }
             }
         }
@@ -1191,16 +1413,27 @@ internal class QueryGenerator(
         body: CodeBlock.Builder,
         eagerPropName: String,
         edgePropName: String,
+        edgeName: String,
         join: EdgeJoin,
+        sourceClass: ClassName,
         targetClass: ClassName,
         targetName: String,
     ) {
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
-        // Fetch all matching rows — limit/offset are applied per group below.
+        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
+        // Run target interceptors with EAGER_LOAD. The IN
+        // predicate that ties target rows back to the source ids
+        // goes in via extraStructural so it's tagged STRUCTURAL,
+        // not CALLER. Fetch all matching rows — limit/offset are
+        // applied per group below.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, sourceIds), subQuery.orderFields, null, null)",
-            targetClass, PREDICATE, join.targetColumn, OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, sourceIds)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, join.targetColumn, OP,
+        )
+        body.addStatement(
+            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            targetClass,
         )
         body.addStatement(
             "val grouped = targetRows.groupBy { it[%S] }",
@@ -1232,15 +1465,22 @@ internal class QueryGenerator(
         body: CodeBlock.Builder,
         eagerPropName: String,
         edgePropName: String,
+        edgeName: String,
         join: EdgeJoin,
+        sourceClass: ClassName,
         targetClass: ClassName,
         targetName: String,
     ) {
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
+        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, sourceIds), subQuery.orderFields, null, null)",
-            targetClass, PREDICATE, join.targetColumn, OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, sourceIds)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, join.targetColumn, OP,
+        )
+        body.addStatement(
+            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            targetClass,
         )
         body.addStatement(
             "val grouped = targetRows.groupBy { it[%S] }",
@@ -1269,7 +1509,9 @@ internal class QueryGenerator(
         body: CodeBlock.Builder,
         eagerPropName: String,
         edgePropName: String,
+        edgeName: String,
         join: EdgeJoin,
+        sourceClass: ClassName,
         targetClass: ClassName,
         targetName: String,
         schema: EntSchema,
@@ -1283,10 +1525,15 @@ internal class QueryGenerator(
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
         body.beginControlFlow("if (fkValues.isNotEmpty())")
+        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         // Fetch all matching targets — limit/offset is meaningless for to-one.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, fkValues), subQuery.orderFields, null, null)",
-            targetClass, PREDICATE, join.targetColumn, OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, fkValues)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, join.targetColumn, OP,
+        )
+        body.addStatement(
+            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            targetClass,
         )
         body.addStatement(
             "var loaded = targetRows.map { %T.fromRow(it) }",
@@ -1315,13 +1562,16 @@ internal class QueryGenerator(
         body: CodeBlock.Builder,
         eagerPropName: String,
         edgePropName: String,
+        edgeName: String,
         join: EdgeJoin,
+        sourceClass: ClassName,
         targetClass: ClassName,
         targetName: String,
     ) {
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
-        // Query junction table
+        // Query junction table (no interceptors — the junction
+        // is internal storage, not an entity with interceptors).
         body.addStatement(
             "val junctionRows = driver.query(%S, listOf(%T.Leaf(%S, %T.IN, sourceIds)), emptyList(), null, null)",
             join.junctionTable, PREDICATE, join.junctionSourceColumn, OP,
@@ -1331,10 +1581,15 @@ internal class QueryGenerator(
             "val targetIds = junctionRows.map { it[%S] }.distinct()",
             join.junctionTargetColumn,
         )
+        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         // Fetch all matching targets — limit/offset are applied per group below.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subQuery.predicates + %T.Leaf(%S, %T.IN, targetIds), subQuery.orderFields, null, null)",
-            targetClass, PREDICATE, "id", OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, targetIds)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, "id", OP,
+        )
+        body.addStatement(
+            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            targetClass,
         )
         // Build a target → sources membership lookup from the junction
         // rows. Then iterate `targetRows` in its (already
@@ -1402,6 +1657,29 @@ internal class QueryGenerator(
     }
 
     /**
+     * Set the eager subquery's traversal context (sourceEntity /
+     * edgeName / path) so its [runReadInterceptors] call exposes
+     * the right [QueryContext] for [ReadOperation.EAGER_LOAD]. Must
+     * be called inside the `subQuery ->` lambda — uses `subQuery`
+     * as the receiver. `entities.map { it.id }` and similar setup
+     * happens before this call; this just patches in the context.
+     */
+    private fun emitEagerSubquerySetup(
+        body: CodeBlock.Builder,
+        edgeName: String,
+        sourceClass: ClassName,
+        targetClass: ClassName,
+    ) {
+        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        body.addStatement("subQuery.traversalSourceEntity = %T::class", sourceClass)
+        body.addStatement("subQuery.traversalEdgeName = %S", edgeName)
+        body.addStatement(
+            "subQuery.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
+            edgeStepClass, sourceClass, edgeName, targetClass,
+        )
+    }
+
+    /**
      * Emit a privacy check block that applies LOAD privacy to eagerly
      * loaded target entities. [loadedVar] is the name of the mutable
      * local holding the loaded entities (or grouped map). When [grouped]
@@ -1458,21 +1736,44 @@ internal class QueryGenerator(
         source: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec? {
+        val sourceName = schemaNames[source] ?: return null
         val targetName = schemaNames[edge.target] ?: return null
+        val sourceEntityClass = ClassName(packageName, sourceName)
+        val targetEntityClass = ClassName(packageName, targetName)
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
         val sourceTable = source.tableName
+        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
-            .addStatement("val parent = combinedPredicate()")
-            .addStatement("val target = %T(driver, client)", targetQueryClass)
+            // Fire SOURCE interceptors with EDGE_TRAVERSAL before
+            // materializing the bridging predicate. The post-
+            // interceptor predicates fold into the HasM2MEdgeFrom's
+            // sourceFilter so source-side tenant-scope / soft-delete
+            // narrowing applies to the bridging EXISTS subquery.
             .addStatement(
-                "target.where(%T.HasM2MEdgeFrom(%S, %S, parent))",
+                "val sourceSpec = runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement(
+                "val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
+                predicateClass,
+            )
+            .addStatement(
+                "val structural = %T.HasM2MEdgeFrom(%S, %S, parent)",
                 predicateClass,
                 sourceTable,
                 edge.name,
             )
+            .addStatement("val target = %T(driver, client)", targetQueryClass)
+            .addStatement("target.traversalSourceEntity = %T::class", sourceEntityClass)
+            .addStatement("target.traversalEdgeName = %S", edge.name)
+            .addStatement(
+                "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
+                edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
+            )
+            .addStatement("target.traversalStructural = structural")
             .addStatement("return target")
             .build()
     }
@@ -1496,28 +1797,46 @@ internal class QueryGenerator(
         source: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec? {
+        val sourceName = schemaNames[source] ?: return null
         val targetName = schemaNames[edge.target] ?: return null
         val inverse = findInverseEdge(edge, source) ?: return null
+        val sourceEntityClass = ClassName(packageName, sourceName)
+        val targetEntityClass = ClassName(packageName, targetName)
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
+        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
-            .addStatement("val parent = combinedPredicate()")
+            // Fire SOURCE interceptors with EDGE_TRAVERSAL before
+            // materializing the bridging predicate. The post-
+            // interceptor predicates fold into the HasEdgeWith
+            // inner so source-side narrowing applies to the
+            // EXISTS subquery used to bridge to the target.
+            .addStatement(
+                "val sourceSpec = runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement(
+                "val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
+                predicateClass,
+            )
+            .addStatement(
+                "val structural: %T = if (parent != null) %T.HasEdgeWith(%S, parent) else %T.HasEdge(%S)",
+                predicateClass,
+                predicateClass,
+                inverse.name,
+                predicateClass,
+                inverse.name,
+            )
             .addStatement("val target = %T(driver, client)", targetQueryClass)
-            .beginControlFlow("if (parent != null)")
+            .addStatement("target.traversalSourceEntity = %T::class", sourceEntityClass)
+            .addStatement("target.traversalEdgeName = %S", edge.name)
             .addStatement(
-                "target.where(%T.HasEdgeWith(%S, parent))",
-                predicateClass,
-                inverse.name,
+                "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
+                edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
-            .nextControlFlow("else")
-            .addStatement(
-                "target.where(%T.HasEdge(%S))",
-                predicateClass,
-                inverse.name,
-            )
-            .endControlFlow()
+            .addStatement("target.traversalStructural = structural")
             .addStatement("return target")
             .build()
     }
