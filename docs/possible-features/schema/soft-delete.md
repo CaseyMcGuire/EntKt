@@ -137,6 +137,23 @@ follow-up if the workaround proves common.
 
 ## Generated Delete API
 
+> **Implementation status — `DELETE_CANDIDATES`.** Both the
+> `ReadOperation.DELETE_CANDIDATES` enum value and the routing
+> of `deleteMany` / `hardDeleteMany` candidate fetches through
+> `runReadInterceptors` are **spec-only** today. The shipped
+> runtime `ReadOperation` enum runs through `EAGER_LOAD` and
+> stops; generated `deleteMany(...)` still queries the driver
+> directly with `driver.query(TABLE, predicates.toList(),
+> emptyList(), null, null)`, no interceptor path. Both pieces
+> ship together with the rest of this soft-delete RFC's
+> implementation per the parallel callout in
+> [Read-Path Interceptors](../query/read-path-interceptors.md).
+> Every `DELETE_CANDIDATES` reference in the subsections below
+> (including `hardDeleteMany` and the "Test Requirements" list)
+> is spec text describing the target state, not shipped
+> behavior. This whole RFC is "not implemented" per the Status
+> line at the top of the file.
+
 For soft-deletable entities, the existing delete terminals
 (`deleteOrThrow(entity)`, `deleteOrError(entity)`,
 `deleteByIdOrError(id)`, `deleteMany(vararg predicates)`) turn
@@ -239,18 +256,6 @@ written against the result-variants contract works unchanged
 when an entity opts into the mixin.
 
 ### `deleteMany`
-
-> **Implementation status — `DELETE_CANDIDATES`.** Both the
-> `ReadOperation.DELETE_CANDIDATES` enum value and the
-> `deleteMany` candidate-fetch interceptor-chain hookup are
-> spec-only today. The shipped runtime `ReadOperation` enum runs
-> through `EAGER_LOAD` and stops; generated `deleteMany(...)`
-> still queries the driver directly without `runReadInterceptors`.
-> Both land together with this soft-delete RFC's implementation
-> per the parallel spec-only callout in
-> [Read-Path Interceptors](../query/read-path-interceptors.md#dependency-on-typed-query-scopes).
-> Treat every `DELETE_CANDIDATES` reference in this section as
-> spec-only until that work lands.
 
 `deleteMany(vararg predicates)` builds its candidate set by
 running a query for matching rows, then per-entity-deletes each
@@ -355,25 +360,28 @@ between variants is **which read step the bypass attaches to**:
 - **`hardDeleteByIdOrError(id)`** — performs an internal `BY_ID`
   load to populate the entity for the DELETE pipeline. That load
   routes through interceptors with `context.operation == BY_ID`,
-  with `bypassSoftDeleteFilter` set so soft-deleted rows are
-  reachable. Every other interceptor (tenant scoping, etc.) still
-  fires; cross-tenant rows return `Ok(false)` exactly like a tenant
-  read of the same id would have returned not-found.
+  with the internal `bypassSoftDeleteFilter` capability set on the
+  query-spec plumbing so soft-deleted rows are reachable. Every
+  other interceptor (tenant scoping, etc.) still fires; cross-tenant
+  rows return `Ok(false)` exactly like a tenant read of the same id
+  would have returned not-found.
 - **`hardDeleteMany(vararg predicates)`** — performs the candidate
   fetch routed through interceptors with
-  `context.operation == DELETE_CANDIDATES`, again with
-  `bypassSoftDeleteFilter` set. Predicate-shaping interceptors fire;
-  limit operations are silent no-ops per the
+  `context.operation == DELETE_CANDIDATES`, again with the internal
+  `bypassSoftDeleteFilter` capability set on the query-spec
+  plumbing. Predicate-shaping interceptors fire; limit operations
+  are silent no-ops per the
   [Read-Path Interceptors](../query/read-path-interceptors.md)
   limit-by-read-shape rules (a `MaxLimitInterceptor` cannot clamp a
   bulk hard-delete to N rows, though its `reject(...)` path still
   fires).
 
 Mechanically, both `hardDeleteByIdOrError` and `hardDeleteMany` set
-a framework-internal `bypassSoftDeleteFilter` capability on the
-read step's `QueryContext` that **only** the generated
-`soft-delete` interceptor honors — exactly parallel to the
-`internalSystemQuery` opt-in model in
+the `bypassSoftDeleteFilter` internal capability
+(package-private query-spec plumbing — **not** part of the public
+`QueryContext` surface, so application code cannot read or set it)
+that **only** the generated `soft-delete` interceptor honors —
+exactly parallel to the `internalSystemQuery` opt-in model in
 [Read-Path Interceptors](../query/read-path-interceptors.md). No
 application interceptor can opt into the bypass. The entity-form
 variants don't issue an internal read, so they don't need the
@@ -580,7 +588,8 @@ Before implementation, add tests for:
   unique indexes as partial
 - restore that would violate a partial-unique constraint
   surfaces as `Err(ConstraintViolation)` / throws
-  `EntConstraintViolationException`
+  `EntConstraintViolationException` (**Postgres-only** — see
+  "Driver coverage" below)
 - `restoreOrThrow(entity)` on an already-live row is a no-op:
   UPDATE privacy / update validation / `beforeUpdate` /
   `afterUpdate` do NOT fire (short-circuited before pipeline)
@@ -593,6 +602,28 @@ Before implementation, add tests for:
 - `hardDeleteMany(vararg predicates)` does NOT filter
   `deleted_at` — both live and soft-deleted matches are
   physically removed
+- `hardDeleteByIdOrError(foreignTenantId)` returns `Ok(false)`
+  — the tenant interceptor still applies on the internal `BY_ID`
+  load; the `bypassSoftDeleteFilter` capability suppresses only
+  the framework soft-delete filter, not tenant scoping
+- `hardDeleteMany` honors application-defined `addPredicate`
+  interceptors on the `DELETE_CANDIDATES` candidate fetch (only
+  soft-delete filtering is suppressed)
+- `hardDeleteMany` interceptor `reject(...)` surfaces as
+  `Err(QueryRejected)` / throws `EntQueryRejectedException`
+  (covers both application-defined `QueryInterceptor<E>.reject`
+  and `MaxLimitInterceptor.reject` since limit clamping is a
+  silent no-op on `DELETE_CANDIDATES` but `reject(...)` still
+  fires)
+- `deleteOrThrow(softDeletedPost)` / `deleteOrError(softDeletedPost)`
+  on an already-soft-deleted row is a no-op: DELETE privacy /
+  delete validation / `beforeDelete` / `afterDelete` do NOT fire
+  (short-circuited before pipeline) — parallel to the
+  `restoreOrThrow(liveRow)` no-op contract
+- `deleteByIdOrError(softDeletedId)` returns `Ok(false)` (or the
+  variant's documented absence shape) with no pipeline run —
+  same short-circuit as `restoreByIdOrError` on an already-live
+  row
 - eager-load (`with{Edge}`) on a soft-deletable target
   excludes deleted target rows
 - non-M2M edge predicates (`SomeEdge.has { }` /
@@ -602,3 +633,13 @@ Before implementation, add tests for:
   behavior, with a TODO comment pointing at the Read-Path
   Interceptors RFC's M2M-walking follow-up; flip when that
   ships
+
+**Driver coverage.** Partial-unique-index behavior is not enforced
+by `InMemoryDriver` (see `runtime/.../InMemoryDriver.kt` —
+`IndexMetadata.where` is a Postgres-side SQL string the in-memory
+driver does not evaluate). Tests that depend on the partial
+`deleted_at IS NULL` index — specifically the restore-conflict
+test bullet above — run against the Postgres driver only. The
+in-memory suite covers the conflict-free path (live-uniqueness
+holds when no soft-deleted row contends) but skips the conflict
+case. All other test bullets above run on both drivers.
