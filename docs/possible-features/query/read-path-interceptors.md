@@ -573,6 +573,7 @@ enum class ReadOperation {
     RAW_COUNT, VISIBLE_COUNT,
     RAW_EXISTS, VISIBLE_EXISTS,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
+    DELETE_CANDIDATES,
 }
 
 /**
@@ -654,6 +655,14 @@ call:
   interceptors. See "Multi-step traversal chains" below for which
   interceptors fire on each step of a chained traversal.
 - edge predicates: `has`, `hasWhere` on the target entity
+- delete candidate fetches: the per-row read that
+  `deleteMany(...)` performs before issuing per-entity DELETEs
+  routes through the full interceptor chain with
+  `context.operation = DELETE_CANDIDATES`. This makes tenant
+  scoping, soft-delete, and other predicate-shaping interceptors
+  apply uniformly to bulk deletes (see
+  [Soft Delete](../schema/soft-delete.md) for the soft-delete
+  contract on `deleteMany`).
 
 **Edge-predicate existence semantics.** `has` / `hasWhere` compile
 to `EXISTS` subqueries against the target table. Target-entity
@@ -757,6 +766,12 @@ based on the operation's `ReadOperation`:
     eager batch, and the answer depends on the implementation strategy).
   - `EDGE_PREDICATE` — `has` / `hasWhere` compile to `EXISTS` subqueries
     where a row limit has no meaning.
+  - `DELETE_CANDIDATES` — `deleteMany(...)` candidate fetches. Applying
+    a row limit would silently truncate the bulk delete
+    (`MaxLimitInterceptor(maxLimit = 500)` should not turn
+    `deleteMany(...)` into "delete the first 500 matching rows"
+    without the caller knowing). Predicate / annotation / reject still
+    apply.
   - `EDGE_TRAVERSAL` — **V1 deferral.** Source-step interceptor
     limit operations don't have a row-limit slot on the bridging
     `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge` predicate, which
@@ -924,6 +939,7 @@ framework applies a closed mapping:
 |---|---|
 | `BY_ID` | `LOAD` |
 | `FIRST`, `ALL`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`, `EAGER_LOAD`, `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS` | `QUERY` |
+| `DELETE_CANDIDATES` | `DELETE` |
 
 The runtime `EntOperation` enum
 ([`EntError.kt`](../../../runtime/src/main/kotlin/entkt/runtime/EntError.kt))
@@ -1433,8 +1449,15 @@ Before implementation, add tests for:
 - all three limit operations (`setDefaultLimitIfAbsent`, `requireLimitAtMost`,
   `rejectIfLimitGreaterThan`) are silent no-ops for `BY_ID`, `FIRST`,
   `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`, `EAGER_LOAD`,
-  and `EDGE_PREDICATE` operations — regardless of whether a prior limit
-  is in place — per the Limit-semantics-by-read-shape rules
+  `EDGE_PREDICATE`, and `DELETE_CANDIDATES` operations — regardless of
+  whether a prior limit is in place — per the Limit-semantics-by-read-shape
+  rules
+- `deleteMany(...)` candidate fetches invoke interceptors with
+  `context.operation == DELETE_CANDIDATES`; predicate-shaping
+  interceptors (tenant scoping, soft-delete, etc.) apply uniformly
+  to bulk deletes, and rejection surfaces as
+  `EntQueryRejectedException` / `Err(EntError.QueryRejected)` with
+  `operation = EntOperation.DELETE`
 - limit operations apply normally for `ALL` and `EDGE_TRAVERSAL`
   operations: `setDefaultLimitIfAbsent` sets a limit when absent,
   `requireLimitAtMost` clamps down, `rejectIfLimitGreaterThan` rejects

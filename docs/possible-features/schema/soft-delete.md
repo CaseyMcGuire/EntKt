@@ -231,23 +231,42 @@ running a query for matching rows, then per-entity-deletes each
 one. For soft-deletable entities V1 picks the following
 contract:
 
-1. **Candidate query filters `deleted_at IS NULL` by default.**
-   `client.posts.deleteMany(Post.tenantId eq tenantId)` skips
-   already-soft-deleted rows at the candidate-fetch step, so
-   the per-entity DELETE privacy / validation / hooks pipeline
-   does NOT fire on rows that are already in the deleted state.
-   Running delete hooks on rows that wouldn't have anything to
-   do is wasteful (privacy especially — DELETE privacy rules
-   typically inspect the entity's current state, which on a
-   soft-deleted row is "already deleted"). This matches the
-   default-filter semantics every other read terminal applies.
+1. **Candidate query runs through the full read-interceptor chain.**
+   `client.posts.deleteMany(Post.tenantId eq tenantId)` fetches
+   the candidate set by calling the same interceptor `apply(...)`
+   pipeline every other read uses, with
+   `QueryContext.operation = ReadOperation.DELETE_CANDIDATES`
+   (a new `ReadOperation` value introduced for this case in
+   [Read-Path Interceptors](../query/read-path-interceptors.md)).
+   This means the `framework:soft-delete` interceptor adds
+   `deleted_at IS NULL` to the candidate fetch by default, **and**
+   any application/global predicate-shaping interceptors (tenant
+   scoping, etc.) also apply uniformly — so `deleteMany` cannot
+   accidentally enumerate or delete rows that the tenant-scoped
+   read path would have hidden.
+
+   Soft-deleted rows are filtered out at the candidate-fetch step,
+   so the per-entity DELETE privacy / validation / hooks pipeline
+   does NOT fire on rows already in the deleted state. Running
+   delete hooks on rows that wouldn't have anything to do is
+   wasteful (privacy especially — DELETE privacy rules typically
+   inspect the entity's current state, which on a soft-deleted row
+   is "already deleted").
+
+   Limit operations on `DELETE_CANDIDATES` are silent no-ops to
+   avoid silently truncating a bulk delete (a
+   `MaxLimitInterceptor(maxLimit = 500)` should not turn
+   `deleteMany(...)` into "delete the first 500 matching rows"
+   without the caller knowing). `addPredicate`, `addAnnotation`,
+   and `reject` apply normally; an interceptor that wants to gate
+   broad deletes uses `addPredicate` to narrow scope or
+   `reject(...)` to refuse the candidate fetch.
 
 2. **No `deleteMany` flag-override in V1.** Callers who
    need to act on already-soft-deleted rows must either load
    them via a separate query (`client.posts.query {
-   withDeleted(); onlyDeleted() }.allOrThrow()`) and feed
-   the resulting ids into `hardDelete*`, or wait for a
-   future block-form API. A `deleteMany { withDeleted(); ... }`
+   onlyDeleted() }.allOrThrow()`) and feed the resulting ids
+   into `hardDelete*`, or wait for a future block-form API. A `deleteMany { withDeleted(); ... }`
    variant is plausible if use cases emerge (re-deleting
    already-soft-deleted rows for audit-trail reasons,
    mass-purging via hard-delete-after-soft, etc.) but is not
@@ -381,6 +400,33 @@ unique index (single-column `.unique()` constraints AND composite
 `.index(... , unique = true)` constraints) to add
 `where = "deleted_at IS NULL"`. Non-unique indexes are
 unaffected.
+
+**Single-column `.unique()` metadata rewrite.** `ColumnMetadata.unique`
+is a bare `Boolean` with no `where` slot, and `PostgresDriver`'s
+`createIndexesSql` emits an unconditional `CREATE UNIQUE INDEX` for any
+column with `unique = true`. To make the partial-unique guarantee
+representable, schema finalization for a soft-deletable entity must:
+
+1. **Clear `ColumnMetadata.unique`** for every column that declared a
+   bare `.unique()`. The column-level boolean no longer participates in
+   DDL emission for soft-deletable entities.
+2. **Synthesize an `IndexMetadata`** equivalent to the cleared
+   constraint, with the partial-unique predicate baked in:
+   ```kotlin
+   IndexMetadata(
+       name = "idx_${table}_${columnName}_unique",
+       columns = listOf(columnName),
+       unique = true,
+       where = "deleted_at IS NULL",
+   )
+   ```
+
+This routes all live-row uniqueness through the index path (which has a
+`where` field), so no DDL surface emits an unconditional global unique
+constraint for a soft-deletable entity. Composite
+`.index(..., unique = true)` already goes through `IndexMetadata`, so
+only the `where` field needs to be set there — no metadata rewrite is
+needed for the composite case beyond predicate injection.
 
 Migrating an existing table from hard-delete to soft-delete
 produces a migration that drops + recreates each unique index

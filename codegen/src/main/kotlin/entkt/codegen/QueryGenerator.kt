@@ -1132,23 +1132,32 @@ internal class QueryGenerator(
         terminalName: String,
         operationName: String,
     ): FunSpec {
-        // The runtime uses `minOf(1, spec.limit ?: 1)` so a caller
-        // who pre-set `limit(0)` actually fetches 0 rows. Mirror
-        // that in the plan so explain matches the driver call.
+        // Runtime: `driver.query(TABLE, spec.predicates,
+        // emptyList(), minOf(1, spec.limit ?: 1), spec.offset)`.
+        // The orderBy is dropped (no point ordering for an
+        // existence probe) but the caller's offset is preserved
+        // (so `query { offset(5) }.rawExists()` skips the first
+        // 5 rows and asks "is there a 6th?"). Mirror exactly so
+        // the explain plan matches the driver call. Note the
+        // limit mirrors the runtime's `minOf(1, spec.limit ?: 1)`
+        // so a caller who pre-set `limit(0)` shows up as `limit
+        // = 0` in the plan.
         return FunSpec.builder(name)
             .addKdoc(
                 "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
                 "Interceptors run with operation = $operationName; limit operations are\n" +
-                "silent no-ops per the RFC. Plan limit mirrors the runtime's\n" +
-                "`minOf(1, spec.limit ?: 1)` — usually 1, but 0 when the caller passed\n" +
-                "`query { limit(0) }`. On interceptor rejection, returns a plan with\n" +
+                "silent no-ops per the RFC. Plan mirrors the runtime exactly:\n" +
+                "`orderBy = emptyList()` (existence probe doesn't order),\n" +
+                "`limit = minOf(1, spec.limit ?: 1)` (usually 1, 0 when the caller\n" +
+                "passed `query { limit(0) }`), and `offset = spec.offset` (caller's\n" +
+                "offset is preserved). On interceptor rejection, returns a plan with\n" +
                 "`rejected = true`."
             )
             .returns(queryPlan)
             .addCode(
                 explainBody(
                     operationName,
-                    CodeBlock.of("buildQueryPlan(spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null), false)"),
+                    CodeBlock.of("buildQueryPlan(spec.copy(orderBy = emptyList(), limit = minOf(1, spec.limit ?: 1)), false)"),
                 ),
             )
             .build()
@@ -1242,8 +1251,13 @@ internal class QueryGenerator(
         val body = CodeBlock.builder()
             .addStatement("val c = requireClient()")
             .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
-            .addStatement("buildQueryPlan(spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null), false)")
+            // No-privacy fast path mirrors rawExists shape:
+            // emptyList orderBy + caller offset preserved.
+            .addStatement("buildQueryPlan(spec.copy(orderBy = emptyList(), limit = minOf(1, spec.limit ?: 1)), false)")
             .nextControlFlow("else")
+            // Privacy path needs the order: the in-process filter
+            // iterates rows in storage order, so spec.orderBy
+            // matters. spec.offset is also preserved by the runtime.
             .addStatement("val cap = c.visibleOverfetchLimit")
             .addStatement("val scanLimit = minOf(spec.limit ?: cap, cap)")
             .addStatement("buildQueryPlan(spec.copy(limit = scanLimit), false)")
@@ -1252,12 +1266,18 @@ internal class QueryGenerator(
         return FunSpec.builder(name)
             .addKdoc(
                 "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
-                "Interceptors run with operation = VISIBLE_EXISTS. On the no-privacy fast path\n" +
-                "the plan uses `minOf(1, spec.limit ?: 1)` (mirroring the runtime, so\n" +
-                "`query { limit(0) }.visibleExists()` shows `limit = 0`); on the privacy\n" +
-                "path the plan uses `minOf(spec.limit ?: cap, cap)` with\n" +
-                "`EntClientConfig.visibleOverfetchLimit`. On interceptor rejection,\n" +
-                "returns a plan with `rejected = true`."
+                "Interceptors run with operation = VISIBLE_EXISTS. The plan mirrors the\n" +
+                "runtime driver call exactly:\n" +
+                " - **No-privacy fast path**: `orderBy = emptyList()`,\n" +
+                "   `limit = minOf(1, spec.limit ?: 1)` (so\n" +
+                "   `query { limit(0) }.visibleExists()` shows `limit = 0`), and\n" +
+                "   `offset = spec.offset` (caller offset preserved).\n" +
+                " - **Privacy path**: `orderBy = spec.orderBy` (the in-process filter\n" +
+                "   iterates rows in storage order, so order matters), `limit =\n" +
+                "   minOf(spec.limit ?: cap, cap)` with\n" +
+                "   `EntClientConfig.visibleOverfetchLimit`, and `offset = spec.offset`.\n" +
+                "\n" +
+                "On interceptor rejection, returns a plan with `rejected = true`."
             )
             .returns(queryPlan)
             .addCode(explainBody("VISIBLE_EXISTS", body))

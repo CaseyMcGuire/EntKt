@@ -271,6 +271,58 @@ class ReadInterceptorRound3FixesIntegrationTest {
         )
     }
 
+    @Test
+    fun `explainRawExists drops orderBy and preserves offset, matching runtime`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        // Runtime rawExists calls driver.query with orderBy =
+        // emptyList() and offset = spec.offset. Explain must
+        // mirror exactly. Pre-fix: explain kept spec.orderBy and
+        // forced offset = null.
+        val plan = client.posts.query {
+            orderBy(entkt.query.OrderField("title", entkt.query.OrderDirection.ASC))
+            offset(5)
+        }.explainRawExists()
+        assertNotNull(plan.root)
+        val desc = plan.root.toString()
+        // orderBy is dropped — should NOT mention "title" in the
+        // explain output (the only place it could appear is in
+        // ORDER BY since there's no predicate on title).
+        assertTrue(
+            !desc.contains("ORDER BY") && !desc.contains("orderBy=[OrderField"),
+            "explainRawExists should drop orderBy to match runtime; was: $desc",
+        )
+        // offset is preserved.
+        assertTrue(
+            desc.contains("OFFSET 5") || desc.contains("offset=5") || desc.contains("offset: 5"),
+            "explainRawExists should preserve caller offset; was: $desc",
+        )
+    }
+
+    @Test
+    fun `explainVisibleExists no-privacy fast path drops orderBy and preserves offset`() {
+        val driver = freshDriver()
+        // Post has no LOAD privacy → visibleExists goes through
+        // the no-privacy fast path, which is identical to rawExists.
+        // Explain on this path must drop orderBy + preserve offset
+        // (pre-fix: explain kept spec.orderBy and forced offset = null).
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val plan = client.posts.query {
+            orderBy(entkt.query.OrderField("title", entkt.query.OrderDirection.ASC))
+            offset(3)
+        }.explainVisibleExists()
+        assertNotNull(plan.root)
+        val desc = plan.root.toString()
+        assertTrue(
+            !desc.contains("ORDER BY") && !desc.contains("orderBy=[OrderField"),
+            "explainVisibleExists no-privacy path should drop orderBy; was: $desc",
+        )
+        assertTrue(
+            desc.contains("OFFSET 3") || desc.contains("offset=3") || desc.contains("offset: 3"),
+            "explainVisibleExists no-privacy path should preserve caller offset; was: $desc",
+        )
+    }
+
     // ---------- requireNotRejected preserves rejection ----------
 
     @Test
