@@ -2,7 +2,106 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+**Implemented.** Per-entity and global interceptors fire on every documented
+read terminal, edge traversal, eager-load subquery, and `has` / `hasWhere`
+edge predicate. Rejection mapping (`EntQueryRejectedException` for non-result
+reads, `Err(EntError.QueryRejected)` for `*OrError`) is in place. Explain
+methods reflect post-interceptor predicates / limits / offsets / annotations.
+
+### What shipped
+
+Runtime (`runtime/src/main/kotlin/entkt/runtime/`):
+
+- `QueryInterceptor<E>` / `GlobalQueryInterceptor` (both `fun interface`)
+- `InterceptScope<E>` / `GlobalInterceptScope` with `addPredicate` (typed only),
+  `requireLimitAtMost`, `setDefaultLimitIfAbsent`, `rejectIfLimitGreaterThan`,
+  `addAnnotation`, `reject`
+- `QueryShape<E>` / `UntypedQueryShape` with three-bucket predicate
+  attribution (caller / structural / interceptor) and the
+  `callerLimit` snapshot. The shape's `init` block enforces the
+  identity `callerPredicateCount + structuralPredicateCount +
+  interceptorPredicateCount == predicates.size`.
+- `QueryContext` with `privacy`, `operation: ReadOperation`,
+  `rootEntity`, `currentEntity`, `sourceEntity`, `edgeName`,
+  `path: List<EdgeStep>`, `flags`, plus the derived
+  `isEagerSubquery`
+- `ReadOperation` enum: `BY_ID`, `FIRST`, `ALL`, `RAW_COUNT`,
+  `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`, `EDGE_TRAVERSAL`,
+  `EDGE_PREDICATE`, `EAGER_LOAD`
+- `QueryFlag` enum: `withDeleted`, `onlyDeleted` (reserved for the
+  future soft-delete RFC; framework treats them as opaque
+  passthroughs in V1)
+- `QuerySpecBuilder` with internal predicate tagging (caller /
+  structural / interceptor) and `FrozenQuerySpec` the driver
+  receives
+- `InterceptorEngine.apply(...)` runs per-entity then global
+  interceptors and returns the frozen spec; throws
+  `AbortQueryRejected` on `scope.reject(...)`
+- `EntInterceptorsConfig` holder with `addEntity` / `addGlobal` /
+  `entityInterceptorsFor` / `globals` and the mandatory
+  unique-within-scope name rule; `FRAMEWORK_INTERCEPTOR_PREFIX =
+  "framework:"` is reserved (application registrations starting
+  with this prefix throw at construction time)
+- `EntError.QueryRejected` + `EntQueryRejectedException` (mapped
+  by `EntError.toException()`)
+
+Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
+
+- `EntClientConfig` gains an `interceptors { ... }` block; the
+  generated `EntClientInterceptors` exposes one per-entity method
+  per repo (`posts(interceptor, name = ...)`) plus `global(...)`
+- `EntClient` carries the `entityInterceptors:
+  EntInterceptorsConfig` and propagates it through
+  `withTransaction` / `withTransactionOrError` /
+  `withPrivacyContext` / the internal fixed-context clone
+- Every generated `*Query` class has an internal
+  `runReadInterceptors(operation, entOperation, extraStructural)`
+  helper that seeds the `QuerySpecBuilder`, runs the chain, walks
+  the resulting predicates for any edge predicates, catches
+  `AbortQueryRejected`, and returns the frozen spec
+- Every documented read terminal calls into the helper:
+  `allOrThrow`/`allOrError`/`visibleAll`/`visibleAllOrError`,
+  `firstOrNull`/`firstOrThrow`/`firstOrError`/`firstVisibleOrNull`,
+  `rawCount`/`rawCountOrError`/`visibleCount`/`visibleCountOrError`,
+  `rawExists`/`rawExistsOrError`/`visibleExists`/`visibleExistsOrError`,
+  `byIdOrNull`/`byIdOrThrow`/`byIdOrError`/`visibleByIdOrNull`, plus
+  the explain family (`explain`/`explainFirst`/`explainExists`/
+  `explainVisibleCount`/`explainRawCount`)
+- Generated edge-traversal `queryX()` methods fire source
+  interceptors with `EDGE_TRAVERSAL` before materializing the
+  bridging `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge`
+  predicate; the target query carries `traversalSourceEntity` /
+  `traversalEdgeName` / `traversalPath` / `traversalStructural`
+  fields so its terminal sees the correct `QueryContext`
+- Eager-load (`.with{Edge}` subqueries) fires target interceptors
+  with `EAGER_LOAD` (`context.isEagerSubquery == true`); the IN
+  predicate that ties target rows to source ids is tagged
+  STRUCTURAL
+- A per-source-entity walker recursively rewrites
+  `Predicate.HasEdgeWith` / `Predicate.HasEdge` sub-nodes by
+  firing the target entity's interceptors with `EDGE_PREDICATE`;
+  HasEdge with no inner upgrades to HasEdgeWith when target
+  interceptors contribute predicates
+
+### Known V1 gaps
+
+- `Predicate.HasM2MEdgeFrom` — the M2M-via-`has { ... }` /
+  `hasWhere { ... }` predicate path is NOT walked by the edge-
+  predicate processor today. The dispatcher keyed by
+  `sourceTable: String` (rather than this query's own outgoing
+  edge name) needs a separate global registry to look up the
+  source entity's interceptors. Workaround: use the M2M
+  traversal form (`queryX()`), which fires source interceptors
+  via the EDGE_TRAVERSAL path. Tracking as a follow-up.
+- The soft-delete framework interceptor itself is not implemented
+  — that requires the separate
+  [soft-delete schema RFC](../schema/soft-delete.md) (mixin
+  declaration, generated `deleted_at` column, delete-as-update
+  path). The interceptor framework hooks (`framework:` prefix,
+  `withDeleted` / `onlyDeleted` flags) are in place to host it
+  when that RFC lands.
+
+### Original RFC follows
 
 ## Summary
 

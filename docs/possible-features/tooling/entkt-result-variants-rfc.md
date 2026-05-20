@@ -663,24 +663,21 @@ returns `false`, matching the optimistic-read shape.
 `rawExists` skip LOAD privacy entirely. Driver failures propagate
 as raw exceptions on these throwing APIs in V1.
 
-**`*OrError` variants are deferred to the Read-Path Interceptors
-RFC.** The structured-result counterparts —
-`rawCountOrError(): EntResult<Long>` /
+**`*OrError` variants shipped with the Read-Path Interceptors
+implementation.** `rawCountOrError(): EntResult<Long>` /
 `visibleCountOrError(): EntResult<Long>` /
 `rawExistsOrError(): EntResult<Boolean>` /
-`visibleExistsOrError(): EntResult<Boolean>` — are designed in the
-[Read-Path Interceptors RFC](../query/read-path-interceptors.md)
-because they only become useful once interceptor rejection
-(`Err(QueryRejected)`) is a real failure surface on aggregates.
-Without interceptors the only failure modes are driver-level
-(connection lost, timeout, etc.), so an `Err(DriverFailure)` /
-`Err(ConstraintViolation)` wrap would be the entire content of
-the variant — better to wait until interceptors land and the
-aggregate `*OrError` shape carries `QueryRejected` too. The
-interceptors RFC owns the full method/outcome tables for these
-variants. The runtime `EntError.QueryRejected` /
-`EntQueryRejectedException` types are likewise gated on
-interceptors implementation.
+`visibleExistsOrError(): EntResult<Boolean>` are generated on every
+`*Query` class. The originally-deferred design landed in the
+[Read-Path Interceptors RFC](../query/read-path-interceptors.md);
+those variants carry `Err(QueryRejected)` for interceptor
+rejection plus the standard `Err(DriverFailure)` /
+`Err(ConstraintViolation)` driver-classifier wraps.
+`visibleCountOrError` also surfaces eager-edge LOAD denial as
+`Err(PrivacyDenied)`; the raw variants intentionally bypass LOAD
+privacy and have no PrivacyDenied surface. The runtime
+`EntError.QueryRejected` / `EntQueryRejectedException` types are
+also in place.
 
 ## Mutation API Semantics
 

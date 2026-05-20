@@ -29,7 +29,7 @@ These pages are design notes, not committed API contracts.
 
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
 - [Query Observability Diagnostics](query/query-observability-diagnostics.md)
-- [Read-Path Interceptors](query/read-path-interceptors.md)
+- [Read-Path Interceptors](query/read-path-interceptors.md) — **implemented** (user-facing docs in [Queries → Read-Path Interceptors](../04-queries.md#read-path-interceptors))
 - [Cursor Pagination](query/cursor-pagination.md)
 - [Projection / Select API](query/projection-select-api.md)
 - [Phantom-Typed Query Scopes](query/phantom-typed-query-scopes.md)
