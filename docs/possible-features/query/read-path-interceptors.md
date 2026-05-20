@@ -1449,17 +1449,12 @@ Before implementation, add tests for:
 - all three limit operations (`setDefaultLimitIfAbsent`, `requireLimitAtMost`,
   `rejectIfLimitGreaterThan`) are silent no-ops for `BY_ID`, `FIRST`,
   `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`, `EAGER_LOAD`,
-  `EDGE_PREDICATE`, and `DELETE_CANDIDATES` operations — regardless of
+  `EDGE_PREDICATE`, and `EDGE_TRAVERSAL` operations — regardless of
   whether a prior limit is in place — per the Limit-semantics-by-read-shape
-  rules
-- `deleteMany(...)` candidate fetches invoke interceptors with
-  `context.operation == DELETE_CANDIDATES`; predicate-shaping
-  interceptors (tenant scoping, soft-delete, etc.) apply uniformly
-  to bulk deletes, and rejection surfaces as
-  `EntQueryRejectedException` / `Err(EntError.QueryRejected)` with
-  `operation = EntOperation.DELETE`
-- limit operations apply normally for `ALL` and `EDGE_TRAVERSAL`
-  operations: `setDefaultLimitIfAbsent` sets a limit when absent,
+  rules (`EDGE_TRAVERSAL` is V1-deferred until the source-with-limit
+  lowering lands; see the Limit-semantics section)
+- limit operations apply normally for `ALL` operations only in V1:
+  `setDefaultLimitIfAbsent` sets a limit when absent,
   `requireLimitAtMost` clamps down, `rejectIfLimitGreaterThan` rejects
   with `QueryRejected.code == "max_limit_exceeded"`
 - `addAnnotation` appears in explain / observability output but does not

@@ -266,6 +266,33 @@ class QueryGeneratorTest {
     }
 
     @Test
+    fun `exists explains drop orderBy and preserve caller offset (match runtime driver call)`() {
+        // Runtime rawExists / visibleExists no-privacy fast path
+        // calls driver.query(TABLE, spec.predicates, emptyList(),
+        // minOf(1, spec.limit ?: 1), spec.offset). The explain
+        // mirror must match exactly so the plan doesn't lie about
+        // what the terminal would actually send. Pre-fix the
+        // explain passed spec.orderBy and forced offset = null,
+        // which silently disagreed with `query { orderBy(...);
+        // offset(N) }.rawExists()`.
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // explainRawExists body should copy spec with orderBy =
+        // emptyList() + limit clamp; offset must NOT be reset.
+        assert(output.contains("spec.copy(orderBy = emptyList(), limit = minOf(1, spec.limit ?: 1))")) {
+            "explainRawExists / explainVisibleExists no-privacy path should pass spec.copy(orderBy = emptyList(), limit = ...) to buildQueryPlan without forcing offset = null\n$output"
+        }
+        // Negative guards: pre-fix shape ("offset = null") must
+        // NOT appear on the exists path.
+        assert(!output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null)")) {
+            "exists explains must NOT force offset = null (runtime preserves caller offset)\n$output"
+        }
+    }
+
+    @Test
     fun `explain includes eager edge subqueries`() {
         val car = Car()
         val user = User()

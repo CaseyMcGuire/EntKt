@@ -325,6 +325,59 @@ class ReadInterceptorRound3FixesIntegrationTest {
 
     // ---------- requireNotRejected preserves rejection ----------
 
+    // ---------- Edge-predicate target annotations bubble up ----------
+
+    @Test
+    fun `edge-predicate target interceptor annotations surface on outer QueryPlan`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                // Article EDGE_PREDICATE step adds annotations.
+                // Without this fix they vanish — only spec.predicates
+                // was reduced into the inner; spec.annotations was
+                // discarded.
+                articles(
+                    QueryInterceptor { scope, _ ->
+                        scope.addAnnotation("article-scoped", "true")
+                        scope.addAnnotation("audit", "via-has")
+                    },
+                    name = "article-edge-annotator",
+                )
+            }
+        }
+        val plan = client.users.query {
+            where(User.articles.has { where(Article.published eq true) })
+        }.explainAllOrThrow()
+        assertEquals("true", plan.annotations["article-scoped"])
+        assertEquals("via-has", plan.annotations["audit"])
+    }
+
+    @Test
+    fun `outer-step annotation wins when edge-predicate target uses the same key`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                articles(
+                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-article-edge") },
+                    name = "article-annotator",
+                )
+                users(
+                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-user-outer") },
+                    name = "user-annotator",
+                )
+            }
+        }
+        val plan = client.users.query {
+            where(User.articles.has { where(Article.published eq true) })
+        }.explainAllOrThrow()
+        // Outer step (User) wins on key conflicts — matches the
+        // traversal-source-vs-terminal direction (closer-to-caller
+        // wins).
+        assertEquals("from-user-outer", plan.annotations["step"])
+    }
+
     @Test
     fun `requireNotRejected throws with the original entity and operation, not synthetic values`() {
         val driver = freshDriver()

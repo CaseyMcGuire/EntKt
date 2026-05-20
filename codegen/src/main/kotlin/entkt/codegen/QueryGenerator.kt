@@ -1654,10 +1654,24 @@ internal class QueryGenerator(
                     // value) must still be walked through the
                     // edge-predicate processor.
                     .addStatement("val skipWalk: List<%T> = listOfNotNull(sourceResult?.bridge) + extraStructural", predicateClass)
-                    .addStatement(
-                        "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath) }",
+                    // Walker accumulator: each edge-predicate target
+                    // step's annotations bubble up into this map and
+                    // merge into the outer FrozenQuerySpec below.
+                    // Outer-step annotations (already on
+                    // `frozen.annotations`) win on key conflicts —
+                    // closer-to-caller wins, same direction as
+                    // traversal-source-vs-terminal merge.
+                    .addStatement("val edgeAnnotations: %T<%T, %T> = mutableMapOf()",
+                        ClassName("kotlin.collections", "MutableMap"),
+                        String::class.asClassName(),
+                        String::class.asClassName(),
                     )
-                    .addStatement("return frozen.copy(predicates = walked)")
+                    .addStatement(
+                        "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
+                    )
+                    .addStatement(
+                        "return frozen.copy(predicates = walked, annotations = edgeAnnotations + frozen.annotations)",
+                    )
                     .build()
             )
             .build()
@@ -1693,6 +1707,7 @@ internal class QueryGenerator(
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
         val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val mutableMap = ClassName("kotlin.collections", "MutableMap")
         val body = CodeBlock.builder()
         body.addStatement("val c = requireClient()")
         // Recursion guard: cap the edge-predicate walker at
@@ -1719,11 +1734,11 @@ internal class QueryGenerator(
         body.add("}\n")
         body.add("return when (predicate) {\n")
         body.add(
-            "  is %T.And -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath), runEdgePredicateInterceptors(predicate.right, parentPath))\n",
+            "  is %T.And -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
             predicateClass, predicateClass,
         )
         body.add(
-            "  is %T.Or -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath), runEdgePredicateInterceptors(predicate.right, parentPath))\n",
+            "  is %T.Or -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
             predicateClass, predicateClass,
         )
         body.add("  is %T.HasEdgeWith -> {\n", predicateClass)
@@ -1758,6 +1773,12 @@ internal class QueryGenerator(
                 "        val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
                 READ_OPERATION, ENT_OPERATION,
             )
+            // Bubble up target-step annotations into the outer
+            // accumulator so observability sees them on the outer
+            // QueryPlan. Source-of-truth merge rule (outer wins on
+            // collision) is applied at the outer's
+            // runReadInterceptors via `edgeAnnotations + frozen.annotations`.
+            body.add("        edgeAnnotations.putAll(spec.annotations)\n")
             body.add(
                 "        spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) } ?: predicate.inner\n",
                 predicateClass,
@@ -1799,6 +1820,10 @@ internal class QueryGenerator(
                 "        val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
                 READ_OPERATION, ENT_OPERATION,
             )
+            // Bubble up target-step annotations even when the
+            // walker upgrades HasEdge → HasEdgeWith (or keeps as
+            // HasEdge if interceptors added nothing).
+            body.add("        edgeAnnotations.putAll(spec.annotations)\n")
             body.add(
                 "        val combined = spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
                 predicateClass,
@@ -1821,6 +1846,13 @@ internal class QueryGenerator(
             .addParameter(
                 "parentPath",
                 List::class.asClassName().parameterizedBy(edgeStepClass),
+            )
+            .addParameter(
+                "edgeAnnotations",
+                mutableMap.parameterizedBy(
+                    String::class.asClassName(),
+                    String::class.asClassName(),
+                ),
             )
             .returns(predicateClass)
             .addCode(body.build())
