@@ -138,18 +138,34 @@ follow-up if the workaround proves common.
 ## Generated Delete API
 
 For soft-deletable entities, the existing delete terminals
-(`delete(entity)`, `deleteById(id)`, `deleteOrThrow(entity)`,
-`deleteOrError(entity)`, `deleteByIdOrError(id)`, `deleteMany`)
-turn into UPDATE-style soft-delete operations instead of DDL
-DELETE. The on-the-wire SQL becomes:
+(`deleteOrThrow(entity)`, `deleteOrError(entity)`,
+`deleteByIdOrError(id)`, `deleteMany(vararg predicates)`) turn
+into UPDATE-style soft-delete operations instead of DDL DELETE.
+These are the methods that exist today — the legacy
+Boolean-returning `delete(entity)` and `deleteById(id)` were
+removed by the Result Variants RFC (and the *OrError suffix is
+the path for any code that needs the "did anything change?"
+signal).
+
+The on-the-wire SQL becomes:
 
 ```sql
-UPDATE posts SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL
+UPDATE posts SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL
 ```
 
+The `?` for `deleted_at` is bound to an **application-generated
+`Instant.now()`** at the framework boundary (not the SQL `now()`
+function). Rationale: the value needs to be visible to the
+`afterDelete` hook on the entity it receives, without forcing
+either a Postgres-only `UPDATE ... RETURNING` round-trip or a
+follow-up `SELECT`. Generating the timestamp in Kotlin keeps
+the path driver-agnostic, makes test injection trivial (use
+`InstantSource` on `EntClient`), and matches how the rest of
+the codegen handles "framework-supplied default values."
+
 The `AND deleted_at IS NULL` clause is what makes
-double-soft-delete observable (see the "already-deleted rows"
-subsection below).
+double-soft-delete observable — see the "already-deleted rows"
+subsection below.
 
 ### Hook / privacy / validation pipeline
 
@@ -165,11 +181,13 @@ The current hard-delete pipeline runs in this order (see
 Soft-delete must use the **same** pipeline: DELETE privacy
 governs, delete validation rules run, `beforeDelete` /
 `afterDelete` hooks fire around the UPDATE — to a caller
-calling `client.posts.delete(post)`, the difference between
-hard and soft delete is invisible at the API layer. The
-hook context for `afterDelete` still receives the entity
-that was deleted (with its post-update `deleted_at`
-populated so a hook can read it).
+calling `client.posts.deleteOrThrow(post)`, the difference
+between hard and soft delete is invisible at the API layer.
+
+The `afterDelete` hook receives the entity **with `deleted_at`
+populated** to the application-generated timestamp the UPDATE
+just bound. Codegen sets it via a `copy(deletedAt = now)` on
+the entity passed in.
 
 UPDATE privacy, update validation, and update hooks do **NOT**
 fire on soft-delete. The operation is semantically a delete;
@@ -179,24 +197,32 @@ update-validation rule that has nothing to do with deletion.
 
 ### Already-deleted rows
 
-Calling `client.posts.delete(softDeletedPost)` is a no-op
-(the `AND deleted_at IS NULL` clause matches zero rows) and
-surfaces per the current `EntError.NoChanges` semantics:
+Calling `client.posts.deleteOrThrow(softDeletedPost)` is a
+no-op (the `AND deleted_at IS NULL` clause matches zero rows).
+The result-variants RFC treats `delete()` as idempotent — the
+"row already gone" outcome doesn't surface as an error in the
+existing hard-delete contract, and soft-delete follows the same
+rule:
 
-| Variant | Outcome on already-deleted row |
+| Variant | Outcome on already-soft-deleted row |
 |---|---|
-| `delete(entity)` | returns Unit (matches the no-op contract for hard-delete on missing row) |
-| `deleteOrThrow(entity)` | throws `EntNoChangesException` |
-| `deleteOrError(entity)` | `Err(NoChanges)` |
-| `deleteById(id)` | `false` |
-| `deleteByIdOrError(id)` | `Err(NotFound)` if no row with that id exists at all; `Err(NoChanges)` if the row exists but is already soft-deleted |
+| `deleteOrThrow(entity)` | returns Unit (matches the existing hard-delete contract for "row already gone" — no error) |
+| `deleteOrError(entity)` | `Ok(Unit)` |
+| `deleteByIdOrError(id)` | `Ok(false)` (same as the hard-delete contract for missing rows — see `entkt-result-variants-rfc.md` §"Delete APIs"; the existing `deleteByIdOrError(id): EntResult<Boolean>` returns `Ok(true)` when a row was deleted and `Ok(false)` when no row existed) |
 
-The `Err(NotFound)` vs `Err(NoChanges)` split for
-`deleteByIdOrError` requires the generated code to probe the
-table before the soft-delete UPDATE (analogous to the existing
-preflight in `deleteByIdOrError` for hard delete). Generating a
-single conditional UPDATE that distinguishes the two outcomes is
-a possible future optimization.
+Note the contrast with the hard-delete API: hard-delete's
+`Ok(false)` covers "no row physically exists." For soft-delete
+the same `Ok(false)` covers both "no row physically exists"
+AND "row exists but is already soft-deleted" — from the
+live-set perspective, both are "nothing to do" and the caller
+gets the same signal. Callers that need to distinguish "the
+row's been soft-deleted by someone else" from "this id was
+never assigned" should query for the row directly with
+`withDeleted()` before deleting.
+
+This keeps soft-delete API-compatible with hard-delete: code
+written against the result-variants contract works unchanged
+when an entity opts into the mixin.
 
 ### Hard delete
 
@@ -204,16 +230,20 @@ A separate hard-delete API for the rare case where physical
 removal is required:
 
 ```kotlin
-client.posts.hardDelete(post)
 client.posts.hardDeleteOrThrow(post)
 client.posts.hardDeleteOrError(post)
-client.posts.hardDeleteById(id)
 client.posts.hardDeleteByIdOrError(id)
+client.posts.hardDeleteMany(vararg predicates)
 ```
 
 These bypass the soft-delete interceptor entirely and run as
 true DDL DELETE. They share the same DELETE privacy / validation
-/ hook pipeline as `delete` — auditing concerns apply equally.
+/ hook pipeline as the soft-delete path, and their result-shape
+contract matches the result-variants RFC exactly (`Ok(false)`
+for missing rows, etc.). No "legacy" `hardDelete(entity)` /
+`hardDeleteById(id)` Boolean variants — symmetric with the
+soft-delete surface and consistent with the result-variants
+RFC's removal of those names.
 
 A schema can opt out of hard-delete by overriding a mixin flag
 (`softDelete(allowHard = false)` — the default is `true` because
@@ -223,27 +253,30 @@ omits the `hardDelete*` family.
 ### Restore
 
 ```kotlin
-client.posts.restore(deletedPost)
 client.posts.restoreOrThrow(deletedPost)
 client.posts.restoreOrError(deletedPost)
-client.posts.restoreById(id)
 client.posts.restoreByIdOrError(id)
 ```
 
-Restore sets `deleted_at = null`. It runs through the
-**UPDATE** pipeline (UPDATE privacy, update validation, update
-hooks) since the operation is semantically un-deleting an entity
-back into the live working set — and an entity author's update
-validation rules (e.g. "title must be ≥ 3 chars") apply to the
-row coming back into normal circulation.
+Restore sets `deleted_at = null`. The on-the-wire SQL becomes:
 
-| Variant | Outcome on row that isn't soft-deleted |
+```sql
+UPDATE posts SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL
+```
+
+It runs through the **UPDATE** pipeline (UPDATE privacy, update
+validation, update hooks) since the operation is semantically
+un-deleting an entity back into the live working set — an
+entity author's update validation rules (e.g. "title must be ≥
+3 chars") apply to the row coming back into normal circulation.
+
+The `afterUpdate` hook receives the entity with `deleted_at = null`.
+
+| Variant | Outcome on row that isn't currently soft-deleted |
 |---|---|
-| `restore(entity)` | returns Unit (no-op) |
-| `restoreOrThrow(entity)` | throws `EntNoChangesException` |
-| `restoreOrError(entity)` | `Err(NoChanges)` |
-| `restoreById(id)` | `false` |
-| `restoreByIdOrError(id)` | `Err(NotFound)` if the id doesn't exist; `Err(NoChanges)` if the row exists but is already live |
+| `restoreOrThrow(entity)` | returns Unit (no-op, mirroring deleteOrThrow on already-deleted) |
+| `restoreOrError(entity)` | `Ok(Unit)` |
+| `restoreByIdOrError(id)` | `Ok(false)` (mirroring deleteByIdOrError on missing — same signal whether the id is unassigned or the row is already live) |
 
 Restore conflicts with active uniqueness constraints are
 discussed in [Uniqueness](#uniqueness) below.
@@ -339,12 +372,26 @@ Before implementation, add tests for:
 - `onlyDeleted()` makes the corresponding terminal return only
   deleted rows
 - both flags on the same step → construction-time error
-- `delete(...)` sets `deleted_at` and runs delete pipeline
-  (privacy / validation / hooks) — NOT update pipeline
-- `delete(...)` on an already-deleted row is a no-op
-  (`Err(NoChanges)` for the structured variant)
+- `deleteOrThrow(entity)` sets `deleted_at` to an application-
+  generated `Instant.now()` and runs the delete pipeline
+  (DELETE privacy / delete validation / `beforeDelete` /
+  `afterDelete` hooks) — NOT update pipeline
+- `afterDelete` hook receives the entity with `deleted_at`
+  populated to the bound timestamp (no `RETURNING` round-trip
+  needed)
+- `deleteOrThrow(entity)` on an already-soft-deleted row is a
+  silent no-op (no `EntNoChangesException`), matching the
+  hard-delete idempotency contract
+- `deleteByIdOrError(id)` returns `Ok(true)` on a successful
+  soft-delete, `Ok(false)` for both missing ids and already-
+  soft-deleted rows (matches the hard-delete
+  `EntResult<Boolean>` contract)
+- `InstantSource` on `EntClient` overrides the `deleted_at`
+  timestamp source (test injection)
 - hard delete remains possible only through the explicit
-  `hardDelete*` API
+  `hardDelete*` API (no `hardDelete(entity)` / `hardDeleteById(id)`
+  Boolean variants — symmetric with the post-result-variants
+  delete surface)
 - partial unique indexes are generated for soft-deletable
   entities (single-column `.unique()` and composite
   `index(unique = true)`)
