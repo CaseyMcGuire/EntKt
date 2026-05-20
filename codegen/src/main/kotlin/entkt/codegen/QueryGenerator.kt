@@ -2354,6 +2354,7 @@ internal class QueryGenerator(
         val sourceName = schemaNames[source] ?: return null
         val targetName = schemaNames[edge.target] ?: return null
         val sourceEntityClass = ClassName(packageName, sourceName)
+        val sourceQueryClass = ClassName(packageName, "${sourceName}Query")
         val targetEntityClass = ClassName(packageName, targetName)
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
@@ -2378,7 +2379,31 @@ internal class QueryGenerator(
                 "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
                 edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
-            .addStatement("val sourceQ = this")
+            // Snapshot source state at queryX() time into a fresh
+            // source-Query instance so the deferred lambda is
+            // immune to later mutations on `this`. Without the
+            // snapshot, `users.queryPosts(); users.where(...);
+            // posts.allOrThrow()` would let the post-queryX where
+            // leak into posts' bridge predicate, which contradicts
+            // the pre-deferral snapshot-at-construction semantics.
+            // List / nullable fields are immutable values, so
+            // copying the references is sufficient: source
+            // mutators reassign the reference on `this`, not on
+            // the snapshot.
+            .addCode(
+                CodeBlock.builder()
+                    .add("val sourceQ = %T(driver, client).also {\n", sourceQueryClass)
+                    .add("  it.predicates = this.predicates\n")
+                    .add("  it.orderFields = this.orderFields\n")
+                    .add("  it.queryLimit = this.queryLimit\n")
+                    .add("  it.queryOffset = this.queryOffset\n")
+                    .add("  it.traversalSourceEntity = this.traversalSourceEntity\n")
+                    .add("  it.traversalEdgeName = this.traversalEdgeName\n")
+                    .add("  it.traversalPath = this.traversalPath\n")
+                    .add("  it.deferredSourceStep = this.deferredSourceStep\n")
+                    .add("}\n")
+                    .build()
+            )
             .addCode(
                 CodeBlock.builder()
                     .add("target.deferredSourceStep = {\n")
@@ -2429,6 +2454,7 @@ internal class QueryGenerator(
         val targetName = schemaNames[edge.target] ?: return null
         val inverse = findInverseEdge(edge, source) ?: return null
         val sourceEntityClass = ClassName(packageName, sourceName)
+        val sourceQueryClass = ClassName(packageName, "${sourceName}Query")
         val targetEntityClass = ClassName(packageName, targetName)
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
@@ -2452,7 +2478,30 @@ internal class QueryGenerator(
                 "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
                 edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
-            .addStatement("val sourceQ = this")
+            // Snapshot source state at queryX() time into a fresh
+            // source-Query instance so the deferred lambda is
+            // immune to later mutations on `this`. Without the
+            // snapshot, `users.queryPosts(); users.where(...);
+            // posts.allOrThrow()` would let the post-queryX where
+            // leak into posts' bridge predicate, which contradicts
+            // the pre-deferral snapshot-at-construction semantics.
+            // List / nullable fields are immutable values, so
+            // copying the references is sufficient: source mutators
+            // reassign the reference on `this`, not on the snapshot.
+            .addCode(
+                CodeBlock.builder()
+                    .add("val sourceQ = %T(driver, client).also {\n", sourceQueryClass)
+                    .add("  it.predicates = this.predicates\n")
+                    .add("  it.orderFields = this.orderFields\n")
+                    .add("  it.queryLimit = this.queryLimit\n")
+                    .add("  it.queryOffset = this.queryOffset\n")
+                    .add("  it.traversalSourceEntity = this.traversalSourceEntity\n")
+                    .add("  it.traversalEdgeName = this.traversalEdgeName\n")
+                    .add("  it.traversalPath = this.traversalPath\n")
+                    .add("  it.deferredSourceStep = this.deferredSourceStep\n")
+                    .add("}\n")
+                    .build()
+            )
             .addCode(
                 CodeBlock.builder()
                     .add("target.deferredSourceStep = {\n")

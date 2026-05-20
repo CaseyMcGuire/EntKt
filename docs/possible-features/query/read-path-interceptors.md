@@ -573,8 +573,20 @@ enum class ReadOperation {
     RAW_COUNT, VISIBLE_COUNT,
     RAW_EXISTS, VISIBLE_EXISTS,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
-    DELETE_CANDIDATES,
+    DELETE_CANDIDATES,  // spec-only — lands with the soft-delete implementation
 }
+
+> **Implementation status — `DELETE_CANDIDATES`.** The runtime enum in
+> `runtime/src/main/kotlin/entkt/runtime/Interceptors.kt` ships the values
+> through `EAGER_LOAD` and does **not** include `DELETE_CANDIDATES` yet —
+> the "What shipped" list at the top of this RFC reflects that. The
+> `DELETE_CANDIDATES` value, the `deleteMany` candidate-fetch
+> interceptor-chain hookup in `RepoGenerator`, the limit-no-op
+> classification below, and the `DELETE_CANDIDATES → DELETE`
+> `EntOperation` mapping all land together as part of the
+> [Soft Delete](../schema/soft-delete.md) implementation. Treat every
+> `DELETE_CANDIDATES` reference in this RFC as spec-only until that work
+> lands.
 
 /**
  * Flags carried on a [QueryContext]. V1 has two public members
@@ -733,6 +745,30 @@ bridging query, and Post's interceptors constrain the terminal query
 guards apply uniformly. `QueryContext.path.size` lets a traversal-
 specific interceptor branch on its position in the chain
 (`path.isEmpty()` → root step; non-empty → bridging or terminal).
+
+**Source state is snapshotted at `queryX()` time, not terminal
+time.** The deferred interceptor invocation runs at terminal time
+(so `*OrError` can wrap a source-step rejection) but the *state*
+the source interceptor chain sees is captured into a fresh source-
+Query snapshot inside `queryX()`. Post-`queryX()` mutations on
+the original source query (`users.where(...)`,
+`users.limit(...)`, even `users.queryGroups()` again) do **not**
+leak into a derived target query's terminal. This matches the
+pre-deferral snapshot semantics — the caller's mental model is
+"the bridge is built when I called `queryX()`, not when I call
+the terminal."
+
+**Bridge predicates discard source `orderBy` / `limit` / `offset`.**
+The bridging predicate (`HasEdgeWith` / `HasM2MEdgeFrom` /
+`HasEdge`) takes only an `inner: Predicate?` — there's no slot
+for ordering or row count on an EXISTS subquery. So even though
+the source-step interceptor chain runs and produces a
+`FrozenQuerySpec`, only `spec.predicates` and `spec.annotations`
+are carried into the target: `spec.orderBy` / `spec.limit` /
+`spec.offset` are dropped at the bridge boundary. (This is the
+same V1 lowering constraint that drives the EDGE_TRAVERSAL
+silent-no-op on interceptor limit operations — see
+"Limit semantics by read shape" below.)
 
 V1 does NOT add a separate `QueryTraverser` middleware concept
 (Entgo's name for the equivalent surface). Instead, generated

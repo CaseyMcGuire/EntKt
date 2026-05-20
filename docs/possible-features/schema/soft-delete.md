@@ -220,6 +220,20 @@ row's been soft-deleted by someone else" from "this id was
 never assigned" should query for the row directly with
 `withDeleted()` before deleting.
 
+**No-op pipeline behavior.** DELETE privacy, delete validation,
+`beforeDelete`, and `afterDelete` do **NOT** fire when the target
+row is already soft-deleted — same rationale as `deleteMany`
+(DELETE rules typically inspect the entity's "current state,"
+which on a soft-deleted row is "already deleted"; running them on
+a no-op is wasteful and surprising). The framework detects the
+`deleted_at IS NOT NULL` state via the same internal load that the
+ID-based update-root pipeline already performs before hooks fire
+and short-circuits to the idempotent no-op result above. This
+mirrors the `restoreOrThrow(liveRow)` no-op contract specified
+elsewhere — both single-row "nothing to do" paths skip the full
+pipeline rather than running rules against a row whose state
+already matches the requested outcome.
+
 This keeps soft-delete API-compatible with hard-delete: code
 written against the result-variants contract works unchanged
 when an entity opts into the mixin.
@@ -281,10 +295,15 @@ contract:
    concurrently) silently don't count, mirroring the hard-delete
    "row vanished concurrently" no-op.
 
-`hardDeleteMany` mirrors the existing hard-delete `deleteMany`
-contract verbatim: the candidate query does NOT filter
-`deleted_at`, every matching row (live or soft-deleted) is
-physically removed, and the count is rows actually deleted.
+`hardDeleteMany`'s candidate query goes through the same
+`DELETE_CANDIDATES` interceptor chain as `deleteMany` — tenant
+scoping, max-limit, application/global predicate interceptors all
+still apply, so a bulk hard-delete cannot escape read-side scoping
+that the soft-delete path respected. The only interceptor that is
+suppressed is the framework `soft-delete` filter: hardDeleteMany's
+candidate query does NOT add `deleted_at IS NULL`, so every matching
+row (live or soft-deleted) becomes a physical-delete candidate, and
+the count is rows actually deleted.
 
 ### Hard delete
 
@@ -298,11 +317,25 @@ client.posts.hardDeleteByIdOrError(id)
 client.posts.hardDeleteMany(vararg predicates)
 ```
 
-These bypass the soft-delete interceptor entirely and run as
-true DDL DELETE. They share the same DELETE privacy / validation
-/ hook pipeline as the soft-delete path, and their result-shape
-contract matches the result-variants RFC exactly (`Ok(false)`
-for missing rows, etc.). No "legacy" `hardDelete(entity)` /
+These bypass **only the framework `soft-delete` interceptor** (so
+`deleted_at IS NULL` is not added to the candidate fetch) and run
+as true DDL DELETE. Every other interceptor — tenant scoping,
+max-limit, application-defined `QueryInterceptor<E>`, and
+`GlobalQueryInterceptor` — still fires on the `DELETE_CANDIDATES`
+candidate-fetch step, so cross-tenant rows cannot be physically
+deleted via the hard-delete path unless they were already
+reachable through the read path. They share the same DELETE
+privacy / validation / hook pipeline as the soft-delete path, and
+their result-shape contract matches the result-variants RFC
+exactly (`Ok(false)` for missing rows, etc.).
+
+Mechanically, hardDeleteMany sets a framework-internal
+`bypassSoftDeleteFilter` capability on the candidate-fetch
+`QueryContext` that **only** the generated `soft-delete`
+interceptor honors — exactly parallel to the
+`internalSystemQuery` opt-in model in
+[Read-Path Interceptors](../query/read-path-interceptors.md). No
+application interceptor can opt into the bypass. No "legacy" `hardDelete(entity)` /
 `hardDeleteById(id)` Boolean variants — symmetric with the
 soft-delete surface and consistent with the result-variants
 RFC's removal of those names.

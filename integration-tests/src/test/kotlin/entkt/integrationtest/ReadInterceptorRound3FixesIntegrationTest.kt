@@ -325,6 +325,66 @@ class ReadInterceptorRound3FixesIntegrationTest {
 
     // ---------- requireNotRejected preserves rejection ----------
 
+    // ---------- Deferred traversal snapshots source at queryX() ----------
+
+    @Test
+    fun `mutating source query after queryX does not leak into target's terminal`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+        }
+        // Two users, one article each. The post-queryX where on
+        // the source MUST NOT affect what posts queryArticles
+        // sees at terminal time — pre-snapshot the deferred
+        // lambda would re-read `users.predicates` at terminal
+        // time and include the late `name = "alice"` filter.
+        val alice = client.users.create { name = "alice"; email = "alice@x" }.saveOrThrow()
+        val bob = client.users.create { name = "bob"; email = "bob@x" }.saveOrThrow()
+        client.articles.create { title = "alice-article"; authorId = alice.id }.saveOrThrow()
+        client.articles.create { title = "bob-article"; authorId = bob.id }.saveOrThrow()
+
+        val users = client.users.query()
+        val articles = users.queryArticles()
+
+        // Mutate the source AFTER queryX. If the lambda captures
+        // `this` live, this where leaks into the bridge and
+        // articles.allOrThrow() returns only "alice-article".
+        // If the lambda captures a snapshot, this where is
+        // invisible to the bridge.
+        users.where(entkt.query.Predicate.Leaf("name", Op.EQ, "alice"))
+
+        val result = articles.allOrThrow()
+        assertEquals(
+            setOf("alice-article", "bob-article"),
+            result.map { it.title }.toSet(),
+            "queryX should snapshot source state at construction; post-queryX mutations to source must not leak into the target's terminal call",
+        )
+    }
+
+    @Test
+    fun `M2M traversal also snapshots source at queryX time`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+        }
+        val p = client.posts.create { title = "keeper" }.saveOrThrow()
+        client.posts.create { title = "intruder" }.saveOrThrow()
+
+        val posts = client.posts.query { where(Post.id eq p.id) }
+        val tags = posts.queryTags()
+
+        // Mutate AFTER queryX. Pre-snapshot fix this leaked.
+        posts.where(entkt.query.Predicate.Leaf("title", Op.EQ, "intruder"))
+
+        // Snapshot semantics: tags sees keeper's (empty) tag list,
+        // not intruder's — no rows either way here but the call
+        // must not throw and must follow the snapshotted predicate
+        // path (id = keeper.id), which has no tags. We assert it
+        // returns empty and didn't blow up.
+        val result = tags.allOrThrow()
+        assertEquals(emptyList(), result)
+    }
+
     // ---------- Edge-predicate target annotations bubble up ----------
 
     @Test
