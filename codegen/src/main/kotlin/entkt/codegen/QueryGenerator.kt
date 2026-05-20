@@ -893,19 +893,6 @@ internal class QueryGenerator(
     }
 
     /**
-     * `visibleExists(): Boolean` — privacy-aware existence check.
-     * Returns true iff at least one storage row matches the
-     * predicate AND the current viewer can LOAD it. Scans storage
-     * order, bounded by `EntClientConfig.visibleOverfetchLimit`
-     * (same cap as `firstVisibleOrNull`), and returns true on the
-     * first visible row. Cap-exhausted-with-no-visible is silent
-     * (returns false), matching the optimistic-read shape used by
-     * `firstVisibleOrNull`.
-     *
-     * No-privacy fast path: when the repo has no LOAD rules, falls
-     * through to [rawExists] semantics (single-row probe, no cap).
-     */
-    /**
      * `rawExistsOrError(): EntResult<Boolean>` — structured-result form
      * of [rawExists]. Same failure-mode mapping as [rawCountOrError]:
      * interceptor rejection → `Err(QueryRejected)`, driver failure →

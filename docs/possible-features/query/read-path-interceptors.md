@@ -1213,6 +1213,17 @@ application code):
   current framework opt-ins**: soft-delete, tenant scoping, max-limit, and
   every other framework- or application-defined interceptor runs on every
   read regardless of this flag.
+- `bypassSoftDeleteFilter` — set by the generated `hardDeleteByIdOrError`
+  internal `BY_ID` load and the `hardDeleteMany` `DELETE_CANDIDATES`
+  candidate fetch (see [Soft Delete](../schema/soft-delete.md)). The
+  generated framework `soft-delete` interceptor is the **only** registered
+  interceptor that honors it — when set, soft-delete skips adding
+  `deleted_at IS NULL` to that read step, so already-soft-deleted rows are
+  reachable for physical removal. Every other interceptor (tenant scoping,
+  max-limit, application-defined, global) ignores the flag and runs
+  normally on the read step. Application code cannot set
+  `bypassSoftDeleteFilter`; the framework attaches it only through the two
+  generated hard-delete entry points listed above.
 
   **Public flags do not propagate across query steps.**
   `withDeleted` / `onlyDeleted` (and any future public flag) attach
@@ -1519,8 +1530,17 @@ Before implementation, add tests for:
 - `addAnnotation` appears in explain / observability output but does not
   affect the query plan
 - LOAD privacy still runs after intercepted reads
-- explain output shows applied interceptors, added predicates, limit clamps,
-  annotations, and rejections in apply order
+- explain output reflects the **resulting** post-interceptor shape
+  (predicates / orderBy / limit / offset that reach the driver),
+  the merged annotations from every interceptor that ran (source +
+  target + edge-predicate steps), and any rejection metadata. V1
+  does **not** carry a per-interceptor *trace* (which interceptor
+  fired, in which order, with what mutation). The merged-effects
+  view is enough for the soft-delete / tenant-scope / max-limit
+  use cases that motivated this RFC; a richer trace API (e.g.
+  `QueryPlan.trace: List<InterceptorStep>`) is plausible
+  follow-up if observability consumers need step-by-step
+  attribution beyond what `annotations` provides.
 
 - **`QueryContext.flags` exposes only public flags.** An
   application interceptor cannot observe the internal

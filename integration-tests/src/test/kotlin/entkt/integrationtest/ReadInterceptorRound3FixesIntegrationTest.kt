@@ -367,22 +367,33 @@ class ReadInterceptorRound3FixesIntegrationTest {
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
         }
-        val p = client.posts.create { title = "keeper" }.saveOrThrow()
-        client.posts.create { title = "intruder" }.saveOrThrow()
+        // Seed: two posts, one tag each (linked via the junction
+        // table). The snapshot case returns [keeperTag]; a leak
+        // of the post-queryX `where(title eq "intruder")` into
+        // the bridge would intersect to zero matching posts
+        // (id = keeper.id has title = "keeper", not "intruder")
+        // and return []. So [keeperTag] vs [] cleanly
+        // distinguishes the two implementations.
+        val keeper = client.posts.create { title = "keeper" }.saveOrThrow()
+        val intruder = client.posts.create { title = "intruder" }.saveOrThrow()
+        val keeperTag = client.tags.create { name = "keeper-tag" }.saveOrThrow()
+        val intruderTag = client.tags.create { name = "intruder-tag" }.saveOrThrow()
+        client.postTags.create { postId = keeper.id; tagId = keeperTag.id }.saveOrThrow()
+        client.postTags.create { postId = intruder.id; tagId = intruderTag.id }.saveOrThrow()
 
-        val posts = client.posts.query { where(Post.id eq p.id) }
+        val posts = client.posts.query { where(Post.id eq keeper.id) }
         val tags = posts.queryTags()
 
-        // Mutate AFTER queryX. Pre-snapshot fix this leaked.
+        // Mutate AFTER queryX. Pre-snapshot fix this leaked into
+        // the bridge predicate; with the snapshot it does not.
         posts.where(entkt.query.Predicate.Leaf("title", Op.EQ, "intruder"))
 
-        // Snapshot semantics: tags sees keeper's (empty) tag list,
-        // not intruder's — no rows either way here but the call
-        // must not throw and must follow the snapshotted predicate
-        // path (id = keeper.id), which has no tags. We assert it
-        // returns empty and didn't blow up.
         val result = tags.allOrThrow()
-        assertEquals(emptyList(), result)
+        assertEquals(
+            listOf("keeper-tag"),
+            result.map { it.name },
+            "M2M queryX should snapshot source state at construction; post-queryX mutations must not leak into the bridge predicate",
+        )
     }
 
     // ---------- Edge-predicate target annotations bubble up ----------

@@ -297,13 +297,18 @@ contract:
 
 `hardDeleteMany`'s candidate query goes through the same
 `DELETE_CANDIDATES` interceptor chain as `deleteMany` — tenant
-scoping, max-limit, application/global predicate interceptors all
-still apply, so a bulk hard-delete cannot escape read-side scoping
-that the soft-delete path respected. The only interceptor that is
-suppressed is the framework `soft-delete` filter: hardDeleteMany's
-candidate query does NOT add `deleted_at IS NULL`, so every matching
-row (live or soft-deleted) becomes a physical-delete candidate, and
-the count is rows actually deleted.
+scoping and other predicate-shaping interceptors all still apply,
+so a bulk hard-delete cannot escape read-side scoping that the
+soft-delete path respected. Per the
+[Read-Path Interceptors](../query/read-path-interceptors.md)
+limit-by-read-shape rules, limit operations on `DELETE_CANDIDATES`
+are silent no-ops, so a `MaxLimitInterceptor` does **not** clamp or
+truncate the bulk hard-delete; its `reject(...)` path (and any
+other interceptor's `reject(...)`) still fires. The framework
+`soft-delete` filter is the one interceptor suppressed:
+hardDeleteMany's candidate query does NOT add `deleted_at IS NULL`,
+so every matching row (live or soft-deleted) becomes a
+physical-delete candidate, and the count is rows actually deleted.
 
 ### Hard delete
 
@@ -318,27 +323,53 @@ client.posts.hardDeleteMany(vararg predicates)
 ```
 
 These bypass **only the framework `soft-delete` interceptor** (so
-`deleted_at IS NULL` is not added to the candidate fetch) and run
-as true DDL DELETE. Every other interceptor — tenant scoping,
-max-limit, application-defined `QueryInterceptor<E>`, and
-`GlobalQueryInterceptor` — still fires on the `DELETE_CANDIDATES`
-candidate-fetch step, so cross-tenant rows cannot be physically
-deleted via the hard-delete path unless they were already
-reachable through the read path. They share the same DELETE
-privacy / validation / hook pipeline as the soft-delete path, and
-their result-shape contract matches the result-variants RFC
-exactly (`Ok(false)` for missing rows, etc.).
+`deleted_at IS NULL` is not added to whatever read the variant
+performs) and run as true DDL DELETE. They all share the same
+DELETE privacy / validation / hook pipeline as the soft-delete
+path, and their result-shape contract matches the result-variants
+RFC exactly (`Ok(false)` for missing rows, etc.). What changes
+between variants is **which read step the bypass attaches to**:
 
-Mechanically, hardDeleteMany sets a framework-internal
-`bypassSoftDeleteFilter` capability on the candidate-fetch
-`QueryContext` that **only** the generated `soft-delete`
-interceptor honors — exactly parallel to the
+- **`hardDeleteOrThrow(entity)` / `hardDeleteOrError(entity)`** —
+  the caller already holds the entity (loaded through some earlier
+  query whose interceptors fired at the load step, including any
+  application/global predicate-shaping interceptors). No new
+  candidate fetch is issued. The DELETE pipeline runs against the
+  already-loaded entity; the bypass is a no-op for these variants
+  because there is no read step to attach it to. Note that whatever
+  read originally loaded the entity DID respect every interceptor —
+  so a tenant-scoped read couldn't have produced an entity from
+  another tenant in the first place.
+- **`hardDeleteByIdOrError(id)`** — performs an internal `BY_ID`
+  load to populate the entity for the DELETE pipeline. That load
+  routes through interceptors with `context.operation == BY_ID`,
+  with `bypassSoftDeleteFilter` set so soft-deleted rows are
+  reachable. Every other interceptor (tenant scoping, etc.) still
+  fires; cross-tenant rows return `Ok(false)` exactly like a tenant
+  read of the same id would have returned not-found.
+- **`hardDeleteMany(vararg predicates)`** — performs the candidate
+  fetch routed through interceptors with
+  `context.operation == DELETE_CANDIDATES`, again with
+  `bypassSoftDeleteFilter` set. Predicate-shaping interceptors fire;
+  limit operations are silent no-ops per the
+  [Read-Path Interceptors](../query/read-path-interceptors.md)
+  limit-by-read-shape rules (a `MaxLimitInterceptor` cannot clamp a
+  bulk hard-delete to N rows, though its `reject(...)` path still
+  fires).
+
+Mechanically, both `hardDeleteByIdOrError` and `hardDeleteMany` set
+a framework-internal `bypassSoftDeleteFilter` capability on the
+read step's `QueryContext` that **only** the generated
+`soft-delete` interceptor honors — exactly parallel to the
 `internalSystemQuery` opt-in model in
 [Read-Path Interceptors](../query/read-path-interceptors.md). No
-application interceptor can opt into the bypass. No "legacy" `hardDelete(entity)` /
-`hardDeleteById(id)` Boolean variants — symmetric with the
-soft-delete surface and consistent with the result-variants
-RFC's removal of those names.
+application interceptor can opt into the bypass. The entity-form
+variants don't issue an internal read, so they don't need the
+flag — their soft-delete bypass is structural: a `DELETE WHERE id
+= ?` without `AND deleted_at IS NULL` deletes whatever row is
+there. No "legacy" `hardDelete(entity)` / `hardDeleteById(id)`
+Boolean variants — symmetric with the soft-delete surface and
+consistent with the result-variants RFC's removal of those names.
 
 A schema can opt out of hard-delete by overriding a mixin flag
 (`softDelete(allowHard = false)` — the default is `true` because
