@@ -758,17 +758,40 @@ pre-deferral snapshot semantics — the caller's mental model is
 "the bridge is built when I called `queryX()`, not when I call
 the terminal."
 
-**Bridge predicates discard source `orderBy` / `limit` / `offset`.**
-The bridging predicate (`HasEdgeWith` / `HasM2MEdgeFrom` /
-`HasEdge`) takes only an `inner: Predicate?` — there's no slot
-for ordering or row count on an EXISTS subquery. So even though
-the source-step interceptor chain runs and produces a
-`FrozenQuerySpec`, only `spec.predicates` and `spec.annotations`
-are carried into the target: `spec.orderBy` / `spec.limit` /
-`spec.offset` are dropped at the bridge boundary. (This is the
-same V1 lowering constraint that drives the EDGE_TRAVERSAL
-silent-no-op on interceptor limit operations — see
-"Limit semantics by read shape" below.)
+**Source `orderBy` / `limit` / `offset` are dropped at the bridge
+boundary — including caller-authored ones.** The bridging
+predicate (`HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge`) takes
+only an `inner: Predicate?`; there's no slot for ordering or row
+count on an EXISTS subquery. So:
+
+```kotlin
+client.users.query {
+    orderBy(User.createdAt.desc())
+    limit(10)
+}.queryPosts().allOrThrow()
+```
+
+does **NOT** mean "posts belonging to the first 10
+most-recently-created users." It means "posts belonging to users
+matching the source `predicates`." The source's `limit(10)` /
+`orderBy(...)` / `offset(...)` are silently ignored at the bridge
+boundary. Callers that need "posts of the first N users" must
+materialize the source query first (`val users =
+client.users.query { orderBy(...); limit(10) }.allOrThrow();
+client.posts.query { where(Post.authorId inList users.map { it.id }) }.allOrThrow()`)
+until a future RFC introduces a richer lowering (CTE or
+IN-from-subquery with limit/offset/order) that the bridge can
+honor.
+
+Source-step interceptors can still *read* the source's
+limit/orderBy/offset via `scope.shape` (the snapshot includes
+them so interceptors can make branching decisions like "reject
+if source has no caller limit set"). The snapshot doesn't drop
+those fields because they're observable to the source's
+interceptor chain — they just don't contribute to the bridge.
+This is the same V1 lowering constraint that drives the
+EDGE_TRAVERSAL silent-no-op on interceptor limit operations
+(see "Limit semantics by read shape" below).
 
 V1 does NOT add a separate `QueryTraverser` middleware concept
 (Entgo's name for the equivalent surface). Instead, generated

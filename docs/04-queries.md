@@ -225,8 +225,29 @@ users:
 val postsOfActiveUsers = client.users
     .query { where(User.active eq true) }
     .queryPosts()
-    .all()  // List<Post>
+    .allOrThrow()  // List<Post>
 ```
+
+> **V1 traversal limitation: source `limit` / `offset` / `orderBy`
+> are dropped at the bridge.** The bridging predicate becomes
+> an `EXISTS` subquery, which has no row-count slot. So
+>
+> ```kotlin
+> client.users.query {
+>     orderBy(User.createdAt.desc())
+>     limit(10)
+> }.queryPosts().allOrThrow()
+> ```
+>
+> does **not** mean "posts of the 10 most-recently-created users."
+> It means "posts of users matching the source `where` clauses,"
+> with the `limit(10)` and `orderBy(...)` silently ignored.
+> Callers that need "posts of the first N users" must materialize
+> the source query first, then re-query: `val users = client.users
+> .query { orderBy(...); limit(10) }.allOrThrow(); client.posts
+> .query { where(Post.authorId inList users.map { it.id }) }
+> .allOrThrow()`. A future RFC may add a richer bridging lowering
+> (CTE or IN-from-subquery) that honors source limit/order/offset.
 
 ### `has` / `hasWhere` -- edge predicates
 
