@@ -242,14 +242,16 @@ contract:
    soft-deleted row is "already deleted"). This matches the
    default-filter semantics every other read terminal applies.
 
-2. **Callers can override with `withDeleted()` on the
-   candidate set.** A future `deleteMany { withDeleted(); ... }`
-   block-form variant ships if a use case emerges
-   (re-deleting already-soft-deleted rows for audit-trail
-   reasons, mass-purging via hard-delete-after-soft, etc.).
-   In V1 the only way to act on already-soft-deleted rows is
-   via the `hardDelete*` family with an explicit
-   `withDeleted()` query.
+2. **No `deleteMany` flag-override in V1.** Callers who
+   need to act on already-soft-deleted rows must either load
+   them via a separate query (`client.posts.query {
+   withDeleted(); onlyDeleted() }.allOrThrow()`) and feed
+   the resulting ids into `hardDelete*`, or wait for a
+   future block-form API. A `deleteMany { withDeleted(); ... }`
+   variant is plausible if use cases emerge (re-deleting
+   already-soft-deleted rows for audit-trail reasons,
+   mass-purging via hard-delete-after-soft, etc.) but is not
+   part of the V1 surface.
 
 3. **Returned count is "rows newly soft-deleted by this
    call."** Same shape as hard-delete's `deleteMany` Int
