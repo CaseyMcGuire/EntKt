@@ -241,8 +241,8 @@ class QueryGeneratorTest {
         assert(output.contains("fun explain(): QueryPlan")) {
             "Should generate explain(): QueryPlan\n$output"
         }
-        assert(output.contains("driver.explainQuery(Car.TABLE, predicates, orderFields,")) {
-            "explain() should delegate to driver.explainQuery\n$output"
+        assert(output.contains("driver.explainQuery(Car.TABLE, spec.predicates, spec.orderBy,")) {
+            "explain() should delegate to driver.explainQuery with the post-interceptor spec\n$output"
         }
     }
 

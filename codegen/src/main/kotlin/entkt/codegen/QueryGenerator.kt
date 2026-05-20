@@ -203,9 +203,13 @@ internal class QueryGenerator(
             .addFunction(buildFirstOrError(schemaName, entityClass))
             .addFunction(buildFirstVisibleOrNull(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleCount(schemaName, entityClass))
+            .addFunction(buildVisibleCountOrError(schemaName, entityClass))
             .addFunction(buildRawCount(schemaName, entityClass))
+            .addFunction(buildRawCountOrError(schemaName, entityClass))
             .addFunction(buildRawExists(entityClass))
+            .addFunction(buildRawExistsOrError(schemaName, entityClass))
             .addFunction(buildVisibleExists(schemaName, entityClass))
+            .addFunction(buildVisibleExistsOrError(schemaName, entityClass))
             .addFunctions(buildExplainMethods(entityClass, schema, schemaNames))
             .addFunctions(traversalMethods)
             .build()
@@ -738,6 +742,101 @@ internal class QueryGenerator(
     }
 
     /**
+     * `rawCountOrError(): EntResult<Long>` — structured-result form of
+     * [rawCount]. Maps each failure mode to its [EntError] variant:
+     *  - interceptor rejection → `Err(QueryRejected)`
+     *  - any other uncaught Exception → routed through
+     *    [classifyDriverError]
+     *
+     * There is no PrivacyDenied surface here — rawCount intentionally
+     * bypasses LOAD privacy, so PrivacyDeniedException can't occur on
+     * this path.
+     */
+    private fun buildRawCountOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val resultType = ENT_RESULT.parameterizedBy(LONG)
+        return FunSpec.builder("rawCountOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add(
+                        "  val spec = runReadInterceptors(%T.RAW_COUNT, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add(
+                        "  %T.Ok(driver.count(%T.TABLE, spec.predicates))\n",
+                        ENT_RESULT, entityClass,
+                    )
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `visibleCountOrError(): EntResult<Long>` — structured-result form
+     * of [visibleCount]. Maps each failure mode to its [EntError] variant.
+     *
+     * Visible-count materializes rows to evaluate LOAD privacy, so the
+     * same PrivacyDeniedException catch arm used by [allOrError] applies
+     * (e.g. an eager edge's denied target re-raises). Denied root rows
+     * are silently filtered (per visibleCount semantics) — those don't
+     * surface as PrivacyDenied here.
+     */
+    private fun buildVisibleCountOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val resultType = ENT_RESULT.parameterizedBy(LONG)
+        return FunSpec.builder("visibleCountOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  val c = requireClient()\n")
+                    .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add(
+                        "  val spec = runReadInterceptors(%T.VISIBLE_COUNT, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add(
+                        "  val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)\n",
+                        entityClass,
+                    )
+                    .add("  val results = rows.map { %T.fromRow(it) }\n", entityClass)
+                    .add("  if (!c.%L.hasLoadPrivacy()) {\n", repoPropName)
+                    .add("    %T.Ok(results.size.toLong())\n", ENT_RESULT)
+                    .add("  } else {\n")
+                    .add("    var count = 0L\n")
+                    .add("    for (entity in results) {\n")
+                    .add("      try { c.%L.evaluateLoadPrivacy(privacy, entity); count++ } catch (_: %T) {}\n", repoPropName, PRIVACY_DENIED)
+                    .add("    }\n")
+                    .add("    %T.Ok(count)\n", ENT_RESULT)
+                    .add("  }\n")
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add(
+                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
+                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                    )
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
      * `rawExists(): Boolean` — fast existence check that skips
      * privacy entirely. Returns true iff at least one storage row
      * matches the predicate. Use this for "does this row exist at
@@ -787,6 +886,42 @@ internal class QueryGenerator(
      * No-privacy fast path: when the repo has no LOAD rules, falls
      * through to [rawExists] semantics (single-row probe, no cap).
      */
+    /**
+     * `rawExistsOrError(): EntResult<Boolean>` — structured-result form
+     * of [rawExists]. Same failure-mode mapping as [rawCountOrError]:
+     * interceptor rejection → `Err(QueryRejected)`, driver failure →
+     * `Err(DriverFailure)`. No PrivacyDenied surface (rawExists bypasses
+     * LOAD privacy).
+     */
+    private fun buildRawExistsOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val resultType = ENT_RESULT.parameterizedBy(BOOLEAN)
+        return FunSpec.builder("rawExistsOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add(
+                        "  val spec = runReadInterceptors(%T.RAW_EXISTS, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add("  val limit = minOf(1, spec.limit ?: 1)\n")
+                    .add(
+                        "  %T.Ok(driver.query(%T.TABLE, spec.predicates, emptyList(), limit, spec.offset).isNotEmpty())\n",
+                        ENT_RESULT, entityClass,
+                    )
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
     private fun buildVisibleExists(schemaName: String, entityClass: ClassName): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val builder = FunSpec.builder("visibleExists")
@@ -834,6 +969,60 @@ internal class QueryGenerator(
     }
 
     /**
+     * `visibleExistsOrError(): EntResult<Boolean>` — structured-result
+     * form of [visibleExists]. Same failure-mode mapping as the *OrError
+     * counterparts: interceptor rejection → `Err(QueryRejected)`, driver
+     * failure → `Err(DriverFailure)`. Denied rows are silently scanned
+     * past per visibleExists semantics — only an eager-edge denial path
+     * (which visibleExists doesn't have) could surface PrivacyDenied.
+     */
+    private fun buildVisibleExistsOrError(schemaName: String, entityClass: ClassName): FunSpec {
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val resultType = ENT_RESULT.parameterizedBy(BOOLEAN)
+        return FunSpec.builder("visibleExistsOrError")
+            .returns(resultType)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  val c = requireClient()\n")
+                    .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add(
+                        "  val spec = runReadInterceptors(%T.VISIBLE_EXISTS, %T.QUERY)\n",
+                        READ_OPERATION, ENT_OPERATION,
+                    )
+                    .add("  if (!c.%L.hasLoadPrivacy()) {\n", repoPropName)
+                    .add("    val limit = minOf(1, spec.limit ?: 1)\n")
+                    .add(
+                        "    %T.Ok(driver.query(%T.TABLE, spec.predicates, emptyList(), limit, spec.offset).isNotEmpty())\n",
+                        ENT_RESULT, entityClass,
+                    )
+                    .add("  } else {\n")
+                    .add("    val scanLimit = minOf(spec.limit ?: c.visibleOverfetchLimit, c.visibleOverfetchLimit)\n")
+                    .add(
+                        "    val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, scanLimit, spec.offset)\n",
+                        entityClass,
+                    )
+                    .add("    var found = false\n")
+                    .add("    for (row in rows) {\n")
+                    .add("      val entity = %T.fromRow(row)\n", entityClass)
+                    .add("      try { c.%L.evaluateLoadPrivacy(privacy, entity); found = true; break } catch (_: %T) {}\n", repoPropName, PRIVACY_DENIED)
+                    .add("    }\n")
+                    .add("    %T.Ok(found)\n", ENT_RESULT)
+                    .add("  }\n")
+                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
+                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
+                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add(
+                        "  %T.Err(%M(driver, e, %S, %T.QUERY))\n",
+                        ENT_RESULT, MEMBER_CLASSIFY, schemaName, ENT_OPERATION,
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
      * Generate per-terminal explain methods plus a private helper
      * that builds the [QueryPlan] tree. Each public method mirrors
      * the execution shape of its corresponding terminal:
@@ -857,50 +1046,92 @@ internal class QueryGenerator(
 
         // explain() → models all()
         methods += FunSpec.builder("explain")
-            .addKdoc("Return a [QueryPlan] describing the query shapes [all] would execute.\n" +
+            .addKdoc("Return a [QueryPlan] describing the query shapes [allOrThrow] would execute.\n" +
                 "Eager edge subplans show structure, not multiplicity — nested\n" +
-                "eager loads may execute once per parent group at runtime.")
+                "eager loads may execute once per parent group at runtime.\n" +
+                "Interceptors run with operation = ALL; their predicate and\n" +
+                "limit contributions show up in the plan.")
             .returns(queryPlan)
-            .addStatement("return buildQueryPlan(queryLimit, queryOffset, true)")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.ALL, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement("return buildQueryPlan(spec, true)")
             .build()
 
         // explainFirst() → models firstOrNull()
         methods += FunSpec.builder("explainFirst")
-            .addKdoc("Return a [QueryPlan] describing the query shapes [firstOrNull] would execute.")
+            .addKdoc("Return a [QueryPlan] describing the query shapes [firstOrNull] would execute.\n" +
+                "Interceptors run with operation = FIRST; limit operations are\n" +
+                "silent no-ops per the RFC's limit-shape rules.")
             .returns(queryPlan)
-            .addStatement("return buildQueryPlan(1, queryOffset, true)")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.FIRST, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            // first() is hardwired to limit 1; honor interceptor
+            // requireLimitAtMost(0) by min'ing with the spec.
+            .addStatement("val limit = minOf(1, spec.limit ?: 1)")
+            .addStatement(
+                "return buildQueryPlan(spec.copy(limit = limit), true)",
+            )
             .build()
 
-        // explainExists() → models exists()
+        // explainExists() → models rawExists()
         methods += FunSpec.builder("explainExists")
-            .addKdoc("Return a [QueryPlan] describing the query shape [exists] would execute.")
+            .addKdoc("Return a [QueryPlan] describing the query shape [rawExists] would execute.\n" +
+                "Interceptors run with operation = RAW_EXISTS; limit operations\n" +
+                "are silent no-ops.")
             .returns(queryPlan)
-            .addStatement("return buildQueryPlan(1, queryOffset, false)")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.RAW_EXISTS, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement("val limit = minOf(1, spec.limit ?: 1)")
+            .addStatement(
+                "return buildQueryPlan(spec.copy(limit = limit), false)",
+            )
             .build()
 
         // explainVisibleCount() → models visibleCount()
         methods += FunSpec.builder("explainVisibleCount")
-            .addKdoc("Return a [QueryPlan] describing the query shape [visibleCount] would execute.")
+            .addKdoc("Return a [QueryPlan] describing the query shape [visibleCount] would execute.\n" +
+                "Interceptors run with operation = VISIBLE_COUNT; limit operations\n" +
+                "are silent no-ops per the RFC.")
             .returns(queryPlan)
-            .addStatement("return buildQueryPlan(queryLimit, queryOffset, false)")
+            .addStatement(
+                "val spec = runReadInterceptors(%T.VISIBLE_COUNT, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement("return buildQueryPlan(spec, false)")
             .build()
 
         // explainRawCount() → models rawCount()
         methods += FunSpec.builder("explainRawCount")
-            .addKdoc("Return a [QueryPlan] describing the query [rawCount] would execute.")
+            .addKdoc("Return a [QueryPlan] describing the query [rawCount] would execute.\n" +
+                "Interceptors run with operation = RAW_COUNT; predicate\n" +
+                "contributions show up in the plan, limit operations are silent\n" +
+                "no-ops per the RFC.")
             .returns(queryPlan)
-            .addStatement("return %T(driver.explainCount(%T.TABLE, predicates))", queryPlan, entityClass)
+            .addStatement(
+                "val spec = runReadInterceptors(%T.RAW_COUNT, %T.QUERY)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement("return %T(driver.explainCount(%T.TABLE, spec.predicates))", queryPlan, entityClass)
             .build()
 
-        // Private buildQueryPlan helper
+        // Private buildQueryPlan helper. Takes the post-interceptor
+        // FrozenQuerySpec rather than raw limit/offset so the explain
+        // output reflects every predicate, limit, and offset
+        // contribution from the chain (including
+        // requireLimitAtMost / addPredicate / setDefaultLimitIfAbsent).
         val helper = FunSpec.builder("buildQueryPlan")
             .addModifiers(KModifier.PRIVATE)
-            .addParameter("limit", INT.copy(nullable = true))
-            .addParameter("offset", INT.copy(nullable = true))
+            .addParameter("spec", FROZEN_QUERY_SPEC)
             .addParameter("includeEager", BOOLEAN)
             .returns(queryPlan)
             .addStatement(
-                "val root = driver.explainQuery(%T.TABLE, predicates, orderFields, limit, offset)",
+                "val root = driver.explainQuery(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)",
                 entityClass,
             )
 
