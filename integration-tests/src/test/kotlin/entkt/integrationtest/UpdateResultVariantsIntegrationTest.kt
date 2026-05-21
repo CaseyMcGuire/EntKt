@@ -7,18 +7,19 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntConstraintViolationException
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -31,7 +32,7 @@ import kotlin.test.assertTrue
  * recognized constraint failures (and `Err(DriverFailure)` for
  * uncategorized ones).
  */
-class UpdateResultVariantsIntegrationTest {
+class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object AllowAll : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -46,8 +47,7 @@ class UpdateResultVariantsIntegrationTest {
     }
 
     private fun freshClient(): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             policies {
@@ -75,7 +75,8 @@ class UpdateResultVariantsIntegrationTest {
         assertEquals("User", error.entity)
         assertEquals(EntOperation.UPDATE, error.operation)
         assertEquals("23505", error.code)
-        assertEquals("unique", error.constraint)
+        assertNotNull(error.constraint)
+        assertTrue(error.constraint!!.contains("email"), "constraint should mention email: ${error.constraint}")
     }
 
     @Test
@@ -115,7 +116,7 @@ class UpdateResultVariantsIntegrationTest {
         assertEquals("Article", error.entity)
         assertEquals(EntOperation.UPDATE, error.operation)
         assertEquals("23503", error.code)
-        assertEquals("foreign_key", error.constraint)
+        assertNotNull(error.constraint)
     }
 
     @Test

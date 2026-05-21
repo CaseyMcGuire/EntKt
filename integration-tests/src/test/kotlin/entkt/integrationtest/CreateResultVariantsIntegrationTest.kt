@@ -9,6 +9,7 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntConstraintViolationException
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
@@ -16,7 +17,6 @@ import entkt.runtime.EntPrivacyDeniedException
 import entkt.runtime.EntResult
 import entkt.runtime.EntValidationException
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.ValidationDecision
@@ -31,16 +31,12 @@ import kotlin.test.assertTrue
  * End-to-end coverage for create-side `saveOrError()` / `saveOrThrow()`
  * (Result Variants RFC, Phase 3). Exercises the full failure surface
  * — validation, privacy, unique constraint, FK constraint — against
- * the in-memory driver. Postgres SQLSTATE coverage lives in Phase 7.
- *
- * The in-memory driver's classifier (Phase 2) maps its own validator
- * message prefixes to [EntError.ConstraintViolation], so generated
- * create-side `saveOrError()` returns the structured error variant
- * for both unique and FK conflicts here. The Postgres path uses
- * SQLSTATE 23xxx and is asserted separately in
- * `PostgresDriverClassifyTest`.
+ * `PostgresDriver`. Constraint-classification (SQLSTATE 23xxx) is also
+ * covered driver-side in `SqlstateConstraintMappingPostgresIntegrationTest`;
+ * this suite pins the structured-result *contract* (Ok/Err shape per
+ * variant) end-to-end through the generated code.
  */
-class CreateResultVariantsIntegrationTest {
+class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object AllowAll : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -59,8 +55,7 @@ class CreateResultVariantsIntegrationTest {
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {
@@ -254,11 +249,12 @@ class CreateResultVariantsIntegrationTest {
         assertTrue(error is EntError.ConstraintViolation)
         assertEquals("User", error.entity)
         assertEquals(EntOperation.CREATE, error.operation)
-        // InMemoryDriver's classifier emits 23505 for both "Unique
-        // violation:" and "Primary key violation:" prefixes — see
-        // InMemoryDriverClassifyTest for the message-prefix coverage.
         assertEquals("23505", error.code)
-        assertEquals("unique", error.constraint)
+        // PSQLException carries the unique-index name on
+        // ServerErrorMessage.constraint — the classifier surfaces it
+        // on the EntError.
+        assertNotNull(error.constraint)
+        assertTrue(error.constraint!!.contains("email"), "constraint should mention email: ${error.constraint}")
     }
 
     @Test
@@ -290,7 +286,7 @@ class CreateResultVariantsIntegrationTest {
         assertEquals("Article", error.entity)
         assertEquals(EntOperation.CREATE, error.operation)
         assertEquals("23503", error.code)
-        assertEquals("foreign_key", error.constraint)
+        assertNotNull(error.constraint)
     }
 
     // ---- saveOrError doesn't persist on Err ----

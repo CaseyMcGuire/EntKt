@@ -5,8 +5,7 @@
 **Implemented.** The core `EntResult` / `EntError` types and the
 `EntException` hierarchy are defined. `Driver.classifyException(...)` is the
 classifier extension point: it returns `EntError.ConstraintViolation` for
-SQLSTATE `23xxx` on `PostgresDriver` and for the `InMemoryDriver`'s own
-validator message-prefixes. `classifyDriverError(...)` is the runtime
+SQLSTATE `23xxx` on `PostgresDriver`. `classifyDriverError(...)` is the runtime
 helper generated `*OrError` blocks call to wrap unrecognized exceptions —
 its fallback rules are:
 

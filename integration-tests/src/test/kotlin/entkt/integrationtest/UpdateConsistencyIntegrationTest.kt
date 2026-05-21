@@ -1,8 +1,8 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.support.LockSupportInMemoryDriver
-import entkt.runtime.InMemoryDriver
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.runtime.TransactionRequiredException
 import entkt.runtime.UnsupportedDriverCapabilityException
 import entkt.runtime.UpdateConsistency
@@ -19,28 +19,22 @@ import kotlin.test.assertNotNull
  * lands the owner row through `Driver.readRowForUpdate(...)` rather
  * than the `ReadCurrent` `byId(...)` path.
  *
- * The bare [InMemoryDriver] reports `supportsReadRowForUpdate = false`
- * because its per-table `synchronized` blocks scope only individual
- * driver calls (not "until transaction end"). For codegen-shape
- * happy-path tests we wrap it in [LockSupportInMemoryDriver], a thin
- * test-only adapter that advertises the capability and forwards
- * locking calls to `byId`. Real concurrent-correctness checks belong
- * to the Postgres driver suite, where the lock semantics are real.
+ * [PostgresDriver] reports `supportsReadRowForUpdate = true` natively
+ * (SELECT ... FOR UPDATE under a transaction), so both the happy-path
+ * Pessimistic-inside-tx branches and the negative-capability branch
+ * (via the [NoLockSupportDriver] wrapper) can be exercised against
+ * the production driver.
  */
-class UpdateConsistencyIntegrationTest {
+class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 
-    /** Bare in-memory driver — reports `supportsReadRowForUpdate = false`. */
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver()
+    /** PostgresDriver natively reports `supportsReadRowForUpdate = true`. */
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     /**
-     * In-memory driver wrapped to advertise true row-lock support so
-     * the Pessimistic codegen branches can be exercised end-to-end.
-     * The wrapper does not implement real lock-until-tx-end semantics
-     * — it just satisfies the capability gate and forwards
-     * `readRowForUpdate` to `byId`. Real concurrency tests belong on
-     * Postgres.
+     * Same as [freshDriver] — kept as a named alias so test bodies
+     * make their intent ("this branch needs row-lock support") clear.
      */
-    private fun lockingDriver(): entkt.runtime.Driver = LockSupportInMemoryDriver(InMemoryDriver())
+    private fun lockingDriver(): entkt.runtime.Driver = resetAndDriver()
 
     @Test
     fun `default consistency is ReadCurrent and update succeeds outside a transaction`() {
@@ -78,9 +72,9 @@ class UpdateConsistencyIntegrationTest {
 
     @Test
     fun `Pessimistic update inside a transaction succeeds`() {
-        // Uses the lock-advertising wrapper so the capability gate
-        // accepts the save. Bare InMemoryDriver reports
-        // `supportsReadRowForUpdate = false` and would reject.
+        // PostgresDriver natively advertises `supportsReadRowForUpdate
+        // = true`, so the capability gate accepts the save and the
+        // SELECT ... FOR UPDATE actually runs against the row.
         val client = EntClient(lockingDriver())
         val user = client.users.create {
             name = "Alice"
@@ -139,7 +133,8 @@ class UpdateConsistencyIntegrationTest {
 
     @Test
     fun `defaultUpdateConsistency on the client is honored when no per-save override is passed`() {
-        // Lock-advertising wrapper so the inside-tx case can complete.
+        // PostgresDriver's native lock support lets the inside-tx
+        // case actually run the SELECT ... FOR UPDATE.
         val client = EntClient(lockingDriver()) {
             defaultUpdateConsistency = UpdateConsistency.Pessimistic
         }
@@ -165,7 +160,7 @@ class UpdateConsistencyIntegrationTest {
 
     @Test
     fun `Pessimistic update on a driver without supportsReadRowForUpdate throws UnsupportedDriverCapabilityException`() {
-        // Wrap the InMemoryDriver with a thin proxy that reports
+        // Wrap a real PostgresDriver with a thin proxy that reports
         // `supportsReadRowForUpdate = false` so the capability preflight
         // fires. Other driver methods delegate to the wrapped instance.
         val real = freshDriver()
@@ -188,12 +183,12 @@ class UpdateConsistencyIntegrationTest {
 }
 
 /**
- * A thin wrapper that delegates everything to a real [InMemoryDriver]
+ * A thin wrapper that delegates everything to a real [entkt.runtime.Driver]
  * but advertises `supportsReadRowForUpdate = false`. Lets the
  * capability-rejection branch of the Pessimistic preflight be
  * exercised without needing a second real driver implementation.
  */
-private class NoLockSupportDriver(private val real: InMemoryDriver) : entkt.runtime.Driver {
+private class NoLockSupportDriver(private val real: entkt.runtime.Driver) : entkt.runtime.Driver {
     override fun register(schema: entkt.runtime.EntitySchema) = real.register(schema)
     override fun insert(table: String, values: Map<String, Any?>) = real.insert(table, values)
     override fun update(table: String, id: Any, values: Map<String, Any?>) = real.update(table, id, values)

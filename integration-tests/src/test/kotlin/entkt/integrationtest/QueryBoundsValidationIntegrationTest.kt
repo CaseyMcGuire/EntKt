@@ -7,8 +7,8 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.Viewer
@@ -19,9 +19,8 @@ import kotlin.test.assertTrue
 /**
  * Pins the boundary-input validation added to query bounds + the
  * client-config overfetch cap. Prior to validation:
- *  - `limit(-1)` / `offset(-1)` propagated to the driver and crashed
- *    inside `take(-1)` / `drop(-1)` (InMemoryDriver) or surfaced as
- *    a SQL syntax error (Postgres) — one layer removed from the
+ *  - `limit(-1)` / `offset(-1)` propagated to the driver and surfaced
+ *    as a SQL syntax error on Postgres — one layer removed from the
  *    caller.
  *  - `visibleOverfetchLimit = 0` made the cap-exhaustion check
  *    `rows.size >= cap` always true, so `visibleAllOrError()` would
@@ -31,7 +30,7 @@ import kotlin.test.assertTrue
  * Now: each is `require`-rejected at the setter boundary so the
  * caller sees the bad input immediately.
  */
-class QueryBoundsValidationIntegrationTest {
+class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -46,8 +45,7 @@ class QueryBoundsValidationIntegrationTest {
     }
 
     private fun freshClient(): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             policies {
@@ -91,8 +89,7 @@ class QueryBoundsValidationIntegrationTest {
     @Test
     fun `visibleOverfetchLimit rejects zero`() {
         val ex = assertFailsWith<IllegalArgumentException> {
-            val driver = InMemoryDriver()
-            EntClient.SCHEMAS.forEach(driver::register)
+            val driver = resetAndDriver()
             EntClient(driver) {
                 visibleOverfetchLimit = 0
             }
@@ -106,8 +103,7 @@ class QueryBoundsValidationIntegrationTest {
     @Test
     fun `visibleOverfetchLimit rejects negative values`() {
         val ex = assertFailsWith<IllegalArgumentException> {
-            val driver = InMemoryDriver()
-            EntClient.SCHEMAS.forEach(driver::register)
+            val driver = resetAndDriver()
             EntClient(driver) {
                 visibleOverfetchLimit = -5
             }

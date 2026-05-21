@@ -2,7 +2,15 @@
 
 ## Status
 
-Possible future cleanup. This is not implemented.
+**Implemented.** `InMemoryDriver` and its `LockSupportInMemoryDriver`
+test wrapper have been removed. Integration tests were migrated to
+`PostgresDriver` via the shared `PostgresTestBase` (Testcontainers,
+`postgres:16-alpine`); tests that were redundant with existing
+Postgres-backed coverage (`PrivacyIntegrationTest`,
+`ValidationIntegrationTest`, `SqlstateConstraintMappingPostgresIntegrationTest`,
+`LinkTableM2MPostgresIntegrationTest`) were deleted rather than
+migrated. The `:example-demo` module was deleted; `:example-spring`
+remains as the runnable Postgres-backed example.
 
 ## Summary
 

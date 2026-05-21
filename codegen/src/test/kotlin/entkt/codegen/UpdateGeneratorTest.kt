@@ -508,8 +508,7 @@ class UpdateGeneratorTest {
         }
         // Phase 4: trailing Exception catch routes anything not
         // matched above through Phase 2's classifier — emitting
-        // ConstraintViolation for SQLSTATE 23xxx (Postgres) /
-        // recognized validator-message prefixes (InMemoryDriver), and
+        // ConstraintViolation for SQLSTATE 23xxx (Postgres) and
         // DriverFailure with the raw cause otherwise.
         assert(
             output.contains(

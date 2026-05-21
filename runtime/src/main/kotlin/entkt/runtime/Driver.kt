@@ -409,8 +409,7 @@ interface Driver {
  *     `EntError`.
  *  2. The driver's own `classifyException` runs next; whatever it
  *     returns wins (typically `ConstraintViolation` for SQLSTATE
- *     23xxx on Postgres, or for the InMemoryDriver's own validator
- *     message-prefixes).
+ *     23xxx on Postgres).
  *  3. If the driver returned `null` and the throwable is a
  *     [java.sql.SQLException] (or subclass — covers `PSQLException`,
  *     H2's `JdbcSQLException`, etc.), wrap as `DriverFailure`. These

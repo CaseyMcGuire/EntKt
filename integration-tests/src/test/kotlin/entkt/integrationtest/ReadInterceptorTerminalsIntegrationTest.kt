@@ -2,6 +2,8 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Post
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.AbortQueryRejected
@@ -10,7 +12,6 @@ import entkt.runtime.EntOperation
 import entkt.runtime.EntQueryRejectedException
 import entkt.runtime.EntResult
 import entkt.runtime.GlobalQueryInterceptor
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.InterceptScope
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
@@ -45,11 +46,9 @@ import kotlin.test.assertTrue
  * Edge / eager / explain wiring lands in Phases 5 / 8 and is not
  * covered here.
  */
-class ReadInterceptorTerminalsIntegrationTest {
+class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().apply {
-        EntClient.SCHEMAS.forEach(::register)
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     private fun seedPosts(client: EntClient, titles: List<String>): List<Post> =
         titles.map { client.posts.create { title = it }.saveOrThrow() }

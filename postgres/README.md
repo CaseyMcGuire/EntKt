@@ -40,6 +40,6 @@ into SQL.
 
 ## Tests
 
-`PostgresDriverTest` mirrors `InMemoryDriverTest` assertion for
-assertion, running against `postgres:16-alpine` via Testcontainers 2.0.4.
-Requires a running Docker daemon.
+`PostgresDriverTest` runs the full driver contract against
+`postgres:16-alpine` via Testcontainers 2.0.4. Requires a running
+Docker daemon.

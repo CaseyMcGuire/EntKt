@@ -7,12 +7,12 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
 import entkt.runtime.EntResult
 import entkt.runtime.EntWriteSucceededLoadDeniedException
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.Viewer
@@ -41,7 +41,7 @@ import kotlin.test.assertTrue
  * `createManyOrError` per-row Err) — composing with
  * `withTransactionOrError + bind()` is the all-or-nothing path.
  */
-class WriteSucceededLoadDeniedIntegrationTest {
+class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
     /** Article LOAD denies for the active viewer; CREATE/UPDATE allow. */
     private object DenyLoadAllowWrite : EntityPolicy<Article, ArticlePolicyScope> {
@@ -57,8 +57,7 @@ class WriteSucceededLoadDeniedIntegrationTest {
     }
 
     private fun freshClient(viewer: Viewer = Viewer.User(1L)): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {
@@ -210,8 +209,7 @@ class WriteSucceededLoadDeniedIntegrationTest {
                 }
             }
         }
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
             policies {

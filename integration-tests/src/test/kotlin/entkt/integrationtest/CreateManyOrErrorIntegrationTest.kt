@@ -7,11 +7,11 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.TransactionRequiredException
@@ -32,10 +32,14 @@ import kotlin.test.assertTrue
  *    (the helper's all-or-nothing semantics require a tx).
  *  - Zero-blocks: returns Ok(emptyList()) without preflight.
  *  - Per-row failure: returns Err for the first failing block; the
- *    caller's tx is *not* rolled back by this helper (caller decides
- *    via bind() inside withTransactionOrError).
+ *    helper itself does not call rollback (caller decides via bind()
+ *    inside withTransactionOrError). On Postgres, a constraint
+ *    violation inside the surrounding tx poisons the tx anyway, so
+ *    earlier writes also roll back at commit-time — see the
+ *    `withTransactionOrError + bind()` test below for the canonical
+ *    all-or-nothing usage.
  */
-class CreateManyOrErrorIntegrationTest {
+class CreateManyOrErrorIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -50,8 +54,7 @@ class CreateManyOrErrorIntegrationTest {
     }
 
     private fun freshClient(): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             policies {
@@ -126,34 +129,13 @@ class CreateManyOrErrorIntegrationTest {
         assertEquals("23505", error.code)
 
         // Short-circuit verified: C was never attempted, so the
-        // c@example.com row is absent. (A was written and the
-        // surrounding plain withTransaction committed because the
-        // helper returned Err normally — see the next test for the
-        // all-or-nothing pattern via withTransactionOrError + bind.)
+        // c@example.com row is absent. A was attempted but the 23505
+        // on B poisoned the tx, so Postgres rolls back A at commit
+        // time — only the pre-tx "Existing" row survives. The
+        // canonical "all-or-nothing on Err" pattern is
+        // withTransactionOrError + bind(), exercised below.
         assertEquals(0L, client.users.query { where(User.email eq "c@example.com") }.rawCount())
-        assertEquals(2L, client.users.query().rawCount())  // Existing + A
-    }
-
-    @Test
-    fun `plain withTransaction leaks earlier writes — helper does NOT roll back on its own`() {
-        // Pins the documented limitation: inside a plain
-        // withTransaction { tx -> tx.users.createManyOrError(...) },
-        // an Err return is a normal return, the outer tx commits,
-        // and earlier successful rows survive. Use
-        // withTransactionOrError + .bind() for all-or-nothing.
-        val client = freshClient()
-        client.users.create { name = "Existing"; email = "dup@example.com" }.saveOrThrow()
-
-        client.withTransaction { tx ->
-            tx.users.createManyOrError(
-                { name = "A"; email = "a@example.com" },
-                { name = "B"; email = "dup@example.com" },
-            )
-        }
-
-        // "A" was committed alongside Existing — the helper short-
-        // circuited at B, but didn't roll A back.
-        assertEquals(2L, client.users.query().rawCount())
+        assertEquals(1L, client.users.query().rawCount())  // Existing only
     }
 
     @Test

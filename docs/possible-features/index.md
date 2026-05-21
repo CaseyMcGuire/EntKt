@@ -58,5 +58,5 @@ These pages are design notes, not committed API contracts.
 - [OpenAPI / JSON Schema Generation](tooling/openapi-json-schema-generation.md)
 - [GraphQL Kotlin Type Generation](tooling/graphql-kotlin-generation.md)
 - [Generated Test Fixtures](tooling/generated-test-fixtures.md)
-- [Remove InMemoryDriver](tooling/remove-in-memory-driver.md)
+- [Remove InMemoryDriver](tooling/remove-in-memory-driver.md) — **implemented**
 - [Gradle Developer Experience](tooling/gradle-dx.md)

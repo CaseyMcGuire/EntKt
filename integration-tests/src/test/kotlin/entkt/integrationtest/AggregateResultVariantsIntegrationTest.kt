@@ -1,12 +1,13 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
 import entkt.runtime.EntResult
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
 import entkt.runtime.Viewer
@@ -33,13 +34,11 @@ import kotlin.test.assertTrue
  * terminals which are already exercised end-to-end in
  * [QueryResultVariantsIntegrationTest].
  */
-class AggregateResultVariantsIntegrationTest {
+class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().apply {
-        EntClient.SCHEMAS.forEach(::register)
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
-    private fun freshClient(driver: InMemoryDriver = freshDriver()): EntClient =
+    private fun freshClient(driver: PostgresDriver = freshDriver()): EntClient =
         EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
 
     // ---------- rawCountOrError ----------

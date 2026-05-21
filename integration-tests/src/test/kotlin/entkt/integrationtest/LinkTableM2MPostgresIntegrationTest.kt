@@ -16,19 +16,13 @@ import kotlin.test.assertTrue
 
 /**
  * Postgres-backed coverage for the RFC #5 link-table M2M helpers
- * against real `REFERENCES ... ON DELETE CASCADE` constraints. The
- * companion `LinkTableM2MIntegrationTest` exercises the same generated
- * code paths against `LockSupportInMemoryDriver`; this suite closes
- * the real-driver coverage gap.
+ * against real `REFERENCES ... ON DELETE CASCADE` constraints.
  *
  * Specifically, this suite pins:
  *  - PostgresDriver rejects junction inserts that reference
  *    non-existent target rows via the FK constraint declared by
  *    RFC #3's junction-shape rule 4 (`ON DELETE CASCADE` implies
- *    `REFERENCES`). The InMemoryDriver-backed test covers the same
- *    case through the in-memory FK enforcement added alongside RFC #5
- *    Phase 8; this test confirms the contract holds on the actual
- *    database too.
+ *    `REFERENCES`).
  *
  * Each test brings up a single Postgres container (Testcontainers,
  * `postgres:16-alpine`), registers all schemas via the generated
@@ -147,12 +141,9 @@ class LinkTableM2MPostgresIntegrationTest {
 
     @Test
     fun `Postgres accepts well-formed M2M add and persists the junction row`() {
-        // Happy-path smoke test: prove the generated junction insert
-        // path actually works against the real driver. The
-        // InMemoryDriver-backed tests cover the same case, but having
-        // it here confirms the codegen output compiles and runs
-        // against real Postgres semantics (FK satisfied, ON CONFLICT
-        // not triggered, etc.).
+        // Happy-path smoke test: confirms the codegen output compiles
+        // and runs against real Postgres semantics (FK satisfied, ON
+        // CONFLICT not triggered, etc.).
         val client = freshClient()
         val post = client.posts.create { title = "Hello" }.save()
         val tagA = client.tags.create { name = "a" }.save()

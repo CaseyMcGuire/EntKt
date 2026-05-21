@@ -634,12 +634,9 @@ Before implementation, add tests for:
   Interceptors RFC's M2M-walking follow-up; flip when that
   ships
 
-**Driver coverage.** Partial-unique-index behavior is not enforced
-by `InMemoryDriver` (see `runtime/.../InMemoryDriver.kt` —
-`IndexMetadata.where` is a Postgres-side SQL string the in-memory
-driver does not evaluate). Tests that depend on the partial
-`deleted_at IS NULL` index — specifically the restore-conflict
-test bullet above — run against the Postgres driver only. The
-in-memory suite covers the conflict-free path (live-uniqueness
-holds when no soft-deleted row contends) but skips the conflict
-case. All other test bullets above run on both drivers.
+**Driver coverage.** All test bullets above run on `PostgresDriver`
+via Testcontainers. Partial-unique-index behavior
+(`IndexMetadata.where`, used for the `deleted_at IS NULL` index
+backing the restore-conflict bullet) is a Postgres-side SQL string;
+verifying it requires a real database, which the Postgres-backed
+test suite provides.

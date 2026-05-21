@@ -108,39 +108,6 @@ satisfy `supportsOwnerEdgeSerialization` and vice versa. Drivers that
 support neither leave both flags at the interface defaults
 (`false` / throwing default methods).
 
-## InMemoryDriver
-
-A thread-safe, in-process driver for testing and demos. No external
-dependencies.
-
-```kotlin
-val client = EntClient(InMemoryDriver())
-```
-
-Features:
-
-- `ConcurrentHashMap`-based storage with `AtomicLong` ID counters
-- Full predicate support including edge traversal and M2M junction tables
-- Referential actions on delete (CASCADE, SET_NULL, RESTRICT) enforced
-  from `ForeignKeyRef.onDelete` metadata
-- Snapshot-based transactions with rollback on exception
-- Nested `withTransaction` calls reuse the existing transaction
-
-Use `InMemoryDriver` for unit tests and demos. It evaluates predicates
-in-process, so behavior matches SQL drivers for all supported predicate
-types.
-
-**Lock capabilities.** `InMemoryDriver` reports
-`supportsReadRowForUpdate = false` and
-`supportsOwnerEdgeSerialization = false`. The snapshot model commits
-transactions atomically but does not hold a true row lock during the
-block, so claiming row-lock support would mislead application code
-into believing concurrent writers are serialized when they are not.
-Tests that exercise the `Pessimistic`/M2M-locking codegen paths use a
-test-only `LockSupportInMemoryDriver` wrapper that flips the flags on
-without changing storage semantics — intended for happy-path codegen
-verification only, not for concurrency tests.
-
 ## PostgresDriver
 
 JDBC-backed driver for PostgreSQL. Requires a `javax.sql.DataSource`.

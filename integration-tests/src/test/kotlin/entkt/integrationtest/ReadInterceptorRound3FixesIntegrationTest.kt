@@ -5,6 +5,8 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.Tag
 import entkt.integrationtest.ent.User
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.EntError
@@ -12,7 +14,6 @@ import entkt.runtime.EntOperation
 import entkt.runtime.EntQueryRejectedException
 import entkt.runtime.EntResult
 import entkt.runtime.GlobalQueryInterceptor
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.InterceptorEngine
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
@@ -44,11 +45,9 @@ import kotlin.test.assertTrue
  *    EntError.QueryRejected (entity, operation) rather than
  *    synthesizing "<explain>" / QUERY.
  */
-class ReadInterceptorRound3FixesIntegrationTest {
+class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().apply {
-        EntClient.SCHEMAS.forEach(::register)
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     // ---------- #1: traversal-source rejection caught by *OrError ----------
 

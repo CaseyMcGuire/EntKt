@@ -4,9 +4,10 @@ import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleUpdateHookContext
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.runtime.EntNoChangesException
 import entkt.runtime.FieldPatch
-import entkt.runtime.InMemoryDriver
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -25,17 +26,16 @@ import kotlin.test.assertFailsWith
  * FK (`authorId`). That covers four of the five shapes the reviewer
  * called out (nullable FK isn't currently in the test schemas).
  *
- * Uses InMemoryDriver to keep the test fast — Postgres testcontainers
- * are overkill for a generated-code compile + behavior check.
+ * Runs against Postgres so the generated `_mutationView` adapter is
+ * exercised end-to-end through the production driver.
  */
-class UpdateHookContextIntegrationTest {
+class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
-    private lateinit var driver: InMemoryDriver
+    private lateinit var driver: PostgresDriver
 
     @BeforeTest
     fun setUp() {
-        driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        driver = resetAndDriver()
     }
 
     private fun newClient(

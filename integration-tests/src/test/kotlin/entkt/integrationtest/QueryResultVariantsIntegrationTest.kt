@@ -7,13 +7,13 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntNotFoundException
 import entkt.runtime.EntOperation
 import entkt.runtime.EntPrivacyDeniedException
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.PrivacyDeniedException
@@ -41,7 +41,7 @@ import kotlin.test.assertTrue
  *   visibleAll          — drop denied rows from the result list
  *   visibleAllOrError   — same wrapped in EntResult
  */
-class QueryResultVariantsIntegrationTest {
+class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     /** Allow exactly one specific article — denies all others. */
     private fun pinPolicy(allowedTitle: String) = object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -77,8 +77,7 @@ class QueryResultVariantsIntegrationTest {
         viewer: Viewer = Viewer.System,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {
@@ -209,8 +208,7 @@ class QueryResultVariantsIntegrationTest {
                 privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
             }
         }
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
             policies {
@@ -250,8 +248,7 @@ class QueryResultVariantsIntegrationTest {
                 privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
             }
         }
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
             policies {
@@ -290,8 +287,7 @@ class QueryResultVariantsIntegrationTest {
                 privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
             }
         }
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
             policies {
@@ -340,7 +336,9 @@ class QueryResultVariantsIntegrationTest {
         val client = freshClient()
         val (first, _, _) = seedThree(client)
 
-        val loaded = client.articles.query().firstOrThrow()
+        // Explicit orderBy so the test pins "first by id" rather
+        // than relying on Postgres's unspecified default row order.
+        val loaded = client.articles.query { orderBy(Article.id.asc()) }.firstOrThrow()
         assertEquals(first.id, loaded.id)
     }
 
@@ -375,7 +373,9 @@ class QueryResultVariantsIntegrationTest {
         val client = freshClient()
         val (first, _, _) = seedThree(client)
 
-        val result = client.articles.query().firstOrError()
+        // Explicit orderBy so the test pins "first by id" rather
+        // than relying on Postgres's unspecified default row order.
+        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrError()
         assertTrue(result is EntResult.Ok)
         assertEquals(first.id, result.value.id)
     }
@@ -436,8 +436,7 @@ class QueryResultVariantsIntegrationTest {
         viewer: Viewer,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope>,
     ): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {
@@ -540,9 +539,9 @@ class QueryResultVariantsIntegrationTest {
     // ---- No-LOAD-privacy fast paths (cap is skipped entirely) ----
 
     /**
-     * Builds a fresh InMemoryDriver-backed client whose Article
-     * policy has NO LOAD privacy rules — the "visible" APIs collapse
-     * to "all" because there's nothing to filter in-process.
+     * Builds a fresh Postgres-backed client whose Article policy has
+     * NO LOAD privacy rules — the "visible" APIs collapse to "all"
+     * because there's nothing to filter in-process.
      */
     private fun freshClientNoPrivacy(cap: Int): EntClient {
         val noLoadPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -550,8 +549,7 @@ class QueryResultVariantsIntegrationTest {
                 // No `load(...)` rules — repo.hasLoadPrivacy() == false.
             }
         }
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
             policies {
@@ -596,8 +594,8 @@ class QueryResultVariantsIntegrationTest {
         val client = freshClientNoPrivacy(cap = 3)
         seedNArticles(client, n = 10)
 
-        val firstVisible = client.articles.query().firstVisibleOrNull()
-        val firstAll = client.articles.query().allOrThrow().first()
+        val firstVisible = client.articles.query { orderBy(Article.id.asc()) }.firstVisibleOrNull()
+        val firstAll = client.articles.query { orderBy(Article.id.asc()) }.allOrThrow().first()
         assertEquals(firstAll.id, firstVisible?.id)
     }
 }

@@ -121,9 +121,8 @@ private fun quoteIdent(identifier: String): String =
     "\"${identifier.replace("\"", "\"\"")}\""
 
 /**
- * Parity tests for [PostgresDriver] against a real Postgres container.
- * The assertions mirror `InMemoryDriverTest` so any divergence between
- * the two drivers shows up immediately.
+ * Driver-contract tests for [PostgresDriver] against a real Postgres
+ * container.
  *
  * Each test starts from a TRUNCATE — schemas live for the lifetime of
  * the container, but rows and id sequences reset between tests so the
@@ -372,8 +371,8 @@ class PostgresDriverTest {
         // Wildcard-injection regression guard: caller input flows raw
         // into the LIKE pattern would mean a search for "%" matches
         // everything and "_" matches every single-char column. After
-        // escaping `%`, `_`, and `\`, the predicate behaves exactly
-        // like InMemoryDriver's literal-substring semantics.
+        // escaping `%`, `_`, and `\`, the predicate behaves as
+        // literal-substring matching.
         val driver = fresh()
         // Rows with literal special characters.
         driver.insert("users", mapOf<String, Any?>("name" to "50% off"))

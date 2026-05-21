@@ -45,8 +45,7 @@ data class EntitySchema(
 /**
  * One column on a registered entity. Drivers that need to materialize
  * a table (Postgres, SQLite, etc.) read [type] and [nullable] to pick
- * the right SQL type and constraints; the in-memory driver ignores
- * everything but [name].
+ * the right SQL type and constraints.
  */
 data class ColumnMetadata(
     /** snake_case column name as it appears in `Driver` row maps. */

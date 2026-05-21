@@ -26,7 +26,7 @@ class User : EntSchema("users") {
 
 ```kotlin
 // 2. Use the generated code
-val client = EntClient(InMemoryDriver())  // or PostgresDriver(dataSource)
+val client = EntClient(PostgresDriver(dataSource))
 
 val alice = client.users.create {
     name = "Alice"
@@ -63,20 +63,19 @@ client.withTransaction { tx ->
 }
 ```
 
-See [`example-demo/src/main/kotlin/example/demo/Demo.kt`](example-demo/src/main/kotlin/example/demo/Demo.kt)
-for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
+See [`:example-spring`](example-spring/README.md) for a runnable Spring
+Boot REST API example backed by Postgres.
 
 ## Module layout
 
 | Module | Description |
 |---|---|
 | [`:schema`](schema/README.md) | Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType` |
-| [`:runtime`](runtime/README.md) | `Driver` interface, `InMemoryDriver`, `EntitySchema`, query `Predicate` hierarchy |
+| [`:runtime`](runtime/README.md) | `Driver` interface, `EntitySchema`, query `Predicate` hierarchy |
 | [`:codegen`](codegen/README.md) | KotlinPoet-based generator: entity classes, create/update/query builders, repos, `EntClient` |
 | [`:migrations`](migrations/README.md) | Driver-agnostic schema diffing and migration planning |
 | [`:gradle-plugin`](gradle-plugin/README.md) | `entkt` Gradle plugin registering `generateEntkt` task |
 | [`:postgres`](postgres/README.md) | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
-| `:example-demo` | Executable demo of the full API against `InMemoryDriver` |
 | [`:example-spring`](example-spring/README.md) | Spring Boot REST API example with Postgres, Flyway-applied SQL migrations, lifecycle hooks, and friendship management |
 
 ## Roadmap
@@ -84,8 +83,8 @@ for a full end-to-end tour, runnable with `./gradlew :example-demo:run`.
 Things that are **not yet implemented**, roughly in order of severity:
 
 ### Driver capabilities
-- **More drivers.** Only `InMemoryDriver` and `PostgresDriver` exist today.
-  No SQLite, MySQL, etc.
+- **More drivers.** Only `PostgresDriver` exists today. No SQLite,
+  MySQL, etc.
 - **Observability.** No logging, metrics, or query-lifecycle hooks on the
   driver interface.
 
@@ -102,8 +101,8 @@ Things that are **not yet implemented**, roughly in order of severity:
 
 ```bash
 ./gradlew build          # compiles everything, runs all tests
-./gradlew :postgres:test # runs the Testcontainers-backed parity tests
-./gradlew :example-demo:run  # runs the InMemoryDriver demo end-to-end
+./gradlew :postgres:test # runs the Testcontainers-backed Postgres tests
 ```
 
-Requires JDK 17+. Running `:postgres:test` requires Docker.
+Requires JDK 17+. Running `:postgres:test` (and the integration test
+suite) requires Docker.

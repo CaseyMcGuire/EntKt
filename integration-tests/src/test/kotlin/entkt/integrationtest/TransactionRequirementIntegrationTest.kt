@@ -1,7 +1,8 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
-import entkt.runtime.InMemoryDriver
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.runtime.TransactionRequiredException
 import entkt.runtime.TransactionRequirement
 import kotlin.test.Test
@@ -22,11 +23,9 @@ import kotlin.test.assertNotNull
  * (link-table M2M helpers etc., once they land in RFC #5), so the
  * single-write shapes here treat it the same as `Optional`.
  */
-class TransactionRequirementIntegrationTest {
+class TransactionRequirementIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().also {
-        // Repos auto-register on construction.
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     @Test
     fun `Optional permits writes outside a transaction`() {

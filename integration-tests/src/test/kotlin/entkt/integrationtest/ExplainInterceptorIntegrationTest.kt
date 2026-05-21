@@ -1,10 +1,11 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.EntQueryRejectedException
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
 import entkt.runtime.ReadOperation
@@ -35,11 +36,9 @@ import kotlin.test.assertTrue
  *  - Post-interceptor predicates / annotations / limits surface in the
  *    plan.
  */
-class ExplainInterceptorIntegrationTest {
+class ExplainInterceptorIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().apply {
-        EntClient.SCHEMAS.forEach(::register)
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     // ---------- Operation routing per explain method ----------
 

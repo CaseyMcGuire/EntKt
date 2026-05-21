@@ -10,7 +10,7 @@
 
 entkt is organized as a multi-module Gradle project. A consumer application
 typically depends on `:schema` (compile-time DSL), `:runtime` (driver
-interface), and either `:postgres` or the in-memory driver for storage.
+interface), and `:postgres` for storage.
 
 The `:gradle-plugin` module provides a Gradle plugin that wires code
 generation into your build automatically.
@@ -87,9 +87,9 @@ Liquibase, or your deployment system to execute the generated files.
 ### Without the plugin
 
 You can also invoke codegen directly via the CLI entry point
-(`entkt.codegen.GenerateMainKt`). See `:example-demo`'s `build.gradle.kts`
-for this approach — it registers a `JavaExec` task that scans the classpath
-for `EntSchema` classes:
+(`entkt.codegen.GenerateMainKt`). See `:integration-tests`'s
+`build.gradle.kts` for this approach — it registers a `JavaExec` task
+that scans the classpath for `EntSchema` classes:
 
 ```kotlin
 val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
@@ -126,12 +126,18 @@ After code generation, you get typed entity classes, builders, and
 an `EntClient`:
 
 ```kotlin
-import entkt.runtime.InMemoryDriver
 import com.example.ent.*
+import entkt.postgres.PostgresDriver
+import org.postgresql.ds.PGSimpleDataSource
 
 fun main() {
     // Create a client with any Driver implementation
-    val client = EntClient(InMemoryDriver())
+    val dataSource = PGSimpleDataSource().apply {
+        setURL("jdbc:postgresql://localhost:5432/mydb")
+        user = "myuser"
+        password = "mypassword"
+    }
+    val client = EntClient(PostgresDriver(dataSource))
 
     // Create
     val alice = client.users.create {
@@ -157,7 +163,9 @@ fun main() {
 }
 ```
 
-For a full working example, run `./gradlew :example-demo:run`.
+For a full working example wired up with Postgres, Flyway-applied
+migrations, and lifecycle hooks, see [`:example-spring`](../example-spring/README.md)
+— a runnable Spring Boot REST API.
 
 ## What Gets Generated
 

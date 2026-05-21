@@ -8,12 +8,12 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
 import entkt.runtime.EntPrivacyDeniedException
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.Viewer
@@ -40,7 +40,7 @@ import kotlin.test.assertTrue
  * are removed (not deprecated) so callers reach for the explicit
  * structured variants.
  */
-class DeleteResultVariantsIntegrationTest {
+class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -67,8 +67,7 @@ class DeleteResultVariantsIntegrationTest {
         viewer: Viewer = Viewer.System,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {

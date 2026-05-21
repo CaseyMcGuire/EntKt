@@ -7,11 +7,11 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.Viewer
@@ -35,7 +35,7 @@ import kotlin.test.assertTrue
  *    caller forgot `.bind()`), the helper rolls back and throws
  *    IllegalStateException
  */
-class WithTransactionOrErrorIntegrationTest {
+class WithTransactionOrErrorIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -50,8 +50,7 @@ class WithTransactionOrErrorIntegrationTest {
     }
 
     private fun freshClient(): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.System) }
             policies {

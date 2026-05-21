@@ -1,6 +1,6 @@
 # :runtime
 
-`Driver` interface, `InMemoryDriver`, `EntitySchema`/`ColumnMetadata`/`EdgeMetadata`,
+`Driver` interface, `EntitySchema`/`ColumnMetadata`/`EdgeMetadata`,
 query `Predicate` hierarchy, `Op` enum.
 
 ## Driver interface
@@ -47,10 +47,3 @@ inside a transaction. The block receives a transaction-scoped driver; if it
 completes normally the transaction commits, if it throws the transaction rolls
 back. Nested `withTransaction` calls reuse the existing transaction.
 
-## InMemoryDriver
-
-Thread-safe in-process storage using `ConcurrentHashMap`
-and `AtomicLong` id counters. Edge predicates recursively scan related tables
-via registered `EdgeMetadata`. Supports transactions with snapshot isolation
-and rollback on error. Used by the demo and as the parity oracle for the
-Postgres driver tests.

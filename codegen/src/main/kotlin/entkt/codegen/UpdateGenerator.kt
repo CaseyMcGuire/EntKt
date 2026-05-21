@@ -1749,8 +1749,7 @@ internal class UpdateGenerator(
      * The trailing `catch (e: Exception)` arm routes uncaught
      * exceptions through [classifyDriverError] so the driver-level
      * classifier (Phase 2) emits `Err(ConstraintViolation)` for
-     * SQLSTATE 23xxx (Postgres) / recognized validator message
-     * prefixes (InMemoryDriver), falling back to `Err(DriverFailure)`
+     * SQLSTATE 23xxx (Postgres), falling back to `Err(DriverFailure)`
      * with the raw cause attached.
      *
      * [Exception] (not [Throwable]) is the floor: [Error] subclasses

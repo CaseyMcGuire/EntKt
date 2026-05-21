@@ -59,11 +59,10 @@ postPolicyHarness.assertUpdateRejected(post, "author cannot change") {
 
 ## Driver Strategy
 
-The first version can use `InMemoryDriver` for generated test harnesses. This
-keeps tests fast and avoids Testcontainers for every policy assertion.
-
-Rules that require database-specific behavior should still be tested in a
-driver integration suite.
+The first version uses `PostgresDriver` via Testcontainers for
+generated test harnesses, sharing a single container across tests in
+the module. Rules that require Postgres-specific behavior land in the
+same suite.
 
 ## Test Requirements
 

@@ -5,12 +5,13 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.Tag
 import entkt.integrationtest.ent.User
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.EdgeStep
 import entkt.runtime.EntQueryRejectedException
 import entkt.runtime.GlobalQueryInterceptor
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
 import entkt.runtime.ReadOperation
@@ -44,11 +45,9 @@ import kotlin.test.assertTrue
  *   on `QueryPlan.annotations` so observability / explain consumers
  *   can read them.
  */
-class ReadInterceptorReviewFixesIntegrationTest {
+class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().apply {
-        EntClient.SCHEMAS.forEach(::register)
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     // ---------- P1: limit ops scoped by ReadOperation ----------
 

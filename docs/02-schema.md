@@ -208,9 +208,10 @@ class Pet : EntSchema("pets") {
 | `OnDelete.SET_NULL` | Set the FK column to NULL (only valid on optional edges) |
 | `OnDelete.RESTRICT` | Prevent deletion of the parent while children exist |
 
-Both `PostgresDriver` and `InMemoryDriver` enforce these actions.
-The migration system detects changes to `onDelete` and generates the
-appropriate `DROP CONSTRAINT` / `ADD CONSTRAINT` ops.
+`PostgresDriver` enforces these actions via `REFERENCES ... ON DELETE`
+in the generated DDL. The migration system detects changes to
+`onDelete` and generates the appropriate `DROP CONSTRAINT` / `ADD
+CONSTRAINT` ops.
 
 ### Many-to-Many
 

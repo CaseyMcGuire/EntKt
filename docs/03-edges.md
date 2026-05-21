@@ -240,9 +240,8 @@ The full API on each helper-eligible edge:
 **Transaction and capability requirements.** A link-table M2M update
 requires a transaction-scoped client and a driver that supports
 either `readRowForUpdate` (true row lock) or
-`serializeOwnerEdgeAndRead` (cooperative serialization). The bare
-`InMemoryDriver` reports both as `false`; `PostgresDriver` reports
-both as `true`. A missing transaction throws
+`serializeOwnerEdgeAndRead` (cooperative serialization).
+`PostgresDriver` reports both as `true`. A missing transaction throws
 `TransactionRequiredException`; a driver without either capability
 throws `UnsupportedDriverCapabilityException`. Both preflights fire
 before any owner-row read, hook, or driver write. See
@@ -330,8 +329,8 @@ optional relationship. When no explicit `.onDelete()` is set, the default
 is inferred from nullability: `SET NULL` for optional FKs, `RESTRICT` for
 required FKs.
 
-Both `PostgresDriver` and `InMemoryDriver` enforce these actions at
-runtime.
+`PostgresDriver` enforces these actions via `REFERENCES ... ON DELETE`
+in the generated DDL.
 
 ## Edge resolution internals
 

@@ -7,13 +7,13 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntNotFoundException
 import entkt.runtime.EntOperation
 import entkt.runtime.EntPrivacyDeniedException
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.PrivacyDeniedException
@@ -37,7 +37,7 @@ import kotlin.test.assertTrue
  *  - `byIdOrError(id): EntResult` absence → Err(NotFound); denial →
  *                                 Err(PrivacyDenied)
  */
-class ByIdResultVariantsIntegrationTest {
+class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     private val denyAllArticles = ArticleLoadPrivacyRule { PrivacyDecision.Deny("article hidden") }
 
@@ -63,8 +63,7 @@ class ByIdResultVariantsIntegrationTest {
         viewer: Viewer = Viewer.System,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): EntClient {
-        val driver = InMemoryDriver()
-        EntClient.SCHEMAS.forEach(driver::register)
+        val driver = resetAndDriver()
         return EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {

@@ -15,8 +15,7 @@ and the per-context updates in
 [Privacy](../../06-privacy.md#updateprivacycontext) /
 [Validation](../../07-validation.md#updatevalidationcontext).
 End-to-end coverage is in
-`integration-tests/src/test/kotlin/entkt/integrationtest/LinkTableM2MIntegrationTest.kt`
-(17 scenarios against `LockSupportInMemoryDriver`).
+`integration-tests/src/test/kotlin/entkt/integrationtest/LinkTableM2MPostgresIntegrationTest.kt`.
 
 Implementation decisions (the design questions called out in the
 phase plan):
@@ -39,10 +38,10 @@ phase plan):
   `update { tags.add(...) }`, but the constructor is module-private.
 - **Decision E** — generated `_hasPendingLinkTableM2MOps()` helper
   on the update class, ORing each mutator's `hasOps()` flag.
-- **Decision F** — `LockSupportInMemoryDriver` extracted to
-  `integration-tests/src/test/kotlin/entkt/integrationtest/support/`
-  and shared between `UpdateConsistencyIntegrationTest` (RFC #4) and
-  `LinkTableM2MIntegrationTest` (RFC #5).
+- **Decision F** — (historical) Locking semantics were originally
+  exercised via a `LockSupportInMemoryDriver` test wrapper, since
+  removed alongside `InMemoryDriver`. Coverage now lives on
+  `PostgresDriver` directly.
 
 Two notes on enforcement that came up during implementation:
 

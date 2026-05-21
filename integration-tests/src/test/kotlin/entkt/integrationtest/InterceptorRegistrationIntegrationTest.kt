@@ -2,8 +2,9 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Post
+import entkt.integrationtest.support.PostgresTestBase
+import entkt.postgres.PostgresDriver
 import entkt.runtime.GlobalQueryInterceptor
-import entkt.runtime.InMemoryDriver
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
 import entkt.runtime.Viewer
@@ -25,11 +26,9 @@ import kotlin.test.assertTrue
  * Behavior (interceptor chain actually running on a terminal call)
  * lands in Phase 4; this suite is registration-side only.
  */
-class InterceptorRegistrationIntegrationTest {
+class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
 
-    private fun freshDriver(): InMemoryDriver = InMemoryDriver().apply {
-        EntClient.SCHEMAS.forEach(::register)
-    }
+    private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     @Test
     fun `interceptors block accepts per-entity and global registrations`() {

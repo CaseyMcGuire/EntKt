@@ -15,11 +15,7 @@ with [RFC #5 Link-Table M2M Mutation Helpers](05-link-table-helpers.md).
   `supportsOwnerEdgeSerialization` + `serializeOwnerEdgeAndRead(table, id)`,
   with `requireTransactionForLocking(method)` as a uniform helper for
   overriding implementations to enforce the in-transaction contract.
-  InMemoryDriver advertises both row-lock capabilities as `false` —
-  its per-table `synchronized` blocks scope only individual driver
-  calls, not "until transaction end," so it can't honor the contract;
-  generated saves under `Pessimistic` reject at the capability gate
-  on this driver. PostgresDriver's `readRowForUpdate` runs
+  PostgresDriver's `readRowForUpdate` runs
   `SELECT ... FOR UPDATE` and `serializeOwnerEdgeAndRead` calls
   `pg_advisory_xact_lock` then reads — both methods throw on the root
   (auto-commit) driver via `requireTransactionForLocking` since the

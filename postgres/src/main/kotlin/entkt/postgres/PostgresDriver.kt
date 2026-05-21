@@ -168,8 +168,7 @@ class PostgresDriver(
         values: Map<String, Any?>,
     ): Map<String, Any?>? {
         val schema = schemaFor(table)
-        // Never let an update rewrite the primary key — same contract as
-        // InMemoryDriver.
+        // Never let an update rewrite the primary key.
         val cols = values.keys.filter { it != schema.idColumn }
         if (cols.isEmpty()) {
             // Nothing to update; just return the existing row (or null).
@@ -625,8 +624,8 @@ class PostgresDriver(
                     // before splicing it into the LIKE pattern, then
                     // declare the escape char explicitly. Without this,
                     // a caller passing `%` matches almost everything
-                    // (LIKE wildcard injection) and the behavior diverges
-                    // from InMemoryDriver's literal-substring semantics.
+                    // (LIKE wildcard injection) instead of the intended
+                    // literal-substring semantics.
                     params.add(Param(FieldType.STRING, "%${escapeLikePattern(leaf.value as String)}%"))
                     "$col LIKE ? ESCAPE '\\'"
                 }
@@ -648,8 +647,8 @@ class PostgresDriver(
          *
          * Without this, raw caller input flowing into the pattern lets
          * a value like `%` match almost everything (LIKE wildcard
-         * injection) and diverges from InMemoryDriver's literal-
-         * substring semantics (`String.contains` etc.).
+         * injection) instead of the intended literal-substring
+         * semantics.
          *
          * The escape char `\` is escaped first so the inserted escapes
          * in the next steps aren't double-escaped.

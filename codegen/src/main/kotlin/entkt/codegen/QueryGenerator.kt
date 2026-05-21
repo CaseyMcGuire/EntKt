@@ -1883,10 +1883,8 @@ internal class QueryGenerator(
             .returns(queryClass)
             // Reject negatives at the boundary so the bad input never
             // reaches the driver. Postgres rejects LIMIT -1 with a
-            // syntax error; the InMemoryDriver's `take(-1)` throws
-            // IllegalArgumentException from inside the query — both
-            // are confusing failures one layer removed from the
-            // caller. Loud-fail here instead.
+            // syntax error one layer removed from the caller — loud-fail
+            // here instead.
             .addStatement("require(n >= 0) { %S + n }", "limit must be non-negative; was ")
             .addStatement("this.queryLimit = n")
             .addStatement("return this")
