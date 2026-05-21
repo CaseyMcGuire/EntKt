@@ -504,13 +504,30 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `deleteMany queries driver directly to bypass load privacy`() {
+    fun `deleteMany routes candidate selection through DELETE_CANDIDATES interceptor chain`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("driver.query(Car.TABLE, predicates.toList()")) {
-            "deleteMany should query driver directly to bypass LOAD privacy\n$output"
+        // Per the read-path-interceptors + soft-delete RFCs:
+        // deleteMany candidate selection now fires interceptors
+        // with operation = DELETE_CANDIDATES (entOperation = DELETE)
+        // so tenant-scoping / soft-delete predicate-shaping
+        // interceptors apply uniformly to bulk deletes. The driver
+        // call uses the post-interceptor spec.predicates rather
+        // than raw `predicates.toList()`.
+        assert(output.contains("CarQuery(driver, client).also { it.predicates = predicates.toList() }")) {
+            "deleteMany should construct a transient CarQuery from caller predicates\n$output"
+        }
+        assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, EntOperation.DELETE)")) {
+            "deleteMany should fire interceptors with DELETE_CANDIDATES / DELETE\n$output"
+        }
+        assert(output.contains("driver.query(Car.TABLE, spec.predicates, emptyList(), null, null)")) {
+            "deleteMany should pass the post-interceptor spec.predicates to driver.query\n$output"
+        }
+        // Negative guard: the pre-fix raw shape must not reappear.
+        assert(!output.contains("driver.query(Car.TABLE, predicates.toList()")) {
+            "deleteMany must NOT pass raw caller predicates to driver.query (skips interceptors)\n$output"
         }
     }
 

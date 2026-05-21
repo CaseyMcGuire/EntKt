@@ -632,7 +632,15 @@ internal class RepoGenerator(
         entityClass: ClassName,
         candidateClass: ClassName,
     ): FunSpec {
-        // deleteMany queries the driver directly (no LOAD privacy), then delete() per entity
+        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
+        // deleteMany candidates flow through the read-interceptor
+        // chain (operation = DELETE_CANDIDATES, entOperation = DELETE)
+        // so predicate-shaping interceptors (tenant scoping, framework
+        // soft-delete, etc.) apply uniformly to bulk deletes — a
+        // bulk delete can NOT escape read-side scoping that would
+        // have hidden the same rows on the read path. Per-entity
+        // DELETE privacy / validation / hooks still run inside
+        // deleteLoaded for each surviving candidate.
         return FunSpec.builder("deleteMany")
             .addParameter(
                 ParameterSpec.builder("predicates", PREDICATE)
@@ -659,8 +667,22 @@ internal class RepoGenerator(
                 "client.checkTransactionRequirement(%S, multiWrite = true)",
                 "$schemaName deleteMany",
             )
+            // Route candidate selection through runReadInterceptors
+            // on a transient *Query instance seeded with the caller's
+            // predicates. Caller predicates land tagged CALLER; any
+            // interceptor predicates land tagged INTERCEPTOR. The
+            // chain's rejection throws EntQueryRejectedException
+            // (since deleteMany returns Int, not EntResult).
             .addStatement(
-                "val rows = driver.query(%T.TABLE, predicates.toList(), emptyList(), null, null)",
+                "val q = %T(driver, client).also { it.predicates = predicates.toList() }",
+                queryClass,
+            )
+            .addStatement(
+                "val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES, %T.DELETE)",
+                READ_OPERATION, ENT_OPERATION,
+            )
+            .addStatement(
+                "val rows = driver.query(%T.TABLE, spec.predicates, emptyList(), null, null)",
                 entityClass,
             )
             .addStatement("val entities = rows.map { %T.fromRow(it) }", entityClass)

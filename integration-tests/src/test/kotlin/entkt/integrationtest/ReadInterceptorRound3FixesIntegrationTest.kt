@@ -16,6 +16,7 @@ import entkt.runtime.InMemoryDriver
 import entkt.runtime.InterceptorEngine
 import entkt.runtime.PrivacyContext
 import entkt.runtime.QueryInterceptor
+import entkt.runtime.ReadOperation
 import entkt.runtime.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -394,6 +395,186 @@ class ReadInterceptorRound3FixesIntegrationTest {
             result.map { it.name },
             "M2M queryX should snapshot source state at construction; post-queryX mutations must not leak into the bridge predicate",
         )
+    }
+
+    // ---------- firstVisibleOrNull eager-target denial propagates ----------
+
+    @Test
+    fun `firstVisibleOrNull throws on eager-target privacy denial (does not swallow as root invisibility)`() {
+        val driver = freshDriver()
+        // Article repo allows everything; Author repo denies the
+        // specific viewer. firstVisibleOrNull on Article with an
+        // eager `.withAuthor()` should THROW PrivacyDeniedException
+        // when the article's author is denied — NOT silently skip
+        // to the next article (the contract is visible filtering is
+        // root-only, eager target denials are strict).
+        val viewer = entkt.runtime.Viewer.User("denied-user")
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(viewer) }
+            policies {
+                articles(object : entkt.runtime.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
+                    override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
+                        privacy { load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { entkt.runtime.PrivacyDecision.Allow }) }
+                    }
+                })
+                users(object : entkt.runtime.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
+                    override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
+                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.PrivacyDecision.Deny("user is hidden") }) }
+                    }
+                })
+            }
+        }
+        // Seed via system viewer (bypasses policies).
+        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.System)) { sys ->
+            val u = sys.users.create { name = "denied-user"; email = "d@x" }.saveOrThrow()
+            sys.articles.create { title = "with-denied-author"; authorId = u.id }.saveOrThrow()
+        }
+
+        assertFailsWith<entkt.runtime.PrivacyDeniedException> {
+            client.articles.query().withAuthor().firstVisibleOrNull()
+        }
+    }
+
+    @Test
+    fun `firstVisibleOrNull still skips root-invisible rows silently`() {
+        val driver = freshDriver()
+        // Setup: two articles, one published, one draft. Article
+        // privacy: deny the draft. firstVisibleOrNull should skip
+        // the draft and return the published one — NOT throw and
+        // NOT return null when a visible row exists past the
+        // denied ones. Use a non-System viewer because System
+        // bypasses privacy entirely (in which case the draft
+        // would be returned and the test would defeat itself).
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(entkt.runtime.Viewer.User("u1")) }
+            policies {
+                articles(object : entkt.runtime.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
+                    override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
+                        privacy {
+                            load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { ctx ->
+                                if (ctx.entity.published) entkt.runtime.PrivacyDecision.Allow
+                                else entkt.runtime.PrivacyDecision.Deny("draft")
+                            })
+                        }
+                    }
+                })
+                users(object : entkt.runtime.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
+                    override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
+                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.PrivacyDecision.Allow }) }
+                    }
+                })
+            }
+        }
+        // Seed via System viewer (bypasses privacy) so the create
+        // path's post-write LOAD check on "draft" doesn't trip.
+        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.System)) { sys ->
+            val u = sys.users.create { name = "u"; email = "u@x" }.saveOrThrow()
+            sys.articles.create { title = "draft"; published = false; authorId = u.id }.saveOrThrow()
+            sys.articles.create { title = "published"; published = true; authorId = u.id }.saveOrThrow()
+        }
+
+        val result = client.articles.query().firstVisibleOrNull()
+        assertNotNull(result)
+        assertEquals("published", result.title)
+    }
+
+    // ---------- deleteMany routes through DELETE_CANDIDATES interceptors ----------
+
+    @Test
+    fun `deleteMany fires interceptors with DELETE_CANDIDATES operation`() {
+        val driver = freshDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                posts(
+                    QueryInterceptor { _, ctx -> ops.add(ctx.operation) },
+                    name = "obs",
+                )
+            }
+        }
+        client.posts.create { title = "x" }.saveOrThrow()
+        client.posts.create { title = "y" }.saveOrThrow()
+        client.withTransaction { tx ->
+            tx.posts.deleteMany()
+        }
+        assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), ops)
+    }
+
+    @Test
+    fun `deleteMany honors interceptor-added predicate on candidate fetch`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                // Tenant-scoping-style interceptor: only "scope-A"
+                // posts are candidates. Pre-fix deleteMany bypassed
+                // this and deleted both posts.
+                posts(
+                    QueryInterceptor { scope, _ ->
+                        scope.addPredicate(Predicate.Leaf("title", Op.EQ, "scope-A"))
+                    },
+                    name = "scope-filter",
+                )
+            }
+        }
+        client.posts.create { title = "scope-A" }.saveOrThrow()
+        client.posts.create { title = "scope-B" }.saveOrThrow()
+
+        val deleted: Int = client.withTransaction { tx -> tx.posts.deleteMany() }
+        assertEquals(1, deleted)
+        // Verify scope-B survived by inspecting the raw table
+        // (byIdOrNull would also hit the interceptor's
+        // `title = scope-A` filter and return null for the
+        // survivor — that's correct uniform interceptor
+        // behavior, but doesn't help us verify physical survival).
+        val remainingRows = driver.query("posts", emptyList(), emptyList(), null, null)
+        assertEquals(1, remainingRows.size)
+        assertEquals("scope-B", remainingRows.single()["title"])
+    }
+
+    @Test
+    fun `deleteMany interceptor rejection throws EntQueryRejectedException`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                posts(
+                    QueryInterceptor { scope, _ -> scope.reject("no broad delete", code = "broad_delete_denied") },
+                    name = "broad-delete-guard",
+                )
+            }
+        }
+        client.posts.create { title = "x" }.saveOrThrow()
+        val ex = assertFailsWith<EntQueryRejectedException> {
+            client.withTransaction { tx -> tx.posts.deleteMany() }
+        }
+        assertEquals("broad_delete_denied", ex.queryRejected.code)
+        assertEquals(EntOperation.DELETE, ex.queryRejected.operation)
+        assertEquals("Post", ex.queryRejected.entity)
+    }
+
+    @Test
+    fun `deleteMany limit interceptor mutators are silent no-ops on DELETE_CANDIDATES`() {
+        val driver = freshDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                // requireLimitAtMost(2) on DELETE_CANDIDATES MUST
+                // NOT clamp the candidate fetch — that would turn
+                // deleteMany into "delete first 2 matching rows"
+                // without the caller knowing. Silent no-op per the
+                // RFC's limit-shape rules.
+                global(
+                    GlobalQueryInterceptor { scope, _ -> scope.requireLimitAtMost(2) },
+                    name = "cap-2",
+                )
+            }
+        }
+        repeat(5) { i -> client.posts.create { title = "p$i" }.saveOrThrow() }
+
+        val deleted: Int = client.withTransaction { tx -> tx.posts.deleteMany() }
+        assertEquals(5, deleted, "limit clamp must be silent no-op on DELETE_CANDIDATES; all 5 rows should be deleted")
     }
 
     // ---------- Edge-predicate target annotations bubble up ----------

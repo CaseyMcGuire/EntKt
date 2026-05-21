@@ -224,7 +224,15 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
     ReadOperation.VISIBLE_EXISTS,
     ReadOperation.EAGER_LOAD,
     ReadOperation.EDGE_PREDICATE,
-    ReadOperation.EDGE_TRAVERSAL -> false
+    ReadOperation.EDGE_TRAVERSAL,
+    // DELETE_CANDIDATES: silent no-op so a MaxLimitInterceptor
+    // doesn't accidentally turn deleteMany(...) into "delete the
+    // first N matching rows" without the caller knowing — that's
+    // a footgun a limit clamp shouldn't be allowed to set up.
+    // reject() still fires, so a max-limit interceptor that wants
+    // to gate broad deletes uses rejectIfLimitGreaterThan in the
+    // normal way.
+    ReadOperation.DELETE_CANDIDATES -> false
 }
 
 /**

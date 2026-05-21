@@ -235,6 +235,21 @@ enum class ReadOperation {
     RAW_COUNT, VISIBLE_COUNT,
     RAW_EXISTS, VISIBLE_EXISTS,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
+
+    /**
+     * `deleteMany(...)` candidate fetch — the bulk-delete API runs
+     * its row-selection query through the interceptor chain with
+     * this operation so predicate-shaping interceptors (tenant
+     * scoping, framework `soft-delete` filtering, etc.) apply
+     * uniformly to bulk deletes. The mapping to [EntOperation] is
+     * `DELETE` (not QUERY), since the surrounding API surface is
+     * a delete operation. Limit operations are silent no-ops on
+     * this shape per the RFC — a `MaxLimitInterceptor(maxLimit = 500)`
+     * should not turn `deleteMany(...)` into "delete the first 500
+     * matching rows" without the caller knowing. `addPredicate`,
+     * `addAnnotation`, and `reject` apply normally.
+     */
+    DELETE_CANDIDATES,
 }
 
 /**

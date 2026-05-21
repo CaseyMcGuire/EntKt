@@ -682,16 +682,29 @@ internal class QueryGenerator(
                     "val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, scanLimit, spec.offset)",
                     entityClass,
                 )
+                // IMPORTANT: scope the PrivacyDeniedException catch
+                // around evaluateLoadPrivacy ONLY — not around
+                // loadEdges. The "visible" contract is root-only:
+                // a denied root row silently skips to the next
+                // candidate, but a denied EAGER TARGET must throw
+                // PrivacyDeniedException out of this call (same
+                // shape visibleAll / visibleAllOrError use). Earlier
+                // codegen wrapped both calls in one try, which
+                // swallowed eager-target denial as if the root were
+                // invisible.
                 .beginControlFlow("for (row in rows)")
                 .addStatement("val entity = %T.fromRow(row)", entityClass)
-                .beginControlFlow("try")
+                .beginControlFlow("val rootVisible = try")
                 .addStatement("c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName)
+                .addStatement("true")
+                .nextControlFlow("catch (_: %T)", PRIVACY_DENIED)
+                .addStatement("false")
+                .endControlFlow()
+                .addStatement("if (!rootVisible) continue")
                 .also {
                     if (hasEdges) it.addStatement("return loadEdges(listOf(entity), privacy).first()")
                     else it.addStatement("return entity")
                 }
-                .nextControlFlow("catch (_: %T)", PRIVACY_DENIED)
-                .endControlFlow()
                 .endControlFlow()
                 .addStatement("return null")
                 .build()

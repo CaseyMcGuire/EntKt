@@ -240,6 +240,7 @@ class InterceptorRuntimeTypesTest {
             ReadOperation.EDGE_TRAVERSAL,
             ReadOperation.EDGE_PREDICATE,
             ReadOperation.EAGER_LOAD,
+            ReadOperation.DELETE_CANDIDATES,
         )
         assertEquals(expected, ReadOperation.entries.toSet())
     }
