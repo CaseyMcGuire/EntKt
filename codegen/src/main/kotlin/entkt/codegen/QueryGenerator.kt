@@ -140,35 +140,34 @@ internal class QueryGenerator(
                     .initializer("emptyList()")
                     .build()
             )
-            // queryLimit / queryOffset stay `internal var` because the
-            // eager-load codegen path reads them on a sibling
-            // `subQuery` (cross-class access). They aren't
-            // security-load-bearing (user already controls them via
-            // `.limit(n)` / `.offset(n)` DSL with `require(n >= 0)`
-            // guards; bypassing the guard is the only harm), so the
-            // pragmatic compromise is `internal var`.
+            // queryLimit / queryOffset: public getter, private setter.
+            // The eager-load codegen path reads them on a sibling
+            // `subQuery` (cross-class read), so the getter must be
+            // visible. The DSL methods `.limit(n)` / `.offset(n)` are
+            // the only legitimate write path and enforce `require(n >= 0)`
+            // — direct app-code mutation bypassing the guard is closed
+            // by `private set`.
             .addProperty(
                 PropertySpec.builder("queryLimit", INT.copy(nullable = true))
-                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("null")
+                    .setter(FunSpec.setterBuilder().addModifiers(KModifier.PRIVATE).build())
                     .build()
             )
             .addProperty(
                 PropertySpec.builder("queryOffset", INT.copy(nullable = true))
-                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("null")
+                    .setter(FunSpec.setterBuilder().addModifiers(KModifier.PRIVATE).build())
                     .build()
             )
-            // Traversal context (observability metadata) — `internal
-            // var` because the walker and eager-load paths set these
-            // on sibling target queries (cross-class write). Not
-            // security-load-bearing: app-side mutation would confuse
-            // the interceptor's QueryContext view but doesn't bypass
-            // any DSL or constraint. The structural traversal-bridge
-            // constraint lives in `deferredSourceStep` below, which
-            // IS hidden via the seeder pattern.
+            // Traversal context: `private var`. Cross-class writes
+            // (walker, eager-load, queryX) go through the generated
+            // `@EntktInternal internal fun seedEdgeTraversal(...)`
+            // method below — application code in the same module
+            // can't spoof traversal-source / edge / path on a sibling
+            // query without an explicit `@OptIn(EntktInternal::class)`.
+            // Same pattern as `setDeferredSourceStep`.
             .addProperty(
                 PropertySpec.builder(
                     "traversalSourceEntity",
@@ -176,14 +175,14 @@ internal class QueryGenerator(
                         .parameterizedBy(com.squareup.kotlinpoet.STAR)
                         .copy(nullable = true),
                 )
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("null")
                     .build()
             )
             .addProperty(
                 PropertySpec.builder("traversalEdgeName", String::class.asClassName().copy(nullable = true))
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("null")
                     .build()
@@ -193,7 +192,7 @@ internal class QueryGenerator(
                     "traversalPath",
                     List::class.asClassName().parameterizedBy(ClassName("entkt.runtime", "EdgeStep")),
                 )
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("emptyList()")
                     .build()
@@ -245,6 +244,7 @@ internal class QueryGenerator(
             .addFunction(buildRunReadInterceptors(schemaName, entityClass))
             .addFunction(buildRunEdgePredicateInterceptors(schemaName, entityClass, schema, schemaNames))
             .addFunction(buildSnapshotForTraversal(queryClass, clientClass))
+            .addFunction(buildSeedEdgeTraversal())
             .addFunction(buildSetDeferredSourceStep(entityClass))
             .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
             .addFunction(buildAllOrError(schemaName, entityClass, hasEdges))
@@ -1505,11 +1505,10 @@ internal class QueryGenerator(
         body.beginControlFlow("%L?.let { subQuery ->", info.eagerPropName)
         // Mirror runtime emit*EagerBlock context setup so the
         // sub-query's interceptors see the right QueryContext.
-        body.addStatement("subQuery.traversalSourceEntity = %T::class", sourceClass)
-        body.addStatement("subQuery.traversalEdgeName = %S", info.edge.name)
+        // Cross-class write goes through the @EntktInternal seeder.
         body.addStatement(
-            "subQuery.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
-            edgeStepClass, sourceClass, info.edge.name, info.targetClass,
+            "subQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
+            sourceClass, info.edge.name, edgeStepClass, sourceClass, info.edge.name, info.targetClass,
         )
 
         // A rejected eager sub-explain becomes a rejected entry
@@ -1852,11 +1851,10 @@ internal class QueryGenerator(
             // backing list directly — preserves the encapsulation
             // story documented in RFC §"Proposed API".
             body.add("      targetQ.where(typedInner)\n")
-            body.add("      targetQ.traversalSourceEntity = %T::class\n", entityClass)
-            body.add("      targetQ.traversalEdgeName = predicate.edge\n")
+            // Cross-class write through the @EntktInternal seeder.
             body.add(
-                "      targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
-                edgeStepClass, entityClass, targetClass,
+                "      targetQ.seedEdgeTraversal(%T::class, predicate.edge, parentPath + %T(%T::class, predicate.edge, %T::class))\n",
+                entityClass, edgeStepClass, entityClass, targetClass,
             )
             body.add(
                 "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
@@ -1897,11 +1895,10 @@ internal class QueryGenerator(
             val targetQueryClass = ClassName(packageName, "${targetName}Query")
             body.add("    %S -> {\n", edge.name)
             body.add("      val targetQ = %T(driver, c)\n", targetQueryClass)
-            body.add("      targetQ.traversalSourceEntity = %T::class\n", entityClass)
-            body.add("      targetQ.traversalEdgeName = predicate.edge\n")
+            // Cross-class write through the @EntktInternal seeder.
             body.add(
-                "      targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
-                edgeStepClass, entityClass, targetClass,
+                "      targetQ.seedEdgeTraversal(%T::class, predicate.edge, parentPath + %T(%T::class, predicate.edge, %T::class))\n",
+                entityClass, edgeStepClass, entityClass, targetClass,
             )
             body.add(
                 "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
@@ -2378,11 +2375,12 @@ internal class QueryGenerator(
         targetClass: ClassName,
     ) {
         val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
-        body.addStatement("subQuery.traversalSourceEntity = %T::class", sourceClass)
-        body.addStatement("subQuery.traversalEdgeName = %S", edgeName)
+        // Cross-class write through the @EntktInternal seeder
+        // (traversal context fields are `private` on the target
+        // query class).
         body.addStatement(
-            "subQuery.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
-            edgeStepClass, sourceClass, edgeName, targetClass,
+            "subQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
+            sourceClass, edgeName, edgeStepClass, sourceClass, edgeName, targetClass,
         )
     }
 
@@ -2476,6 +2474,36 @@ internal class QueryGenerator(
     }
 
     /**
+     * Generate `seedEdgeTraversal(sourceEntity, edgeName, path)` on
+     * the query class. The three traversal-context fields are
+     * `private` — spoofing source / edge / path from app code
+     * would confuse the interceptor's QueryContext view. Cross-
+     * class write needs a method; the method is `@EntktInternal
+     * internal` so application code can't call it without explicit
+     * `@OptIn`. Used by the eager-load setup, the edge-predicate
+     * walker, and queryX traversal methods.
+     */
+    private fun buildSeedEdgeTraversal(): FunSpec {
+        return FunSpec.builder("seedEdgeTraversal")
+            .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter(
+                "sourceEntity",
+                ClassName("kotlin.reflect", "KClass")
+                    .parameterizedBy(com.squareup.kotlinpoet.STAR),
+            )
+            .addParameter("edgeName", String::class.asClassName())
+            .addParameter(
+                "path",
+                List::class.asClassName().parameterizedBy(ClassName("entkt.runtime", "EdgeStep")),
+            )
+            .addStatement("this.traversalSourceEntity = sourceEntity")
+            .addStatement("this.traversalEdgeName = edgeName")
+            .addStatement("this.traversalPath = path")
+            .build()
+    }
+
+    /**
      * Generate `setDeferredSourceStep(step)` seeder on the query
      * class. The `deferredSourceStep` field itself is `private` —
      * clearing it would remove the structural traversal-bridge
@@ -2534,11 +2562,10 @@ internal class QueryGenerator(
             // as `Err(QueryRejected)` instead of having queryX()
             // throw before allOrError() can run.
             .addStatement("val target = %T(driver, client)", targetQueryClass)
-            .addStatement("target.traversalSourceEntity = %T::class", sourceEntityClass)
-            .addStatement("target.traversalEdgeName = %S", edge.name)
+            // Cross-class write through the @EntktInternal seeder.
             .addStatement(
-                "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
-                edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
+                "target.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
+                sourceEntityClass, edge.name, edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
             // Snapshot source state at queryX() time into a fresh
             // source-Query instance so the deferred lambda is
@@ -2634,11 +2661,10 @@ internal class QueryGenerator(
             // as `Err(QueryRejected)` instead of having queryX()
             // throw before allOrError() can run.
             .addStatement("val target = %T(driver, client)", targetQueryClass)
-            .addStatement("target.traversalSourceEntity = %T::class", sourceEntityClass)
-            .addStatement("target.traversalEdgeName = %S", edge.name)
+            // Cross-class write through the @EntktInternal seeder.
             .addStatement(
-                "target.traversalPath = this.traversalPath + %T(%T::class, %S, %T::class)",
-                edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
+                "target.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
+                sourceEntityClass, edge.name, edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
             )
             // Snapshot source state at queryX() time into a fresh
             // source-Query instance so the deferred lambda is
