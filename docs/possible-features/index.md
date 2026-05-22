@@ -7,7 +7,7 @@ These pages are design notes, not committed API contracts.
 
 - [Privacy / Validation Explain Mode](privacy-validation/privacy-validation-explain-mode.md)
 - [Policy Test Helpers](privacy-validation/policy-test-helpers.md)
-- [Query Observability Privacy](privacy-validation/query-observability-privacy.md)
+- [Checked Aggregate Privacy](privacy-validation/checked-aggregate-privacy.md)
 - [Edge-Derived LOAD Privacy](privacy-validation/edge-derived-load-privacy.md)
 - [Preflighted Bulk Operations](privacy-validation/preflighted-bulk-operations.md)
 
@@ -50,9 +50,7 @@ These pages are design notes, not committed API contracts.
 
 ## Results, Codegen, And Tooling
 
-- [Structured Error Model](tooling/structured-error-model.md)
 - [EntKt Result Variants](tooling/entkt-result-variants-rfc.md)
-- [Read Result Variants](tooling/read-result-variants.md)
 - [Flyway Shadow Migration Workflow](tooling/flyway-shadow-migration-workflow.md)
 - [Codegen Plugin Hooks](tooling/codegen-plugin-hooks.md)
 - [OpenAPI / JSON Schema Generation](tooling/openapi-json-schema-generation.md)

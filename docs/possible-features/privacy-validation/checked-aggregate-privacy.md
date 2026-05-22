@@ -1,4 +1,4 @@
-# RFC: Query Observability Privacy
+# RFC: Checked Aggregate Privacy
 
 ## Status
 
@@ -6,8 +6,9 @@ Possible future feature. This is not implemented.
 
 ## Summary
 
-Add explicit query terminal methods for callers that need stricter control
-over whether counts and existence checks can reveal unreadable rows.
+Add explicit aggregate and existence terminal methods for callers that need
+stricter control over whether counts and existence checks can reveal unreadable
+rows.
 
 ## Motivation
 
@@ -15,8 +16,8 @@ over whether counts and existence checks can reveal unreadable rows.
 materializes rows and filters denied ones. `exists()` currently checks one
 materialized row.
 
-Some applications may need stronger query-observability guarantees where a
-caller cannot learn that unreadable rows exist.
+Some applications may need stronger aggregate privacy guarantees where a caller
+cannot learn that unreadable rows exist.
 
 ## Non-Goals
 
@@ -27,7 +28,7 @@ caller cannot learn that unreadable rows exist.
 
 ## Proposed API
 
-Add strict terminal operations:
+Add strict aggregate / existence terminal operations:
 
 ```kotlin
 query.checkedCount()
@@ -72,4 +73,3 @@ Before implementation, add tests for:
 - `checkedExists()` throws if any matched row is denied
 - `checkedExists()` returns false when no row matches
 - docs clearly compare raw, visible, and checked variants
-

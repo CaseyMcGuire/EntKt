@@ -4,17 +4,23 @@
 
 Possible future feature. This is not implemented.
 
+Read-path interceptors already own the per-terminal dry-run explain surface and
+the post-interceptor query shape. This RFC is now limited to future diagnostics
+that are not covered by that implementation: execution tracing, query-count
+estimates, SQL shape output, loader / eager-load diagnostics, and diagnostic
+warnings.
+
 ## Summary
 
-Add query diagnostics that make generated read behavior inspectable before and
-after execution.
+Add query diagnostics that make generated read behavior inspectable beyond the
+existing per-terminal explain methods.
 
 The goal is to help users answer:
 
 - how many database queries will this operation issue?
 - which SQL shapes will be used?
 - did eager loading batch edges or fall back to repeated reads?
-- which interceptors or implicit predicates changed the query?
+- which generated or framework behavior changed the query?
 - did request-scoped loaders batch or cache reads?
 
 ## Motivation
@@ -28,7 +34,7 @@ Generated APIs can hide useful complexity:
 client.posts.query {
     withAuthor()
     withComments()
-}.all()
+}.allOrThrow()
 ```
 
 This may be the right API, but users still need to understand the work it does
@@ -47,30 +53,18 @@ query execution strategy.
 - Do not optimize N+1 behavior in this RFC.
 - Do not require a GraphQL runtime.
 
-## Proposed API
+## Implemented Baseline
 
-Add a dry-run-style query explanation surface. The exact method
-name mirrors the terminal it models — there is no bare `.explain()`
-because it would be ambiguous about which terminal it dry-runs
-(every terminal has its own intercepted query context). Use the
-per-terminal explain method:
+[Read-Path Interceptors](read-path-interceptors.md) already defines and
+implements the dry-run explain family. Each explain method mirrors a concrete
+terminal API because every terminal has its own intercepted query context.
 
-```kotlin
-val explanation = client.posts.query {
-    where(Post.published eq true)
-    withAuthor()
-    limit(20)
-}.explainAllOrThrow()
-```
+This RFC should not introduce another explain surface or redefine the base query
+plan model. Future diagnostics should enrich the existing explain output and add
+runtime tracing for actual executions.
 
-The full explain surface (one per terminal-API name) is
-enumerated in
-[Read-Path Interceptors](read-path-interceptors.md) — see
-"Explain Interaction" for `explainFirstOrError` /
-`explainVisibleAll` / `explainRawCount` /
-`explainVisibleByIdOrNull` / etc.
-
-Possible text output:
+Baseline explain output can already describe the post-interceptor root query
+shape:
 
 ```text
 PostQuery
@@ -90,12 +84,15 @@ PostQuery
     1 author batch query
 ```
 
-The runtime representation should also be machine-readable:
+Future diagnostics can add a richer machine-readable wrapper around that
+existing plan:
 
 ```kotlin
 data class QueryDiagnostics(
-    val root: QueryPlanNode,
+    val plan: QueryPlan,
     val estimatedDriverQueries: IntRange?,
+    val sqlShapes: List<SqlShape>,
+    val loaderPlans: List<LoaderPlan>,
     val warnings: List<QueryDiagnosticWarning>,
 )
 ```
@@ -112,7 +109,7 @@ val trace = client.withQueryTracing {
     posts.query {
         withAuthor()
         limit(20)
-    }.all()
+    }.allOrThrow()
 }
 ```
 
@@ -157,7 +154,7 @@ should be surfaced as uncertainty instead of hidden.
 
 ## SQL Shape Output
 
-Driver-backed explanations can include SQL shapes and redacted bind values:
+Driver-backed diagnostics can include SQL shapes and redacted bind values:
 
 ```text
 SELECT * FROM posts
@@ -169,18 +166,16 @@ LIMIT ?
 Default output should not include raw bind values because predicates may
 contain emails, tokens, names, or other sensitive data.
 
-Potential opt-in — every explain method takes the same
-`includeBindValues` flag:
+Potential opt-in: every explain / diagnostic method that can show SQL takes the
+same `includeBindValues` flag.
 
 ```kotlin
 query.explainAllOrThrow(includeBindValues = true)
 client.users.explainByIdOrNull(id, includeBindValues = true)
 ```
 
-(The bind-values argument is uniform across the explain surface —
-all `explain*` methods accept it. The interceptors RFC's
-[Explain Interaction](read-path-interceptors.md) enumerates the
-method names; this RFC owns the bind-values opt-in.)
+The bind-values argument should be uniform across the existing explain surface
+and any richer diagnostics API added by this RFC.
 
 ## Loader And Eager-Load Diagnostics
 
@@ -204,10 +199,9 @@ See [Request-Scoped Entity Loading](request-scoped-entity-loading.md).
 
 ## Interceptor Diagnostics
 
-If read-path interceptors are adopted, both the explain family
-(`explainAllOrThrow` / `explainFirstOrError` / `explainVisibleCount`
-/ etc.) and execution tracing should show which interceptors ran
-and what they changed:
+The existing explain family already shows post-interceptor query shape. Future
+diagnostics and execution tracing should add attribution for which interceptors
+ran and what they changed:
 
 ```text
 interceptors:
@@ -226,15 +220,16 @@ issue reads, but it should not replace rule-level tracing. Detailed privacy
 decisions belong in [Privacy / Validation Explain Mode](../privacy-validation/privacy-validation-explain-mode.md).
 
 Privacy-sensitive aggregate semantics are covered separately by
-[Query Observability Privacy](../privacy-validation/query-observability-privacy.md).
+[Checked Aggregate Privacy](../privacy-validation/checked-aggregate-privacy.md).
 
 ## Test Requirements
 
 Before implementation, add tests for:
 
-- root query explanation includes table, predicates, order, limit, and offset
-- eager-load explanation reports the expected generated batch reads
-- interceptor-added predicates appear in diagnostics
+- diagnostics build on the implemented per-terminal explain surface rather than
+  introducing separate terminal names
+- eager-load diagnostics report the expected generated batch reads
+- interceptor attribution appears in diagnostics and runtime traces
 - default SQL output redacts bind values
 - execution tracing records actual driver query count
 - loader tracing records batch sizes and cache hits
