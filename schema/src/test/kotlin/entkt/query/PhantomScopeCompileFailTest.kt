@@ -226,6 +226,49 @@ class PhantomScopeCompileFailTest {
     }
 
     @Test
+    fun `restricted predicate variants preserve value-based equality`() {
+        // Switching from `data class` to plain `class` to close the
+        // copy() bypass also removed the auto-generated equals /
+        // hashCode. The implementation adds those back manually so
+        // structurally-equal predicates still compare equal — runtime
+        // and integration tests that compare predicate trees by ==
+        // continue to work without surprises. The compile passes if
+        // the generated equals returns true for matching fields;
+        // a hashCode collision check is included for the contract.
+        val result = compile("""
+            @OptIn(EntktInternal::class)
+            fun checks(): Boolean {
+                val a: Predicate.HasEdge<User> = Predicate.HasEdge("posts")
+                val b: Predicate.HasEdge<User> = Predicate.HasEdge("posts")
+                val c: Predicate.HasEdge<User> = Predicate.HasEdge("comments")
+                check(a == b)
+                check(a != c)
+                check(a.hashCode() == b.hashCode())
+
+                val inner: Predicate<Post> = Predicate.Leaf("x", Op.EQ, 1)
+                val w1: Predicate.HasEdgeWith<User, Post> = Predicate.HasEdgeWith("posts", inner)
+                val w2: Predicate.HasEdgeWith<User, Post> = Predicate.HasEdgeWith("posts", inner)
+                check(w1 == w2)
+                check(w1.hashCode() == w2.hashCode())
+
+                val m1: Predicate.HasM2MEdgeFrom<Post, User> =
+                    Predicate.HasM2MEdgeFrom("users", "posts", null)
+                val m2: Predicate.HasM2MEdgeFrom<Post, User> =
+                    Predicate.HasM2MEdgeFrom("users", "posts", null)
+                check(m1 == m2)
+                check(m1.hashCode() == m2.hashCode())
+                return true
+            }
+        """.trimIndent())
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Restricted predicates should compile and equals/hashCode should preserve value semantics. " +
+                "Messages:\n${result.messages}",
+        )
+    }
+
+    @Test
     fun `HasM2MEdgeFrom does not expose a copy() method`() {
         val result = compile("""
             @OptIn(EntktInternal::class)

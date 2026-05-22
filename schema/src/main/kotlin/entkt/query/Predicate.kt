@@ -64,6 +64,9 @@ sealed class Predicate<E : Any> {
         val edge: String,
     ) : Predicate<E>() {
         override fun toString(): String = "HasEdge(edge=$edge)"
+        override fun equals(other: Any?): Boolean =
+            other is HasEdge<*> && other.edge == edge
+        override fun hashCode(): Int = edge.hashCode()
     }
 
     /**
@@ -86,6 +89,9 @@ sealed class Predicate<E : Any> {
         val inner: Predicate<Target>,
     ) : Predicate<E>() {
         override fun toString(): String = "HasEdgeWith(edge=$edge, inner=$inner)"
+        override fun equals(other: Any?): Boolean =
+            other is HasEdgeWith<*, *> && other.edge == edge && other.inner == inner
+        override fun hashCode(): Int = 31 * edge.hashCode() + inner.hashCode()
     }
 
     /**
@@ -116,6 +122,17 @@ sealed class Predicate<E : Any> {
     ) : Predicate<E>() {
         override fun toString(): String =
             "HasM2MEdgeFrom(sourceTable=$sourceTable, edgeName=$edgeName, sourceFilter=$sourceFilter)"
+        override fun equals(other: Any?): Boolean =
+            other is HasM2MEdgeFrom<*, *> &&
+                other.sourceTable == sourceTable &&
+                other.edgeName == edgeName &&
+                other.sourceFilter == sourceFilter
+        override fun hashCode(): Int {
+            var h = sourceTable.hashCode()
+            h = 31 * h + edgeName.hashCode()
+            h = 31 * h + (sourceFilter?.hashCode() ?: 0)
+            return h
+        }
     }
 }
 
