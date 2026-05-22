@@ -353,20 +353,52 @@ sealed class Predicate<E : Any> {
     // the "Constructor Visibility" section. Direct construction
     // from application code raises a compile error; codegen opts
     // in once via @file:OptIn(EntktInternal::class).
-    data class HasEdge<E : Any> @EntktInternal constructor(
+    //
+    // These are regular `class`es (NOT `data class`), because a
+    // data class auto-generates a PUBLIC `copy(...)` method that
+    // is not covered by the constructor's opt-in annotation —
+    // reopening the walker-cast fabrication hole. Manual
+    // `equals` / `hashCode` / `toString` preserve value semantics
+    // without re-introducing `copy()`.
+    class HasEdge<E : Any> @EntktInternal constructor(
         val edge: String,
-    ) : Predicate<E>()
+    ) : Predicate<E>() {
+        override fun toString(): String = "HasEdge(edge=$edge)"
+        override fun equals(other: Any?): Boolean =
+            other is HasEdge<*> && other.edge == edge
+        override fun hashCode(): Int = edge.hashCode()
+    }
 
-    data class HasEdgeWith<E : Any, Target : Any> @EntktInternal constructor(
+    class HasEdgeWith<E : Any, Target : Any> @EntktInternal constructor(
         val edge: String,
         val inner: Predicate<Target>,
-    ) : Predicate<E>()
+    ) : Predicate<E>() {
+        override fun toString(): String = "HasEdgeWith(edge=$edge, inner=$inner)"
+        override fun equals(other: Any?): Boolean =
+            other is HasEdgeWith<*, *> && other.edge == edge && other.inner == inner
+        override fun hashCode(): Int = 31 * edge.hashCode() + inner.hashCode()
+    }
 
-    data class HasM2MEdgeFrom<E : Any, Source : Any> @EntktInternal constructor(
+    class HasM2MEdgeFrom<E : Any, Source : Any> @EntktInternal constructor(
         val sourceTable: String,
         val edgeName: String,
         val sourceFilter: Predicate<Source>?,
-    ) : Predicate<E>()
+    ) : Predicate<E>() {
+        override fun toString(): String =
+            "HasM2MEdgeFrom(sourceTable=$sourceTable, edgeName=$edgeName, " +
+                "sourceFilter=$sourceFilter)"
+        override fun equals(other: Any?): Boolean =
+            other is HasM2MEdgeFrom<*, *> &&
+                other.sourceTable == sourceTable &&
+                other.edgeName == edgeName &&
+                other.sourceFilter == sourceFilter
+        override fun hashCode(): Int {
+            var h = sourceTable.hashCode()
+            h = 31 * h + edgeName.hashCode()
+            h = 31 * h + (sourceFilter?.hashCode() ?: 0)
+            return h
+        }
+    }
 }
 ```
 
