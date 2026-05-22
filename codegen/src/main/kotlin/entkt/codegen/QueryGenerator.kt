@@ -109,25 +109,23 @@ internal class QueryGenerator(
                     .initializer("client")
                     .build()
             )
-            // `predicates` and `orderFields` are `internal` (not
-            // `private`) because the generated `snapshotForTraversal`
-            // helper on this same class needs to copy them into a
-            // fresh sibling instance — same-class private access works
-            // for that, but the property must be at least `internal`
-            // for the deferred-source-step lambda generated in
-            // `buildTraversal` / `buildM2MTraversal` to read the
-            // source query's state through `this.predicates` /
-            // `this.orderFields` on the snapshot copy. `internal` is
-            // module-scoped; user application code in the same module
-            // can technically read these, but the public DSL
-            // (`where(...)`, `orderBy(...)`) is the documented way and
-            // the backing list is documented as opaque.
+            // Mutable query state is `private` per RFC §"Proposed API":
+            // application code in the same module would have write
+            // access if these were `internal`, which would let
+            // app code mutate `predicates` / `orderFields` /
+            // traversal context / `deferredSourceStep` directly and
+            // bypass the public DSL (`where(...)`, `orderBy(...)`,
+            // queryX traversal). The only cross-instance access these
+            // need is from the generated `snapshotForTraversal`
+            // method below, which lives inside the same class and
+            // therefore enjoys same-class private access in Kotlin
+            // (private is class-scoped, not instance-scoped).
             .addProperty(
                 PropertySpec.builder(
                     "predicates",
                     List::class.asClassName().parameterizedBy(predicateForEntity),
                 )
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("emptyList()")
                     .build()
@@ -137,32 +135,40 @@ internal class QueryGenerator(
                     "orderFields",
                     List::class.asClassName().parameterizedBy(orderFieldForEntity),
                 )
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("emptyList()")
                     .build()
             )
+            // queryLimit / queryOffset stay `internal var` because the
+            // eager-load codegen path reads them on a sibling
+            // `subQuery` (cross-class access). They aren't
+            // security-load-bearing (user already controls them via
+            // `.limit(n)` / `.offset(n)` DSL with `require(n >= 0)`
+            // guards; bypassing the guard is the only harm), so the
+            // pragmatic compromise is `internal var`.
             .addProperty(
                 PropertySpec.builder("queryLimit", INT.copy(nullable = true))
+                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("null")
                     .build()
             )
             .addProperty(
                 PropertySpec.builder("queryOffset", INT.copy(nullable = true))
+                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("null")
                     .build()
             )
-            // Traversal context, populated by generated queryX()
-            // methods when this query is the *target* of a
-            // traversal step. Read by runReadInterceptors to set
-            // the QueryContext's sourceEntity / edgeName / path
-            // and to inject the HasEdgeWith / HasM2MEdgeFrom /
-            // HasEdge structural predicate that ties this target
-            // query back to its source. Defaults are the "root
-            // read" shape (no source, empty path, no structural
-            // predicate).
+            // Traversal context (observability metadata) — `internal
+            // var` because the walker and eager-load paths set these
+            // on sibling target queries (cross-class write). Not
+            // security-load-bearing: app-side mutation would confuse
+            // the interceptor's QueryContext view but doesn't bypass
+            // any DSL or constraint. The structural traversal-bridge
+            // constraint lives in `deferredSourceStep` below, which
+            // IS hidden via the seeder pattern.
             .addProperty(
                 PropertySpec.builder(
                     "traversalSourceEntity",
@@ -214,7 +220,7 @@ internal class QueryGenerator(
                             .parameterizedBy(entityClass),
                     ).copy(nullable = true),
                 )
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
                     .initializer("null")
                     .build()
@@ -238,6 +244,8 @@ internal class QueryGenerator(
             .addFunction(buildRequireClient(schemaName))
             .addFunction(buildRunReadInterceptors(schemaName, entityClass))
             .addFunction(buildRunEdgePredicateInterceptors(schemaName, entityClass, schema, schemaNames))
+            .addFunction(buildSnapshotForTraversal(queryClass, clientClass))
+            .addFunction(buildSetDeferredSourceStep(entityClass))
             .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
             .addFunction(buildAllOrError(schemaName, entityClass, hasEdges))
             .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
@@ -2435,6 +2443,75 @@ internal class QueryGenerator(
     }
 
     /**
+     * Generate `snapshotForTraversal(driver, client): ThisQuery` on the
+     * query class.
+     *
+     * Generated traversal methods (`queryX()` / `queryX()` M2M variants)
+     * need to seed a fresh source-query instance with the current
+     * query's state so subsequent mutations on `this` don't leak into
+     * the bridge. Since `predicates` / `orderFields` / traversal
+     * context / `deferredSourceStep` are all `private`, the only place
+     * they can be cross-instance-copied is from inside the class
+     * itself (same-class private access is unaffected by instance
+     * boundaries in Kotlin).
+     *
+     * `@EntktInternal` on the method blocks application callers from
+     * invoking it without explicit opt-in — generated traversal code
+     * lives in `@file:OptIn(EntktInternal::class)` files, so the call
+     * compiles there.
+     */
+    private fun buildSnapshotForTraversal(queryClass: ClassName, clientClass: ClassName): FunSpec {
+        return FunSpec.builder("snapshotForTraversal")
+            .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("driver", DRIVER)
+            .addParameter(
+                ParameterSpec.builder("client", clientClass.copy(nullable = true))
+                    .build(),
+            )
+            .returns(queryClass)
+            .addCode(
+                CodeBlock.builder()
+                    .add("return %T(driver, client).also {\n", queryClass)
+                    .add("  it.predicates = this.predicates\n")
+                    .add("  it.orderFields = this.orderFields\n")
+                    .add("  it.queryLimit = this.queryLimit\n")
+                    .add("  it.queryOffset = this.queryOffset\n")
+                    .add("  it.traversalSourceEntity = this.traversalSourceEntity\n")
+                    .add("  it.traversalEdgeName = this.traversalEdgeName\n")
+                    .add("  it.traversalPath = this.traversalPath\n")
+                    .add("  it.deferredSourceStep = this.deferredSourceStep\n")
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * Generate `setDeferredSourceStep(step)` seeder on the query
+     * class. The `deferredSourceStep` field itself is `private` —
+     * clearing it would remove the structural traversal-bridge
+     * constraint and let queries leak across the boundary. Cross-
+     * class write needs a method; the method is
+     * `@EntktInternal internal` so application code can't call it
+     * without explicit `@OptIn`. Generated traversal code (in
+     * `@file:OptIn(EntktInternal::class)` files) calls it freely.
+     */
+    private fun buildSetDeferredSourceStep(entityClass: ClassName): FunSpec {
+        val lambdaType = LambdaTypeName.get(
+            receiver = null,
+            returnType = ClassName("entkt.runtime", "TraversalSourceResult")
+                .parameterizedBy(entityClass),
+        ).copy(nullable = true)
+        return FunSpec.builder("setDeferredSourceStep")
+            .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("step", lambdaType)
+            .addStatement("this.deferredSourceStep = step")
+            .build()
+    }
+
+    /**
      * Generate a `queryX(): TargetQuery` traversal for a many-to-many
      * [edge]. Lowered to a `Predicate.HasM2MEdgeFrom` against the
      * candidate target row, naming the *source* schema's table and the
@@ -2482,27 +2559,21 @@ internal class QueryGenerator(
             // posts.allOrThrow()` would let the post-queryX where
             // leak into posts' bridge predicate, which contradicts
             // the pre-deferral snapshot-at-construction semantics.
-            // List / nullable fields are immutable values, so
-            // copying the references is sufficient: source
-            // mutators reassign the reference on `this`, not on
-            // the snapshot.
+            // List / nullable fields are immutable values, so copying
+            // the references is sufficient: source mutators reassign
+            // the reference on `this`, not on the snapshot. The copy
+            // is delegated to the generated `snapshotForTraversal`
+            // method, which lives inside the source query class and
+            // can access the private backing fields via same-class
+            // private access.
+            .addStatement("val sourceQ = this.snapshotForTraversal(driver, client)")
             .addCode(
                 CodeBlock.builder()
-                    .add("val sourceQ = %T(driver, client).also {\n", sourceQueryClass)
-                    .add("  it.predicates = this.predicates\n")
-                    .add("  it.orderFields = this.orderFields\n")
-                    .add("  it.queryLimit = this.queryLimit\n")
-                    .add("  it.queryOffset = this.queryOffset\n")
-                    .add("  it.traversalSourceEntity = this.traversalSourceEntity\n")
-                    .add("  it.traversalEdgeName = this.traversalEdgeName\n")
-                    .add("  it.traversalPath = this.traversalPath\n")
-                    .add("  it.deferredSourceStep = this.deferredSourceStep\n")
-                    .add("}\n")
-                    .build()
-            )
-            .addCode(
-                CodeBlock.builder()
-                    .add("target.deferredSourceStep = {\n")
+                    // Cross-class write goes through the @EntktInternal
+                    // seeder so application code can't clear / overwrite
+                    // deferredSourceStep without an explicit opt-in (it
+                    // is `private` on the target class).
+                    .add("target.setDeferredSourceStep {\n")
                     .add(
                         "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
                         READ_OPERATION, ENT_OPERATION,
@@ -2595,26 +2666,21 @@ internal class QueryGenerator(
             // posts.allOrThrow()` would let the post-queryX where
             // leak into posts' bridge predicate, which contradicts
             // the pre-deferral snapshot-at-construction semantics.
-            // List / nullable fields are immutable values, so
-            // copying the references is sufficient: source mutators
-            // reassign the reference on `this`, not on the snapshot.
+            // List / nullable fields are immutable values, so copying
+            // the references is sufficient: source mutators reassign
+            // the reference on `this`, not on the snapshot. The copy
+            // is delegated to the generated `snapshotForTraversal`
+            // method, which lives inside the source query class and
+            // can access the private backing fields via same-class
+            // private access.
+            .addStatement("val sourceQ = this.snapshotForTraversal(driver, client)")
             .addCode(
                 CodeBlock.builder()
-                    .add("val sourceQ = %T(driver, client).also {\n", sourceQueryClass)
-                    .add("  it.predicates = this.predicates\n")
-                    .add("  it.orderFields = this.orderFields\n")
-                    .add("  it.queryLimit = this.queryLimit\n")
-                    .add("  it.queryOffset = this.queryOffset\n")
-                    .add("  it.traversalSourceEntity = this.traversalSourceEntity\n")
-                    .add("  it.traversalEdgeName = this.traversalEdgeName\n")
-                    .add("  it.traversalPath = this.traversalPath\n")
-                    .add("  it.deferredSourceStep = this.deferredSourceStep\n")
-                    .add("}\n")
-                    .build()
-            )
-            .addCode(
-                CodeBlock.builder()
-                    .add("target.deferredSourceStep = {\n")
+                    // Cross-class write goes through the @EntktInternal
+                    // seeder so application code can't clear / overwrite
+                    // deferredSourceStep without an explicit opt-in (it
+                    // is `private` on the target class).
+                    .add("target.setDeferredSourceStep {\n")
                     .add(
                         "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
                         READ_OPERATION, ENT_OPERATION,

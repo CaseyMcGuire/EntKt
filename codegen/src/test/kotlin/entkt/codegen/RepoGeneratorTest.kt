@@ -516,8 +516,13 @@ class RepoGeneratorTest {
         // interceptors apply uniformly to bulk deletes. The driver
         // call uses the post-interceptor spec.predicates rather
         // than raw `predicates.toList()`.
-        assert(output.contains("CarQuery(driver, client).also { it.predicates = predicates.toList() }")) {
-            "deleteMany should construct a transient CarQuery from caller predicates\n$output"
+        // After the P2 fix, the generated query's `predicates` backing
+        // field is `private`, so deleteMany seeds it via the public
+        // `where()` DSL inside `apply { ... }` rather than writing the
+        // backing list directly. Functionally equivalent (both append
+        // to the same list); structurally on the public surface.
+        assert(output.contains("CarQuery(driver, client).apply { for (p in predicates) where(p) }")) {
+            "deleteMany should construct a transient CarQuery from caller predicates via the public DSL\n$output"
         }
         assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, EntOperation.DELETE)")) {
             "deleteMany should fire interceptors with DELETE_CANDIDATES / DELETE\n$output"

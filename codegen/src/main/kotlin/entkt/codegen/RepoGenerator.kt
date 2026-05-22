@@ -677,8 +677,14 @@ internal class RepoGenerator(
             // interceptor predicates land tagged INTERCEPTOR. The
             // chain's rejection throws EntQueryRejectedException
             // (since deleteMany returns Int, not EntResult).
+            // Seed predicates through the public `where()` DSL rather
+            // than writing the backing list directly — `predicates` on
+            // the generated query class is `private`, and the public
+            // DSL is functionally equivalent (both accumulate onto the
+            // same list) and keeps generated code on the documented
+            // public surface.
             .addStatement(
-                "val q = %T(driver, client).also { it.predicates = predicates.toList() }",
+                "val q = %T(driver, client).apply { for (p in predicates) where(p) }",
                 queryClass,
             )
             .addStatement(
