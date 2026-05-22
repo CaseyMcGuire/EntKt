@@ -42,17 +42,17 @@ object NoopDriver : Driver {
 
     override fun query(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>> =
         error("NoopDriver cannot query — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun count(table: String, predicates: List<Predicate>): Long =
+    override fun count(table: String, predicates: List<Predicate<*>>): Long =
         error("NoopDriver cannot count — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun exists(table: String, predicates: List<Predicate>): Boolean =
+    override fun exists(table: String, predicates: List<Predicate<*>>): Boolean =
         error("NoopDriver cannot exists — was a terminal op called inside EdgeRef.has { }?")
 
     override fun delete(table: String, id: Any): Boolean =
@@ -61,22 +61,22 @@ object NoopDriver : Driver {
     override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> =
         error("NoopDriver cannot insertMany — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int =
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int =
         error("NoopDriver cannot updateMany — was a terminal op called inside EdgeRef.has { }?")
 
     override fun explainQuery(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): QueryExplanation =
         error("NoopDriver cannot explainQuery — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation =
+    override fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation =
         error("NoopDriver cannot explainCount — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun deleteMany(table: String, predicates: List<Predicate>): Int =
+    override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
         error("NoopDriver cannot deleteMany — was a terminal op called inside EdgeRef.has { }?")
 
     override fun <T> withTransaction(block: (Driver) -> T): T =

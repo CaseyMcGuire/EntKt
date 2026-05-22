@@ -52,8 +52,8 @@ interface Driver {
      */
     fun query(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>>
@@ -62,13 +62,13 @@ interface Driver {
      * Count rows matching [predicates]. Predicates are AND-ed together,
      * same as [query]. Returns zero for an empty or unmatched table.
      */
-    fun count(table: String, predicates: List<Predicate>): Long
+    fun count(table: String, predicates: List<Predicate<*>>): Long
 
     /**
      * Return true if at least one row matches [predicates]. Semantically
      * equivalent to `count(...) > 0` but drivers can short-circuit.
      */
-    fun exists(table: String, predicates: List<Predicate>): Boolean
+    fun exists(table: String, predicates: List<Predicate<*>>): Boolean
 
     /** Returns true if a row was actually removed. */
     fun delete(table: String, id: Any): Boolean
@@ -93,7 +93,7 @@ interface Driver {
      * hooks. No generated repo method wraps this — callers who need
      * per-row hooks should loop over [update].
      */
-    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
+    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int
 
     /**
      * Delete all rows matching [predicates]. Predicates are AND-ed
@@ -103,7 +103,7 @@ interface Driver {
      * hooks. The generated `deleteMany` repo method queries matching
      * entities and deletes each through `delete(entity)` so hooks fire.
      */
-    fun deleteMany(table: String, predicates: List<Predicate>): Int
+    fun deleteMany(table: String, predicates: List<Predicate<*>>): Int
 
     /**
      * Return a [QueryExplanation] describing the SELECT query the
@@ -116,8 +116,8 @@ interface Driver {
      */
     fun explainQuery(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): QueryExplanation = UnsupportedQueryExplanation(this::class.simpleName ?: "Driver")
@@ -133,7 +133,7 @@ interface Driver {
      */
     fun explainCount(
         table: String,
-        predicates: List<Predicate>,
+        predicates: List<Predicate<*>>,
     ): QueryExplanation = UnsupportedQueryExplanation(this::class.simpleName ?: "Driver")
 
     /**

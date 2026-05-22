@@ -28,15 +28,15 @@ class InterceptorEngineTest {
     private class Post
 
     private fun builder(
-        caller: List<Predicate> = emptyList(),
-        structural: List<Predicate> = emptyList(),
+        caller: List<Predicate<*>> = emptyList(),
+        structural: List<Predicate<*>> = emptyList(),
         callerLimit: Int? = null,
     ): QuerySpecBuilder = QuerySpecBuilder(
         table = "posts",
         entity = Post::class,
         callerPredicates = caller,
         structuralPredicates = structural,
-        orderBy = emptyList(),
+        orderBy = emptyList<OrderField<*>>(),
         callerLimit = callerLimit,
         offset = null,
         flags = emptySet(),
@@ -58,7 +58,7 @@ class InterceptorEngineTest {
 
     @Test
     fun `scope-shape sees own addPredicate immediately (live property)`() {
-        val pX = Predicate.Leaf("x", Op.EQ, 1)
+        val pX = Predicate.Leaf<Post>("x", Op.EQ, 1)
         val captured = mutableListOf<Int>()  // counts after each read
         val interceptor = QueryInterceptor<Post> { scope, _ ->
             captured.add(scope.shape.predicates.size)  // 0
@@ -82,7 +82,7 @@ class InterceptorEngineTest {
         var liveCount = -1
         val interceptor = QueryInterceptor<Post> { scope, _ ->
             val snap = scope.shape
-            scope.addPredicate(Predicate.Leaf("y", Op.EQ, 2))
+            scope.addPredicate(Predicate.Leaf<Post>("y", Op.EQ, 2))
             snapCount = snap.predicates.size           // frozen
             liveCount = scope.shape.predicates.size    // fresh read
         }
@@ -100,8 +100,8 @@ class InterceptorEngineTest {
 
     @Test
     fun `interceptor sees previous interceptors mutations through shape`() {
-        val pX = Predicate.Leaf("x", Op.EQ, 1)
-        val pY = Predicate.Leaf("y", Op.EQ, 2)
+        val pX = Predicate.Leaf<Post>("x", Op.EQ, 1)
+        val pY = Predicate.Leaf<Post>("y", Op.EQ, 2)
         var bSawX = false
         var bSawY = false
         val a = QueryInterceptor<Post> { scope, _ -> scope.addPredicate(pX) }
@@ -133,7 +133,7 @@ class InterceptorEngineTest {
         var observedStructural = -1
         var observedInterceptor = -1
         val a = QueryInterceptor<Post> { scope, _ ->
-            scope.addPredicate(Predicate.Leaf("ax", Op.EQ, 0))
+            scope.addPredicate(Predicate.Leaf<Post>("ax", Op.EQ, 0))
         }
         val b = QueryInterceptor<Post> { scope, _ ->
             // Read attribution AFTER A's contribution is visible.
@@ -144,8 +144,8 @@ class InterceptorEngineTest {
         InterceptorEngine.apply(
             builder = builder(
                 caller = listOf(
-                    Predicate.Leaf("c1", Op.EQ, 1),
-                    Predicate.Leaf("c2", Op.EQ, 2),
+                    Predicate.Leaf<Post>("c1", Op.EQ, 1),
+                    Predicate.Leaf<Post>("c2", Op.EQ, 2),
                 ),
                 structural = emptyList(),
             ),
@@ -172,7 +172,7 @@ class InterceptorEngineTest {
         InterceptorEngine.apply(
             builder = builder(
                 caller = emptyList(),
-                structural = listOf(Predicate.Leaf("id", Op.EQ, 42)),
+                structural = listOf(Predicate.Leaf<Post>("id", Op.EQ, 42)),
             ),
             context = rootContext(operation = ReadOperation.BY_ID),
             entity = "Post",
@@ -439,7 +439,7 @@ class InterceptorEngineTest {
 
     @Test
     fun `global interceptors see all prior mutations including earlier globals`() {
-        val pX = Predicate.Leaf("x", Op.EQ, 1)
+        val pX = Predicate.Leaf<Post>("x", Op.EQ, 1)
         var g1ObservedPredicates = -1
         var g2ObservedAnnotations: Map<String, String> = emptyMap()
         val entityI = QueryInterceptor<Post> { scope, _ -> scope.addPredicate(pX) }
@@ -470,11 +470,11 @@ class InterceptorEngineTest {
     @Test
     fun `freeze returns the final snapshot with all mutations`() {
         val b = builder(
-            caller = listOf(Predicate.Leaf("c", Op.EQ, 1)),
-            structural = listOf(Predicate.Leaf("s", Op.EQ, 2)),
+            caller = listOf(Predicate.Leaf<Post>("c", Op.EQ, 1)),
+            structural = listOf(Predicate.Leaf<Post>("s", Op.EQ, 2)),
             callerLimit = 100,
         )
-        val pX = Predicate.Leaf("x", Op.EQ, 3)
+        val pX = Predicate.Leaf<Post>("x", Op.EQ, 3)
         val interceptor = QueryInterceptor<Post> { scope, _ ->
             scope.addPredicate(pX)
             scope.requireLimitAtMost(50)

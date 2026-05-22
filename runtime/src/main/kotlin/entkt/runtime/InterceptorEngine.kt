@@ -24,9 +24,9 @@ import entkt.query.Predicate
 public class QuerySpecBuilder public constructor(
     public val table: String,
     public val entity: kotlin.reflect.KClass<*>,
-    callerPredicates: List<Predicate>,
-    structuralPredicates: List<Predicate>,
-    orderBy: List<OrderField>,
+    callerPredicates: List<Predicate<*>>,
+    structuralPredicates: List<Predicate<*>>,
+    orderBy: List<OrderField<*>>,
     callerLimit: Int?,
     public val offset: Int?,
     public val flags: Set<QueryFlag>,
@@ -41,11 +41,19 @@ public class QuerySpecBuilder public constructor(
      */
     initialAnnotations: Map<String, String> = emptyMap(),
 ) {
+    // Storage is erased: predicates flow in from typed call sites
+    // (caller-authored `Predicate<E>` plus interceptor-added
+    // `Predicate<E>`) and structural sites built internally, but
+    // the builder doesn't care about `E` at storage time — it
+    // forwards to the driver via the erased `FrozenQuerySpec`
+    // anyway. Typed views are projected back through `typedShape<E>()`
+    // with an unchecked cast — sound because every site that adds
+    // predicates is typed to the matching `E`.
     private val predicates: MutableList<Tagged> = mutableListOf<Tagged>().apply {
         addAll(callerPredicates.map { Tagged(it, Source.CALLER) })
         addAll(structuralPredicates.map { Tagged(it, Source.STRUCTURAL) })
     }
-    private val orderByList: MutableList<OrderField> = orderBy.toMutableList()
+    private val orderByList: MutableList<OrderField<*>> = orderBy.toMutableList()
     private var currentLimit: Int? = callerLimit
     public val callerLimit: Int? = callerLimit
     private val annotationsMap: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
@@ -53,7 +61,7 @@ public class QuerySpecBuilder public constructor(
     }
 
     /** Appends an interceptor-tagged predicate. */
-    internal fun addInterceptorPredicate(predicate: Predicate) {
+    internal fun addInterceptorPredicate(predicate: Predicate<*>) {
         predicates.add(Tagged(predicate, Source.INTERCEPTOR))
     }
 
@@ -79,8 +87,17 @@ public class QuerySpecBuilder public constructor(
 
     // ---- Shape projections (recomputed on each call — live, not snapshot) ----
 
+    @Suppress("UNCHECKED_CAST")
     internal fun <E : Any> typedShape(): QueryShape<E> {
-        val allPredicates = predicates.map { it.predicate }
+        // Project erased storage back to typed at the shape boundary.
+        // Sound: every predicate stored here was added through a site
+        // that was already typed to the matching `E` (caller-authored
+        // `where(Predicate<E>)`, interceptor-added
+        // `scope.addPredicate(Predicate<E>)`, or structural predicates
+        // built internally against the same `E`). The `*`-erased
+        // storage is a representation detail of the builder.
+        val allPredicates = predicates.map { it.predicate } as List<Predicate<E>>
+        val typedOrderBy = orderByList.toList() as List<OrderField<E>>
         var caller = 0; var structural = 0; var interceptor = 0
         for (t in predicates) when (t.source) {
             Source.CALLER -> caller++
@@ -90,7 +107,7 @@ public class QuerySpecBuilder public constructor(
         return QueryShape(
             table = table,
             predicates = allPredicates,
-            orderBy = orderByList.toList(),
+            orderBy = typedOrderBy,
             limit = currentLimit,
             callerLimit = callerLimit,
             offset = offset,
@@ -136,7 +153,7 @@ public class QuerySpecBuilder public constructor(
     )
 
     private enum class Source { CALLER, STRUCTURAL, INTERCEPTOR }
-    private data class Tagged(val predicate: Predicate, val source: Source)
+    private data class Tagged(val predicate: Predicate<*>, val source: Source)
 }
 
 /**
@@ -158,8 +175,8 @@ public class QuerySpecBuilder public constructor(
  * propagates out of this lambda and into the terminal's `try/catch`
  * which converts to `Err(QueryRejected)`.
  */
-public data class TraversalSourceResult public constructor(
-    val bridge: Predicate,
+public data class TraversalSourceResult<E : Any> public constructor(
+    val bridge: Predicate<E>,
     val annotations: Map<String, String>,
 )
 
@@ -167,11 +184,18 @@ public data class TraversalSourceResult public constructor(
  * The final immutable spec the driver receives. Distinct from the
  * mutable [QuerySpecBuilder] so the framework can hand it across a
  * module boundary without exposing the builder API.
+ *
+ * Predicates and order fields are stored erased (`Predicate<*>` /
+ * `OrderField<*>`) at this layer because the driver consumes them
+ * structurally (field name / op / value / edge name / source
+ * table) and does not introspect the phantom entity scope — see
+ * the RFC's "Driver Boundary" section. Layers above the driver
+ * stay typed in `E`; erasure happens at this single boundary.
  */
 public data class FrozenQuerySpec public constructor(
     val table: String,
-    val predicates: List<Predicate>,
-    val orderBy: List<OrderField>,
+    val predicates: List<Predicate<*>>,
+    val orderBy: List<OrderField<*>>,
     val limit: Int?,
     val offset: Int?,
     val flags: Set<QueryFlag>,
@@ -257,7 +281,7 @@ internal class InterceptScopeImpl<E : Any>(
 ) : InterceptScope<E> {
     override val shape: QueryShape<E> get() = builder.typedShape()
 
-    override fun addPredicate(predicate: Predicate) {
+    override fun addPredicate(predicate: Predicate<E>) {
         builder.addInterceptorPredicate(predicate)
     }
 

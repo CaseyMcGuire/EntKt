@@ -57,7 +57,7 @@ interface InterceptScope<E : Any> {
     val shape: QueryShape<E>
 
     /** Adds a predicate AND-ed with caller / prior-interceptor / structural predicates. */
-    fun addPredicate(predicate: Predicate)
+    fun addPredicate(predicate: Predicate<E>)
 
     /**
      * Clamps the effective limit to at most [max] on read shapes
@@ -144,8 +144,8 @@ interface GlobalInterceptScope {
  */
 data class QueryShape<E : Any>(
     val table: String,
-    val predicates: List<Predicate>,
-    val orderBy: List<OrderField>,
+    val predicates: List<Predicate<E>>,
+    val orderBy: List<OrderField<E>>,
     val limit: Int?,
     val callerLimit: Int?,
     val offset: Int?,

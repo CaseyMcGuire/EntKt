@@ -27,8 +27,8 @@ class InterceptorRuntimeTypesTest {
 
     @Test
     fun `QueryShape attribution identity holds at construction`() {
-        val p1 = Predicate.Leaf("x", Op.EQ, 1)
-        val p2 = Predicate.Leaf("y", Op.EQ, 2)
+        val p1 = Predicate.Leaf<A>("x", Op.EQ, 1)
+        val p2 = Predicate.Leaf<A>("y", Op.EQ, 2)
         val shape = QueryShape<A>(
             table = "as",
             predicates = listOf(p1, p2),
@@ -52,7 +52,7 @@ class InterceptorRuntimeTypesTest {
         val ex = assertFailsWith<IllegalStateException> {
             QueryShape<A>(
                 table = "as",
-                predicates = listOf(Predicate.Leaf("x", Op.EQ, 1), Predicate.Leaf("y", Op.EQ, 2)),
+                predicates = listOf(Predicate.Leaf<A>("x", Op.EQ, 1), Predicate.Leaf<A>("y", Op.EQ, 2)),
                 orderBy = emptyList(),
                 limit = null,
                 callerLimit = null,
