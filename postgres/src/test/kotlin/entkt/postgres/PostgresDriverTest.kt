@@ -1,5 +1,15 @@
+// Driver-level test fixtures construct edge predicates
+// (`Predicate.HasEdgeWith` / `HasEdge` / `HasM2MEdgeFrom`) directly
+// to exercise the SQL renderer in isolation. These types carry
+// `@EntktInternal` so application code can't fabricate them outside
+// the generated `EdgeRef.has(...)` surface (see RFC §"Constructor
+// Visibility"). Driver tests opt in once at the file header — the
+// fabrication is intentional and scoped to driver-internal coverage.
+@file:OptIn(EntktInternal::class)
+
 package entkt.postgres
 
+import entkt.query.EntktInternal
 import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
@@ -248,7 +258,7 @@ class PostgresDriverTest {
 
         val adults = driver.query(
             table = "users",
-            predicates = listOf(Predicate.Leaf("age", Op.GTE, 18)),
+            predicates = listOf(Predicate.Leaf<Any>("age", Op.GTE, 18)),
             orderBy = emptyList(),
             limit = null,
             offset = null,
@@ -266,7 +276,7 @@ class PostgresDriverTest {
         val sortedByAgeDesc = driver.query(
             "users",
             predicates = emptyList(),
-            orderBy = listOf(OrderField("age", OrderDirection.DESC)),
+            orderBy = listOf(OrderField<Any>("age", OrderDirection.DESC)),
             limit = 2,
             offset = 1,
         )
@@ -282,10 +292,10 @@ class PostgresDriverTest {
 
         // active AND (age >= 65 OR name == "Alice")
         val pred = Predicate.And(
-            Predicate.Leaf("active", Op.EQ, true),
+            Predicate.Leaf<Any>("active", Op.EQ, true),
             Predicate.Or(
-                Predicate.Leaf("age", Op.GTE, 65),
-                Predicate.Leaf("name", Op.EQ, "Alice"),
+                Predicate.Leaf<Any>("age", Op.GTE, 65),
+                Predicate.Leaf<Any>("name", Op.EQ, "Alice"),
             ),
         )
         val rows = driver.query("users", listOf(pred), emptyList(), null, null)
@@ -307,9 +317,9 @@ class PostgresDriverTest {
             mapOf<String, Any?>("title" to "draft", "published" to false, "author_id" to bob["id"]),
         )
 
-        val pred = Predicate.HasEdgeWith(
+        val pred = Predicate.HasEdgeWith<Any, Any>(
             edge = "posts",
-            inner = Predicate.Leaf("published", Op.EQ, true),
+            inner = Predicate.Leaf<Any>("published", Op.EQ, true),
         )
         val rows = driver.query("users", listOf(pred), emptyList(), null, null)
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
@@ -326,7 +336,7 @@ class PostgresDriverTest {
 
         val rows = driver.query(
             "posts",
-            listOf(Predicate.HasEdge("author")),
+            listOf(Predicate.HasEdge<Any>("author")),
             emptyList(),
             null,
             null,
@@ -343,7 +353,7 @@ class PostgresDriverTest {
 
         val containsExample = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.CONTAINS, "example")),
+            listOf(Predicate.Leaf<Any>("name", Op.CONTAINS, "example")),
             emptyList(), null, null,
         )
         assertEquals(
@@ -353,14 +363,14 @@ class PostgresDriverTest {
 
         val prefixAlice = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.HAS_PREFIX, "alice")),
+            listOf(Predicate.Leaf<Any>("name", Op.HAS_PREFIX, "alice")),
             emptyList(), null, null,
         )
         assertEquals(setOf("alice@example.com"), prefixAlice.map { it["name"] }.toSet())
 
         val suffixOrg = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.HAS_SUFFIX, ".org")),
+            listOf(Predicate.Leaf<Any>("name", Op.HAS_SUFFIX, ".org")),
             emptyList(), null, null,
         )
         assertEquals(setOf("carol@other.org"), suffixOrg.map { it["name"] }.toSet())
@@ -384,7 +394,7 @@ class PostgresDriverTest {
         // contains "%" matches only the row with a literal percent.
         val containsPct = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.CONTAINS, "%")),
+            listOf(Predicate.Leaf<Any>("name", Op.CONTAINS, "%")),
             emptyList(), null, null,
         )
         assertEquals(setOf("50% off"), containsPct.map { it["name"] }.toSet())
@@ -394,7 +404,7 @@ class PostgresDriverTest {
         // would catch).
         val containsUnderscore = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.CONTAINS, "_")),
+            listOf(Predicate.Leaf<Any>("name", Op.CONTAINS, "_")),
             emptyList(), null, null,
         )
         assertEquals(setOf("a_b"), containsUnderscore.map { it["name"] }.toSet())
@@ -403,7 +413,7 @@ class PostgresDriverTest {
         // matches only the row containing it.
         val containsBackslash = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.CONTAINS, "\\")),
+            listOf(Predicate.Leaf<Any>("name", Op.CONTAINS, "\\")),
             emptyList(), null, null,
         )
         assertEquals(setOf("back\\slash"), containsBackslash.map { it["name"] }.toSet())
@@ -411,7 +421,7 @@ class PostgresDriverTest {
         // hasPrefix with a wildcard-looking value: only literal matches.
         val prefixPct = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.HAS_PREFIX, "50%")),
+            listOf(Predicate.Leaf<Any>("name", Op.HAS_PREFIX, "50%")),
             emptyList(), null, null,
         )
         assertEquals(setOf("50% off"), prefixPct.map { it["name"] }.toSet())
@@ -419,7 +429,7 @@ class PostgresDriverTest {
         // hasSuffix with a wildcard-looking value: only literal matches.
         val suffixPct = driver.query(
             "users",
-            listOf(Predicate.Leaf("name", Op.HAS_SUFFIX, "% off")),
+            listOf(Predicate.Leaf<Any>("name", Op.HAS_SUFFIX, "% off")),
             emptyList(), null, null,
         )
         assertEquals(setOf("50% off"), suffixPct.map { it["name"] }.toSet())
@@ -434,14 +444,14 @@ class PostgresDriverTest {
 
         val inAges = driver.query(
             "users",
-            listOf(Predicate.Leaf("age", Op.IN, listOf(30, 50))),
+            listOf(Predicate.Leaf<Any>("age", Op.IN, listOf(30, 50))),
             emptyList(), null, null,
         )
         assertEquals(setOf("Alice", "Carol"), inAges.map { it["name"] }.toSet())
 
         val notInAges = driver.query(
             "users",
-            listOf(Predicate.Leaf("age", Op.NOT_IN, listOf(30, 50))),
+            listOf(Predicate.Leaf<Any>("age", Op.NOT_IN, listOf(30, 50))),
             emptyList(), null, null,
         )
         assertEquals(setOf("Bob"), notInAges.map { it["name"] }.toSet())
@@ -455,14 +465,14 @@ class PostgresDriverTest {
 
         val noAge = driver.query(
             "users",
-            listOf(Predicate.Leaf("age", Op.IS_NULL, null)),
+            listOf(Predicate.Leaf<Any>("age", Op.IS_NULL, null)),
             emptyList(), null, null,
         )
         assertEquals(setOf("Bob"), noAge.map { it["name"] }.toSet())
 
         val withAge = driver.query(
             "users",
-            listOf(Predicate.Leaf("age", Op.IS_NOT_NULL, null)),
+            listOf(Predicate.Leaf<Any>("age", Op.IS_NOT_NULL, null)),
             emptyList(), null, null,
         )
         assertEquals(setOf("Alice"), withAge.map { it["name"] }.toSet())
@@ -496,8 +506,8 @@ class PostgresDriverTest {
 
         val rows = driver.query(
             table = table,
-            predicates = listOf(Predicate.Leaf(nameColumn, Op.EQ, "Alice")),
-            orderBy = listOf(OrderField(nameColumn, OrderDirection.ASC)),
+            predicates = listOf(Predicate.Leaf<Any>(nameColumn, Op.EQ, "Alice")),
+            orderBy = listOf(OrderField<Any>(nameColumn, OrderDirection.ASC)),
             limit = null,
             offset = null,
         )
@@ -940,7 +950,7 @@ class PostgresDriverTest {
 
         val rows = driver.query(
             "m2m_groups",
-            listOf(Predicate.HasEdge("users")),
+            listOf(Predicate.HasEdge<Any>("users")),
             emptyList(), null, null,
         )
         assertEquals(1, rows.size)
@@ -960,7 +970,7 @@ class PostgresDriverTest {
 
         val rows = driver.query(
             "m2m_groups",
-            listOf(Predicate.HasEdgeWith("users", Predicate.Leaf("age", Op.GTE, 18))),
+            listOf(Predicate.HasEdgeWith<Any, Any>("users", Predicate.Leaf<Any>("age", Op.GTE, 18))),
             emptyList(), null, null,
         )
         assertEquals(setOf("Admins"), rows.map { it["name"] }.toSet())
@@ -977,7 +987,7 @@ class PostgresDriverTest {
 
         val rows = driver.query(
             "m2m_users",
-            listOf(Predicate.HasEdge("groups")),
+            listOf(Predicate.HasEdge<Any>("groups")),
             emptyList(), null, null,
         )
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
@@ -996,7 +1006,7 @@ class PostgresDriverTest {
 
         val rows = driver.query(
             "m2m_users",
-            listOf(Predicate.HasEdgeWith("groups", Predicate.Leaf("name", Op.EQ, "Admins"))),
+            listOf(Predicate.HasEdgeWith<Any, Any>("groups", Predicate.Leaf<Any>("name", Op.EQ, "Admins"))),
             emptyList(), null, null,
         )
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
@@ -1027,7 +1037,7 @@ class PostgresDriverTest {
         driver.insert("users", mapOf<String, Any?>("name" to "Bob", "active" to true))
         driver.insert("users", mapOf<String, Any?>("name" to "Carol", "active" to false))
 
-        assertEquals(2L, driver.count("users", listOf(Predicate.Leaf("active", Op.EQ, true))))
+        assertEquals(2L, driver.count("users", listOf(Predicate.Leaf<Any>("active", Op.EQ, true))))
     }
 
     // ---------- exists ----------
@@ -1037,7 +1047,7 @@ class PostgresDriverTest {
         val driver = fresh()
         driver.insert("users", mapOf<String, Any?>("name" to "Alice", "active" to true))
 
-        assertTrue(driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, true))))
+        assertTrue(driver.exists("users", listOf(Predicate.Leaf<Any>("active", Op.EQ, true))))
     }
 
     @Test
@@ -1051,7 +1061,7 @@ class PostgresDriverTest {
         val driver = fresh()
         driver.insert("users", mapOf<String, Any?>("name" to "Alice", "active" to true))
 
-        assertEquals(false, driver.exists("users", listOf(Predicate.Leaf("active", Op.EQ, false))))
+        assertEquals(false, driver.exists("users", listOf(Predicate.Leaf<Any>("active", Op.EQ, false))))
     }
 
     // ---------- insertMany ----------
@@ -1142,11 +1152,11 @@ class PostgresDriverTest {
         val count = driver.updateMany(
             "users",
             mapOf("active" to false),
-            listOf(Predicate.Leaf("age", Op.LT, 18)),
+            listOf(Predicate.Leaf<Any>("age", Op.LT, 18)),
         )
 
         assertEquals(1, count)
-        val bob = driver.query("users", listOf(Predicate.Leaf("name", Op.EQ, "Bob")), emptyList(), null, null).single()
+        val bob = driver.query("users", listOf(Predicate.Leaf<Any>("name", Op.EQ, "Bob")), emptyList(), null, null).single()
         assertEquals(false, bob["active"])
     }
 
@@ -1168,7 +1178,7 @@ class PostgresDriverTest {
         driver.insert("users", mapOf("name" to "Bob", "age" to 17))
         driver.insert("users", mapOf("name" to "Carol", "age" to 65))
 
-        val count = driver.deleteMany("users", listOf(Predicate.Leaf("age", Op.LT, 18)))
+        val count = driver.deleteMany("users", listOf(Predicate.Leaf<Any>("age", Op.LT, 18)))
 
         assertEquals(1, count)
         val remaining = driver.query("users", emptyList(), emptyList(), null, null)
@@ -1328,8 +1338,8 @@ class PostgresDriverTest {
         val driver = fresh()
         val explanation = driver.explainQuery(
             "users",
-            listOf(Predicate.Leaf("name", Op.EQ, "alice"), Predicate.Leaf("age", Op.GT, 25)),
-            listOf(OrderField("name", OrderDirection.ASC)),
+            listOf(Predicate.Leaf<Any>("name", Op.EQ, "alice"), Predicate.Leaf<Any>("age", Op.GT, 25)),
+            listOf(OrderField<Any>("name", OrderDirection.ASC)),
             10,
             5,
         )
@@ -1354,7 +1364,7 @@ class PostgresDriverTest {
         val driver = fresh()
         val pg = driver.explainQuery(
             "users",
-            listOf(Predicate.HasEdgeWith("posts", Predicate.Leaf("published", Op.EQ, true))),
+            listOf(Predicate.HasEdgeWith<Any, Any>("posts", Predicate.Leaf<Any>("published", Op.EQ, true))),
             emptyList(),
             null,
             null,

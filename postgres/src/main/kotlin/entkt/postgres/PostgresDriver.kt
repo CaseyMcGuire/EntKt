@@ -24,6 +24,26 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
 
 /**
+ * AND together a list of erased predicates into a single erased
+ * predicate, or null when the list is empty. Used by the SQL builders
+ * to combine the driver-call's `List<Predicate<*>>` into a single
+ * predicate tree for [PostgresDriver.SqlBuilder.lower].
+ *
+ * The runtime representation of `Predicate.And<E>(left, right)` is a
+ * plain wrapper that doesn't inspect E, so combining two erased
+ * predicates into an erased And is sound — drivers consume predicates
+ * structurally (field/op/value/edge name/source table) and don't
+ * introspect the phantom type. The unchecked cast localizes the
+ * "phantom doesn't matter at the driver" invariant to one place per
+ * the RFC's "Driver Boundary" section.
+ */
+@Suppress("UNCHECKED_CAST")
+private fun List<Predicate<*>>.andTogether(): Predicate<*>? =
+    reduceOrNull { left, right ->
+        Predicate.And(left as Predicate<Any>, right as Predicate<Any>)
+    }
+
+/**
  * A [Driver] backed by a JDBC [DataSource] talking to PostgreSQL.
  *
  * Each call borrows one connection from the pool and runs a single
@@ -80,8 +100,8 @@ class PostgresDriver(
 
     override fun query(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>> =
@@ -89,8 +109,8 @@ class PostgresDriver(
 
     override fun explainQuery(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): QueryExplanation {
@@ -100,16 +120,16 @@ class PostgresDriver(
 
     override fun explainCount(
         table: String,
-        predicates: List<Predicate>,
+        predicates: List<Predicate<*>>,
     ): QueryExplanation {
         val prepared = buildCountSql(table, predicates)
         return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
     }
 
-    override fun count(table: String, predicates: List<Predicate>): Long =
+    override fun count(table: String, predicates: List<Predicate<*>>): Long =
         dataSource.connection.use { countWith(it, table, predicates) }
 
-    override fun exists(table: String, predicates: List<Predicate>): Boolean =
+    override fun exists(table: String, predicates: List<Predicate<*>>): Boolean =
         dataSource.connection.use { existsWith(it, table, predicates) }
 
     override fun delete(table: String, id: Any): Boolean =
@@ -118,10 +138,10 @@ class PostgresDriver(
     override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> =
         dataSource.connection.use { insertManyWith(it, table, values) }
 
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int =
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int =
         dataSource.connection.use { updateManyWith(it, table, values, predicates) }
 
-    override fun deleteMany(table: String, predicates: List<Predicate>): Int =
+    override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
         dataSource.connection.use { deleteManyWith(it, table, predicates) }
 
     // ---------- Connection-taking internals ----------
@@ -203,8 +223,8 @@ class PostgresDriver(
 
     private fun buildSelectSql(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): PreparedSql {
@@ -216,7 +236,7 @@ class PostgresDriver(
         sql.append("SELECT ").append(baseAlias).append(".* FROM ")
             .append(quote(table)).append(" AS ").append(baseAlias)
 
-        val combined = predicates.reduceOrNull(Predicate::And)
+        val combined = predicates.andTogether()
         if (combined != null) {
             val whereSql = builder.lower(combined, schema, baseAlias)
             sql.append(" WHERE ").append(whereSql)
@@ -241,8 +261,8 @@ class PostgresDriver(
     private fun queryWith(
         conn: Connection,
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>> {
@@ -261,7 +281,7 @@ class PostgresDriver(
         }
     }
 
-    private fun buildCountSql(table: String, predicates: List<Predicate>): PreparedSql {
+    private fun buildCountSql(table: String, predicates: List<Predicate<*>>): PreparedSql {
         val schema = schemaFor(table)
         val builder = SqlBuilder()
         val baseAlias = "t0"
@@ -270,7 +290,7 @@ class PostgresDriver(
         sql.append("SELECT COUNT(*) FROM ")
             .append(quote(table)).append(" AS ").append(baseAlias)
 
-        val combined = predicates.reduceOrNull(Predicate::And)
+        val combined = predicates.andTogether()
         if (combined != null) {
             val whereSql = builder.lower(combined, schema, baseAlias)
             sql.append(" WHERE ").append(whereSql)
@@ -282,7 +302,7 @@ class PostgresDriver(
     private fun countWith(
         conn: Connection,
         table: String,
-        predicates: List<Predicate>,
+        predicates: List<Predicate<*>>,
     ): Long {
         val prepared = buildCountSql(table, predicates)
 
@@ -300,7 +320,7 @@ class PostgresDriver(
     private fun existsWith(
         conn: Connection,
         table: String,
-        predicates: List<Predicate>,
+        predicates: List<Predicate<*>>,
     ): Boolean {
         val schema = schemaFor(table)
         val builder = SqlBuilder()
@@ -310,7 +330,7 @@ class PostgresDriver(
         sql.append("SELECT EXISTS(SELECT 1 FROM ")
             .append(quote(table)).append(" AS ").append(baseAlias)
 
-        val combined = predicates.reduceOrNull(Predicate::And)
+        val combined = predicates.andTogether()
         if (combined != null) {
             val whereSql = builder.lower(combined, schema, baseAlias)
             sql.append(" WHERE ").append(whereSql)
@@ -413,7 +433,7 @@ class PostgresDriver(
         conn: Connection,
         table: String,
         values: Map<String, Any?>,
-        predicates: List<Predicate>,
+        predicates: List<Predicate<*>>,
     ): Int {
         val schema = schemaFor(table)
         val cols = values.keys.filter { it != schema.idColumn }
@@ -426,7 +446,7 @@ class PostgresDriver(
         val sql = StringBuilder()
         sql.append("UPDATE ${quote(table)} AS $baseAlias SET $setClause")
 
-        val combined = predicates.reduceOrNull(Predicate::And)
+        val combined = predicates.andTogether()
         if (combined != null) {
             val whereSql = builder.lower(combined, schema, baseAlias)
             sql.append(" WHERE ").append(whereSql)
@@ -447,7 +467,7 @@ class PostgresDriver(
     private fun deleteManyWith(
         conn: Connection,
         table: String,
-        predicates: List<Predicate>,
+        predicates: List<Predicate<*>>,
     ): Int {
         val schema = schemaFor(table)
         val builder = SqlBuilder()
@@ -456,7 +476,7 @@ class PostgresDriver(
         val sql = StringBuilder()
         sql.append("DELETE FROM ${quote(table)} AS $baseAlias")
 
-        val combined = predicates.reduceOrNull(Predicate::And)
+        val combined = predicates.andTogether()
         if (combined != null) {
             val whereSql = builder.lower(combined, schema, baseAlias)
             sql.append(" WHERE ").append(whereSql)
@@ -573,21 +593,21 @@ class PostgresDriver(
 
         fun nextAlias(): String = "t${++aliasCounter}"
 
-        fun lower(predicate: Predicate, schema: EntitySchema, alias: String): String =
+        fun lower(predicate: Predicate<*>, schema: EntitySchema, alias: String): String =
             when (predicate) {
-                is Predicate.Leaf -> lowerLeaf(predicate, schema, alias)
-                is Predicate.And ->
+                is Predicate.Leaf<*> -> lowerLeaf(predicate, schema, alias)
+                is Predicate.And<*> ->
                     "(${lower(predicate.left, schema, alias)} AND ${lower(predicate.right, schema, alias)})"
-                is Predicate.Or ->
+                is Predicate.Or<*> ->
                     "(${lower(predicate.left, schema, alias)} OR ${lower(predicate.right, schema, alias)})"
-                is Predicate.HasEdge -> lowerHasEdge(predicate.edge, null, schema, alias)
-                is Predicate.HasEdgeWith ->
+                is Predicate.HasEdge<*> -> lowerHasEdge(predicate.edge, null, schema, alias)
+                is Predicate.HasEdgeWith<*, *> ->
                     lowerHasEdge(predicate.edge, predicate.inner, schema, alias)
-                is Predicate.HasM2MEdgeFrom ->
+                is Predicate.HasM2MEdgeFrom<*, *> ->
                     lowerInverseM2M(predicate, alias)
             }
 
-        private fun lowerLeaf(leaf: Predicate.Leaf, schema: EntitySchema, alias: String): String {
+        private fun lowerLeaf(leaf: Predicate.Leaf<*>, schema: EntitySchema, alias: String): String {
             val col = "$alias.${quote(leaf.field)}"
             val type = columnTypeOf(schema, leaf.field)
             return when (leaf.op) {
@@ -682,7 +702,7 @@ class PostgresDriver(
 
         private fun lowerHasEdge(
             edgeName: String,
-            inner: Predicate?,
+            inner: Predicate<*>?,
             sourceSchema: EntitySchema,
             sourceAlias: String,
         ): String {
@@ -719,7 +739,7 @@ class PostgresDriver(
          * filter applies to the source table.
          */
         private fun lowerInverseM2M(
-            predicate: Predicate.HasM2MEdgeFrom,
+            predicate: Predicate.HasM2MEdgeFrom<*, *>,
             candidateAlias: String,
         ): String {
             val sourceSchema = schemas[predicate.sourceTable]
@@ -1033,33 +1053,33 @@ class PostgresDriver(
 
         override fun query(
             table: String,
-            predicates: List<Predicate>,
-            orderBy: List<OrderField>,
+            predicates: List<Predicate<*>>,
+            orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
         ): List<Map<String, Any?>> {
             checkOpen(); return queryWith(conn, table, predicates, orderBy, limit, offset)
         }
 
-        override fun count(table: String, predicates: List<Predicate>): Long {
+        override fun count(table: String, predicates: List<Predicate<*>>): Long {
             checkOpen(); return countWith(conn, table, predicates)
         }
 
-        override fun exists(table: String, predicates: List<Predicate>): Boolean {
+        override fun exists(table: String, predicates: List<Predicate<*>>): Boolean {
             checkOpen(); return existsWith(conn, table, predicates)
         }
 
         override fun explainQuery(
             table: String,
-            predicates: List<Predicate>,
-            orderBy: List<OrderField>,
+            predicates: List<Predicate<*>>,
+            orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
         ): QueryExplanation {
             checkOpen(); return root.explainQuery(table, predicates, orderBy, limit, offset)
         }
 
-        override fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation {
+        override fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation {
             checkOpen(); return root.explainCount(table, predicates)
         }
 
@@ -1071,11 +1091,11 @@ class PostgresDriver(
             checkOpen(); return insertManyWith(conn, table, values)
         }
 
-        override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int {
+        override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int {
             checkOpen(); return updateManyWith(conn, table, values, predicates)
         }
 
-        override fun deleteMany(table: String, predicates: List<Predicate>): Int {
+        override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int {
             checkOpen(); return deleteManyWith(conn, table, predicates)
         }
 
