@@ -171,6 +171,49 @@ class PhantomScopeCompileFailTest {
     }
 
     @Test
+    fun `HasEdgeWith does not expose a copy() method (data-class auto-gen disabled)`() {
+        // Previously, `Predicate.HasEdgeWith @EntktInternal constructor(...)`
+        // was a data class, which auto-generates a PUBLIC `copy(...)` that
+        // sidesteps the constructor's opt-in. A caller could obtain a
+        // legitimate HasEdgeWith via EdgeRef.has(...) and then call
+        // `.copy(edge = "something-else")` to pair the original
+        // Predicate<Target> with a different edge name — reopening the
+        // walker-cast fabrication hole. Switching to regular classes
+        // removes auto-generated copy() entirely.
+        val result = compile("""
+            @OptIn(EntktInternal::class)
+            fun legitimate(): Predicate.HasEdgeWith<User, Post> {
+                val inner: Predicate<Post> = Predicate.Leaf("x", Op.EQ, 1)
+                return Predicate.HasEdgeWith("posts", inner)
+            }
+            fun bypass(): Predicate.HasEdgeWith<User, Post> =
+                legitimate().copy(edge = "comments")
+        """.trimIndent())
+        assertCompileError(result, "Unresolved reference")
+    }
+
+    @Test
+    fun `HasEdge does not expose a copy() method`() {
+        val result = compile("""
+            @OptIn(EntktInternal::class)
+            fun legitimate(): Predicate.HasEdge<User> = Predicate.HasEdge("posts")
+            fun bypass() = legitimate().copy(edge = "comments")
+        """.trimIndent())
+        assertCompileError(result, "Unresolved reference")
+    }
+
+    @Test
+    fun `HasM2MEdgeFrom does not expose a copy() method`() {
+        val result = compile("""
+            @OptIn(EntktInternal::class)
+            fun legitimate(): Predicate.HasM2MEdgeFrom<Post, User> =
+                Predicate.HasM2MEdgeFrom("users", "posts", null)
+            fun bypass() = legitimate().copy(edgeName = "comments")
+        """.trimIndent())
+        assertCompileError(result, "Unresolved reference")
+    }
+
+    @Test
     fun `explicit OptIn at call site allows restricted construction`() {
         // Sanity check that the escape hatch works — code that opts in
         // explicitly compiles. The opt-in cost is documented and

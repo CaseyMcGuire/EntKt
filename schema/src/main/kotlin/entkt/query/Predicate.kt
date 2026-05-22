@@ -49,10 +49,22 @@ sealed class Predicate<E : Any> {
      * "Has any related row across [edge]." For required edges this is
      * trivially true; for optional edges it filters out rows whose FK is
      * null (or whose join-table row is missing).
+     *
+     * Not a `data class` — Kotlin would auto-generate a public
+     * `copy(...)` whose visibility we cannot annotate with
+     * `@EntktInternal`, reopening the walker-cast fabrication hole
+     * (RFC §"Constructor Visibility"). A caller could legitimately
+     * obtain a `HasEdge<User>("posts")` via `User.posts.exists()`,
+     * cast back to `Predicate.HasEdge<User>`, and call
+     * `copy(edge = "comments")` without opting in. As a regular
+     * class with one `@EntktInternal` entry point, that bypass is
+     * closed.
      */
-    data class HasEdge<E : Any> @EntktInternal constructor(
+    class HasEdge<E : Any> @EntktInternal constructor(
         val edge: String,
-    ) : Predicate<E>()
+    ) : Predicate<E>() {
+        override fun toString(): String = "HasEdge(edge=$edge)"
+    }
 
     /**
      * "Has at least one related row across [edge] that matches [inner]."
@@ -66,11 +78,15 @@ sealed class Predicate<E : Any> {
      * generated edge-predicate walker uses the edge name as a runtime
      * witness to recover `Target` for an unchecked cast on the inner
      * predicate.
+     *
+     * Not a `data class` — same copy-bypass rationale as [HasEdge].
      */
-    data class HasEdgeWith<E : Any, Target : Any> @EntktInternal constructor(
+    class HasEdgeWith<E : Any, Target : Any> @EntktInternal constructor(
         val edge: String,
         val inner: Predicate<Target>,
-    ) : Predicate<E>()
+    ) : Predicate<E>() {
+        override fun toString(): String = "HasEdgeWith(edge=$edge, inner=$inner)"
+    }
 
     /**
      * "Is the M2M target of at least one row in [sourceTable] (matched
@@ -90,12 +106,17 @@ sealed class Predicate<E : Any> {
      *
      * [Source] is the source-table entity scope, carried through
      * `sourceFilter: Predicate<Source>?`.
+     *
+     * Not a `data class` — same copy-bypass rationale as [HasEdge].
      */
-    data class HasM2MEdgeFrom<E : Any, Source : Any> @EntktInternal constructor(
+    class HasM2MEdgeFrom<E : Any, Source : Any> @EntktInternal constructor(
         val sourceTable: String,
         val edgeName: String,
         val sourceFilter: Predicate<Source>?,
-    ) : Predicate<E>()
+    ) : Predicate<E>() {
+        override fun toString(): String =
+            "HasM2MEdgeFrom(sourceTable=$sourceTable, edgeName=$edgeName, sourceFilter=$sourceFilter)"
+    }
 }
 
 enum class Op {
