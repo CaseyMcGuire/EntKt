@@ -126,14 +126,16 @@ class EntktPluginTest {
             assertTrue(entityContent.contains("val name: String"), "Should have name field")
             assertTrue(entityContent.contains("val age: Int?"), "Should have nullable age")
             assertTrue(entityContent.contains("val ownerId: Int?"), "Should have FK from unique edge")
-            // Column refs are emitted on the companion
+            // Column refs are emitted on the companion. After the
+            // phantom-typed-query-scopes RFC, every column class carries
+            // the owning entity as its first type argument.
             assertTrue(
-                entityContent.contains("val name: StringColumn = StringColumn(\"name\")"),
-                "Should emit StringColumn for name field",
+                entityContent.contains("val name: StringColumn<Pet> = StringColumn<Pet>(\"name\")"),
+                "Should emit StringColumn<Pet> for name field",
             )
             assertTrue(
-                entityContent.contains("val ownerId: NullableComparableColumn<Int>"),
-                "Should emit NullableComparableColumn for optional edge FK",
+                entityContent.contains("val ownerId: NullableComparableColumn<Pet, Int>"),
+                "Should emit NullableComparableColumn<Pet, Int> for optional edge FK",
             )
             // I/O entry points live on the repo, not the entity companion
             assertTrue(!entityContent.contains("fun create("), "create() should not live on entity")
@@ -148,12 +150,12 @@ class EntktPluginTest {
             val queryContent = generatedDir.resolve("PetQuery.kt").readText()
             assertTrue(queryContent.contains("@EntktDsl"), "Query class should be annotated @EntktDsl")
             assertTrue(
-                queryContent.contains("`where`(predicate: Predicate)"),
-                "Query class should have where(Predicate)",
+                queryContent.contains("`where`(predicate: Predicate<Pet>)"),
+                "Query class should have where(Predicate<Pet>)",
             )
             assertTrue(
-                queryContent.contains("fun orderBy(`field`: OrderField)"),
-                "Query class should have orderBy(OrderField)",
+                queryContent.contains("fun orderBy(`field`: OrderField<Pet>)"),
+                "Query class should have orderBy(OrderField<Pet>)",
             )
             // Per-field predicate methods are gone — predicates go through column refs
             assertTrue(!queryContent.contains("whereHasOwner"), "Should not emit old whereHasOwner alias")
