@@ -24,6 +24,12 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // Compile-fail test harness: validates that the typed query DSL
+    // rejects wrong-entity predicates / unauthorized @EntktInternal
+    // constructor calls at compile time. See
+    // docs/possible-features/query/phantom-typed-query-scopes.md
+    // §"Test Requirements".
+    testImplementation(libs.kotlin.compile.testing)
 }
 
 java {
