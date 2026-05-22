@@ -28,15 +28,15 @@ class InterceptorEngineTest {
     private class Post
 
     private fun builder(
-        caller: List<Predicate<*>> = emptyList(),
-        structural: List<Predicate<*>> = emptyList(),
+        caller: List<Predicate<Post>> = emptyList(),
+        structural: List<Predicate<Post>> = emptyList(),
         callerLimit: Int? = null,
-    ): QuerySpecBuilder = QuerySpecBuilder(
+    ): QuerySpecBuilder<Post> = QuerySpecBuilder(
         table = "posts",
         entity = Post::class,
         callerPredicates = caller,
         structuralPredicates = structural,
-        orderBy = emptyList<OrderField<*>>(),
+        orderBy = emptyList<OrderField<Post>>(),
         callerLimit = callerLimit,
         offset = null,
         flags = emptySet(),

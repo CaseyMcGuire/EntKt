@@ -1400,7 +1400,10 @@ internal class QueryGenerator(
         // interceptors).
         val helper = FunSpec.builder("buildQueryPlan")
             .addModifiers(KModifier.INTERNAL)
-            .addParameter("spec", FROZEN_QUERY_SPEC)
+            // Spec is typed in this query's entity scope per RFC
+            // §"Driver Boundary" — every layer above the driver
+            // call carries E through.
+            .addParameter("spec", FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
             .addParameter("includeEager", BOOLEAN)
             .addParameter(
                 ParameterSpec.builder("junctionExplain", QUERY_EXPLANATION.copy(nullable = true))
@@ -1614,7 +1617,11 @@ internal class QueryGenerator(
                     .defaultValue("emptyList()")
                     .build()
             )
-            .returns(FROZEN_QUERY_SPEC)
+            // Return type is typed in this query's entity scope; the
+            // FrozenQuerySpec produced by `runReadInterceptors` carries
+            // `List<Predicate<EntityClass>>` so the walker rewrite and
+            // explain plan builders don't need unchecked casts.
+            .returns(FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
             .addCode(
                 CodeBlock.builder()
                     .addStatement("val c = requireClient()")
@@ -1655,7 +1662,10 @@ internal class QueryGenerator(
                         "val root = traversalPath.firstOrNull()?.source ?: %T::class",
                         entityClass,
                     )
-                    .add("val builder = %T(\n", QUERY_SPEC_BUILDER)
+                    // QuerySpecBuilder<EntityClass> typed at construction
+                    // — the typed `predicates` / `orderFields` from this
+                    // query class feed in without casts.
+                    .add("val builder = %T<%T>(\n", QUERY_SPEC_BUILDER, entityClass)
                     .add("  table = %T.TABLE,\n", entityClass)
                     .add("  entity = %T::class,\n", entityClass)
                     .add("  callerPredicates = predicates,\n")
@@ -1728,24 +1738,12 @@ internal class QueryGenerator(
                         String::class.asClassName(),
                         String::class.asClassName(),
                     )
-                    // frozen.predicates is erased (Predicate<*>) at
-                    // the driver boundary, but every entry was added
-                    // through a Predicate<EntityClass>-typed site
-                    // (caller where(...) / typed structural / typed
-                    // interceptor addPredicate). Cast back to the
-                    // typed scope for the walker, which is typed in
-                    // this query's entity. The walker's per-edge
-                    // unchecked-cast pattern handles the per-branch
-                    // Target recovery from there.
-                    .add("@%T(%S)\n",
-                        ClassName("kotlin", "Suppress"), "UNCHECKED_CAST",
-                    )
+                    // frozen.predicates is typed `List<Predicate<EntityClass>>`
+                    // because FrozenQuerySpec<E> carries E through (RFC
+                    // §"Driver Boundary"). No cast needed at the walker
+                    // call.
                     .addStatement(
-                        "val typedFrozenPreds = frozen.predicates as List<%T<%T>>",
-                        predicateClass, entityClass,
-                    )
-                    .addStatement(
-                        "val walked = typedFrozenPreds.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
+                        "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
                     )
                     .addStatement(
                         "return frozen.copy(predicates = walked, annotations = edgeAnnotations + frozen.annotations)",
@@ -1870,15 +1868,11 @@ internal class QueryGenerator(
             // collision) is applied at the outer's
             // runReadInterceptors via `edgeAnnotations + frozen.annotations`.
             body.add("      edgeAnnotations.putAll(spec.annotations)\n")
-            // FrozenQuerySpec.predicates is erased; cast back to the
-            // target's scope inside this branch.
-            body.add("      @Suppress(\"UNCHECKED_CAST\")\n")
+            // spec.predicates is typed `List<Predicate<Target>>` (the
+            // target's runReadInterceptors returns FrozenQuerySpec<Target>),
+            // so the reduce produces a typed Predicate<Target> directly.
             body.add(
-                "      val typedSpecPreds = spec.predicates as List<%T<%T>>\n",
-                predicateClass, targetClass,
-            )
-            body.add(
-                "      val combinedInner = typedSpecPreds.reduceOrNull { acc, p -> %T.And(acc, p) } ?: typedInner\n",
+                "      val combinedInner = spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) } ?: typedInner\n",
                 predicateClass,
             )
             body.add(
@@ -1917,15 +1911,9 @@ internal class QueryGenerator(
             // walker upgrades HasEdge → HasEdgeWith (or keeps as
             // HasEdge if interceptors added nothing).
             body.add("      edgeAnnotations.putAll(spec.annotations)\n")
-            // FrozenQuerySpec.predicates is erased; cast back to the
-            // target's scope inside this branch.
-            body.add("      @Suppress(\"UNCHECKED_CAST\")\n")
+            // spec.predicates is already typed in Target.
             body.add(
-                "      val typedSpecPreds = spec.predicates as List<%T<%T>>\n",
-                predicateClass, targetClass,
-            )
-            body.add(
-                "      val combined = typedSpecPreds.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                "      val combined = spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
                 predicateClass,
             )
             body.add(
@@ -2578,18 +2566,11 @@ internal class QueryGenerator(
                         "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
                         READ_OPERATION, ENT_OPERATION,
                     )
-                    // Same unchecked-cast pattern as buildTraversal:
-                    // erased FrozenQuerySpec.predicates → typed
-                    // Predicate<SourceEntity>. Sound by construction
-                    // (every contributor was Predicate<SourceEntity>-
-                    // typed).
-                    .add("  @Suppress(\"UNCHECKED_CAST\")\n")
+                    // sourceSpec is FrozenQuerySpec<SourceEntity>; its
+                    // predicates are typed `List<Predicate<SourceEntity>>`
+                    // — no cast needed.
                     .add(
-                        "  val sourcePreds = sourceSpec.predicates as List<%T<%T>>\n",
-                        predicateClass, sourceEntityClass,
-                    )
-                    .add(
-                        "  val parent: %T<%T>? = sourcePreds.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                        "  val parent: %T<%T>? = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
                         predicateClass, sourceEntityClass, predicateClass,
                     )
                     // M2M bridge: HasM2MEdgeFrom<Target, Source>(...).
@@ -2685,20 +2666,11 @@ internal class QueryGenerator(
                         "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
                         READ_OPERATION, ENT_OPERATION,
                     )
-                    // FrozenQuerySpec.predicates is erased; cast to the
-                    // source entity's scope so the reduce produces a
-                    // typed Predicate<SourceEntity>. Sound because every
-                    // predicate that flowed into sourceSpec was added
-                    // through a Predicate<SourceEntity>-typed site
-                    // (caller where(...), structural source-id, or
-                    // source-entity interceptor addPredicate).
-                    .add("  @Suppress(\"UNCHECKED_CAST\")\n")
+                    // sourceSpec is FrozenQuerySpec<SourceEntity>; its
+                    // predicates are typed `List<Predicate<SourceEntity>>`
+                    // — no cast needed.
                     .add(
-                        "  val sourcePreds = sourceSpec.predicates as List<%T<%T>>\n",
-                        predicateClass, sourceEntityClass,
-                    )
-                    .add(
-                        "  val parent: %T<%T>? = sourcePreds.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                        "  val parent: %T<%T>? = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
                         predicateClass, sourceEntityClass, predicateClass,
                     )
                     // Bridge is target-scoped: HasEdgeWith<Target, Source>

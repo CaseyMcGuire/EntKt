@@ -21,12 +21,12 @@ import entkt.query.Predicate
  * owned interceptors may operate on this type via a future
  * package-private extension; that path isn't part of V1.
  */
-public class QuerySpecBuilder public constructor(
+public class QuerySpecBuilder<E : Any> public constructor(
     public val table: String,
     public val entity: kotlin.reflect.KClass<*>,
-    callerPredicates: List<Predicate<*>>,
-    structuralPredicates: List<Predicate<*>>,
-    orderBy: List<OrderField<*>>,
+    callerPredicates: List<Predicate<E>>,
+    structuralPredicates: List<Predicate<E>>,
+    orderBy: List<OrderField<E>>,
     callerLimit: Int?,
     public val offset: Int?,
     public val flags: Set<QueryFlag>,
@@ -41,19 +41,20 @@ public class QuerySpecBuilder public constructor(
      */
     initialAnnotations: Map<String, String> = emptyMap(),
 ) {
-    // Storage is erased: predicates flow in from typed call sites
-    // (caller-authored `Predicate<E>` plus interceptor-added
-    // `Predicate<E>`) and structural sites built internally, but
-    // the builder doesn't care about `E` at storage time — it
-    // forwards to the driver via the erased `FrozenQuerySpec`
-    // anyway. Typed views are projected back through `typedShape<E>()`
-    // with an unchecked cast — sound because every site that adds
-    // predicates is typed to the matching `E`.
-    private val predicates: MutableList<Tagged> = mutableListOf<Tagged>().apply {
+    // Typed in E per RFC §"Driver Boundary": every layer above the
+    // driver call stays typed. Predicates enter the builder from
+    // call sites that are typed to the matching E (caller
+    // `where(Predicate<E>)`, structural builders constructed
+    // against the same E, interceptor-added
+    // `scope.addPredicate(Predicate<E>)`). Erasure happens only
+    // when `freeze()` produces the `FrozenQuerySpec<E>` and the
+    // generated code passes its lists via covariance to the
+    // driver's `List<Predicate<*>>` parameters.
+    private val predicates: MutableList<Tagged<E>> = mutableListOf<Tagged<E>>().apply {
         addAll(callerPredicates.map { Tagged(it, Source.CALLER) })
         addAll(structuralPredicates.map { Tagged(it, Source.STRUCTURAL) })
     }
-    private val orderByList: MutableList<OrderField<*>> = orderBy.toMutableList()
+    private val orderByList: MutableList<OrderField<E>> = orderBy.toMutableList()
     private var currentLimit: Int? = callerLimit
     public val callerLimit: Int? = callerLimit
     private val annotationsMap: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
@@ -61,7 +62,7 @@ public class QuerySpecBuilder public constructor(
     }
 
     /** Appends an interceptor-tagged predicate. */
-    internal fun addInterceptorPredicate(predicate: Predicate<*>) {
+    internal fun addInterceptorPredicate(predicate: Predicate<E>) {
         predicates.add(Tagged(predicate, Source.INTERCEPTOR))
     }
 
@@ -87,17 +88,9 @@ public class QuerySpecBuilder public constructor(
 
     // ---- Shape projections (recomputed on each call — live, not snapshot) ----
 
-    @Suppress("UNCHECKED_CAST")
-    internal fun <E : Any> typedShape(): QueryShape<E> {
-        // Project erased storage back to typed at the shape boundary.
-        // Sound: every predicate stored here was added through a site
-        // that was already typed to the matching `E` (caller-authored
-        // `where(Predicate<E>)`, interceptor-added
-        // `scope.addPredicate(Predicate<E>)`, or structural predicates
-        // built internally against the same `E`). The `*`-erased
-        // storage is a representation detail of the builder.
-        val allPredicates = predicates.map { it.predicate } as List<Predicate<E>>
-        val typedOrderBy = orderByList.toList() as List<OrderField<E>>
+    internal fun typedShape(): QueryShape<E> {
+        // No cast needed — storage is typed in E already, the builder
+        // and its predicates / orderBy lists all carry the same E.
         var caller = 0; var structural = 0; var interceptor = 0
         for (t in predicates) when (t.source) {
             Source.CALLER -> caller++
@@ -106,8 +99,8 @@ public class QuerySpecBuilder public constructor(
         }
         return QueryShape(
             table = table,
-            predicates = allPredicates,
-            orderBy = typedOrderBy,
+            predicates = predicates.map { it.predicate },
+            orderBy = orderByList.toList(),
             limit = currentLimit,
             callerLimit = callerLimit,
             offset = offset,
@@ -142,7 +135,7 @@ public class QuerySpecBuilder public constructor(
     }
 
     /** Snapshot used by drivers / explain. */
-    internal fun freeze(): FrozenQuerySpec = FrozenQuerySpec(
+    internal fun freeze(): FrozenQuerySpec<E> = FrozenQuerySpec(
         table = table,
         predicates = predicates.map { it.predicate },
         orderBy = orderByList.toList(),
@@ -153,7 +146,7 @@ public class QuerySpecBuilder public constructor(
     )
 
     private enum class Source { CALLER, STRUCTURAL, INTERCEPTOR }
-    private data class Tagged(val predicate: Predicate<*>, val source: Source)
+    private data class Tagged<E : Any>(val predicate: Predicate<E>, val source: Source)
 }
 
 /**
@@ -185,17 +178,19 @@ public data class TraversalSourceResult<E : Any> public constructor(
  * mutable [QuerySpecBuilder] so the framework can hand it across a
  * module boundary without exposing the builder API.
  *
- * Predicates and order fields are stored erased (`Predicate<*>` /
- * `OrderField<*>`) at this layer because the driver consumes them
- * structurally (field name / op / value / edge name / source
- * table) and does not introspect the phantom entity scope — see
- * the RFC's "Driver Boundary" section. Layers above the driver
- * stay typed in `E`; erasure happens at this single boundary.
+ * Typed in `E` per RFC §"Driver Boundary": every layer above the
+ * driver call carries the entity scope through. Generated code's
+ * `frozen.predicates: List<Predicate<E>>` flows into
+ * `driver.query(table, frozen.predicates, ...)` through the
+ * `List<out T>` variance — the driver method takes
+ * `List<Predicate<*>>` and `List<Predicate<E>>` is assignable to
+ * that, so erasure is implicit at the driver call (no `as` cast
+ * needed in the caller).
  */
-public data class FrozenQuerySpec public constructor(
+public data class FrozenQuerySpec<E : Any> public constructor(
     val table: String,
-    val predicates: List<Predicate<*>>,
-    val orderBy: List<OrderField<*>>,
+    val predicates: List<Predicate<E>>,
+    val orderBy: List<OrderField<E>>,
     val limit: Int?,
     val offset: Int?,
     val flags: Set<QueryFlag>,
@@ -273,7 +268,7 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
  * documented on the [InterceptScope] mutator KDocs.
  */
 internal class InterceptScopeImpl<E : Any>(
-    private val builder: QuerySpecBuilder,
+    private val builder: QuerySpecBuilder<E>,
     private val rejectingInterceptor: String,
     private val entity: String,
     private val entOperation: EntOperation,
@@ -323,9 +318,17 @@ internal class InterceptScopeImpl<E : Any>(
     }
 }
 
-/** Concrete [GlobalInterceptScope] mirror of [InterceptScopeImpl]. */
+/**
+ * Concrete [GlobalInterceptScope] mirror of [InterceptScopeImpl].
+ *
+ * Holds the builder as `QuerySpecBuilder<*>` — globals are entity-
+ * agnostic, so the underlying `E` is irrelevant here. The shape
+ * surfaced to global interceptors is the erased [UntypedQueryShape]
+ * via `builder.untypedShape()`. Limit / annotate / reject mutations
+ * don't reference E either, so the wildcard is sound.
+ */
 internal class GlobalInterceptScopeImpl(
-    private val builder: QuerySpecBuilder,
+    private val builder: QuerySpecBuilder<*>,
     private val rejectingInterceptor: String,
     private val entity: String,
     private val entOperation: EntOperation,
@@ -429,13 +432,13 @@ public object InterceptorEngine {
      * live shape reflecting all prior interceptors' mutations.
      */
     public fun <E : Any> apply(
-        builder: QuerySpecBuilder,
+        builder: QuerySpecBuilder<E>,
         context: QueryContext,
         entity: String,
         entOperation: EntOperation,
         entityInterceptors: List<RegisteredInterceptor<E>>,
         globalInterceptors: List<RegisteredGlobalInterceptor>,
-    ): FrozenQuerySpec {
+    ): FrozenQuerySpec<E> {
         for (registered in entityInterceptors) {
             val scope = InterceptScopeImpl<E>(builder, registered.name, entity, entOperation, context.operation)
             registered.interceptor.intercept(scope, context)
