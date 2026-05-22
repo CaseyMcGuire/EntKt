@@ -61,7 +61,22 @@ internal class ClientGenerator(
         val hooksClass = ClassName(packageName, "EntClientHooks")
         val t = TypeVariableName("T")
 
+        // Generated EntClient reads / writes the
+        // `entityInterceptors` property (marked `@EntktInternal`
+        // below) during init, clone, and per-terminal interceptor
+        // lookup. The file-level OptIn covers all those access
+        // sites; application code that wants to reach the raw
+        // EntInterceptorsConfig must add its own
+        // `@OptIn(EntktInternal::class)` and own the consequences
+        // (untyped scope-key-keyed registration can pair a
+        // QueryInterceptor<E> with the wrong scope).
         val fileBuilder = FileSpec.builder(packageName, "EntClient")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+                    .build()
+            )
 
         // Generate per-entity hooks DSL classes
         for (input in schemas) {
@@ -166,10 +181,20 @@ internal class ClientGenerator(
                 // withPrivacyContext / fixed clones. Read by
                 // generated wrapper code at each terminal call to
                 // feed the InterceptorEngine.
+                //
+                // Marked `@EntktInternal` so same-module application
+                // code can't reach the raw EntInterceptorsConfig and
+                // call `addEntity(scopeKey: String, ..., QueryInterceptor<E>)`
+                // with an arbitrary E — `entityInterceptorsFor<E>(scopeKey)`
+                // does an unchecked cast keyed on the scopeKey string,
+                // so a wrong-entity QueryInterceptor would silently
+                // bind to a different repo's scope. Generated code
+                // reaches it via @file:OptIn at the top of this file.
                 PropertySpec.builder(
                     "entityInterceptors",
                     ClassName("entkt.runtime", "EntInterceptorsConfig"),
                 )
+                    .addAnnotation(ClassName("entkt.query", "EntktInternal"))
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("%T()", ClassName("entkt.runtime", "EntInterceptorsConfig"))

@@ -171,6 +171,29 @@ class PhantomScopeCompileFailTest {
     }
 
     @Test
+    fun `properties marked @EntktInternal require OptIn to read or write`() {
+        // The generated EntClient marks its `entityInterceptors`
+        // property `@EntktInternal internal var` so application code
+        // can't reach the raw EntInterceptorsConfig and call
+        // `addEntity(scopeKey: String, ...)` with a mismatched scope
+        // and entity type — the config's `entityInterceptorsFor<E>(scopeKey)`
+        // does an unchecked cast keyed on the scopeKey string. This
+        // test pins the property-level annotation behavior on a stub
+        // class (the real EntClient is generated and not reachable
+        // from a self-contained snippet).
+        val result = compile("""
+            class FakeClient {
+                @EntktInternal
+                internal var raw: Int = 0
+            }
+            fun bad(c: FakeClient) {
+                c.raw = 42
+            }
+        """.trimIndent())
+        assertCompileError(result, "Internal entkt construction site")
+    }
+
+    @Test
     fun `HasEdgeWith does not expose a copy() method (data-class auto-gen disabled)`() {
         // Previously, `Predicate.HasEdgeWith @EntktInternal constructor(...)`
         // was a data class, which auto-generates a PUBLIC `copy(...)` that
