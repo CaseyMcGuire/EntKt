@@ -20,6 +20,7 @@ import entkt.schema.Field
 import entkt.schema.FieldType
 
 private val EDGE_REF = ClassName("entkt.query", "EdgeRef")
+private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val NOOP_DRIVER = ClassName("entkt.runtime", "NoopDriver")
 private val ANY_NULLABLE = Any::class.asTypeName().copy(nullable = true)
 private val ROW_TYPE = ClassName("kotlin.collections", "Map")
@@ -42,18 +43,17 @@ internal class EntityGenerator(
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
+        val entityClass = ClassName(packageName, className)
         val columnRefs = buildList {
-            add(buildIdColumnRef(schema))
-            addAll(allFields.map { buildFieldColumnRef(it) })
-            addAll(edgeFks.map { buildEdgeColumnRef(it) })
+            add(buildIdColumnRef(schema, entityClass))
+            addAll(allFields.map { buildFieldColumnRef(it, entityClass) })
+            addAll(edgeFks.map { buildEdgeColumnRef(it, entityClass) })
         }
         // Edge refs are emitted for *every* declared edge — including
         // non-unique to-many edges that don't get a synthetic FK column.
         // The runtime uses these to lower has/exists predicates.
         val edgeRefs = schema.edges()
-            .mapNotNull { edge -> buildEdgeRef(edge, schemaNames) }
-
-        val entityClass = ClassName(packageName, className)
+            .mapNotNull { edge -> buildEdgeRef(edge, entityClass, schemaNames) }
         val tableName = schema.tableName
         val tableProperty = PropertySpec.builder("TABLE", STRING)
             .initializer("%S", tableName)
@@ -103,7 +103,21 @@ internal class EntityGenerator(
             )
             .build()
 
+        // Every generated entity file constructs `EdgeRef(...)` and
+        // therefore needs `@file:OptIn(EntktInternal::class)` — the
+        // EdgeRef constructor is opt-in-restricted per RFC §"Constructor
+        // Visibility" so it can't be fabricated from application code.
+        // Emitting the file-level OptIn lets the per-edge initializers
+        // compile without per-call annotation.
         return FileSpec.builder(packageName, className)
+            .addAnnotation(
+                com.squareup.kotlinpoet.AnnotationSpec.builder(
+                    ClassName("kotlin", "OptIn"),
+                )
+                    .useSiteTarget(com.squareup.kotlinpoet.AnnotationSpec.UseSiteTarget.FILE)
+                    .addMember("%T::class", ENTKT_INTERNAL)
+                    .build()
+            )
             .addType(typeSpec)
             .build()
     }
@@ -283,33 +297,35 @@ internal class EntityGenerator(
      * always non-null and named "id"; type follows the schema's
      * `id()` declaration.
      */
-    private fun buildIdColumnRef(schema: EntSchema): PropertySpec {
+    private fun buildIdColumnRef(schema: EntSchema, entityClass: ClassName): PropertySpec {
         val idType = schema.id().type
-        val columnType = columnClassFor(idType, nullable = false)
+        val columnType = columnClassFor(idType, nullable = false, entityClass)
         return PropertySpec.builder("id", columnType)
             .initializer("%T(%S)", columnType, "id")
             .build()
     }
 
-    private fun buildFieldColumnRef(field: Field): PropertySpec {
+    private fun buildFieldColumnRef(field: Field, entityClass: ClassName): PropertySpec {
         val propertyName = toCamelCase(field.name)
         val nullable = field.nullable
         val columnType = if (field.type == FieldType.ENUM) {
             val enumTypeName = field.resolvedTypeName()
             val cls = if (nullable) ClassName("entkt.query", "NullableEnumColumn")
             else ClassName("entkt.query", "EnumColumn")
-            cls.parameterizedBy(enumTypeName)
+            // Phantom-typed columns: first type arg is the owning entity
+            // (`E`), second is the value type (`T`).
+            cls.parameterizedBy(entityClass, enumTypeName)
         } else {
-            columnClassFor(field.type, nullable)
+            columnClassFor(field.type, nullable, entityClass)
         }
         return PropertySpec.builder(propertyName, columnType)
             .initializer("%T(%S)", columnType, field.columnName)
             .build()
     }
 
-    private fun buildEdgeColumnRef(fk: EdgeFk): PropertySpec {
+    private fun buildEdgeColumnRef(fk: EdgeFk, entityClass: ClassName): PropertySpec {
         val nullable = !fk.required
-        val columnType = columnClassFor(fk.idType, nullable)
+        val columnType = columnClassFor(fk.idType, nullable, entityClass)
         return PropertySpec.builder(fk.propertyName, columnType)
             .initializer("%T(%S)", columnType, fk.columnName)
             .build()
@@ -317,17 +333,23 @@ internal class EntityGenerator(
 
     private fun buildEdgeRef(
         edge: Edge,
+        sourceEntity: ClassName,
         schemaNames: Map<EntSchema, String>,
     ): PropertySpec? {
         val targetName = schemaNames[edge.target] ?: return null
         val targetEntity = ClassName(packageName, targetName)
         val targetQuery = ClassName(packageName, "${targetName}Query")
-        val edgeRefType = EDGE_REF.parameterizedBy(targetEntity, targetQuery)
+        // EdgeRef now carries three type args: Source, Target, Q.
+        val edgeRefType = EDGE_REF.parameterizedBy(sourceEntity, targetEntity, targetQuery)
         val propertyName = toCamelCase(edge.name)
         // EdgeRef.has { block } only accumulates predicates off the
         // query — it never calls the driver — so we hand it NoopDriver
         // and bail loudly if something tries to run a terminal op
         // inside `has { }`.
+        //
+        // The EdgeRef constructor is `@EntktInternal`; the surrounding
+        // FileSpec carries `@file:OptIn(EntktInternal::class)` so the
+        // call site compiles without a per-call opt-in.
         return PropertySpec.builder(propertyName, edgeRefType)
             .initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetQuery, NOOP_DRIVER)
             .build()
@@ -378,11 +400,19 @@ private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
         .build()
 }
 
-internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
+internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: ClassName): TypeName {
+    // Phantom-typed columns: every column class is parameterized by
+    // `<E, T>` (the StringColumn variants and EnumColumn `<E, T>` carry
+    // the same E in the first position). The entity scope flows in as
+    // the first type argument; the value type is the second (when the
+    // column class takes one).
     return when (type) {
         FieldType.STRING, FieldType.TEXT -> {
-            if (nullable) ClassName("entkt.query", "NullableStringColumn")
+            val cls = if (nullable) ClassName("entkt.query", "NullableStringColumn")
             else ClassName("entkt.query", "StringColumn")
+            // StringColumn<E> takes only the entity-scope parameter;
+            // its value type is fixed as `String` by the class.
+            cls.parameterizedBy(entityClass)
         }
         FieldType.INT,
         FieldType.LONG,
@@ -391,7 +421,7 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
         FieldType.TIME -> {
             val cls = if (nullable) ClassName("entkt.query", "NullableComparableColumn")
             else ClassName("entkt.query", "ComparableColumn")
-            cls.parameterizedBy(type.toTypeName())
+            cls.parameterizedBy(entityClass, type.toTypeName())
         }
         FieldType.BOOL,
         FieldType.UUID,
@@ -399,7 +429,7 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean): TypeName {
         FieldType.ENUM -> {
             val cls = if (nullable) ClassName("entkt.query", "NullableColumn")
             else ClassName("entkt.query", "Column")
-            cls.parameterizedBy(type.toTypeName())
+            cls.parameterizedBy(entityClass, type.toTypeName())
         }
     }
 }

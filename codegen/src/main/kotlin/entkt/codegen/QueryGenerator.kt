@@ -13,6 +13,7 @@ import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
@@ -56,6 +57,11 @@ internal class QueryGenerator(
         val className = "${schemaName}Query"
         val queryClass = ClassName(packageName, className)
         val entityClass = ClassName(packageName, schemaName)
+        // Typed convenience names for this entity's predicate/order-field
+        // scopes. Used everywhere the generated query stores or accepts
+        // its own predicate / order field, per RFC §"Proposed API".
+        val predicateForEntity = predicateClass.parameterizedBy(entityClass)
+        val orderFieldForEntity = orderFieldClass.parameterizedBy(entityClass)
 
         val traversalMethods = schema.edges()
             .mapNotNull { edge ->
@@ -77,7 +83,10 @@ internal class QueryGenerator(
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
-            .addSuperinterface(EDGE_QUERY)
+            // Generated query class implements EdgeQuery<EntityClass>
+            // per RFC §"Proposed API" — the scope flows out of
+            // combinedPredicate() typed as `Predicate<EntityClass>`.
+            .addSuperinterface(EDGE_QUERY.parameterizedBy(entityClass))
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -100,11 +109,25 @@ internal class QueryGenerator(
                     .initializer("client")
                     .build()
             )
+            // `predicates` and `orderFields` are `internal` (not
+            // `private`) because the generated `snapshotForTraversal`
+            // helper on this same class needs to copy them into a
+            // fresh sibling instance — same-class private access works
+            // for that, but the property must be at least `internal`
+            // for the deferred-source-step lambda generated in
+            // `buildTraversal` / `buildM2MTraversal` to read the
+            // source query's state through `this.predicates` /
+            // `this.orderFields` on the snapshot copy. `internal` is
+            // module-scoped; user application code in the same module
+            // can technically read these, but the public DSL
+            // (`where(...)`, `orderBy(...)`) is the documented way and
+            // the backing list is documented as opaque.
             .addProperty(
                 PropertySpec.builder(
                     "predicates",
-                    List::class.asClassName().parameterizedBy(predicateClass),
+                    List::class.asClassName().parameterizedBy(predicateForEntity),
                 )
+                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("emptyList()")
                     .build()
@@ -112,8 +135,9 @@ internal class QueryGenerator(
             .addProperty(
                 PropertySpec.builder(
                     "orderFields",
-                    List::class.asClassName().parameterizedBy(orderFieldClass),
+                    List::class.asClassName().parameterizedBy(orderFieldForEntity),
                 )
+                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("emptyList()")
                     .build()
@@ -186,7 +210,8 @@ internal class QueryGenerator(
                     "deferredSourceStep",
                     LambdaTypeName.get(
                         receiver = null,
-                        returnType = ClassName("entkt.runtime", "TraversalSourceResult"),
+                        returnType = ClassName("entkt.runtime", "TraversalSourceResult")
+                            .parameterizedBy(entityClass),
                     ).copy(nullable = true),
                 )
                     .addModifiers(KModifier.INTERNAL)
@@ -195,11 +220,11 @@ internal class QueryGenerator(
                     .build()
             )
             .addProperties(eagerEdgeSpecs.map { it.property })
-            .addFunction(buildWhere(queryClass))
-            .addFunction(buildOrderBy(queryClass))
+            .addFunction(buildWhere(queryClass, predicateForEntity))
+            .addFunction(buildOrderBy(queryClass, orderFieldForEntity))
             .addFunction(buildLimit(queryClass))
             .addFunction(buildOffset(queryClass))
-            .addFunction(buildCombinedPredicate())
+            .addFunction(buildCombinedPredicate(predicateForEntity))
             .addFunctions(eagerEdgeSpecs.map { it.withMethod })
             // Always emit `loadEdges` — the M2M eager-load codegen
             // emitted on a *source* query calls `subQuery.loadEdges(...)`
@@ -233,7 +258,19 @@ internal class QueryGenerator(
             .addFunctions(traversalMethods)
             .build()
 
+        // Every generated query file constructs `Predicate.HasEdge` /
+        // `Predicate.HasEdgeWith` / `Predicate.HasM2MEdgeFrom` in the
+        // edge-predicate walker and traversal lambdas. Those types
+        // carry `@EntktInternal` constructors per RFC §"Constructor
+        // Visibility"; the file-level OptIn lets the construction
+        // sites compile without per-call annotation.
         return FileSpec.builder(packageName, className)
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+                    .build()
+            )
             .addType(typeSpec)
             .build()
     }
@@ -1476,14 +1513,17 @@ internal class QueryGenerator(
             // M2M: junction table explain stands alone (no
             // interceptors on the junction), then the target-table
             // plan uses the post-EAGER_LOAD spec with an IN on "id".
+            // Junction-table query has no entity scope (junctions are
+            // internal storage). Predicate.Leaf<Any> renders the same
+            // structural fields and erases at the driver call.
             body.addStatement(
-                "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
-                info.join.junctionTable, PREDICATE, info.join.junctionSourceColumn, OP, QUERY_EXPLANATION,
+                "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
+                info.join.junctionTable, PREDICATE, Any::class.asClassName(), info.join.junctionSourceColumn, OP, QUERY_EXPLANATION,
             )
             body.add("edges[%S] = try {\n", info.edge.name)
             body.add(
-                "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
-                READ_OPERATION, ENT_OPERATION, PREDICATE, "id", OP, QUERY_EXPLANATION,
+                "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+                READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
             )
             // Strip limit/offset before handing to buildQueryPlan:
             // the runtime eager fetch uses null/null limit/offset
@@ -1505,8 +1545,8 @@ internal class QueryGenerator(
             // belongsTo: IN on targetColumn ("id" on target side).
             body.add("edges[%S] = try {\n", info.edge.name)
             body.add(
-                "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
-                READ_OPERATION, ENT_OPERATION, PREDICATE, info.join.targetColumn, OP, QUERY_EXPLANATION,
+                "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+                READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, info.join.targetColumn, OP, QUERY_EXPLANATION,
             )
             // See M2M branch above for why limit/offset are
             // stripped here.
@@ -1549,7 +1589,14 @@ internal class QueryGenerator(
     private fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val readOp = READ_OPERATION
-        val structuralListType = List::class.asClassName().parameterizedBy(predicateClass)
+        // Structural predicates pass in typed to this query's entity
+        // scope. The deferred-source-step bridge (target-scoped) and
+        // the eager-load `id IN (...)` leaf both produce
+        // Predicate<EntityClass>, so the combined list is uniformly
+        // typed. QuerySpecBuilder's erased-storage signatures accept
+        // it via standard List<out T> variance.
+        val predicateForEntity = predicateClass.parameterizedBy(entityClass)
+        val structuralListType = List::class.asClassName().parameterizedBy(predicateForEntity)
         return FunSpec.builder("runReadInterceptors")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("operation", readOp)
@@ -1653,7 +1700,14 @@ internal class QueryGenerator(
                     // matches a traversal-bridging HasEdgeWith by
                     // value) must still be walked through the
                     // edge-predicate processor.
-                    .addStatement("val skipWalk: List<%T> = listOfNotNull(sourceResult?.bridge) + extraStructural", predicateClass)
+                    // skipWalk is typed in this query's entity scope so
+                    // the runEdgePredicateInterceptors call below can
+                    // forward the typed `frozen.predicates.map { ... }`
+                    // entries through the typed walker without casting.
+                    .addStatement(
+                        "val skipWalk: List<%T<%T>> = listOfNotNull(sourceResult?.bridge) + extraStructural",
+                        predicateClass, entityClass,
+                    )
                     // Walker accumulator: each edge-predicate target
                     // step's annotations bubble up into this map and
                     // merge into the outer FrozenQuerySpec below.
@@ -1666,8 +1720,24 @@ internal class QueryGenerator(
                         String::class.asClassName(),
                         String::class.asClassName(),
                     )
+                    // frozen.predicates is erased (Predicate<*>) at
+                    // the driver boundary, but every entry was added
+                    // through a Predicate<EntityClass>-typed site
+                    // (caller where(...) / typed structural / typed
+                    // interceptor addPredicate). Cast back to the
+                    // typed scope for the walker, which is typed in
+                    // this query's entity. The walker's per-edge
+                    // unchecked-cast pattern handles the per-branch
+                    // Target recovery from there.
+                    .add("@%T(%S)\n",
+                        ClassName("kotlin", "Suppress"), "UNCHECKED_CAST",
+                    )
                     .addStatement(
-                        "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
+                        "val typedFrozenPreds = frozen.predicates as List<%T<%T>>",
+                        predicateClass, entityClass,
+                    )
+                    .addStatement(
+                        "val walked = typedFrozenPreds.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
                     )
                     .addStatement(
                         "return frozen.copy(predicates = walked, annotations = edgeAnnotations + frozen.annotations)",
@@ -1734,15 +1804,22 @@ internal class QueryGenerator(
         body.add("}\n")
         body.add("return when (predicate) {\n")
         body.add(
-            "  is %T.And -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
-            predicateClass, predicateClass,
+            "  is %T.And<%T> -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
+            predicateClass, entityClass, predicateClass,
         )
         body.add(
-            "  is %T.Or -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
-            predicateClass, predicateClass,
+            "  is %T.Or<%T> -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
+            predicateClass, entityClass, predicateClass,
         )
-        body.add("  is %T.HasEdgeWith -> {\n", predicateClass)
-        body.add("    val processedInner = when (predicate.edge) {\n")
+        // HasEdgeWith dispatch. Predicate.HasEdgeWith<E, Target>.inner
+        // is typed Predicate<Target>, but the smart-cast lands at
+        // HasEdgeWith<E, *> so .inner is Predicate<*>. The edge-name
+        // serves as the runtime witness for recovering Target — see
+        // RFC §"Edge-Predicate Walker". Each branch knows its target
+        // statically (from the schema), does an unchecked cast inside
+        // the branch, and rebuilds a typed HasEdgeWith for the
+        // candidate before returning.
+        body.add("  is %T.HasEdgeWith<%T, *> -> when (predicate.edge) {\n", predicateClass, entityClass)
         for (edge in schema.edges()) {
             val targetName = schemaNames[edge.target] ?: continue
             val targetClass = ClassName(packageName, targetName)
@@ -1750,27 +1827,33 @@ internal class QueryGenerator(
             // The edge name in HasEdgeWith corresponds to an edge
             // on THIS query's entity (the source). Dispatch by
             // this entity's outgoing edge names.
-            body.add(
-                "      %S -> {\n",
-                edge.name,
-            )
+            body.add("    %S -> {\n", edge.name)
             // Reuse this source query's driver — the target
             // query never touches it on this code path (we only
             // call runReadInterceptors, which is pure transform),
             // but its primary constructor requires one.
+            body.add("      val targetQ = %T(driver, c)\n", targetQueryClass)
+            // Edge-name-validated unchecked cast: the schema declares
+            // this edge with this exact target, so predicate.inner
+            // (typed Predicate<*>) is in fact Predicate<TargetEntity>
+            // — the runtime witness is the edge-name match.
+            body.add("      @Suppress(\"UNCHECKED_CAST\")\n")
             body.add(
-                "        val targetQ = %T(driver, c)\n",
-                targetQueryClass,
+                "      val typedInner = predicate.inner as %T<%T>\n",
+                predicateClass, targetClass,
             )
-            body.add("        targetQ.predicates = listOf(predicate.inner)\n")
-            body.add("        targetQ.traversalSourceEntity = %T::class\n", entityClass)
-            body.add("        targetQ.traversalEdgeName = predicate.edge\n")
+            // Use the public DSL (target.where) rather than writing the
+            // backing list directly — preserves the encapsulation
+            // story documented in RFC §"Proposed API".
+            body.add("      targetQ.where(typedInner)\n")
+            body.add("      targetQ.traversalSourceEntity = %T::class\n", entityClass)
+            body.add("      targetQ.traversalEdgeName = predicate.edge\n")
             body.add(
-                "        targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
+                "      targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
                 edgeStepClass, entityClass, targetClass,
             )
             body.add(
-                "        val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
+                "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
                 READ_OPERATION, ENT_OPERATION,
             )
             // Bubble up target-step annotations into the outer
@@ -1778,16 +1861,25 @@ internal class QueryGenerator(
             // QueryPlan. Source-of-truth merge rule (outer wins on
             // collision) is applied at the outer's
             // runReadInterceptors via `edgeAnnotations + frozen.annotations`.
-            body.add("        edgeAnnotations.putAll(spec.annotations)\n")
+            body.add("      edgeAnnotations.putAll(spec.annotations)\n")
+            // FrozenQuerySpec.predicates is erased; cast back to the
+            // target's scope inside this branch.
+            body.add("      @Suppress(\"UNCHECKED_CAST\")\n")
             body.add(
-                "        spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) } ?: predicate.inner\n",
+                "      val typedSpecPreds = spec.predicates as List<%T<%T>>\n",
+                predicateClass, targetClass,
+            )
+            body.add(
+                "      val combinedInner = typedSpecPreds.reduceOrNull { acc, p -> %T.And(acc, p) } ?: typedInner\n",
                 predicateClass,
             )
-            body.add("      }\n")
+            body.add(
+                "      %T.HasEdgeWith<%T, %T>(predicate.edge, combinedInner)\n",
+                predicateClass, entityClass, targetClass,
+            )
+            body.add("    }\n")
         }
-        body.add("      else -> predicate.inner\n")
-        body.add("    }\n")
-        body.add("    %T.HasEdgeWith(predicate.edge, processedInner)\n", predicateClass)
+        body.add("    else -> predicate\n")
         body.add("  }\n")
         // HasEdge (no inner): if any target interceptor adds
         // predicates, upgrade to HasEdgeWith with the interceptor-
@@ -1796,53 +1888,58 @@ internal class QueryGenerator(
         // target — `User.articles.has()` must still filter out
         // soft-deleted articles, otherwise the existence check is
         // wrong.
-        body.add("  is %T.HasEdge -> {\n", predicateClass)
-        body.add("    when (predicate.edge) {\n")
+        body.add("  is %T.HasEdge<%T> -> when (predicate.edge) {\n", predicateClass, entityClass)
         for (edge in schema.edges()) {
             val targetName = schemaNames[edge.target] ?: continue
             val targetClass = ClassName(packageName, targetName)
             val targetQueryClass = ClassName(packageName, "${targetName}Query")
+            body.add("    %S -> {\n", edge.name)
+            body.add("      val targetQ = %T(driver, c)\n", targetQueryClass)
+            body.add("      targetQ.traversalSourceEntity = %T::class\n", entityClass)
+            body.add("      targetQ.traversalEdgeName = predicate.edge\n")
             body.add(
-                "      %S -> {\n",
-                edge.name,
-            )
-            body.add(
-                "        val targetQ = %T(driver, c)\n",
-                targetQueryClass,
-            )
-            body.add("        targetQ.traversalSourceEntity = %T::class\n", entityClass)
-            body.add("        targetQ.traversalEdgeName = predicate.edge\n")
-            body.add(
-                "        targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
+                "      targetQ.traversalPath = parentPath + %T(%T::class, predicate.edge, %T::class)\n",
                 edgeStepClass, entityClass, targetClass,
             )
             body.add(
-                "        val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
+                "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
                 READ_OPERATION, ENT_OPERATION,
             )
             // Bubble up target-step annotations even when the
             // walker upgrades HasEdge → HasEdgeWith (or keeps as
             // HasEdge if interceptors added nothing).
-            body.add("        edgeAnnotations.putAll(spec.annotations)\n")
+            body.add("      edgeAnnotations.putAll(spec.annotations)\n")
+            // FrozenQuerySpec.predicates is erased; cast back to the
+            // target's scope inside this branch.
+            body.add("      @Suppress(\"UNCHECKED_CAST\")\n")
             body.add(
-                "        val combined = spec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                "      val typedSpecPreds = spec.predicates as List<%T<%T>>\n",
+                predicateClass, targetClass,
+            )
+            body.add(
+                "      val combined = typedSpecPreds.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
                 predicateClass,
             )
             body.add(
-                "        if (combined != null) %T.HasEdgeWith(predicate.edge, combined) else predicate\n",
-                predicateClass,
+                "      if (combined != null) %T.HasEdgeWith<%T, %T>(predicate.edge, combined) else predicate\n",
+                predicateClass, entityClass, targetClass,
             )
-            body.add("      }\n")
+            body.add("    }\n")
         }
-        body.add("      else -> predicate\n")
-        body.add("    }\n")
+        body.add("    else -> predicate\n")
         body.add("  }\n")
         body.add("  else -> predicate\n")
         body.add("}\n")
 
+        // Walker input/output are typed in this query's entity scope.
+        // The walker recurses through a Predicate<EntityClass> tree,
+        // rewriting edge-predicate sub-nodes (which carry their own
+        // Target scope) via per-edge branches that use the
+        // edge-name-validated unchecked-cast pattern above.
+        val predicateForThis = predicateClass.parameterizedBy(entityClass)
         return FunSpec.builder("runEdgePredicateInterceptors")
             .addModifiers(KModifier.INTERNAL)
-            .addParameter("predicate", predicateClass)
+            .addParameter("predicate", predicateForThis)
             .addParameter(
                 "parentPath",
                 List::class.asClassName().parameterizedBy(edgeStepClass),
@@ -1854,23 +1951,23 @@ internal class QueryGenerator(
                     String::class.asClassName(),
                 ),
             )
-            .returns(predicateClass)
+            .returns(predicateForThis)
             .addCode(body.build())
             .build()
     }
 
-    private fun buildWhere(queryClass: ClassName): FunSpec {
+    private fun buildWhere(queryClass: ClassName, predicateForEntity: TypeName): FunSpec {
         return FunSpec.builder("where")
-            .addParameter("predicate", predicateClass)
+            .addParameter("predicate", predicateForEntity)
             .returns(queryClass)
             .addStatement("this.predicates = this.predicates + predicate")
             .addStatement("return this")
             .build()
     }
 
-    private fun buildOrderBy(queryClass: ClassName): FunSpec {
+    private fun buildOrderBy(queryClass: ClassName, orderFieldForEntity: TypeName): FunSpec {
         return FunSpec.builder("orderBy")
-            .addParameter("field", orderFieldClass)
+            .addParameter("field", orderFieldForEntity)
             .returns(queryClass)
             .addStatement("this.orderFields = this.orderFields + field")
             .addStatement("return this")
@@ -2041,8 +2138,8 @@ internal class QueryGenerator(
         // not CALLER. Fetch all matching rows — limit/offset are
         // applied per group below.
         body.addStatement(
-            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, sourceIds)))",
-            READ_OPERATION, ENT_OPERATION, PREDICATE, join.targetColumn, OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
         )
         body.addStatement(
             "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
@@ -2088,8 +2185,8 @@ internal class QueryGenerator(
         body.addStatement("val sourceIds = entities.map { it.id }")
         emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         body.addStatement(
-            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, sourceIds)))",
-            READ_OPERATION, ENT_OPERATION, PREDICATE, join.targetColumn, OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
         )
         body.addStatement(
             "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
@@ -2141,8 +2238,8 @@ internal class QueryGenerator(
         emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         // Fetch all matching targets — limit/offset is meaningless for to-one.
         body.addStatement(
-            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, fkValues)))",
-            READ_OPERATION, ENT_OPERATION, PREDICATE, join.targetColumn, OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
         )
         body.addStatement(
             "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
@@ -2185,9 +2282,10 @@ internal class QueryGenerator(
         body.addStatement("val sourceIds = entities.map { it.id }")
         // Query junction table (no interceptors — the junction
         // is internal storage, not an entity with interceptors).
+        // Junction-table query has no entity scope.
         body.addStatement(
-            "val junctionRows = driver.query(%S, listOf(%T.Leaf(%S, %T.IN, sourceIds)), emptyList(), null, null)",
-            join.junctionTable, PREDICATE, join.junctionSourceColumn, OP,
+            "val junctionRows = driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), emptyList(), null, null)",
+            join.junctionTable, PREDICATE, Any::class.asClassName(), join.junctionSourceColumn, OP,
         )
         body.beginControlFlow("if (junctionRows.isNotEmpty())")
         body.addStatement(
@@ -2197,8 +2295,8 @@ internal class QueryGenerator(
         emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         // Fetch all matching targets — limit/offset are applied per group below.
         body.addStatement(
-            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf(%S, %T.IN, targetIds)))",
-            READ_OPERATION, ENT_OPERATION, PREDICATE, "id", OP,
+            "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
+            READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, "id", OP,
         )
         body.addStatement(
             "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
@@ -2325,10 +2423,10 @@ internal class QueryGenerator(
      * is what `EdgeRef.has { }` and the generated traversal methods
      * call to fold a query's filters into a single Predicate.
      */
-    private fun buildCombinedPredicate(): FunSpec {
+    private fun buildCombinedPredicate(predicateForEntity: TypeName): FunSpec {
         return FunSpec.builder("combinedPredicate")
             .addModifiers(KModifier.OVERRIDE)
-            .returns(predicateClass.copy(nullable = true))
+            .returns(predicateForEntity.copy(nullable = true))
             .addStatement(
                 "return predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
                 predicateClass,
@@ -2409,14 +2507,28 @@ internal class QueryGenerator(
                         "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
                         READ_OPERATION, ENT_OPERATION,
                     )
+                    // Same unchecked-cast pattern as buildTraversal:
+                    // erased FrozenQuerySpec.predicates → typed
+                    // Predicate<SourceEntity>. Sound by construction
+                    // (every contributor was Predicate<SourceEntity>-
+                    // typed).
+                    .add("  @Suppress(\"UNCHECKED_CAST\")\n")
                     .add(
-                        "  val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
-                        predicateClass,
+                        "  val sourcePreds = sourceSpec.predicates as List<%T<%T>>\n",
+                        predicateClass, sourceEntityClass,
                     )
-                    .add("  %T(\n", traversalSourceResult)
                     .add(
-                        "    bridge = %T.HasM2MEdgeFrom(%S, %S, parent),\n",
+                        "  val parent: %T<%T>? = sourcePreds.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                        predicateClass, sourceEntityClass, predicateClass,
+                    )
+                    // M2M bridge: HasM2MEdgeFrom<Target, Source>(...).
+                    // The candidate is the M2M target; the sourceFilter
+                    // constrains rows in the source table.
+                    .add("  %T<%T>(\n", traversalSourceResult, targetEntityClass)
+                    .add(
+                        "    bridge = %T.HasM2MEdgeFrom<%T, %T>(%S, %S, parent),\n",
                         predicateClass,
+                        targetEntityClass, sourceEntityClass,
                         sourceTable,
                         edge.name,
                     )
@@ -2507,21 +2619,42 @@ internal class QueryGenerator(
                         "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
                         READ_OPERATION, ENT_OPERATION,
                     )
+                    // FrozenQuerySpec.predicates is erased; cast to the
+                    // source entity's scope so the reduce produces a
+                    // typed Predicate<SourceEntity>. Sound because every
+                    // predicate that flowed into sourceSpec was added
+                    // through a Predicate<SourceEntity>-typed site
+                    // (caller where(...), structural source-id, or
+                    // source-entity interceptor addPredicate).
+                    .add("  @Suppress(\"UNCHECKED_CAST\")\n")
                     .add(
-                        "  val parent = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
-                        predicateClass,
+                        "  val sourcePreds = sourceSpec.predicates as List<%T<%T>>\n",
+                        predicateClass, sourceEntityClass,
                     )
                     .add(
-                        "  val bridge: %T = if (parent != null) %T.HasEdgeWith(%S, parent) else %T.HasEdge(%S)\n",
+                        "  val parent: %T<%T>? = sourcePreds.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
+                        predicateClass, sourceEntityClass, predicateClass,
+                    )
+                    // Bridge is target-scoped: HasEdgeWith<Target, Source>
+                    // (the inner predicate is on Source). Per RFC
+                    // §"Query Traversal": "the candidate entity is the
+                    // target". The walker's edge-name witness +
+                    // unchecked cast soundness applies symmetrically
+                    // to the construction site here — codegen knows
+                    // both Source and Target by schema.
+                    .add(
+                        "  val bridge: %T<%T> = if (parent != null) %T.HasEdgeWith<%T, %T>(%S, parent) else %T.HasEdge<%T>(%S)\n",
+                        predicateClass, targetEntityClass,
                         predicateClass,
-                        predicateClass,
+                        targetEntityClass, sourceEntityClass,
                         inverse.name,
                         predicateClass,
+                        targetEntityClass,
                         inverse.name,
                     )
                     .add(
-                        "  %T(bridge = bridge, annotations = sourceSpec.annotations)\n",
-                        traversalSourceResult,
+                        "  %T<%T>(bridge = bridge, annotations = sourceSpec.annotations)\n",
+                        traversalSourceResult, targetEntityClass,
                     )
                     .add("}\n")
                     .build()

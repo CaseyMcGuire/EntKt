@@ -1,3 +1,10 @@
+// Edge-predicate walker integration tests construct
+// `Predicate.HasEdgeWith` / `Predicate.HasEdge` directly to drive
+// the walker through specific shapes. Those constructors carry
+// `@EntktInternal` per RFC §"Constructor Visibility"; the
+// file-level opt-in lets the test code construct them.
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article

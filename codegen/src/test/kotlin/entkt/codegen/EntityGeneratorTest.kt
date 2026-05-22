@@ -146,7 +146,7 @@ class EntityGeneratorTest {
         assert(output.contains("val updatedAt: Instant")) { "Should convert updated_at to updatedAt\n$output" }
         // ...but the snake_case raw name survives as the column ref's
         // constructor argument (used as the predicate field name).
-        assert(output.contains("ComparableColumn<Instant>(\"created_at\")")) {
+        assert(output.contains("ComparableColumn<User, Instant>(\"created_at\")")) {
             "Column ref should carry the raw snake_case name\n$output"
         }
     }
@@ -205,8 +205,8 @@ class EntityGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         // Car uses EntId.int() so the column ref is ComparableColumn<Int>
-        assert(output.contains("val id: ComparableColumn<Int> = ComparableColumn<Int>(\"id\")")) {
-            "Should emit ComparableColumn<Int> for id on Car (which declares EntId.int())\n$output"
+        assert(output.contains("val id: ComparableColumn<Car, Int> = ComparableColumn<Car, Int>(\"id\")")) {
+            "Should emit ComparableColumn<Car, Int> for id on Car (which declares EntId.int())\n$output"
         }
     }
 
@@ -219,8 +219,8 @@ class EntityGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("val id: Column<UUID> = Column<UUID>(\"id\")")) {
-            "Should emit Column<UUID> for id on User (which declares EntId.uuid())\n$output"
+        assert(output.contains("val id: Column<User, UUID> = Column<User, UUID>(\"id\")")) {
+            "Should emit Column<User, UUID> for id on User (which declares EntId.uuid())\n$output"
         }
     }
 
@@ -230,14 +230,21 @@ class EntityGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("val model: StringColumn = StringColumn(\"model\")")) {
-            "Should have StringColumn for model\n$output"
+        assert(output.contains("val model: StringColumn<Car> = StringColumn<Car>(\"model\")")) {
+            "Should have StringColumn<Car> for model\n$output"
         }
-        assert(output.contains("val year: ComparableColumn<Int> = ComparableColumn<Int>(\"year\")")) {
-            "Should have ComparableColumn<Int> for year\n$output"
+        assert(output.contains("val year: ComparableColumn<Car, Int> = ComparableColumn<Car, Int>(\"year\")")) {
+            "Should have ComparableColumn<Car, Int> for year\n$output"
         }
-        assert(output.contains("val price: NullableComparableColumn<Float> = NullableComparableColumn<Float>(\"price\")")) {
-            "Should have NullableComparableColumn<Float> for optional price\n$output"
+        // KotlinPoet wraps the price column over two lines because
+        // the doubled `NullableComparableColumn<Car, Float>` initializer
+        // pushes the line past KotlinPoet's column threshold. Check the
+        // type declaration and the initializer-call substring separately.
+        assert(output.contains("val price: NullableComparableColumn<Car, Float>")) {
+            "Should have NullableComparableColumn<Car, Float> for optional price\n$output"
+        }
+        assert(output.contains("NullableComparableColumn<Car, Float>(\"price\")")) {
+            "Should have NullableComparableColumn<Car, Float>(\"price\") initializer\n$output"
         }
     }
 
@@ -247,8 +254,8 @@ class EntityGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("val active: Column<Boolean> = Column<Boolean>(\"active\")")) {
-            "Should have Column<Boolean> for active\n$output"
+        assert(output.contains("val active: Column<User, Boolean> = Column<User, Boolean>(\"active\")")) {
+            "Should have Column<User, Boolean> for active\n$output"
         }
     }
 
@@ -260,8 +267,15 @@ class EntityGeneratorTest {
 
         // Property name is camelCase, but the column name carried into
         // the Predicate should be the raw field name.
-        assert(output.contains("val createdAt: ComparableColumn<Instant> = ComparableColumn<Instant>(\"created_at\")")) {
-            "Should use snake_case column name\n$output"
+        // Same line-wrap reason as the NullableComparableColumn<Car, Float>
+        // case above — doubled long generic types push past KotlinPoet's
+        // column limit, so the `= ` and initializer land on the next
+        // line. Check declaration + initializer separately.
+        assert(output.contains("val createdAt: ComparableColumn<User, Instant>")) {
+            "Should declare createdAt with ComparableColumn<User, Instant>\n$output"
+        }
+        assert(output.contains("ComparableColumn<User, Instant>(\"created_at\")")) {
+            "Should use snake_case column name in the initializer\n$output"
         }
     }
 
@@ -278,8 +292,8 @@ class EntityGeneratorTest {
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
         }
-        assert(output.contains("val cars: EdgeRef<Car, CarQuery> = EdgeRef(\"cars\") { CarQuery(NoopDriver) }")) {
-            "Should emit a typed EdgeRef for the cars edge wired to NoopDriver\n$output"
+        assert(output.contains("val cars: EdgeRef<User, Car, CarQuery> = EdgeRef(\"cars\") { CarQuery(NoopDriver) }")) {
+            "Should emit a typed EdgeRef<Source, Target, Q> for the cars edge wired to NoopDriver\n$output"
         }
     }
 
@@ -395,8 +409,8 @@ class EntityGeneratorTest {
         finalize(ticket)
         val output = generator.generate("Ticket", ticket).toString()
 
-        assert(output.contains("val priority: EnumColumn<Priority> = EnumColumn<Priority>(\"priority\")")) {
-            "Should emit EnumColumn parameterized with the enum class\n$output"
+        assert(output.contains("val priority: EnumColumn<Ticket, Priority> = EnumColumn<Ticket, Priority>(\"priority\")")) {
+            "Should emit EnumColumn parameterized with entity and enum classes\n$output"
         }
     }
 
@@ -420,8 +434,8 @@ class EntityGeneratorTest {
         assert(output.contains("val category: Category")) {
             "Second typed enum should use the Kotlin enum type\n$output"
         }
-        assert(output.contains("val category: EnumColumn<Category> = EnumColumn<Category>(\"category\")")) {
-            "Second typed enum should use EnumColumn\n$output"
+        assert(output.contains("val category: EnumColumn<Ticket, Category> = EnumColumn<Ticket, Category>(\"category\")")) {
+            "Second typed enum should use EnumColumn<Ticket, Category>\n$output"
         }
     }
 

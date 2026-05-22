@@ -267,8 +267,8 @@ internal class RepoGenerator(
         body.add("  operation = %T.BY_ID,\n", READ_OPERATION)
         body.add("  entOperation = %T.LOAD,\n", ENT_OPERATION)
         body.add(
-            "  extraStructural = listOf(%T.Leaf(%S, %T.EQ, id)),\n",
-            PREDICATE, "id", OP,
+            "  extraStructural = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
+            PREDICATE, entityClass, "id", OP,
         )
         body.add(")\n")
         // Use driver.query (not driver.byId) because interceptors
@@ -425,8 +425,8 @@ internal class RepoGenerator(
                     .add("    operation = %T.BY_ID,\n", READ_OPERATION)
                     .add("    entOperation = %T.LOAD,\n", ENT_OPERATION)
                     .add(
-                        "    extraStructural = listOf(%T.Leaf(%S, %T.EQ, id)),\n",
-                        PREDICATE, "id", OP,
+                        "    extraStructural = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
+                        PREDICATE, entityClass, "id", OP,
                     )
                     .add("  )\n")
                     // By-id is a single-row PK lookup; hardwire
@@ -643,7 +643,11 @@ internal class RepoGenerator(
         // deleteLoaded for each surviving candidate.
         return FunSpec.builder("deleteMany")
             .addParameter(
-                ParameterSpec.builder("predicates", PREDICATE)
+                // vararg predicates: Predicate<EntityClass> — typed in
+                // the entity scope so callers can only pass predicates
+                // for this repo's entity, matching the rest of the
+                // typed query DSL surface.
+                ParameterSpec.builder("predicates", PREDICATE.parameterizedBy(entityClass))
                     .addModifiers(KModifier.VARARG)
                     .build(),
             )

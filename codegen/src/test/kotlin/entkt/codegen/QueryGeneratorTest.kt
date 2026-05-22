@@ -37,8 +37,8 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("`where`(predicate: Predicate)")) {
-            "Should have where(Predicate)\n$output"
+        assert(output.contains("`where`(predicate: Predicate<Car>)")) {
+            "Should have where(Predicate<Car>)\n$output"
         }
     }
 
@@ -48,8 +48,8 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun orderBy(`field`: OrderField)")) {
-            "Should have orderBy(OrderField)\n$output"
+        assert(output.contains("fun orderBy(`field`: OrderField<Car>)")) {
+            "Should have orderBy(OrderField<Car>)\n$output"
         }
     }
 
@@ -99,8 +99,8 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("override fun combinedPredicate(): Predicate?")) {
-            "Should override combinedPredicate\n$output"
+        assert(output.contains("override fun combinedPredicate(): Predicate<Car>?")) {
+            "Should override combinedPredicate with typed return\n$output"
         }
         assert(output.contains("predicates.reduceOrNull")) {
             "Should fold predicates with reduceOrNull\n$output"

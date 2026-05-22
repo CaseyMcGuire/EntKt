@@ -195,18 +195,18 @@ private class NoLockSupportDriver(private val real: entkt.runtime.Driver) : entk
     override fun byId(table: String, id: Any) = real.byId(table, id)
     override fun query(
         table: String,
-        predicates: List<entkt.query.Predicate>,
-        orderBy: List<entkt.query.OrderField>,
+        predicates: List<entkt.query.Predicate<*>>,
+        orderBy: List<entkt.query.OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ) = real.query(table, predicates, orderBy, limit, offset)
-    override fun count(table: String, predicates: List<entkt.query.Predicate>) = real.count(table, predicates)
-    override fun exists(table: String, predicates: List<entkt.query.Predicate>) = real.exists(table, predicates)
+    override fun count(table: String, predicates: List<entkt.query.Predicate<*>>) = real.count(table, predicates)
+    override fun exists(table: String, predicates: List<entkt.query.Predicate<*>>) = real.exists(table, predicates)
     override fun delete(table: String, id: Any) = real.delete(table, id)
     override fun insertMany(table: String, values: List<Map<String, Any?>>) = real.insertMany(table, values)
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate>) =
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate<*>>) =
         real.updateMany(table, values, predicates)
-    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate>) = real.deleteMany(table, predicates)
+    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>) = real.deleteMany(table, predicates)
     override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T =
         real.withTransaction { txReal ->
             // Wrap the tx driver too, so the in-tx Pessimistic preflight
@@ -225,18 +225,18 @@ private class NoLockSupportTxDriver(private val txReal: entkt.runtime.Driver) : 
     override fun byId(table: String, id: Any) = txReal.byId(table, id)
     override fun query(
         table: String,
-        predicates: List<entkt.query.Predicate>,
-        orderBy: List<entkt.query.OrderField>,
+        predicates: List<entkt.query.Predicate<*>>,
+        orderBy: List<entkt.query.OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ) = txReal.query(table, predicates, orderBy, limit, offset)
-    override fun count(table: String, predicates: List<entkt.query.Predicate>) = txReal.count(table, predicates)
-    override fun exists(table: String, predicates: List<entkt.query.Predicate>) = txReal.exists(table, predicates)
+    override fun count(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.count(table, predicates)
+    override fun exists(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.exists(table, predicates)
     override fun delete(table: String, id: Any) = txReal.delete(table, id)
     override fun insertMany(table: String, values: List<Map<String, Any?>>) = txReal.insertMany(table, values)
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate>) =
+    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate<*>>) =
         txReal.updateMany(table, values, predicates)
-    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate>) = txReal.deleteMany(table, predicates)
+    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.deleteMany(table, predicates)
     override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T = block(this)
 
     override val inTransaction: Boolean get() = true

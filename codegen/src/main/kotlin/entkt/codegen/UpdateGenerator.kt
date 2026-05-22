@@ -1014,14 +1014,17 @@ internal class UpdateGenerator(
             val currentVar = "_current_${prop}"
             val targetIdType = edge.targetIdTypeName
             // Read current junction state only when the edge has pending ops.
+            // Junction-table query: predicate has no entity scope.
+            // Predicate.Leaf<Any> renders the same structural data
+            // (field/op/value) and erases at the driver boundary.
             code.add(
                 "val %L: Set<%T> = if (this.%L.hasOps()) {\n" +
-                    "  driver.query(%S, listOf(%T.Leaf(%S, %T.EQ, this.id)), emptyList(), null, null)\n" +
+                    "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, this.id)), emptyList(), null, null)\n" +
                     "    .map { it[%S] as %T }\n" +
                     "    .toSet()\n" +
                     "} else emptySet()\n",
                 currentVar, targetIdType, prop,
-                edge.junctionTable, PREDICATE, edge.junctionSourceColumn, OP_CLASS,
+                edge.junctionTable, PREDICATE, Any::class.asClassName(), edge.junctionSourceColumn, OP_CLASS,
                 edge.junctionTargetColumn, targetIdType,
             )
         }
@@ -1533,11 +1536,15 @@ internal class UpdateGenerator(
                 // predicate AND-pair (sourceCol = id, targetCol IN removed)
                 // restricts the delete to this owner's junction rows.
                 builder.beginControlFlow("if (edgeChanges.%L.removed.isNotEmpty())", prop)
+                // Junction-table delete: predicates have no entity
+                // scope (junctions are internal storage). Predicate.Leaf<Any>
+                // renders the same structural data and erases at the
+                // driver boundary.
                 builder.addStatement(
-                    "driver.deleteMany(%S, listOf(%T.Leaf(%S, %T.EQ, id), %T.Leaf(%S, %T.IN, edgeChanges.%L.removed.toList())))",
+                    "driver.deleteMany(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id), %T.Leaf<%T>(%S, %T.IN, edgeChanges.%L.removed.toList())))",
                     edge.junctionTable,
-                    PREDICATE, edge.junctionSourceColumn, OP_CLASS,
-                    PREDICATE, edge.junctionTargetColumn, OP_CLASS, prop,
+                    PREDICATE, Any::class.asClassName(), edge.junctionSourceColumn, OP_CLASS,
+                    PREDICATE, Any::class.asClassName(), edge.junctionTargetColumn, OP_CLASS, prop,
                 )
                 builder.endControlFlow()
             }

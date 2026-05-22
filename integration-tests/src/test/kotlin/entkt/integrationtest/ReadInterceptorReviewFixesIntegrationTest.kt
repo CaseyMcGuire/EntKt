@@ -1,3 +1,12 @@
+// Integration test exercises the EDGE_PREDICATE walker by directly
+// constructing `Predicate.HasEdgeWith(...)` predicates against the
+// generated query classes. Those constructors carry @EntktInternal
+// (RFC §"Constructor Visibility"); the file-level opt-in lets the
+// fabrication compile. The test scenario is exactly what the walker
+// is designed for, just bypassing the generated `EdgeRef.has(...)`
+// DSL to control the test inputs precisely.
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article

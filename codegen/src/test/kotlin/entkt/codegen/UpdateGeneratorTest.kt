@@ -1568,12 +1568,15 @@ class UpdateGeneratorTest {
 
         // Per-edge junction read, guarded by per-mutator hasOps() so we
         // skip the round-trip when nothing was staged.
+        // Junction-table queries are erased (no entity scope) per the
+        // typed-RFC; Predicate.Leaf<Any> renders the same structural
+        // data.
         assert(output.contains(
             "val _current_tags: Set<UUID> = if (this.tags.hasOps()) { " +
-                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf(\"post_id\", Op.EQ, this.id)), emptyList(), null, null) " +
+                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, this.id)), emptyList(), null, null) " +
                 ".map { it[\"tag_id\"] as UUID } .toSet() } else emptySet()",
         )) {
-            "Expected per-edge junction read that lowers to Predicate.Leaf(sourceCol, Op.EQ, this.id)\n$output"
+            "Expected per-edge junction read that lowers to Predicate.Leaf<Any>(sourceCol, Op.EQ, this.id)\n$output"
         }
 
         // The aggregator call delegates per-edge to runtime
@@ -1744,10 +1747,11 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // One round-trip per edge: deleteMany(table, [sourceCol=ownerId, targetCol IN removed]).
+        // Junction-table deletes have no entity scope; Predicate.Leaf<Any>.
         assert(output.contains(
-            "if (edgeChanges.tags.removed.isNotEmpty()) { driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf(\"post_id\", Op.EQ, id), Predicate.Leaf(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) }",
+            "if (edgeChanges.tags.removed.isNotEmpty()) { driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, id), Predicate.Leaf<Any>(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) }",
         )) {
-            "Deletes should use one deleteMany per edge with AND-paired source EQ + target IN predicates\n$output"
+            "Deletes should use one deleteMany per edge with AND-paired source EQ + target IN predicates (erased Predicate.Leaf<Any>)\n$output"
         }
     }
 

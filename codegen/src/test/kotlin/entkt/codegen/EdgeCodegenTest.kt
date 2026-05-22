@@ -1362,8 +1362,11 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("val ownerId: NullableComparableColumn<Long> = NullableComparableColumn<Long>(\"owner_id\")")) {
-            "Should emit NullableComparableColumn<Long> for optional edge FK\n$output"
+        assert(output.contains("val ownerId: NullableComparableColumn<Pet, Long>")) {
+            "Should declare ownerId as NullableComparableColumn<Pet, Long>\n$output"
+        }
+        assert(output.contains("NullableComparableColumn<Pet, Long>(\"owner_id\")")) {
+            "Should emit NullableComparableColumn<Pet, Long>(\"owner_id\") initializer\n$output"
         }
     }
 
@@ -1373,8 +1376,11 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
-        assert(output.contains("val ownerId: ComparableColumn<Long> = ComparableColumn<Long>(\"owner_id\")")) {
-            "Should emit non-null ComparableColumn<Long> for required edge FK\n$output"
+        assert(output.contains("val ownerId: ComparableColumn<RequiredPet, Long>")) {
+            "Should declare ownerId as ComparableColumn<RequiredPet, Long>\n$output"
+        }
+        assert(output.contains("ComparableColumn<RequiredPet, Long>(\"owner_id\")")) {
+            "Should emit ComparableColumn<RequiredPet, Long>(\"owner_id\") initializer\n$output"
         }
     }
 
@@ -1419,8 +1425,8 @@ class EdgeCodegenTest {
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
         }
-        assert(output.contains("val pets: EdgeRef<Pet, PetQuery> = EdgeRef(\"pets\") { PetQuery(NoopDriver) }")) {
-            "Should emit EdgeRef for the pets edge wired to NoopDriver\n$output"
+        assert(output.contains("val pets: EdgeRef<Owner, Pet, PetQuery> = EdgeRef(\"pets\") { PetQuery(NoopDriver) }")) {
+            "Should emit EdgeRef<Owner, Pet, PetQuery> for the pets edge\n$output"
         }
     }
 
@@ -1430,11 +1436,11 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("val owner: EdgeRef<Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery(NoopDriver) }")) {
-            "Should emit EdgeRef for the owner edge wired to NoopDriver\n$output"
+        assert(output.contains("val owner: EdgeRef<Pet, Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery(NoopDriver) }")) {
+            "Should emit EdgeRef<Pet, Owner, OwnerQuery> for the owner edge\n$output"
         }
         // The FK column ref still lives next to it
-        assert(output.contains("val ownerId: NullableComparableColumn<Long>")) {
+        assert(output.contains("val ownerId: NullableComparableColumn<Pet, Long>")) {
             "FK column ref should coexist with the EdgeRef\n$output"
         }
     }
@@ -1450,11 +1456,16 @@ class EdgeCodegenTest {
         assert(output.contains("fun queryPets(): PetQuery")) {
             "Should generate traversal queryPets()\n$output"
         }
-        assert(output.contains("Predicate.HasEdgeWith(\"owner\", parent)")) {
-            "Should reference the inverse edge name in HasEdgeWith\n$output"
+        // Walker generates typed HasEdgeWith<TargetEntity, SourceEntity>.
+        // Owner.queryPets → Pet candidates filtered by inverse "owner"
+        // edge pointing back to Owner; so HasEdgeWith<Pet, Owner>.
+        // KotlinPoet may wrap the long line between args, so match on
+        // a contiguous substring of the type+name pair.
+        assert(output.contains("Predicate.HasEdgeWith<Pet, Owner>(\"owner\",")) {
+            "Should reference the inverse edge name in HasEdgeWith<Pet, Owner>\n$output"
         }
-        assert(output.contains("Predicate.HasEdge(\"owner\")")) {
-            "Should fall back to HasEdge when parent has no wheres\n$output"
+        assert(output.contains("Predicate.HasEdge<Pet>(\"owner\")")) {
+            "Should fall back to HasEdge<Pet> when parent has no wheres\n$output"
         }
     }
 
@@ -1467,8 +1478,11 @@ class EdgeCodegenTest {
         assert(output.contains("fun queryOwner(): OwnerQuery")) {
             "Should generate traversal queryOwner()\n$output"
         }
-        assert(output.contains("Predicate.HasEdgeWith(\"pets\", parent)")) {
-            "Should reference Owner's 'pets' edge as the inverse\n$output"
+        // Pet.queryOwner → Owner candidates filtered by inverse "pets"
+        // edge on Owner pointing to Pet; HasEdgeWith<Owner, Pet>.
+        // KotlinPoet may wrap between args.
+        assert(output.contains("Predicate.HasEdgeWith<Owner, Pet>(\"pets\",")) {
+            "Should reference Owner's 'pets' edge as the inverse in HasEdgeWith<Owner, Pet>\n$output"
         }
     }
 
@@ -1510,8 +1524,8 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString()
 
-        assert(output.contains("val members: EdgeRef<Pet, PetQuery> = EdgeRef(\"members\") { PetQuery(NoopDriver) }")) {
-            "Should emit EdgeRef for M2M members edge\n$output"
+        assert(output.contains("val members: EdgeRef<Team, Pet, PetQuery> = EdgeRef(\"members\") { PetQuery(NoopDriver) }")) {
+            "Should emit EdgeRef<Team, Pet, PetQuery> for M2M members edge\n$output"
         }
     }
 
@@ -1568,10 +1582,13 @@ class EdgeCodegenTest {
         assert(output.contains("fun queryMembers(): PetQuery")) {
             "Should generate M2M traversal queryMembers()\n$output"
         }
-        assert(output.contains("Predicate.HasM2MEdgeFrom(\"teams\", \"members\", parent)")) {
-            "Should lower to HasM2MEdgeFrom against the source schema\n$output"
+        // M2M traversal: bridge is HasM2MEdgeFrom<TargetEntity, SourceEntity>.
+        // Team.queryMembers → Pet candidates filtered through junction
+        // by Team's "members" forward edge: HasM2MEdgeFrom<Pet, Team>.
+        assert(output.contains("Predicate.HasM2MEdgeFrom<Pet, Team>(\"teams\", \"members\", parent)")) {
+            "Should lower to HasM2MEdgeFrom<Pet, Team> against the source schema\n$output"
         }
-        assert(!output.contains("Predicate.HasEdgeWith(\"teams_members\"")) {
+        assert(!output.contains("Predicate.HasEdgeWith<Pet, Team>(\"teams_members\"")) {
             "Should not reference the synthesized reverse-edge name\n$output"
         }
     }
@@ -1686,8 +1703,10 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("Predicate.Leaf(\"owner_id\", Op.IN, sourceIds)")) {
-            "Should build IN predicate on the FK column\n$output"
+        // Owner eager-loads pets via the IN predicate on target (Pet)
+        // FK column. Eager-load Leaf is target-scoped: Predicate.Leaf<Pet>.
+        assert(output.contains("Predicate.Leaf<Pet>(\"owner_id\", Op.IN, sourceIds)")) {
+            "Should build IN predicate on the FK column scoped to target\n$output"
         }
     }
 
@@ -1697,8 +1716,9 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("Predicate.Leaf(\"id\", Op.IN, fkValues)")) {
-            "Should build IN predicate on target id column\n$output"
+        // Pet eager-loads owner (Owner) by id: Predicate.Leaf<Owner>.
+        assert(output.contains("Predicate.Leaf<Owner>(\"id\", Op.IN, fkValues)")) {
+            "Should build IN predicate on target id column scoped to target\n$output"
         }
     }
 
@@ -1711,8 +1731,9 @@ class EdgeCodegenTest {
         assert(output.contains("\"team_members\"")) {
             "Should query junction table\n$output"
         }
-        assert(output.contains("Predicate.Leaf(\"team_id\", Op.IN, sourceIds)")) {
-            "Should query junction with source FK\n$output"
+        // Junction-table query has no entity scope; Predicate.Leaf<Any>.
+        assert(output.contains("Predicate.Leaf<Any>(\"team_id\", Op.IN, sourceIds)")) {
+            "Should query junction with source FK as erased Predicate.Leaf<Any>\n$output"
         }
     }
 
@@ -1738,8 +1759,9 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Person", byName["Person"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("Predicate.Leaf(\"person_id\", Op.IN, sourceIds)")) {
-            "Should query junction with source FK person_id\n$output"
+        // Junction-table query, erased scope.
+        assert(output.contains("Predicate.Leaf<Any>(\"person_id\", Op.IN, sourceIds)")) {
+            "Should query junction with source FK person_id as erased Predicate.Leaf<Any>\n$output"
         }
     }
 
@@ -2327,8 +2349,9 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Parent", parent, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("Predicate.Leaf(\"owner_id\", Op.IN, sourceIds)")) {
-            "Should query target by FK column, not source FK\n$output"
+        // Parent eager-loads Profile target via FK on target side.
+        assert(output.contains("Predicate.Leaf<Profile>(\"owner_id\", Op.IN, sourceIds)")) {
+            "Should query target by FK column (target-scoped Predicate.Leaf<Profile>), not source FK\n$output"
         }
         assert(output.contains("groupBy { it[\"owner_id\"] }")) {
             "Should group loaded rows by FK column\n$output"

@@ -388,8 +388,8 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun deleteMany(vararg predicates: Predicate): Int")) {
-            "Should have deleteMany with vararg Predicate\n$output"
+        assert(output.contains("fun deleteMany(vararg predicates: Predicate<Car>): Int")) {
+            "Should have deleteMany with vararg typed Predicate<Car>\n$output"
         }
     }
 

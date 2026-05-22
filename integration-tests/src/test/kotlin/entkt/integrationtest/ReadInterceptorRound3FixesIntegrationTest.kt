@@ -1,3 +1,8 @@
+// Same opt-in story as ReadInterceptorReviewFixesIntegrationTest:
+// directly fabricates `Predicate.HasEdgeWith(...)` to exercise the
+// walker's per-edge dispatch.
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
