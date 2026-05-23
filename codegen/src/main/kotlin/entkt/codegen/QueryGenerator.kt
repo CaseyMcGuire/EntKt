@@ -87,6 +87,18 @@ internal class QueryGenerator(
             // per RFC §"Proposed API" — the scope flows out of
             // combinedPredicate() typed as `Predicate<EntityClass>`.
             .addSuperinterface(EDGE_QUERY.parameterizedBy(entityClass))
+            // Also implements `EdgePredicateScope<EntityClass>` so it
+            // can be used as the narrow receiver inside
+            // `EdgeRef.has { ... }` blocks. The generated `where()`
+            // method below is marked `override` to satisfy this
+            // interface's `where(Predicate<E>)` member — Kotlin
+            // permits the concrete query class to refine the return
+            // type covariantly from `EdgePredicateScope<E>` to the
+            // concrete query type so chaining outside `has` blocks
+            // still returns the wider type.
+            .addSuperinterface(
+                ClassName("entkt.query", "EdgePredicateScope").parameterizedBy(entityClass),
+            )
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -1950,7 +1962,13 @@ internal class QueryGenerator(
     }
 
     private fun buildWhere(queryClass: ClassName, predicateForEntity: TypeName): FunSpec {
+        // Marked `override` because `EdgePredicateScope<E>.where(Predicate<E>)`
+        // declares this signature. Covariant return type — the
+        // interface declares `EdgePredicateScope<E>` and the
+        // concrete query class returns its own concrete type for
+        // fluent chaining outside `has { }` blocks.
         return FunSpec.builder("where")
+            .addModifiers(KModifier.OVERRIDE)
             .addParameter("predicate", predicateForEntity)
             .returns(queryClass)
             .addStatement("this.predicates = this.predicates + predicate")

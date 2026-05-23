@@ -170,6 +170,81 @@ class PhantomScopeCompileFailTest {
         assertCompileError(result, "Internal entkt construction site")
     }
 
+    // ---- EdgeRef.has block narrowing ----
+
+    /** Stub query type for the has-block tests. Implements both
+     *  [EdgeQuery] and [EdgePredicateScope] so it satisfies
+     *  [EdgeRef]'s constraints, but also carries `orderBy` /
+     *  `limit` / `allOrThrow` methods so we can prove those are
+     *  NOT visible inside `has { }` blocks. The [testEntities]
+     *  template above declares `User` and `Post`; this snippet
+     *  extends it with `PostQuery` + the `edge` value. */
+    private val hasBlockTestFixtures = """
+        class PostQuery : EdgeQuery<Post>, EdgePredicateScope<Post> {
+            override fun where(predicate: Predicate<Post>): EdgePredicateScope<Post> = this
+            override fun combinedPredicate(): Predicate<Post>? = null
+            fun orderBy(field: OrderField<Post>): PostQuery = this
+            fun limit(n: Int): PostQuery = this
+            fun allOrThrow(): List<Post> = emptyList()
+        }
+
+        @OptIn(EntktInternal::class)
+        val edge: EdgeRef<User, Post, PostQuery> = EdgeRef("posts") { PostQuery() }
+    """.trimIndent()
+
+    @Test
+    fun `has block where(Predicate) is in scope`() {
+        // Positive: the narrowed scope still exposes where.
+        val result = compile("""
+            $hasBlockTestFixtures
+            fun ok(): Predicate<User> = edge.has {
+                where(Predicate.Leaf("published", Op.EQ, true))
+            }
+        """.trimIndent())
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "where(...) should be callable inside has { ... }; messages:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `has block orderBy is unreachable`() {
+        // orderBy is on the concrete PostQuery but not on
+        // EdgePredicateScope<Post>; the lambda receiver hides it.
+        val result = compile("""
+            $hasBlockTestFixtures
+            fun bad(): Predicate<User> = edge.has {
+                orderBy(OrderField("created_at", OrderDirection.ASC))
+            }
+        """.trimIndent())
+        assertCompileError(result, "Unresolved reference")
+    }
+
+    @Test
+    fun `has block limit is unreachable`() {
+        val result = compile("""
+            $hasBlockTestFixtures
+            fun bad(): Predicate<User> = edge.has {
+                limit(1)
+            }
+        """.trimIndent())
+        assertCompileError(result, "Unresolved reference")
+    }
+
+    @Test
+    fun `has block terminal allOrThrow is unreachable`() {
+        // Previously this would have compiled and thrown at runtime
+        // via NoopDriver; now it's a compile error.
+        val result = compile("""
+            $hasBlockTestFixtures
+            fun bad(): Predicate<User> = edge.has {
+                allOrThrow()
+            }
+        """.trimIndent())
+        assertCompileError(result, "Unresolved reference")
+    }
+
     @Test
     fun `methods marked @EntktInternal require OptIn to call`() {
         // Mirrors the property-level test below. This pins the
