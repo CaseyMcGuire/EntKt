@@ -12,4 +12,28 @@ data class Field(
     val enumClass: kotlin.reflect.KClass<out Enum<*>>? = null,
     val validators: List<Validator> = emptyList(),
     val comment: String? = null,
+    /**
+     * Kotlin `val` name of the schema property that produced this
+     * field's backing builder. Populated by `EntSchema.finalize()`'s
+     * declaration-name capture pass (RFC 06,
+     * `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`)
+     * by walking the schema class's direct `val` properties via
+     * `KProperty.javaField` (no getter invocation, so computed
+     * getters / delegated properties are skipped without side
+     * effects).
+     *
+     * Null when:
+     * - no direct property on the concrete schema class references
+     *   this field's builder (computed getter, delegated, inherited,
+     *   mixin-backed declaration site, programmatic registration)
+     * - the schema hasn't been finalized yet
+     *
+     * Codegen reads this only for **field-backed FK** edges
+     * (`belongsTo(...).field(handle)`) to derive the generated FK
+     * API name from the Kotlin val rather than from
+     * `toCamelCase(column)`. Plain scalar fields keep their existing
+     * `toCamelCase(name)`-derived property name regardless of
+     * declarationName.
+     */
+    val declarationName: String? = null,
 )

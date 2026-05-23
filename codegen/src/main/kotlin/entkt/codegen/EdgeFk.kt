@@ -132,9 +132,24 @@ fun computeEdgeFks(
             val backingColumn = belongsTo.field
             if (backingColumn != null) {
                 val backingField = fieldsByName[backingColumn]
+                // RFC 06: derive the generated FK API name from the
+                // backing field's Kotlin val name when capture
+                // populated it, falling back to toCamelCase(column)
+                // for backing fields whose declaration site can't
+                // be captured (computed getter / delegated /
+                // inherited / mixin-backed / pre-finalize). The
+                // fallback preserves today's behavior for those
+                // cases so no schema breaks silently — but the
+                // Phase 3 diagnostic refuses to compile when a
+                // belongsTo(...).field(handle) backing has null
+                // declarationName, so the fallback path is only
+                // ever reached for non-field-backed edges or for
+                // schemas the diagnostic rejects up-front.
+                val fkPropertyName = backingField?.declarationName
+                    ?: toCamelCase(backingColumn)
                 EdgeFk(
                     edgeName = edge.name,
-                    propertyName = toCamelCase(backingColumn),
+                    propertyName = fkPropertyName,
                     columnName = backingColumn,
                     targetName = targetName,
                     targetTable = edge.target.tableName,

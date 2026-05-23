@@ -9,6 +9,73 @@ import entkt.schema.OnDelete
  * relational shape of a schema graph without requiring a live database
  * or running codegen.
  */
+/**
+ * RFC 06 diagnostic pass. Walk every `belongsTo(...).field(handle)`
+ * on [input]'s schema, look up the backing field by column name,
+ * and return a diagnostic string for each backing field whose
+ * `declarationName` is null. Shared between
+ * [SchemaInspector.validate] (which appends the strings to its
+ * errors list) and [EntGenerator.generate] (which throws if the
+ * list is non-empty so direct codegen callers can't bypass the
+ * check).
+ *
+ * Lenient about upstream resolution failures: if `fields()` or
+ * `edges()` throws (typically because earlier per-schema
+ * validation already errored), this pass returns an empty list
+ * to avoid drowning the root-cause diagnostic.
+ */
+/**
+ * RFC 06 duplicate-alias diagnostic. Returns one error per
+ * [entkt.schema.DeclarationAlias] the capture pass recorded on
+ * [input]'s schema — each one names a field whose backing
+ * builder is referenced from two or more direct public `val`
+ * properties (`val a = uuid("x"); val b = a`). Aliasing is
+ * always a schema-author bug: the schema has two valid
+ * declaration names for the same handle, so codegen can't
+ * deterministically pick one without surprising callers.
+ */
+internal fun findDuplicateDeclarationAliases(input: SchemaInput): List<String> {
+    return input.schema.declarationAliases().map { alias ->
+        "Schema '${input.name}': field '${alias.fieldColumn}' is referenced from " +
+            alias.properties.size + " direct public vals (${alias.properties.joinToString(", ") { "'$it'" }}). " +
+            "RFC 06 requires exactly one direct val per FieldBuilder so codegen has a single " +
+            "deterministic declaration name to follow. Remove the aliasing val(s)."
+    }
+}
+
+internal fun findFieldBackedFkDeclarationErrors(input: SchemaInput): List<String> {
+    val fieldsByName: Map<String, entkt.schema.Field> = try {
+        input.schema.fields().associateBy { it.name }
+    } catch (e: Exception) {
+        return emptyList()
+    }
+    val edges: List<entkt.schema.Edge> = try {
+        input.schema.edges()
+    } catch (e: Exception) {
+        return emptyList()
+    }
+    val errors = mutableListOf<String>()
+    for (edge in edges) {
+        val belongsTo = edge.kind as? entkt.schema.EdgeKind.BelongsTo ?: continue
+        val backingColumn = belongsTo.field ?: continue
+        val backingField = fieldsByName[backingColumn] ?: continue
+        if (backingField.declarationName == null) {
+            errors.add(
+                "Schema '${input.name}': field-backed edge '${edge.name}' references " +
+                    "backing field '$backingColumn' whose declaration name could not be " +
+                    "captured. V1 only captures direct public `val` properties on the " +
+                    "concrete schema class. Restructure the backing field as a public " +
+                    "val (not a computed getter, delegated property, mixin re-export, " +
+                    "var, inherited property, or programmatically-registered field) — " +
+                    "or, if the FK doesn't need a custom API name, drop the " +
+                    "`.field(handle)` to use the implicit FK form (`${edge.name}_id` " +
+                    "column, `${toCamelCase(edge.name)}Id` property).",
+            )
+        }
+    }
+    return errors
+}
+
 object SchemaInspector {
 
     /**
@@ -116,6 +183,24 @@ object SchemaInspector {
                 }
             }
         }
+
+        // RFC 06: a `belongsTo(...).field(handle)` whose backing
+        // field has no captured Kotlin val name on the concrete
+        // schema (computed getter, delegated, inherited, mixin-
+        // backed, var, or registered programmatically) can't have
+        // its FK API name derived from a Kotlin declaration.
+        // Codegen's EdgeFk.kt would fall back to
+        // `toCamelCase(column)` for such cases, but that's a
+        // silent ambiguity: the schema author wrote
+        // `.field(someHandle)` and reasonably expects the FK API
+        // to reflect that handle's name. Shared with
+        // [EntGenerator.generate] via [findFieldBackedFkDeclarationErrors]
+        // so direct codegen callers can't bypass the check.
+        errors.addAll(findFieldBackedFkDeclarationErrors(input))
+        // RFC 06: a FieldBuilder referenced from multiple direct
+        // public vals (`val a = uuid("x"); val b = a`) has no
+        // single canonical declaration name; reject the schema.
+        errors.addAll(findDuplicateDeclarationAliases(input))
     }
 
     /**

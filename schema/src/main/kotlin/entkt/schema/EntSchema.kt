@@ -1,6 +1,10 @@
 package entkt.schema
 
 import kotlin.reflect.KClass
+import kotlin.reflect.KMutableProperty1
+import kotlin.reflect.KVisibility
+import kotlin.reflect.full.declaredMemberProperties
+import kotlin.reflect.jvm.javaField
 
 /**
  * Base class for all entkt schema declarations. Each schema corresponds
@@ -17,6 +21,30 @@ import kotlin.reflect.KClass
  *
  * @param tableName the physical SQL table name
  */
+/**
+ * One field whose backing `FieldBuilder` is referenced from more
+ * than one direct public `val` property on the concrete schema
+ * class. Recorded by [EntSchema.captureDeclarationNames] during
+ * finalize; surfaced as a `validateEntSchemas` diagnostic via the
+ * codegen-side alias-rejection helper. Per RFC 06,
+ * `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`.
+ *
+ * Public so codegen modules can consume the accessor; treat as
+ * read-only diagnostic metadata, not as part of the schema's
+ * write-time DSL.
+ */
+data class DeclarationAlias(
+    /** Column name of the shared backing field. */
+    val fieldColumn: String,
+    /**
+     * Every direct public `val` property on the schema class that
+     * references the same builder instance, in declaration order.
+     * Always length ≥ 2 (no entry is recorded when only one
+     * property references a given builder).
+     */
+    val properties: List<String>,
+)
+
 abstract class EntSchema(val tableName: String) {
 
     init {
@@ -31,6 +59,24 @@ abstract class EntSchema(val tableName: String) {
 
     @PublishedApi
     internal val _indexes: MutableList<IndexBuilder> = mutableListOf()
+
+    /**
+     * RFC 06 alias tracking. Populated by [captureDeclarationNames]
+     * during [finalize]. Each entry names a field whose backing
+     * `FieldBuilder` is referenced from more than one direct
+     * public `val` on the concrete schema class
+     * (`val a = uuid("x"); val b = a`). Codegen-side validation
+     * rejects schemas with any entries here.
+     */
+    @PublishedApi
+    internal val _declarationAliases: MutableList<DeclarationAlias> = mutableListOf()
+
+    /**
+     * Read-only view of [_declarationAliases], for codegen-side
+     * diagnostics that need to surface duplicate-alias errors.
+     * Empty list before finalize.
+     */
+    fun declarationAliases(): List<DeclarationAlias> = _declarationAliases.toList()
 
     private var _finalized = false
 
@@ -212,11 +258,134 @@ abstract class EntSchema(val tableName: String) {
         for (edge in _edges) {
             edge.resolve(registry, this::class)
         }
+        // RFC 06: capture the Kotlin `val` name for each FieldBuilder.
+        // Runs BEFORE freezing so we can write to FieldBuilder.declarationName.
+        captureDeclarationNames()
         // Freeze all builders so mutations after finalization are rejected
         for (field in _fields) { field.frozen = true }
         for (edge in _edges) { edge.frozen = true }
         for (index in _indexes) { index.frozen = true }
         _finalized = true
+    }
+
+    /**
+     * Walk the concrete schema class's direct public `val`
+     * properties and set [FieldBuilder.declarationName] on each
+     * one whose backing-field value is identity-equal to a
+     * `FieldBuilder` already in [_fields]. Per RFC 06
+     * (`docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`).
+     *
+     * **Reads the Java backing field, not the getter.** Calling
+     * `KProperty.getter.call(...)` on a computed-getter property
+     * like `val x get() = string("...")` would invoke `string(...)`
+     * again, creating a throw-away `FieldBuilder` *and* registering
+     * a fresh `Field` on this schema as a side effect via the
+     * protected DSL helpers. Reading `javaField.get(this)` directly
+     * is side-effect-free: it returns the value stored in the
+     * property's backing JVM field, or — for computed getters and
+     * delegated properties, which have no backing field —
+     * `KProperty.javaField` is null and the property is skipped
+     * entirely without ever invoking its getter.
+     *
+     * Properties this pass deliberately does NOT capture:
+     *
+     *  - non-public visibility (`private`, `protected`, `internal`)
+     *  - properties inherited from a superclass — capture uses
+     *    [declaredMemberProperties], which returns only the
+     *    concrete schema class's own properties (matches the RFC's
+     *    "direct public val property on the concrete schema class"
+     *    scope rule)
+     *  - `var` properties — capture filters out
+     *    [KMutableProperty1] instances so `var x = string("x")`
+     *    isn't treated as a stable handle declaration
+     *  - computed getters (`javaField == null`)
+     *  - delegated (`by lazy`, `by SomeDelegate`) — also
+     *    `javaField == null` for the property itself
+     *  - mixin-backed re-exports — the host schema's property holds
+     *    an `EntMixin` instance (not a `FieldBuilder`), so the
+     *    identity match against [_fields] never succeeds
+     *
+     * Aliased properties (`val a = uuid("x"); val b = a`) are
+     * flagged as duplicates by [findDuplicateDeclarationAliases]
+     * (called from the codegen-side validator). The capture pass
+     * still records the *first* property name on the builder so
+     * downstream codegen has a deterministic value to fall back
+     * on if the diagnostic is suppressed — but the schema is
+     * rejected before codegen ever runs.
+     */
+    private fun captureDeclarationNames() {
+        // Build an identity-keyed map of registered builders so the
+        // capture pass is O(properties), not O(properties × fields).
+        // Identity-keyed because two `string("x")` calls produce
+        // distinct builder instances even though they share `fieldName`.
+        val byIdentity: MutableMap<FieldBuilder<*, *>, FieldBuilder<*, *>> =
+            java.util.IdentityHashMap<FieldBuilder<*, *>, FieldBuilder<*, *>>().also { map ->
+                for (b in _fields) map[b] = b
+            }
+        // Track every (builder → list of property names) match so
+        // duplicates can surface as a single coherent diagnostic.
+        // Identity-keyed for the same reason as `byIdentity`.
+        val propsByBuilder: MutableMap<FieldBuilder<*, *>, MutableList<String>> =
+            java.util.IdentityHashMap()
+
+        val schemaClass: KClass<out EntSchema> = this::class
+        // `declaredMemberProperties` returns only properties
+        // declared in this class, NOT inherited ones. The RFC's
+        // V1 scope is "direct public val property on the concrete
+        // schema class" — inherited properties (e.g. from an
+        // abstract intermediate base) are explicitly out of scope.
+        for (prop in schemaClass.declaredMemberProperties) {
+            // Only public.
+            if (prop.visibility != KVisibility.PUBLIC) continue
+
+            // Drop `var` properties. KProperty1 is the read-only
+            // base; KMutableProperty1 represents `var`. RFC V1
+            // captures only stable `val` handles.
+            if (prop is KMutableProperty1<*, *>) continue
+
+            // `javaField` is null for computed getters and
+            // delegated properties; both are excluded from V1.
+            val javaField = prop.javaField ?: continue
+
+            // The Java field is in the concrete class; reading it
+            // requires bypassing Java visibility (KProperty's
+            // `javaField` honors Java access modifiers, and Kotlin
+            // backing fields for public `val`s are usually private
+            // at the JVM level).
+            javaField.isAccessible = true
+            val value: Any? = javaField.get(this)
+            if (value !is FieldBuilder<*, *>) continue
+
+            // Identity match: only annotate builders that are
+            // actually registered with this schema. A FieldBuilder
+            // constructed but never registered (or one owned by
+            // another schema) is silently skipped.
+            val registered = byIdentity[value] ?: continue
+
+            // Capture the first property name we see (declaration
+            // order) so downstream codegen has a deterministic
+            // value; aliased properties produce an explicit
+            // diagnostic via [_declarationAliases] below.
+            if (registered.declarationName == null) {
+                registered.declarationName = prop.name
+            }
+            // Record EVERY direct val pointing at this builder.
+            // Aliases (`val a = uuid("x"); val b = a`) end up here
+            // with both names; the codegen-side validator surfaces
+            // the duplicate.
+            propsByBuilder.getOrPut(registered) { mutableListOf() }.add(prop.name)
+        }
+
+        // After the walk, every builder referenced by 2+ direct
+        // vals becomes a DeclarationAlias entry. Single-property
+        // builders are the normal case and don't get recorded.
+        for ((builder, props) in propsByBuilder) {
+            if (props.size > 1) {
+                _declarationAliases.add(
+                    DeclarationAlias(fieldColumn = builder.fieldName, properties = props.toList()),
+                )
+            }
+        }
     }
 
     // ── Accessors (post-finalization) ──────────────────────────────

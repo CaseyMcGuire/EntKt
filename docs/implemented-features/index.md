@@ -14,6 +14,7 @@ Open or speculative RFCs remain in the
 - [Many-To-Many Schema Modeling](edge-mutation/03-m2m-schema-modeling.md)
 - [Transaction And Locking Semantics For Edge Mutations](edge-mutation/04-transaction-locking-semantics.md)
 - [Link-Table M2M Mutation Helpers](edge-mutation/05-link-table-helpers.md)
+- [Field-Backed FK Declaration Names](edge-mutation/06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](edge-mutation/07-generated-member-name-collisions.md)
 
 ## Query APIs

@@ -6,7 +6,7 @@ Implemented as the core to-one FK mutation and nullability baseline.
 
 Follow-up work was extracted into focused RFCs:
 
-- [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+- [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
 
@@ -1067,18 +1067,18 @@ The implementation should be covered by tests for:
   that edge
 - edge declaration property names whose generated implicit FK names collide are
   rejected
-- *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
+- *(follow-up — [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md))*
   schema collection fails if codegen
   cannot map a registered `belongsTo` builder to exactly one stable Kotlin
   declaration property name
-- *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
+- *(follow-up — [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md))*
   computed getter edge declarations
   are rejected when they create new builders during property inspection
 - implicit FK edges reject generated `{edge}Id` Kotlin member collisions and
   require `belongsTo(...).field(handle)` when callers need an explicit backing
   field name *(unset method collisions and broader cross-artifact namespaces are
   covered by [Generated Member Name Collisions](07-generated-member-name-collisions.md))*
-- *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
+- *(follow-up — [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md))*
   field-backed edges derive FK
   property names from the backing field declaration property (today derived
   from the column name via `toCamelCase`)
@@ -1165,7 +1165,7 @@ The implementation should be covered by tests for:
 
 The old deferred scope is now split into smaller possible-feature RFCs:
 
-- [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+- [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
 

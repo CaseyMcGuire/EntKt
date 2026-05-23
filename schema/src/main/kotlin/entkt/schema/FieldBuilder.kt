@@ -10,6 +10,20 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     internal var frozen: Boolean = false
     @PublishedApi internal var declarationOwner: EntSchema? = null
 
+    /**
+     * Kotlin `val` name of the schema property that holds this
+     * builder, captured by [EntSchema.finalize] via reflection over
+     * `KProperty.javaField` (no getter invocation). Null until
+     * capture runs or for builders that have no qualifying `val`
+     * on the schema class (computed getters / delegated /
+     * inherited / mixin-backed / programmatic registration).
+     *
+     * Propagated into [Field.declarationName] by [build].
+     *
+     * See `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`.
+     */
+    internal var declarationName: String? = null
+
     protected fun checkNotFrozen() {
         check(!frozen) { "Field '$fieldName' cannot be modified after schema finalization" }
     }
@@ -67,6 +81,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             enumClass = enumClass,
             validators = validators,
             comment = comment,
+            declarationName = declarationName,
         )
     }
 }

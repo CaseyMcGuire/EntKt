@@ -23,7 +23,7 @@ generated helper methods such as `unset{Property}()` or hook-facing view
 members.
 
 This RFC is the general generated-name validation pass. The
-[Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+[Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 RFC must either depend on this RFC or implement the smaller subset it needs:
 field-backed FK property names and their generated `unset{Property}()` methods
 must be validated before codegen emits the new declaration-derived names.
@@ -130,7 +130,7 @@ same artifact namespace.
 
 The first manifest implementation covers exactly the artifacts needed to
 unblock the
-[Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+[Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 RFC plus the user-facing surfaces where collisions are most likely:
 
 - entity data class
@@ -272,26 +272,32 @@ The diagnostic should include:
 - diagnostics include the schema name, generated artifact, generated member
   name, and both sources
 
-### Deferred to RFC 06 (declaration-name capture)
+### Now-reachable follow-up cases (after RFC 06 V1)
 
-The following cases are structurally unreachable in V1 because field and edge
-names are validated as snake_case at schema construction time, which forces
-any scalar field whose camelCased property would match an FK property to use
-the same snake_case column as the FK — and that trips the column-collision
-check at the storage layer before the manifest sees it:
+[RFC 06](06-field-backed-fk-declaration-names.md) V1 has shipped, which
+unblocks two of the three test bullets that were previously
+structurally unreachable. The manifest already handles them; the
+remaining work is adding the test schemas:
 
-- **scalar field vs. implicit FK property collision** — requires the
-  scalar's `toCamelCase(column)` to equal the FK's `${edgeName}Id` while
-  the columns differ. Once RFC 06 ships declaration-name capture for
-  field-backed FKs, the FK property can derive from a Kotlin val name
-  (decoupled from the column), making this collision triggerable.
-- **scalar field vs. field-backed FK property collision** — same
-  constraint; unblocked by RFC 06.
-- **two generated `unset{Property}()` methods colliding** — these methods
-  derive from the property names of mutable fields / FKs, so two
-  colliding unset methods require two colliding properties first. Same
-  RFC 06 unblock.
+- **scalar field vs. field-backed FK property collision** — now
+  triggerable: scalar `val anything = string("foo_col")` produces
+  entity property `fooCol`; FK with backing `val fooCol = long("backing")`
+  also produces entity property `fooCol`. Different storage columns
+  (`foo_col` vs `backing`), different Kotlin val names (`anything`
+  vs `fooCol`), but the same generated entity-class property → the
+  manifest detects the duplicate.
+- **two generated `unset{Property}()` methods colliding** — falls
+  out of the same construction: both the scalar and the renamed FK
+  produce `unsetFooCol()` on `${name}UpdateMutationView`.
 
-The manifest *already* handles these cases — when RFC 06 ships, only test
-schemas need to be added; no changes to `BuildMemberManifest.kt` are
-expected.
+Still structurally unreachable:
+
+- **scalar field vs. implicit FK property collision** — an implicit
+  FK derives its property from `${edgeName}Id` and synthesizes
+  column `${edge.name}_id`. For a scalar to share that property
+  name, the scalar's `toCamelCase(column)` has to equal
+  `${edgeName}Id`, which means the scalar's column has to be
+  `${edge.name}_id` too — and that trips the storage-column
+  collision check before the manifest sees it. No RFC unblock
+  available without changing the implicit-FK column-naming
+  convention itself.

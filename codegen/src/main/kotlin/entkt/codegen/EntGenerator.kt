@@ -572,6 +572,21 @@ class EntGenerator(
                     collisions.joinToString("\n") { "  - " + formatMemberCollisionDiagnostic(it) },
             )
         }
+
+        // RFC 06: reject schemas whose belongsTo(...).field(handle)
+        // backing has no captured Kotlin val name. SchemaInspector
+        // runs the same check, but direct callers of
+        // EntGenerator.generate(...) (no inspector pass) must not
+        // silently fall through to computeEdgeFks's
+        // toCamelCase(column) fallback.
+        val rfc06Errors = schemas.flatMap { findFieldBackedFkDeclarationErrors(it) } +
+            schemas.flatMap { findDuplicateDeclarationAliases(it) }
+        if (rfc06Errors.isNotEmpty()) {
+            error(
+                "Field-backed FK declaration capture failed:\n" +
+                    rfc06Errors.joinToString("\n") { "  - $it" },
+            )
+        }
         val perSchema = schemas.flatMap { (name, schema) ->
             listOf(
                 entityGenerator.generate(name, schema, schemaNames),
