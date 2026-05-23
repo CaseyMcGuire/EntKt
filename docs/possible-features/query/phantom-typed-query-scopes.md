@@ -447,11 +447,25 @@ The same pattern applies to `NullableComparableColumn`,
 
 ## Edge Predicates
 
-Edge predicates are the intentional scope bridge.
+Edge predicates are the intentional scope bridge. Two interfaces
+mediate them on the generated query class:
 
 ```kotlin
+// Internal: the query class folds its accumulated wheres into a
+// single predicate for the runtime to lower into an EXISTS
+// subquery. `combinedPredicate()` is consumed by `EdgeRef.has`
+// after the block runs.
 interface EdgeQuery<E : Any> {
     fun combinedPredicate(): Predicate<E>?
+}
+
+// Narrow public DSL surface visible inside `EdgeRef.has { ... }`
+// blocks. Exposes ONLY `where(Predicate<E>)` so calls that don't
+// lower into the runtime's EXISTS subquery (`orderBy` / `limit` /
+// `offset` / traversal `queryX()` / eager `with{Edge}` / terminal
+// operations) are unreachable inside the block at compile time.
+interface EdgePredicateScope<E : Any> {
+    fun where(predicate: Predicate<E>): EdgePredicateScope<E>
 }
 ```
 
@@ -462,21 +476,35 @@ interface EdgeQuery<E : Any> {
 // (both also @EntktInternal); EdgeRef lives in :schema so those
 // calls are inside the opt-in boundary established by :schema's
 // own @file:OptIn(EntktInternal::class) on EdgeRef.kt.
-class EdgeRef<Source : Any, Target : Any, Q : EdgeQuery<Target>>
-@EntktInternal constructor(
+//
+// `Q` carries TWO constraints: it must be the target's
+// EdgeQuery<Target> (so has() can read combinedPredicate()) AND
+// EdgePredicateScope<Target> (so has() can use the narrow scope
+// as the lambda receiver). Generated query classes implement both.
+class EdgeRef<Source : Any, Target : Any, Q> @EntktInternal constructor(
     val name: String,
     private val newQuery: () -> Q,
-) {
+) where Q : EdgeQuery<Target>, Q : EdgePredicateScope<Target> {
     fun exists(): Predicate<Source> =
         Predicate.HasEdge(name)
 
-    fun has(block: Q.() -> Unit): Predicate<Source> {
-        val inner = newQuery().apply(block).combinedPredicate()
-            ?: return Predicate.HasEdge(name)
+    fun has(block: EdgePredicateScope<Target>.() -> Unit): Predicate<Source> {
+        val q = newQuery()
+        q.block()
+        val inner = q.combinedPredicate() ?: return Predicate.HasEdge(name)
         return Predicate.HasEdgeWith<Source, Target>(name, inner)
     }
 }
 ```
+
+Why the narrow receiver: `has(...)` lowers into a runtime
+`HasEdgeWith` predicate whose inner is a `Predicate<Target>` —
+the runtime doesn't take any order / limit / traversal / eager-
+load parameters on that subquery. Calls to those methods inside
+the block were either silently dropped (`orderBy`, `limit`) or
+threw at runtime via `NoopDriver` (terminal ops like `allOrThrow`,
+since the EdgeRef factory hands the target query a `NoopDriver`).
+Narrowing the receiver makes those misuses compile errors instead.
 
 Generated entity companions include both source and target scopes:
 

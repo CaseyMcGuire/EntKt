@@ -41,7 +41,15 @@ Runtime (`runtime/src/main/kotlin/entkt/runtime/`):
   `entityInterceptorsFor` / `globals` and the mandatory
   unique-within-scope name rule; `FRAMEWORK_INTERCEPTOR_PREFIX =
   "framework:"` is reserved (application registrations starting
-  with this prefix throw at construction time)
+  with this prefix throw at construction time). These four methods
+  are all marked `@EntktInternal` per the phantom-typed-query-scopes
+  RFC: the string-keyed `scopeKey` paired with the unchecked cast
+  in `entityInterceptorsFor<E>(scopeKey)` is the soundness boundary
+  the typed `EntClientInterceptors` DSL enforces, and the raw API
+  is not application-callable without explicit `@OptIn`. Generated
+  `EntClient` / `EntClientInterceptors` files carry
+  `@file:OptIn(EntktInternal::class)` so their typed DSL methods
+  call the raw API freely.
 - `EntError.QueryRejected` + `EntQueryRejectedException` (mapped
   by `EntError.toException()`)
 
@@ -53,7 +61,13 @@ Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
 - `EntClient` carries the `entityInterceptors:
   EntInterceptorsConfig` and propagates it through
   `withTransaction` / `withTransactionOrError` /
-  `withPrivacyContext` / the internal fixed-context clone
+  `withPrivacyContext` / the internal fixed-context clone. The
+  property is emitted as `@EntktInternal internal var` per the
+  phantom-typed-query-scopes RFC so application code in the
+  consuming module can't reach the raw config to call
+  `addEntity(scopeKey: String, ..., QueryInterceptor<E>)` with
+  a mismatched scope; same on `EntClientInterceptors.config`,
+  which carries the same annotation.
 - Every generated `*Query` class has an internal
   `runReadInterceptors(operation, entOperation, extraStructural)`
   helper that seeds the `QuerySpecBuilder`, runs the chain, walks
