@@ -14,24 +14,35 @@ import entkt.schema.EntSchema
  * - **entity data class** (`${name}`) — scalar field properties,
  *   FK properties, fixed `id` / `edges` accessors, data-class
  *   synthesized members (`copy`, `equals`, `hashCode`, `toString`,
- *   `componentN`).
- * - **entity companion** (`${name}.Companion`) — `fromRow`,
- *   `TABLE`, `SCHEMA`.
+ *   `componentN` covering id + scalars + fks + the trailing
+ *   `edges` constructor slot when the schema has any edges).
+ * - **entity companion** (`${name}.Companion`) — fixed `fromRow` /
+ *   `TABLE` / `SCHEMA`, plus the id column ref, one column ref
+ *   per scalar field (`toCamelCase(field.name)`), one column ref
+ *   per FK (`fk.propertyName`), and one edge ref per edge
+ *   (`toCamelCase(edge.name)`).
  * - **mutation interface** (`${name}Mutation`) — mutable scalar
  *   field properties, mutable FK properties.
  * - **create builder** (`${name}Create`) — every mutable scalar
  *   field setter, every FK setter (immutable FKs are create-only
  *   writable, so they appear here), fixed builder members.
  * - **update builder** (`${name}Update`) — mutable scalar field
- *   setters, mutable FK setters, `unset{X}()` method for each
- *   mutable scalar field and FK, fixed builder members
- *   (including `id`, `consistency`).
+ *   setters, mutable FK setters, helper-eligible M2M mutator
+ *   properties, fixed builder members (including `id`,
+ *   `consistency`). **NOT `unset{X}()` methods** — those live
+ *   only on the private hook-facing adapter and are surfaced via
+ *   `${name}UpdateMutationView`, never on the public builder.
  * - **create mutation view** (`${name}CreateMutationView`) —
  *   inherited mutation props + create-only immutable scalar /
  *   immutable FK setters.
  * - **update mutation view** (`${name}UpdateMutationView`) —
- *   inherited mutation props + `unset{X}()` methods + fixed
- *   `pendingEdges` + helper-eligible M2M mutator properties.
+ *   inherited mutation props + `unset{X}()` methods + the fixed
+ *   `pendingEdges` aggregator (unconditionally emitted by
+ *   MutationGenerator, regardless of whether the schema has any
+ *   helper-eligible M2M edge — so the manifest registers it
+ *   unconditionally). **NOT M2M mutator properties** — those
+ *   live on the public `${name}Update` builder, never on this
+ *   view.
  *
  * Storage names (DB column names, table names) are intentionally
  * absent — those don't share a Kotlin member namespace with
@@ -56,10 +67,10 @@ internal fun buildMemberManifest(
     val nonFkEdges = schema.edges().filter { it.kind !is EdgeKind.BelongsTo }
 
     addEntityClassMembers(manifest, schemaName, scalars, fks, nonFkEdges)
-    addEntityCompanionMembers(manifest, schemaName)
+    addEntityCompanionMembers(manifest, schemaName, scalars, fks, schema.edges())
     addMutationInterfaceMembers(manifest, schemaName, mutableScalars, mutableFks)
     addCreateBuilderMembers(manifest, schemaName, scalars, fks)
-    addUpdateBuilderMembers(manifest, schemaName, mutableScalars, mutableFks)
+    addUpdateBuilderMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
     addCreateMutationViewMembers(manifest, schemaName, immutableScalars, immutableFks)
     addUpdateMutationViewMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
 
@@ -108,12 +119,16 @@ private fun addEntityClassMembers(
     manifest.add(artifact, "toString", GeneratedMemberKind.FUNCTION, "data-class synthesized toString")
 
     // componentN: the entity data class's primary constructor has
-    // one slot per scalar field + one slot per FK + the id. The
-    // exact ordering of synthesized component functions matches
-    // the constructor order; we enumerate `component1`..`componentK`
-    // for K = id + scalars + fks so that any user field whose
-    // generated name lands on `component1`..`componentK` collides.
-    val componentCount = 1 + scalars.size + fks.size
+    // one slot per scalar field + one slot per FK + the id, PLUS
+    // one trailing `edges` slot when the schema has any edges
+    // (EntityGenerator.kt:216 appends the edges parameter when an
+    // Edges inner class is generated, which happens iff
+    // schema.edges() is non-empty). Synthesized component
+    // functions match constructor order, so we enumerate
+    // `component1`..`componentK` for K equal to the constructor
+    // arity.
+    val hasEdgesSlot = nonFkEdges.isNotEmpty() || fks.isNotEmpty()
+    val componentCount = 1 + scalars.size + fks.size + (if (hasEdgesSlot) 1 else 0)
     for (i in 1..componentCount) {
         manifest.add(artifact, "component$i", GeneratedMemberKind.FUNCTION, "data-class synthesized component$i")
     }
@@ -159,11 +174,56 @@ private fun addEntityClassMembers(
 private fun addEntityCompanionMembers(
     manifest: GeneratedMemberManifest,
     schemaName: String,
+    scalars: List<entkt.schema.Field>,
+    fks: List<EdgeFk>,
+    allEdges: List<entkt.schema.Edge>,
 ) {
     val artifact = companionArtifact(schemaName)
+
+    // Fixed companion members.
     manifest.add(artifact, "fromRow", GeneratedMemberKind.FUNCTION, "fixed entity companion decoder")
     manifest.add(artifact, "TABLE", GeneratedMemberKind.PROPERTY, "fixed entity companion TABLE")
     manifest.add(artifact, "SCHEMA", GeneratedMemberKind.PROPERTY, "fixed entity companion SCHEMA")
+
+    // The id column ref — see EntityGenerator.buildIdColumnRef.
+    // Always named exactly "id" since the id column is always the
+    // schema's primary key.
+    manifest.add(artifact, "id", GeneratedMemberKind.PROPERTY, "id column ref")
+
+    // One column ref per scalar field (EntityGenerator.buildFieldColumnRef
+    // uses toCamelCase(field.name) for the property name).
+    for (field in scalars) {
+        manifest.add(
+            artifact,
+            fieldPropertyName(field.name),
+            GeneratedMemberKind.PROPERTY,
+            "column ref for field '${field.name}'",
+        )
+    }
+
+    // One column ref per FK (EntityGenerator.buildEdgeColumnRef
+    // uses fk.propertyName).
+    for (fk in fks) {
+        manifest.add(
+            artifact,
+            fk.propertyName,
+            GeneratedMemberKind.PROPERTY,
+            "column ref for FK edge '${fk.edgeName}'",
+        )
+    }
+
+    // One edge ref per edge — including non-belongsTo edges
+    // (EntityGenerator.buildEdgeRef uses toCamelCase(edge.name)).
+    // The edge refs are how the runtime walks `has` / `exists`
+    // predicates, so every declared edge contributes one.
+    for (edge in allEdges) {
+        manifest.add(
+            artifact,
+            toCamelCase(edge.name),
+            GeneratedMemberKind.PROPERTY,
+            "edge ref for edge '${edge.name}'",
+        )
+    }
 }
 
 // ── Mutation interface (the shared writable surface) ─────────────
@@ -236,19 +296,18 @@ private fun addUpdateBuilderMembers(
     schemaName: String,
     mutableScalars: List<entkt.schema.Field>,
     mutableFks: List<EdgeFk>,
+    helperEligibleM2M: List<HelperEligibleM2M>,
 ) {
     val artifact = updateBuilderArtifact(schemaName)
 
     addFixedBuilderMembers(manifest, artifact, includeUpdateOnly = true)
 
     for (field in mutableScalars) {
-        val prop = fieldPropertyName(field.name)
-        manifest.add(artifact, prop, GeneratedMemberKind.PROPERTY, "field '${field.name}' setter")
         manifest.add(
             artifact,
-            unsetMethodName(prop),
-            GeneratedMemberKind.FUNCTION,
-            "unset method for field '${field.name}'",
+            fieldPropertyName(field.name),
+            GeneratedMemberKind.PROPERTY,
+            "field '${field.name}' setter",
         )
     }
     for (fk in mutableFks) {
@@ -258,13 +317,30 @@ private fun addUpdateBuilderMembers(
             GeneratedMemberKind.PROPERTY,
             "FK setter for edge '${fk.edgeName}'",
         )
+    }
+
+    // RFC #5 Phase 2 (link-table M2M): mutator properties live on
+    // the *public* update builder, not on the UpdateMutationView
+    // interface — hooks must not reach add/remove/set through
+    // ctx.mutation. See UpdateGeneratorTest §"UpdateMutationView is
+    // not extended with the mutator property — hooks must not see
+    // it" for the pin on this contract.
+    for (m2m in helperEligibleM2M) {
         manifest.add(
             artifact,
-            unsetMethodName(fk.propertyName),
-            GeneratedMemberKind.FUNCTION,
-            "unset method for FK edge '${fk.edgeName}'",
+            m2m.mutatorPropertyName,
+            GeneratedMemberKind.PROPERTY,
+            "M2M edge mutator for edge '${m2m.edgeName}'",
         )
     }
+
+    // No `unset{X}()` here. The public update builder
+    // intentionally does NOT expose unset methods — they live only
+    // on the private hook-facing adapter (typed as
+    // `${name}UpdateMutationView`), so callers can't write
+    // `client.posts.update(id) { unsetName() }`. See
+    // UpdateGeneratorTest §"unset lives on the private hook-facing
+    // view, not the public builder".
 }
 
 // ── Create mutation view ─────────────────────────────────────────
@@ -340,30 +416,27 @@ private fun addUpdateMutationViewMembers(
         )
     }
 
-    // `pendingEdges` aggregator — fixed on schemas with at least
-    // one helper-eligible M2M edge. Schemas with no link-table
-    // M2M don't get this member; the manifest reflects that so
-    // those schemas can use `pendingEdges` as a regular field
-    // name without false-positive collisions.
-    if (helperEligibleM2M.isNotEmpty()) {
-        manifest.add(
-            artifact,
-            "pendingEdges",
-            GeneratedMemberKind.PROPERTY,
-            "fixed update-mutation-view pendingEdges aggregator (helper-eligible M2M edges present)",
-        )
-        // M2M mutator properties — one per helper-eligible M2M
-        // edge, named via `HelperEligibleM2M.mutatorPropertyName`
-        // (currently `toCamelCase(edge.name)`).
-        for (m2m in helperEligibleM2M) {
-            manifest.add(
-                artifact,
-                m2m.mutatorPropertyName,
-                GeneratedMemberKind.PROPERTY,
-                "M2M edge mutator for edge '${m2m.edgeName}'",
-            )
-        }
-    }
+    // `pendingEdges` aggregator — unconditionally emitted on
+    // UpdateMutationView by MutationGenerator.kt:153 regardless of
+    // whether the schema has any helper-eligible M2M edge. Even a
+    // schema with no link-table M2M ends up with an empty-shape
+    // `pendingEdges: ${name}PendingEdgeOps` property on the
+    // interface, so the manifest must register it unconditionally
+    // — otherwise `val pendingEdges = string(...)` on a non-M2M
+    // schema would slip past the collision check and surface as a
+    // Kotlin compile error downstream.
+    //
+    // The per-edge mutator properties (`tags.add(...)` etc.)
+    // intentionally do NOT land here — they live on the public
+    // `${name}Update` builder, not on UpdateMutationView. See
+    // [addUpdateBuilderMembers].
+    @Suppress("UNUSED_PARAMETER") helperEligibleM2M
+    manifest.add(
+        artifact,
+        "pendingEdges",
+        GeneratedMemberKind.PROPERTY,
+        "fixed update-mutation-view pendingEdges aggregator",
+    )
 }
 
 // ── Fixed builder members ────────────────────────────────────────

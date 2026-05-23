@@ -60,8 +60,12 @@ class BuildMemberManifestTest {
         assertTrue("component1" in byArtifact["Notebook"]!!)
         assertTrue("component2" in byArtifact["Notebook"]!!)
 
-        // Companion
-        assertEquals(setOf("fromRow", "TABLE", "SCHEMA"), byArtifact["Notebook.Companion"])
+        // Companion — fixed (fromRow/TABLE/SCHEMA) plus column refs
+        // for id + every scalar field.
+        assertEquals(
+            setOf("fromRow", "TABLE", "SCHEMA", "id", "title"),
+            byArtifact["Notebook.Companion"],
+        )
 
         // Mutation interface — just the mutable scalar (no FK on this schema)
         assertEquals(setOf("title"), byArtifact["NotebookMutation"])
@@ -76,22 +80,33 @@ class BuildMemberManifestTest {
         assertTrue("driver" in byArtifact["NotebookCreate"]!!)
         assertTrue("beforeCreateHooks" in byArtifact["NotebookCreate"]!!)
 
-        // Update builder — title, unsetTitle, fixed members including id + consistency
+        // Update builder — title setter + fixed members including id +
+        // consistency. NOT unsetTitle — that lives only on
+        // NotebookUpdateMutationView (the hook-facing interface),
+        // never on the public builder. See UpdateGeneratorTest
+        // §"unset lives on the private hook-facing view, not the
+        // public builder" for the contract.
         assertNotNull(byArtifact["NotebookUpdate"])
         assertTrue("title" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("unsetTitle" in byArtifact["NotebookUpdate"]!!)
         assertTrue("id" in byArtifact["NotebookUpdate"]!!)
         assertTrue("consistency" in byArtifact["NotebookUpdate"]!!)
         assertTrue("dirtyFields" in byArtifact["NotebookUpdate"]!!)
+        assertTrue(
+            "unsetTitle" !in byArtifact["NotebookUpdate"]!!,
+            "unset methods must NOT appear on the public Update builder; they live on UpdateMutationView only",
+        )
 
-        // Update mutation view — title + unsetTitle, no pendingEdges (no M2M)
+        // Update mutation view — title + unsetTitle + pendingEdges.
+        // pendingEdges is unconditionally emitted by MutationGenerator
+        // even on schemas without helper-eligible M2M (the property
+        // exists as an empty-shape `${name}PendingEdgeOps`), so the
+        // manifest must register it unconditionally too — otherwise
+        // a `val pendingEdges = string(...)` on a non-M2M schema
+        // slips past the collision check.
         assertNotNull(byArtifact["NotebookUpdateMutationView"])
         assertTrue("title" in byArtifact["NotebookUpdateMutationView"]!!)
         assertTrue("unsetTitle" in byArtifact["NotebookUpdateMutationView"]!!)
-        assertTrue(
-            "pendingEdges" !in byArtifact["NotebookUpdateMutationView"]!!,
-            "schemas without helper-eligible M2M should NOT add pendingEdges",
-        )
+        assertTrue("pendingEdges" in byArtifact["NotebookUpdateMutationView"]!!)
     }
 
     @Test

@@ -7,7 +7,7 @@ Implemented as the core to-one FK mutation and nullability baseline.
 Follow-up work was extracted into focused RFCs:
 
 - [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
-- [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md)
+- [Generated Member Name Collisions](07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
 
 Create-side result variants are already implemented under
@@ -1077,14 +1077,14 @@ The implementation should be covered by tests for:
 - implicit FK edges reject generated `{edge}Id` Kotlin member collisions and
   require `belongsTo(...).field(handle)` when callers need an explicit backing
   field name *(unset method collisions and broader cross-artifact namespaces are
-  covered by [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md))*
+  covered by [Generated Member Name Collisions](07-generated-member-name-collisions.md))*
 - *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
   field-backed edges derive FK
   property names from the backing field declaration property (today derived
   from the column name via `toCamelCase`)
 - field-backed edges check backing FK property names for collisions
   *(unset method collisions are covered by
-  [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md))*
+  [Generated Member Name Collisions](07-generated-member-name-collisions.md))*
 - nullable to-one `null` assignment clears the FK
 - nullable to-one update distinguishes unset from explicit null: unset leaves the
   FK out of the update write set, while explicit null clears it
@@ -1166,7 +1166,7 @@ The implementation should be covered by tests for:
 The old deferred scope is now split into smaller possible-feature RFCs:
 
 - [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
-- [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md)
+- [Generated Member Name Collisions](07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
 
 The former create-side result-variants item is no longer deferred; create

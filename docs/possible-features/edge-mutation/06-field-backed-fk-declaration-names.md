@@ -8,7 +8,7 @@ Extracted from the implemented
 [To-One FK Mutation And Nullability](../../implemented-features/edge-mutation/02-to-one-assignment-nullability.md)
 RFC.
 
-**Dependency: [07-generated-member-name-collisions.md](07-generated-member-name-collisions.md)
+**Dependency: [07-generated-member-name-collisions.md](../../implemented-features/edge-mutation/07-generated-member-name-collisions.md)
 must land first.** Declaration-name capture changes generated
 member names — `authorId` becomes `writer` when the backing field's
 declaration name diverges from `toCamelCase(column)`. That can

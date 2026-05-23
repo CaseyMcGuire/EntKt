@@ -24,7 +24,14 @@ internal fun ensureFinalized(schemas: List<SchemaInput>) {
     validateEdgeTargetIdentity(schemas)
     validateUniqueNamesAndTables(schemas)
     val schemaNames = schemas.associate { it.schema to it.name }
-    validateMemberNames(schemas, schemaNames)
+    // Generated-member-name collision detection (RFC 07) is run by
+    // [EntGenerator.generate] after this finalization step via
+    // [runMemberCollisionCheck], producing per-artifact diagnostics.
+    // The older single-namespace `validateMemberNames` was removed
+    // because the manifest-based check is a strict superset on the
+    // cases it covered and reports the schema, artifact, and source
+    // for each collision rather than a single "both generate
+    // property" message.
     validateRelationNames(schemas, schemaNames)
     validateM2MOrientation(schemas, schemaNames)
     validateThroughLinkJunctions(schemas, schemaNames)
@@ -111,67 +118,6 @@ private fun validateUniqueNamesAndTables(schemas: List<SchemaInput>) {
  * names may differ but still derive to the same Kotlin identifier
  * (e.g. field "author_id" -> authorId, edge "author" FK -> authorId).
  */
-private fun validateMemberNames(
-    schemas: List<SchemaInput>,
-    schemaNames: Map<EntSchema, String>,
-) {
-    for (input in schemas) {
-        // Seed with names that codegen emits as fixed properties on the
-        // entity data class, create builder, and update builder.
-        val memberSources = mutableMapOf(
-            "id" to "primary key",
-            "edges" to "entity edges inner class",
-            "client" to "create/update builder",
-            "driver" to "create/update builder",
-            "entity" to "update builder",
-            "dirtyFields" to "update builder",
-            "beforeSaveHooks" to "create/update builder",
-            "beforeCreateHooks" to "create builder",
-            "afterCreateHooks" to "create builder",
-            "beforeUpdateHooks" to "update builder",
-            "afterUpdateHooks" to "update builder",
-        )
-        // Field-backed FKs are emitted via the edgeFks code path now, so
-        // skip the backing column in the scalar field validation. The
-        // edgeFks loop below claims that property name attributed to its
-        // owning edge.
-        for (field in scalarFields(input.schema)) {
-            val prop = toCamelCase(field.name)
-            val prev = memberSources.put(prop, "field '${field.name}'")
-            if (prev != null) {
-                error(
-                    "Schema '${input.name}': $prev and field '${field.name}' both generate " +
-                        "property '$prop'",
-                )
-            }
-        }
-        for (edge in input.schema.edges()) {
-            val edgeProp = toCamelCase(edge.name)
-            val prev = memberSources.put(edgeProp, "edge '${edge.name}'")
-            if (prev != null) {
-                error(
-                    "Schema '${input.name}': $prev and edge '${edge.name}' both generate " +
-                        "property '$edgeProp'",
-                )
-            }
-        }
-        for (fk in computeEdgeFks(input.schema, schemaNames)) {
-            val attribution = if (fk.isFieldBacked) {
-                "field-backed FK for edge '${fk.edgeName}'"
-            } else {
-                "synthesized FK for edge '${fk.edgeName}'"
-            }
-            val prev = memberSources.put(fk.propertyName, attribution)
-            if (prev != null) {
-                error(
-                    "Schema '${input.name}': $prev and $attribution " +
-                        "both generate property '${fk.propertyName}'",
-                )
-            }
-        }
-    }
-}
-
 /**
  * PostgreSQL relation names (tables, indexes, sequences) share a
  * namespace. Collect every name that will become a Postgres relation
@@ -608,6 +554,24 @@ class EntGenerator(
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
         ensureFinalized(schemas)
         val schemaNames: Map<EntSchema, String> = schemas.associate { it.schema to it.name }
+
+        // RFC 07: reject schemas that would emit duplicate Kotlin
+        // member names on the same generated artifact. Runs here
+        // (not only via SchemaInspector.validate) so direct callers
+        // of EntGenerator.generate(...) can't bypass the check.
+        // `strict = true` lets manifest-build failures propagate —
+        // the hard validation path must not silently skip the
+        // collision check for a schema with a broken manifest.
+        // Throws with every detected collision joined, so callers
+        // see all problems in one error message rather than
+        // resolving them one at a time.
+        val collisions = runMemberCollisionCheck(schemas, schemaNames, strict = true)
+        if (collisions.isNotEmpty()) {
+            error(
+                "Generated member-name collisions detected:\n" +
+                    collisions.joinToString("\n") { "  - " + formatMemberCollisionDiagnostic(it) },
+            )
+        }
         val perSchema = schemas.flatMap { (name, schema) ->
             listOf(
                 entityGenerator.generate(name, schema, schemaNames),

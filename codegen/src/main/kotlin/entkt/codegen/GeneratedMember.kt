@@ -137,3 +137,69 @@ internal class GeneratedMemberManifest(val schema: String) {
     /** Read-only view, for tests and diagnostics that want the full list. */
     fun snapshot(): List<GeneratedMember> = entries.toList()
 }
+
+/**
+ * Run the RFC 07 manifest + collision check across [schemas] and
+ * return every detected [MemberCollision]. Shared between
+ * [SchemaInspector.validate] and [EntGenerator.generate], with
+ * the two callers using different strictness modes via [strict].
+ *
+ * `strict = false` (default — used by [SchemaInspector.validate]):
+ * per-schema manifest-build failures are swallowed and the schema
+ * is skipped. The rationale is that the inspector's upstream
+ * per-schema passes (column / edge / index resolution) typically
+ * surface the root cause as its own diagnostic, and we don't want
+ * derivative manifest-builder failures drowning that signal in
+ * the result's errors list.
+ *
+ * `strict = true` (used by [EntGenerator.generate]): manifest-
+ * build failures propagate. The hard validation path must not
+ * silently skip collision checks for a schema — a manifest build
+ * that throws indicates either a codegen bug or a malformed schema
+ * that earlier validation didn't catch, and either should be a
+ * loud failure rather than a silent pass.
+ *
+ * In strict mode, `helperEligibleM2MEdges` is also allowed to
+ * propagate. A thrown call there would leave the `helperEligible`
+ * list empty, which would silently omit the per-edge M2M mutator
+ * properties from the update-builder manifest — hiding collisions
+ * between user-declared fields and the mutator properties (e.g.
+ * `val tags = string("tags")` on a schema with a
+ * `manyToMany<Tag>("tags")` through-link edge). Lenient mode keeps
+ * the fail-soft so the inspector doesn't drown out the upstream
+ * error that almost certainly caused the M2M-resolution throw.
+ */
+internal fun runMemberCollisionCheck(
+    schemas: List<SchemaInput>,
+    schemaNames: Map<entkt.schema.EntSchema, String>,
+    strict: Boolean = false,
+): List<MemberCollision> {
+    val collisions = mutableListOf<MemberCollision>()
+    for (input in schemas) {
+        val helperEligible = if (strict) {
+            // No try/catch: an M2M-resolution failure means we'd
+            // build an incomplete manifest and silently miss
+            // mutator-property collisions on the update builder.
+            helperEligibleM2MEdges(input.schema, schemaNames)
+        } else {
+            try {
+                helperEligibleM2MEdges(input.schema, schemaNames)
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+        val manifest = if (strict) {
+            // No try/catch: a manifest-build failure here is a real
+            // bug that the generator path must surface, not skip.
+            buildMemberManifest(input.name, input.schema, schemaNames, helperEligible)
+        } else {
+            try {
+                buildMemberManifest(input.name, input.schema, schemaNames, helperEligible)
+            } catch (e: Exception) {
+                continue
+            }
+        }
+        collisions.addAll(manifest.findCollisions())
+    }
+    return collisions
+}
