@@ -1,642 +1,398 @@
-# RFC: Soft Delete
+# RFC: Soft Delete Convention
 
 ## Status
 
-Possible future feature. This is not implemented. The
-[Read-Path Interceptors](../query/read-path-interceptors.md)
-framework hooks that this feature would build on **are**
-implemented — including the reserved `framework:` interceptor
-name prefix and the reserved `QueryFlag.withDeleted` /
-`QueryFlag.onlyDeleted` enum members — so this RFC can be
-specified concretely against the existing surface.
+Possible future feature. This is not implemented as a packaged
+convenience, but the pieces it should use already exist:
+
+- reusable schema mixins
+- per-entity read-path interceptors
+- predicate injection via `InterceptScope.addPredicate(...)`
+
+This RFC intentionally does **not** propose soft-delete-specific
+codegen.
 
 ## Summary
 
-Add schema support for soft-deleted entities where delete operations mark a
-row as deleted instead of removing it physically, with default reads silently
-filtering deleted rows everywhere and explicit opt-ins via `withDeleted()` /
-`onlyDeleted()` query-DSL methods.
+Soft delete should be a convention built from ordinary Ent
+features:
+
+1. A reusable mixin adds a normal nullable `deleted_at` timestamp.
+2. Applications soft-delete by updating that timestamp.
+3. Applications restore by clearing that timestamp.
+4. A per-entity query interceptor hides rows whose timestamp is
+   non-null.
+5. Generated `delete*` APIs keep their current meaning: physical
+   delete.
+
+If an application wants a shorthand API, it can add extension
+functions in its own codebase. The generated repo surface should
+not grow `softDelete*`, `restore*`, or `hardDelete*` methods.
 
 ## Motivation
 
-Many applications need to retain deleted rows for audit, restore, billing, or
-compliance workflows.
+Many applications need to retain rows for audit, undo, billing,
+or compliance workflows. Ent already has the primitives needed
+to model that:
 
-Soft delete should be generated consistently rather than implemented through
-ad hoc hooks in every project — and it should be implemented via the existing
-read-path interceptor mechanism, not as a bespoke special case in every
-driver.
+- normal fields for lifecycle state
+- normal update APIs for changing lifecycle state
+- read interceptors for default visibility rules
+
+Treating soft delete as a special generated schema capability
+creates unnecessary coupling. It also turns a simple visibility
+policy into a large codegen feature with bespoke builder,
+patch, hook, migration, uniqueness, and delete semantics.
+
+The framework should provide the small reusable pieces, then let
+applications decide whether and where to install them.
 
 ## Non-Goals
 
-- Do not enable soft delete by default.
-- Do not make soft-deleted rows visible unless callers opt in.
-- Do not replace hard delete for entities that need it.
-- Do not solve archival or retention policies in the first version.
+- Do not change the meaning of generated `delete*` APIs.
+- Do not generate `softDelete*`, `restore*`, or `hardDelete*`
+  APIs.
+- Do not add framework-only fields or hide `deletedAt` from
+  generated create/update builders.
+- Do not make soft delete automatic for every schema.
+- Do not automatically rewrite unique indexes as partial unique
+  indexes.
+- Do not solve archival, retention, purge scheduling, or legal
+  hold workflows.
 
-## Proposed Schema API
+## Schema Mixin
 
-Mixin opt-in:
-
-```kotlin
-override fun mixins() = listOf(softDelete())
-```
-
-Generated column on the entity table:
-
-```kotlin
-time("deleted_at").nullable()
-```
-
-The mixin installs a framework-owned read-path interceptor named
-`framework:soft-delete` at codegen time. The `framework:` prefix
-is reserved (applications can't register interceptors with that
-prefix — enforced at `EntClient` construction), so this name
-won't collide with anything user-defined.
-
-## Generated Query API
-
-Every read terminal (and every traversal / eager / edge-predicate
-step) routes through the interceptor framework today. The
-`framework:soft-delete` interceptor's contract per `QueryFlag`:
-
-| Flag set on the step | Effective filter |
-|---|---|
-| neither | `deleted_at IS NULL` (interceptor-added predicate; tagged INTERCEPTOR) |
-| `withDeleted` | no filter (interceptor is a no-op for this step) |
-| `onlyDeleted` | `deleted_at IS NOT NULL` |
-| both | construction-time error: the two flags are mutually exclusive |
-
-Flags are public members of the existing `QueryFlag` enum and
-attach to a step via DSL on the query builder (the
-`withDeleted()` / `onlyDeleted()` methods land with this RFC).
-Per the interceptors RFC, public flags **do not propagate
-across query steps** — each traversal / eager / edge-predicate
-step gets its own flag set, and the soft-delete interceptor
-reads `context.flags` per step.
-
-### Per-terminal behavior (with neither flag set)
-
-The interceptor framework already covers every documented read,
-so the behavior follows uniformly:
-
-| Terminal family | Soft-delete behavior |
-|---|---|
-| `allOrThrow` / `allOrError` / `visibleAll` / `visibleAllOrError` | excludes deleted rows |
-| `firstOrNull` / `firstOrThrow` / `firstOrError` / `firstVisibleOrNull` | excludes deleted rows |
-| `rawCount` / `rawCountOrError` / `visibleCount` / `visibleCountOrError` | counts non-deleted rows only |
-| `rawExists` / `rawExistsOrError` / `visibleExists` / `visibleExistsOrError` | true iff a non-deleted row matches |
-| `byIdOrNull` / `byIdOrThrow` / `byIdOrError` / `visibleByIdOrNull` | a soft-deleted row returns "not found" (the `deleted_at IS NULL` predicate ANDs with the structural `id = ?`) |
-| `queryX()` edge traversals | the source-step EXISTS subquery excludes soft-deleted source rows; the target-side terminal further excludes soft-deleted target rows |
-| `with{Edge}` eager loads | excludes soft-deleted target rows |
-| `Edge.has { ... }` / `Edge.hasWhere { ... }` predicates (1:1 / 1:N) | excludes soft-deleted target rows in the EXISTS subquery |
-
-The last row covers the read-path interceptors V1 surface for
-HasEdge / HasEdgeWith. **The M2M `has` / `hasWhere` path is a
-known V1 correctness gap** — the read-path interceptors RFC
-documents that `Predicate.HasM2MEdgeFrom` is not walked by the
-edge-predicate processor yet, so an M2M `has` block against a
-soft-deletable target entity (e.g. `Post.tags.has()` if `Tag`
-were soft-deletable) would NOT filter soft-deleted targets in
-V1. This RFC must either gate on closing that gap or ship with
-the explicit caveat:
-
-> **V1 gap.** M2M edge predicates (`SomeEntity.someM2MEdge.has { }`
-> / `.hasWhere { }`) bypass the soft-delete filter on the target.
-> The traversal form (`querySomeM2MEdge()`) honors it correctly.
-> Tracking with the Read-Path Interceptors RFC's known-gap note.
-
-### Opt-in DSL
+The framework can provide a small reusable mixin:
 
 ```kotlin
-client.posts.query { withDeleted() }.allOrThrow()
-client.posts.query { onlyDeleted() }.allOrThrow()
+class DeletedAt(scope: EntMixin.Scope) : EntMixin(scope) {
+    val deletedAt = time("deleted_at").nullable()
+}
 ```
 
-Both set the corresponding `QueryFlag` on the query builder's
-flags set. The flag is in scope only for that step (not
-inherited by `.queryX()` chains or `.with{Edge}` sub-blocks —
-each step opts in for itself).
-
-### By-id with deleted rows
-
-V1 has no `byIdOrNull(id) { withDeleted() }` shape because
-by-id terminals don't accept a flags block today. Callers who
-need to look up a soft-deleted row by id express it as a
-query:
+Usage:
 
 ```kotlin
-client.posts.query {
-    withDeleted()
-    where(Post.id eq deletedPostId)
-}.firstOrNull()
+class Post : EntSchema("posts") {
+    val softDelete = include(::DeletedAt)
+
+    val title = string("title")
+}
 ```
 
-A typed `byIdOrNull(id) { withDeleted() }` shape is a possible
-follow-up if the workaround proves common.
+`deletedAt` is a normal nullable timestamp field:
 
-## Generated Delete API
+- it appears on the generated entity
+- it appears on create/update builders
+- it appears in update privacy / validation patches
+- it participates in hooks exactly like any other mutable field
 
-> **Implementation status — `DELETE_CANDIDATES`.** Both the
-> `ReadOperation.DELETE_CANDIDATES` enum value and the routing
-> of `deleteMany` / `hardDeleteMany` candidate fetches through
-> `runReadInterceptors` are **spec-only** today. The shipped
-> runtime `ReadOperation` enum runs through `EAGER_LOAD` and
-> stops; generated `deleteMany(...)` still queries the driver
-> directly with `driver.query(TABLE, predicates.toList(),
-> emptyList(), null, null)`, no interceptor path. Both pieces
-> ship together with the rest of this soft-delete RFC's
-> implementation per the parallel callout in
-> [Read-Path Interceptors](../query/read-path-interceptors.md).
-> Every `DELETE_CANDIDATES` reference in the subsections below
-> (including `hardDeleteMany` and the "Test Requirements" list)
-> is spec text describing the target state, not shipped
-> behavior. This whole RFC is "not implemented" per the Status
-> line at the top of the file.
+That is intentional. Soft deletion is just an update to ordinary
+application state.
 
-For soft-deletable entities, the existing delete terminals
-(`deleteOrThrow(entity)`, `deleteOrError(entity)`,
-`deleteByIdOrError(id)`, `deleteMany(vararg predicates)`) turn
-into UPDATE-style soft-delete operations instead of DDL DELETE.
-These are the methods that exist today — the legacy
-Boolean-returning `delete(entity)` and `deleteById(id)` were
-removed by the Result Variants RFC (and the *OrError suffix is
-the path for any code that needs the "did anything change?"
-signal).
+## Soft Delete And Restore
 
-The on-the-wire SQL becomes:
+Applications soft-delete with the generated update API:
+
+```kotlin
+client.posts.update(postId) {
+    deletedAt = clock.instant()
+}.saveOrThrow()
+```
+
+Applications restore by clearing the timestamp:
+
+```kotlin
+unfilteredClient.posts.update(postId) {
+    deletedAt = null
+}.saveOrThrow()
+```
+
+**Restore should use an unfiltered client.** Technically,
+`update(id).save()`'s owner-row load routes through
+`driver.byId(...)` directly today — it does not pass through the
+read-interceptor chain, so `ExcludeDeleted` does **not** block
+restore writes through the filtered client. Restore "works" via
+the filtered client by accident.
+
+That accident is brittle: if the framework later routes the
+owner-row load through the interceptor chain (a reasonable
+consistency fix), filtered restore would silently break. The
+robust pattern is to reach for the unfiltered client for restore
+workflows — same shape applications already use for
+`Viewer.System`-elevated reads (see [Seeing Deleted Rows](#seeing-deleted-rows)).
+Restore is an "I know what I'm doing" path, and the unfiltered
+client is the natural affordance.
+
+The same caveat applies to non-id-form reads that *do* go through
+interceptors: `client.posts.query { where(...) }.firstOrNull()`
+on a soft-deleted row returns null through the filtered client.
+A restore workflow that looks up the target by anything other
+than primary key must use the unfiltered client.
+
+These operations run the existing update pipeline:
+
+- transaction requirement preflight
+- owner-row load
+- update hooks
+- UPDATE privacy
+- update validation
+- driver update
+
+There is no separate DELETE or RESTORE pipeline. If an
+application wants different authorization for soft delete,
+restore, or ordinary update, its update privacy / validation
+rules can inspect the requested/effective patch.
+
+## Physical Delete
+
+Generated `delete*` APIs retain their current behavior:
+
+```kotlin
+client.posts.deleteOrThrow(post)
+client.posts.deleteByIdOrError(postId)
+client.posts.deleteMany(Post.authorId eq authorId)
+```
+
+These physically delete rows. They do not set `deleted_at`.
+
+This preserves the existing mental model:
+
+- `update { deletedAt = now }` means soft delete
+- `update { deletedAt = null }` means restore
+- `delete(...)` means physical delete
+
+If an application wants names that make that policy harder to
+miss, it can add extension functions:
+
+```kotlin
+fun PostRepo.softDeleteByIdOrThrow(
+    id: Int,
+    now: Instant = Instant.now(),
+): Post =
+    update(id) {
+        deletedAt = now
+    }.saveOrThrow()
+
+fun PostRepo.restoreByIdOrThrow(id: Int): Post =
+    update(id) {
+        deletedAt = null
+    }.saveOrThrow()
+```
+
+Those helpers are application code, not generated framework API.
+
+## Query Interceptor
+
+The framework can provide a reusable per-entity interceptor that
+hides deleted rows:
+
+```kotlin
+class ExcludeDeleted<E : Any>(
+    private val column: String = "deleted_at",
+) : QueryInterceptor<E> {
+    override fun intercept(scope: InterceptScope<E>, context: QueryContext) {
+        scope.addPredicate(Predicate.Leaf(column, Op.IS_NULL, null))
+    }
+}
+```
+
+Registration uses the existing generated client interceptor DSL:
+
+```kotlin
+val client = EntClient(driver) {
+    interceptors {
+        posts(ExcludeDeleted<Post>(), name = "soft-delete")
+        comments(ExcludeDeleted<Comment>(), name = "soft-delete")
+    }
+}
+```
+
+The interceptor is per-entity because global interceptors cannot
+add typed predicates. A future helper may reduce boilerplate, but
+the underlying behavior is just normal per-entity interceptor
+registration.
+
+## Read Behavior
+
+For every read path where read interceptors already fire, the
+interceptor adds:
 
 ```sql
-UPDATE posts SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL
+deleted_at IS NULL
 ```
 
-The `?` for `deleted_at` is bound to an **application-generated
-`Instant.now()`** at the framework boundary (not the SQL `now()`
-function). Rationale: the value needs to be visible to the
-`afterDelete` hook on the entity it receives, without forcing
-either a Postgres-only `UPDATE ... RETURNING` round-trip or a
-follow-up `SELECT`. Generating the timestamp in Kotlin keeps
-the path driver-agnostic, makes test injection trivial (use
-`InstantSource` on `EntClient`), and matches how the rest of
-the codegen handles "framework-supplied default values."
+This includes the currently implemented read-interceptor
+coverage:
 
-The `AND deleted_at IS NULL` clause is what makes
-double-soft-delete observable — see the "already-deleted rows"
-subsection below.
+- root queries
+- first/all terminals
+- count/exists terminals
+- by-id reads that route through query code
+- eager-load subqueries
+- non-M2M edge predicates
+- edge traversals
+- `deleteMany` candidate selection, because it already runs
+  through `ReadOperation.DELETE_CANDIDATES`
 
-### Hook / privacy / validation pipeline
+The convention inherits existing read-interceptor limitations.
+In particular, any documented M2M path that does not currently
+walk target-entity interceptors will not magically gain
+soft-delete filtering from this RFC. Fixing that belongs to the
+read-path interceptor implementation, not to soft delete.
 
-The current hard-delete pipeline runs in this order (see
-`docs/07-validation.md` and `docs/05-hooks.md`):
+## `deleteMany`
 
-1. DELETE privacy
-2. delete validation
-3. `beforeDelete` hooks
-4. `driver.delete(...)`
-5. `afterDelete` hooks
+`deleteMany(...)` remains physical delete. Because its candidate
+selection already runs through read interceptors, a client with
+`ExcludeDeleted` installed physically deletes only rows that are
+visible through that client by default.
 
-Soft-delete must use the **same** pipeline: DELETE privacy
-governs, delete validation rules run, `beforeDelete` /
-`afterDelete` hooks fire around the UPDATE — to a caller
-calling `client.posts.deleteOrThrow(post)`, the difference
-between hard and soft delete is invisible at the API layer.
+That is consistent with other scoping interceptors: tenant
+interceptors also narrow bulk-delete candidates.
 
-The `afterDelete` hook receives the entity **with `deleted_at`
-populated** to the application-generated timestamp the UPDATE
-just bound. Codegen sets it via a `copy(deletedAt = now)` on
-the entity passed in.
+Applications that need to purge already-soft-deleted rows should
+use a client or code path without the `ExcludeDeleted`
+interceptor, or should write an explicit purge helper that uses
+the lower-level driver/admin path chosen by that application.
 
-UPDATE privacy, update validation, and update hooks do **NOT**
-fire on soft-delete. The operation is semantically a delete;
-running update rules would defeat the "delete is delete" mental
-model and would let an entity author block soft-deletion via an
-update-validation rule that has nothing to do with deletion.
+## Seeing Deleted Rows
 
-### Already-deleted rows
+V1 does not need a generated `withDeleted()` / `onlyDeleted()`
+query API.
 
-Calling `client.posts.deleteOrThrow(softDeletedPost)` is a
-no-op (the `AND deleted_at IS NULL` clause matches zero rows).
-The result-variants RFC treats `delete()` as idempotent — the
-"row already gone" outcome doesn't surface as an error in the
-existing hard-delete contract, and soft-delete follows the same
-rule:
+Applications have simple options:
 
-| Variant | Outcome on already-soft-deleted row |
-|---|---|
-| `deleteOrThrow(entity)` | returns Unit (matches the existing hard-delete contract for "row already gone" — no error) |
-| `deleteOrError(entity)` | `Ok(Unit)` |
-| `deleteByIdOrError(id)` | `Ok(false)` (same as the hard-delete contract for missing rows — see `entkt-result-variants-rfc.md` §"Delete APIs"; the existing `deleteByIdOrError(id): EntResult<Boolean>` returns `Ok(true)` when a row was deleted and `Ok(false)` when no row existed) |
+- use a normal filtered client for user-facing reads
+- use a separate unfiltered/admin client for workflows that need
+  deleted rows
+- register a custom interceptor that follows application-owned
+  conventions once the application has a generic way to signal
+  per-query intent
 
-Note the contrast with the hard-delete API: hard-delete's
-`Ok(false)` covers "no row physically exists." For soft-delete
-the same `Ok(false)` covers both "no row physically exists"
-AND "row exists but is already soft-deleted" — from the
-live-set perspective, both are "nothing to do" and the caller
-gets the same signal. Callers that need to distinguish "the
-row's been soft-deleted by someone else" from "this id was
-never assigned" should query for the row directly with
-`withDeleted()` before deleting.
+The runtime already has `QueryFlag.withDeleted` and
+`QueryFlag.onlyDeleted` enum members, but generated query builders
+do not currently expose generic flag-setting DSL. Wiring those
+flags can be a separate query ergonomics RFC. It is not required
+for the soft-delete convention.
 
-**No-op pipeline behavior.** DELETE privacy, delete validation,
-`beforeDelete`, and `afterDelete` do **NOT** fire when the target
-row is already soft-deleted — same rationale as `deleteMany`
-(DELETE rules typically inspect the entity's "current state,"
-which on a soft-deleted row is "already deleted"; running them on
-a no-op is wasteful and surprising). The framework detects the
-`deleted_at IS NOT NULL` state via the same internal load that the
-ID-based update-root pipeline already performs before hooks fire
-and short-circuits to the idempotent no-op result above. This
-mirrors the `restoreOrThrow(liveRow)` no-op contract specified
-elsewhere — both single-row "nothing to do" paths skip the full
-pipeline rather than running rules against a row whose state
-already matches the requested outcome.
-
-This keeps soft-delete API-compatible with hard-delete: code
-written against the result-variants contract works unchanged
-when an entity opts into the mixin.
-
-### `deleteMany`
-
-`deleteMany(vararg predicates)` builds its candidate set by
-running a query for matching rows, then per-entity-deletes each
-one. For soft-deletable entities V1 picks the following
-contract:
-
-1. **Candidate query runs through the full read-interceptor chain.**
-   `client.posts.deleteMany(Post.tenantId eq tenantId)` fetches
-   the candidate set by calling the same interceptor `apply(...)`
-   pipeline every other read uses, with
-   `QueryContext.operation = ReadOperation.DELETE_CANDIDATES`
-   (a new `ReadOperation` value introduced for this case in
-   [Read-Path Interceptors](../query/read-path-interceptors.md)).
-   This means the `framework:soft-delete` interceptor adds
-   `deleted_at IS NULL` to the candidate fetch by default, **and**
-   any application/global predicate-shaping interceptors (tenant
-   scoping, etc.) also apply uniformly — so `deleteMany` cannot
-   accidentally enumerate or delete rows that the tenant-scoped
-   read path would have hidden.
-
-   Soft-deleted rows are filtered out at the candidate-fetch step,
-   so the per-entity DELETE privacy / validation / hooks pipeline
-   does NOT fire on rows already in the deleted state. Running
-   delete hooks on rows that wouldn't have anything to do is
-   wasteful (privacy especially — DELETE privacy rules typically
-   inspect the entity's current state, which on a soft-deleted row
-   is "already deleted").
-
-   Limit operations on `DELETE_CANDIDATES` are silent no-ops to
-   avoid silently truncating a bulk delete (a
-   `MaxLimitInterceptor(maxLimit = 500)` should not turn
-   `deleteMany(...)` into "delete the first 500 matching rows"
-   without the caller knowing). `addPredicate`, `addAnnotation`,
-   and `reject` apply normally; an interceptor that wants to gate
-   broad deletes uses `addPredicate` to narrow scope or
-   `reject(...)` to refuse the candidate fetch.
-
-2. **No `deleteMany` flag-override in V1.** Callers who
-   need to act on already-soft-deleted rows must either load
-   them via a separate query (`client.posts.query {
-   onlyDeleted() }.allOrThrow()`) and feed the resulting ids
-   into `hardDelete*`, or wait for a future block-form API. A `deleteMany { withDeleted(); ... }`
-   variant is plausible if use cases emerge (re-deleting
-   already-soft-deleted rows for audit-trail reasons,
-   mass-purging via hard-delete-after-soft, etc.) but is not
-   part of the V1 surface.
-
-3. **Returned count is "rows newly soft-deleted by this
-   call."** Same shape as hard-delete's `deleteMany` Int
-   return — `count++` per matching row whose UPDATE actually
-   modified the row. Rows that race into the deleted state
-   between the candidate fetch and the per-row UPDATE
-   (`WHERE id = ? AND deleted_at IS NULL` matches zero
-   concurrently) silently don't count, mirroring the hard-delete
-   "row vanished concurrently" no-op.
-
-`hardDeleteMany`'s candidate query goes through the same
-`DELETE_CANDIDATES` interceptor chain as `deleteMany` — tenant
-scoping and other predicate-shaping interceptors all still apply,
-so a bulk hard-delete cannot escape read-side scoping that the
-soft-delete path respected. Per the
-[Read-Path Interceptors](../query/read-path-interceptors.md)
-limit-by-read-shape rules, limit operations on `DELETE_CANDIDATES`
-are silent no-ops, so a `MaxLimitInterceptor` does **not** clamp or
-truncate the bulk hard-delete; its `reject(...)` path (and any
-other interceptor's `reject(...)`) still fires. The framework
-`soft-delete` filter is the one interceptor suppressed:
-hardDeleteMany's candidate query does NOT add `deleted_at IS NULL`,
-so every matching row (live or soft-deleted) becomes a
-physical-delete candidate, and the count is rows actually deleted.
-
-### Hard delete
-
-A separate hard-delete API for the rare case where physical
-removal is required:
-
-```kotlin
-client.posts.hardDeleteOrThrow(post)
-client.posts.hardDeleteOrError(post)
-client.posts.hardDeleteByIdOrError(id)
-client.posts.hardDeleteMany(vararg predicates)
-```
-
-These bypass **only the framework `soft-delete` interceptor** (so
-`deleted_at IS NULL` is not added to whatever read the variant
-performs) and run as true DDL DELETE. They all share the same
-DELETE privacy / validation / hook pipeline as the soft-delete
-path, and their result-shape contract matches the result-variants
-RFC exactly (`Ok(false)` for missing rows, etc.). What changes
-between variants is **which read step the bypass attaches to**:
-
-- **`hardDeleteOrThrow(entity)` / `hardDeleteOrError(entity)`** —
-  the caller already holds the entity (loaded through some earlier
-  query whose interceptors fired at the load step, including any
-  application/global predicate-shaping interceptors). No new
-  candidate fetch is issued. The DELETE pipeline runs against the
-  already-loaded entity; the bypass is a no-op for these variants
-  because there is no read step to attach it to. Note that whatever
-  read originally loaded the entity DID respect every interceptor —
-  so a tenant-scoped read couldn't have produced an entity from
-  another tenant in the first place.
-- **`hardDeleteByIdOrError(id)`** — performs an internal `BY_ID`
-  load to populate the entity for the DELETE pipeline. That load
-  routes through interceptors with `context.operation == BY_ID`,
-  with the internal `bypassSoftDeleteFilter` capability set on the
-  query-spec plumbing so soft-deleted rows are reachable. Every
-  other interceptor (tenant scoping, etc.) still fires; cross-tenant
-  rows return `Ok(false)` exactly like a tenant read of the same id
-  would have returned not-found.
-- **`hardDeleteMany(vararg predicates)`** — performs the candidate
-  fetch routed through interceptors with
-  `context.operation == DELETE_CANDIDATES`, again with the internal
-  `bypassSoftDeleteFilter` capability set on the query-spec
-  plumbing. Predicate-shaping interceptors fire; limit operations
-  are silent no-ops per the
-  [Read-Path Interceptors](../query/read-path-interceptors.md)
-  limit-by-read-shape rules (a `MaxLimitInterceptor` cannot clamp a
-  bulk hard-delete to N rows, though its `reject(...)` path still
-  fires).
-
-Mechanically, both `hardDeleteByIdOrError` and `hardDeleteMany` set
-the `bypassSoftDeleteFilter` internal capability
-(package-private query-spec plumbing — **not** part of the public
-`QueryContext` surface, so application code cannot read or set it)
-that **only** the generated `soft-delete` interceptor honors —
-exactly parallel to the `internalSystemQuery` opt-in model in
-[Read-Path Interceptors](../query/read-path-interceptors.md). No
-application interceptor can opt into the bypass. The entity-form
-variants don't issue an internal read, so they don't need the
-flag — their soft-delete bypass is structural: a `DELETE WHERE id
-= ?` without `AND deleted_at IS NULL` deletes whatever row is
-there. No "legacy" `hardDelete(entity)` / `hardDeleteById(id)`
-Boolean variants — symmetric with the soft-delete surface and
-consistent with the result-variants RFC's removal of those names.
-
-A schema can opt out of hard-delete by overriding a mixin flag
-(`softDelete(allowHard = false)` — the default is `true` because
-GDPR-style purges are real). When `allowHard = false`, codegen
-omits the `hardDelete*` family.
-
-### Restore
-
-```kotlin
-client.posts.restoreOrThrow(deletedPost)
-client.posts.restoreOrError(deletedPost)
-client.posts.restoreByIdOrError(id)
-```
-
-Restore sets `deleted_at = null`. The on-the-wire SQL becomes:
-
-```sql
-UPDATE posts SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL
-```
-
-It runs through the **UPDATE** pipeline (UPDATE privacy, update
-validation, update hooks) since the operation is semantically
-un-deleting an entity back into the live working set — an
-entity author's update validation rules (e.g. "title must be ≥
-3 chars") apply to the row coming back into normal circulation.
-
-The `afterUpdate` hook receives the entity with `deleted_at = null`.
-
-| Variant | Outcome on row that isn't currently soft-deleted |
-|---|---|
-| `restoreOrThrow(entity)` | returns Unit (no-op, mirroring deleteOrThrow on already-deleted) |
-| `restoreOrError(entity)` | `Ok(Unit)` |
-| `restoreByIdOrError(id)` | `Ok(false)` (mirroring deleteByIdOrError on missing — same signal whether the id is unassigned or the row is already live) |
-
-**No-op pipeline behavior.** When the row is already live, the
-restore is a no-op (the `WHERE deleted_at IS NOT NULL` clause
-matches zero rows). UPDATE privacy / update validation /
-`beforeUpdate` / `afterUpdate` **do NOT fire on the no-op
-path** — the framework probes for the row's current state
-first and short-circuits the pipeline before any hook runs.
-Same shape as `deleteOrThrow` on an already-soft-deleted row:
-no observable change → no hook firing. This avoids running an
-entity author's update validation rule (e.g. "title must be ≥
-3 chars") against a row that's already in the target state.
-
-For the `restoreByIdOrError(id)` variant, the same short-
-circuit applies: a missing id returns `Ok(false)` without
-running any pipeline, an already-live row returns `Ok(false)`
-without running the update pipeline.
-
-Restore conflicts with active uniqueness constraints are
-discussed in [Uniqueness](#uniqueness) below.
+**Deferring per-query opt-out is safe.** Adding `withDeleted()` /
+`onlyDeleted()` DSL later is purely additive: it doesn't reshape
+the `ExcludeDeleted` interceptor or change any of the call-site
+patterns this RFC ships. Applications that adopt the two-client
+pattern now keep working unchanged when the per-query DSL lands,
+and can migrate selectively where the per-query shape reads
+better. The design does not paint itself into a corner by
+deferring.
 
 ## Uniqueness
 
-Soft delete forces a choice between two uniqueness semantics:
+The framework should not automatically rewrite unique indexes.
 
-- **Global uniqueness** — the unique index covers every row,
-  deleted or not. A unique `email` column then prevents you from
-  ever re-creating an entity with the email of a soft-deleted
-  one, and restore is always conflict-free.
-- **Live-row uniqueness** — the unique index is partial,
-  scoped to non-deleted rows only. A unique `email` allows
-  re-creating an entity with a soft-deleted user's email
-  (because that older row is "not really there" from the
-  application's perspective), and **restore can conflict** with
-  a newer live row holding the same email.
+If an application wants uniqueness only among live rows, it
+declares the partial unique index itself:
 
-V1 chooses **live-row uniqueness** as the default for
-soft-deletable entities, because:
+```kotlin
+val byEmailLive = index("idx_users_email_live", email)
+    .unique()
+    .where("deleted_at IS NULL")
+```
 
-- The whole point of soft delete is "this row is no longer
-  observable to the application," and a unique constraint that
-  keeps blocking new writes against an invisible row violates
-  that contract.
-- Re-creating an account / category / tag with the email or
-  name of an old soft-deleted row is a very common operational
-  pattern; global uniqueness makes it impossible without
-  hard-deleting first.
+If it wants global uniqueness across live and deleted rows, it
+uses the normal unconditional unique index.
 
-### Migration changes
+This keeps the behavior explicit and avoids hidden migration
+rewrites.
 
-The codegen-side migration layer already supports partial
-unique indexes via
-`NormalizedIndex(columns, unique = true, where = "deleted_at IS NULL")`
-(see `migrations/src/main/kotlin/entkt/migrations/NormalizedSchema.kt`),
-and Postgres renders the WHERE clause correctly
-(`postgres/src/main/kotlin/entkt/postgres/PostgresSqlRenderer.kt`).
+## Migration Notes
 
-For a soft-deletable entity, the mixin rewrites every declared
-unique index (single-column `.unique()` constraints AND composite
-`.index(... , unique = true)` constraints) to add
-`where = "deleted_at IS NULL"`. Non-unique indexes are
-unaffected.
+Moving an existing table to this convention is ordinary schema
+work:
 
-**Single-column `.unique()` metadata rewrite.** `ColumnMetadata.unique`
-is a bare `Boolean` with no `where` slot, and `PostgresDriver`'s
-`createIndexesSql` emits an unconditional `CREATE UNIQUE INDEX` for any
-column with `unique = true`. To make the partial-unique guarantee
-representable, schema finalization for a soft-deletable entity must:
+1. Add a nullable `deleted_at` column.
+2. Install the query interceptor on clients that should hide
+   deleted rows.
+3. Add or change partial unique indexes manually if the
+   application wants live-row-only uniqueness.
+4. Backfill `deleted_at` only if the application already has
+   historical deletion state to preserve.
 
-1. **Clear `ColumnMetadata.unique`** for every column that declared a
-   bare `.unique()`. The column-level boolean no longer participates in
-   DDL emission for soft-deletable entities.
-2. **Synthesize an `IndexMetadata`** equivalent to the cleared
-   constraint, with the partial-unique predicate baked in:
-   ```kotlin
-   IndexMetadata(
-       name = "idx_${table}_${columnName}_unique",
-       columns = listOf(columnName),
-       unique = true,
-       where = "deleted_at IS NULL",
-   )
-   ```
+No generated migration rewrite is part of this RFC.
 
-This routes all live-row uniqueness through the index path (which has a
-`where` field), so no DDL surface emits an unconditional global unique
-constraint for a soft-deletable entity. Composite
-`.index(..., unique = true)` already goes through `IndexMetadata`, so
-only the `where` field needs to be set there — no metadata rewrite is
-needed for the composite case beyond predicate injection.
+## Privacy, Hooks, And Validation
 
-Migrating an existing table from hard-delete to soft-delete
-produces a migration that drops + recreates each unique index
-as a partial unique index. The migration RFC's existing
-add/drop sequencing covers this.
+Soft delete and restore are updates. They use existing update
+privacy, update validation, and update hooks.
 
-### Restore conflicts
+Physical delete remains delete. It uses existing delete privacy,
+delete validation, and delete hooks.
 
-When restoring a row would violate a partial unique constraint
-(another live row already has the same value), the restore
-fails with the constraint violation surface used everywhere
-else:
-
-| Variant | Outcome on restore conflict |
-|---|---|
-| `restoreOrThrow(entity)` | throws `EntConstraintViolationException` |
-| `restoreOrError(entity)` | `Err(ConstraintViolation)` |
-| `restoreByIdOrError(id)` | `Err(ConstraintViolation)` |
-
-Callers that want global uniqueness can opt out of the partial-
-index rewrite with `softDelete(uniqueness = Uniqueness.Global)`
-— restore is then conflict-free but re-creation with old keys
-is blocked.
-
-## Privacy Behavior
-
-DELETE privacy governs `delete(...)` (the soft-delete path) and
-`hardDelete(...)` (the hard-delete path) — neither needs special
-privacy treatment since both are semantically deletes from the
-caller's perspective.
-
-UPDATE privacy governs `restore(...)`, since the operation
-materializes a row back into the live working set and is closer
-to "update this row's lifecycle state" than "create a new
-entity." A `RESTORE` privacy operation could replace this in a
-follow-up if the use case for separate restore-vs-update
-authorization emerges (e.g. compliance workflows where only
-specific roles can restore but not edit).
+The framework does not invent separate lifecycle operations for
+soft delete. Applications that need policy distinctions can
+encode them in update rules by checking whether `deletedAt` is
+being set or cleared.
 
 ## Test Requirements
 
-Before implementation, add tests for:
+Before packaging the convention, add focused tests for:
 
-- default queries (every terminal in the table above) exclude
-  deleted rows
-- `withDeleted()` makes the corresponding terminal include
-  deleted rows
-- `onlyDeleted()` makes the corresponding terminal return only
-  deleted rows
-- both flags on the same step → construction-time error
-- `deleteOrThrow(entity)` sets `deleted_at` to an application-
-  generated `Instant.now()` and runs the delete pipeline
-  (DELETE privacy / delete validation / `beforeDelete` /
-  `afterDelete` hooks) — NOT update pipeline
-- `afterDelete` hook receives the entity with `deleted_at`
-  populated to the bound timestamp (no `RETURNING` round-trip
-  needed)
-- `deleteOrThrow(entity)` on an already-soft-deleted row is a
-  silent no-op (no `EntNoChangesException`), matching the
-  hard-delete idempotency contract
-- `deleteByIdOrError(id)` returns `Ok(true)` on a successful
-  soft-delete, `Ok(false)` for both missing ids and already-
-  soft-deleted rows (matches the hard-delete
-  `EntResult<Boolean>` contract)
-- `InstantSource` on `EntClient` overrides the `deleted_at`
-  timestamp source (test injection)
-- hard delete remains possible only through the explicit
-  `hardDelete*` API (no `hardDelete(entity)` / `hardDeleteById(id)`
-  Boolean variants — symmetric with the post-result-variants
-  delete surface)
-- partial unique indexes are generated for soft-deletable
-  entities (single-column `.unique()` and composite
-  `index(unique = true)`)
-- migration from hard-delete to soft-delete drops + recreates
-  unique indexes as partial
-- restore that would violate a partial-unique constraint
-  surfaces as `Err(ConstraintViolation)` / throws
-  `EntConstraintViolationException` (**Postgres-only** — see
-  "Driver coverage" below)
-- `restoreOrThrow(entity)` on an already-live row is a no-op:
-  UPDATE privacy / update validation / `beforeUpdate` /
-  `afterUpdate` do NOT fire (short-circuited before pipeline)
-- `restoreByIdOrError(id)` returns `Ok(false)` for both
-  missing ids and already-live rows, no pipeline runs in
-  either case
-- `deleteMany(vararg predicates)` skips already-soft-deleted
-  rows at candidate-fetch (no delete pipeline runs for them);
-  the returned count is "rows newly soft-deleted by this call"
-- `hardDeleteMany(vararg predicates)` does NOT filter
-  `deleted_at` — both live and soft-deleted matches are
-  physically removed
-- `hardDeleteByIdOrError(foreignTenantId)` returns `Ok(false)`
-  — the tenant interceptor still applies on the internal `BY_ID`
-  load; the `bypassSoftDeleteFilter` capability suppresses only
-  the framework soft-delete filter, not tenant scoping
-- `hardDeleteMany` honors application-defined `addPredicate`
-  interceptors on the `DELETE_CANDIDATES` candidate fetch (only
-  soft-delete filtering is suppressed)
-- `hardDeleteMany` interceptor `reject(...)` surfaces as
-  `Err(QueryRejected)` / throws `EntQueryRejectedException`
-  (covers both application-defined `QueryInterceptor<E>.reject`
-  and `MaxLimitInterceptor.reject` since limit clamping is a
-  silent no-op on `DELETE_CANDIDATES` but `reject(...)` still
-  fires)
-- `deleteOrThrow(softDeletedPost)` / `deleteOrError(softDeletedPost)`
-  on an already-soft-deleted row is a no-op: DELETE privacy /
-  delete validation / `beforeDelete` / `afterDelete` do NOT fire
-  (short-circuited before pipeline) — parallel to the
-  `restoreOrThrow(liveRow)` no-op contract
-- `deleteByIdOrError(softDeletedId)` returns `Ok(false)` (or the
-  variant's documented absence shape) with no pipeline run —
-  same short-circuit as `restoreByIdOrError` on an already-live
-  row
-- eager-load (`with{Edge}`) on a soft-deletable target
-  excludes deleted target rows
-- non-M2M edge predicates (`SomeEdge.has { }` /
-  `.hasWhere { }`) exclude soft-deleted target rows in the
-  EXISTS subquery
-- **regression test for the M2M known gap** asserting current
-  behavior, with a TODO comment pointing at the Read-Path
-  Interceptors RFC's M2M-walking follow-up; flip when that
-  ships
+- `DeletedAt` mixin adds a nullable `deleted_at` field and the
+  generated entity exposes `deletedAt`
+- generated create/update builders treat `deletedAt` like a
+  normal mutable nullable timestamp field
+- `ExcludeDeleted` appends `Predicate.Leaf("deleted_at",
+  Op.IS_NULL, null)`
+- a client with the interceptor installed excludes rows with
+  non-null `deleted_at` from ordinary reads
+- eager-load and non-M2M edge predicate reads inherit the filter
+  through existing read-interceptor coverage
+- documented M2M gaps remain documented regression tests until
+  read-path interceptors close them
+- `update { deletedAt = now }` runs the update pipeline, not the
+  delete pipeline
+- `update { deletedAt = null }` runs the update pipeline
+- `deleteOrThrow` / `deleteByIdOrError` still physically delete
+  rows
+- `deleteMany` on a filtered client physically deletes only
+  visible candidates
+- an unfiltered/admin client can read rows whose `deleted_at` is
+  non-null
 
-**Driver coverage.** All test bullets above run on `PostgresDriver`
-via Testcontainers. Partial-unique-index behavior
-(`IndexMetadata.where`, used for the `deleted_at IS NULL` index
-backing the restore-conflict bullet) is a Postgres-side SQL string;
-verifying it requires a real database, which the Postgres-backed
-test suite provides.
+## Implementation Shape
+
+The implementation should be small:
+
+1. Add the `DeletedAt` mixin.
+2. Add the reusable `ExcludeDeleted` interceptor helper.
+3. Add docs showing client registration and extension-function
+   examples.
+4. Add the focused tests above.
+
+Do not add soft-delete recognition to codegen. Do not add
+framework-only fields. Do not change generated delete semantics.
+
+## Naming Decisions
+
+These names are picked deliberately; future readers should not
+relitigate them without new motivation.
+
+- **`DeletedAt`** for the mixin (vs `SoftDeleteFields`, `Deletable`).
+  Names the field it declares, mirroring how `Timestamps` declares
+  `createdAt` / `updatedAt`. Doesn't lie about what the type
+  *is* — it's a field bundle, not a capability tag.
+  `Deletable` overstates (every entity can be deleted);
+  `SoftDeleteFields` is clunky and the "Fields" plural is
+  misleading since there's one.
+- **`ExcludeDeleted`** for the interceptor (vs `HideDeleted`,
+  `LiveRowsOnly`). Names the behavior the interceptor performs
+  (predicate-shaping: it *excludes*). Matches existing helpers
+  named for what they do (e.g. `MaxLimitInterceptor`), not the
+  resulting state. `LiveRowsOnly` reads nicely at the call site
+  but doesn't say what "live" means and breaks down when the
+  same helper is reused for `archived_at` etc.
+- **`column: String = "deleted_at"` default.** The companion
+  `DeletedAt` mixin uses exactly that column name, so the
+  canonical pairing is zero-argument. A wrong column name fails
+  loudly (driver throws on an unknown column), so default-naming
+  doesn't create silent-mis-filter risk. Requiring the column at
+  every registration would be friction without safety.
