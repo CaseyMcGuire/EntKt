@@ -687,8 +687,20 @@ internal class ClientGenerator(
 
         val builder = TypeSpec.classBuilder(interceptorsClass)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            // `config` is the raw `EntInterceptorsConfig` that holds
+            // the per-entity and global interceptor lists. Marked
+            // `@EntktInternal internal` so application code in the
+            // `interceptors { ... }` block can't reach it as
+            // `config.addEntity("posts", ..., QueryInterceptor<User> { ... })`
+            // and bypass the typed DSL — `addEntity` itself is also
+            // `@EntktInternal` (defense in depth). The typed helper
+            // methods below (`posts(...)`, `users(...)`, `global(...)`)
+            // live in the generated EntClient.kt file which carries
+            // `@file:OptIn(EntktInternal::class)`, so the call sites
+            // here compile cleanly.
             .addProperty(
                 PropertySpec.builder("config", ENT_INTERCEPTORS_CONFIG)
+                    .addAnnotation(ClassName("entkt.query", "EntktInternal"))
                     .addModifiers(KModifier.INTERNAL)
                     .initializer("%T()", ENT_INTERCEPTORS_CONFIG)
                     .build()

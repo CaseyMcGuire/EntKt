@@ -171,6 +171,30 @@ class PhantomScopeCompileFailTest {
     }
 
     @Test
+    fun `methods marked @EntktInternal require OptIn to call`() {
+        // Mirrors the property-level test below. This pins the
+        // method-level @EntktInternal contract that runtime's
+        // EntInterceptorsConfig relies on to gate `addEntity` /
+        // `entityInterceptorsFor` / `addGlobal` / `globals` (the
+        // raw string-keyed registration + unchecked-cast lookup
+        // pair that the typed `EntClientInterceptors` DSL would
+        // otherwise enforce). Imports from `:runtime` aren't
+        // reachable from `:schema`'s test classpath, but the
+        // annotation behavior is identical to the local stub
+        // used here.
+        val result = compile("""
+            class FakeConfig {
+                @EntktInternal
+                fun addEntity(scopeKey: String, name: String) {}
+            }
+            fun bad(c: FakeConfig) {
+                c.addEntity("posts", "x")
+            }
+        """.trimIndent())
+        assertCompileError(result, "Internal entkt construction site")
+    }
+
+    @Test
     fun `properties marked @EntktInternal require OptIn to read or write`() {
         // The generated EntClient marks its `entityInterceptors`
         // property `@EntktInternal internal var` so application code

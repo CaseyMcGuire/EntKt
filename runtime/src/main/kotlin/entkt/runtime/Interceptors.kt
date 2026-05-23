@@ -326,7 +326,18 @@ public class EntInterceptorsConfig public constructor() {
      * generated DSL passes the entity's repo property name like
      * `"posts"`). Generated DSL calls this from per-entity helper
      * methods.
+     *
+     * `@EntktInternal` because the pairing between [scopeKey] (a
+     * raw string) and the interceptor's `E` type parameter is the
+     * typed-scope soundness boundary: register
+     * `QueryInterceptor<User>` under `"posts"` and the cast in
+     * [entityInterceptorsFor] silently produces a wrong-entity
+     * interceptor at lookup time. The generated typed DSL
+     * (`interceptors { posts(...) }`) pairs them correctly and
+     * opts in once at file scope. Application code calling this
+     * directly must accept the soundness invariant.
      */
+    @entkt.query.EntktInternal
     public fun <E : Any> addEntity(
         scopeKey: String,
         name: String,
@@ -340,6 +351,15 @@ public class EntInterceptorsConfig public constructor() {
         list.add(RegisteredInterceptor(name, interceptor))
     }
 
+    /**
+     * Add a global interceptor.
+     *
+     * `@EntktInternal` for symmetry with [addEntity]. Application
+     * code goes through the typed DSL
+     * (`interceptors { global(...) }`); direct calls take the
+     * raw-registration opt-in.
+     */
+    @entkt.query.EntktInternal
     public fun addGlobal(name: String, interceptor: GlobalQueryInterceptor) {
         validateApplicationName(name, "global")
         require(globalsList.none { it.name == name }) {
@@ -348,12 +368,20 @@ public class EntInterceptorsConfig public constructor() {
         globalsList.add(RegisteredGlobalInterceptor(name, interceptor))
     }
 
-    /** Used by the generated EntClient init block to populate per-repo lists. */
+    /**
+     * Used by the generated EntClient init block to populate
+     * per-repo lists. The unchecked cast here is the other half
+     * of the soundness boundary established at [addEntity];
+     * `@EntktInternal` keeps it off the application-callable
+     * surface.
+     */
+    @entkt.query.EntktInternal
     @Suppress("UNCHECKED_CAST")
     public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<E>> =
         (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<E>>
 
     /** Used by the generated EntClient init block to populate the global list. */
+    @entkt.query.EntktInternal
     public fun globals(): List<RegisteredGlobalInterceptor> = globalsList.toList()
 
     private fun validateApplicationName(name: String, scope: String) {

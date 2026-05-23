@@ -1,3 +1,14 @@
+// Runtime contract tests for `EntInterceptorsConfig` exercise the
+// raw `addEntity` / `addGlobal` / `entityInterceptorsFor` /
+// `globals` methods directly. Those methods carry `@EntktInternal`
+// because the string-keyed `scopeKey` pairing + the unchecked cast
+// in `entityInterceptorsFor` form the soundness boundary that the
+// typed `EntClientInterceptors` DSL would otherwise enforce. This
+// test file opts in once at the file header — same pattern as the
+// driver tests that fabricate edge predicates to exercise SQL
+// rendering.
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.runtime
 
 import kotlin.test.Test
