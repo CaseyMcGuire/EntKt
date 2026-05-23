@@ -2,11 +2,8 @@
 
 ## Status
 
-Partially implemented. The schema-side write-model marker (`throughLink` /
-`throughEntity`) and the static validation rules described in this RFC landed,
-but the original "default reverse-edge synthesis" behavior was reverted in
-favor of an explicit, no-synthesis model — see the "Auto-synthesized
-user-facing reverse traversal API" deferred item below for the rationale.
+Implemented as the core many-to-many schema modeling baseline.
+
 Specifically implemented:
 
 - `manyToMany<Target>(...).throughLink<Junction>(sourceEdge, targetEdge)` and
@@ -40,25 +37,12 @@ Specifically implemented:
   strategies, and missing / partial / wrong-order unique composite indexes
   are all rejected with a message naming the failing rule.
 
-Deferred to a future RFC (or to the link-table-helpers RFC #5):
+Follow-up work was extracted into focused RFCs:
 
-- The actual `throughLink` direct-helper method generation (`tags.add(...)`,
-  `tags.remove(...)`, `tags.set(...)`) — RFC #5 covers the API shape; the
-  generator implementation is not yet in this repo.
-- Auto-synthesized user-facing reverse traversal API. The RFC text
-  ("By default, a `throughEntity(...)` declaration synthesizes a
-  read-only reverse traversal edge on the opposite-side schema") was
-  briefly implemented but reverted in favor of the explicit
-  pair-swapped declaration pattern. A future revision could revisit
-  the auto-synthesis design (with a non-mechanical naming scheme and
-  opt-in surfacing) if the explicit pattern proves too ceremonious in
-  practice.
-- Junction `belongsTo` nullable-FK traversal semantics for `throughEntity`
-  (inner-join skip-null behavior described under "Traversal semantics with
-  nullable junction FKs"); the runtime currently treats nullable junction
-  FKs the same as non-null ones until the link-table helpers spec lands.
+- [Through-Entity Nullable M2M Traversal](../../possible-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+- [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
 
-Split out from [Edge Mutation API](00-overview.md).
+Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
 
 ## Summary
 
@@ -122,8 +106,9 @@ type rather than an enum + nullable disambiguation fields. A sealed
 model makes downstream codegen branching exhaustive (a future variant
 can't be silently skipped), drops the "always populated in practice
 but typed nullable" footgun on `sourceEdge` / `targetEdge`, and leaves
-the door open for additional variants like `LinkTableInverse` (see the
-read-only reverse-traversal design in "Future Enhancements") without
+the door open for additional variants like `LinkTableInverse` (see
+[Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md))
+without
 needing to add another enum case and another nullable-discriminator
 field on `Through`:
 
@@ -249,7 +234,7 @@ forward-traversal mechanism that lets queries work without it). For
 `throughLink(...)` specifically, callers that need reverse traversal in
 V1 query the junction schema directly; an opt-in marker for read-only
 reverse traversal of link-table relationships is sketched in
-"Future Enhancements".
+[Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md).
 
 Codegen must reject an explicit opposite-side `throughLink(...)` declaration
 that resolves to the same **canonical relationship identity** in V1 —
@@ -652,7 +637,7 @@ only when:
   rows, so the helper's "the relationship set equals the requested
   set" guarantee is scoped to interleavings among generated M2M
   helpers, not against endpoint cascades. See
-  [Link-Table M2M Mutation Helpers — Target Loading And Existence](../../implemented-features/edge-mutation/05-link-table-helpers.md)
+  [Link-Table M2M Mutation Helpers — Target Loading And Existence](05-link-table-helpers.md)
   for the full discussion.
 
   **Note on "explicit".** Codegen reads
@@ -758,9 +743,9 @@ direct-driver path.
 - [To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
   defines required-by-default `belongsTo(...)`, which this RFC relies on for
   non-null junction FK semantics.
-- [Link-Table M2M Mutation Helpers](../../implemented-features/edge-mutation/05-link-table-helpers.md) defines
+- [Link-Table M2M Mutation Helpers](05-link-table-helpers.md) defines
   the generated helper APIs for safe `throughLink(...)` edges.
-- [Transaction And Locking Semantics](../../implemented-features/edge-mutation/04-transaction-locking-semantics.md)
+- [Transaction And Locking Semantics](04-transaction-locking-semantics.md)
   defines the transaction and serialization requirements those helpers need.
 
 ## Rollout Plan
@@ -784,8 +769,9 @@ direct-driver path.
    of write model (see "Write Orientation" → "No reverse-edge synthesis").
    Bidirectional traversal requires the opposite-side schema to declare
    its own pair-swapped `throughEntity(...)`. Reverse traversal for
-   `throughLink(...)` is deferred to a follow-up `throughLinkInverse(...)`
-   design.
+  `throughLink(...)` is covered by the follow-up
+  [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
+  design.
 5. Keep through-entity edges repo-only for write paths. Forward query
    traversal lowers to `Predicate.HasM2MEdgeFrom` against the source
    schema's forward-edge metadata, so no target-side reverse entry is
@@ -953,40 +939,14 @@ Before implementation, add tests for:
   (a hook, a privacy rule, a validation rule, a default) and assert
   none of them fire on a `throughLink(...)` helper write
 
-## Future Enhancements
+## Extracted Follow-Ups
 
-- **Read-only reverse traversal via an explicit marker.** V1 omits the
-  reverse traversal edge for `throughLink(...)` relationships entirely.
-  The eventual design is a third M2M DSL marker — working name
-  `throughLinkInverse(...)` — that the opposite-side schema declares
-  explicitly to opt into traversal, eager loading, and predicate
-  handles for the reverse direction. The marker generates no
-  `add(...)` / `remove(...)` / `set(...)` helpers, so the write
-  orientation stays unambiguous. Sketch:
+The old future-enhancement notes are now split into smaller possible-feature
+RFCs:
 
-  ```kotlin
-  class Post : EntSchema("posts") {
-      val tags = manyToMany<Tag>("tags")
-          .throughLink<PostTag>(PostTag::post, PostTag::tag)
-  }
+- [Through-Entity Nullable M2M Traversal](../../possible-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+- [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
 
-  class Tag : EntSchema("tags") {
-      val posts = manyToMany<Post>("posts")
-          .throughLinkInverse(Post::tags)   // read-only reverse
-  }
-  ```
-
-  Conflict rules: declaring both an explicit reverse `throughLink(...)`
-  *and* a `throughLinkInverse(...)` for the same junction is rejected;
-  declaring `throughLinkInverse(...)` without the corresponding write
-  orientation `throughLink(...)` is rejected; the inverse marker
-  inherits all relationship metadata from the write side. Migration
-  from V1 is purely additive — V1 callers gain reverse traversal by
-  declaring the marker; existing schemas continue to work unchanged.
-
-- **Bidirectional link-table write helpers** could be added later if the
-  schema DSL gains a concrete read-only/write-orientation marker or the
-  driver/runtime gains a canonical edge-lock model. Any design must
-  ensure helpers from both endpoint directions serialize on the same
-  canonical relationship identity so exact `set(...)` semantics cannot
-  race with reverse-direction `add(...)`, `remove(...)`, or `set(...)`.
+Bidirectional link-table write helpers remain intentionally out of scope. Any
+future design would need a canonical write-orientation and locking model so
+exact `set(...)` semantics cannot race with reverse-direction helpers.

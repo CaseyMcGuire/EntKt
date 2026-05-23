@@ -20,8 +20,11 @@ Implemented RFCs have moved to the
 - [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
-- [To-One FK Mutation And Nullability](edge-mutation/02-to-one-assignment-nullability.md)
-- [Many-To-Many Schema Modeling](edge-mutation/03-m2m-schema-modeling.md)
+- [Field-Backed FK Declaration Names](edge-mutation/06-field-backed-fk-declaration-names.md)
+- [Generated Member Name Collisions](edge-mutation/07-generated-member-name-collisions.md)
+- [Create Hook Mutation View Adapter](edge-mutation/08-create-hook-mutation-view-adapter.md)
+- [Through-Entity Nullable M2M Traversal](edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+- [Through-Link Inverse Read Traversal](edge-mutation/10-through-link-inverse-read-traversal.md)
 - [Mutation Actions](mutation/mutation-actions.md)
 - [Transactional Graph Changesets](mutation/transactional-graph-changesets.md)
 

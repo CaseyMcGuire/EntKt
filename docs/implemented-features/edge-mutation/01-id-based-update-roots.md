@@ -472,7 +472,7 @@ payload is valid, but no state transition will be persisted.
 
 ## Relationship To Other RFCs
 
-[To-One FK Mutation And Nullability](../../possible-features/edge-mutation/02-to-one-assignment-nullability.md)
+[To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
 defines to-one resolved FK mutation semantics. This RFC defines the
 owner-row update root that those FK writes run inside.
 

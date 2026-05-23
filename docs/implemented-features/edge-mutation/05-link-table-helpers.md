@@ -92,7 +92,7 @@ Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-over
 Generate collection-style mutation helpers for helper-eligible `throughLink(...)`
 many-to-many edges. The public API is **id-only**, mirroring the to-one
 FK philosophy from
-[To-One FK Mutation And Nullability](../../possible-features/edge-mutation/02-to-one-assignment-nullability.md)
+[To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
 (`belongsTo` writes go through `authorId = alice.id`, not `author = alice`):
 
 - `tags.add(tagId)`
@@ -117,7 +117,7 @@ privacy/validation candidate shape, target loading semantics, edge-only update
 return state, and create-time deferral.
 
 The schema marker and link-table eligibility rules live in
-[Many-To-Many Schema Modeling](../../possible-features/edge-mutation/03-m2m-schema-modeling.md). Transaction
+[Many-To-Many Schema Modeling](03-m2m-schema-modeling.md). Transaction
 and locking requirements live in
 [Transaction And Locking Semantics](04-transaction-locking-semantics.md).
 
@@ -177,7 +177,7 @@ reading or mutating junction rows. After the generated junction writes complete
 inside that serialized section, the relationship set equals the requested set
 **among generated M2M helpers**. Endpoint deletes are not part of that
 discipline — they cascade through the junction FK (`OnDelete.CASCADE`, required
-by [Many-To-Many Schema Modeling](../../possible-features/edge-mutation/03-m2m-schema-modeling.md)) and can interleave
+by [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)) and can interleave
 between the helper's junction read and write, producing a final link set
 smaller than the requested set. See "Target Loading And Existence" below for
 the race and the available mitigations.
@@ -538,18 +538,19 @@ V1 should keep privacy and validation owner-centric:
   repo
 - `throughLink(...)` write-orientation edges get direct M2M helpers only when the
   junction schema satisfies the helper-eligible static shape constraints from
-  [Many-To-Many Schema Modeling](../../possible-features/edge-mutation/03-m2m-schema-modeling.md)
+  [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
 - V1 does not synthesize a reverse traversal edge for `throughLink(...)`
   relationships (per
-  [Many-To-Many Schema Modeling — Write Orientation](../../possible-features/edge-mutation/03-m2m-schema-modeling.md)),
+  [Many-To-Many Schema Modeling — Write Orientation](03-m2m-schema-modeling.md)),
   so there are no reverse-orientation helpers to talk about — callers
   that need to traverse the relationship from the opposite side query
   the junction schema directly. Explicit reverse `throughLink(...)`
   declarations (a second declaration with the same canonical
   relationship identity, including the swapped-orientation case) are
   rejected at schema validation. Reverse traversal is deferred to a
-  follow-up `throughLinkInverse(...)` design — see "Future Enhancements"
-  in RFC #3.
+  follow-up
+  [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
+  design.
 - `throughEntity(...)` edges do not get direct M2M helpers; their write rules
   live on the junction entity repo
 

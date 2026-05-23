@@ -62,11 +62,11 @@ val editor = belongsTo<User>("editor").nullable()
 
 ## Relationship To Edge Mutation RFCs
 
-[To-One FK Mutation And Nullability](../edge-mutation/02-to-one-assignment-nullability.md)
+[To-One FK Mutation And Nullability](../../implemented-features/edge-mutation/02-to-one-assignment-nullability.md)
 depends on this terminology: `belongsTo(...)` is required by default, and
 `.nullable()` is the only way to make a to-one relationship nullable.
 
-[Many-To-Many Schema Modeling](../edge-mutation/03-m2m-schema-modeling.md) uses the
+[Many-To-Many Schema Modeling](../../implemented-features/edge-mutation/03-m2m-schema-modeling.md) uses the
 same terminology for junction `belongsTo` edges.
 
 ## Rollout Plan

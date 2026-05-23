@@ -10,6 +10,8 @@ Open or speculative RFCs remain in the
 ## Mutation APIs
 
 - [ID-Based Update Roots](edge-mutation/01-id-based-update-roots.md)
+- [To-One FK Mutation And Nullability](edge-mutation/02-to-one-assignment-nullability.md)
+- [Many-To-Many Schema Modeling](edge-mutation/03-m2m-schema-modeling.md)
 - [Transaction And Locking Semantics For Edge Mutations](edge-mutation/04-transaction-locking-semantics.md)
 - [Link-Table M2M Mutation Helpers](edge-mutation/05-link-table-helpers.md)
 

@@ -2,53 +2,18 @@
 
 ## Status
 
-Partially implemented. The required-by-default nullability model,
-removal of entity-setter properties from generated builders, non-null
-Kotlin types on required FK builder properties (with private nullable
-staging + custom getter/setter), defensive null check on required FK
-setters, unassigned-read throw on Create required FK getters, unified
-relationship-FK semantics for field-backed FKs
-(`belongsTo(...).field(handle)` now flows through the same code path
-as implicit FKs), create-default application with explicit-null-wins
-for nullable field-backed FKs, a restricted `CreateMutationView` +
-`CreateHookContext` for `beforeCreate` hooks (hiding `save()`,
-`driver`, hook lists, and the private staging/assigned fields from
-the typed hook surface — this is a static API restriction, not a
-sandboxed capability boundary; a hook that explicitly casts
-`ctx.mutation` back to the concrete `${Entity}Create` can still reach
-those members at runtime), immutability-aware update surface for field-backed
-FKs (`.immutable()` backing field → no setter on `${Entity}Update`, no
-slot on `${Entity}UpdatePatch`, no `unset` on `${Entity}UpdateMutationView`),
-backing-field validators carried into the FK code path (so a
-`belongsTo(...).field(handle)` whose backing column has `.positive()`,
-`.min(...)`, etc. runs those checks during both create save and update
-effective-patch validation), generated local validation failures
-mapping to `ValidationException` (every emitted validator,
-`_checkRequiredNotNull`, the create-side required-scalar binding, and
-the create-side required-FK binding now throw `ValidationException`
-with the correct shape — on update this is caught by `saveOrError()`
-and wrapped into `EntError.ValidationFailed`; on create the
-`ValidationException` propagates from `save()` as-is until a Create
-`saveOrError()` is generated under the Result Variants RFC; either
-way an `IllegalStateException` no longer escapes from save-prep.
-Property getters still throw `IllegalStateException` for
-hook/property reads, which are usage errors rather than save-prep
-validation), sensitive
-field-backed FK redaction in the generated entity `toString()` (a
-`belongsTo(...).field(handle)` whose backing column is `.sensitive()`
-now prints `propName=***` instead of the value), FK comments
-propagated to KDoc on every generated FK surface (entity, Create /
-Update builders, Mutation / CreateMutationView / UpdateMutationView
-interfaces) — sourced from the backing field's `.comment(...)` for
-field-backed edges and from the edge's `.comment(...)` for implicit
-edges — and an RFC-mandated baseline KDoc emitted on every generated
-FK property (documenting "id-only surface: target rows are not
-auto-loaded, target LOAD privacy is not evaluated, relationship-write
-authorization belongs in owner write privacy or validation") with the
-user-supplied comment appearing above it when present, are in place. Deferred work is listed under "Deferred Scope" at the
-end of this document.
+Implemented as the core to-one FK mutation and nullability baseline.
 
-Split out from [Edge Mutation API](00-overview.md).
+Follow-up work was extracted into focused RFCs:
+
+- [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+- [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md)
+- [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
+
+Create-side result variants are already implemented under
+[EntKt Result Variants](../tooling/entkt-result-variants-rfc.md).
+
+Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
 
 ## Summary
 
@@ -69,7 +34,7 @@ This RFC covers:
 ID-based update roots, many-to-many schema modeling, link-table helpers, and
 multi-write transaction semantics are covered by separate RFCs.
 
-This RFC assumes the [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md)
+This RFC assumes the [ID-Based Update Roots](01-id-based-update-roots.md)
 contract. Update roots identify owner rows by id, and generated repos should not
 expose `update(entity)` owner-row overloads.
 
@@ -90,11 +55,10 @@ This keeps create and update semantics aligned with ID-based update roots:
 mutation builders accept scalar values and FK ids. Loaded entity objects remain
 read/query state, not mutation input.
 
-Examples use `.save()` as shorthand for the current generated save operation. If
-the [Result Variants](../../implemented-features/tooling/entkt-result-variants-rfc.md) RFC is adopted, examples
-should use `saveOrThrow()` for the throwing path or `saveOrError()` for
-structured errors. `saveOrNull()` must not swallow privacy, validation,
-constraint, transaction, or driver failures.
+Examples use `.save()` as shorthand for the generated save operation. Callers
+can use `saveOrThrow()` for the throwing path or `saveOrError()` for structured
+errors. `saveOrNull()` must not swallow privacy, validation, constraint,
+transaction, or driver failures.
 
 ## Non-Goals
 
@@ -150,7 +114,7 @@ If the database rejects the FK because the target id does not exist, the
 throwing path surfaces a constraint exception and `saveOrError()` surfaces
 `EntError.ConstraintViolation`, not `ValidationFailed`, unless a custom
 validation rule checked target existence earlier. (`EntError.ConstraintViolation`
-is defined by the [Result Variants RFC](../../implemented-features/tooling/entkt-result-variants-rfc.md);
+is defined by the [Result Variants RFC](../tooling/entkt-result-variants-rfc.md);
 this RFC depends on that variant landing for `saveOrError()` to surface it.
 Until then, database constraint exceptions propagate as their underlying
 exception types from `saveOrError()`.)
@@ -161,7 +125,7 @@ The relationship nullability model is required by default. A
 `belongsTo<Target>(...)` edge produces a non-null FK unless the schema marks the
 relationship with `.nullable()`. `.nullable()` is the only relationship
 nullability modifier — see
-[Schema Nullability Terminology](../schema/schema-nullability-terminology.md) for the
+[Schema Nullability Terminology](../../possible-features/schema/schema-nullability-terminology.md) for the
 DSL-wide contract.
 
 Nullable to-one edges, declared with `.nullable()`, can be cleared by assigning
@@ -718,7 +682,7 @@ privacy, and validation should treat the final FK value and the create
 write candidate as the source of truth for relationship state. On updates,
 they should treat the requested patch, effective patch, and full
 after-state candidate as the source of truth for changed relationship
-FKs (per [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md)).
+FKs (per [ID-Based Update Roots](01-id-based-update-roots.md)).
 
 The remaining examples in this subsection use an implicit FK
 (`authorId`, `unsetAuthorId()`, `ctx.before.authorId`); for field-backed
@@ -728,7 +692,7 @@ edges, substitute the captured backing field declaration name (e.g.
 Hook-facing to-one mutation views are **value-oriented**: a resolved FK
 getter returns the pending value when one exists and throws when the
 relationship is untouched. `beforeUpdate` hooks receive the update hook
-context defined by [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md),
+context defined by [ID-Based Update Roots](01-id-based-update-roots.md),
 which includes the loaded `before` entity for current-database-state
 reads.
 
@@ -850,7 +814,7 @@ are writable in both create and update hook contexts. Create-only values,
 including immutable fields and immutable field-backed FKs, are not exposed on
 `beforeSave`; use `beforeCreate` for those. `beforeCreate` receives a restricted
 create hook interface, and `beforeUpdate` receives the update hook context
-defined by [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md), whose
+defined by [ID-Based Update Roots](01-id-based-update-roots.md), whose
 `mutation` property is the restricted update hook interface.
 
 On the common `beforeSave` mutation interface, update-side getters follow update
@@ -940,7 +904,7 @@ Create saves follow the normal generated create pipeline:
    pipeline
 
 For updates, the high-level save pipeline is defined by
-[ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md). This RFC
+[ID-Based Update Roots](01-id-based-update-roots.md). This RFC
 contributes the to-one-specific steps inside that pipeline. Update-specific
 cases such as syntactically empty updates, hook-cleared empty updates, missing
 owner rows, update defaults, `NoChanges`, and returned entity hydration are
@@ -999,7 +963,7 @@ patch, and after-state candidate.
 
 Privacy contexts keep the caller's privacy context. Validation contexts keep the
 existing System-scoped LOAD-privacy bypass. Transaction-scoped context behavior
-is covered in [Transaction And Locking Semantics](../../implemented-features/edge-mutation/04-transaction-locking-semantics.md).
+is covered in [Transaction And Locking Semantics](04-transaction-locking-semantics.md).
 
 ## Rollout Plan
 
@@ -1007,7 +971,7 @@ is covered in [Transaction And Locking Semantics](../../implemented-features/edg
 2. Change relationship nullability to required by default for `belongsTo(...)`,
    with `.nullable()` as the explicit nullable relationship
    marker. Follow the DSL-wide terminology contract from
-   [Schema Nullability Terminology](../schema/schema-nullability-terminology.md).
+   [Schema Nullability Terminology](../../possible-features/schema/schema-nullability-terminology.md).
 3. Add tests proving required/nullable to-one semantics and hook/privacy/
    validation visibility.
 
@@ -1015,13 +979,10 @@ is covered in [Transaction And Locking Semantics](../../implemented-features/edg
 
 This is the full specification's test checklist. Most bullets describe
 behavior that is implemented and covered by codegen / integration
-tests on `master`; a handful describe deferred-spec behavior that
-will land alongside the work in "Deferred Scope" below. Each
-deferred-only bullet is annotated `(deferred — Declaration Name
-Capture)` or similar so readers can tell at a glance which bullets
-are aspirational vs. already locked in by tests.
+tests on `master`; a handful now belong to extracted follow-up RFCs
+and are annotated as such.
 
-Before implementation, add tests for:
+The implementation should be covered by tests for:
 
 - to-one id assignment sets the FK without loading the target entity
 - generated resolved FK KDoc documents that to-one writes use only target ids, do
@@ -1106,21 +1067,24 @@ Before implementation, add tests for:
   that edge
 - edge declaration property names whose generated implicit FK names collide are
   rejected
-- *(deferred — Declaration Name Capture)* schema collection fails if codegen
+- *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
+  schema collection fails if codegen
   cannot map a registered `belongsTo` builder to exactly one stable Kotlin
   declaration property name
-- *(deferred — Declaration Name Capture)* computed getter edge declarations
+- *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
+  computed getter edge declarations
   are rejected when they create new builders during property inspection
 - implicit FK edges reject generated `{edge}Id` Kotlin member collisions and
   require `belongsTo(...).field(handle)` when callers need an explicit backing
-  field name *(unset method collisions and broader cross-artifact namespaces
-  deferred — see "Collision detection — partial" in Deferred Scope)*
-- *(deferred — Declaration Name Capture)* field-backed edges derive FK
+  field name *(unset method collisions and broader cross-artifact namespaces are
+  covered by [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md))*
+- *(follow-up — [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md))*
+  field-backed edges derive FK
   property names from the backing field declaration property (today derived
   from the column name via `toCamelCase`)
 - field-backed edges check backing FK property names for collisions
-  *(unset method collisions deferred — see "Collision detection — partial"
-  in Deferred Scope)*
+  *(unset method collisions are covered by
+  [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md))*
 - nullable to-one `null` assignment clears the FK
 - nullable to-one update distinguishes unset from explicit null: unset leaves the
   FK out of the update write set, while explicit null clears it
@@ -1170,10 +1134,7 @@ Before implementation, add tests for:
 - returned update entities reflect the persisted row, not synthesized update
   input values
 - missing target FK writes surface database constraint errors; under
-  `saveOrError()` they surface as `EntError.ConstraintViolation` once the
-  [Result Variants RFC](../../implemented-features/tooling/entkt-result-variants-rfc.md) defines
-  that variant and generated `saveOrError()` catches constraint exceptions
-  (deferred to that RFC; until then the underlying exception propagates)
+  `saveOrError()` they surface as `EntError.ConstraintViolation`
 - hooks observe final pending FK values after builder writes and can mutate
   changed FK values through the hook-facing scalar/FK mutation view
 - update hooks throw when reading untouched relationship FKs instead of exposing
@@ -1200,45 +1161,13 @@ Before implementation, add tests for:
   effective patch over the loaded `before`)
 - to-one update candidates do not require target entity loads
 
-## Deferred Scope
+## Extracted Follow-Ups
 
-The current implementation lands the core API and contract pieces of
-this RFC. The following sections remain as follow-up work and are not
-required to use the new nullability model in practice:
+The old deferred scope is now split into smaller possible-feature RFCs:
 
-- **Field-backed FK API derived from the captured backing field
-  declaration name.** `belongsTo(...).field(handle)` still works as the
-  storage-level FK declaration, but the generated FK API name comes from
-  the field's column name (via `toCamelCase`), not from the Kotlin
-  declaration `val` name. The RFC's authoritative-declaration-name
-  capture rules (`Declaration Property Name Capture` and `Explicit
-  Backing Fields`) require reflection-driven property-name capture, plus
-  diagnostics for ineligible properties (delegated, private, inherited,
-  computed-getter, etc.).
-- **Collision detection — partial.** `validateMemberNames` in codegen
-  rejects schemas where the FK property name collides with a declared
-  field, edge, or another FK's property name (with attribution
-  distinguishing "field-backed FK for edge 'foo'" from "synthesized FK
-  for edge 'foo'"). What's still not enforced: collisions involving
-  the generated `unset{FkProperty}()` method names and other
-  cross-artifact namespaces (Mutation interface members, hook-facing
-  view methods, etc.) listed in the unified collision rule under
-  "Explicit Backing Fields". The current check catches the
-  highest-frequency collisions in practice; the broader rule remains
-  a specification target.
-- **Hook-facing FK getter behavior on Create.** Reading an unassigned
-  required FK now throws on Create builders, matching the RFC. The
-  RFC's note about hook-facing create interfaces having distinct
-  read-behavior wrappers is not yet implemented; create hooks currently
-  read the builder directly.
-- **Create-side result variants (`saveOrError()` / `saveOrThrow()`).**
-  The update path generates `saveOrError()` (catching `EntException`,
-  `PrivacyDeniedException`, `ValidationException` → mapping into the
-  matching `EntError` variants) and `saveOrThrow()`. The create path
-  still only generates `fun save()`. Validation failures from the
-  create path (`_checkRequiredNotNull`-style required checks, missing
-  required FK at save binding, scalar / FK validator failures) all
-  throw `ValidationException` with the correct shape, so they will
-  wrap into `EntError.ValidationFailed` automatically once Create
-  generates `saveOrError()`. That generation is deferred to the
-  [Result Variants RFC](../../implemented-features/tooling/entkt-result-variants-rfc.md).
+- [Field-Backed FK Declaration Names](../../possible-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+- [Generated Member Name Collisions](../../possible-features/edge-mutation/07-generated-member-name-collisions.md)
+- [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
+
+The former create-side result-variants item is no longer deferred; create
+builders now generate `saveOrError()` and `saveOrThrow()`.
