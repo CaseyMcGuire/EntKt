@@ -19,6 +19,7 @@ Implemented RFCs have moved to the
 - [Structured Mutation Pipeline](mutation/structured-mutation-pipeline.md)
 - [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
+- [Transaction Options And Savepoints](mutation/transaction-options-savepoints.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
 - [Field-Backed FK Declaration Names](edge-mutation/06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](edge-mutation/07-generated-member-name-collisions.md)
@@ -36,6 +37,7 @@ Implemented RFCs have moved to the
 - [Projection / Select API](query/projection-select-api.md)
 - [Aggregations](query/aggregations.md)
 - [Indexed Query Helpers](query/indexed-query-helpers.md)
+- [Typed SQL DSL Escape Hatch](query/typed-sql-dsl-escape-hatch.md)
 
 ## Model Behavior
 
@@ -54,3 +56,6 @@ Implemented RFCs have moved to the
 - [GraphQL Kotlin Type Generation](tooling/graphql-kotlin-generation.md)
 - [Generated Test Fixtures](tooling/generated-test-fixtures.md)
 - [Gradle Developer Experience](tooling/gradle-dx.md)
+- [Coroutine And R2DBC Driver Track](tooling/coroutine-r2dbc-driver.md)
+- [Migration Diagnostics](tooling/migration-diagnostics.md)
+- [Driver Capability Matrix](tooling/driver-capability-matrix.md)

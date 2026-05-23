@@ -1,0 +1,139 @@
+package entkt.codegen
+
+import entkt.schema.EntId
+import entkt.schema.EntSchema
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+/**
+ * Phase 2 smoke test for RFC 07's manifest builder. Verifies that
+ * representative schemas produce manifest entries on every V1
+ * artifact (entity / companion / mutation interface / create /
+ * update / create-view / update-view). The end-to-end collision
+ * detection over real schemas lands in Phase 5.
+ */
+class BuildMemberManifestTest {
+
+    /** Minimal schema with one mutable scalar field. */
+    private class Notebook : EntSchema("notebooks") {
+        override fun id() = EntId.long()
+        val title = string("title")
+    }
+
+    /** Schema with mutable + immutable scalars + an FK. */
+    private class Article : EntSchema("articles") {
+        override fun id() = EntId.long()
+        val createdAt = time("created_at").immutable()
+        val title = string("title")
+        val author = belongsTo<Author>("author")
+    }
+
+    private class Author : EntSchema("authors") {
+        override fun id() = EntId.long()
+        val name = string("name")
+    }
+
+    private fun finalized(vararg schemas: EntSchema): Map<EntSchema, String> {
+        val byClass = schemas.associate { it::class to it }
+        schemas.forEach { it.finalize(byClass) }
+        return schemas.associateWith { it::class.simpleName!! }
+    }
+
+    @Test
+    fun `minimal schema populates every V1 artifact with the expected fixed members`() {
+        val schema = Notebook()
+        val schemaNames = finalized(schema)
+
+        val manifest = buildMemberManifest("Notebook", schema, schemaNames)
+        val entries = manifest.snapshot()
+        val byArtifact = entries.groupBy { it.artifact }.mapValues { (_, ms) -> ms.map { it.name }.toSet() }
+
+        // Entity class — id, edges, copy, equals, hashCode, toString,
+        // component1..component2 (id + 1 scalar), and the title property.
+        assertNotNull(byArtifact["Notebook"])
+        assertTrue("id" in byArtifact["Notebook"]!!)
+        assertTrue("edges" in byArtifact["Notebook"]!!)
+        assertTrue("copy" in byArtifact["Notebook"]!!)
+        assertTrue("title" in byArtifact["Notebook"]!!)
+        assertTrue("component1" in byArtifact["Notebook"]!!)
+        assertTrue("component2" in byArtifact["Notebook"]!!)
+
+        // Companion
+        assertEquals(setOf("fromRow", "TABLE", "SCHEMA"), byArtifact["Notebook.Companion"])
+
+        // Mutation interface — just the mutable scalar (no FK on this schema)
+        assertEquals(setOf("title"), byArtifact["NotebookMutation"])
+
+        // Create builder — title + fixed members
+        assertNotNull(byArtifact["NotebookCreate"])
+        assertTrue("title" in byArtifact["NotebookCreate"]!!)
+        assertTrue("save" in byArtifact["NotebookCreate"]!!)
+        assertTrue("saveOrError" in byArtifact["NotebookCreate"]!!)
+        assertTrue("saveOrThrow" in byArtifact["NotebookCreate"]!!)
+        assertTrue("client" in byArtifact["NotebookCreate"]!!)
+        assertTrue("driver" in byArtifact["NotebookCreate"]!!)
+        assertTrue("beforeCreateHooks" in byArtifact["NotebookCreate"]!!)
+
+        // Update builder — title, unsetTitle, fixed members including id + consistency
+        assertNotNull(byArtifact["NotebookUpdate"])
+        assertTrue("title" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("unsetTitle" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("id" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("consistency" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("dirtyFields" in byArtifact["NotebookUpdate"]!!)
+
+        // Update mutation view — title + unsetTitle, no pendingEdges (no M2M)
+        assertNotNull(byArtifact["NotebookUpdateMutationView"])
+        assertTrue("title" in byArtifact["NotebookUpdateMutationView"]!!)
+        assertTrue("unsetTitle" in byArtifact["NotebookUpdateMutationView"]!!)
+        assertTrue(
+            "pendingEdges" !in byArtifact["NotebookUpdateMutationView"]!!,
+            "schemas without helper-eligible M2M should NOT add pendingEdges",
+        )
+    }
+
+    @Test
+    fun `schema with immutable field and FK exposes them correctly across artifacts`() {
+        val author = Author()
+        val article = Article()
+        val schemaNames = finalized(author, article)
+
+        val manifest = buildMemberManifest("Article", article, schemaNames)
+        val byArtifact = manifest.snapshot().groupBy { it.artifact }
+            .mapValues { (_, ms) -> ms.map { it.name }.toSet() }
+
+        // Entity class carries scalars AND the implicit FK ("authorId").
+        val entity = byArtifact["Article"]!!
+        assertTrue("createdAt" in entity)
+        assertTrue("title" in entity)
+        assertTrue("authorId" in entity, "implicit FK property should land on entity as authorId")
+
+        // Mutation interface: only mutable scalars + mutable FKs.
+        // createdAt is immutable, so it should NOT be on Mutation.
+        val mutation = byArtifact["ArticleMutation"]!!
+        assertTrue("title" in mutation)
+        assertTrue("authorId" in mutation)
+        assertTrue("createdAt" !in mutation, "immutable scalar should not appear on Mutation")
+
+        // Create view: adds the immutable createdAt (create-only writable).
+        val createView = byArtifact["ArticleCreateMutationView"]!!
+        assertTrue("createdAt" in createView)
+
+        // Update mutation view: title + unsetTitle, authorId + unsetAuthorId.
+        // createdAt absent (immutable).
+        val updateView = byArtifact["ArticleUpdateMutationView"]!!
+        assertTrue("title" in updateView)
+        assertTrue("unsetTitle" in updateView)
+        assertTrue("authorId" in updateView)
+        assertTrue("unsetAuthorId" in updateView)
+        assertTrue("createdAt" !in updateView)
+    }
+
+    // Helper-eligible M2M coverage is exercised end-to-end in
+    // Phase 5 with real `throughLink` schemas — synthesizing a
+    // `HelperEligibleM2M` here would require constructing a fake
+    // `Edge` with full junction metadata, which the real edge
+    // resolver builds during validate().
+}

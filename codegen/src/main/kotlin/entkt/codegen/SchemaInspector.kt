@@ -38,6 +38,34 @@ object SchemaInspector {
             }
         }
 
+        // RFC 07: generated-member-name collision detection. Runs
+        // AFTER per-schema column/edge/index resolution so that
+        // FK metadata (which depends on resolved edges) is
+        // available to the manifest builder. Per-schema rather
+        // than global because the RFC scopes collisions per
+        // (artifact, name) and artifacts are named per schema —
+        // `PostUpdate.x` and `ArticleUpdate.x` are not a clash.
+        // Failures during manifest building (e.g. edge resolution
+        // already errored above) are swallowed: the per-schema
+        // validation above already surfaced the root cause as a
+        // user-facing diagnostic, and we don't want to drown that
+        // in derivative manifest-builder failures.
+        for (input in inputs) {
+            val helperEligible = try {
+                helperEligibleM2MEdges(input.schema, schemaNames)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            val manifest = try {
+                buildMemberManifest(input.name, input.schema, schemaNames, helperEligible)
+            } catch (e: Exception) {
+                continue
+            }
+            for (collision in manifest.findCollisions()) {
+                errors.add(formatMemberCollisionDiagnostic(collision))
+            }
+        }
+
         return if (errors.isEmpty()) {
             ValidationResult(valid = true, errors = emptyList())
         } else {

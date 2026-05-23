@@ -22,6 +22,8 @@ The goal is to help users answer:
 - did eager loading batch edges or fall back to repeated reads?
 - which generated or framework behavior changed the query?
 - did request-scoped loaders batch or cache reads?
+- which terminal call produced each driver query?
+- how can query behavior be logged safely in development or production?
 
 ## Motivation
 
@@ -52,6 +54,8 @@ query execution strategy.
 - Do not guarantee exact query counts for every dynamic privacy rule.
 - Do not optimize N+1 behavior in this RFC.
 - Do not require a GraphQL runtime.
+- Do not log raw bind values by default.
+- Do not require every application to use the same logging backend.
 
 ## Implemented Baseline
 
@@ -133,6 +137,72 @@ This complements the explain family:
 - tracing records actual driver calls, loader batches, cache hits, and
   privacy checks during execution
 
+## Query Logging
+
+Add an opt-in query logger that receives structured query events rather than
+preformatted strings:
+
+```kotlin
+client.withQueryLogging(QueryLogOptions()) {
+    posts.query {
+        withAuthor()
+        limit(20)
+    }.allOrThrow()
+}
+```
+
+Potential event model:
+
+```kotlin
+data class QueryLogEvent(
+    val operation: QueryOperation,
+    val entity: String,
+    val terminal: String,
+    val sqlShape: String?,
+    val bindValues: BindValueDisplay,
+    val duration: Duration?,
+    val rowCount: Int?,
+    val source: QuerySource,
+)
+```
+
+Default logging should redact bind values:
+
+```text
+SELECT * FROM posts WHERE title = ? LIMIT ?
+binds: [redacted, redacted]
+```
+
+Applications can opt in to bind-value logging explicitly for local debugging:
+
+```kotlin
+QueryLogOptions(includeBindValues = true)
+```
+
+That opt-in should be deliberately named because bind values can contain
+emails, names, tokens, or other sensitive application data.
+
+## Slow Query Logging
+
+Support threshold-based logging without requiring full tracing:
+
+```kotlin
+QueryLogOptions(
+    slowQueryThreshold = 250.milliseconds,
+)
+```
+
+Slow-query events should include:
+
+- entity and terminal
+- SQL shape
+- elapsed time
+- row count when the driver reports it
+- loader/interceptor attribution when available
+
+This should work for generated reads and mutation reads such as current-row
+loads during updates.
+
 ## Query Count Estimates
 
 Diagnostics should report query counts in plain language:
@@ -176,6 +246,12 @@ client.users.explainByIdOrNull(id, includeBindValues = true)
 
 The bind-values argument should be uniform across the existing explain surface
 and any richer diagnostics API added by this RFC.
+
+Typed SQL escape-hatch expressions should appear in this same SQL shape output.
+Raw fragments should be marked so users can distinguish generated predicates
+from user-supplied SQL fragments.
+
+See [Typed SQL DSL Escape Hatch](typed-sql-dsl-escape-hatch.md).
 
 ## Loader And Eager-Load Diagnostics
 
@@ -232,6 +308,9 @@ Before implementation, add tests for:
 - interceptor attribution appears in diagnostics and runtime traces
 - default SQL output redacts bind values
 - execution tracing records actual driver query count
+- query logging emits structured events without requiring global logging
+- slow-query logging filters below-threshold queries
+- logged bind values are redacted by default and opt-in when shown
 - loader tracing records batch sizes and cache hits
 - privacy-rule reads are represented as uncertainty or trace events
 - diagnostics are deterministic enough for snapshot tests
