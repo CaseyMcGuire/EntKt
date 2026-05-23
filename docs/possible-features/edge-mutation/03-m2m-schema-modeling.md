@@ -652,7 +652,7 @@ only when:
   rows, so the helper's "the relationship set equals the requested
   set" guarantee is scoped to interleavings among generated M2M
   helpers, not against endpoint cascades. See
-  [Link-Table M2M Mutation Helpers — Target Loading And Existence](05-link-table-helpers.md)
+  [Link-Table M2M Mutation Helpers — Target Loading And Existence](../../implemented-features/edge-mutation/05-link-table-helpers.md)
   for the full discussion.
 
   **Note on "explicit".** Codegen reads
@@ -758,9 +758,9 @@ direct-driver path.
 - [To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
   defines required-by-default `belongsTo(...)`, which this RFC relies on for
   non-null junction FK semantics.
-- [Link-Table M2M Mutation Helpers](05-link-table-helpers.md) defines
+- [Link-Table M2M Mutation Helpers](../../implemented-features/edge-mutation/05-link-table-helpers.md) defines
   the generated helper APIs for safe `throughLink(...)` edges.
-- [Transaction And Locking Semantics](04-transaction-locking-semantics.md)
+- [Transaction And Locking Semantics](../../implemented-features/edge-mutation/04-transaction-locking-semantics.md)
   defines the transaction and serialization requirements those helpers need.
 
 ## Rollout Plan

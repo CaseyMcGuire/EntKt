@@ -107,15 +107,20 @@ Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
   source entity's interceptors. Workaround: use the M2M
   traversal form (`queryX()`), which fires source interceptors
   via the EDGE_TRAVERSAL path. Tracking as a follow-up.
-- The soft-delete framework interceptor itself is not implemented
-  — that requires the separate
-  [soft-delete schema RFC](../schema/soft-delete.md) (mixin
-  declaration, generated `deleted_at` column, delete-as-update
-  path). The interceptor framework hooks (`framework:` prefix,
-  `withDeleted` / `onlyDeleted` flags) are in place to host it
-  when that RFC lands.
+- Soft-delete filtering now ships as the separate
+  [Soft Delete Convention](../schema/soft-delete.md): a normal
+  `DeletedAt` mixin plus an application-registered
+  `ExcludeDeleted` query interceptor. It does not use generated
+  soft-delete codegen or generated `withDeleted` / `onlyDeleted`
+  query DSL.
 
 ### Original RFC follows
+
+The original design text below predates the later soft-delete
+convention. References to a generated framework soft-delete
+interceptor, generated hard-delete bypass, or generated
+`withDeleted` / `onlyDeleted` DSL are historical context, not the
+implemented soft-delete shape.
 
 ## Summary
 
@@ -1203,7 +1208,7 @@ override fun intercept(scope: InterceptScope<E>, context: QueryContext) {
 Annotations land on `QuerySpec.annotations` and surface in explain /
 observability output. They do **not** affect the query plan — they are
 diagnostic metadata only, consumed by
-[Query Observability Diagnostics](query-observability-diagnostics.md).
+[Query Observability Diagnostics](../../possible-features/query/query-observability-diagnostics.md).
 
 ## Flags And Capabilities
 

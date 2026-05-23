@@ -802,7 +802,7 @@ requested set. Later serialized M2M-helper mutations may change the
 relationship again.
 ```
 
-See [Many-To-Many Schema Modeling](../edge-mutation/03-m2m-schema-modeling.md)
+See [Many-To-Many Schema Modeling](../../possible-features/edge-mutation/03-m2m-schema-modeling.md)
 for the `OnDelete.CASCADE` requirement and
 [Link-Table M2M Mutation Helpers — Target Loading And Existence](../edge-mutation/05-link-table-helpers.md)
 for the full endpoint-cascade race discussion.

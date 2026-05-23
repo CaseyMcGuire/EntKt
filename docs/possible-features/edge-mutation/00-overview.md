@@ -9,11 +9,11 @@ Possible future feature. This is not implemented.
 The original edge mutation RFC has been split into five smaller RFCs. They are
 related, but they should be reviewed and implemented independently:
 
-1. [ID-Based Update Roots](01-id-based-update-roots.md)
+1. [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md)
 2. [To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
 3. [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
-4. [Transaction And Locking Semantics For Edge Mutations](04-transaction-locking-semantics.md)
-5. [Link-Table M2M Mutation Helpers](05-link-table-helpers.md)
+4. [Transaction And Locking Semantics For Edge Mutations](../../implemented-features/edge-mutation/04-transaction-locking-semantics.md)
+5. [Link-Table M2M Mutation Helpers](../../implemented-features/edge-mutation/05-link-table-helpers.md)
 
 ## Motivation
 
@@ -36,11 +36,11 @@ and transaction design.
 
 The intended review and implementation order is:
 
-1. [ID-Based Update Roots](01-id-based-update-roots.md)
+1. [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md)
 2. [To-One FK Mutation And Nullability](02-to-one-assignment-nullability.md)
 3. [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
-4. [Transaction And Locking Semantics For Edge Mutations](04-transaction-locking-semantics.md)
-5. [Link-Table M2M Mutation Helpers](05-link-table-helpers.md)
+4. [Transaction And Locking Semantics For Edge Mutations](../../implemented-features/edge-mutation/04-transaction-locking-semantics.md)
+5. [Link-Table M2M Mutation Helpers](../../implemented-features/edge-mutation/05-link-table-helpers.md)
 
 The transaction and helper RFCs are tightly related, but they are separated so
 the runtime guarantees can be reviewed without also reviewing the full builder

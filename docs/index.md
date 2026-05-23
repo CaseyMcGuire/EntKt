@@ -21,3 +21,4 @@ query builders, and repositories that talk to a pluggable `Driver`.
 ## Possible Features
 
 - [Possible Features Index](possible-features/index.md) -- catalog of future feature RFCs and design notes
+- [Implemented Features Index](implemented-features/index.md) -- RFCs whose main implementation has landed

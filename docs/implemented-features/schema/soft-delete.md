@@ -2,12 +2,12 @@
 
 ## Status
 
-Possible future feature. This is not implemented as a packaged
-convenience, but the pieces it should use already exist:
+Implemented. The packaged convention is available through:
 
-- reusable schema mixins
-- per-entity read-path interceptors
-- predicate injection via `InterceptScope.addPredicate(...)`
+- `entkt.schema.DeletedAt`, a reusable schema mixin that declares
+  a nullable `deleted_at` timestamp
+- `entkt.runtime.ExcludeDeleted`, a per-entity read-path interceptor
+  that adds `deleted_at IS NULL` by default
 
 This RFC intentionally does **not** propose soft-delete-specific
 codegen.

@@ -55,7 +55,7 @@ query execution strategy.
 
 ## Implemented Baseline
 
-[Read-Path Interceptors](read-path-interceptors.md) already defines and
+[Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md) already defines and
 implements the dry-run explain family. Each explain method mirrors a concrete
 terminal API because every terminal has its own intercepted query context.
 
@@ -128,7 +128,7 @@ This complements the explain family:
 - `explainAllOrThrow()` / `explainFirstOrError()` / `explainVisibleCount()`
   / etc. describe planned generated behavior for one terminal without
   executing the query (see
-  [Read-Path Interceptors → Explain Interaction](read-path-interceptors.md)
+  [Read-Path Interceptors → Explain Interaction](../../implemented-features/query/read-path-interceptors.md)
   for the full method list and per-terminal mirroring rule)
 - tracing records actual driver calls, loader batches, cache hits, and
   privacy checks during execution
@@ -209,7 +209,7 @@ interceptors:
   TenantReadInterceptor<Post>: added tenant_id = ?
 ```
 
-See [Read-Path Interceptors](read-path-interceptors.md).
+See [Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md).
 
 ## Privacy Diagnostics
 

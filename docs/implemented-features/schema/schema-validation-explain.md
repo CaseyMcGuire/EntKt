@@ -447,7 +447,7 @@ handling. `scanForSchemas()` calls `collectSchemas()` then
 
 ### Relationship To Schema Printer
 
-This RFC is broader than [Schema Printer](schema-printer.md).
+This RFC is broader than [Schema Printer](../../possible-features/schema/schema-printer.md).
 
 The likely long-term direction is:
 

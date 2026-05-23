@@ -69,7 +69,7 @@ This RFC covers:
 ID-based update roots, many-to-many schema modeling, link-table helpers, and
 multi-write transaction semantics are covered by separate RFCs.
 
-This RFC assumes the [ID-Based Update Roots](01-id-based-update-roots.md)
+This RFC assumes the [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md)
 contract. Update roots identify owner rows by id, and generated repos should not
 expose `update(entity)` owner-row overloads.
 
@@ -91,7 +91,7 @@ mutation builders accept scalar values and FK ids. Loaded entity objects remain
 read/query state, not mutation input.
 
 Examples use `.save()` as shorthand for the current generated save operation. If
-the [Result Variants](../tooling/entkt-result-variants-rfc.md) RFC is adopted, examples
+the [Result Variants](../../implemented-features/tooling/entkt-result-variants-rfc.md) RFC is adopted, examples
 should use `saveOrThrow()` for the throwing path or `saveOrError()` for
 structured errors. `saveOrNull()` must not swallow privacy, validation,
 constraint, transaction, or driver failures.
@@ -150,7 +150,7 @@ If the database rejects the FK because the target id does not exist, the
 throwing path surfaces a constraint exception and `saveOrError()` surfaces
 `EntError.ConstraintViolation`, not `ValidationFailed`, unless a custom
 validation rule checked target existence earlier. (`EntError.ConstraintViolation`
-is defined by the [Result Variants RFC](../tooling/entkt-result-variants-rfc.md);
+is defined by the [Result Variants RFC](../../implemented-features/tooling/entkt-result-variants-rfc.md);
 this RFC depends on that variant landing for `saveOrError()` to surface it.
 Until then, database constraint exceptions propagate as their underlying
 exception types from `saveOrError()`.)
@@ -718,7 +718,7 @@ privacy, and validation should treat the final FK value and the create
 write candidate as the source of truth for relationship state. On updates,
 they should treat the requested patch, effective patch, and full
 after-state candidate as the source of truth for changed relationship
-FKs (per [ID-Based Update Roots](01-id-based-update-roots.md)).
+FKs (per [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md)).
 
 The remaining examples in this subsection use an implicit FK
 (`authorId`, `unsetAuthorId()`, `ctx.before.authorId`); for field-backed
@@ -728,7 +728,7 @@ edges, substitute the captured backing field declaration name (e.g.
 Hook-facing to-one mutation views are **value-oriented**: a resolved FK
 getter returns the pending value when one exists and throws when the
 relationship is untouched. `beforeUpdate` hooks receive the update hook
-context defined by [ID-Based Update Roots](01-id-based-update-roots.md),
+context defined by [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md),
 which includes the loaded `before` entity for current-database-state
 reads.
 
@@ -850,7 +850,7 @@ are writable in both create and update hook contexts. Create-only values,
 including immutable fields and immutable field-backed FKs, are not exposed on
 `beforeSave`; use `beforeCreate` for those. `beforeCreate` receives a restricted
 create hook interface, and `beforeUpdate` receives the update hook context
-defined by [ID-Based Update Roots](01-id-based-update-roots.md), whose
+defined by [ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md), whose
 `mutation` property is the restricted update hook interface.
 
 On the common `beforeSave` mutation interface, update-side getters follow update
@@ -940,7 +940,7 @@ Create saves follow the normal generated create pipeline:
    pipeline
 
 For updates, the high-level save pipeline is defined by
-[ID-Based Update Roots](01-id-based-update-roots.md). This RFC
+[ID-Based Update Roots](../../implemented-features/edge-mutation/01-id-based-update-roots.md). This RFC
 contributes the to-one-specific steps inside that pipeline. Update-specific
 cases such as syntactically empty updates, hook-cleared empty updates, missing
 owner rows, update defaults, `NoChanges`, and returned entity hydration are
@@ -999,7 +999,7 @@ patch, and after-state candidate.
 
 Privacy contexts keep the caller's privacy context. Validation contexts keep the
 existing System-scoped LOAD-privacy bypass. Transaction-scoped context behavior
-is covered in [Transaction And Locking Semantics](04-transaction-locking-semantics.md).
+is covered in [Transaction And Locking Semantics](../../implemented-features/edge-mutation/04-transaction-locking-semantics.md).
 
 ## Rollout Plan
 
@@ -1171,7 +1171,7 @@ Before implementation, add tests for:
   input values
 - missing target FK writes surface database constraint errors; under
   `saveOrError()` they surface as `EntError.ConstraintViolation` once the
-  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md) defines
+  [Result Variants RFC](../../implemented-features/tooling/entkt-result-variants-rfc.md) defines
   that variant and generated `saveOrError()` catches constraint exceptions
   (deferred to that RFC; until then the underlying exception propagates)
 - hooks observe final pending FK values after builder writes and can mutate
@@ -1241,4 +1241,4 @@ required to use the new nullability model in practice:
   throw `ValidationException` with the correct shape, so they will
   wrap into `EntError.ValidationFailed` automatically once Create
   generates `saveOrError()`. That generation is deferred to the
-  [Result Variants RFC](../tooling/entkt-result-variants-rfc.md).
+  [Result Variants RFC](../../implemented-features/tooling/entkt-result-variants-rfc.md).

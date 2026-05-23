@@ -457,7 +457,7 @@ articles).
 
 ### See also
 
-- [Read-Path Interceptors RFC](possible-features/query/read-path-interceptors.md)
+- [Read-Path Interceptors RFC](implemented-features/query/read-path-interceptors.md)
   for the full design and the limit-shape rules per operation.
 
 ## Transactions
