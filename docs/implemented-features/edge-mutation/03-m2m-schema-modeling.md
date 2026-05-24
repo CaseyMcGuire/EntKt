@@ -39,7 +39,7 @@ Specifically implemented:
 
 Follow-up work was extracted into focused RFCs:
 
-- [Through-Entity Nullable M2M Traversal](../../possible-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+- [Through-Entity Nullable M2M Traversal](09-through-entity-nullable-m2m-traversal.md)
 - [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
 
 Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
@@ -944,7 +944,7 @@ Before implementation, add tests for:
 The old future-enhancement notes are now split into smaller possible-feature
 RFCs:
 
-- [Through-Entity Nullable M2M Traversal](../../possible-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+- [Through-Entity Nullable M2M Traversal](09-through-entity-nullable-m2m-traversal.md)
 - [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
 
 Bidirectional link-table write helpers remain intentionally out of scope. Any

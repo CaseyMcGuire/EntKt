@@ -17,6 +17,7 @@ Open or speculative RFCs remain in the
 - [Field-Backed FK Declaration Names](edge-mutation/06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](edge-mutation/07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](edge-mutation/08-create-hook-mutation-view-adapter.md)
+- [Through-Entity Nullable M2M Traversal](edge-mutation/09-through-entity-nullable-m2m-traversal.md)
 
 ## Query APIs
 

@@ -10,4 +10,15 @@ class User : EntSchema("users") {
     val email = string("email").unique()
 
     val articles = hasMany<Article>("articles")
+
+    /**
+     * Inverse side of [Group.users]. Pair-swapped junction edge
+     * refs: this side passes `Membership::user` first (the
+     * source-side junction edge), `Membership::group` second
+     * (the target-side junction edge). The RFC 09 acceptance
+     * criteria require null-skip semantics to hold in both
+     * directions; this edge is what exercises the inverse half.
+     */
+    val groups = manyToMany<Group>("groups")
+        .throughEntity<Membership>(Membership::user, Membership::group)
 }

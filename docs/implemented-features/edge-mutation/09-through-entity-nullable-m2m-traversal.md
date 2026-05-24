@@ -2,11 +2,29 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+**V1 implemented.** No new runtime or codegen code was needed —
+both lowerings already drop null junction FKs via standard SQL
+three-valued logic (`= ?` and `IN (...)` return `UNKNOWN` when
+the operand is `NULL`). The acceptance work was pinning that
+behavior with end-to-end tests so future regressions surface
+loudly.
 
-Extracted from the implemented
-[Many-To-Many Schema Modeling](../../implemented-features/edge-mutation/03-m2m-schema-modeling.md)
-RFC.
+Test coverage lives in
+`integration-tests/src/test/kotlin/entkt/integrationtest/ThroughEntityNullableM2MTraversalIntegrationTest.kt`:
+16 Postgres-backed cases covering all three traversal shapes
+(query-chain `queryUsers()` / `queryGroups()`, predicate
+`EdgeRef.exists()` / `EdgeRef.has { where(...) }`, eager
+`withUsers` / `withGroups`) × both directions (`Group → User`
+forward and `User → Group` via the pair-swapped junction edge
+on [User]) × both null shapes (junction source FK null, junction
+target FK null). The supporting fixtures —
+[Membership] (junction with nullable
+`belongsTo<Group>().nullable()` + `belongsTo<User>().nullable()`),
+[Group], and the inverse `User.groups` edge — were added to
+`integration-tests/schema/` to model exactly this scenario.
+
+Extracted from the
+[Many-To-Many Schema Modeling](03-m2m-schema-modeling.md) RFC.
 
 ## Summary
 
@@ -25,14 +43,19 @@ For:
 
 ```kotlin
 class Membership : EntSchema("memberships") {
+    override fun id() = EntId.long()
     val group = belongsTo<Group>("group").nullable()
     val user = belongsTo<User>("user").nullable()
 }
 
 class Group : EntSchema("groups") {
+    override fun id() = EntId.long()
     val users = manyToMany<User>("users")
         .throughEntity<Membership>(Membership::group, Membership::user)
 }
+
+// Companion target schema (omitted: the `User` schema with its
+// own `override fun id()` declaration).
 ```
 
 Traversal behaves as follows:
@@ -50,9 +73,14 @@ This applies consistently to:
   the source entity's `Query` class, not on entity instances). A
   single-entity traversal is written as
   `client.groups.query().where(Group.id eq group.id).queryUsers()`.
-- **Predicate traversal** — `client.groups.query().where(Group.users.has { ... })`
-  / `Group.users.hasWhere { ... }`, where the M2M edge predicate
-  lowers to an EXISTS subquery walking the junction table.
+- **Predicate traversal** — both shapes that the `EdgeRef` API exposes:
+  - **`Group.users.exists()`** for plain existence — lowers to
+    `Predicate.HasEdge` (a simple "any related row at all" check
+    walking the junction table).
+  - **`client.groups.query().where(Group.users.has { where(User.someField eq value) })`**
+    for filtered existence — lowers to `Predicate.HasEdgeWith` (the
+    target-filtered EXISTS subquery walking the junction table and
+    the target rows it joins to).
 - **Eager loading** — `client.groups.query().withUsers { ... }.allOrThrow()`,
   which fetches junction rows in one driver call and target rows
   in a second, then groups targets back to their source rows.
@@ -69,13 +97,19 @@ not the same:
 
 ### Query-chain + predicate traversal (single SQL statement)
 
-`queryUsers()` / `Group.users.has { … }` lowers to an EXISTS
-subquery against the junction table joined to the target table.
-Equality predicates on the junction's source / target FK
-columns naturally drop rows where either FK is NULL — SQL's
-three-valued logic makes `junction.source_col = ?` evaluate to
-`UNKNOWN` (not `TRUE`) when `source_col IS NULL`, so the row
-fails the EXISTS condition.
+`queryUsers()` lowers to an EXISTS subquery against the junction
+table joined to the target table. The `EdgeRef` predicate API
+exposes two shapes that share the same EXISTS skeleton:
+`Group.users.exists()` (lowers to `Predicate.HasEdge`) and
+`Group.users.has { where(...) }` (lowers to
+`Predicate.HasEdgeWith` with the target-side filter folded into
+the subquery). Both rely on equality predicates on the
+junction's source / target FK columns, which naturally drop
+rows where either FK is NULL — SQL's three-valued logic makes
+`junction.source_col = ?` evaluate to `UNKNOWN` (not `TRUE`)
+when `source_col IS NULL`, so the row fails the EXISTS
+condition regardless of which predicate shape walked the
+subquery.
 
 ### Eager loading (two-step driver call)
 
@@ -130,10 +164,16 @@ definition.
   separate test cases so a regression in one side can't be hidden by
   the other.
 - Integration tests prove nullable source and target junction FKs are
-  skipped for **predicate traversal** (`Group.users.has { ... }` and
-  `Group.users.hasWhere { ... }`) — the EXISTS-subquery lowering is
-  a different SQL shape from `queryX()`, so the null-skip behavior
-  needs its own pin.
+  skipped for **predicate traversal**. Cover both `EdgeRef` shapes
+  the API exposes:
+  - `Group.users.exists()` — lowers to `Predicate.HasEdge` (plain
+    existence walking the junction table).
+  - `Group.users.has { where(User.someField eq value) }` — lowers
+    to `Predicate.HasEdgeWith` (target-filtered EXISTS walking
+    the junction + target rows).
+
+  Both share an EXISTS-subquery lowering shape distinct from
+  `queryX()`, so each needs its own null-skip pin.
 - Integration tests prove nullable source and target junction FKs are
   skipped for **eager loading** (`withUsers { ... }`). The two-step
   junction-fetch + target-fetch lowering is a third distinct shape;
