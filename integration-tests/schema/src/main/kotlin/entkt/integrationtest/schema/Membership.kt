@@ -11,12 +11,11 @@ import entkt.schema.EntSchema
  * its FK columns may be nullable and it carries a payload.
  *
  * The nullable FKs are intentional and the subject of
- * [docs/possible-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md](
- * the RFC 09 traversal-semantics spec): rows with `group_id` or
- * `user_id` set to NULL must be skipped by every form of
- * `Group.users` / `User.groups` M2M traversal (query-chain,
- * predicate, eager) while remaining directly queryable through
- * `client.memberships`.
+ * `docs/implemented-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md`:
+ * rows with `group_id` or `user_id` set to NULL must be skipped
+ * by every form of `Group.users` / `User.groups` M2M traversal
+ * (query-chain, predicate, eager) while remaining directly
+ * queryable through `client.memberships`.
  */
 class Membership : EntSchema("memberships") {
     override fun id() = EntId.long()

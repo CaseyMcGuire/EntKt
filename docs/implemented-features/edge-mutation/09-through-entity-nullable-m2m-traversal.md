@@ -90,26 +90,62 @@ This applies consistently to:
 
 ## Implementation Notes
 
-Two distinct lowering shapes serve M2M traversal — both should
+Three distinct lowering shapes serve M2M traversal — all should
 naturally skip null FK values, but the RFC's integration tests
 need to pin each independently because the SQL each produces is
 not the same:
 
-### Query-chain + predicate traversal (single SQL statement)
+### Query-chain traversal (single SQL statement, target as outer)
 
-`queryUsers()` lowers to an EXISTS subquery against the junction
-table joined to the target table. The `EdgeRef` predicate API
-exposes two shapes that share the same EXISTS skeleton:
-`Group.users.exists()` (lowers to `Predicate.HasEdge`) and
-`Group.users.has { where(...) }` (lowers to
-`Predicate.HasEdgeWith` with the target-side filter folded into
-the subquery). Both rely on equality predicates on the
-junction's source / target FK columns, which naturally drop
-rows where either FK is NULL — SQL's three-valued logic makes
-`junction.source_col = ?` evaluate to `UNKNOWN` (not `TRUE`)
-when `source_col IS NULL`, so the row fails the EXISTS
-condition regardless of which predicate shape walked the
-subquery.
+`queryUsers()` lowers via `Predicate.HasM2MEdgeFrom` (see
+`postgres/src/main/kotlin/entkt/postgres/PostgresDriver.kt`'s
+`lowerInverseM2M`). The outer query is on the **target** table
+(users); the bridge predicate is an EXISTS subquery that walks
+the junction joined to the **source** table:
+
+```sql
+... FROM users WHERE EXISTS (
+    SELECT 1 FROM memberships AS j
+    JOIN groups AS s ON j.group_id = s.id
+    WHERE j.user_id = users.id
+        AND j.group_id = s.id
+        [AND <source-side filter on s>]
+)
+```
+
+Two null-skip safety nets, both from standard SQL three-valued
+logic: `j.user_id = users.id` (the candidate-correlation) fails
+when `user_id IS NULL`, and the `JOIN groups AS s ON j.group_id
+= s.id` fails when `group_id IS NULL`.
+
+### Predicate traversal (single SQL statement, source as outer)
+
+`Group.users.exists()` and `Group.users.has { where(...) }`
+lower via `Predicate.HasEdge` / `Predicate.HasEdgeWith` (see
+`PostgresDriver.kt`'s `lowerHasEdge`). The outer query stays on
+the **source** table (groups); the EXISTS subquery walks the
+junction joined to the **target**:
+
+```sql
+... FROM groups WHERE EXISTS (
+    SELECT 1 FROM memberships AS j
+    JOIN users AS t ON t.id = j.user_id
+    WHERE j.group_id = groups.id
+        [AND <target-side filter on t>]
+)
+```
+
+`Group.users.has { where(...) }` folds the target-side filter
+into the EXISTS body; bare `Group.users.exists()` omits it.
+Same two null-skip mechanisms apply, swapped: `j.group_id =
+groups.id` correlates against the outer candidate (drops
+`group_id IS NULL`) and `JOIN users AS t ON t.id = j.user_id`
+drops `user_id IS NULL`.
+
+The two single-statement shapes differ in which side joins to
+the junction (source vs. target) and which side correlates to
+the outer candidate — so they need separate test pins even
+though both ultimately rely on SQL NULL semantics.
 
 ### Eager loading (two-step driver call)
 
@@ -137,13 +173,13 @@ ordering on the target's columns — none of which a single
 SQL join would express cleanly given the source-grouping the
 runtime does afterward.
 
-### Why this RFC may still be a no-op on the implementation side
+### Why this RFC was a no-op on the implementation side
 
-Both lowerings rely on standard SQL NULL semantics (`= ?` and
-`IN (...)` return UNKNOWN when the left side is NULL, which
+All three lowerings rely on standard SQL NULL semantics (`= ?`
+and `IN (...)` return UNKNOWN when an operand is NULL, which
 fails any boolean test). The integration tests called out in
-the acceptance criteria are the necessary work; if a test ever
-finds a runtime gap (e.g., a future driver that maps NULL
+the acceptance criteria were the only work needed; if a test
+ever finds a runtime gap (e.g., a future driver that maps NULL
 inputs differently, or a step-1 query that doesn't materialize
 the IS NULL skip correctly), code changes would land in the
 respective lowering — not in the schema-level traversal
