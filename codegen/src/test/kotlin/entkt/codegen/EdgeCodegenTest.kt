@@ -1142,8 +1142,13 @@ class EdgeCodegenTest {
         assert(output.contains("beforeCreateHooks: List<(PetCreateHookContext) -> Unit>")) {
             "beforeCreateHooks list should be typed against PetCreateHookContext\n$output"
         }
-        assert(output.contains("val createCtx = PetCreateHookContext(client, this)")) {
-            "save() should construct a CreateHookContext\n$output"
+        // RFC 08: the CreateHookContext now wraps the private
+        // `_createMutationView` adapter, not the concrete builder
+        // (`this`). This matches the runtime-enforced contract
+        // the update path has had since RFC #4 / #5 — a hook
+        // attempting `ctx.mutation as PetCreate` throws.
+        assert(output.contains("val createCtx = PetCreateHookContext(client, _createMutationView)")) {
+            "save() should construct a CreateHookContext wrapping _createMutationView\n$output"
         }
         assert(output.contains("for (hook in beforeCreateHooks) hook(createCtx)")) {
             "save() should iterate beforeCreate hooks with the context\n$output"

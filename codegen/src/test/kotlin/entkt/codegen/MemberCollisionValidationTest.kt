@@ -263,6 +263,65 @@ class MemberCollisionValidationTest {
     }
 
     // ──────────────────────────────────────────────────────────────
+    // RFC 08 manifest coverage: the private hook-facing adapter
+    // properties (`_beforeSaveView`, `_createMutationView` on
+    // Create; `_mutationView`, `_beforeSaveView`,
+    // `_capturedPendingEdges` on Update) are reachable as
+    // collision targets via RFC 06 declaration-name capture.
+    // Schema column names can't start with `_` (snake_case
+    // regex), but Kotlin val names can, and RFC 06 picks up the
+    // val name verbatim — so `val _beforeSaveView = uuid("x");
+    // val rel = belongsTo<X>("rel").field(_beforeSaveView)`
+    // produces a generated FK property named `_beforeSaveView`
+    // that collides with the private adapter.
+    // ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun `field-backed FK named '_beforeSaveView' collides with the Create adapter`() {
+        class T : EntSchema("targets_a") {
+            override fun id() = EntId.long()
+        }
+        class S : EntSchema("schemas_a") {
+            override fun id() = EntId.long()
+            val _beforeSaveView = long("backing_col")
+            val rel = belongsTo<T>("rel").field(_beforeSaveView)
+        }
+
+        val errors = validate("T" to T(), "S" to S())
+        assertCollision(errors, "SCreate", "_beforeSaveView")
+    }
+
+    @Test
+    fun `field-backed FK named '_createMutationView' collides with the Create adapter`() {
+        class T : EntSchema("targets_b") {
+            override fun id() = EntId.long()
+        }
+        class S : EntSchema("schemas_b") {
+            override fun id() = EntId.long()
+            val _createMutationView = long("backing_col")
+            val rel = belongsTo<T>("rel").field(_createMutationView)
+        }
+
+        val errors = validate("T" to T(), "S" to S())
+        assertCollision(errors, "SCreate", "_createMutationView")
+    }
+
+    @Test
+    fun `field-backed FK named '_mutationView' collides with the Update adapter`() {
+        class T : EntSchema("targets_c") {
+            override fun id() = EntId.long()
+        }
+        class S : EntSchema("schemas_c") {
+            override fun id() = EntId.long()
+            val _mutationView = long("backing_col")
+            val rel = belongsTo<T>("rel").field(_mutationView)
+        }
+
+        val errors = validate("T" to T(), "S" to S())
+        assertCollision(errors, "SUpdate", "_mutationView")
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // Negative test: existing valid schemas should not raise false
     // positives. Mirrors the RFC's acceptance criterion
     // "Existing valid schemas continue to pass without renaming."

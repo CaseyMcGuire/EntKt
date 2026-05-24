@@ -40,26 +40,36 @@ import entkt.schema.EntSchema
  * inspection, or `unset{Field}()`.
  *
  * Also generates two restricted hook-facing views that extend the
- * shared `Mutation` interface. The strength of the restriction differs
- * between create and update:
+ * shared `Mutation` interface. Both views are now
+ * **runtime-enforced** via private anonymous adapter properties
+ * on the respective Create / Update builders (RFC #5 introduced
+ * the update adapter; RFC 08 brought the create side to parity):
  *
  * - `${SchemaName}CreateMutationView` — the typed surface for
  *   `beforeCreate` hook lambdas. Adds immutable scalar fields
- *   (writable on create only). The hook receives the concrete
- *   `${SchemaName}Create` builder typed as the view, so the
- *   restriction is a static API restriction only: a hook that
- *   explicitly casts back to `${SchemaName}Create` can still reach
- *   `save()`, `client`, `driver`, hook lists, etc. at runtime.
+ *   (writable on create only). The hook receives a private
+ *   adapter (`_createMutationView`) whose runtime type implements
+ *   only this view — it forwards property reads/writes to the
+ *   outer `${SchemaName}Create` builder but does not extend or
+ *   expose the concrete builder type. A hook that casts
+ *   `ctx.mutation` to `${SchemaName}Create` throws
+ *   `ClassCastException`. The concrete `${SchemaName}Create`
+ *   class continues to implement `${SchemaName}CreateMutationView`
+ *   as a static type relationship (so non-hook code that upcasts
+ *   the builder keeps working), but the runtime object handed
+ *   to each hook is the adapter, not the builder.
  *
  * - `${SchemaName}UpdateMutationView` — the typed surface for
  *   `beforeUpdate` hook lambdas (via `ctx.mutation`). Adds
- *   `unset{Field}()` patch operations. The hook receives a private
- *   anonymous adapter whose runtime type implements only this view —
- *   it forwards property reads/writes and unset() calls to the outer
- *   update builder but does not extend or expose `${SchemaName}Update`.
- *   A hook that casts the parameter to `${SchemaName}Update` throws
- *   `ClassCastException`. So on the update path the narrowing is
- *   actually runtime-enforced, not just typed.
+ *   `unset{Field}()` patch operations and the `pendingEdges`
+ *   aggregator. Same private-adapter pattern as the create
+ *   side: a hook that casts `ctx.mutation` to `${SchemaName}Update`
+ *   throws `ClassCastException`.
+ *
+ * `beforeSave` hooks on both create and update receive a
+ * `${SchemaName}Mutation`-typed adapter (`_beforeSaveView` on
+ * each builder) — the shared writable surface, with no view-
+ * specific extensions reachable.
  *
  * The Update view's `unset` methods live only on the update side because
  * the patch model they remove from is update-specific.

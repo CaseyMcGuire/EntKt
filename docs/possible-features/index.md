@@ -21,7 +21,6 @@ Implemented RFCs have moved to the
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
 - [Transaction Options And Savepoints](mutation/transaction-options-savepoints.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
-- [Create Hook Mutation View Adapter](edge-mutation/08-create-hook-mutation-view-adapter.md)
 - [Through-Entity Nullable M2M Traversal](edge-mutation/09-through-entity-nullable-m2m-traversal.md)
 - [Through-Link Inverse Read Traversal](edge-mutation/10-through-link-inverse-read-traversal.md)
 - [Mutation Actions](mutation/mutation-actions.md)

@@ -137,6 +137,40 @@ internal class CreateGenerator(
                 }
             }
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
+            // RFC 08: private hook-facing adapters. `_beforeSaveView`
+            // implements ONLY `${Schema}Mutation` for `beforeSave`
+            // hooks; `_createMutationView` implements
+            // `${Schema}CreateMutationView` for `beforeCreate`
+            // hooks via `ctx.mutation`. Both forward to the outer
+            // `${Schema}Create` builder. A hook attempting
+            // `arg as ${Schema}Create` (or `ctx.mutation as` any
+            // other view it shouldn't reach) fails at runtime,
+            // matching the runtime-enforced contract the update
+            // path has had since RFC #4 / #5.
+            .addProperty(
+                // _beforeSaveView implements ${Schema}Mutation, which
+                // declares ONLY mutable scalar fields + mutable FKs
+                // (immutable FKs live on the CreateMutationView side
+                // — they're create-only writable). Filter edgeFks
+                // to mutables here so the anonymous-object body
+                // doesn't emit `override var` for FK properties the
+                // interface doesn't declare — Kotlin rejects those
+                // with "overrides nothing."
+                buildBeforeSaveAdapterProperty(
+                    schemaName,
+                    mutationClass,
+                    mutableFields,
+                    edgeFks.filter { !it.immutable },
+                ),
+            )
+            .addProperty(
+                buildCreateMutationViewAdapterProperty(
+                    schemaName,
+                    createMutationViewClass,
+                    allFields,
+                    edgeFks,
+                ),
+            )
             .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
             .addFunction(buildSaveOrErrorFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
@@ -144,6 +178,122 @@ internal class CreateGenerator(
 
         return FileSpec.builder(packageName, className)
             .addType(typeSpec)
+            .build()
+    }
+
+    /**
+     * RFC 08: private `_beforeSaveView` adapter that implements
+     * ONLY `${Schema}Mutation` — the shared writable surface for
+     * `beforeSave` hooks across create + update. Excludes
+     * immutable-scalar / immutable-FK setters (those are part of
+     * the `${Schema}CreateMutationView` surface, which is the
+     * create-phase-specific view passed to `beforeCreate`), and
+     * has no `${Schema}Create`-specific members like
+     * `save()` / `driver` / `client` / hook lists.
+     *
+     * Mirrors [UpdateGenerator.buildBeforeSaveAdapterProperty] —
+     * both create and update saves hand `beforeSave` hooks the
+     * same `Mutation`-typed adapter shape, so a hook registered
+     * via `onBeforeSave` sees the same restricted surface
+     * regardless of the operation phase.
+     */
+    private fun buildBeforeSaveAdapterProperty(
+        schemaName: String,
+        mutationClass: ClassName,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): PropertySpec {
+        val createClassName = "${schemaName}Create"
+        val adapter = TypeSpec.anonymousClassBuilder()
+            .addSuperinterface(mutationClass)
+        for (field in mutableFields) {
+            val propName = toCamelCase(field.name)
+            val typeName = field.resolvedTypeName().copy(nullable = true)
+            adapter.addProperty(buildAdapterForwarderProperty(createClassName, propName, typeName))
+        }
+        for (fk in edgeFks) {
+            // FK type on the Mutation interface follows
+            // relationship nullability — required FKs are non-null.
+            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
+            adapter.addProperty(buildAdapterForwarderProperty(createClassName, fk.propertyName, typeName))
+        }
+        return PropertySpec.builder("_beforeSaveView", mutationClass)
+            .addModifiers(KModifier.PRIVATE)
+            .initializer("%L", adapter.build())
+            .build()
+    }
+
+    /**
+     * RFC 08: private `_createMutationView` adapter that
+     * implements `${Schema}CreateMutationView` — the
+     * create-phase view a `beforeCreate` hook sees through
+     * `ctx.mutation`. Forwards every scalar (mutable AND
+     * immutable, since immutables are create-only writable
+     * and surface on the create view) and every FK (mutable AND
+     * immutable for the same reason) to the outer
+     * `${Schema}Create` builder.
+     *
+     * Replaces V0's "hand the concrete builder typed as the
+     * view" pattern. A `beforeCreate` hook that attempts
+     * `ctx.mutation as ${Schema}Create` now throws
+     * `ClassCastException` at runtime — the adapter only
+     * implements the view interface.
+     */
+    private fun buildCreateMutationViewAdapterProperty(
+        schemaName: String,
+        createMutationViewClass: ClassName,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): PropertySpec {
+        val createClassName = "${schemaName}Create"
+        val adapter = TypeSpec.anonymousClassBuilder()
+            .addSuperinterface(createMutationViewClass)
+        // Mutable scalars (inherited from Mutation) + immutable
+        // scalars (declared on CreateMutationView itself). The
+        // generated `${Schema}Create` class declares both as
+        // `var ... = null` properties — the forwarder reads /
+        // writes through them.
+        for (field in allFields) {
+            val propName = toCamelCase(field.name)
+            val typeName = field.resolvedTypeName().copy(nullable = true)
+            adapter.addProperty(buildAdapterForwarderProperty(createClassName, propName, typeName))
+        }
+        for (fk in edgeFks) {
+            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
+            adapter.addProperty(buildAdapterForwarderProperty(createClassName, fk.propertyName, typeName))
+        }
+        return PropertySpec.builder("_createMutationView", createMutationViewClass)
+            .addModifiers(KModifier.PRIVATE)
+            .initializer("%L", adapter.build())
+            .build()
+    }
+
+    /**
+     * One forwarder property on a Create-side adapter. Reads /
+     * writes go to the outer `${Schema}Create` instance via
+     * `this@${createClassName}.${prop}`. The forwarder property
+     * is `override var` because every member declared on the
+     * generated view interfaces is a mutable property.
+     */
+    private fun buildAdapterForwarderProperty(
+        createClassName: String,
+        prop: String,
+        typeName: com.squareup.kotlinpoet.TypeName,
+    ): PropertySpec {
+        return PropertySpec.builder(prop, typeName)
+            .addModifiers(KModifier.OVERRIDE)
+            .mutable(true)
+            .getter(
+                FunSpec.getterBuilder()
+                    .addStatement("return this@%L.%L", createClassName, prop)
+                    .build(),
+            )
+            .setter(
+                FunSpec.setterBuilder()
+                    .addParameter("value", typeName)
+                    .addStatement("this@%L.%L = value", createClassName, prop)
+                    .build(),
+            )
             .build()
     }
 
@@ -301,19 +451,15 @@ internal class CreateGenerator(
         builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName create")
 
         // ---- Lifecycle hooks (before validation so hooks can set fields). ----
-        builder.addStatement("for (hook in beforeSaveHooks) hook(this)")
-        // beforeCreate hooks receive a CreateHookContext wrapping the
-        // restricted view and the client. `this` satisfies the view
-        // contract, so it can be passed as the mutation directly.
-        // Note: this is a static API restriction (hook lambdas are typed
-        // against the view interface, not the concrete builder), not a
-        // sandboxed capability boundary — a hook that explicitly casts
-        // `ctx.mutation as ${Schema}Create` can still reach save() etc.
-        // The contract is "hidden from the typed hook surface", not
-        // "unreachable at runtime".
+        // RFC 08: route through the private `_beforeSaveView` and
+        // `_createMutationView` adapters so a misbehaving hook
+        // that tries to cast back to `${Schema}Create` (or to a
+        // wider sibling view) fails at runtime — matching the
+        // runtime-enforced contract the update path uses.
+        builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         builder.addStatement(
-            "val createCtx = %T(client, this)",
+            "val createCtx = %T(client, _createMutationView)",
             createHookCtxClass,
         )
         builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")

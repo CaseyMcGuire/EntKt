@@ -8,7 +8,7 @@ Follow-up work was extracted into focused RFCs:
 
 - [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](07-generated-member-name-collisions.md)
-- [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
+- [Create Hook Mutation View Adapter](08-create-hook-mutation-view-adapter.md)
 
 Create-side result variants are already implemented under
 [EntKt Result Variants](../tooling/entkt-result-variants-rfc.md).
@@ -787,26 +787,29 @@ relationship mutability, but they do not expose relationship entity properties
 or link-table edge mutators. Create and update hook interfaces may differ when
 immutable fields are create-only.
 
-The strength of the restriction differs between the two paths:
+**Both paths are now runtime-enforced** via private anonymous adapter
+objects on the respective `${Entity}Create` / `${Entity}Update`
+builders. The original V0 asymmetry — create as static-only, update
+as runtime-enforced — was resolved by
+[RFC 08](08-create-hook-mutation-view-adapter.md):
 
-- **`beforeCreate`** receives the concrete `${Entity}Create` builder typed
-  as `${Entity}CreateMutationView`. The view interface hides `save()`,
-  `driver`, `client`, hook lists, and the private staging/assigned fields
-  from autocomplete and type-checked use. The runtime value is still the
-  concrete builder, so a hook that explicitly casts the parameter back
-  (`ctx.mutation as ${Entity}Create`) can reach the hidden members. This
-  is a static API restriction, not a sandboxed capability boundary —
-  "hidden from the typed hook surface", not "unreachable at runtime".
+- **`beforeCreate`** receives a private adapter (`_createMutationView`)
+  whose runtime type implements only `${Entity}CreateMutationView`. The
+  adapter forwards property reads/writes to the outer
+  `${Entity}Create` builder but does not extend or expose the concrete
+  builder. A hook that casts `ctx.mutation as ${Entity}Create` throws
+  `ClassCastException`.
 
-- **`beforeUpdate`** receives a private anonymous adapter object whose
-  runtime type implements only `${Entity}UpdateMutationView`. The adapter
-  forwards property reads/writes and `unset{Field}()` calls to the outer
-  update builder, but it does not extend or expose the concrete
-  `${Entity}Update`. A hook that casts back (`ctx.mutation as
-  ${Entity}Update`) throws `ClassCastException` — the runtime really
-  doesn't expose the hidden members through this object. So on the update
-  path the restriction is a runtime-enforced narrowing, not just a typed
-  one.
+- **`beforeUpdate`** receives a private adapter
+  (`_mutationView`) whose runtime type implements only
+  `${Entity}UpdateMutationView`. Same mechanism — `ctx.mutation as
+  ${Entity}Update` throws.
+
+The concrete `${Entity}Create` class continues to implement
+`${Entity}CreateMutationView` (and `${Entity}Mutation`) as a static
+type relationship, so non-hook code that upcasts a builder to either
+view interface keeps working. Only the runtime object handed to each
+hook is the adapter, not the builder.
 
 `beforeSave` receives a common restricted `{Entity}Mutation` interface shared by
 create and update hooks. That common interface exposes only fields and FKs that
@@ -1143,9 +1146,9 @@ The implementation should be covered by tests for:
   relationship entity properties
 - hook callbacks are typed against restricted hook-facing mutation interfaces,
   not the concrete public create/update builders (per "Hook-Facing API Shape":
-  `beforeCreate` and `beforeSave` get the concrete builder typed as the view —
-  static-API restriction; `beforeUpdate` gets a private adapter that doesn't
-  extend the concrete builder — runtime-enforced narrowing)
+  `beforeCreate` / `beforeUpdate` / `beforeSave` all receive private adapters
+  that don't extend the concrete builder — runtime-enforced narrowing on
+  both create and update after RFC 08)
 - `beforeSave` is typed against a common restricted mutation interface that
   excludes create-only immutable fields and immutable field-backed FKs
 - update-side getters on the common `beforeSave` mutation interface throw for
@@ -1167,7 +1170,7 @@ The old deferred scope is now split into smaller possible-feature RFCs:
 
 - [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](07-generated-member-name-collisions.md)
-- [Create Hook Mutation View Adapter](../../possible-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
+- [Create Hook Mutation View Adapter](08-create-hook-mutation-view-adapter.md)
 
 The former create-side result-variants item is no longer deferred; create
 builders now generate `saveOrError()` and `saveOrThrow()`.

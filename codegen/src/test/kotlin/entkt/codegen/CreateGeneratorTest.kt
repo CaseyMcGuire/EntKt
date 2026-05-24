@@ -516,4 +516,150 @@ class CreateGeneratorTest {
             "Should route uncaught Exception through classifyDriverError with CREATE operation\n$output"
         }
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // RFC 08: private hook-facing adapters on the create builder
+    // ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun `RFC 08 — create builder emits private _beforeSaveView adapter implementing Mutation only`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("private val _beforeSaveView: CarMutation")) {
+            "Should declare a private _beforeSaveView property typed as CarMutation\n$output"
+        }
+        // Adapter is an anonymous `object : CarMutation { ... }`; it
+        // must NOT implement CarCreateMutationView or CarCreate.
+        assert(output.contains("object : CarMutation {")) {
+            "_beforeSaveView should be an anonymous Mutation implementation\n$output"
+        }
+        // Forwarder for mutable scalar field.
+        assert(output.contains("override var model: String?") &&
+            output.contains("this@CarCreate.model")) {
+            "_beforeSaveView should forward `model` through to the outer CarCreate\n$output"
+        }
+    }
+
+    @Test
+    fun `RFC 08 — create builder emits private _createMutationView adapter implementing CreateMutationView only`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("private val _createMutationView: CarCreateMutationView")) {
+            "Should declare a private _createMutationView property typed as CarCreateMutationView\n$output"
+        }
+        assert(output.contains("object : CarCreateMutationView {")) {
+            "_createMutationView should be an anonymous CreateMutationView implementation\n$output"
+        }
+        assert(output.contains("this@CarCreate.")) {
+            "_createMutationView's forwarders should reference this@CarCreate\n$output"
+        }
+    }
+
+    @Test
+    fun `RFC 08 — beforeSave hook receives _beforeSaveView, not 'this'`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("for (hook in beforeSaveHooks) hook(_beforeSaveView)")) {
+            "save() should pass _beforeSaveView to beforeSave hooks, not `this`\n$output"
+        }
+        assert(!output.contains("for (hook in beforeSaveHooks) hook(this)")) {
+            "save() must NOT pass `this` to beforeSave hooks — RFC 08 contract\n$output"
+        }
+    }
+
+    @Test
+    fun `RFC 08 — beforeCreate CreateHookContext wraps _createMutationView, not 'this'`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("CarCreateHookContext(client, _createMutationView)")) {
+            "CreateHookContext should wrap _createMutationView, not `this`\n$output"
+        }
+        assert(!output.contains("CarCreateHookContext(client, this)")) {
+            "CreateHookContext must NOT wrap `this` — RFC 08 contract\n$output"
+        }
+    }
+
+    @Test
+    fun `RFC 08 — _beforeSaveView omits immutable FK forwarders (Mutation excludes them)`() {
+        // Regression for the override-nothing bug: ${Entity}Mutation
+        // only declares mutable FKs; immutable FKs live on
+        // ${Entity}CreateMutationView. The _beforeSaveView adapter
+        // implements Mutation, so emitting `override var ownerId`
+        // for an immutable FK on the Mutation impl would fail
+        // Kotlin compilation with "overrides nothing."
+        //
+        // Defined via an inline local schema with an immutable
+        // field-backed FK so the test owns its fixtures.
+        class ImmFkParent : EntSchema("imm_parents") {
+            override fun id() = EntId.long()
+        }
+        class ImmFkChild : EntSchema("imm_children") {
+            override fun id() = EntId.long()
+            val name = string("name")
+            val ownerId = long("owner_id").immutable()
+            val owner = belongsTo<ImmFkParent>("owner").field(ownerId)
+        }
+        val parent = ImmFkParent()
+        val child = ImmFkChild()
+        val registry = mapOf<KClass<out EntSchema>, EntSchema>(
+            parent::class to parent,
+            child::class to child,
+        )
+        parent.finalize(registry)
+        child.finalize(registry)
+        val schemaNames = mapOf<EntSchema, String>(parent to "ImmFkParent", child to "ImmFkChild")
+        val output = generator.generate("ImmFkChild", child, schemaNames).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // The _createMutationView adapter SHOULD have `ownerId` —
+        // immutables are create-only writable, so they're part of
+        // ${Entity}CreateMutationView's surface.
+        val createViewBlock = output.substringAfter("private val _createMutationView: ImmFkChildCreateMutationView")
+            .substringBefore("public fun save")
+        assert(createViewBlock.contains("override var ownerId")) {
+            "_createMutationView should forward `ownerId` (immutable FKs live on CreateMutationView)\n$output"
+        }
+
+        // The _beforeSaveView adapter MUST NOT have `ownerId` —
+        // Mutation doesn't declare immutable FKs.
+        val beforeSaveBlock = output.substringAfter("private val _beforeSaveView: ImmFkChildMutation")
+            .substringBefore("private val _createMutationView")
+        assert(!beforeSaveBlock.contains("override var ownerId")) {
+            "_beforeSaveView must NOT forward immutable FK `ownerId` — Mutation doesn't declare it\n$output"
+        }
+        // The mutable scalar should still be there.
+        assert(beforeSaveBlock.contains("override var name")) {
+            "_beforeSaveView should still forward mutable scalars\n$output"
+        }
+    }
+
+    @Test
+    fun `RFC 08 — concrete Create still implements CreateMutationView (smallest change)`() {
+        // Per RFC 08 §"Relationship between ${Entity}Create and
+        // ${Entity}CreateMutationView", the class hierarchy is
+        // unchanged — only the runtime object handed to hooks
+        // changes. Non-hook code that upcasts a builder to either
+        // view interface keeps working.
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("public class CarCreate( ") &&
+            output.contains(") : CarCreateMutationView {")) {
+            "CarCreate should still implement CarCreateMutationView at the class level\n$output"
+        }
+    }
 }

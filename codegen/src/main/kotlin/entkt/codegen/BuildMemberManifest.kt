@@ -467,6 +467,20 @@ private fun addFixedBuilderMembers(
             "dirtyFields" to GeneratedMemberKind.PROPERTY,
             "beforeUpdateHooks" to GeneratedMemberKind.PROPERTY,
             "afterUpdateHooks" to GeneratedMemberKind.PROPERTY,
+            // RFC #5 / #4 / #8 private adapter + snapshot properties.
+            // Schema field names can't start with `_` (the snake_case
+            // regex forbids it), but RFC 06 declaration capture picks
+            // up Kotlin val names verbatim — and Kotlin allows `val
+            // _foo`. A schema like `val _mutationView = uuid("x");
+            // val rel = belongsTo<X>("rel").field(_mutationView)`
+            // produces a generated FK property named `_mutationView`
+            // that would collide with the private adapter on the
+            // update builder. Manifest registers these so the RFC 07
+            // collision check rejects the schema with the actionable
+            // diagnostic.
+            "_mutationView" to GeneratedMemberKind.PROPERTY,
+            "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
+            "_capturedPendingEdges" to GeneratedMemberKind.PROPERTY,
         )
         for ((n, kind) in updateOnly) {
             manifest.add(artifact, n, kind, "fixed update-builder member '$n'")
@@ -476,6 +490,13 @@ private fun addFixedBuilderMembers(
         val createOnly = listOf(
             "beforeCreateHooks" to GeneratedMemberKind.PROPERTY,
             "afterCreateHooks" to GeneratedMemberKind.PROPERTY,
+            // RFC 08 private adapter properties. Same reachability
+            // story as the update side above — schemas using RFC 06
+            // declaration capture can produce a `_beforeSaveView`-
+            // or `_createMutationView`-named FK property that would
+            // collide with these.
+            "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
+            "_createMutationView" to GeneratedMemberKind.PROPERTY,
         )
         for ((n, kind) in createOnly) {
             manifest.add(artifact, n, kind, "fixed create-builder member '$n'")
