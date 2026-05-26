@@ -8,6 +8,7 @@ Implemented RFCs have moved to the
 
 ## Privacy And Validation
 
+- [Privacy Rule Primitives And Viewer Flavors](privacy-validation/privacy-rule-primitives-and-viewer-flavors.md)
 - [Privacy / Validation Explain Mode](privacy-validation/privacy-validation-explain-mode.md)
 - [Policy Test Helpers](privacy-validation/policy-test-helpers.md)
 - [Checked Aggregate Privacy](privacy-validation/checked-aggregate-privacy.md)
