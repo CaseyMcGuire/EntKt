@@ -145,6 +145,28 @@ abstract class EntSchema(val tableName: String) {
     protected fun uuid(name: String): UuidFieldBuilder = registerField(UuidFieldBuilder(name))
     protected fun bytes(name: String): BytesFieldBuilder = registerField(BytesFieldBuilder(name))
 
+    /**
+     * Declare an enum-typed field backed by Kotlin enum class [E].
+     *
+     * Values are persisted as the constant's [Enum.name] string in a plain
+     * `text` column (no native DB enum, no `CHECK` constraint) and read back
+     * with `valueOf(name)`.
+     *
+     * **Renaming a constant is a data-affecting change, not a free
+     * refactor.** Renaming the enum *class* is safe (the persisted value is
+     * the constant name, unchanged), but renaming a *constant* (e.g.
+     * `MEDIUM` → `NORMAL`):
+     * - changes the persisted contract — existing rows still hold the old
+     *   string, and `valueOf("MEDIUM")` throws when those rows are read;
+     * - if the constant is used as a `.default(...)`, the migration differ
+     *   emits only a metadata-only `ALTER COLUMN … SET DEFAULT 'NORMAL'` — it
+     *   does **not** rewrite existing rows, and nothing in the DB or tooling
+     *   flags the stale values.
+     *
+     * Treat a constant rename like any value migration: add the new constant,
+     * backfill existing rows (`UPDATE … SET col = 'NORMAL' WHERE col =
+     * 'MEDIUM'`) in a hand-written migration, then retire the old name.
+     */
     protected inline fun <reified E : Enum<E>> enum(name: String): EnumFieldBuilder =
         enum(name, E::class)
 

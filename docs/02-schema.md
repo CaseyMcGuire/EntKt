@@ -133,6 +133,24 @@ With this declaration:
 Values are stored as strings in the database (via `.name`) and converted
 back with `valueOf()` when reading rows. The driver layer is unchanged.
 
+> **Caveat: renaming an enum constant is a data migration, not a refactor.**
+> Because values persist as the constant's `.name` in a plain `text` column
+> (no native DB enum, no `CHECK` constraint), renaming a *constant* (e.g.
+> `MEDIUM` → `NORMAL`) diverges from existing data:
+>
+> - Existing rows keep the old string, so `valueOf("MEDIUM")` **throws** when
+>   those rows are read back.
+> - If the constant was a `.default(...)`, migration generation emits only a
+>   metadata-only `ALTER COLUMN … SET DEFAULT 'NORMAL'`. It does **not**
+>   rewrite existing rows, and neither the database nor the diff tool flags
+>   the stale values — the migration applies cleanly and the problem only
+>   surfaces later, at read time.
+>
+> Renaming the enum *class* is safe (the persisted value is unchanged). To
+> rename a *constant*, write a manual migration that backfills the data
+> (`UPDATE … SET col = 'NORMAL' WHERE col = 'MEDIUM'`) alongside the code
+> change.
+
 ## Edges
 
 Edges define relationships between entities. They are declared as
