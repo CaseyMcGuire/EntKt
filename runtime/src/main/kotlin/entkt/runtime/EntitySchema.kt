@@ -62,6 +62,22 @@ data class ColumnMetadata(
     val references: ForeignKeyRef? = null,
     /** Documentation comment from the schema DSL, if any. */
     val comment: String? = null,
+    /**
+     * Default value declared on the schema DSL (`.default(...)` /
+     * `.defaultNow()`), or null when none. Holds the raw Kotlin value —
+     * a primitive, an enum constant, or the sentinel `"now"` for a
+     * `TIME` `defaultNow()` — which each
+     * [entkt.migrations.TypeMapper] converts into a SQL `DEFAULT`
+     * expression for its dialect.
+     *
+     * Consumed only on the migration path: [Driver]s never apply column
+     * defaults at runtime (the generated `create()` bakes them in from
+     * `Field.default` directly), so the generated `SCHEMA` literal leaves
+     * this null. The migration builder
+     * (`entkt.codegen.buildEntitySchemas`) populates it so
+     * `NormalizedSchema.fromEntitySchemas` can emit `DEFAULT` clauses.
+     */
+    val default: Any? = null,
 )
 
 /**

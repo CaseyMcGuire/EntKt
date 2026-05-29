@@ -16,9 +16,30 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+private enum class FwColor { RED, GREEN }
+
 class FlywayMigrationWorkflowTest {
 
     // ---- Schema fixtures ----
+
+    private val settingsSchema = EntitySchema(
+        table = "fw_settings",
+        idColumn = "id",
+        idStrategy = IdStrategy.AUTO_INT,
+        columns = listOf(
+            ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+            ColumnMetadata("label", FieldType.STRING, nullable = false, default = "anon"),
+            ColumnMetadata("quote_label", FieldType.STRING, nullable = false, default = "O'Brien"),
+            ColumnMetadata("enabled", FieldType.BOOL, nullable = false, default = true),
+            ColumnMetadata("retries", FieldType.INT, nullable = false, default = 3),
+            ColumnMetadata("big_count", FieldType.LONG, nullable = false, default = 100L),
+            ColumnMetadata("ratio", FieldType.DOUBLE, nullable = false, default = 1.5),
+            ColumnMetadata("color", FieldType.ENUM, nullable = false, default = FwColor.GREEN),
+            ColumnMetadata("created_at", FieldType.TIME, nullable = false, default = "now"),
+            ColumnMetadata("note", FieldType.STRING, nullable = true, default = "n/a"),
+        ),
+        edges = emptyMap(),
+    )
 
     private val usersSchema = EntitySchema(
         table = "fw_users",
@@ -208,6 +229,131 @@ class FlywayMigrationWorkflowTest {
             val content = written.filePath.toFile().readText()
             assertTrue(content.contains("MANUAL STEPS REQUIRED"))
             assertTrue(content.contains("RAISE EXCEPTION"), "Should contain a failing statement to block Flyway application")
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `column defaults round-trip through real Postgres without drift`() {
+        val dir = createTempDir()
+        try {
+            // Generating with verify=true applies the DDL to the shadow DB,
+            // re-introspects, and re-diffs — so any mismatch between the
+            // rendered DEFAULT and the database-reported default surfaces here.
+            val result = createWorkflow().generate(
+                schemas = listOf(settingsSchema),
+                migrationsDir = dir,
+                description = "settings_with_defaults",
+                verify = true,
+            ) as GenerateResult.Written
+
+            val content = result.filePath.toFile().readText()
+            assertTrue(content.contains("DEFAULT 'anon'"), content)
+            assertTrue(content.contains("DEFAULT 'O''Brien'"), content)
+            assertTrue(content.contains("DEFAULT true"), content)
+            assertTrue(content.contains("DEFAULT 3"), content)
+            assertTrue(content.contains("DEFAULT 100"), content)
+            assertTrue(content.contains("DEFAULT 1.5"), content)
+            assertTrue(content.contains("DEFAULT 'GREEN'"), content)
+            assertTrue(content.contains("DEFAULT now()"), content)
+
+            // Re-running against the same schema must find no drift, proving
+            // the desired/introspected default forms reconcile.
+            val second = createWorkflow().generate(
+                schemas = listOf(settingsSchema),
+                migrationsDir = dir,
+                description = "no_changes",
+            )
+            assertTrue(second is GenerateResult.NoChanges, "unexpected drift: $second")
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `adding a default to an existing column round-trips as auto op`() {
+        val dir = createTempDir()
+        try {
+            val noDefault = EntitySchema(
+                table = "fw_flags",
+                idColumn = "id",
+                idStrategy = IdStrategy.AUTO_INT,
+                columns = listOf(
+                    ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+                    ColumnMetadata("state", FieldType.STRING, nullable = false),
+                ),
+                edges = emptyMap(),
+            )
+            val withDefault = EntitySchema(
+                table = "fw_flags",
+                idColumn = "id",
+                idStrategy = IdStrategy.AUTO_INT,
+                columns = listOf(
+                    ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+                    ColumnMetadata("state", FieldType.STRING, nullable = false, default = "pending"),
+                ),
+                edges = emptyMap(),
+            )
+
+            createWorkflow().generate(schemas = listOf(noDefault), migrationsDir = dir, description = "initial")
+
+            val result = createWorkflow().generate(
+                schemas = listOf(withDefault),
+                migrationsDir = dir,
+                description = "add_default",
+                verify = true,
+            ) as GenerateResult.Written
+
+            val setDefaults = result.ops.filterIsInstance<MigrationOp.SetColumnDefault>()
+            assertEquals(1, setDefaults.size)
+            assertEquals("state", setDefaults[0].columnName)
+            assertTrue(result.filePath.toFile().readText().contains("SET DEFAULT 'pending'"))
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `adding a unique column with a default surfaces the index as a manual step`() {
+        val dir = createTempDir()
+        try {
+            val base = EntitySchema(
+                table = "fw_codes",
+                idColumn = "id",
+                idStrategy = IdStrategy.AUTO_INT,
+                columns = listOf(
+                    ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+                    ColumnMetadata("name", FieldType.STRING, nullable = false),
+                ),
+                edges = emptyMap(),
+            )
+            val withUniqueDefaulted = EntitySchema(
+                table = "fw_codes",
+                idColumn = "id",
+                idStrategy = IdStrategy.AUTO_INT,
+                columns = listOf(
+                    ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+                    ColumnMetadata("name", FieldType.STRING, nullable = false),
+                    ColumnMetadata("code", FieldType.STRING, nullable = false, unique = true, default = "x"),
+                ),
+                edges = emptyMap(),
+            )
+
+            createWorkflow().generate(schemas = listOf(base), migrationsDir = dir, description = "initial")
+
+            // The constant-backfilled unique column would make CREATE UNIQUE
+            // INDEX fail on a populated table, so it must be a manual step —
+            // the empty shadow DB can't see the conflict.
+            val ex = assertFailsWith<ManualMigrationRequiredException> {
+                createWorkflow().generate(
+                    schemas = listOf(withUniqueDefaulted),
+                    migrationsDir = dir,
+                    description = "add_unique_code",
+                    manualMode = ManualMode.FAIL,
+                )
+            }
+            assertTrue(ex.ops.any { it is MigrationOp.AddIndex }, "expected the unique index to be manual: ${ex.ops}")
         } finally {
             dir.toFile().deleteRecursively()
         }

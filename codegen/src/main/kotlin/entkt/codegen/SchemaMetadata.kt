@@ -85,6 +85,13 @@ internal data class ColumnDescriptor(
     val onDelete: OnDelete? = null,
     /** Documentation comment from the schema DSL, if any. */
     val comment: String? = null,
+    /**
+     * Raw default value from the field's `.default(...)` / `.defaultNow()`
+     * modifier, or null. Carried through to
+     * [entkt.runtime.ColumnMetadata.default] on the migration path so the
+     * differ can emit `DEFAULT` clauses.
+     */
+    val default: Any? = null,
 )
 
 /**
@@ -208,6 +215,7 @@ internal fun columnMetadataFor(
                     references = edgeRef?.let { it.targetTable to "id" },
                     onDelete = edgeRef?.onDelete,
                     comment = field.comment,
+                    default = field.default,
                 ),
             )
         }
@@ -220,6 +228,7 @@ internal fun columnMetadataFor(
                     unique = fk.unique,
                     references = fk.targetTable to "id",
                     onDelete = fk.onDelete,
+                    default = fk.default,
                 ),
             )
         }
@@ -416,6 +425,11 @@ internal fun entitySchemaCodeBlock(
 ): CodeBlock {
     val table = schema.tableName
     val columns = columnMetadataFor(schema, schemaNames)
+    // Note: ColumnMetadata.default is intentionally omitted from this
+    // runtime literal — it is consumed only on the migration path (which
+    // builds ColumnMetadata via buildEntitySchemas, not this literal), and
+    // the generated create() applies defaults from Field.default directly.
+    // See ColumnMetadata.default's KDoc.
     val columnsLiteral = CodeBlock.builder()
         .add("listOf(\n")
         .also { cb ->

@@ -17,6 +17,12 @@ class PostgresSqlRenderer(
         is MigrationOp.AddColumn -> renderAddColumn(op.table, op.column)
         is MigrationOp.AddIndex -> renderAddIndex(op.table, op.index)
         is MigrationOp.AddForeignKey -> renderAddForeignKey(op.table, op.fk)
+        is MigrationOp.SetColumnDefault -> listOf(
+            "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} SET DEFAULT ${op.default}",
+        )
+        is MigrationOp.DropColumnDefault -> listOf(
+            "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP DEFAULT",
+        )
         // Manual ops — render as comments describing what needs to be done
         is MigrationOp.DropTable -> listOf("-- TODO: DROP TABLE ${quote(op.tableName)}")
         is MigrationOp.DropColumn -> listOf("-- TODO: ALTER TABLE ${quote(op.table)} DROP COLUMN ${quote(op.columnName)}")
@@ -51,19 +57,22 @@ class PostgresSqlRenderer(
     }
 
     private fun renderColumnDdl(col: NormalizedColumn): String {
-        val constraints = buildList {
+        val parts = buildList {
+            add(quote(col.name))
+            add(col.sqlType)
+            if (col.default != null) add("DEFAULT ${col.default}")
             if (col.primaryKey) add("PRIMARY KEY")
             if (!col.nullable && !col.primaryKey && col.sqlType !in setOf("serial", "bigserial")) {
                 add("NOT NULL")
             }
-        }.joinToString(" ")
-        val tail = if (constraints.isEmpty()) "" else " $constraints"
-        return "${quote(col.name)} ${col.sqlType}$tail"
+        }
+        return parts.joinToString(" ")
     }
 
     private fun renderAddColumn(table: String, column: NormalizedColumn): List<String> {
+        val default = if (column.default != null) " DEFAULT ${column.default}" else ""
         val nullable = if (column.nullable) "" else " NOT NULL"
-        return listOf("ALTER TABLE ${quote(table)} ADD COLUMN ${quote(column.name)} ${column.sqlType}$nullable")
+        return listOf("ALTER TABLE ${quote(table)} ADD COLUMN ${quote(column.name)} ${column.sqlType}$default$nullable")
     }
 
     private fun renderAddIndex(

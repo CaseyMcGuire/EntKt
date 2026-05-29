@@ -24,7 +24,8 @@ class SchemaDifferTest {
         sqlType: String = "text",
         nullable: Boolean = false,
         primaryKey: Boolean = false,
-    ) = NormalizedColumn(name, sqlType, nullable, primaryKey)
+        default: String? = null,
+    ) = NormalizedColumn(name, sqlType, nullable, primaryKey, default)
 
     private fun idx(
         columns: List<String>,
@@ -109,6 +110,241 @@ class SchemaDifferTest {
         val manualAdds = result.manual.filterIsInstance<MigrationOp.AddColumn>()
         assertEquals(1, manualAdds.size)
         assertEquals("name", manualAdds[0].column.name)
+    }
+
+    @Test
+    fun `add non-null column with default is auto op`() {
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true))),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(
+                    col("id", "serial", primaryKey = true),
+                    col("status", "text", nullable = false, default = "'active'"),
+                ),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        val addCols = result.ops.filterIsInstance<MigrationOp.AddColumn>()
+        assertEquals(1, addCols.size)
+        assertEquals("status", addCols[0].column.name)
+        assertEquals("'active'", addCols[0].column.default)
+        assertTrue(result.manual.isEmpty())
+    }
+
+    @Test
+    fun `setting a default on existing column is auto op`() {
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status"))),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("status", default = "'active'")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        val setDefaults = result.ops.filterIsInstance<MigrationOp.SetColumnDefault>()
+        assertEquals(1, setDefaults.size)
+        assertEquals("status", setDefaults[0].columnName)
+        assertEquals("'active'", setDefaults[0].default)
+        assertTrue(result.manual.isEmpty())
+    }
+
+    @Test
+    fun `changing a default on existing column is auto op`() {
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status", default = "'old'"))),
+        )
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status", default = "'new'"))),
+        )
+        val result = differ.diff(desired, current)
+
+        val setDefaults = result.ops.filterIsInstance<MigrationOp.SetColumnDefault>()
+        assertEquals(1, setDefaults.size)
+        assertEquals("'new'", setDefaults[0].default)
+    }
+
+    @Test
+    fun `removing a default from existing column is a drop default op`() {
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status", default = "'active'"))),
+        )
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status"))),
+        )
+        val result = differ.diff(desired, current)
+
+        val dropDefaults = result.ops.filterIsInstance<MigrationOp.DropColumnDefault>()
+        assertEquals(1, dropDefaults.size)
+        assertEquals("status", dropDefaults[0].columnName)
+    }
+
+    @Test
+    fun `default differing only by type cast does not diff`() {
+        // Desired comes from formatSqlDefault ('active'); current comes from
+        // the database ('active'::text). They must reconcile.
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status", default = "'active'::text"))),
+        )
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("status", default = "'active'"))),
+        )
+        val result = differ.diff(desired, current)
+
+        assertTrue(result.ops.isEmpty(), "expected no default change, got: ${result.ops}")
+        assertTrue(result.manual.isEmpty())
+    }
+
+    @Test
+    fun `changing a string default containing a double colon is detected`() {
+        val current = schema(
+            table("t", columns = listOf(col("id", "serial", primaryKey = true), col("tok", default = "'a::b'"))),
+        )
+        val desired = schema(
+            table("t", columns = listOf(col("id", "serial", primaryKey = true), col("tok", default = "'a::c'"))),
+        )
+        val result = differ.diff(desired, current)
+
+        val setDefaults = result.ops.filterIsInstance<MigrationOp.SetColumnDefault>()
+        assertEquals(1, setDefaults.size)
+        assertEquals("'a::c'", setDefaults[0].default)
+    }
+
+    @Test
+    fun `numeric default differing by cast and quoting does not diff`() {
+        // bigint default: desired "5" vs database-reported "'5'::bigint".
+        val current = schema(
+            table("t", columns = listOf(col("id", "bigserial", primaryKey = true), col("n", "bigint", default = "'5'::bigint"))),
+        )
+        val desired = schema(
+            table("t", columns = listOf(col("id", "bigserial", primaryKey = true), col("n", "bigint", default = "5"))),
+        )
+        val result = differ.diff(desired, current)
+
+        assertTrue(result.ops.isEmpty(), "expected no default change, got: ${result.ops}")
+    }
+
+    @Test
+    fun `adding a unique column with a default defers the unique index to manual`() {
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true))),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(
+                    col("id", "serial", primaryKey = true),
+                    col("code", "text", nullable = false, default = "'x'"),
+                ),
+                indexes = listOf(idx(listOf("code"), unique = true, name = "idx_users_code_unique")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        // The column add itself is safe (auto)...
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddColumn>().size)
+        // ...but a unique index over the constant-backfilled column would
+        // fail on a populated table, so it is deferred to manual.
+        assertTrue(result.ops.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
+        val manualIdx = result.manual.filterIsInstance<MigrationOp.AddIndex>()
+        assertEquals(1, manualIdx.size)
+        assertEquals(listOf("code"), manualIdx[0].index.columns)
+    }
+
+    @Test
+    fun `unique index mixing an existing column with a defaulted new column is manual`() {
+        val current = schema(
+            table("t", columns = listOf(col("id", "serial", primaryKey = true), col("a"))),
+        )
+        val desired = schema(
+            table(
+                "t",
+                columns = listOf(
+                    col("id", "serial", primaryKey = true),
+                    col("a"),
+                    col("b", "text", nullable = false, default = "'x'"),
+                ),
+                indexes = listOf(idx(listOf("a", "b"), unique = true, name = "idx_t_a_b")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        // Backfilling b to a constant collapses (a, b) uniqueness onto `a`,
+        // which has no prior unique constraint and may already hold dups —
+        // so the index can fail on real data. Defer to manual.
+        assertTrue(result.ops.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
+        assertEquals(1, result.manual.filterIsInstance<MigrationOp.AddIndex>().size)
+    }
+
+    @Test
+    fun `unique index with a defaulted new column plus a nullable null-backfilled column stays auto`() {
+        val current = schema(
+            table("t", columns = listOf(col("id", "serial", primaryKey = true))),
+        )
+        val desired = schema(
+            table(
+                "t",
+                columns = listOf(
+                    col("id", "serial", primaryKey = true),
+                    col("a", "text", nullable = false, default = "'x'"),
+                    col("b", "text", nullable = true), // NULL for every existing row
+                ),
+                indexes = listOf(idx(listOf("a", "b"), unique = true, name = "idx_t_a_b")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        // Every existing row gets b = NULL, and NULLS DISTINCT makes all
+        // (x, NULL) tuples distinct, so the index is provably safe to build.
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        assertTrue(result.manual.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
+    }
+
+    @Test
+    fun `adding a unique index over only pre-existing columns stays auto`() {
+        // Unchanged behavior: data-dependent (not guaranteed) failure stays
+        // the caller's responsibility, matching `add index is auto op`.
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("email"))),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(idx(listOf("email"), unique = true, name = "idx_users_email")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        assertTrue(result.manual.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
+    }
+
+    @Test
+    fun `adding a nullable unique column without a default keeps the index auto`() {
+        val current = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true))),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(
+                    col("id", "serial", primaryKey = true),
+                    col("code", "text", nullable = true), // no default → backfills NULL, distinct under unique
+                ),
+                indexes = listOf(idx(listOf("code"), unique = true, name = "idx_users_code_unique")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        assertTrue(result.manual.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
     }
 
     @Test

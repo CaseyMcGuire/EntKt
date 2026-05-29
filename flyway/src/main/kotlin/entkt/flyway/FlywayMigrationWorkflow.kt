@@ -309,15 +309,20 @@ class FlywayMigrationWorkflow(
         if (result.manual.isNotEmpty() && manualMode == ManualMode.ACKNOWLEDGE_AND_ADVANCE) {
             sb.appendLine("--")
             sb.appendLine("-- $MANUAL_STEPS_MARKER")
-            sb.appendLine("-- The following operations require manual SQL. Replace the failing")
-            sb.appendLine("-- statement below with your manual migration SQL before applying.")
+            sb.appendLine("-- The operations below require hand-written SQL. Add it to this file in")
+            sb.appendLine("-- the correct position relative to the auto-generated statements that")
+            sb.appendLine("-- follow the guard — ordering matters: some manual steps depend on the")
+            sb.appendLine("-- auto ops (e.g. a unique index over a newly added column must run AFTER")
+            sb.appendLine("-- that column is added), while an auto op may depend on a manual one")
+            sb.appendLine("-- (e.g. a foreign key referencing a column you add by hand). Do not")
+            sb.appendLine("-- assume the SQL goes where this guard sits.")
             sb.appendLine("--")
             for (op in result.manual) {
                 sb.appendLine("-- [ ] ${describeOp(op)}")
             }
             sb.appendLine("--")
             sb.appendLine()
-            sb.appendLine("-- Remove this statement once you have added your manual migration SQL above.")
+            sb.appendLine("-- Delete this guard once the manual steps above are written into the file.")
             sb.appendLine("DO $\$BEGIN RAISE EXCEPTION 'entkt: manual migration steps have not been completed — see comments above'; END$\$;")
             sb.appendLine()
             if (result.ops.isNotEmpty()) {

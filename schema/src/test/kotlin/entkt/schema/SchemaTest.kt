@@ -504,6 +504,23 @@ class SchemaTest {
     }
 
     @Test
+    fun `non-finite double default is rejected`() {
+        assertFailsWith<IllegalStateException> {
+            DoubleFieldBuilder("ratio").default(Double.NaN).build()
+        }
+        assertFailsWith<IllegalStateException> {
+            DoubleFieldBuilder("ratio").default(Double.POSITIVE_INFINITY).build()
+        }
+    }
+
+    @Test
+    fun `non-finite float default is rejected`() {
+        assertFailsWith<IllegalStateException> {
+            FloatFieldBuilder("ratio").default(Float.NEGATIVE_INFINITY).build()
+        }
+    }
+
+    @Test
     fun `empty index is rejected`() {
         assertFailsWith<IllegalArgumentException> {
             IndexBuilder("idx_empty", emptyList()).build()

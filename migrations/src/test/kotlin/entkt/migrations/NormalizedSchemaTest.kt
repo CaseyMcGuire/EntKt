@@ -8,9 +8,13 @@ import entkt.runtime.IndexMetadata
 import entkt.schema.FieldType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class NormalizedSchemaTest {
+
+    private enum class Color { RED, GREEN }
 
     private val typeMapper = object : TypeMapper {
         override fun sqlTypeFor(fieldType: FieldType, isPrimaryKey: Boolean, idStrategy: IdStrategy): String {
@@ -101,6 +105,69 @@ class NormalizedSchemaTest {
         assertEquals(1, table.indexes.size)
         assertEquals(listOf("first_name", "last_name"), table.indexes[0].columns)
         assertEquals("idx_full_name", table.indexes[0].name)
+    }
+
+    @Test
+    fun `fromEntitySchemas formats column defaults`() {
+        val schema = EntitySchema(
+            table = "items",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_INT,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+                ColumnMetadata("name", FieldType.STRING, nullable = false, default = "anon"),
+                ColumnMetadata("count", FieldType.INT, nullable = false, default = 5),
+                ColumnMetadata("active", FieldType.BOOL, nullable = false, default = true),
+                ColumnMetadata("color", FieldType.ENUM, nullable = false, default = Color.GREEN),
+                ColumnMetadata("created_at", FieldType.TIME, nullable = false, default = "now"),
+                ColumnMetadata("bio", FieldType.TEXT, nullable = true),
+            ),
+            edges = emptyMap(),
+        )
+        val table = NormalizedSchema.fromEntitySchemas(listOf(schema), typeMapper).tables["items"]!!
+        val byName = table.columns.associateBy { it.name }
+
+        assertEquals("'anon'", byName["name"]!!.default)
+        assertEquals("5", byName["count"]!!.default)
+        assertEquals("true", byName["active"]!!.default)
+        assertEquals("'GREEN'", byName["color"]!!.default)
+        assertEquals("now()", byName["created_at"]!!.default)
+        assertNull(byName["id"]!!.default)
+        assertNull(byName["bio"]!!.default)
+    }
+
+    @Test
+    fun `formatSqlDefault renders each type`() {
+        assertEquals("'hi'", formatSqlDefault(FieldType.STRING, "hi"))
+        assertEquals("'O''Brien'", formatSqlDefault(FieldType.TEXT, "O'Brien"))
+        assertEquals("true", formatSqlDefault(FieldType.BOOL, true))
+        assertEquals("42", formatSqlDefault(FieldType.INT, 42))
+        assertEquals("100", formatSqlDefault(FieldType.LONG, 100L))
+        assertEquals("1.5", formatSqlDefault(FieldType.DOUBLE, 1.5))
+        assertEquals("'GREEN'", formatSqlDefault(FieldType.ENUM, Color.GREEN))
+        assertEquals("now()", formatSqlDefault(FieldType.TIME, "now"))
+        assertEquals("2.5", formatSqlDefault(FieldType.FLOAT, 2.5f))
+        assertNull(formatSqlDefault(FieldType.INT, null))
+    }
+
+    @Test
+    fun `normalizeDefault reconciles cast quoting and parens`() {
+        assertEquals(normalizeDefault("'active'"), normalizeDefault("'active'::text"))
+        assertEquals(normalizeDefault("5"), normalizeDefault("'5'::bigint"))
+        assertEquals(normalizeDefault("1.5"), normalizeDefault("1.5::double precision"))
+        assertEquals(normalizeDefault("-5"), normalizeDefault("(-5)"))
+        assertEquals("now()", normalizeDefault("now()"))
+        assertNull(normalizeDefault(null))
+    }
+
+    @Test
+    fun `normalizeDefault preserves colons inside string literals`() {
+        // A `::` inside a string value must not be stripped as a cast.
+        assertEquals("a::b", normalizeDefault("'a::b'"))
+        // ...and a real cast on such a literal still reconciles.
+        assertEquals(normalizeDefault("'a::b'"), normalizeDefault("'a::b'::text"))
+        // ...but two genuinely different values stay distinct (no masking).
+        assertNotEquals(normalizeDefault("'a::b'"), normalizeDefault("'a::c'"))
     }
 
     @Test

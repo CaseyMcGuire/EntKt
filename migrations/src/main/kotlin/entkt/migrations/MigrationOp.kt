@@ -24,6 +24,16 @@ sealed interface MigrationOp {
      */
     data class AddForeignKey(val table: String, val fk: NormalizedForeignKey) : MigrationOp
 
+    /**
+     * Set or change a column's `DEFAULT`. Safe metadata-only change in
+     * PostgreSQL — it does not rewrite existing rows. [default] is the
+     * rendered SQL default expression (e.g. `'ACTIVE'`, `42`, `now()`).
+     */
+    data class SetColumnDefault(val table: String, val columnName: String, val default: String) : MigrationOp
+
+    /** Drop a column's `DEFAULT`. Safe metadata-only change. */
+    data class DropColumnDefault(val table: String, val columnName: String) : MigrationOp
+
     // ---- Detected but not auto-generated in v1 ----
 
     data class DropTable(val tableName: String) : MigrationOp

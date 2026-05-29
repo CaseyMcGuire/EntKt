@@ -25,6 +25,14 @@ interface TypeMapper {
      * database actually stores. Default: identity (no limit).
      */
     fun normalizeIdentifier(name: String): String = name
+
+    /**
+     * Render a schema-DSL default [value] into a SQL `DEFAULT` expression
+     * for this dialect, or null when [value] is null. The result is baked
+     * into [NormalizedColumn.default] and emitted in `CREATE TABLE` /
+     * `ADD COLUMN` DDL. Default: [formatSqlDefault] (PostgreSQL form).
+     */
+    fun formatDefault(fieldType: FieldType, value: Any?): String? = formatSqlDefault(fieldType, value)
 }
 
 /**
@@ -74,6 +82,8 @@ fun describeOp(op: MigrationOp): String = when (op) {
         "AddIndex: ${op.table} ($cols)$u$w"
     }
     is MigrationOp.AddForeignKey -> "AddForeignKey: ${op.table}.${op.fk.column} -> ${op.fk.targetTable}.${op.fk.targetColumn}"
+    is MigrationOp.SetColumnDefault -> "SetColumnDefault: ${op.table}.${op.columnName} DEFAULT ${op.default}"
+    is MigrationOp.DropColumnDefault -> "DropColumnDefault: ${op.table}.${op.columnName}"
     is MigrationOp.DropTable -> "DropTable: ${op.tableName}"
     is MigrationOp.DropColumn -> "DropColumn: ${op.table}.${op.columnName}"
     is MigrationOp.AlterColumnType -> "AlterColumnType: ${op.table}.${op.columnName} (${op.oldType} -> ${op.newType})"

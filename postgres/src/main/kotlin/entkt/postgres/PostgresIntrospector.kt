@@ -90,7 +90,8 @@ class PostgresIntrospector(
                     val default = rs.getString("column_default")
 
                     // Detect serial columns by nextval default
-                    val sqlType = if (default != null && default.startsWith("nextval(")) {
+                    val isSerial = default != null && default.startsWith("nextval(")
+                    val sqlType = if (isSerial) {
                         when (typeMapper.canonicalize(rawType)) {
                             "integer" -> "serial"
                             "bigint" -> "bigserial"
@@ -106,6 +107,10 @@ class PostgresIntrospector(
                             sqlType = sqlType,
                             nullable = nullable,
                             primaryKey = false, // filled in later
+                            // The nextval(...) default is an artifact of the
+                            // serial type, not a user-declared DEFAULT — drop
+                            // it so it doesn't read as schema drift.
+                            default = if (isSerial) null else default,
                         ),
                     )
                 }

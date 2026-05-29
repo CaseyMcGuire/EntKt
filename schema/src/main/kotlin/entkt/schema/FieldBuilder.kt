@@ -63,6 +63,14 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
         if (immutable && updateDefault != null) {
             error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")
         }
+        // Non-finite IEEE values (NaN / ±Infinity) have no portable SQL
+        // literal — Postgres needs the quoted-cast form, and generated
+        // Kotlin would emit a bare `NaN` token. Reject them at the source
+        // rather than producing broken DDL or code downstream.
+        val d = default
+        if ((d is Double && !d.isFinite()) || (d is Float && !d.isFinite())) {
+            error("Field '$fieldName' default must be a finite number, got $d")
+        }
         if (enumClass != null && default is Enum<*>) {
             require((default as Enum<*>)::class == enumClass) {
                 "Field '$fieldName' default must be a ${enumClass!!.simpleName} constant, " +

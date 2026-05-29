@@ -3,6 +3,7 @@ package entkt.postgres
 import entkt.codegen.SchemaInput
 import entkt.codegen.buildEntitySchemas
 import entkt.migrations.MigrationOp
+import entkt.migrations.NormalizedColumn
 import entkt.migrations.NormalizedSchema
 import entkt.schema.EntId
 import entkt.schema.EntSchema
@@ -223,6 +224,92 @@ class PostgresDdlTest {
                 """.trimIndent(),
             ),
             ddl,
+        )
+    }
+
+    @Test
+    fun `column defaults are emitted in CREATE TABLE`() {
+        class Defaults : EntSchema("defaults") {
+            override fun id() = EntId.int()
+            val statusStr = string("status_str").default("active")
+            val isActive = bool("is_active").default(true)
+            val count = int("count").default(5)
+            val big = long("big").default(100L)
+            val ratio = double("ratio").default(1.5)
+            val priority = enum<Priority>("priority").default(Priority.MEDIUM)
+            val createdAt = time("created_at").defaultNow()
+            val note = string("note").default("n/a").optional()
+        }
+
+        val ddl = renderDdl(Defaults())
+        assertEquals(
+            listOf(
+                """
+                CREATE TABLE "defaults" (
+                  "id" serial PRIMARY KEY,
+                  "status_str" text DEFAULT 'active' NOT NULL,
+                  "is_active" boolean DEFAULT true NOT NULL,
+                  "count" integer DEFAULT 5 NOT NULL,
+                  "big" bigint DEFAULT 100 NOT NULL,
+                  "ratio" double precision DEFAULT 1.5 NOT NULL,
+                  "priority" text DEFAULT 'MEDIUM' NOT NULL,
+                  "created_at" timestamptz DEFAULT now() NOT NULL,
+                  "note" text DEFAULT 'n/a'
+                )
+                """.trimIndent(),
+            ),
+            ddl,
+        )
+    }
+
+    @Test
+    fun `string default with embedded single quote is escaped`() {
+        class Quotes : EntSchema("quotes") {
+            override fun id() = EntId.int()
+            val label = string("label").default("O'Brien")
+        }
+
+        val ddl = renderDdl(Quotes())
+        assertEquals(
+            listOf(
+                """
+                CREATE TABLE "quotes" (
+                  "id" serial PRIMARY KEY,
+                  "label" text DEFAULT 'O''Brien' NOT NULL
+                )
+                """.trimIndent(),
+            ),
+            ddl,
+        )
+    }
+
+    @Test
+    fun `ADD COLUMN emits DEFAULT before NOT NULL`() {
+        val col = NormalizedColumn("status", "text", nullable = false, primaryKey = false, default = "'active'")
+        assertEquals(
+            listOf("""ALTER TABLE "users" ADD COLUMN "status" text DEFAULT 'active' NOT NULL"""),
+            renderer.render(MigrationOp.AddColumn("users", col)),
+        )
+    }
+
+    @Test
+    fun `nullable ADD COLUMN emits DEFAULT without NOT NULL`() {
+        val col = NormalizedColumn("note", "text", nullable = true, primaryKey = false, default = "'n/a'")
+        assertEquals(
+            listOf("""ALTER TABLE "users" ADD COLUMN "note" text DEFAULT 'n/a'"""),
+            renderer.render(MigrationOp.AddColumn("users", col)),
+        )
+    }
+
+    @Test
+    fun `SetColumnDefault and DropColumnDefault render as ALTER COLUMN`() {
+        assertEquals(
+            listOf("""ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'active'"""),
+            renderer.render(MigrationOp.SetColumnDefault("users", "status", "'active'")),
+        )
+        assertEquals(
+            listOf("""ALTER TABLE "users" ALTER COLUMN "status" DROP DEFAULT"""),
+            renderer.render(MigrationOp.DropColumnDefault("users", "status")),
         )
     }
 

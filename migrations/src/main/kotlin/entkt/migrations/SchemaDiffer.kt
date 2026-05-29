@@ -78,14 +78,15 @@ class SchemaDiffer {
         // New columns
         for ((name, col) in desiredCols) {
             if (name !in currentCols) {
-                if (col.primaryKey) {
+                when {
                     // PK changes can't be done with a simple ADD COLUMN
-                    manualOps.add(MigrationOp.AddColumn(table, col))
-                } else if (col.nullable) {
-                    autoOps.add(MigrationOp.AddColumn(table, col))
-                } else {
-                    // Non-null column on existing table requires a default or backfill
-                    manualOps.add(MigrationOp.AddColumn(table, col))
+                    col.primaryKey -> manualOps.add(MigrationOp.AddColumn(table, col))
+                    col.nullable -> autoOps.add(MigrationOp.AddColumn(table, col))
+                    // A non-null column with a default is safe to add: the
+                    // DEFAULT backfills existing rows in the same statement.
+                    col.default != null -> autoOps.add(MigrationOp.AddColumn(table, col))
+                    // Non-null column without a default requires a backfill.
+                    else -> manualOps.add(MigrationOp.AddColumn(table, col))
                 }
             }
         }
@@ -118,6 +119,15 @@ class SchemaDiffer {
             if (desiredCol.primaryKey != currentCol.primaryKey) {
                 manualOps.add(MigrationOp.AlterPrimaryKey(table, name, added = desiredCol.primaryKey))
             }
+
+            // Column default changes are safe metadata-only ALTERs.
+            if (normalizeDefault(desiredCol.default) != normalizeDefault(currentCol.default)) {
+                if (desiredCol.default == null) {
+                    autoOps.add(MigrationOp.DropColumnDefault(table, name))
+                } else {
+                    autoOps.add(MigrationOp.SetColumnDefault(table, name, desiredCol.default))
+                }
+            }
         }
     }
 
@@ -136,11 +146,42 @@ class SchemaDiffer {
         val currentByKey = current.indexes.associateBy { IndexKey(it.columns, it.unique, normalizeWhere(it.where)) }
         val desiredByKey = desired.indexes.associateBy { IndexKey(it.columns, it.unique, normalizeWhere(it.where)) }
 
+        // A column added to an existing table with a constant default
+        // backfills every existing row to that same value. A new UNIQUE
+        // index that includes such a column is therefore unsafe: the
+        // constant collapses the tuple's distinctness onto the remaining
+        // columns, which carry no uniqueness guarantee (no constraint
+        // existed before), so the index can fail to build on real data —
+        // and the empty shadow DB never sees it.
+        //
+        // The one provably-safe shape is an index that also includes a
+        // newly-added nullable column with no default: it is NULL for
+        // every existing row, and Postgres' NULLS DISTINCT makes all those
+        // tuples distinct regardless of the other columns. Such indexes
+        // stay auto.
+        //
+        // Adding a unique index over only pre-existing columns keeps its
+        // current behavior (auto) — that failure is data-dependent, not
+        // guaranteed, and is the caller's existing responsibility.
+        val currentColumnNames = current.columns.mapTo(mutableSetOf()) { it.name }
+        val newColumns = desired.columns.filter { it.name !in currentColumnNames }
+        val newDefaultedColumns = newColumns.filter { it.default != null }.mapTo(mutableSetOf()) { it.name }
+        val newNullableNoDefaultColumns =
+            newColumns.filter { it.nullable && it.default == null }.mapTo(mutableSetOf()) { it.name }
+        fun isUnsafeNewUniqueIndex(idx: NormalizedIndex): Boolean =
+            idx.unique &&
+                idx.columns.any { it in newDefaultedColumns } &&
+                idx.columns.none { it in newNullableNoDefaultColumns }
+
         // New indexes
         for ((key, idx) in desiredByKey) {
             val currentIdx = currentByKey[key]
             if (currentIdx == null) {
-                autoOps.add(MigrationOp.AddIndex(table, idx))
+                if (isUnsafeNewUniqueIndex(idx)) {
+                    manualOps.add(MigrationOp.AddIndex(table, idx))
+                } else {
+                    autoOps.add(MigrationOp.AddIndex(table, idx))
+                }
             } else if (idx.name != null && idx.name != currentIdx.name) {
                 // Desired has an explicit name that differs from current
                 // (which may be null/derived or a different explicit name)
