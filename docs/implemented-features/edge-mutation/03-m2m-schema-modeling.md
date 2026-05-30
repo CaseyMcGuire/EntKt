@@ -589,7 +589,7 @@ only when:
   modifiers. Specifically rejected on a `throughLink(...)` junction's
   source/target FK columns:
   - field-level validators (`.positive()`, `.min(...)`,
-    `.maxLen(...)`, `.match(...)`, etc.)
+    `.maxLength(...)`, `.match(...)`, etc.)
   - `.sensitive()`
   - `.default(...)` / `.defaultNow()`
   - `.updateDefault(...)` / `.updateDefaultNow()` (already rejected
@@ -899,7 +899,7 @@ Before implementation, add tests for:
   mixin-provided fields (e.g. `include(::Timestamps)`)
 - `throughLink(...)` rejects junction schemas whose two source/target
   FK backing fields carry write-time modifiers (validators like
-  `.positive()` / `.minLen(...)` / `.match(...)`, `.sensitive()`,
+  `.positive()` / `.minLength(...)` / `.match(...)`, `.sensitive()`,
   `.default(...)` / `.defaultNow()`, `.updateDefault(...)`,
   `.immutable()`). Junction helpers bypass the repo so these never
   fire and silent inertness is a foot-gun. `.comment(...)` is

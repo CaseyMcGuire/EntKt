@@ -1,8 +1,8 @@
 package entkt.schema
 
 class StringFieldBuilder internal constructor(name: String) : FieldBuilder<StringFieldBuilder, String>(name, FieldType.STRING) {
-    fun minLen(min: Int): StringFieldBuilder = validate(Validators.minLen(min))
-    fun maxLen(max: Int): StringFieldBuilder = validate(Validators.maxLen(max))
+    fun minLength(min: Int): StringFieldBuilder = validate(Validators.minLength(min))
+    fun maxLength(max: Int): StringFieldBuilder = validate(Validators.maxLength(max))
     fun notEmpty(): StringFieldBuilder = validate(Validators.notEmpty())
     fun match(pattern: Regex): StringFieldBuilder = validate(Validators.match(pattern))
     fun default(value: String): StringFieldBuilder = apply { setDefault(value) }

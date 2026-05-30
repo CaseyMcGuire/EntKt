@@ -20,7 +20,7 @@ Stored as strings in the database.
 Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
 **Type-specific validators** (enforced as inline checks in generated `save()` methods):
-- Strings: `.minLen()`, `.maxLen()`, `.notEmpty()`, `.match(regex)`
+- Strings: `.minLength()`, `.maxLength()`, `.notEmpty()`, `.match(regex)`
 - Numbers: `.min()`, `.max()`, `.positive()`, `.negative()`, `.nonNegative()`
 
 ## Id strategies

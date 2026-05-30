@@ -30,7 +30,7 @@ This RFC proposes a Kotlin-first shape instead:
 ```kotlin
 class User : EntSchema("users") {
     override fun id() = EntId.long()
-    val name = string("name").minLen(1).maxLen(64)
+    val name = string("name").minLength(1).maxLength(64)
     val posts = hasMany<Post>("posts")
     val friends = manyToMany<User>("friends")
         .through<Friendship>(Friendship::user, Friendship::friend)
@@ -38,7 +38,7 @@ class User : EntSchema("users") {
 
 class Post : EntSchema("posts") {
     override fun id() = EntId.long()
-    val title = string("title").minLen(1)
+    val title = string("title").minLength(1)
     val authorId = long("author_id")
     val author = belongsTo<User>("author")
         .field(authorId)
@@ -195,7 +195,7 @@ all core schema elements, with explicit SQL field and table names.
 ```kotlin
 class Post : EntSchema("posts") {
     override fun id() = EntId.long()
-    val title = string("title").minLen(1)
+    val title = string("title").minLength(1)
     val authorId = long("author_id")
     val author = belongsTo<User>("author")
         .field(authorId)

@@ -27,7 +27,7 @@ class Car : EntSchema("cars") {
 
 class User : EntSchema("users") {
     override fun id() = EntId.int()
-    val name = string("name").minLen(1).maxLen(100)
+    val name = string("name").minLength(1).maxLength(100)
     val age = int("age").optional().positive()
     val email = string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
     val role = enum<Role>("role").default(Role.USER)
@@ -262,8 +262,8 @@ class SchemaTest {
 
         val name = fields[0]
         assertEquals(2, name.validators.size)
-        assertEquals("minLen(1)", name.validators[0].name)
-        assertEquals("maxLen(100)", name.validators[1].name)
+        assertEquals("minLength(1)", name.validators[0].name)
+        assertEquals("maxLength(100)", name.validators[1].name)
 
         val age = fields[1]
         assertEquals(1, age.validators.size)
@@ -277,9 +277,9 @@ class SchemaTest {
 
     @Test
     fun `validators check values correctly`() {
-        val minLen = Validators.minLen(3)
-        assertTrue(minLen.check("abc"))
-        assertFalse(minLen.check("ab"))
+        val minLength = Validators.minLength(3)
+        assertTrue(minLength.check("abc"))
+        assertFalse(minLength.check("ab"))
 
         val positive = Validators.positive()
         assertTrue(positive.check(5))

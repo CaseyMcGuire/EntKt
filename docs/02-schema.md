@@ -9,7 +9,7 @@ declarations.
 class User : EntSchema("users") {
     override fun id() = EntId.uuid()
 
-    val name = string("name").minLen(1).maxLen(64)
+    val name = string("name").minLength(1).maxLength(64)
     val email = string("email").unique()
 
     val posts = hasMany<Post>("posts")
@@ -38,7 +38,7 @@ Fields are declared as property declarations on the schema class:
 class Ticket : EntSchema("tickets") {
     override fun id() = EntId.int()
 
-    val title = string("title").minLen(1).maxLen(200)
+    val title = string("title").minLength(1).maxLength(200)
     val body = text("body")
     val active = bool("active").default(true)
     val count = int("count").positive()
@@ -88,7 +88,7 @@ These are available on all field types:
 String fields:
 
 ```kotlin
-string("name").minLen(1).maxLen(100).notEmpty()
+string("name").minLength(1).maxLength(100).notEmpty()
 string("slug").match(Regex("^[a-z0-9-]+$"))
 ```
 

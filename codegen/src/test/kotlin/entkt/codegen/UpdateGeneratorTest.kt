@@ -675,10 +675,10 @@ class UpdateGeneratorTest {
 
         // Validators run on the unwrapped patched value (`name_v`, etc.).
         assert(output.contains("name_v.length < 3")) {
-            "Should emit minLen check on patched value\n$output"
+            "Should emit minLength check on patched value\n$output"
         }
         assert(output.contains("name_v.length > 100")) {
-            "Should emit maxLen check on patched value\n$output"
+            "Should emit maxLength check on patched value\n$output"
         }
         assert(output.contains("name_v.isEmpty()")) {
             "Should emit notEmpty check on patched value\n$output"

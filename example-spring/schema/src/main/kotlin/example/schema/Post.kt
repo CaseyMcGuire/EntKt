@@ -12,7 +12,7 @@ class Post : EntSchema("posts") {
 
     val timestamps = include(::Timestamps)
 
-    val title = string("title").minLen(1).maxLen(200)
+    val title = string("title").minLength(1).maxLength(200)
     val body = text("body")
     val published = bool("published").default(false)
 

@@ -109,7 +109,7 @@ import entkt.schema.*
 class User : EntSchema("users") {
     override fun id() = EntId.uuid()
 
-    val name = string("name").minLen(1).maxLen(64)
+    val name = string("name").minLength(1).maxLength(64)
     val email = string("email").unique()
     val age = int("age").optional().min(0).max(150)
     val active = bool("active").default(true)

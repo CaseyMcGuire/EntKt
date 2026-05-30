@@ -275,7 +275,7 @@ all checks.
 1.  beforeSave hooks
 2.  beforeCreate hooks
 3.  field extraction + defaults
-4.  field validation (minLen, maxLen, etc.)
+4.  field validation (minLength, maxLength, etc.)
 5.  build WriteCandidate
 6.  privacy create
 7.  validation create          ← NEW
@@ -337,7 +337,7 @@ all checks.
 ```
 
 Field validation runs before privacy because it validates local request
-shape and generated schema constraints (minLen, maxLen, etc.) — these
+shape and generated schema constraints (minLength, maxLength, etc.) — these
 do not read stored data. Entity validation runs after privacy to
 prevent domain and data-existence leaks through validation errors
 (e.g. "slug already exists" or "recipient not found").
@@ -449,7 +449,7 @@ shared between privacy and validation contexts.
 
 | Concept | Purpose | Runs | Bypassed by System? |
 |---------|---------|------|---------------------|
-| Field validation | Per-field constraints (minLen, max, etc.) | Before privacy | No |
+| Field validation | Per-field constraints (minLength, max, etc.) | Before privacy | No |
 | Privacy | Authorization — who can perform the operation | Before validation | Yes |
 | Entity validation | Cross-field / cross-entity invariants | After privacy | No |
 | Hooks | Side effects (timestamps, logging, notifications) | Before validation + privacy (mutate), after write (react) | No |

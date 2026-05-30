@@ -27,7 +27,7 @@ class DefaultedEnumEntity : EntSchema("defaulted_enum_entities") {
 
 class ValidatedEntity : EntSchema("validated_entities") {
     override fun id() = EntId.int()
-    val name = string("name").minLen(3).maxLen(100).notEmpty()
+    val name = string("name").minLength(3).maxLength(100).notEmpty()
     val age = int("age").positive()
     val nickname = string("nickname").optional().match(Regex("^[a-z]+$"))
     val code = string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
@@ -200,10 +200,10 @@ class CreateGeneratorTest {
         val output = generator.generate("ValidatedEntity", schema).toString()
 
         assert(output.contains("name.length < 3")) {
-            "Should emit minLen check\n$output"
+            "Should emit minLength check\n$output"
         }
         assert(output.contains("name.length > 100")) {
-            "Should emit maxLen check\n$output"
+            "Should emit maxLength check\n$output"
         }
         assert(output.contains("name.isEmpty()")) {
             "Should emit notEmpty check\n$output"

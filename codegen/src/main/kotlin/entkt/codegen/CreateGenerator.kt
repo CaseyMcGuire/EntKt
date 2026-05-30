@@ -851,13 +851,13 @@ private fun emitValidatorCheck(
     val throwExpr =
         "throw %T(%S, listOf(%T(%S, field = %S)))"
     when (spec) {
-        is ValidatorSpec.MinLen -> builder.addStatement(
+        is ValidatorSpec.MinLength -> builder.addStatement(
             "if (%L.length < %L) $throwExpr",
             prop, spec.min,
             VALIDATION_EXCEPTION, schemaName,
             VALIDATION_INVALID, message, fieldName,
         )
-        is ValidatorSpec.MaxLen -> builder.addStatement(
+        is ValidatorSpec.MaxLength -> builder.addStatement(
             "if (%L.length > %L) $throwExpr",
             prop, spec.max,
             VALIDATION_EXCEPTION, schemaName,

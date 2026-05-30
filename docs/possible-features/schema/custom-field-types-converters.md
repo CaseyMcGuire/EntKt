@@ -89,7 +89,7 @@ value<Slug>("slug") {
         encode = { it.value },
         decode = { Slug(it) },
     )
-    maxLen(120)
+    maxLength(120)
     unique()
 }
 ```

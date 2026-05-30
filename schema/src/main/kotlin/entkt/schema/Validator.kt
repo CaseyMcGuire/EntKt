@@ -1,8 +1,8 @@
 package entkt.schema
 
 sealed interface ValidatorSpec {
-    data class MinLen(val min: Int) : ValidatorSpec
-    data class MaxLen(val max: Int) : ValidatorSpec
+    data class MinLength(val min: Int) : ValidatorSpec
+    data class MaxLength(val max: Int) : ValidatorSpec
     data object NotEmpty : ValidatorSpec
     data class Match(val pattern: String, val options: Set<RegexOption> = emptySet()) : ValidatorSpec
     data class Min(val min: Number) : ValidatorSpec
@@ -20,18 +20,18 @@ data class Validator(
 )
 
 object Validators {
-    fun minLen(min: Int): Validator = Validator(
-        name = "minLen($min)",
+    fun minLength(min: Int): Validator = Validator(
+        name = "minLength($min)",
         message = "value must be at least $min characters",
         check = { (it as? String)?.length?.let { len -> len >= min } ?: false },
-        spec = ValidatorSpec.MinLen(min),
+        spec = ValidatorSpec.MinLength(min),
     )
 
-    fun maxLen(max: Int): Validator = Validator(
-        name = "maxLen($max)",
+    fun maxLength(max: Int): Validator = Validator(
+        name = "maxLength($max)",
         message = "value must be at most $max characters",
         check = { (it as? String)?.length?.let { len -> len <= max } ?: false },
-        spec = ValidatorSpec.MaxLen(max),
+        spec = ValidatorSpec.MaxLength(max),
     )
 
     fun notEmpty(): Validator = Validator(

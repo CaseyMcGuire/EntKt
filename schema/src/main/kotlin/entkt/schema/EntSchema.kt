@@ -14,7 +14,7 @@ import kotlin.reflect.jvm.javaField
  * ```kotlin
  * class User : EntSchema("users") {
  *     override fun id() = EntId.long()
- *     val name = string("name").minLen(1).maxLen(64)
+ *     val name = string("name").minLength(1).maxLength(64)
  *     val posts = hasMany<Post>("posts")
  * }
  * ```
