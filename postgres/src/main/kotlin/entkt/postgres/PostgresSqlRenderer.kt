@@ -39,14 +39,12 @@ class PostgresSqlRenderer(
         is MigrationOp.DropColumnNotNull -> listOf(
             "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP NOT NULL",
         )
-        // A PK change is not a single statement — emit a hint rather than
-        // misleading DDL (it requires DROP CONSTRAINT + ADD PRIMARY KEY). No
-        // leading "--": the caller comments every manual line uniformly.
-        is MigrationOp.AlterPrimaryKey -> if (op.added) {
-            listOf("add ${quote(op.columnName)} to ${quote(op.table)} PRIMARY KEY (DROP CONSTRAINT + ADD PRIMARY KEY)")
-        } else {
-            listOf("remove ${quote(op.columnName)} from ${quote(op.table)} PRIMARY KEY (DROP CONSTRAINT + ADD PRIMARY KEY)")
-        }
+        // A PK change is not a single statement (it needs DROP CONSTRAINT +
+        // ADD PRIMARY KEY), so there is no candidate DDL to emit. Return
+        // nothing rather than a prose "hint" that would be commented as if it
+        // were uncommentable SQL — the describeOp() checklist line carries the
+        // guidance instead.
+        is MigrationOp.AlterPrimaryKey -> emptyList()
         is MigrationOp.DropIndex -> listOf(
             "DROP INDEX ${quote(truncateIdentifier(op.name ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
         )

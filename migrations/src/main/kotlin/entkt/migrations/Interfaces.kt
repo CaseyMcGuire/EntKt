@@ -91,7 +91,7 @@ fun describeOp(op: MigrationOp): String = when (op) {
     is MigrationOp.DropColumnNotNull -> "DropColumnNotNull: ${op.table}.${op.columnName}"
     is MigrationOp.AlterPrimaryKey -> {
         val action = if (op.added) "add to" else "remove from"
-        "AlterPrimaryKey: $action ${op.table}.${op.columnName}"
+        "AlterPrimaryKey: $action ${op.table}.${op.columnName} (requires DROP CONSTRAINT + ADD PRIMARY KEY)"
     }
     is MigrationOp.DropIndex -> {
         val cols = op.columns.joinToString(", ")

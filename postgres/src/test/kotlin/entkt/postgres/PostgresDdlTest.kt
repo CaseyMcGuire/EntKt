@@ -10,6 +10,7 @@ import entkt.schema.EntSchema
 import entkt.schema.OnDelete
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 // ── Relationship pattern schemas (file-level for cross-class references) ──
 
@@ -315,6 +316,9 @@ class PostgresDdlTest {
             listOf("""ALTER TABLE "posts" DROP COLUMN "legacy""""),
             renderer.render(MigrationOp.DropColumn("posts", "legacy")),
         )
+        // A PK change has no single statement — render nothing rather than a
+        // prose hint that would be commented as if it were uncommentable SQL.
+        assertTrue(renderer.render(MigrationOp.AlterPrimaryKey("users", "email", added = true)).isEmpty())
     }
 
     @Test
