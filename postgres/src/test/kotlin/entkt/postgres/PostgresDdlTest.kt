@@ -302,6 +302,22 @@ class PostgresDdlTest {
     }
 
     @Test
+    fun `destructive ops render as bare DDL for commenting`() {
+        assertEquals(
+            listOf("""ALTER TABLE "assets" ALTER COLUMN "content_type" DROP NOT NULL"""),
+            renderer.render(MigrationOp.DropColumnNotNull("assets", "content_type")),
+        )
+        assertEquals(
+            listOf("""DROP TABLE "old_table""""),
+            renderer.render(MigrationOp.DropTable("old_table")),
+        )
+        assertEquals(
+            listOf("""ALTER TABLE "posts" DROP COLUMN "legacy""""),
+            renderer.render(MigrationOp.DropColumn("posts", "legacy")),
+        )
+    }
+
+    @Test
     fun `SetColumnDefault and DropColumnDefault render as ALTER COLUMN`() {
         assertEquals(
             listOf("""ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'active'"""),

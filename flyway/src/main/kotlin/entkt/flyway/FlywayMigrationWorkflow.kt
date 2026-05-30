@@ -309,16 +309,20 @@ class FlywayMigrationWorkflow(
         if (result.manual.isNotEmpty() && manualMode == ManualMode.ACKNOWLEDGE_AND_ADVANCE) {
             sb.appendLine("--")
             sb.appendLine("-- $MANUAL_STEPS_MARKER")
-            sb.appendLine("-- The operations below require hand-written SQL. Add it to this file in")
-            sb.appendLine("-- the correct position relative to the auto-generated statements that")
-            sb.appendLine("-- follow the guard — ordering matters: some manual steps depend on the")
-            sb.appendLine("-- auto ops (e.g. a unique index over a newly added column must run AFTER")
-            sb.appendLine("-- that column is added), while an auto op may depend on a manual one")
-            sb.appendLine("-- (e.g. a foreign key referencing a column you add by hand). Do not")
-            sb.appendLine("-- assume the SQL goes where this guard sits.")
+            sb.appendLine("-- Each destructive operation below is emitted COMMENTED OUT under its")
+            sb.appendLine("-- checklist item. Review it, then uncomment and place it in the correct")
+            sb.appendLine("-- position relative to the auto-generated statements that follow the")
+            sb.appendLine("-- guard — ordering matters: some manual steps depend on the auto ops")
+            sb.appendLine("-- (e.g. a unique index over a newly added column must run AFTER that")
+            sb.appendLine("-- column), while an auto op may depend on a manual one (e.g. a foreign")
+            sb.appendLine("-- key referencing a column you add by hand). Do not assume the SQL goes")
+            sb.appendLine("-- where this guard sits.")
             sb.appendLine("--")
             for (op in result.manual) {
                 sb.appendLine("-- [ ] ${describeOp(op)}")
+                for (stmt in renderer.render(op)) {
+                    sb.appendLine("--   $stmt;")
+                }
             }
             sb.appendLine("--")
             sb.appendLine()

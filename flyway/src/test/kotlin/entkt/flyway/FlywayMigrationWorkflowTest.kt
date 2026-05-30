@@ -229,6 +229,13 @@ class FlywayMigrationWorkflowTest {
             val content = written.filePath.toFile().readText()
             assertTrue(content.contains("MANUAL STEPS REQUIRED"))
             assertTrue(content.contains("RAISE EXCEPTION"), "Should contain a failing statement to block Flyway application")
+            // The checklist item is kept...
+            assertTrue(content.contains("-- [ ] AddColumn: fw_users.bio"), content)
+            // ...and the operation is emitted COMMENTED OUT beneath it.
+            assertTrue(
+                content.contains("""--   ALTER TABLE "fw_users" ADD COLUMN "bio" text NOT NULL;"""),
+                content,
+            )
         } finally {
             dir.toFile().deleteRecursively()
         }

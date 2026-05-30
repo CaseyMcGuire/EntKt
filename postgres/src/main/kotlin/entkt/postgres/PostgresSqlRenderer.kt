@@ -23,28 +23,35 @@ class PostgresSqlRenderer(
         is MigrationOp.DropColumnDefault -> listOf(
             "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP DEFAULT",
         )
-        // Manual ops — render as comments describing what needs to be done
-        is MigrationOp.DropTable -> listOf("-- TODO: DROP TABLE ${quote(op.tableName)}")
-        is MigrationOp.DropColumn -> listOf("-- TODO: ALTER TABLE ${quote(op.table)} DROP COLUMN ${quote(op.columnName)}")
+        // Destructive / manual ops — rendered as the raw DDL the operation
+        // would run. They are NOT meant to be applied as-is: the migration
+        // writer emits these commented out for human review (see
+        // FlywayMigrationWorkflow.buildMigrationContent). Keeping render()
+        // a pure op→SQL function — commenting is the caller's concern.
+        is MigrationOp.DropTable -> listOf("DROP TABLE ${quote(op.tableName)}")
+        is MigrationOp.DropColumn -> listOf("ALTER TABLE ${quote(op.table)} DROP COLUMN ${quote(op.columnName)}")
         is MigrationOp.AlterColumnType -> listOf(
-            "-- TODO: ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} TYPE ${op.newType}",
+            "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} TYPE ${op.newType}",
         )
         is MigrationOp.SetColumnNotNull -> listOf(
-            "-- TODO: ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} SET NOT NULL",
+            "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} SET NOT NULL",
         )
         is MigrationOp.DropColumnNotNull -> listOf(
-            "-- TODO: ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP NOT NULL",
+            "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP NOT NULL",
         )
+        // A PK change is not a single statement — emit a hint rather than
+        // misleading DDL (it requires DROP CONSTRAINT + ADD PRIMARY KEY). No
+        // leading "--": the caller comments every manual line uniformly.
         is MigrationOp.AlterPrimaryKey -> if (op.added) {
-            listOf("-- TODO: ALTER TABLE ${quote(op.table)} ADD ${quote(op.columnName)} to PRIMARY KEY (requires DROP + re-CREATE)")
+            listOf("add ${quote(op.columnName)} to ${quote(op.table)} PRIMARY KEY (DROP CONSTRAINT + ADD PRIMARY KEY)")
         } else {
-            listOf("-- TODO: ALTER TABLE ${quote(op.table)} DROP ${quote(op.columnName)} from PRIMARY KEY (requires DROP + re-CREATE)")
+            listOf("remove ${quote(op.columnName)} from ${quote(op.table)} PRIMARY KEY (DROP CONSTRAINT + ADD PRIMARY KEY)")
         }
         is MigrationOp.DropIndex -> listOf(
-            "-- TODO: DROP INDEX ${quote(truncateIdentifier(op.name ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
+            "DROP INDEX ${quote(truncateIdentifier(op.name ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
         )
         is MigrationOp.DropForeignKey -> listOf(
-            "-- TODO: ALTER TABLE ${quote(op.table)} DROP CONSTRAINT ${quote(truncateIdentifier(op.constraintName ?: "fk_${op.table}_${op.column}"))}",
+            "ALTER TABLE ${quote(op.table)} DROP CONSTRAINT ${quote(truncateIdentifier(op.constraintName ?: "fk_${op.table}_${op.column}"))}",
         )
     }
 
