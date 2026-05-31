@@ -263,6 +263,7 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
     private var junctionTargetProp: KProperty1<out EntSchema, *>? = null
     private var mode: ManyToManyMode? = null
     private var comment: String? = null
+    private var readOnly: Boolean = false
 
     // Resolved during finalize
     private var resolvedTarget: EntSchema? = null
@@ -308,6 +309,15 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
     }
 
     fun comment(text: String): ManyToManyBuilder<Target> = apply { checkNotFrozen(); comment = text }
+
+    /**
+     * Mark this `throughLink(...)` declaration read-only: the generated
+     * entity gets read traversal but no `add` / `remove` / `set` write
+     * helpers. Used for the non-writing side of a symmetric link table
+     * (RFC 10). Only valid with `throughLink(...)`; combining it with
+     * `throughEntity(...)` is rejected at finalization.
+     */
+    fun readOnly(): ManyToManyBuilder<Target> = apply { checkNotFrozen(); readOnly = true }
 
     override fun resolve(registry: Map<KClass<out EntSchema>, EntSchema>, owner: KClass<out EntSchema>) {
         resolvedTarget = registry[targetClass]
@@ -369,8 +379,15 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
             )
         }
 
+        if (readOnly && resolvedMode != ManyToManyMode.LINK) {
+            error(
+                "manyToMany edge '$edgeName': .readOnly() is only valid with throughLink(...) " +
+                    "(a pure link table) — throughEntity junctions are mutated through their own repo.",
+            )
+        }
+
         resolvedThrough = when (resolvedMode) {
-            ManyToManyMode.LINK -> ManyToManyThrough.LinkTable(junctionInstance, srcBuilder.edgeName, tgtBuilder.edgeName)
+            ManyToManyMode.LINK -> ManyToManyThrough.LinkTable(junctionInstance, srcBuilder.edgeName, tgtBuilder.edgeName, readOnly)
             ManyToManyMode.ENTITY -> ManyToManyThrough.ThroughEntity(junctionInstance, srcBuilder.edgeName, tgtBuilder.edgeName)
         }
     }
