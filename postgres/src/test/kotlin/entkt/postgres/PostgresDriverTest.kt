@@ -1079,14 +1079,17 @@ class PostgresDriverTest {
 
         // A fresh pair (so the (user_id, group_id) conflict does NOT fire) but a
         // colliding explicit primary key → unique violation on the PK, which is
-        // outside the conflict target and therefore propagates.
-        assertFailsWith<Exception> {
+        // outside the conflict target and therefore propagates. Assert the
+        // specific SQLSTATE 23505 (unique_violation) so the test proves the
+        // conflict-outside-target path, not merely "some exception".
+        val ex = assertFailsWith<org.postgresql.util.PSQLException> {
             driver.insertIgnore(
                 "m2m_user_groups",
                 mapOf<String, Any?>("id" to existingId, "user_id" to 999L, "group_id" to 999L),
                 conflictColumns = listOf("user_id", "group_id"),
             )
         }
+        assertEquals("23505", ex.sqlState, "expected a unique_violation on the primary key, got: ${ex.message}")
     }
 
     @Test

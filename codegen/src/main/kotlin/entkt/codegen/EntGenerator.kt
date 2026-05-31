@@ -165,33 +165,6 @@ private fun validateRelationNames(
 }
 
 /**
- * Reject incompatible M2M declarations that share a canonical
- * relationship identity (same junction class plus the same unordered
- * pair of junction `belongsTo` edges).
- *
- * Rules:
- * - Any two `throughLink` declarations with the same canonical identity
- *   are rejected — link tables allow at most one declaration per
- *   relationship identity (regardless of orientation). The opposite
- *   side, when needed, is deferred until link-table reverse-traversal
- *   is specified.
- * - Mixed `throughLink` + `throughEntity` over the same canonical
- *   identity is rejected — the same junction edge pair must be
- *   modelled consistently.
- * - Two `throughEntity` declarations with **identical** orientation
- *   keys are rejected as a same-orientation alias. Pair-swapped
- *   orientations (one declaration's `(sourceEdge, targetEdge)` is the
- *   other's `(targetEdge, sourceEdge)`) are *allowed* — this is how
- *   callers declare bidirectional traversal.
- *
- * `ManyToManyBuilder.resolve()` already enforces that
- * `sourceEdge` points back at the declaring schema and `targetEdge` at
- * the M2M target type parameter, so a same-orientation alias across
- * two distinct declaring schemas is unreachable here (the junction
- * `belongsTo` cannot target both schemas). Same-orientation aliases
- * therefore only need to be detected within a single declaring schema.
- */
-/**
  * Canonical relationship identity for an M2M declaration: the junction
  * schema name plus the *unordered* junction-edge pair (sorted), so both
  * orientations of the same link table map to the same key. Shared by
@@ -203,6 +176,29 @@ private fun m2mCanonicalKey(junctionName: String, sourceEdge: String, targetEdge
     return Triple(junctionName, lo, hi)
 }
 
+/**
+ * Reject incompatible M2M declarations that share a canonical relationship
+ * identity (same junction class plus the same unordered pair of junction
+ * `belongsTo` edges), for both `throughLink` and `throughEntity`.
+ *
+ * Per relationship identity:
+ * - **One** declaration: always allowed (the lone-side case).
+ * - **Two** declarations: allowed **only if pair-swapped** — one's
+ *   `(sourceEdge, targetEdge)` is the other's `(targetEdge, sourceEdge)`.
+ *   This is how both orientations of a symmetric link table are declared
+ *   (RFC 10). Two declarations with the **same** orientation are rejected as
+ *   a same-orientation alias.
+ * - **Three or more** declarations: rejected (only two distinct orientations
+ *   exist over a 2-edge junction, so 3+ necessarily repeats one).
+ * - **Mixed** `throughLink` + `throughEntity` over one identity: rejected —
+ *   the same junction edge pair must be modelled consistently.
+ *
+ * `ManyToManyBuilder.resolve()` already enforces that `sourceEdge` points back
+ * at the declaring schema and `targetEdge` at the M2M target type parameter, so
+ * a same-orientation alias across two distinct declaring schemas is unreachable
+ * (the junction `belongsTo` cannot target both schemas) — same-orientation
+ * aliases only need detecting within a single declaring schema.
+ */
 private fun validateM2MOrientation(
     schemas: List<SchemaInput>,
     schemaNames: Map<EntSchema, String>,
@@ -545,8 +541,15 @@ private fun validateThroughLinkJunctions(
             // that FK. The unique pair index satisfies only the side it leads
             // with; the opposite endpoint needs its own leading-column index.
             // (Not relaxed for `.readOnly()` — a read-only side still reads by
-            // source.) A lone declaration is exempt (its source-first unique
-            // index already leads with its source FK).
+            // source.) A LONE declaration is exempt — NOT because it always has
+            // a source-leading index (Rule 6 accepts the unique pair index in
+            // either column order, so a lone side's only index may lead with the
+            // target FK), but for backward compatibility: lone declarations are
+            // the pre-existing case, and tightening this would reject schemas the
+            // old source-first rule's relaxation now accepts. The cost is a
+            // possible sequential-scan source read on such a lone junction — a
+            // performance gap, not a correctness issue. See the spec's Backward
+            // Compatibility note.
             val isTwoSided = m2mCanonicalKey(junctionName, through.sourceEdge, through.targetEdge) in twoSidedKeys
             if (isTwoSided) {
                 val hasLeading = indexes.any { it.where == null && it.fields.firstOrNull() == sourceFkCol }

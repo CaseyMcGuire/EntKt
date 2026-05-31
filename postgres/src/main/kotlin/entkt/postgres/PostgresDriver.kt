@@ -1007,12 +1007,13 @@ class PostgresDriver(
      * does not block ordinary `UPDATE`/`DELETE` from outside the
      * discipline. Returns `null` if no row exists.
      *
-     * The lock key folds the table name's `hashCode` and the id's
-     * `hashCode` into a single `bigint` argument to
-     * `pg_advisory_xact_lock(key1, key2)`. Postgres advisory locks
-     * are released automatically at transaction end, so the duration
-     * requirement from transaction locking ("held until the enclosing transaction
-     * commits or rolls back") is automatic.
+     * The lock key binds the table name's `hashCode` and the id's
+     * `hashCode` as the two `int4` arguments of the
+     * `pg_advisory_xact_lock(int4, int4)` overload (matching
+     * [serializeRelationshipWith]). Postgres advisory locks are released
+     * automatically at transaction end, so the duration requirement from
+     * transaction locking ("held until the enclosing transaction commits or
+     * rolls back") is automatic.
      */
     internal fun serializeOwnerEdgeAndReadWith(conn: Connection, table: String, id: Any): Map<String, Any?>? {
         val schema = schemas[table] ?: error("Unregistered table: $table")

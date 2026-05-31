@@ -240,30 +240,41 @@ Lock model:
   (`serializeOwnerEdgeAndRead` / `supportsOwnerEdgeSerialization`,
   `PostgresDriver.kt:945-959`): add a capability
   `supportsRelationshipSerialization` and a method
-  `serializeRelationship(key: RelationshipLockKey)`. Postgres derives a stable
-  64-bit advisory key from `(junctionTable, sortedFkColumns)` and takes a second
-  `pg_advisory_xact_lock`. Preflight requires the capability when
-  `relationshipLocking = Canonical`.
+  `serializeRelationship(key: RelationshipLockKey)`. Postgres derives two 32-bit
+  keys (the junction-table-name hash and the sorted-FK-columns hash) from
+  `(junctionTable, sortedFkColumns)` and takes a second
+  `pg_advisory_xact_lock(int4, int4)`, mirroring `serializeOwnerEdgeAndReadWith`.
+  Preflight requires the capability when `relationshipLocking = Canonical`.
 - **Granularity:** relationship-level (whole junction relationship), not per
   source/target id — coarser, but deadlock-free and trivial to reason about; the
   throughput cost matters only for write-hot link tables, which is exactly where
   the caller opts in deliberately.
 - **Acquisition order (deadlock avoidance):** a single save may touch several
-  M2M relationships and the owner row. All locks are acquired in one canonical
-  total order — owner-edge lock first, then relationship locks in ascending key
-  order — so deterministic keys + a fixed order ⇒ no lock-order cycle between
-  cooperating transactions.
-- **Acquired before the junction read (correctness for `set`):** the
-  relationship lock(s) are taken **after** the owner-edge lock/read but
-  **before `_buildEdgeChanges(...)` reads the current junction rows**. `set`'s
-  exact-replace reads current state and reconciles; if the lock were taken after
-  that read, a concurrent cross-orientation `set` could mutate the junction
-  between the read and the write — exactly the race the lock exists to prevent.
-  Read-and-reconcile must happen entirely under the lock.
+  M2M relationships. The relationship lock(s) are acquired **first**, in
+  ascending canonical-key order (junction table, then sorted FK pair), **before**
+  the owner-edge lock/read — so deterministic keys + a fixed order ⇒ no
+  lock-order cycle between cooperating transactions.
+- **Acquired before the owner read (deadlock + `set` correctness):** the
+  relationship lock(s) are taken **before** the owner-edge lock/read (and so
+  before `_buildEdgeChanges(...)` reads the current junction rows). Two reasons:
+  (1) **Deadlock:** the owner read does `SELECT ... FOR UPDATE` on the owner row,
+  and the *opposite* orientation's junction `INSERT` takes a `FOR KEY SHARE`
+  lock on that same owner row (the FK check). If the owner lock were taken first,
+  two opposite-orientation `Canonical` saves would deadlock
+  (owner-lock-then-relationship-lock vs relationship-lock-then-FK-share-lock).
+  Taking the relationship lock first means a contender holds no row locks while
+  it waits. (2) **`set` correctness:** `set`'s exact-replace reads current state
+  and reconciles; read-and-reconcile must happen entirely under the lock, so a
+  concurrent cross-orientation `set` can't mutate the junction between the read
+  and the write.
 - **Cooperative:** it serializes only against other writes that also set
   `relationshipLocking = Canonical`. A writer that leaves it `OwnerOnly` still takes
-  only its owner-edge lock and is not protected. It removes the *deadlock* for
-  cooperating writers; it does **not** remove last-writer-wins.
+  only its owner-edge lock and is not protected — and because the owner read
+  `FOR UPDATE`s the owner row while the opposite orientation's junction insert
+  needs a `FOR KEY SHARE` on it, two `OwnerOnly` opposite-orientation writers to
+  the same pair *can deadlock* (one is aborted with SQLSTATE 40P01). `Canonical`
+  removes that deadlock for cooperating writers; it does **not** remove
+  last-writer-wins.
 
 ## Validation
 
@@ -323,12 +334,22 @@ sealed variant. The builder captures it; `LinkTable` carries it;
 
 ## Backward Compatibility
 
-Fully compatible. Every existing schema is a lone `throughLink` declaration —
-the sole side keeps `read` / `add` / `remove` / `set`, and its junction has the
-source-first unique index the revised rule still accepts. The relaxation only
-*widens* what validation accepts (pair-swapped second declarations, previously
-rejected). One behavior improvement that is strictly safer: `add` becomes
-idempotent (re-adding an existing link is now a no-op instead of throwing).
+Source-compatible. Every existing schema is a lone `throughLink` declaration —
+the sole side keeps `read` / `add` / `remove` / `set`, and its junction's
+source-first unique index still satisfies the revised rule. The relaxation
+*widens* what validation accepts: pair-swapped second declarations (previously
+rejected) now pass, and — because the unique-pair rule is now order-independent
+(needed so both orientations accept the one shared index) — a **lone** declaration
+whose only pair index is *reverse-order* `(target_fk, source_fk)` now also passes,
+where the old source-first rule would have rejected it. The per-side leading-column
+requirement only applies to two-sided declarations, so such a lone reverse-order
+junction generates code that reads by its source FK without a leading index (a
+sequential-scan performance gap, not a correctness issue). Two behavior changes:
+`add` becomes idempotent (re-adding an existing link is a no-op instead of
+throwing), and every generated `update(...)` gains a defaulted
+`relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking`
+parameter (mirroring the existing `consistency` parameter) — so generated
+signatures change for all schemas, not only at junction inserts.
 
 ## Implementation Touchpoints
 
@@ -380,10 +401,15 @@ idempotent (re-adding an existing link is now a no-op instead of throwing).
 - **`add` / `remove` parity & idempotency:** `post.tags.add(t)` and
   `tag.posts.add(p)` produce identical rows; re-adding an existing link is a
   no-op (no throw); `add` emits `ON CONFLICT … DO NOTHING`.
-- **Concurrent opposite-side `add`** (Postgres integration): both succeed,
-  converging to one junction row — proving `insertIgnore`, not a unique
-  violation. Same for a cross-anchor `set` + `add` race (`set`'s additive
-  insert tolerates the racing `add`).
+- **Cross-anchor idempotency:** re-adding the same pair from the opposite
+  orientation is a no-op (`insertIgnore`'s `ON CONFLICT … DO NOTHING`), proven
+  sequentially (no unique violation, no duplicate row). Note: *concurrent*
+  opposite-orientation writes to the **same** pair only converge under
+  `Canonical` (which serializes them — see the concurrency test); under the
+  default `OwnerOnly` they can **deadlock** (SQLSTATE 40P01), because the owner
+  read `FOR UPDATE`s one endpoint while the opposite orientation's junction
+  insert needs `FOR KEY SHARE` on it. `insertIgnore` prevents a *unique
+  violation*, not that deadlock — removing it is what `Canonical` is for.
 - **Preflight scope:** a save with pending `add`/`set` requires
   `supportsInsertIgnore`; a remove-only save does not.
 - **`set` ownership/visibility:** `set` works from either side; a `readOnly`
@@ -395,8 +421,8 @@ idempotent (re-adding an existing link is now a no-op instead of throwing).
   Preflight requires `supportsRelationshipSerialization` when `Canonical`.
 - **Lock ordering across multiple relationships:** a save touching several M2M
   relationships calls `serializeRelationship(...)` in **deterministic
-  ascending-key order** (after the owner-edge lock, before the junction read) —
-  the deadlock-avoidance invariant.
+  ascending-key order**, **before** the owner-edge lock/read — the
+  deadlock-avoidance invariant.
 - **Validation — orientation:** pair-swapped two-sided declaration accepts;
   two same-orientation declarations reject; three reject; mixed reject.
 - **Validation — junction index:** a pair-swapped declaration is accepted with
@@ -404,6 +430,8 @@ idempotent (re-adding an existing link is now a no-op instead of throwing).
   writable *or* `.readOnly()` — requires the other-direction leading-column
   index (a `.readOnly()` second side without it is rejected, since it still
   reads by source).
-- **Compatibility:** every existing single-side `throughLink` fixture generates
-  byte-identical code except junction inserts (`add` *and* `set`'s additive
-  delta) switch `insert` → `insertIgnore`.
+- **Compatibility:** existing single-side `throughLink` fixtures generate the
+  same code except (1) junction inserts (`add` *and* `set`'s additive delta)
+  switch `insert` → `insertIgnore`, and (2) every `update(...)` gains the
+  defaulted `relationshipLocking` parameter (source-compatible, mirroring
+  `consistency`).

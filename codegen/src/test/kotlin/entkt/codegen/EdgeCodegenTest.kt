@@ -496,6 +496,50 @@ private class NoLeadMembership : EntSchema("no_lead_memberships") {
     val byUserGroup = index("idx_no_lead_user_group", user.fk, group.fk).unique()
 }
 
+// A `.readOnly()` second side STILL reads by its source FK, so it still needs
+// its own leading-column index — Rule 6b does not relax for readOnly. Here the
+// readOnly `users` side (source FK group_id) has no group_id-leading index, so
+// the junction is rejected even though that side is read-only.
+private class RoNoLeadUser : EntSchema("ro_no_lead_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<RoNoLeadGroup>("groups")
+        .throughLink<RoNoLeadMembership>(RoNoLeadMembership::user, RoNoLeadMembership::group)
+}
+private class RoNoLeadGroup : EntSchema("ro_no_lead_groups") {
+    override fun id() = EntId.long()
+    val users = manyToMany<RoNoLeadUser>("users")
+        .throughLink<RoNoLeadMembership>(RoNoLeadMembership::group, RoNoLeadMembership::user)
+        .readOnly()
+}
+private class RoNoLeadMembership : EntSchema("ro_no_lead_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<RoNoLeadUser>("user").onDelete(OnDelete.CASCADE)
+    val group = belongsTo<RoNoLeadGroup>("group").onDelete(OnDelete.CASCADE)
+    // Only a user_id-leading unique pair index — nothing leads with group_id.
+    val byUserGroup = index("idx_ro_no_lead_user_group", user.fk, group.fk).unique()
+}
+
+// Same shape but the readOnly `users` side HAS its group_id-leading index, so
+// the two-sided declaration (writable + readOnly) finalizes cleanly.
+private class RoLeadUser : EntSchema("ro_lead_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<RoLeadGroup>("groups")
+        .throughLink<RoLeadMembership>(RoLeadMembership::user, RoLeadMembership::group)
+}
+private class RoLeadGroup : EntSchema("ro_lead_groups") {
+    override fun id() = EntId.long()
+    val users = manyToMany<RoLeadUser>("users")
+        .throughLink<RoLeadMembership>(RoLeadMembership::group, RoLeadMembership::user)
+        .readOnly()
+}
+private class RoLeadMembership : EntSchema("ro_lead_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<RoLeadUser>("user").onDelete(OnDelete.CASCADE)
+    val group = belongsTo<RoLeadGroup>("group").onDelete(OnDelete.CASCADE)
+    val byUserGroup = index("idx_ro_lead_user_group", user.fk, group.fk).unique()
+    val byGroupUser = index("idx_ro_lead_group_user", group.fk, user.fk)
+}
+
 // Mixed mode (one side throughLink, the other throughEntity) over the
 // same canonical identity is rejected.
 private class MixedLinkUser : EntSchema("mixed_users") {
@@ -1895,6 +1939,33 @@ class EdgeCodegenTest {
             ))
         }
         assertContains(err.message!!, "no non-partial index leading with")
+    }
+
+    @Test
+    fun `pair-swapped readOnly side missing its leading index is rejected`() {
+        // RFC 10: every two-sided declaration — writable OR .readOnly() — needs
+        // its source-FK leading index, because a readOnly side still reads by
+        // source. The readOnly `users` side here lacks a group_id-leading index.
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("RoNoLeadUser", RoNoLeadUser()),
+                SchemaInput("RoNoLeadGroup", RoNoLeadGroup()),
+                SchemaInput("RoNoLeadMembership", RoNoLeadMembership()),
+            ))
+        }
+        assertContains(err.message!!, "no non-partial index leading with")
+        assertContains(err.message!!, "group_id")
+    }
+
+    @Test
+    fun `pair-swapped writable plus readOnly side with both leading indexes is accepted`() {
+        // Positive: the readOnly side has its group_id-leading index, so the
+        // two-sided (writable + readOnly) declaration finalizes cleanly.
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("RoLeadUser", RoLeadUser()),
+            SchemaInput("RoLeadGroup", RoLeadGroup()),
+            SchemaInput("RoLeadMembership", RoLeadMembership()),
+        ))
     }
 
     @Test

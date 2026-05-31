@@ -40,6 +40,20 @@ class RelationshipLockingTest {
         assertNotEquals(a, b)
     }
 
+    @Test
+    fun `direct construction with unsorted columns does NOT equal the canonical key`() {
+        // Foot-gun guard: the data-class primary constructor does not sort, so
+        // constructing directly with an unsorted FK pair yields a key that is
+        // NOT equal to the canonical one — which would silently lock a different
+        // advisory key and lose cross-orientation serialization. All production
+        // call sites must build keys via canonical(); this test documents why.
+        val direct = RelationshipLockKey("post_tag", listOf("tag_id", "post_id"))
+        val canonical = RelationshipLockKey.canonical("post_tag", listOf("tag_id", "post_id"))
+        assertNotEquals(canonical, direct)
+        assertEquals(listOf("post_id", "tag_id"), canonical.fkColumns)
+        assertEquals(listOf("tag_id", "post_id"), direct.fkColumns)
+    }
+
     // ---------- RelationshipLocking enum ----------
 
     @Test
