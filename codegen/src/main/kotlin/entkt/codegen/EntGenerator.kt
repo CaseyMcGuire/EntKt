@@ -191,6 +191,18 @@ private fun validateRelationNames(
  * `belongsTo` cannot target both schemas). Same-orientation aliases
  * therefore only need to be detected within a single declaring schema.
  */
+/**
+ * Canonical relationship identity for an M2M declaration: the junction
+ * schema name plus the *unordered* junction-edge pair (sorted), so both
+ * orientations of the same link table map to the same key. Shared by
+ * [validateM2MOrientation] and [validateThroughLinkJunctions] so they agree
+ * on what counts as "the same relationship" / a two-sided declaration.
+ */
+private fun m2mCanonicalKey(junctionName: String, sourceEdge: String, targetEdge: String): Triple<String, String, String> {
+    val (lo, hi) = if (sourceEdge <= targetEdge) sourceEdge to targetEdge else targetEdge to sourceEdge
+    return Triple(junctionName, lo, hi)
+}
+
 private fun validateM2MOrientation(
     schemas: List<SchemaInput>,
     schemaNames: Map<EntSchema, String>,
@@ -204,14 +216,8 @@ private fun validateM2MOrientation(
         val mode: String, // "throughLink" or "throughEntity"
     )
 
-    // Key for canonical relationship identity: junction schema +
-    // unordered pair of junction edge names. Use a sorted Pair so the
-    // map key is stable regardless of declaration order.
-    fun canonicalKey(d: M2MDecl): Triple<String, String, String> {
-        val (lo, hi) = if (d.sourceEdge <= d.targetEdge) d.sourceEdge to d.targetEdge
-        else d.targetEdge to d.sourceEdge
-        return Triple(d.junctionName, lo, hi)
-    }
+    fun canonicalKey(d: M2MDecl): Triple<String, String, String> =
+        m2mCanonicalKey(d.junctionName, d.sourceEdge, d.targetEdge)
 
     val declarations = mutableListOf<M2MDecl>()
     for (input in schemas) {
@@ -256,33 +262,28 @@ private fun validateM2MOrientation(
             )
         }
 
-        if (modes.single() == "throughLink") {
-            val descriptions = group.joinToString(", ") {
-                "'${it.declaringSchema}.${it.edgeName}' (${it.sourceEdge}, ${it.targetEdge})"
+        // Same-mode group (throughLink or throughEntity): two declarations
+        // are allowed only when they are pair-swapped — one (source, target),
+        // the other (target, source) — the two endpoints of one relationship.
+        // Same-orientation declarations are alias traversal names over the
+        // same relationship and direction; reject them. (Three or more over a
+        // two-element edge pair always force a same-orientation collision by
+        // pigeonhole, so this also covers the ≥3 case.) RFC 10 makes
+        // throughLink consistent with the throughEntity bidirectional shape.
+        val byOrientation = group.groupBy { it.sourceEdge to it.targetEdge }
+        for ((orientation, sameOrientation) in byOrientation) {
+            if (sameOrientation.size < 2) continue
+            val descriptions = sameOrientation.joinToString(", ") {
+                "'${it.declaringSchema}.${it.edgeName}'"
             }
             error(
-                "Duplicate throughLink declarations over junction '${group[0].junctionName}' with " +
-                    "edge pair {${group[0].sourceEdge}, ${group[0].targetEdge}}: $descriptions. " +
-                    "Link-table relationships allow at most one throughLink per canonical identity; " +
-                    "drop the duplicate or model the relationship as throughEntity if both sides " +
-                    "need explicit traversal.",
+                "Same-orientation alias M2M declarations on junction '${group[0].junctionName}' " +
+                    "with orientation key (${orientation.first}, ${orientation.second}): $descriptions. " +
+                    "Two declarations over one junction must be pair-swapped (the two endpoints, " +
+                    "one (source, target) and the other (target, source)); multiple declarations " +
+                    "sharing the same (sourceEdge, targetEdge) alias the same relationship and " +
+                    "direction and aren't supported.",
             )
-        } else {
-            // Pure throughEntity group — reject identical orientation keys only.
-            val byOrientation = group.groupBy { it.sourceEdge to it.targetEdge }
-            for ((orientation, sameOrientation) in byOrientation) {
-                if (sameOrientation.size < 2) continue
-                val descriptions = sameOrientation.joinToString(", ") {
-                    "'${it.declaringSchema}.${it.edgeName}'"
-                }
-                error(
-                    "Same-orientation alias M2M declarations on junction '${group[0].junctionName}' " +
-                        "with orientation key (${orientation.first}, ${orientation.second}): $descriptions. " +
-                        "Multiple manyToMany declarations cannot share the same junction class and " +
-                        "the same (sourceEdge, targetEdge) — alias traversal names over the same " +
-                        "relationship and direction aren't supported in V1.",
-                )
-            }
         }
     }
 }
@@ -304,13 +305,33 @@ private fun validateM2MOrientation(
  *    explicitly.
  * 5. Junction id strategy is not `EXPLICIT` (auto-numeric or
  *    client-UUID only).
- * 6. Junction declares a non-partial unique index on exactly
- *    `(sourceFkColumn, targetFkColumn)` in that order.
+ * 6. Junction declares a non-partial unique index on the unordered FK
+ *    pair `{sourceFkColumn, targetFkColumn}` (either column order).
+ * 6b. (RFC 10) For a relationship declared from both endpoints, each side
+ *    additionally needs a non-partial index leading with its own source FK.
  */
 private fun validateThroughLinkJunctions(
     schemas: List<SchemaInput>,
     schemaNames: Map<EntSchema, String>,
 ) {
+    // Canonical relationship identities (junction + unordered edge pair)
+    // declared from BOTH endpoints (RFC 10 symmetric link tables). Each side
+    // of such a declaration reads by its OWN source FK, so each needs a
+    // source-FK-leading index (Rule 6b). A lone declaration is exempt.
+    val twoSidedKeys: Set<Triple<String, String, String>> = run {
+        val counts = mutableMapOf<Triple<String, String, String>, Int>()
+        for (input in schemas) {
+            for (edge in input.schema.edges()) {
+                val m2m = edge.kind as? EdgeKind.ManyToMany ?: continue
+                val through = m2m.through as? ManyToManyThrough.LinkTable ?: continue
+                val jn = schemaNames[through.junction] ?: continue
+                val k = m2mCanonicalKey(jn, through.sourceEdge, through.targetEdge)
+                counts[k] = (counts[k] ?: 0) + 1
+            }
+        }
+        counts.filterValues { it == 2 }.keys
+    }
+
     for (input in schemas) {
         for (edge in input.schema.edges()) {
             val m2m = edge.kind as? EdgeKind.ManyToMany ?: continue
@@ -375,7 +396,7 @@ private fun validateThroughLinkJunctions(
                     "$ctx: source junction edge '${sourceJunctionEdge.name}' is `.unique()`; this " +
                         "constrains each ${schemaNames[sourceJunctionEdge.target] ?: sourceJunctionEdge.target.tableName} " +
                         "to at most one junction row, turning the relationship into 1:1 and breaking " +
-                        "M2M helper semantics. Drop `.unique()` (the source-first composite unique " +
+                        "M2M helper semantics. Drop `.unique()` (the composite unique pair " +
                         "index from Rule 6 already enforces pair uniqueness) or model this " +
                         "relationship as throughEntity / hasOne+belongsTo.",
                 )
@@ -385,7 +406,7 @@ private fun validateThroughLinkJunctions(
                     "$ctx: target junction edge '${targetJunctionEdge.name}' is `.unique()`; this " +
                         "constrains each ${schemaNames[targetJunctionEdge.target] ?: targetJunctionEdge.target.tableName} " +
                         "to at most one junction row, turning the relationship into 1:1 and breaking " +
-                        "M2M helper semantics. Drop `.unique()` (the source-first composite unique " +
+                        "M2M helper semantics. Drop `.unique()` (the composite unique pair " +
                         "index from Rule 6 already enforces pair uniqueness) or model this " +
                         "relationship as throughEntity / hasOne+belongsTo.",
                 )
@@ -495,22 +516,49 @@ private fun validateThroughLinkJunctions(
                 )
             }
 
-            // Rule 6: source-first non-partial unique composite index.
+            // Rule 6: a non-partial unique composite index on the unordered
+            // FK pair — either column order satisfies it (RFC 10). Pair
+            // uniqueness is order-independent, and a pair-swapped second
+            // declaration's "source-first" order is the reverse.
             val indexes = try { junction.indexes() } catch (e: Exception) {
                 error("$ctx: junction indexes could not be resolved: ${e.message}")
             }
             val qualifying = indexes.firstOrNull {
                 it.unique &&
                     it.where == null &&
-                    it.fields == listOf(sourceFkCol, targetFkCol)
+                    it.fields.size == 2 &&
+                    it.fields.toSet() == setOf(sourceFkCol, targetFkCol)
             }
             if (qualifying == null) {
                 error(
-                    "$ctx: junction is missing a non-partial unique composite index on " +
-                        "($sourceFkCol, $targetFkCol). Declare one with " +
+                    "$ctx: junction is missing a non-partial unique composite index on the " +
+                        "pair ($sourceFkCol, $targetFkCol) (either column order). Declare one with " +
                         "`index(\"<name>\", <source_fk>, <target_fk>).unique()` (no `.where(...)`), " +
                         "or model this relationship as throughEntity.",
                 )
+            }
+
+            // Rule 6b (RFC 10): when the relationship is declared from both
+            // endpoints, THIS side does source-keyed reads (set exact-set,
+            // add/remove deltas, read traversal, eager-load) by its own
+            // source FK — require a non-partial index whose LEADING column is
+            // that FK. The unique pair index satisfies only the side it leads
+            // with; the opposite endpoint needs its own leading-column index.
+            // (Not relaxed for `.readOnly()` — a read-only side still reads by
+            // source.) A lone declaration is exempt (its source-first unique
+            // index already leads with its source FK).
+            val isTwoSided = m2mCanonicalKey(junctionName, through.sourceEdge, through.targetEdge) in twoSidedKeys
+            if (isTwoSided) {
+                val hasLeading = indexes.any { it.where == null && it.fields.firstOrNull() == sourceFkCol }
+                if (!hasLeading) {
+                    error(
+                        "$ctx is one side of a two-sided link table, so it reads by its source FK " +
+                            "'$sourceFkCol', but the junction has no non-partial index leading with " +
+                            "'$sourceFkCol'. Declare one leading with the source FK, e.g. " +
+                            "`index(\"<name>\", <$sourceFkCol field>, <$targetFkCol field>)` " +
+                            "(unique or not). The unique pair index only covers the side it leads with.",
+                    )
+                }
             }
 
             // Rule 6a: no extra unique index that constrains a single FK

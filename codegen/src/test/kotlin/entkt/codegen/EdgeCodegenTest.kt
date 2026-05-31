@@ -435,8 +435,9 @@ private class Follow : EntSchema("follows") {
     val followed = belongsTo<FollowUser>("followed")
 }
 
-// Cross-schema pair-swap with throughLink is rejected (link-table
-// relationships allow only one declaration per canonical identity).
+// Cross-schema pair-swap with throughLink is ACCEPTED (RFC 10 symmetric
+// link tables) when the junction carries the unique pair index plus a
+// leading-column index for each side's source FK.
 private class LinkUser : EntSchema("link_users") {
     override fun id() = EntId.long()
     val groups = manyToMany<LinkGroup>("groups")
@@ -449,8 +450,50 @@ private class LinkGroup : EntSchema("link_groups") {
 }
 private class LinkMembership : EntSchema("link_memberships") {
     override fun id() = EntId.long()
-    val user = belongsTo<LinkUser>("user")
-    val group = belongsTo<LinkGroup>("group")
+    val user = belongsTo<LinkUser>("user").onDelete(OnDelete.CASCADE)
+    val group = belongsTo<LinkGroup>("group").onDelete(OnDelete.CASCADE)
+    val byUserGroup = index("idx_link_memberships_user_group", user.fk, group.fk).unique()
+    val byGroupUser = index("idx_link_memberships_group_user", group.fk, user.fk)
+}
+
+// Two same-orientation throughLink aliases over one junction are rejected
+// (two declarations must be pair-swapped, not the same direction).
+private class SameOrientGroup : EntSchema("same_orient_groups") {
+    override fun id() = EntId.long()
+}
+private class SameOrientMembership : EntSchema("same_orient_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<SameOrientUser>("user").onDelete(OnDelete.CASCADE)
+    val group = belongsTo<SameOrientGroup>("group").onDelete(OnDelete.CASCADE)
+    val byUserGroup = index("idx_same_orient_user_group", user.fk, group.fk).unique()
+}
+private class SameOrientUser : EntSchema("same_orient_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<SameOrientGroup>("groups")
+        .throughLink<SameOrientMembership>(SameOrientMembership::user, SameOrientMembership::group)
+    val groupsAlias = manyToMany<SameOrientGroup>("groups_alias")
+        .throughLink<SameOrientMembership>(SameOrientMembership::user, SameOrientMembership::group)
+}
+
+// Pair-swapped throughLink whose junction is missing the OTHER side's
+// leading-column index → rejected by Rule 6b. Only the unique pair index
+// (leading with user_id) is present, so the group side has no group_id
+// leading index.
+private class NoLeadUser : EntSchema("no_lead_users") {
+    override fun id() = EntId.long()
+    val groups = manyToMany<NoLeadGroup>("groups")
+        .throughLink<NoLeadMembership>(NoLeadMembership::user, NoLeadMembership::group)
+}
+private class NoLeadGroup : EntSchema("no_lead_groups") {
+    override fun id() = EntId.long()
+    val users = manyToMany<NoLeadUser>("users")
+        .throughLink<NoLeadMembership>(NoLeadMembership::group, NoLeadMembership::user)
+}
+private class NoLeadMembership : EntSchema("no_lead_memberships") {
+    override fun id() = EntId.long()
+    val user = belongsTo<NoLeadUser>("user").onDelete(OnDelete.CASCADE)
+    val group = belongsTo<NoLeadGroup>("group").onDelete(OnDelete.CASCADE)
+    val byUserGroup = index("idx_no_lead_user_group", user.fk, group.fk).unique()
 }
 
 // Mixed mode (one side throughLink, the other throughEntity) over the
@@ -1819,17 +1862,39 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `cross-schema pair-swapped throughLink is rejected`() {
+    fun `cross-schema pair-swapped throughLink is accepted with indexes`() {
+        // RFC 10: pair-swapped throughLink declarations are the two endpoints
+        // of one symmetric link table. With the unique pair index + a
+        // leading-column index per side, this finalizes and generates.
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("LinkUser", LinkUser()),
+            SchemaInput("LinkGroup", LinkGroup()),
+            SchemaInput("LinkMembership", LinkMembership()),
+        ))
+    }
+
+    @Test
+    fun `same-orientation throughLink aliases are rejected`() {
         val err = assertFailsWith<IllegalStateException> {
             EntGenerator("com.example.ent").generate(listOf(
-                SchemaInput("LinkUser", LinkUser()),
-                SchemaInput("LinkGroup", LinkGroup()),
-                SchemaInput("LinkMembership", LinkMembership()),
+                SchemaInput("SameOrientUser", SameOrientUser()),
+                SchemaInput("SameOrientGroup", SameOrientGroup()),
+                SchemaInput("SameOrientMembership", SameOrientMembership()),
             ))
         }
-        assertContains(err.message!!, "Duplicate throughLink declarations")
-        assertContains(err.message!!, "LinkUser.groups")
-        assertContains(err.message!!, "LinkGroup.users")
+        assertContains(err.message!!, "Same-orientation alias")
+    }
+
+    @Test
+    fun `pair-swapped throughLink missing the other-side leading index is rejected`() {
+        val err = assertFailsWith<IllegalStateException> {
+            EntGenerator("com.example.ent").generate(listOf(
+                SchemaInput("NoLeadUser", NoLeadUser()),
+                SchemaInput("NoLeadGroup", NoLeadGroup()),
+                SchemaInput("NoLeadMembership", NoLeadMembership()),
+            ))
+        }
+        assertContains(err.message!!, "no non-partial index leading with")
     }
 
     @Test
@@ -1993,15 +2058,14 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `throughLink junction with wrong column order in unique index is rejected`() {
-        val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
-                SchemaInput("ReverseOrderIdxLinkPost", ReverseOrderIdxLinkPost()),
-                SchemaInput("ReverseOrderIdxLinkTag", ReverseOrderIdxLinkTag()),
-                SchemaInput("ReverseOrderIdxLinkPostTag", ReverseOrderIdxLinkPostTag()),
-            ))
-        }
-        assertContains(err.message!!, "missing a non-partial unique composite index")
+    fun `throughLink junction accepts a reverse-order unique pair index`() {
+        // RFC 10: the unique pair index matches unordered, so (tag_id, post_id)
+        // is accepted for a lone declaration just like (post_id, tag_id).
+        EntGenerator("com.example.ent").generate(listOf(
+            SchemaInput("ReverseOrderIdxLinkPost", ReverseOrderIdxLinkPost()),
+            SchemaInput("ReverseOrderIdxLinkTag", ReverseOrderIdxLinkTag()),
+            SchemaInput("ReverseOrderIdxLinkPostTag", ReverseOrderIdxLinkPostTag()),
+        ))
     }
 
     @Test
