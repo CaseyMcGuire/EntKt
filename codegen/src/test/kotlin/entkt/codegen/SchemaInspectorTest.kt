@@ -69,6 +69,27 @@ private class InspArticleTag : EntSchema("article_tags") {
     val tag = belongsTo<InspTag>("tag").field(tagId)
 }
 
+// throughLink fixtures (RFC 10): a writable side (LinkPost.tags) and a
+// `.readOnly()` side (LinkTag.posts) over the same pair-swapped junction.
+private class InspLinkPost : EntSchema("link_posts") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<InspLinkTag>("tags")
+        .throughLink<InspLinkPostTag>(InspLinkPostTag::post, InspLinkPostTag::tag)
+}
+private class InspLinkTag : EntSchema("link_tags") {
+    override fun id() = EntId.long()
+    val posts = manyToMany<InspLinkPost>("posts")
+        .throughLink<InspLinkPostTag>(InspLinkPostTag::tag, InspLinkPostTag::post)
+        .readOnly()
+}
+private class InspLinkPostTag : EntSchema("link_post_tags") {
+    override fun id() = EntId.long()
+    val post = belongsTo<InspLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag = belongsTo<InspLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val byPost = index("idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
+    val byTag = index("idx_link_post_tags_tag_post", tag.fk, post.fk)
+}
+
 private class InspTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
     val createdAt = time("created_at").defaultNow().immutable()
     val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
@@ -369,6 +390,31 @@ class SchemaInspectorTest {
         assertEquals("article_tags", through.junctionTable)
         assertEquals("tag", through.sourceEdge)
         assertEquals("article", through.targetEdge)
+        // throughEntity has no link-table write helpers.
+        assertNull(through.writeHelpers)
+    }
+
+    @Test
+    fun `explain reports the add-remove-set write surface for a writable throughLink side`() {
+        val graph = SchemaInspector.explain(inputs(
+            InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
+        ))
+        val post = graph.schemas.first { it.schemaName == "LinkPost" }
+        val tagsEdge = post.edges.first { it.name == "tags" }
+        assertEquals(listOf("add", "remove", "set"), tagsEdge.through!!.writeHelpers)
+    }
+
+    @Test
+    fun `explain reports an empty write surface for a readOnly throughLink side but still lists the edge`() {
+        val graph = SchemaInspector.explain(inputs(
+            InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
+        ))
+        val tag = graph.schemas.first { it.schemaName == "LinkTag" }
+        // The .readOnly() side still appears (read traversal is intact)...
+        val postsEdge = tag.edges.first { it.name == "posts" }
+        assertEquals("manyToMany", postsEdge.kind)
+        // ...but exposes no write helpers.
+        assertEquals(emptyList<String>(), postsEdge.through!!.writeHelpers)
     }
 
     @Test

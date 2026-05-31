@@ -2,6 +2,7 @@ package entkt.codegen
 
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
+import entkt.schema.ManyToManyThrough
 import entkt.schema.OnDelete
 
 /**
@@ -382,6 +383,15 @@ object SchemaInspector {
                 is EdgeKind.ManyToMany -> {
                     val through = kind.through
                     val junctionTable = through.junction.tableName
+                    // RFC 10: surface the concrete write surface. A writable
+                    // throughLink side exposes add/remove/set; a `.readOnly()`
+                    // side still appears (read traversal) but exposes none; a
+                    // throughEntity edge has no link-table helpers (null).
+                    val writeHelpers = when (through) {
+                        is ManyToManyThrough.LinkTable ->
+                            if (through.readOnly) emptyList() else listOf("add", "remove", "set")
+                        is ManyToManyThrough.ThroughEntity -> null
+                    }
                     ExplainedEdge(
                         name = edge.name,
                         kind = "manyToMany",
@@ -390,6 +400,7 @@ object SchemaInspector {
                             junctionTable = junctionTable,
                             sourceEdge = through.sourceEdge,
                             targetEdge = through.targetEdge,
+                            writeHelpers = writeHelpers,
                         ),
                         comment = edge.comment,
                     )

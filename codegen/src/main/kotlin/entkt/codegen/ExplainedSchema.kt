@@ -55,6 +55,13 @@ data class ExplainedThrough(
     val junctionTable: String,
     val sourceEdge: String,
     val targetEdge: String,
+    /**
+     * The concrete link-table mutation surface this edge exposes (RFC 10):
+     * `["add", "remove", "set"]` for a writable `throughLink` side,
+     * `[]` for a `.readOnly()` side (read traversal only). `null` for a
+     * `throughEntity` M2M edge, which has no link-table write helpers.
+     */
+    val writeHelpers: List<String>? = null,
 )
 
 data class ExplainedIndex(
