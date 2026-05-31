@@ -1,0 +1,173 @@
+package entkt.integrationtest
+
+import entkt.integrationtest.ent.EntClient
+import entkt.postgres.PostgresDriver
+import entkt.runtime.Driver
+import entkt.runtime.RelationshipLockKey
+import entkt.runtime.RelationshipLocking
+import org.postgresql.ds.PGSimpleDataSource
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
+import org.testcontainers.postgresql.PostgreSQLContainer
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicReference
+import javax.sql.DataSource
+import kotlin.concurrent.thread
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * Postgres-backed coverage for RFC 10 canonical relationship locking
+ * (`relationshipLocking = Canonical`) on the symmetric `Post.tags` /
+ * `Tag.posts` link table.
+ *
+ * Pins the two properties that only show up against a real database:
+ *  - both orientations take the *same* canonical relationship lock key
+ *    (junction + sorted FK pair), not their per-owner key — proven with a
+ *    recording driver;
+ *  - concurrent opposite-orientation writes converge without deadlocking,
+ *    because the canonical lock serializes the junction read-diff-write.
+ */
+@Testcontainers
+class RelationshipLockingPostgresIntegrationTest {
+
+    companion object {
+        @Container
+        @JvmStatic
+        val postgres: PostgreSQLContainer = PostgreSQLContainer("postgres:16-alpine")
+    }
+
+    private val dataSource: DataSource by lazy {
+        PGSimpleDataSource().apply {
+            setURL(postgres.jdbcUrl)
+            user = postgres.username
+            password = postgres.password
+        }
+    }
+
+    /**
+     * A [Driver] decorator that records every [serializeRelationship] key,
+     * delegating all other calls to [inner]. Wraps the transaction-scoped
+     * driver too so locks taken inside `withTransaction` are observed.
+     */
+    private class RecordingDriver(
+        private val inner: Driver,
+        val keys: MutableList<RelationshipLockKey>,
+    ) : Driver by inner {
+        override fun serializeRelationship(key: RelationshipLockKey) {
+            keys.add(key)
+            inner.serializeRelationship(key)
+        }
+
+        override fun <T> withTransaction(block: (Driver) -> T): T =
+            inner.withTransaction { tx -> block(RecordingDriver(tx, keys)) }
+    }
+
+    private fun setupDb() {
+        val driver = PostgresDriver(dataSource, autoDdl = true)
+        EntClient.SCHEMAS.forEach(driver::register)
+        val tables = EntClient.SCHEMAS.joinToString(", ") { "\"${it.table}\"" }
+        dataSource.connection.use { conn ->
+            conn.createStatement().use {
+                it.execute("TRUNCATE TABLE $tables RESTART IDENTITY CASCADE")
+            }
+        }
+    }
+
+    private fun junctionRowCount(): Long =
+        dataSource.connection.use { conn ->
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT COUNT(*) FROM \"post_tags\"").use { rs ->
+                    rs.next()
+                    rs.getLong(1)
+                }
+            }
+        }
+
+    @Test
+    fun `Canonical save takes the canonical relationship lock — identical key from both orientations`() {
+        setupDb()
+        val keys = Collections.synchronizedList(mutableListOf<RelationshipLockKey>())
+        val client = EntClient(RecordingDriver(PostgresDriver(dataSource), keys)) {
+            defaultRelationshipLocking = RelationshipLocking.Canonical
+        }
+        val post = client.posts.create { title = "p" }.save()
+        val post2 = client.posts.create { title = "p2" }.save()
+        val tag = client.tags.create { name = "a" }.save()
+
+        // Post-side Canonical add, then Tag-side Canonical add.
+        client.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }
+        client.withTransaction { tx -> tx.tags.update(tag.id) { posts.add(post2.id) }.save() }
+
+        val expected = RelationshipLockKey.canonical("post_tags", listOf("post_id", "tag_id"))
+        assertEquals(2, keys.size, "both Canonical saves take the relationship lock once")
+        assertTrue(
+            keys.all { it == expected },
+            "both orientations must lock the same canonical relationship key, not a per-owner key; got $keys",
+        )
+    }
+
+    @Test
+    fun `OwnerOnly save does not take the relationship lock`() {
+        setupDb()
+        val keys = Collections.synchronizedList(mutableListOf<RelationshipLockKey>())
+        // No config override → defaultRelationshipLocking = OwnerOnly.
+        val client = EntClient(RecordingDriver(PostgresDriver(dataSource), keys))
+        val post = client.posts.create { title = "p" }.save()
+        val tag = client.tags.create { name = "a" }.save()
+
+        client.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }
+
+        assertTrue(keys.isEmpty(), "OwnerOnly must not call serializeRelationship; got $keys")
+    }
+
+    @Test
+    fun `concurrent opposite-side Canonical writes converge without deadlock`() {
+        setupDb()
+        val client = EntClient(PostgresDriver(dataSource)) {
+            defaultRelationshipLocking = RelationshipLocking.Canonical
+        }
+        val post = client.posts.create { title = "p" }.save()
+        val tag = client.tags.create { name = "a" }.save()
+
+        val rounds = 20
+        val errorA = AtomicReference<Throwable?>(null)
+        val errorB = AtomicReference<Throwable?>(null)
+
+        // Both threads repeatedly toggle the SAME (post, tag) pair from
+        // opposite orientations — maximal contention on the post_tags
+        // relationship. Without the canonical lock these interleave at the
+        // junction-row level and deadlock (SQLSTATE 40P01); with it they
+        // serialize and every transaction commits.
+        val a = thread(start = false, name = "post-side") {
+            try {
+                repeat(rounds) {
+                    client.withTransaction { tx -> tx.posts.update(post.id) { tags.set(listOf(tag.id)) }.save() }
+                    client.withTransaction { tx -> tx.posts.update(post.id) { tags.set(emptyList()) }.save() }
+                }
+            } catch (t: Throwable) {
+                errorA.set(t)
+            }
+        }
+        val b = thread(start = false, name = "tag-side") {
+            try {
+                repeat(rounds) {
+                    client.withTransaction { tx -> tx.tags.update(tag.id) { posts.set(listOf(post.id)) }.save() }
+                    client.withTransaction { tx -> tx.tags.update(tag.id) { posts.set(emptyList()) }.save() }
+                }
+            } catch (t: Throwable) {
+                errorB.set(t)
+            }
+        }
+        a.start(); b.start()
+        a.join(60_000); b.join(60_000)
+
+        assertNull(errorA.get(), "Post-side thread failed: ${errorA.get()}")
+        assertNull(errorB.get(), "Tag-side thread failed: ${errorB.get()}")
+        // There is only one possible junction row for this pair, so any
+        // committed end state holds 0 or 1 rows — never a duplicate.
+        assertTrue(junctionRowCount() in 0L..1L, "junction must hold at most the single (post, tag) row")
+    }
+}

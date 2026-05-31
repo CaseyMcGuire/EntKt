@@ -26,6 +26,7 @@ private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
+private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime", "RelationshipLocking")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -141,6 +142,18 @@ internal class ClientGenerator(
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("%T.ReadCurrent", UPDATE_CONSISTENCY)
+                    .build()
+            )
+            .addProperty(
+                // Client-wide default RelationshipLocking for symmetric
+                // link-table M2M writes (RFC 10). The per-save
+                // `relationshipLocking = ...` argument on `update(...)`
+                // always overrides this default. OwnerOnly = the existing
+                // always-on owner-edge serialization only.
+                PropertySpec.builder("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("%T.OwnerOnly", RELATIONSHIP_LOCKING)
                     .build()
             )
             .addProperty(
@@ -420,6 +433,15 @@ internal class ClientGenerator(
                     .build()
             )
             .addProperty(
+                // Configurable client-wide default RelationshipLocking
+                // (RFC 10). The per-save `relationshipLocking = ...` argument
+                // on `update(...)` always overrides this default.
+                PropertySpec.builder("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
+                    .mutable(true)
+                    .initializer("%T.OwnerOnly", RELATIONSHIP_LOCKING)
+                    .build()
+            )
+            .addProperty(
                 // Bounds the storage scan visibleAll / visibleAllOrError
                 // / firstVisibleOrNull issue against the driver when
                 // privacy pushdown is unavailable. Default 100 rows.
@@ -490,6 +512,7 @@ internal class ClientGenerator(
         block.addStatement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
         block.addStatement("transactionRequirement = cfg.transactionRequirement")
         block.addStatement("defaultUpdateConsistency = cfg.defaultUpdateConsistency")
+        block.addStatement("defaultRelationshipLocking = cfg.defaultRelationshipLocking")
         block.addStatement("visibleOverfetchLimit = cfg.visibleOverfetchLimit")
         block.addStatement("entityInterceptors = cfg.interceptorsConfig.config")
         return block.build()
@@ -507,6 +530,7 @@ internal class ClientGenerator(
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")
         body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
         body.addStatement("tx.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
@@ -586,6 +610,7 @@ internal class ClientGenerator(
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")
         body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
         body.addStatement("tx.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
@@ -788,6 +813,7 @@ internal class ClientGenerator(
         body.addStatement("scoped.privacyContextProvider = { context }")
         body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
         body.addStatement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")
         body.addStatement("scoped.visibleOverfetchLimit = this.visibleOverfetchLimit")
         body.addStatement("scoped.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
@@ -822,6 +848,7 @@ internal class ClientGenerator(
         body.addStatement("fixed.privacyContextProvider = { context }")
         body.addStatement("fixed.transactionRequirement = this.transactionRequirement")
         body.addStatement("fixed.defaultUpdateConsistency = this.defaultUpdateConsistency")
+        body.addStatement("fixed.defaultRelationshipLocking = this.defaultRelationshipLocking")
         body.addStatement("fixed.visibleOverfetchLimit = this.visibleOverfetchLimit")
         body.addStatement("fixed.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {

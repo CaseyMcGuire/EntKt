@@ -31,6 +31,8 @@ private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime", "EntNoChangesE
 private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
 private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
+private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime", "RelationshipLocking")
+private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime", "RelationshipLockKey")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
 private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime", "UnsupportedDriverCapabilityException")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
@@ -102,6 +104,7 @@ internal class UpdateGenerator(
                     .addParameter("client", clientClass)
                     .addParameter("id", idType)
                     .addParameter("consistency", UPDATE_CONSISTENCY)
+                    .addParameter("relationshipLocking", RELATIONSHIP_LOCKING)
                     .addParameter("beforeSaveHooks", beforeSaveHookType)
                     .addParameter("beforeUpdateHooks", beforeUpdateHookType)
                     .addParameter("afterUpdateHooks", afterUpdateHookType)
@@ -135,6 +138,17 @@ internal class UpdateGenerator(
                 PropertySpec.builder("consistency", UPDATE_CONSISTENCY)
                     .addModifiers(KModifier.PRIVATE)
                     .initializer("consistency")
+                    .build()
+            )
+            // Per-save RelationshipLocking selected by the caller (or
+            // inherited from the client's `defaultRelationshipLocking`).
+            // Read by save() to decide whether to take the canonical
+            // cross-orientation relationship lock for symmetric link-table
+            // M2M writes (RFC 10).
+            .addProperty(
+                PropertySpec.builder("relationshipLocking", RELATIONSHIP_LOCKING)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("relationshipLocking")
                     .build()
             )
             // Internal state: populated by save() from the byId(id) load.
@@ -936,6 +950,59 @@ internal class UpdateGenerator(
     }
 
     /**
+     * RFC 10: emit the canonical relationship-lock acquisition into save().
+     * For each distinct link-table relationship (junction + unordered FK pair)
+     * touched by a helper-eligible edge, emit a guarded
+     * `driver.serializeRelationship(...)` call that fires only when
+     * `relationshipLocking == Canonical` and that relationship has pending ops.
+     *
+     * Two correctness properties:
+     *  - **De-dup**: edges resolving to the same canonical key (same junction
+     *    + same unordered FK pair) collapse to ONE lock whose guard ORs their
+     *    `hasOps()` flags — never two locks on one relationship.
+     *  - **Order**: the distinct relationships are emitted in ascending
+     *    canonical-key order (junction table, then sorted FK columns) — a
+     *    global total order both orientations agree on, so a multi-relationship
+     *    save can't deadlock against another ordering.
+     *
+     * Called BEFORE the owner-row read (which `SELECT ... FOR UPDATE`s the owner
+     * row that the opposite orientation's junction insert FK-checks). Taking the
+     * relationship lock first means a contending opposite-orientation save holds
+     * no row locks while it waits — so the two can't form an
+     * owner-lock-vs-FK-share-lock cycle. The lock is an xact lock, held through
+     * the junction read-diff-write to commit. No-op for schemas with no
+     * helper-eligible edges (the loop body never executes).
+     */
+    private fun emitCanonicalRelationshipLocks(
+        builder: FunSpec.Builder,
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ) {
+        if (helperEligibleEdges.isEmpty()) return
+        // Canonical key: junction table + the FK pair sorted into canonical
+        // order (matches RelationshipLockKey.canonical), so both orientations
+        // of the same link table group together and lock the same key.
+        val groups = helperEligibleEdges.groupBy { edge ->
+            edge.junctionTable to listOf(edge.junctionSourceColumn, edge.junctionTargetColumn).sorted()
+        }
+        val orderedKeys = groups.keys.sortedWith(
+            compareBy({ it.first }, { it.second.joinToString(",") }),
+        )
+        for (key in orderedKeys) {
+            val edgesInGroup = groups.getValue(key)
+            val opsGuard = edgesInGroup.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasOps()" }
+            builder.beginControlFlow(
+                "if (relationshipLocking == %T.Canonical && (%L))",
+                RELATIONSHIP_LOCKING, opsGuard,
+            )
+            builder.addStatement(
+                "driver.serializeRelationship(%T.canonical(%S, listOf(%S, %S)))",
+                RELATIONSHIP_LOCK_KEY, key.first, key.second[0], key.second[1],
+            )
+            builder.endControlFlow()
+        }
+    }
+
+    /**
      * RFC #5 Phase 4: build `_checkLinkTableM2MMixedMode()`, the
      * defense-in-depth check that re-runs the per-mutator-call mixed-mode
      * rule against the captured op-log state at save preflight. The per-call
@@ -1263,9 +1330,40 @@ internal class UpdateGenerator(
                 "$schemaName link-table M2M add/set requires a driver with supportsInsertIgnore = true",
             )
             builder.endControlFlow()
+            // RFC 10: opting into Canonical relationship locking needs a driver
+            // that can take the cross-orientation relationship lock. Checked
+            // here (before any read/write) so the rejection is never racy.
+            builder.beginControlFlow(
+                "if (relationshipLocking == %T.Canonical && !driver.supportsRelationshipSerialization)",
+                RELATIONSHIP_LOCKING,
+            )
+            builder.addStatement(
+                "throw %T(%S)",
+                UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
+                "$schemaName relationshipLocking = Canonical requires a driver with " +
+                    "supportsRelationshipSerialization = true",
+            )
+            builder.endControlFlow()
             builder.addStatement("_checkLinkTableM2MMixedMode()")
             builder.endControlFlow()
         }
+
+        // ---- RFC 10: canonical relationship lock acquisition. When
+        // `relationshipLocking == Canonical`, take a cross-orientation lock on
+        // every distinct link-table relationship the pending ops touch — keyed
+        // by the junction + sorted FK pair, so both orientations contend on the
+        // same key. Acquired in ascending canonical-key order (junction table,
+        // then sorted FK columns) so a multi-relationship save can't deadlock
+        // against a differently-ordered one.
+        //
+        // Crucially this runs BEFORE the owner-row read below. The owner read
+        // takes a `SELECT ... FOR UPDATE` (or owner-edge serialization) on the
+        // owner row, and the *opposite* orientation's junction insert FK-checks
+        // that very row — so acquiring the owner lock first would let two
+        // opposite saves deadlock (owner-lock-then-relationship-lock vs
+        // relationship-lock-then-FK-share-lock). Taking the relationship lock
+        // first means a contending save holds nothing while it waits for it. ----
+        emitCanonicalRelationshipLocks(builder, helperEligibleEdges)
 
         // ---- Internal current-row load. The primitive choice is per
         // driver, not per consistency mode (RFC #4 Many-To-Many Pipeline):

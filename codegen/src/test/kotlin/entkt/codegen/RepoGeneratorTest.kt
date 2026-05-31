@@ -55,8 +55,8 @@ class RepoGeneratorTest {
         assert(output.contains("fun create(block: CarCreate.() -> Unit): CarCreate")) {
             "Should have create taking DSL block\n$output"
         }
-        assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    block: CarUpdate.() -> Unit,\n  ): CarUpdate")) {
-            "Should have update(id, consistency, block) — update is rooted by id, with a per-save UpdateConsistency override\n$output"
+        assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking,\n    block: CarUpdate.() -> Unit,\n  ): CarUpdate")) {
+            "Should have update(id, consistency, relationshipLocking, block) — update is rooted by id, with per-save UpdateConsistency + RelationshipLocking overrides\n$output"
         }
     }
 
@@ -258,13 +258,13 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `update passes client, consistency, and hook lists to the builder`() {
+    fun `update passes client, consistency, relationshipLocking, and hook lists to the builder`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarUpdate(driver, client, id, consistency, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
-            "update should pass client, consistency, and hook lists to CarUpdate\n$output"
+        assert(output.contains("CarUpdate(driver, client, id, consistency, relationshipLocking, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
+            "update should pass client, consistency, relationshipLocking, and hook lists to CarUpdate\n$output"
         }
     }
 

@@ -45,6 +45,33 @@ class ClientGeneratorTest {
     }
 
     @Test
+    fun `EntClient and config carry defaultRelationshipLocking defaulting to OwnerOnly`() {
+        val schemas = buildSchemas()
+        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
+
+        // Both the client and the config expose the configurable default,
+        // initialized to OwnerOnly (RFC 10). Two declarations total.
+        val decls = Regex("defaultRelationshipLocking: RelationshipLocking = RelationshipLocking\\.OwnerOnly")
+            .findAll(output).count()
+        assert(decls == 2) {
+            "Expected the client + config to both declare defaultRelationshipLocking = OwnerOnly; found $decls\n$output"
+        }
+        // Config copy + the four context-propagation sites thread it through.
+        assert(output.contains("defaultRelationshipLocking = cfg.defaultRelationshipLocking")) {
+            "Config copy must thread defaultRelationshipLocking\n$output"
+        }
+        assert(output.contains("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
+            "withTransaction must propagate defaultRelationshipLocking\n$output"
+        }
+        assert(output.contains("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
+            "withPrivacyContext must propagate defaultRelationshipLocking\n$output"
+        }
+        assert(output.contains("fixed.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
+            "fixed-context must propagate defaultRelationshipLocking\n$output"
+        }
+    }
+
+    @Test
     fun `EntClient exposes a repo property per schema`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()

@@ -22,6 +22,7 @@ private val LIST = ClassName("kotlin.collections", "List")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val INT = Int::class.asClassName()
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
+private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
 private val PRIVACY_OPERATION = ClassName("entkt.runtime", "PrivacyOperation")
@@ -176,10 +177,18 @@ internal class RepoGenerator(
                             .defaultValue("client.defaultUpdateConsistency")
                             .build(),
                     )
+                    // Per-save RelationshipLocking override (RFC 10).
+                    // Defaults to the client's `defaultRelationshipLocking`
+                    // (OwnerOnly unless the EntClientConfig sets otherwise).
+                    .addParameter(
+                        ParameterSpec.builder("relationshipLocking", RELATIONSHIP_LOCKING)
+                            .defaultValue("client.defaultRelationshipLocking")
+                            .build(),
+                    )
                     .addParameter("block", updateLambda)
                     .returns(updateClass)
                     .addStatement(
-                        "return %T(driver, client, id, consistency, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
+                        "return %T(driver, client, id, consistency, relationshipLocking, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
                         updateClass,
                     )
                     .build()

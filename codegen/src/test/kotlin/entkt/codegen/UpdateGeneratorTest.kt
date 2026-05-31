@@ -1391,6 +1391,101 @@ class UpdateGeneratorTest {
         }
     }
 
+    // ---------- RFC 10 Phase 5: canonical relationship locking ----------
+
+    @Test
+    fun `update ctor takes a relationshipLocking parameter and property`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("private val relationshipLocking: RelationshipLocking")) {
+            "Update class must carry a relationshipLocking property\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits the Canonical supportsRelationshipSerialization preflight`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("if (relationshipLocking == RelationshipLocking.Canonical && !driver.supportsRelationshipSerialization)")) {
+            "Expected the Canonical capability preflight\n$output"
+        }
+        assert(output.contains("requires a driver with supportsRelationshipSerialization = true")) {
+            "Expected the Canonical capability error message\n$output"
+        }
+    }
+
+    @Test
+    fun `save takes the canonical relationship lock only under Canonical, before the owner-row read`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Gated on Canonical AND the edge having pending ops; keyed by the
+        // canonical (sorted) FK pair so both orientations lock the same key.
+        assert(output.contains(
+            "if (relationshipLocking == RelationshipLocking.Canonical && (this.tags.hasOps())) { " +
+                "driver.serializeRelationship(RelationshipLockKey.canonical(\"m2m_post_tags\", listOf(\"post_id\", \"tag_id\"))) }",
+        )) {
+            "Expected the guarded canonical relationship lock\n$output"
+        }
+
+        // Positioned AFTER the Canonical capability preflight and strictly
+        // BEFORE the owner-row read: the owner read FOR-UPDATEs the owner row
+        // that the opposite orientation's junction insert FK-checks, so taking
+        // the relationship lock first is what makes the two deadlock-free.
+        val preflightIdx = output.indexOf("if (relationshipLocking == RelationshipLocking.Canonical && !driver.supportsRelationshipSerialization)")
+        val lockIdx = output.indexOf("driver.serializeRelationship(RelationshipLockKey.canonical(\"m2m_post_tags\"")
+        val ownerReadIdx = output.indexOf("val row0 = if (consistency == UpdateConsistency.Pessimistic)")
+        assert(preflightIdx != -1 && lockIdx != -1 && ownerReadIdx != -1) {
+            "Missing one of the ordering anchors\n$output"
+        }
+        assert(preflightIdx < lockIdx && lockIdx < ownerReadIdx) {
+            "Relationship lock must sit after the Canonical preflight and before the owner-row read\n$output"
+        }
+    }
+
+    @Test
+    fun `multi-relationship canonical locks are emitted in ascending key order`() {
+        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Junction tables sort m2m_doc_labels < m2m_doc_tags, so the labels
+        // lock must be acquired before the tags lock (deadlock-free order).
+        val labelsIdx = output.indexOf("RelationshipLockKey.canonical(\"m2m_doc_labels\"")
+        val tagsIdx = output.indexOf("RelationshipLockKey.canonical(\"m2m_doc_tags\"")
+        assert(labelsIdx != -1 && tagsIdx != -1) {
+            "Expected a relationship lock for each junction\n$output"
+        }
+        assert(labelsIdx < tagsIdx) {
+            "Relationship locks must be emitted in ascending canonical-key order\n$output"
+        }
+    }
+
+    @Test
+    fun `two edges to the same junction collapse to one relationship lock`() {
+        val (doc, names) = makeDupJunctionSchemas()
+        val output = generator.generate("DupJunctionDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Risk #3: the de-dup must produce ONE lock for the shared junction,
+        // not one per edge.
+        val lockCount = Regex("RelationshipLockKey\\.canonical\\(\"dup_junction_doc_tags\"")
+            .findAll(output).count()
+        assert(lockCount == 1) {
+            "Two edges to one junction must collapse to a single relationship lock; found $lockCount\n$output"
+        }
+        // The single lock's guard ORs both edges' hasOps().
+        assert(output.contains("this.tags.hasOps() || this.moreTags.hasOps()") ||
+               output.contains("this.moreTags.hasOps() || this.tags.hasOps()")) {
+            "The collapsed lock guard must OR both edges' hasOps()\n$output"
+        }
+    }
+
     @Test
     fun `update builder emits _checkLinkTableM2MMixedMode that dispatches per-edge to validateInvariants`() {
         // Phase 8: the mixed-mode invariants live on the mutator
@@ -2088,5 +2183,41 @@ private fun makeReadOnlyMixedSchemas(): ReadOnlyMixedSchemas {
             docTag to "RoDocTag",
             docWatcher to "RoDocWatcher",
         ),
+    )
+}
+
+// Two helper-eligible edges to the *same* junction with the same FK pair.
+// Contrived (a full-codegen run would reject the same-orientation alias), but
+// it lets the UpdateGenerator unit test exercise the canonical-lock de-dup:
+// both edges resolve to one canonical key, so save() must take exactly one
+// relationship lock whose guard ORs both mutators.
+private class DupJunctionDoc : EntSchema("dup_junction_docs") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<DupJunctionTag>("tags")
+        .throughLink<DupJunctionDocTag>(DupJunctionDocTag::doc, DupJunctionDocTag::tag)
+    val moreTags = manyToMany<DupJunctionTag>("more_tags")
+        .throughLink<DupJunctionDocTag>(DupJunctionDocTag::doc, DupJunctionDocTag::tag)
+}
+private class DupJunctionTag : EntSchema("dup_junction_tags") {
+    override fun id() = EntId.long()
+}
+private class DupJunctionDocTag : EntSchema("dup_junction_doc_tags") {
+    override fun id() = EntId.long()
+    val doc = belongsTo<DupJunctionDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag = belongsTo<DupJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_dup_junction_doc_tags_pair", doc.fk, tag.fk).unique()
+}
+private data class DupJunctionSchemas(
+    val doc: DupJunctionDoc,
+    val names: Map<EntSchema, String>,
+)
+private fun makeDupJunctionSchemas(): DupJunctionSchemas {
+    val doc = DupJunctionDoc()
+    val tag = DupJunctionTag()
+    val docTag = DupJunctionDocTag()
+    finalize(doc, tag, docTag)
+    return DupJunctionSchemas(
+        doc,
+        mapOf(doc to "DupJunctionDoc", tag to "DupJunctionTag", docTag to "DupJunctionDocTag"),
     )
 }
