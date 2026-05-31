@@ -253,6 +253,13 @@ Lock model:
   total order — owner-edge lock first, then relationship locks in ascending key
   order — so deterministic keys + a fixed order ⇒ no lock-order cycle between
   cooperating transactions.
+- **Acquired before the junction read (correctness for `set`):** the
+  relationship lock(s) are taken **after** the owner-edge lock/read but
+  **before `_buildEdgeChanges(...)` reads the current junction rows**. `set`'s
+  exact-replace reads current state and reconciles; if the lock were taken after
+  that read, a concurrent cross-orientation `set` could mutate the junction
+  between the read and the write — exactly the race the lock exists to prevent.
+  Read-and-reconcile must happen entirely under the lock.
 - **Cooperative:** it serializes only against other writes that also set
   `relationshipLocking = Canonical`. A writer that leaves it `OwnerOnly` still takes
   only its owner-edge lock and is not protected. It removes the *deadlock* for
@@ -287,11 +294,13 @@ have — so the current rule **blocks** the feature.
 
 Revised rule:
 
-- **Correctness:** require exactly one non-partial unique composite index on
-  the **unordered** FK pair — `(source_fk, target_fk)` *or*
-  `(target_fk, source_fk)` satisfies it. Either index enforces pair uniqueness
-  (and is a valid `ON CONFLICT` arbiter for `insertIgnore`). The
-  per-declaration source-first requirement is dropped.
+- **Correctness:** require **at least one** non-partial unique composite index
+  on the **unordered** FK pair — `(source_fk, target_fk)` *or*
+  `(target_fk, source_fk)` qualifies. Either index enforces pair uniqueness (and
+  is a valid `ON CONFLICT` arbiter for `insertIgnore`). Declaring **both** (e.g.
+  one per leading direction, to also satisfy the performance rule below) is
+  fine — not a redundancy error. The per-declaration source-first requirement is
+  dropped.
 - **Performance (the real reason the old rule was source-first):** generated
   helpers do source-keyed lookups via the index's *leading* column — and
   **every declared side does them, writable or `.readOnly()`**: `set` exact-set
@@ -384,6 +393,10 @@ idempotent (re-adding an existing link is now a no-op instead of throwing).
   identity), **not** the owner-row lock — two `Canonical` opposite-side `set`s
   serialize (no deadlock); a writer that leaves it `OwnerOnly` is unprotected.
   Preflight requires `supportsRelationshipSerialization` when `Canonical`.
+- **Lock ordering across multiple relationships:** a save touching several M2M
+  relationships calls `serializeRelationship(...)` in **deterministic
+  ascending-key order** (after the owner-edge lock, before the junction read) —
+  the deadlock-avoidance invariant.
 - **Validation — orientation:** pair-swapped two-sided declaration accepts;
   two same-orientation declarations reject; three reject; mixed reject.
 - **Validation — junction index:** a pair-swapped declaration is accepted with
