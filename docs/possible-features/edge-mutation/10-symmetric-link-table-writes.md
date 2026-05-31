@@ -134,15 +134,17 @@ throws.) Idempotent `add` is the behavior callers expect, so:
       table: String,
       values: Map<String, Any?>,
       conflictColumns: List<String>,
-  )  // returns Unit
+  ): Map<String, Any?>?   // inserted row, or null when the conflict skipped it
   ```
 
   emitting `INSERT INTO <t> (…) VALUES (…) ON CONFLICT (<conflictColumns>) DO
-  NOTHING`. Generated code passes `conflictColumns = [source_fk, target_fk]`,
-  so only the expected pair-duplicate is swallowed. **Returns `Unit`** — unlike
-  `insert` it has **no `RETURNING`**; it guarantees only idempotent-insert
-  semantics for the given `conflictColumns` and does not surface the row (the
-  junction-write loop never reads it). Gated behind a driver capability
+  NOTHING RETURNING *`. Generated code passes
+  `conflictColumns = [source_fk, target_fk]`, so only the expected pair-duplicate
+  is swallowed. **Returns the inserted row, or `null` when `ON CONFLICT` skipped
+  it** (a duplicate) — matching `insert`'s return convention and informative
+  (`null` = the link already existed). The junction-write loop ignores the
+  result; it relies only on the idempotent-insert semantics for the given
+  `conflictColumns`. Gated behind a driver capability
   `supportsInsertIgnore`.
 - **Every generated junction insert uses `insertIgnore`, not only the public
   `add` path.** The write loop inserts every `edgeChanges.added` row, and that
@@ -196,7 +198,7 @@ the block — matching entkt's existing
 `update(id, consistency = UpdateConsistency.Pessimistic) { … }` shape:
 
 ```kotlin
-enum class RelationshipLocking { None, Canonical }
+enum class RelationshipLocking { OwnerOnly, Canonical }
 
 tx.posts.update(
     post.id,
@@ -206,7 +208,8 @@ tx.posts.update(
 }.save()
 ```
 
-`relationshipLocking` defaults to `None` and, like `consistency`, honors a
+`relationshipLocking` defaults to `OwnerOnly` (only the always-on owner-edge
+lock, no extra relationship lock) and, like `consistency`, honors a
 client-wide default — but it **only takes effect on saves with pending
 link-table M2M writes**: it locks the canonical relationship(s) those writes
 touch and is a **no-op for any other update** (there is no relationship to
@@ -251,7 +254,7 @@ Lock model:
   order — so deterministic keys + a fixed order ⇒ no lock-order cycle between
   cooperating transactions.
 - **Cooperative:** it serializes only against other writes that also set
-  `relationshipLocking = Canonical`. A writer that leaves it `None` still takes
+  `relationshipLocking = Canonical`. A writer that leaves it `OwnerOnly` still takes
   only its owner-edge lock and is not protected. It removes the *deadlock* for
   cooperating writers; it does **not** remove last-writer-wins.
 
@@ -379,7 +382,7 @@ idempotent (re-adding an existing link is now a no-op instead of throwing).
 - **`relationshipLocking = Canonical` uses the relationship lock:** assert it
   calls `serializeRelationship` on the canonical-relationship key (junction
   identity), **not** the owner-row lock — two `Canonical` opposite-side `set`s
-  serialize (no deadlock); a writer that leaves it `None` is unprotected.
+  serialize (no deadlock); a writer that leaves it `OwnerOnly` is unprotected.
   Preflight requires `supportsRelationshipSerialization` when `Canonical`.
 - **Validation — orientation:** pair-swapped two-sided declaration accepts;
   two same-orientation declarations reject; three reject; mixed reject.
