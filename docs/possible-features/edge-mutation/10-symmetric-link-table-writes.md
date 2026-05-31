@@ -134,13 +134,16 @@ throws.) Idempotent `add` is the behavior callers expect, so:
       table: String,
       values: Map<String, Any?>,
       conflictColumns: List<String>,
-  )
+  )  // returns Unit
   ```
 
   emitting `INSERT INTO <t> (…) VALUES (…) ON CONFLICT (<conflictColumns>) DO
   NOTHING`. Generated code passes `conflictColumns = [source_fk, target_fk]`,
-  so only the expected pair-duplicate is swallowed. Gated behind a driver
-  capability `supportsInsertIgnore`.
+  so only the expected pair-duplicate is swallowed. **Returns `Unit`** — unlike
+  `insert` it has **no `RETURNING`**; it guarantees only idempotent-insert
+  semantics for the given `conflictColumns` and does not surface the row (the
+  junction-write loop never reads it). Gated behind a driver capability
+  `supportsInsertIgnore`.
 - **Every generated junction insert uses `insertIgnore`, not only the public
   `add` path.** The write loop inserts every `edgeChanges.added` row, and that
   set is fed by both `add(...)` *and* the additive delta computed by `set(...)`.
@@ -204,7 +207,11 @@ tx.posts.update(
 ```
 
 `relationshipLocking` defaults to `None` and, like `consistency`, honors a
-client-wide default. The two are orthogonal, explicit per-update options:
+client-wide default — but it **only takes effect on saves with pending
+link-table M2M writes**: it locks the canonical relationship(s) those writes
+touch and is a **no-op for any other update** (there is no relationship to
+lock). So enabling `Canonical` client-wide does **not** add advisory locks to
+unrelated updates. The two are orthogonal, explicit per-update options:
 `consistency` (`UpdateConsistency`) governs how the *owner row* is read
 (ReadCurrent vs Pessimistic); `relationshipLocking` governs the *relationship*
 lock; owner-edge serialization is always-on for M2M regardless of either.
@@ -219,15 +226,21 @@ the primary API.
 
 Lock model:
 
-- **Key:** the relationship identity, **not** the owner row — a stable hash of
-  `(junctionTable, sortedFkPair)`. This is what coordinates `post.tags` with
-  `tag.posts`.
+- **Key (defined, not driver-invented):** a first-class
+  `RelationshipLockKey(junctionTable: String, fkColumns: List<String>)`, where
+  `fkColumns` is the **unordered** FK pair stored in canonical (sorted) order so
+  both orientations of the same link table produce the *same* key. Codegen
+  constructs it from the relationship identity; the driver maps it to its lock
+  primitive — neither side invents an opaque key. This is what coordinates
+  `post.tags` with `tag.posts`.
 - **Driver API:** mirrors the existing owner-edge serialization
   (`serializeOwnerEdgeAndRead` / `supportsOwnerEdgeSerialization`,
   `PostgresDriver.kt:945-959`): add a capability
-  `supportsRelationshipSerialization` and a method `serializeRelationship(key)`.
-  Postgres implements it as a second `pg_advisory_xact_lock` on the relationship
-  key. Preflight requires the capability when `relationshipLocking = Canonical`.
+  `supportsRelationshipSerialization` and a method
+  `serializeRelationship(key: RelationshipLockKey)`. Postgres derives a stable
+  64-bit advisory key from `(junctionTable, sortedFkColumns)` and takes a second
+  `pg_advisory_xact_lock`. Preflight requires the capability when
+  `relationshipLocking = Canonical`.
 - **Granularity:** relationship-level (whole junction relationship), not per
   source/target id — coarser, but deadlock-free and trivial to reason about; the
   throughput cost matters only for write-hot link tables, which is exactly where
@@ -331,12 +344,14 @@ idempotent (re-adding an existing link is now a no-op instead of throwing).
   `add(...)` or `set(...)`. The transaction requirement and owner-edge
   serialization (`:1202-1256`) are unchanged.
 - **`relationshipLocking` option**: a `RelationshipLocking` enum on the per-
-  update options surface beside `consistency` (client-wide default). When
-  `Canonical`, take the canonical-relationship lock — new driver
-  `serializeRelationship(key)` + `supportsRelationshipSerialization` capability
-  (mirroring `serializeOwnerEdgeAndRead`/`supportsOwnerEdgeSerialization`) —
-  in addition to the owner-edge lock, in the canonical acquisition order.
-  Preflight requires the capability when `Canonical`.
+  update options surface beside `consistency` (client-wide default, but a no-op
+  on saves without pending link-table M2M writes). When `Canonical`, take the
+  canonical-relationship lock — new driver
+  `serializeRelationship(key: RelationshipLockKey)` +
+  `supportsRelationshipSerialization` capability (mirroring
+  `serializeOwnerEdgeAndRead`/`supportsOwnerEdgeSerialization`) — in addition to
+  the owner-edge lock, in the canonical acquisition order. Preflight requires
+  the capability when `Canonical`.
 - **`PrivacyGenerator`** (`:63-68`, `:114-128`): `pendingEdges` / `EdgeChanges`
   aggregators on both writable sides.
 - **Read path** (`Query.kt` `queryX` / `withX` / `EdgeRef`): unchanged —
