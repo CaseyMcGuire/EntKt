@@ -11,9 +11,8 @@ data class Edge(
 /**
  * Many-to-many "through" metadata as a sealed type so codegen branches
  * on the write model (link table vs through-entity) at the call site
- * with exhaustive `when`. A future variant (e.g. `LinkTableInverse` for
- * read-only reverse traversal) drops in without retrofitting an enum
- * or adding nullable disambiguators.
+ * with exhaustive `when`. A future variant drops in without retrofitting
+ * an enum or adding nullable disambiguators.
  */
 sealed interface ManyToManyThrough {
     /**

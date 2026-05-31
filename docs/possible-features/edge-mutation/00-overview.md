@@ -24,7 +24,7 @@ The original edge mutation RFC was split into five baseline RFCs:
 Those baseline contracts are implemented. The remaining work is intentionally
 smaller and can be reviewed independently:
 
-10. [Through-Link Inverse Read Traversal](10-through-link-inverse-read-traversal.md)
+10. [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
 
 ## Motivation
 
@@ -52,7 +52,7 @@ The recommended implementation order is:
 2. ~~[Field-Backed FK Declaration Names](../../implemented-features/edge-mutation/06-field-backed-fk-declaration-names.md)~~ (**implemented**, V1)
 3. ~~[Create Hook Mutation View Adapter](../../implemented-features/edge-mutation/08-create-hook-mutation-view-adapter.md)~~ (**implemented**, V1)
 4. ~~[Through-Entity Nullable M2M Traversal](../../implemented-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)~~ (**implemented**, V1)
-5. [Through-Link Inverse Read Traversal](10-through-link-inverse-read-traversal.md)
+5. [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
 
 The collision work landed first (RFC 07 V1) so that declaration-name
 capture (RFC 06 V1) emits actionable diagnostics rather than Kotlin compile

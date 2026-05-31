@@ -82,8 +82,8 @@ Deferred to follow-ups (out of V1 scope):
   endpoint-delete race on requested-present targets is handled by
   application-level cooperation (see the §Target Loading And
   Existence section).
-- **Reverse traversal via `throughLinkInverse(...)`** (referenced
-  by RFC #3). Separate RFC.
+- **Second-side / reverse traversal** (referenced by RFC #3). Separate RFC
+  — see [Symmetric Link-Table Edges](../../possible-features/edge-mutation/10-symmetric-link-table-writes.md).
 
 Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
 
@@ -549,7 +549,7 @@ V1 should keep privacy and validation owner-centric:
   relationship identity, including the swapped-orientation case) are
   rejected at schema validation. Reverse traversal is deferred to a
   follow-up
-  [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
+  [Symmetric Link-Table Edges](../../possible-features/edge-mutation/10-symmetric-link-table-writes.md)
   design.
 - `throughEntity(...)` edges do not get direct M2M helpers; their write rules
   live on the junction entity repo

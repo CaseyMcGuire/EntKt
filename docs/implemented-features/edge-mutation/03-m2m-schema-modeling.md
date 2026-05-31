@@ -40,7 +40,7 @@ Specifically implemented:
 Follow-up work was extracted into focused RFCs:
 
 - [Through-Entity Nullable M2M Traversal](09-through-entity-nullable-m2m-traversal.md)
-- [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
+- [Symmetric Link-Table Edges](../../possible-features/edge-mutation/10-symmetric-link-table-writes.md)
 
 Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
 
@@ -106,9 +106,7 @@ type rather than an enum + nullable disambiguation fields. A sealed
 model makes downstream codegen branching exhaustive (a future variant
 can't be silently skipped), drops the "always populated in practice
 but typed nullable" footgun on `sourceEdge` / `targetEdge`, and leaves
-the door open for additional variants like `LinkTableInverse` (see
-[Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md))
-without
+the door open for additional variants without
 needing to add another enum case and another nullable-discriminator
 field on `Through`:
 
@@ -149,10 +147,9 @@ this sealed `ManyToManyThrough` so every codegen path that reads
 M2M metadata is forced to branch on the variant.
 
 Codegen `when (through) { … }` blocks should be exhaustive over the
-sealed variants — if a future variant is added (e.g. `LinkTableInverse`
-for read-only reverse traversal), the compiler flags every branching
-site that needs an opinion on the new mode rather than letting it
-silently fall through.
+sealed variants — if a future variant is added, the compiler flags every
+branching site that needs an opinion on the new mode rather than letting
+it silently fall through.
 
 ## Write Orientation
 
@@ -234,7 +231,7 @@ forward-traversal mechanism that lets queries work without it). For
 `throughLink(...)` specifically, callers that need reverse traversal in
 V1 query the junction schema directly; an opt-in marker for read-only
 reverse traversal of link-table relationships is sketched in
-[Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md).
+[Symmetric Link-Table Edges](../../possible-features/edge-mutation/10-symmetric-link-table-writes.md).
 
 Codegen must reject an explicit opposite-side `throughLink(...)` declaration
 that resolves to the same **canonical relationship identity** in V1 —
@@ -770,7 +767,7 @@ direct-driver path.
    Bidirectional traversal requires the opposite-side schema to declare
    its own pair-swapped `throughEntity(...)`. Reverse traversal for
   `throughLink(...)` is covered by the follow-up
-  [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
+  [Symmetric Link-Table Edges](../../possible-features/edge-mutation/10-symmetric-link-table-writes.md)
   design.
 5. Keep through-entity edges repo-only for write paths. Forward query
    traversal lowers to `Predicate.HasM2MEdgeFrom` against the source
@@ -945,7 +942,7 @@ The old future-enhancement notes are now split into smaller possible-feature
 RFCs:
 
 - [Through-Entity Nullable M2M Traversal](09-through-entity-nullable-m2m-traversal.md)
-- [Through-Link Inverse Read Traversal](../../possible-features/edge-mutation/10-through-link-inverse-read-traversal.md)
+- [Symmetric Link-Table Edges](../../possible-features/edge-mutation/10-symmetric-link-table-writes.md)
 
 Bidirectional link-table write helpers remain intentionally out of scope. Any
 future design would need a canonical write-orientation and locking model so
