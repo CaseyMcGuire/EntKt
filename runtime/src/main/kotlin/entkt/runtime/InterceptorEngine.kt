@@ -41,7 +41,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
      */
     initialAnnotations: Map<String, String> = emptyMap(),
 ) {
-    // Typed in E per RFC §"Driver Boundary": every layer above the
+    // Typed in E: every layer above the
     // driver call stays typed. Predicates enter the builder from
     // call sites that are typed to the matching E (caller
     // `where(Predicate<E>)`, structural builders constructed
@@ -178,7 +178,7 @@ public data class TraversalSourceResult<E : Any> public constructor(
  * mutable [QuerySpecBuilder] so the framework can hand it across a
  * module boundary without exposing the builder API.
  *
- * Typed in `E` per RFC §"Driver Boundary": every layer above the
+ * Typed in `E`: every layer above the
  * driver call carries the entity scope through. Generated code's
  * `frozen.predicates: List<Predicate<E>>` flows into
  * `driver.query(table, frozen.predicates, ...)` through the
@@ -263,9 +263,9 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
  * Limit mutators (`requireLimitAtMost` / `setDefaultLimitIfAbsent` /
  * `rejectIfLimitGreaterThan`) silently no-op when [readOperation]
  * is a shape on which limit operations have no meaning — see
- * [limitOpsApply] for the per-operation table. This honors the RFC's
- * "silent no-op on shapes where row limits have no meaning" contract
- * documented on the [InterceptScope] mutator KDocs.
+ * [limitOpsApply] for the per-operation table. Those unsupported
+ * shapes are silent no-ops, as documented on the [InterceptScope]
+ * mutator KDocs.
  */
 internal class InterceptScopeImpl<E : Any>(
     private val builder: QuerySpecBuilder<E>,

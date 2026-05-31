@@ -5,7 +5,7 @@ import entkt.schema.EntSchema
 
 /**
  * Fixture with a **nullable** belongsTo edge — used to exercise
- * RFC 08's create-hook adapter coverage for nullable FK
+ * create-hook adapter's create-hook adapter coverage for nullable FK
  * properties. The Mutation interface declares the FK as nullable
  * (`Long?`), so the adapter forwarder is also nullable; reads
  * return `null` until assigned, and writes accept both ids and

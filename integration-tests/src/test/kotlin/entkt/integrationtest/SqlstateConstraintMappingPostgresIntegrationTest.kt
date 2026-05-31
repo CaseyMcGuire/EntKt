@@ -28,16 +28,15 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Phase 7: end-to-end coverage that PostgresDriver's
+ * end-to-end coverage that PostgresDriver's
  * `classifyException` (SQLSTATE 23xxx → ConstraintViolation)
  * actually triggers in real generated *OrError paths against real
  * Postgres. The `PostgresDriverClassifyTest` unit test in :postgres
  * synthesizes PSQLException values; this suite confirms the same
  * mapping fires when Postgres itself raises the violation.
  *
- * Pins per SQLSTATE the RFC's "Postgres unique/FK/check violations
- * include useful constraint metadata where available" test
- * requirement: each test asserts the EntError.ConstraintViolation
+ * Pins the SQLSTATE-to-error mapping for unique/FK/check violations:
+ * each test asserts the EntError.ConstraintViolation
  * carries `code` == the SQLSTATE and (where Postgres surfaces it)
  * `constraint` populated from ServerErrorMessage.
  */

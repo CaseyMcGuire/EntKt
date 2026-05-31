@@ -16,7 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Phase 7 coverage: structured-result aggregate terminals
+ * coverage: structured-result aggregate terminals
  * `rawCountOrError`, `visibleCountOrError`, `rawExistsOrError`,
  * `visibleExistsOrError`. Pins each variant's failure-mode mapping:
  *

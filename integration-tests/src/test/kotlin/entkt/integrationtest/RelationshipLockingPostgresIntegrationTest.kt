@@ -19,7 +19,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Postgres-backed coverage for RFC 10 canonical relationship locking
+ * Postgres-backed coverage for symmetric link-table writes canonical relationship locking
  * (`relationshipLocking = Canonical`) on the symmetric `Post.tags` /
  * `Tag.posts` link table.
  *

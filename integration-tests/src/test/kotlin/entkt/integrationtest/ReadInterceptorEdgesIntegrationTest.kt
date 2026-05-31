@@ -1,7 +1,7 @@
 // Edge-predicate walker integration tests construct
 // `Predicate.HasEdgeWith` / `Predicate.HasEdge` directly to drive
 // the walker through specific shapes. Those constructors carry
-// `@EntktInternal` per RFC §"Constructor Visibility"; the
+// `@EntktInternal`; the
 // file-level opt-in lets the test code construct them.
 @file:OptIn(entkt.query.EntktInternal::class)
 
@@ -31,13 +31,13 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Phase 5 coverage: interceptors fire correctly on edge traversal,
+ * coverage: interceptors fire correctly on edge traversal,
  * eager-load subqueries, and `has` / `hasWhere` edge predicates per
- * the read-path interceptors RFC. Pins:
+ * the read-path interceptors. Pins:
  *
  *  - 5a edge traversal: `queryX()` fires source interceptors with
  *    `EDGE_TRAVERSAL`; target terminal sees `sourceEntity`,
- *    `edgeName`, `path` set per the RFC's multi-step chain rules
+ *    `edgeName`, `path` set by multi-step chain rules
  *  - 5b eager-load: `.with{Edge}` fires target interceptors with
  *    `EAGER_LOAD` (`context.isEagerSubquery == true`); interceptor
  *    predicates flow into the eager subquery

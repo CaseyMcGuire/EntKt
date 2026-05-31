@@ -217,7 +217,7 @@ class PrivacyGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 3: PendingEdgeOps aggregator on UpdateHookContext ----------
+    // ---------- link-table M2M helpers PendingEdgeOps aggregator on UpdateHookContext ----------
 
     @Test
     fun `emits empty PendingEdgeOps aggregator for schemas without helper-eligible edges`() {
@@ -284,7 +284,7 @@ class PrivacyGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 5: EdgeChangesView sidecar on UpdatePrivacyContext ----------
+    // ---------- link-table M2M helpers EdgeChangesView sidecar on UpdatePrivacyContext ----------
 
     @Test
     fun `emits empty EdgeChangesView for schemas without helper-eligible edges`() {
@@ -345,7 +345,7 @@ class PrivacyGeneratorTest {
     }
 }
 
-// ---------- RFC #5 Phase 3 test schemas (PrivacyGeneratorTest) ----------
+// ---------- link-table M2M helpers test schemas (PrivacyGeneratorTest) ----------
 
 private class PrivM2MPost : EntSchema("m2m_priv_posts") {
     override fun id() = EntId.long()

@@ -17,7 +17,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * Phase 3 coverage: the DSL-side [EntInterceptorsConfig] holder
+ * coverage: the DSL-side [EntInterceptorsConfig] holder
  * generated `EntClientConfig` exposes through the `interceptors {
  * ... }` block. Validates the registration contract (mandatory
  * non-blank names, uniqueness scoped per-entity and per-globals,

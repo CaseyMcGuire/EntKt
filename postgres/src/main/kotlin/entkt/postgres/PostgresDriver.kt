@@ -34,8 +34,7 @@ import javax.sql.DataSource
  * predicates into an erased And is sound — drivers consume predicates
  * structurally (field/op/value/edge name/source table) and don't
  * introspect the phantom type. The unchecked cast localizes the
- * "phantom doesn't matter at the driver" invariant to one place per
- * the RFC's "Driver Boundary" section.
+ * "phantom doesn't matter at the driver" invariant to one place.
  */
 @Suppress("UNCHECKED_CAST")
 private fun List<Predicate<*>>.andTogether(): Predicate<*>? =
@@ -919,7 +918,7 @@ class PostgresDriver(
         }
     }
 
-    // ---------- Locking capabilities (RFC #4) ----------
+    // ---------- Locking capabilities (transaction locking) ----------
     //
     // The root (non-transactional) driver advertises both row-lock
     // capabilities so the generated capability-preflight at save-start
@@ -935,7 +934,7 @@ class PostgresDriver(
         get() = true
 
     override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
-        // Uniform contract enforcement (RFC #4): the
+        // Uniform contract enforcement (transaction locking): the
         // `Driver.readRowForUpdate` interface contract requires
         // implementations to reject non-transactional callers. The
         // helper throws IllegalStateException when `inTransaction`
@@ -1012,7 +1011,7 @@ class PostgresDriver(
      * `hashCode` into a single `bigint` argument to
      * `pg_advisory_xact_lock(key1, key2)`. Postgres advisory locks
      * are released automatically at transaction end, so the duration
-     * requirement from RFC #4 ("held until the enclosing transaction
+     * requirement from transaction locking ("held until the enclosing transaction
      * commits or rolls back") is automatic.
      */
     internal fun serializeOwnerEdgeAndReadWith(conn: Connection, table: String, id: Any): Map<String, Any?>? {
@@ -1071,7 +1070,7 @@ class PostgresDriver(
     private fun quote(identifier: String): String =
         "\"${identifier.replace("\"", "\"\"")}\""
 
-    // ---------- Driver exception classification (Result Variants RFC Phase 2) ----------
+    // ---------- Driver exception classification (result variants) ----------
 
     /**
      * Map a [PSQLException] thrown by this driver to a structured
@@ -1088,7 +1087,7 @@ class PostgresDriver(
      * Serialization-failure SQLSTATEs (`40001`, `40P01`) deliberately
      * return `null` in V1 — they're the natural fit for
      * [EntError.Conflict] but that variant has no generated path
-     * surfacing it yet (the optimistic-locking RFC will land that).
+     * surfacing it yet (the optimistic-locking support will land that).
      * Returning null falls through to `EntError.DriverFailure`, which
      * is the right shape until Conflict has a real consumer.
      *
@@ -1212,7 +1211,7 @@ class PostgresDriver(
             return block(this)
         }
 
-        // ---------- RFC #4 capability surface ----------
+        // ---------- transaction locking capability surface ----------
 
         override val inTransaction: Boolean
             get() = true

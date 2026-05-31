@@ -7,7 +7,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * Unit tests for the RFC 10 driver primitives' runtime types and the
+ * Unit tests for the symmetric link-table writes driver primitives' runtime types and the
  * default (unsupported) Driver behavior. Postgres-specific behavior of
  * `insertIgnore` / `serializeRelationship` lives in the integration tests.
  */
@@ -87,7 +87,7 @@ class RelationshipLockingTest {
 
     /**
      * A Driver that overrides only the abstract members, leaving every
-     * defaulted method (including the two new RFC 10 primitives) at its
+     * defaulted method (including the two new symmetric link-table writes primitives) at its
      * interface default — so we can assert the *interface* default throws
      * `UnsupportedOperationException`, not NoopDriver's `IllegalStateException`.
      */

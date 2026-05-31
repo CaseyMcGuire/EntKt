@@ -50,7 +50,7 @@ class ClientGeneratorTest {
         val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
         // Both the client and the config expose the configurable default,
-        // initialized to OwnerOnly (RFC 10). Two declarations total.
+        // initialized to OwnerOnly (symmetric link-table writes). Two declarations total.
         val decls = Regex("defaultRelationshipLocking: RelationshipLocking = RelationshipLocking\\.OwnerOnly")
             .findAll(output).count()
         assert(decls == 2) {
@@ -165,7 +165,7 @@ class ClientGeneratorTest {
             "Should have afterCreate\n$output"
         }
         assert(output.contains("fun beforeUpdate(hook: (CarUpdateHookContext) -> Unit)")) {
-            "beforeUpdate now takes a CarUpdateHookContext (Phase 4)\n$output"
+            "beforeUpdate now takes a CarUpdateHookContext\n$output"
         }
         assert(output.contains("fun afterUpdate(hook: (Car) -> Unit)")) {
             "Should have afterUpdate\n$output"

@@ -32,19 +32,19 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Regression coverage for the post-RFC-review round-3 fixes.
+ * Regression coverage for the post-review round-3 fixes.
  *
- *  - #1 Traversal-source interceptor invocation deferred to terminal
+ *  - Traversal-source interceptor invocation deferred to terminal
  *    time, so `.queryX().allOrError()` catches source-step rejection
  *    as `Err(QueryRejected)` instead of having queryX() throw.
- *  - #2 Traversal-source annotations carry forward into the terminal
+ *  - Traversal-source annotations carry forward into the terminal
  *    QueryPlan.
- *  - #4 Identity-based skipWalk: a caller-authored predicate that's
+ *  - Identity-based skipWalk: a caller-authored predicate that's
  *    structurally equal to a framework structural is still walked
  *    through the edge-predicate processor.
- *  - #5 Recursion guard on the edge-predicate walker: a cyclic
+ *  - Recursion guard on the edge-predicate walker: a cyclic
  *    interceptor configuration trips the guard with a clear error.
- *  - #6 Visible-explain matches runtime overfetch-cap shape (+ the
+ *  - Visible-explain matches runtime overfetch-cap shape (+ the
  *    limit(0) edge case for exists explains).
  *  - requireNotRejected preserves the original
  *    EntError.QueryRejected (entity, operation) rather than
@@ -54,7 +54,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
-    // ---------- #1: traversal-source rejection caught by *OrError ----------
+    // ---------- traversal-source rejection caught by *OrError ----------
 
     @Test
     fun `traversal-source rejection surfaces as Err(QueryRejected) on chained allOrError`() {
@@ -128,7 +128,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         assertEquals(EntOperation.QUERY, ex.queryRejected.operation)
     }
 
-    // ---------- #2: traversal-source annotations carry forward ----------
+    // ---------- traversal-source annotations carry forward ----------
 
     @Test
     fun `traversal-source annotations surface on terminal QueryPlan`() {
@@ -174,7 +174,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         assertEquals("from-article", plan.annotations["step"])
     }
 
-    // ---------- #4: identity-based skipWalk ----------
+    // ---------- identity-based skipWalk ----------
 
     @Test
     fun `caller-authored HasEdge structurally equal to a framework-structural is still walked`() {
@@ -199,7 +199,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         assertTrue(fired, "Article EDGE_PREDICATE interceptor should fire for the caller's User.articles.has()")
     }
 
-    // ---------- #5: recursion guard ----------
+    // ---------- recursion guard ----------
 
     @Test
     fun `edge-predicate interceptor cycle trips the recursion guard`() {
@@ -242,7 +242,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         assertEquals(32, InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH)
     }
 
-    // ---------- #6: visible-explain matches runtime ----------
+    // ---------- visible-explain matches runtime ----------
 
     @Test
     fun `explainVisibleExists with limit(0) shows limit 0, matching runtime`() {
@@ -568,7 +568,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 // NOT clamp the candidate fetch — that would turn
                 // deleteMany into "delete first 2 matching rows"
                 // without the caller knowing. Silent no-op per the
-                // RFC's limit-shape rules.
+                // limit-shape rules.
                 global(
                     GlobalQueryInterceptor { scope, _ -> scope.requireLimitAtMost(2) },
                     name = "cap-2",

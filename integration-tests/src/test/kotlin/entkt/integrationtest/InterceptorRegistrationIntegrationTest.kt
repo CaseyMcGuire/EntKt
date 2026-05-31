@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * Phase 3 end-to-end coverage for the generated `interceptors { ... }`
+ * end-to-end coverage for the generated `interceptors { ... }`
  * DSL on `EntClientConfig`. Pins the contract that:
  *
  *  - Per-entity registration (`posts(interceptor, name=...)`) and
@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  *    misconfigured client never reaches the first read.
  *
  * Behavior (interceptor chain actually running on a terminal call)
- * lands in Phase 4; this suite is registration-side only.
+ * lands in; this suite is registration-side only.
  */
 class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
 
@@ -97,9 +97,9 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `withTransaction and withPrivacyContext clones construct cleanly when interceptors are registered`() {
-        // Phase 3 proxy: verifies the clone code paths run without
+        // proxy: verifies the clone code paths run without
         // blowing up when the parent has interceptors registered.
-        // Phase 4 will add a direct firing-count test once the
+        // will add a direct firing-count test once the
         // runtime is wired through terminals.
         val driver = freshDriver()
         val client = EntClient(driver) {

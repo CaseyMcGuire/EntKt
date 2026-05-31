@@ -8,11 +8,11 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Phase 2 smoke test for RFC 07's manifest builder. Verifies that
+ * smoke test for generated-member collision checks's manifest builder. Verifies that
  * representative schemas produce manifest entries on every V1
  * artifact (entity / companion / mutation interface / create /
  * update / create-view / update-view). The end-to-end collision
- * detection over real schemas lands in Phase 5.
+ * detection over real schemas lands in.
  */
 class BuildMemberManifestTest {
 
@@ -83,9 +83,7 @@ class BuildMemberManifestTest {
         // Update builder — title setter + fixed members including id +
         // consistency. NOT unsetTitle — that lives only on
         // NotebookUpdateMutationView (the hook-facing interface),
-        // never on the public builder. See UpdateGeneratorTest
-        // §"unset lives on the private hook-facing view, not the
-        // public builder" for the contract.
+        // never on the public builder.
         assertNotNull(byArtifact["NotebookUpdate"])
         assertTrue("title" in byArtifact["NotebookUpdate"]!!)
         assertTrue("id" in byArtifact["NotebookUpdate"]!!)
@@ -147,7 +145,7 @@ class BuildMemberManifestTest {
     }
 
     // Helper-eligible M2M coverage is exercised end-to-end in
-    // Phase 5 with real `throughLink` schemas — synthesizing a
+    // with real `throughLink` schemas — synthesizing a
     // `HelperEligibleM2M` here would require constructing a fake
     // `Edge` with full junction metadata, which the real edge
     // resolver builds during validate().

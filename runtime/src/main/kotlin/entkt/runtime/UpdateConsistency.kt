@@ -2,12 +2,12 @@ package entkt.runtime
 
 /**
  * Per-save owner-row-stability mode for generated `update(...)` saves
- * (RFC #4).
+ * (transaction locking).
  *
  * - [ReadCurrent]: the default. The owner row is read but not locked
  *   before hooks, privacy, validation, and writes. Another transaction
  *   may change the owner row's scalar fields or delete it between the
- *   read and the write — the staleness window from RFC #1's
+ *   read and the write — the staleness window from id-rooted update behavior's
  *   id-based update roots.
  * - [Pessimistic]: the owner row is read under a true row lock
  *   (`SELECT ... FOR UPDATE`-equivalent) before hooks, privacy,
@@ -38,8 +38,8 @@ enum class UpdateConsistency {
 class UnsupportedDriverCapabilityException(message: String) : RuntimeException(message)
 
 /**
- * Per-update relationship-locking mode for symmetric link-table M2M writes
- * (RFC 10). Layered *on top of* the always-on owner-edge serialization, which
+ * Per-update relationship-locking mode for symmetric link-table M2M writes.
+ * Layered *on top of* the always-on owner-edge serialization, which
  * is unaffected by this selector.
  *
  * - [OwnerOnly]: the default. The save takes only the owner-edge lock, which

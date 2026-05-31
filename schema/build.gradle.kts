@@ -26,9 +26,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     // Compile-fail test harness: validates that the typed query DSL
     // rejects wrong-entity predicates / unauthorized @EntktInternal
-    // constructor calls at compile time. See
-    // docs/possible-features/query/phantom-typed-query-scopes.md
-    // §"Test Requirements".
+    // constructor calls at compile time.
     testImplementation(libs.kotlin.compile.testing)
 }
 

@@ -16,9 +16,7 @@ package entkt.query
  *
  * Constructors marked `@EntktInternal` ([HasEdge], [HasEdgeWith],
  * [HasM2MEdgeFrom]) participate in the edge-predicate walker's
- * edge-name-validated unchecked-cast soundness story — see
- * `docs/possible-features/query/phantom-typed-query-scopes.md`
- * §"Edge-Predicate Walker" / §"Constructor Visibility". Application
+ * edge-name-validated unchecked-cast soundness story. Application
  * code constructs them via the generated `EdgeRef.has { ... }` /
  * `EdgeRef.exists()` surface.
  */
@@ -52,8 +50,8 @@ sealed class Predicate<E : Any> {
      *
      * Not a `data class` — Kotlin would auto-generate a public
      * `copy(...)` whose visibility we cannot annotate with
-     * `@EntktInternal`, reopening the walker-cast fabrication hole
-     * (RFC §"Constructor Visibility"). A caller could legitimately
+     * `@EntktInternal`, reopening the walker-cast fabrication hole.
+     * A caller could legitimately
      * obtain a `HasEdge<User>("posts")` via `User.posts.exists()`,
      * cast back to `Predicate.HasEdge<User>`, and call
      * `copy(edge = "comments")` without opting in. As a regular

@@ -136,7 +136,7 @@ class UpdateGeneratorTest {
         }
         val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
         // Throws ValidationException so saveOrError wraps it into
-        // EntError.ValidationFailed (Phase 12).
+        // EntError.ValidationFailed.
         assert(
             checkFnBody.contains(
                 "if (\"name\" in dirtyFields && this.name == null) throw ValidationException(\"User\", listOf(ValidationDecision.Invalid(\"name is required\", field = \"name\")))",
@@ -195,7 +195,7 @@ class UpdateGeneratorTest {
         assert(checkFnEnd != -1) { "Couldn't find end of _checkRequiredNotNull body\n$output" }
         val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
         // Throws ValidationException so saveOrError wraps it into
-        // EntError.ValidationFailed (Phase 12).
+        // EntError.ValidationFailed.
         assert(
             checkFnBody.contains(
                 "if (\"name\" in dirtyFields && this.name == null) throw ValidationException(\"User\", listOf(ValidationDecision.Invalid(\"name is required\", field = \"name\")))",
@@ -223,7 +223,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Per the RFC: reading an untouched update property must throw —
+        // Reading an untouched update property must throw —
         // a default-null getter would collapse Unset and explicit
         // Set(null) into the same observable value, and required-field
         // builders have no current-state value before save(). Hooks
@@ -333,7 +333,7 @@ class UpdateGeneratorTest {
 
         // The builder must NOT have unset{Field}() at the class level —
         // that would make `client.users.update(id) { unsetName() }` a
-        // valid DSL pattern, contradicting the RFC's "hook-facing"
+        // valid DSL pattern, contradicting the hook-facing
         // framing. The unset methods live on the private _mutationView
         // adapter so only hooks can reach them via ctx.mutation.
         assert(
@@ -385,7 +385,7 @@ class UpdateGeneratorTest {
         // UPDATE privacy on it (real authorization decision against
         // `before`), then throws NoChanges. Validation/driver/after-hooks/
         // load-privacy are skipped.
-        // Phase 5: edgeChanges sidecar is computed between the
+        // edgeChanges sidecar is computed between the
         // canonical patch build and the empty-branch check.
         val emptyCheck = output.indexOf(
             "val edgeChanges = _buildEdgeChanges(pendingEdges) if (dirtyFields.isEmpty())",
@@ -434,7 +434,7 @@ class UpdateGeneratorTest {
         // The TOP empty-check is at index 0-ish; we want the SECOND occurrence
         // (after the byId load + hook loop) to come before the effective patch
         // construction. Find it via the canonical preceding marker.
-        // Phase 5: _buildEdgeChanges call sits between _buildRequestedPatch
+        // _buildEdgeChanges call sits between _buildRequestedPatch
         // and the post-hook empty check.
         val postHookEmptyPos = output.indexOf(
             "val edgeChanges = _buildEdgeChanges(pendingEdges) if (dirtyFields.isEmpty())",
@@ -457,13 +457,13 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // saveOrNull is an explicit alias for save() — the canonical name
-        // per the result-variants RFC's *OrNull convention.
+        // per the result variants's *OrNull convention.
         assert(output.contains("public fun saveOrNull(): User? = save()")) {
             "Should generate saveOrNull() as an explicit alias for save()\n$output"
         }
         // saveOrError wraps EntException (NotFound, NoChanges) into a
         // structured EntResult; other exceptions still propagate per
-        // the result-variants RFC's deferred surface.
+        // the result variants's deferred surface.
         assert(output.contains("public fun saveOrError(): EntResult<User>")) {
             "Should generate saveOrError(): EntResult<User>\n$output"
         }
@@ -494,7 +494,7 @@ class UpdateGeneratorTest {
         // ValidationException → EntError.ValidationFailed (operation
         // is hardcoded UPDATE since ValidationException doesn't carry
         // its own operation field and this is the update generator).
-        // Phase 1 of the result-variants RFC pivots the wire-level
+        // result variants pivots the wire-level
         // violation type from ValidationDecision.Invalid (rule-DSL
         // shape) to ValidationViolation (consumer shape), so the
         // catch arm maps via the runtime toValidationViolation()
@@ -506,8 +506,8 @@ class UpdateGeneratorTest {
         ) {
             "saveOrError should wrap ValidationException into EntError.ValidationFailed, mapping each Invalid via toValidationViolation()\n$output"
         }
-        // Phase 4: trailing Exception catch routes anything not
-        // matched above through Phase 2's classifier — emitting
+        // trailing Exception catch routes anything not
+        // matched above through classifier — emitting
         // ConstraintViolation for SQLSTATE 23xxx (Postgres) and
         // DriverFailure with the raw cause otherwise.
         assert(
@@ -526,7 +526,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Phase 4: saveOrThrow no longer inlines the NotFound throw —
+        // saveOrThrow no longer inlines the NotFound throw —
         // it delegates to saveOrError().getOrThrow(), which throws
         // EntNotFoundException via EntError.NotFound.toException().
         // This keeps the mapping table (NotFound, NoChanges, Privacy,
@@ -556,7 +556,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Phase 4 moved hook access to ctx.before / ctx.mutation, so
+        // moved hook access to ctx.before / ctx.mutation, so
         // the `entity` lateinit is now purely internal state populated
         // by save() and read by candidate construction. Keeping it
         // public would let direct callers either crash on uninitialized
@@ -579,7 +579,7 @@ class UpdateGeneratorTest {
             "Should take beforeSaveHooks\n$output"
         }
         assert(output.contains("beforeUpdateHooks: List<(UserUpdateHookContext) -> Unit>")) {
-            "beforeUpdate hooks now take a UserUpdateHookContext (Phase 4)\n$output"
+            "beforeUpdate hooks now take a UserUpdateHookContext\n$output"
         }
         assert(output.contains("afterUpdateHooks: List<(User) -> Unit>")) {
             "Should take afterUpdateHooks\n$output"
@@ -803,7 +803,7 @@ class UpdateGeneratorTest {
     // removed because the typed builder API now prevents this at compile time —
     // updateDefaultNow() only exists on TimeFieldBuilder.
 
-    // ---------- RFC #5 Phase 2: link-table M2M mutator generation ----------
+    // ---------- link-table M2M mutator generation ----------
 
     @Test
     fun `update builder for schema with throughLink M2M edge gets a nested mutator class`() {
@@ -877,7 +877,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // RFC #5 same-id mixed-direction rule: add(x) after remove(x)
+        // link-table M2M helpers same-id mixed-direction rule: add(x) after remove(x)
         // and the reverse both throw at the second call. The two
         // delta sets stay disjoint by construction.
         assert(output.contains("if (_removes.contains(id)) throw IllegalStateException")) {
@@ -918,7 +918,7 @@ class UpdateGeneratorTest {
 
     @Test
     fun `mutator op log fields are private — downstream codegen consumes them through internal accessors`() {
-        // RFC #5 Phase 8: op-log fields locked down to private so
+        // link-table M2M helpers op-log fields locked down to private so
         // same-module application code can't bypass per-call invariants
         // by writing tags._adds.add(...) directly. Downstream codegen
         // (_buildPendingEdgeOps, _checkLinkTableM2MMixedMode, the M2M
@@ -991,8 +991,7 @@ class UpdateGeneratorTest {
         // The private `_mutationView` adapter implements
         // M2MPostUpdateMutationView. It forwards scalar fields and FKs
         // through `override var ...` and exposes `override fun unsetX()`
-        // for each. Hooks read pending edge ops through the Phase 3
-        // `pendingEdges` sidecar; they must not reach into the mutator,
+        // for each. Hooks read pending edge ops through the // `pendingEdges` sidecar; they must not reach into the mutator,
         // so there must be NO `override var tags` / `override fun unsetTags`
         // in the adapter — the only way the view interface could expose
         // the mutator property.
@@ -1030,11 +1029,11 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 3: PendingEdgeOps hook surface ----------
+    // ---------- link-table M2M helpers PendingEdgeOps hook surface ----------
 
     @Test
     fun `update builder emits a _buildPendingEdgeOps that delegates per-edge to snapshotOps`() {
-        // Phase 8: with mutator op-log fields private, the aggregator
+        // with mutator op-log fields private, the aggregator
         // construction no longer reaches into _requestedSet / _adds /
         // _removes directly. Each per-edge entry calls the mutator's
         // internal `snapshotOps()` accessor, which performs the dedup
@@ -1190,8 +1189,8 @@ class UpdateGeneratorTest {
 
     @Test
     fun `mutation view adapter pendingEdges routes through the captured snapshot, not a fresh rebuild`() {
-        // Phase 8 (P3): the adapter returns the SAME pendingEdges
-        // instance that the hook context received. The previous
+        // The adapter returns the SAME pendingEdges instance that the
+        // hook context received. The previous
         // _buildPendingEdgeOps() rebuild path was structurally
         // equivalent (because hook code can't mutate the op log
         // through the view) but every read paid a fresh allocation
@@ -1253,8 +1252,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Phase 8 follow-up (P3-residual): the assignment is the
-        // FIRST statement inside the try, so the finally that clears
+        // The assignment is the FIRST statement inside the try, so the finally that clears
         // it covers every observable exit. Snapshot value flows into
         // the field and into the hook context constructor —
         // guaranteeing object identity between ctx.pendingEdges and
@@ -1289,7 +1287,7 @@ class UpdateGeneratorTest {
         }
         // Symmetry guard: also fires for non-M2M schemas, since the
         // _capturedPendingEdges field exists uniformly across all
-        // Update classes (per Phase 8 design).
+        // Update classes (per design).
         val user = User()
         finalize(user, Car())
         val userOutput = generator.generate("User", user).toString()
@@ -1299,7 +1297,7 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 4: M2M save-time preflight ----------
+    // ---------- link-table M2M save-time preflight ----------
 
     @Test
     fun `update builder emits _hasPendingLinkTableM2MOps that ORs mutator hasOps flags`() {
@@ -1391,7 +1389,7 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- RFC 10 Phase 5: canonical relationship locking ----------
+    // ---------- symmetric link-table writes canonical relationship locking ----------
 
     @Test
     fun `update ctor takes a relationshipLocking parameter and property`() {
@@ -1472,7 +1470,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("DupJunctionDoc", doc, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Risk #3: the de-dup must produce ONE lock for the shared junction,
+        // the de-dup must produce ONE lock for the shared junction,
         // not one per edge.
         val lockCount = Regex("RelationshipLockKey\\.canonical\\(\"dup_junction_doc_tags\"")
             .findAll(output).count()
@@ -1488,7 +1486,7 @@ class UpdateGeneratorTest {
 
     @Test
     fun `update builder emits _checkLinkTableM2MMixedMode that dispatches per-edge to validateInvariants`() {
-        // Phase 8: the mixed-mode invariants live on the mutator
+        // the mixed-mode invariants live on the mutator
         // itself (`validateInvariants()`) now that the op-log fields
         // are private. The save-preflight helper just dispatches per
         // edge.
@@ -1520,7 +1518,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // The M2M preflight slots between the Pessimistic preflight
-        // (already emitted by RFC #4) and the owner-row read. Pinning
+        // (already emitted by transaction locking) and the owner-row read. Pinning
         // ordering by string indices.
         val pessIdx = output.indexOf("if (consistency == UpdateConsistency.Pessimistic)")
         val m2mIdx = output.indexOf("if (_hasPendingLinkTableM2MOps())")
@@ -1625,7 +1623,7 @@ class UpdateGeneratorTest {
 
     @Test
     fun `defense-in-depth also catches same-id overlap between _adds and _removes`() {
-        // Phase 8: with the op-log fields now private, the overlap
+        // with the op-log fields now private, the overlap
         // check lives inside the mutator's validateInvariants() body
         // — and the save-preflight _checkLinkTableM2MMixedMode calls
         // it via this.tags.validateInvariants(). Test both: the
@@ -1648,7 +1646,7 @@ class UpdateGeneratorTest {
 
     @Test
     fun `multi-edge schemas dispatch validateInvariants per edge in the preflight`() {
-        // Phase 8: the save-preflight _checkLinkTableM2MMixedMode
+        // the save-preflight _checkLinkTableM2MMixedMode
         // calls each mutator's validateInvariants(). Pin the
         // per-edge dispatch.
         val (doc, _, _, _, names) = makeMultiEdgeSchemas()
@@ -1671,7 +1669,7 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 5: three-way owner-row read + junction reads + EdgeChanges ----------
+    // ---------- link-table M2M helpers three-way owner-row read + junction reads + EdgeChanges ----------
 
     @Test
     fun `M2M-capable schema emits three-way owner-row read primitive choice`() {
@@ -1736,7 +1734,7 @@ class UpdateGeneratorTest {
         // Per-edge junction read, guarded by per-mutator hasOps() so we
         // skip the round-trip when nothing was staged.
         // Junction-table queries are erased (no entity scope) per the
-        // typed-RFC; Predicate.Leaf<Any> renders the same structural
+        // typed query scopes; Predicate.Leaf<Any> renders the same structural
         // data.
         assert(output.contains(
             "val _current_tags: Set<UUID> = if (this.tags.hasOps()) { " +
@@ -1786,7 +1784,7 @@ class UpdateGeneratorTest {
 
         val patchIdx = output.indexOf("val requestedPatch = _buildRequestedPatch()")
         val edgeChangesIdx = output.indexOf("val edgeChanges = _buildEdgeChanges(pendingEdges)")
-        // Phase 6 gates the empty-branch condition on M2M-pending so
+        // gates the empty-branch condition on M2M-pending so
         // M2M-only updates proceed past it.
         val emptyIdx = output.indexOf(
             "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch",
@@ -1808,7 +1806,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Phase 5 threads edgeChanges into both the empty-branch
+        // threads edgeChanges into both the empty-branch
         // privacy evaluation AND the non-empty branch's privacy +
         // validation evaluations. Two occurrences of evaluateUpdatePrivacy,
         // one of evaluateUpdateValidation, all with the sidecar.
@@ -1824,7 +1822,7 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 6: junction writes + edge-only owner-UPDATE suppression ----------
+    // ---------- link-table M2M helpers junction writes + edge-only owner-UPDATE suppression ----------
 
     @Test
     fun `M2M-only update no longer throws NoChanges — both empty checks gate on M2M pending`() {
@@ -1832,10 +1830,10 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Phase 5 had two empty checks in save():
+        // had two empty checks in save():
         //   - top of save(): syntactic check before any preflight runs
         //   - after the canonical patch build: hook-cleared branch
-        // Phase 6 gated the hook-cleared branch. Phase 7 also gates the
+        // gated the hook-cleared branch. also gates the
         // top-of-save syntactic check, since M2M-only updates have
         // dirtyFields.isEmpty() (the mutators don't touch dirtyFields).
         val topGate = "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { throw EntNoChangesException"
@@ -1975,7 +1973,7 @@ class UpdateGeneratorTest {
     }
 }
 
-// ---------- RFC #5 Phase 6 test schemas (CLIENT_UUID junction) ----------
+// ---------- link-table M2M helpers test schemas (CLIENT_UUID junction) ----------
 
 private class UuidJunctionPost : EntSchema("uuid_junction_posts") {
     override fun id() = EntId.long()
@@ -2013,7 +2011,7 @@ private fun makeClientUuidJunctionSchemas(): ClientUuidJunctionSchemas {
     )
 }
 
-// ---------- RFC #5 Phase 2 test schemas ----------
+// ---------- link-table M2M helpers test schemas ----------
 
 // helper-eligible throughLink (Long-id source, UUID-id target)
 private class M2MPost : EntSchema("m2m_posts") {
@@ -2083,8 +2081,8 @@ private fun makeEntityM2MSchemas(): EntitySchemas {
 }
 
 // Two helper-eligible throughLink edges on one source — same target type,
-// different property names. Mutator naming follows the source edge
-// (decision C) so the two don't collide.
+// different property names. Mutator naming follows the source edge so
+// the two don't collide.
 private class M2MDoc : EntSchema("m2m_docs") {
     override fun id() = EntId.long()
     val tags = manyToMany<M2MLabel>("tags")
@@ -2131,7 +2129,7 @@ private fun makeMultiEdgeSchemas(): MultiEdgeSchemas {
     )
 }
 
-// ---------- RFC 10 test schemas: writable + .readOnly() throughLink ----------
+// ---------- symmetric link-table writes test schemas: writable + .readOnly() throughLink ----------
 
 // One writable throughLink (`tags`) and one `.readOnly()` throughLink
 // (`watchers`) on the same source. The readOnly side keeps read traversal

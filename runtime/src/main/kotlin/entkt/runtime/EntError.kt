@@ -102,7 +102,7 @@ sealed interface EntError {
     /**
      * Optimistic-concurrency or relationship-serialization conflict.
      * Not reachable from V1 generated code — reserved for a future
-     * optimistic-locking RFC that introduces versioned writes. The
+     * optimistic-locking support that introduces versioned writes. The
      * type is defined now so the [EntResult.Err] surface is stable.
      */
     data class Conflict(
@@ -199,7 +199,7 @@ sealed interface EntError {
      * Surfaced through `*OrError` reads as `Err(QueryRejected)`
      * and through `*OrThrow` / non-result `visible*` reads as
      * [EntQueryRejectedException]. See the Read-Path Interceptors
-     * RFC for the full per-API outcome mapping.
+     * contract for the full per-API outcome mapping.
      */
     data class QueryRejected(
         override val entity: String,
@@ -212,7 +212,7 @@ sealed interface EntError {
 
     /**
      * Convert this error to the matching [EntException] subclass.
-     * Used by [EntResult.getOrThrow] and the RFC's example handler;
+     * Used by [EntResult.getOrThrow] and example handlers;
      * also useful for code that receives an `EntResult` from a
      * boundary and wants to fall back to throwing semantics for
      * unhandled variants.

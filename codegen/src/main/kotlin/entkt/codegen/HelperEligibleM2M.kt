@@ -9,19 +9,19 @@ import entkt.schema.ManyToManyThrough
 
 /**
  * One link-table M2M edge that is eligible for direct mutator codegen
- * (RFC #5). Every value is resolved at codegen time so downstream
+ * (link-table M2M helpers). Every value is resolved at codegen time so downstream
  * generators can splice junction reads and writes into the save
  * pipeline without re-walking the schema.
  *
  * A writable `throughLink(...)` declaration that survives
  * [validateThroughLinkJunctions] is helper-eligible by definition —
- * that validation enforces the junction shape constraints from RFC #3
+ * that validation enforces the junction shape constraints from M2M schema modeling
  * (id + 2 FK columns only, OnDelete.CASCADE, no payload, no write-time
  * modifiers, an unordered unique pair index, and a non-partial index
  * leading with this side's source FK, etc.).
  * [helperEligibleM2MEdges] filters M2M edges to the
  * `ManyToManyThrough.LinkTable` variant, drops any side declared
- * `.readOnly()` (read traversal only, no write surface — RFC 10), and
+ * `.readOnly()` (read traversal only, no write surface — symmetric link-table writes), and
  * resolves the FK column names through [resolveM2MEdgeJoin]. With
  * symmetric link tables both pair-swapped endpoints are writable, so a
  * junction can surface here from both sides.
@@ -49,7 +49,7 @@ internal data class HelperEligibleM2M(
      * `"AUTO_LONG"`, or `"CLIENT_UUID"`. Junction-shape rule 5
      * (`validateThroughLinkJunctions`) rejects `EXPLICIT`, so the
      * helpers never have to deal with caller-supplied junction ids.
-     * Phase 6's junction-insert codegen branches on this: AUTO_* lets
+     * junction-insert codegen branches on this: AUTO_* lets
      * the driver mint the id, CLIENT_UUID mints client-side via
      * `UUID.randomUUID()`.
      */
@@ -58,7 +58,7 @@ internal data class HelperEligibleM2M(
 
 /**
  * Return all M2M edges on [schema] that are eligible for direct
- * link-table mutator codegen (RFC #5). Empty list if the schema has
+ * link-table mutator codegen (link-table M2M helpers). Empty list if the schema has
  * no `throughLink(...)` M2M edges.
  *
  * Pass the same [schemaNames] map that other codegen passes use —
@@ -73,7 +73,7 @@ internal fun helperEligibleM2MEdges(
         val m2m = edge.kind as? EdgeKind.ManyToMany ?: return@mapNotNull null
         val through = m2m.through as? ManyToManyThrough.LinkTable ?: return@mapNotNull null
         // A `.readOnly()` side keeps its read traversal but generates no write
-        // surface (RFC 10). Excluding it here is the single chokepoint: privacy
+        // surface (symmetric link-table writes). Excluding it here is the single chokepoint: privacy
         // aggregators, the UpdateGenerator write splice, and explain all derive
         // their write surface from this list, so the exclusion propagates.
         if (through.readOnly) return@mapNotNull null

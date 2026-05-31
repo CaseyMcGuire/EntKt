@@ -271,8 +271,8 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
 
     /**
      * Declare the relationship as a pure link table. The junction
-     * schema is relationship storage; direct M2M helpers (per the
-     * Link-Table Helpers RFC) are eligible for generation when the
+     * schema is relationship storage; direct M2M helpers are eligible
+     * for generation when the
      * junction satisfies the helper-eligibility constraints.
      */
     inline fun <reified Junction : EntSchema> throughLink(
@@ -313,8 +313,8 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
     /**
      * Mark this `throughLink(...)` declaration read-only: the generated
      * entity gets read traversal but no `add` / `remove` / `set` write
-     * helpers. Used for the non-writing side of a symmetric link table
-     * (RFC 10). Only valid with `throughLink(...)`; combining it with
+     * helpers. Used for the non-writing side of a symmetric link table.
+     * Only valid with `throughLink(...)`; combining it with
      * `throughEntity(...)` is rejected at finalization.
      */
     fun readOnly(): ManyToManyBuilder<Target> = apply { checkNotFrozen(); readOnly = true }

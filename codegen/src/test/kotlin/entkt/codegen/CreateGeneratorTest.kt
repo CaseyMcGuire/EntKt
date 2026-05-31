@@ -210,7 +210,7 @@ class CreateGeneratorTest {
         }
         // Validator failures throw ValidationException carrying both
         // the rule's message and the field name; saveOrError wraps this
-        // into EntError.ValidationFailed (Phase 12).
+        // into EntError.ValidationFailed.
         assert(output.contains("Invalid(\"value must be at least 3 characters\", field = \"name\")")) {
             "Should include validator message + field in ValidationDecision.Invalid\n$output"
         }
@@ -469,7 +469,7 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         // saveOrThrow delegates to saveOrError().getOrThrow() — the
-        // RFC's "throwing wraps result" guideline.
+        // Throwing wrappers delegate to the structured-result path.
         assert(output.contains("public fun saveOrThrow(): Car = saveOrError().getOrThrow()")) {
             "Should generate saveOrThrow as a wrapper over saveOrError\n$output"
         }
@@ -507,7 +507,7 @@ class CreateGeneratorTest {
             "Should pass EntException's error through unchanged\n$output"
         }
         // Exception catch-all routes through classifyDriverError so the
-        // driver-level classifier (Phase 2) produces ConstraintViolation
+        // driver-level classifier produces ConstraintViolation
         // for SQLSTATE 23xxx or DriverFailure as the fallback.
         assert(output.contains("catch (e: Exception)")) {
             "Should have a catch-all for Exception\n$output"
@@ -518,11 +518,11 @@ class CreateGeneratorTest {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // RFC 08: private hook-facing adapters on the create builder
+    // create-hook adapter: private hook-facing adapters on the create builder
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `RFC 08 — create builder emits private _beforeSaveView adapter implementing Mutation only`() {
+    fun `create-hook adapter — create builder emits private _beforeSaveView adapter implementing Mutation only`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -544,7 +544,7 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `RFC 08 — create builder emits private _createMutationView adapter implementing CreateMutationView only`() {
+    fun `create-hook adapter — create builder emits private _createMutationView adapter implementing CreateMutationView only`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -562,7 +562,7 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `RFC 08 — beforeSave hook receives _beforeSaveView, not 'this'`() {
+    fun `create-hook adapter — beforeSave hook receives _beforeSaveView, not 'this'`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -572,12 +572,12 @@ class CreateGeneratorTest {
             "save() should pass _beforeSaveView to beforeSave hooks, not `this`\n$output"
         }
         assert(!output.contains("for (hook in beforeSaveHooks) hook(this)")) {
-            "save() must NOT pass `this` to beforeSave hooks — RFC 08 contract\n$output"
+            "save() must NOT pass `this` to beforeSave hooks — create-hook adapter contract\n$output"
         }
     }
 
     @Test
-    fun `RFC 08 — beforeCreate CreateHookContext wraps _createMutationView, not 'this'`() {
+    fun `create-hook adapter — beforeCreate CreateHookContext wraps _createMutationView, not 'this'`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -587,12 +587,12 @@ class CreateGeneratorTest {
             "CreateHookContext should wrap _createMutationView, not `this`\n$output"
         }
         assert(!output.contains("CarCreateHookContext(client, this)")) {
-            "CreateHookContext must NOT wrap `this` — RFC 08 contract\n$output"
+            "CreateHookContext must NOT wrap `this` — create-hook adapter contract\n$output"
         }
     }
 
     @Test
-    fun `RFC 08 — _beforeSaveView omits immutable FK forwarders (Mutation excludes them)`() {
+    fun `create-hook adapter — _beforeSaveView omits immutable FK forwarders (Mutation excludes them)`() {
         // Regression for the override-nothing bug: ${Entity}Mutation
         // only declares mutable FKs; immutable FKs live on
         // ${Entity}CreateMutationView. The _beforeSaveView adapter
@@ -646,11 +646,10 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `RFC 08 — concrete Create still implements CreateMutationView (smallest change)`() {
-        // Per RFC 08 §"Relationship between ${Entity}Create and
-        // ${Entity}CreateMutationView", the class hierarchy is
-        // unchanged — only the runtime object handed to hooks
-        // changes. Non-hook code that upcasts a builder to either
+    fun `create-hook adapter — concrete Create still implements CreateMutationView (smallest change)`() {
+        // The class hierarchy is unchanged; only the runtime object
+        // handed to hooks changes. Non-hook code that upcasts a
+        // builder to either
         // view interface keeps working.
         val car = Car()
         finalize(car, User())

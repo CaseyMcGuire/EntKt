@@ -66,7 +66,7 @@ class PostgresDriverClassifyTest {
     fun `SQLSTATE 40001 serialization failure is NOT classified in V1 (falls through to DriverFailure)`() {
         // The natural fit is EntError.Conflict, but V1 has no
         // generated code that surfaces Conflict — keep it as
-        // DriverFailure until the optimistic-locking RFC lands a real
+        // DriverFailure until the optimistic-locking support lands a real
         // consumer. Per-driver classifier returns null; the
         // classifyDriverError helper wraps as DriverFailure.
         val psql = PSQLException("could not serialize", PSQLState.SERIALIZATION_FAILURE)

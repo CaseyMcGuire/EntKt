@@ -26,7 +26,7 @@ import kotlin.reflect.jvm.javaField
  * than one direct public `val` property on the concrete schema
  * class. Recorded by [EntSchema.captureDeclarationNames] during
  * finalize; surfaced as a `validateEntSchemas` diagnostic via the
- * codegen-side alias-rejection helper. Per RFC 06,
+ * codegen-side alias-rejection helper. Per declaration-name capture,
  * `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`.
  *
  * Public so codegen modules can consume the accessor; treat as
@@ -61,7 +61,7 @@ abstract class EntSchema(val tableName: String) {
     internal val _indexes: MutableList<IndexBuilder> = mutableListOf()
 
     /**
-     * RFC 06 alias tracking. Populated by [captureDeclarationNames]
+     * declaration-name capture alias tracking. Populated by [captureDeclarationNames]
      * during [finalize]. Each entry names a field whose backing
      * `FieldBuilder` is referenced from more than one direct
      * public `val` on the concrete schema class
@@ -280,7 +280,7 @@ abstract class EntSchema(val tableName: String) {
         for (edge in _edges) {
             edge.resolve(registry, this::class)
         }
-        // RFC 06: capture the Kotlin `val` name for each FieldBuilder.
+        // declaration-name capture: capture the Kotlin `val` name for each FieldBuilder.
         // Runs BEFORE freezing so we can write to FieldBuilder.declarationName.
         captureDeclarationNames()
         // Freeze all builders so mutations after finalization are rejected
@@ -294,7 +294,7 @@ abstract class EntSchema(val tableName: String) {
      * Walk the concrete schema class's direct public `val`
      * properties and set [FieldBuilder.declarationName] on each
      * one whose backing-field value is identity-equal to a
-     * `FieldBuilder` already in [_fields]. Per RFC 06
+     * `FieldBuilder` already in [_fields]. Per declaration-name capture
      * (`docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`).
      *
      * **Reads the Java backing field, not the getter.** Calling
@@ -314,7 +314,7 @@ abstract class EntSchema(val tableName: String) {
      *  - non-public visibility (`private`, `protected`, `internal`)
      *  - properties inherited from a superclass — capture uses
      *    [declaredMemberProperties], which returns only the
-     *    concrete schema class's own properties (matches the RFC's
+     *    concrete schema class's own properties (matches the
      *    "direct public val property on the concrete schema class"
      *    scope rule)
      *  - `var` properties — capture filters out
@@ -352,7 +352,7 @@ abstract class EntSchema(val tableName: String) {
 
         val schemaClass: KClass<out EntSchema> = this::class
         // `declaredMemberProperties` returns only properties
-        // declared in this class, NOT inherited ones. The RFC's
+        // declared in this class, NOT inherited ones. The
         // V1 scope is "direct public val property on the concrete
         // schema class" — inherited properties (e.g. from an
         // abstract intermediate base) are explicitly out of scope.
@@ -361,7 +361,7 @@ abstract class EntSchema(val tableName: String) {
             if (prop.visibility != KVisibility.PUBLIC) continue
 
             // Drop `var` properties. KProperty1 is the read-only
-            // base; KMutableProperty1 represents `var`. RFC V1
+            // base; KMutableProperty1 represents `var`. V1
             // captures only stable `val` handles.
             if (prop is KMutableProperty1<*, *>) continue
 

@@ -19,7 +19,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Coverage for the explain API per the Read-Path Interceptors RFC.
+ * Coverage for the explain API per the read-path interceptors.
  * Pins:
  *
  *  - Every per-terminal explain method (`explainAllOrThrow`,

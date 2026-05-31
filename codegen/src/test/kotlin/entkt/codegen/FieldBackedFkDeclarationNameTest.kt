@@ -9,10 +9,10 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * End-to-end coverage for RFC 06's field-backed FK declaration-name
- * capture. Exercises both the codegen wiring (Phase 2: `EdgeFk.propertyName`
+ * End-to-end coverage for declaration-name capture's field-backed FK declaration-name
+ * capture. Exercises both the codegen wiring (`EdgeFk.propertyName`
  * uses the captured declaration name) and the validation diagnostic
- * (Phase 3: schemas whose backing field's declaration name can't be
+ * (schemas whose backing field's declaration name can't be
  * captured are rejected with an actionable message).
  */
 class FieldBackedFkDeclarationNameTest {
@@ -31,7 +31,7 @@ class FieldBackedFkDeclarationNameTest {
         SchemaInspector.validate(pairs.map { SchemaInput(it.first, it.second) }).errors
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 2 — FK property name uses the captured declaration name
+    // FK property name uses the captured declaration name
     // ──────────────────────────────────────────────────────────────
 
     @Test
@@ -39,8 +39,8 @@ class FieldBackedFkDeclarationNameTest {
         class Post : EntSchema("posts") {
             override fun id() = EntId.long()
             // Backing column is `author_id`; val name is `writer`.
-            // Pre-RFC-06 the FK property would have been `authorId`;
-            // post-RFC-06 it's `writer`.
+            // Pre-contract-06 the FK property would have been `authorId`;
+            // after declaration-name capture it's `writer`.
             val writer = long("author_id")
             val author = belongsTo<Target>("author").field(writer)
         }
@@ -110,7 +110,7 @@ class FieldBackedFkDeclarationNameTest {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 3 — diagnostic rejects unqualifying backing-field shapes
+    // diagnostic rejects unqualifying backing-field shapes
     // ──────────────────────────────────────────────────────────────
 
     @Test
@@ -130,7 +130,7 @@ class FieldBackedFkDeclarationNameTest {
                 it.contains("declaration name could not be captured")
         }
         if (match == null) {
-            fail("expected RFC 06 diagnostic for private backing field; got:\n${errors.joinToString("\n") { "  - $it" }}")
+            fail("expected declaration-name capture diagnostic for private backing field; got:\n${errors.joinToString("\n") { "  - $it" }}")
         }
         // Diagnostic must suggest the workarounds.
         assertTrue("public val" in match, "diagnostic should mention restructuring to a public val")
@@ -139,7 +139,7 @@ class FieldBackedFkDeclarationNameTest {
 
     @Test
     fun `clean schema without explicit field-handle validates fine`() {
-        // Sanity check: the RFC 06 diagnostic must not false-flag
+        // Sanity check: the declaration-name capture diagnostic must not false-flag
         // schemas that don't use the field-backed form at all.
         class Post : EntSchema("posts") {
             override fun id() = EntId.long()
@@ -162,7 +162,7 @@ class FieldBackedFkDeclarationNameTest {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Duplicate-alias rejection (RFC acceptance criterion:
+    // Duplicate-alias rejection (acceptance criterion:
     // "A schema in which two direct properties reference the same
     // FieldBuilder instance fails validateEntSchemas")
     // ──────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ class FieldBackedFkDeclarationNameTest {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Capture scope: var / inherited properties rejected (#3)
+    // Capture scope: var / inherited properties rejected
     // ──────────────────────────────────────────────────────────────
 
     @Test
@@ -203,14 +203,14 @@ class FieldBackedFkDeclarationNameTest {
         // The backing field exists in _fields (uuid("...") was
         // invoked during init), but the capture pass skips the
         // var property — so declarationName stays null and the
-        // RFC 06 diagnostic fires.
+        // declaration-name capture diagnostic fires.
         val match = errors.firstOrNull {
             it.contains("Post") &&
                 it.contains("'author'") &&
                 it.contains("declaration name could not be captured")
         }
         if (match == null) {
-            fail("expected RFC 06 diagnostic for var-backed FK; got:\n${errors.joinToString("\n") { "  - $it" }}")
+            fail("expected declaration-name capture diagnostic for var-backed FK; got:\n${errors.joinToString("\n") { "  - $it" }}")
         }
     }
 
@@ -237,7 +237,7 @@ class FieldBackedFkDeclarationNameTest {
                 it.contains("declaration name could not be captured")
         }
         if (match == null) {
-            fail("expected RFC 06 diagnostic for inherited backing; got:\n${errors.joinToString("\n") { "  - $it" }}")
+            fail("expected declaration-name capture diagnostic for inherited backing; got:\n${errors.joinToString("\n") { "  - $it" }}")
         }
     }
 
@@ -314,9 +314,9 @@ class FieldBackedFkDeclarationNameTest {
 
     @Test
     fun `Field declarationName is null for backing fields whose val is not captured`() {
-        // Direct introspection: verify the Phase 1 capture actually
+        // Direct introspection: verify the capture actually
         // leaves declarationName null for private vals (the case
-        // Phase 3 rejects).
+        // rejects).
         class Post : EntSchema("posts") {
             override fun id() = EntId.long()
             private val hidden = long("author_id")

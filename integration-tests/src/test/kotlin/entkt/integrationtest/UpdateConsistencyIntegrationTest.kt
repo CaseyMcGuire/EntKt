@@ -12,8 +12,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
 /**
- * End-to-end coverage for [UpdateConsistency.Pessimistic] (RFC #4
- * Phase 3). The two preflights — transaction required, driver
+ * End-to-end coverage for [UpdateConsistency.Pessimistic] (transaction locking
+ *). The two preflights — transaction required, driver
  * capability required — fire before the owner-row load, hooks,
  * privacy, validation, or driver writes; the actual lock-and-read
  * lands the owner row through `Driver.readRowForUpdate(...)` rather

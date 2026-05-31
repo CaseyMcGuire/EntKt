@@ -185,7 +185,7 @@ private class SamePropOwner : EntSchema("same_prop_owner") {
         .throughEntity<SamePropJunction>(SamePropJunction::only, SamePropJunction::only)
 }
 
-// RFC 10 (Symmetric Link-Table Edges): read-only link-table fixtures.
+// symmetric link-table writes (Symmetric Link-Table Edges): read-only link-table fixtures.
 private class RoTag : EntSchema("ro_tags") { override fun id() = EntId.long() }
 
 private class RoPostTag : EntSchema("ro_post_tags") {

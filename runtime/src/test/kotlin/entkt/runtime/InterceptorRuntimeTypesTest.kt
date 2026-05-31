@@ -11,8 +11,8 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * Phase 1 coverage: the immutable runtime types added for the
- * Read-Path Interceptors RFC. Wiring into generated reads lands in
+ * coverage: the immutable runtime types added for the
+ * read-path interceptors. Wiring into generated reads lands in
  * later phases; this suite pins the data-class invariants
  * (attribution identity, derived properties) and the
  * Err(QueryRejected) ↔ EntQueryRejectedException round-trip so

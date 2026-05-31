@@ -6,7 +6,7 @@ import entkt.schema.OnDelete
 
 /**
  * Junction table for the symmetric `Post.tags` / `Tag.posts` link-table
- * M2M edge (RFC 10). Satisfies the RFC #3 helper-eligibility shape:
+ * M2M edge (symmetric link-table writes). Satisfies the M2M schema modeling helper-eligibility shape:
  *   1. id + the two FK columns (no payload)
  *   2. both junction belongsTo edges are non-null
  *   3. backing fields carry no write-time modifiers
@@ -27,7 +27,7 @@ class PostTag : EntSchema("post_tags") {
     // the leading-column index for the `Post.tags` orientation (leads post_id).
     val pair = index("idx_post_tags_post_tag", post.fk, tag.fk).unique()
 
-    // RFC 10: the `Tag.posts` orientation needs its own non-partial index
+    // symmetric link-table writes: the `Tag.posts` orientation needs its own non-partial index
     // leading with its source FK (tag_id) to validate.
     val byTag = index("idx_post_tags_tag_post", tag.fk, post.fk)
 }

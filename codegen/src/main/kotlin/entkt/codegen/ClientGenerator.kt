@@ -146,7 +146,7 @@ internal class ClientGenerator(
             )
             .addProperty(
                 // Client-wide default RelationshipLocking for symmetric
-                // link-table M2M writes (RFC 10). The per-save
+                // link-table M2M writes. The per-save
                 // `relationshipLocking = ...` argument on `update(...)`
                 // always overrides this default. OwnerOnly = the existing
                 // always-on owner-edge serialization only.
@@ -433,8 +433,8 @@ internal class ClientGenerator(
                     .build()
             )
             .addProperty(
-                // Configurable client-wide default RelationshipLocking
-                // (RFC 10). The per-save `relationshipLocking = ...` argument
+                // Configurable client-wide default RelationshipLocking.
+                // The per-save `relationshipLocking = ...` argument
                 // on `update(...)` always overrides this default.
                 PropertySpec.builder("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
                     .mutable(true)
@@ -688,8 +688,7 @@ internal class ClientGenerator(
      * method per entity (e.g. `posts(name = ..., interceptor)`)
      * plus `global(name, interceptor)`.
      *
-     * Generated DSL surface (per the RFC's Generated Registration
-     * section):
+     * Generated DSL surface:
      *
      *     EntClient(driver) {
      *         interceptors {

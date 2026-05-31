@@ -10,7 +10,7 @@ package entkt.runtime
  *
  * - [Optional]: no requirement. Saves run in whatever client scope
  *   they were called from. This is the default and matches behavior
- *   prior to RFC #4.
+ *   prior to transaction locking.
  * - [RequiredForMultiWrite]: saves that issue more than one driver
  *   write must run on a transaction-scoped client; single-row
  *   create/update/delete saves stay transaction-optional. The
@@ -18,7 +18,7 @@ package entkt.runtime
  *   today are `createMany(...)` (when called with 2+ blocks) and
  *   `deleteMany(...)` (regardless of how many rows match — classified
  *   by operation shape, not result size, so an empty-match call
- *   still rejects). Future link-table M2M write helpers from RFC #5
+ *   still rejects). Future link-table M2M write helpers from link-table M2M helpers
  *   (`tags.add(...)`, `tags.remove(...)`, `tags.set(...)`) will join
  *   the same classification once they land.
  * - [RequiredForAllWrites]: every generated write — create, update,

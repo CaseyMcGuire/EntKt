@@ -11,8 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
 /**
- * End-to-end coverage for [TransactionRequirement] enforcement (RFC #4
- * Phase 2). Pins that the generated-save preflight throws
+ * End-to-end coverage for [TransactionRequirement] enforcement. Pins that the generated-save preflight throws
  * [TransactionRequiredException] *before* hooks, privacy, validation,
  * or driver writes when the configured requirement isn't satisfied —
  * and conversely that the same operation succeeds inside
@@ -20,7 +19,7 @@ import kotlin.test.assertNotNull
  *
  * `Article` gives us a single-write create/update/delete shape.
  * `RequiredForMultiWrite` only fires for multi-write saves
- * (link-table M2M helpers etc., once they land in RFC #5), so the
+ * such as link-table M2M updates, so the
  * single-write shapes here treat it the same as `Optional`.
  */
 class TransactionRequirementIntegrationTest : PostgresTestBase() {
@@ -191,8 +190,8 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `RequiredForMultiWrite accepts single-write create outside a transaction`() {
         // Create is a single-write save shape, so RequiredForMultiWrite
-        // doesn't apply to it. Once link-table M2M helpers land (RFC #5)
-        // those multi-write paths will trigger the rejection.
+        // doesn't apply to it. Link-table M2M update paths trigger
+        // the rejection because they perform multiple writes.
         val driver = freshDriver()
         val client = EntClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForMultiWrite
@@ -211,7 +210,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // its all-or-nothing contract doesn't hold). The empty-blocks
         // short-circuit fires before the tx check, mirroring the
         // "classify syntactically empty before any other observable
-        // work" rule from RFC #4.
+        // work" rule from transaction locking.
         val driver = freshDriver()
         val client = EntClient(driver)
         val result = client.users.createManyOrError()
@@ -258,7 +257,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     fun `RequiredForMultiWrite rejects deleteMany outside a transaction (classify by operation shape, not result size)`() {
         // deleteMany is a multi-write API regardless of how many rows
         // actually match — classifying by operation shape mirrors the
-        // RFC's "classify before normalization" rule. Without this,
+        // classify-before-normalization rule. Without this,
         // a deleteMany over a predicate that matches 0 rows would
         // silently return 0 outside a tx; matching N rows would loop
         // through N delegated single-write deletes and never trigger
@@ -307,7 +306,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `update with empty patch reports NoChanges before the transaction-requirement preflight`() {
-        // Per RFC #4: "syntactically empty update classification — report
+        // Per transaction locking: "syntactically empty update classification — report
         // NoChanges before any other observable work, including
         // transaction requirement checks." This pins that ordering.
         val driver = freshDriver()

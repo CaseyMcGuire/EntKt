@@ -130,14 +130,14 @@ internal class CreateGenerator(
                     }
                     // Nullable FK with a default needs an "assigned" flag
                     // so explicit-null assignment can suppress the default
-                    // (RFC: explicit-null-wins for nullable field-backed FKs).
+                    // ( explicit-null-wins for nullable field-backed FKs).
                     if (!fk.required && fk.default != null) {
                         builder.addProperty(buildAssignedFlag(fk))
                     }
                 }
             }
             .addProperties(edgeFks.map { buildEdgeFkProperty(it, override = true) })
-            // RFC 08: private hook-facing adapters. `_beforeSaveView`
+            // create-hook adapter: private hook-facing adapters. `_beforeSaveView`
             // implements ONLY `${Schema}Mutation` for `beforeSave`
             // hooks; `_createMutationView` implements
             // `${Schema}CreateMutationView` for `beforeCreate`
@@ -146,7 +146,7 @@ internal class CreateGenerator(
             // `arg as ${Schema}Create` (or `ctx.mutation as` any
             // other view it shouldn't reach) fails at runtime,
             // matching the runtime-enforced contract the update
-            // path has had since RFC #4 / #5.
+            // path has had since transaction locking and link-table M2M helpers.
             .addProperty(
                 // _beforeSaveView implements ${Schema}Mutation, which
                 // declares ONLY mutable scalar fields + mutable FKs
@@ -182,7 +182,7 @@ internal class CreateGenerator(
     }
 
     /**
-     * RFC 08: private `_beforeSaveView` adapter that implements
+     * create-hook adapter: private `_beforeSaveView` adapter that implements
      * ONLY `${Schema}Mutation` — the shared writable surface for
      * `beforeSave` hooks across create + update. Excludes
      * immutable-scalar / immutable-FK setters (those are part of
@@ -224,7 +224,7 @@ internal class CreateGenerator(
     }
 
     /**
-     * RFC 08: private `_createMutationView` adapter that
+     * create-hook adapter: private `_createMutationView` adapter that
      * implements `${Schema}CreateMutationView` — the
      * create-phase view a `beforeCreate` hook sees through
      * `ctx.mutation`. Forwards every scalar (mutable AND
@@ -311,9 +311,9 @@ internal class CreateGenerator(
     private fun buildEdgeFkProperty(fk: EdgeFk, override: Boolean): PropertySpec {
         if (fk.required) {
             // Required FKs:
-            //   - public property is non-null typed (per RFC "Public Types")
+            //   - public property is non-null typed (by contract "Public Types")
             //   - private nullable staging field holds the value until assigned
-            //   - getter throws on unassigned read (per RFC "Resolved FK
+            //   - getter throws on unassigned read (by contract "Resolved FK
             //     Getter Behavior"); a hook that reads `m.authorId` before
             //     assigning fails fast
             //   - setter rejects null at entry so Java/platform callers
@@ -444,14 +444,14 @@ internal class CreateGenerator(
     ) {
         val idStrategy = idStrategyName(schema)
 
-        // ---- Transaction-requirement preflight (RFC #4). Throws
+        // ---- Transaction-requirement preflight (transaction locking). Throws
         // TransactionRequiredException before any observable work
         // (hooks, defaults, validation, driver writes) when the
         // configured TransactionRequirement isn't satisfied. ----
         builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName create")
 
         // ---- Lifecycle hooks (before validation so hooks can set fields). ----
-        // RFC 08: route through the private `_beforeSaveView` and
+        // create-hook adapter: route through the private `_beforeSaveView` and
         // `_createMutationView` adapters so a misbehaving hook
         // that tries to cast back to `${Schema}Create` (or to a
         // wider sibling view) fails at runtime — matching the
@@ -514,7 +514,7 @@ internal class CreateGenerator(
                     stagingFieldName(fk.propertyName),
                     fkDefaultCodeBlock(fk),
                 )
-                // Nullable + default: explicit-null-wins (per RFC). The
+                // Nullable + default: explicit-null-wins (by contract). The
                 // setter flips `_<prop>Assigned`, so any explicit write
                 // — including `null` — suppresses the default.
                 !fk.required && fk.default != null -> builder.addStatement(
@@ -743,7 +743,7 @@ internal class CreateGenerator(
      * [classifyDriverError] rather than being wrapped — only
      * `SQLException` (and subclasses like `PSQLException`) fall back
      * to `DriverFailure`. The driver classifier is the integration
-     * point for Phase 2's SQLSTATE/message-prefix mapping, so adding
+     * point for SQLSTATE/message-prefix mapping, so adding
      * new constraint codes to a driver does not require regenerating
      * consumer code.
      */
@@ -787,8 +787,7 @@ internal class CreateGenerator(
      * Throwing variant: delegates to [saveOrError] and unwraps via
      * [EntResult.getOrThrow] so callers get a structured
      * [EntException] subclass for every recognized failure surface.
-     * Implemented as a wrapper per the RFC's "throwing APIs should be
-     * implemented as wrappers over xOrError()" guideline — keeps the
+     * Implemented as a wrapper over `saveOrError()` to keep the
      * classification/mapping logic in one place.
      */
     private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {

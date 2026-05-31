@@ -24,8 +24,8 @@ import kotlin.test.assertTrue
 
 /**
  * End-to-end coverage for the update-side `saveOrError()` /
- * `saveOrThrow()` driver-classification wiring landed in Phase 4 of
- * the Result Variants RFC. The Phase 1 catches (NotFound, NoChanges,
+ * `saveOrThrow()` driver-classification wiring landed in of
+ * the result variants. The catches (NotFound, NoChanges,
  * Privacy, Validation) are exercised elsewhere; this suite focuses on
  * the new `catch (Exception)` arm that routes through
  * `classifyDriverError` to produce `Err(ConstraintViolation)` for

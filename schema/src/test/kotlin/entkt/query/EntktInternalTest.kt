@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 
 /**
  * Contract test for [EntktInternal] — pins the parts of the annotation
- * surface that the phantom-typed-query-scopes RFC's "Constructor
+ * surface that the phantom-typed query scopes's "Constructor
  * Visibility" section depends on.
  *
  * The retention assertion is the hard cross-module invariant: if
@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
  * downstream module cannot satisfy the opt-in requirement.
  *
  * The level=ERROR and message-shape parts of the contract are validated
- * by behavior in the Phase 9 compile-fail harness (a call to an
+ * by behavior in the compile-fail harness (a call to an
  * `@EntktInternal` site without `@OptIn` must fail to compile with the
  * configured message). The `@RequiresOptIn` meta-annotation is not
  * always projected through `KClass<*>.annotations` at runtime, so we

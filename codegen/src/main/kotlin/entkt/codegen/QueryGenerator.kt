@@ -59,7 +59,7 @@ internal class QueryGenerator(
         val entityClass = ClassName(packageName, schemaName)
         // Typed convenience names for this entity's predicate/order-field
         // scopes. Used everywhere the generated query stores or accepts
-        // its own predicate / order field, per RFC §"Proposed API".
+        // its own predicate / order field.
         val predicateForEntity = predicateClass.parameterizedBy(entityClass)
         val orderFieldForEntity = orderFieldClass.parameterizedBy(entityClass)
 
@@ -83,9 +83,9 @@ internal class QueryGenerator(
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
-            // Generated query class implements EdgeQuery<EntityClass>
-            // per RFC §"Proposed API" — the scope flows out of
-            // combinedPredicate() typed as `Predicate<EntityClass>`.
+            // Generated query class implements EdgeQuery<EntityClass>;
+            // the scope flows out of combinedPredicate() typed as
+            // `Predicate<EntityClass>`.
             .addSuperinterface(EDGE_QUERY.parameterizedBy(entityClass))
             // Also implements `EdgePredicateScope<EntityClass>` so it
             // can be used as the narrow receiver inside
@@ -121,7 +121,7 @@ internal class QueryGenerator(
                     .initializer("client")
                     .build()
             )
-            // Mutable query state is `private` per RFC §"Proposed API":
+            // Mutable query state is `private`:
             // application code in the same module would have write
             // access if these were `internal`, which would let
             // app code mutate `predicates` / `orderFields` /
@@ -281,9 +281,8 @@ internal class QueryGenerator(
         // Every generated query file constructs `Predicate.HasEdge` /
         // `Predicate.HasEdgeWith` / `Predicate.HasM2MEdgeFrom` in the
         // edge-predicate walker and traversal lambdas. Those types
-        // carry `@EntktInternal` constructors per RFC §"Constructor
-        // Visibility"; the file-level OptIn lets the construction
-        // sites compile without per-call annotation.
+        // carry `@EntktInternal` constructors; the file-level OptIn
+        // lets the construction sites compile without per-call annotation.
         return FileSpec.builder(packageName, className)
             .addAnnotation(
                 AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
@@ -303,10 +302,9 @@ internal class QueryGenerator(
      * [EntDriverException] / [EntConstraintViolationException] per
      * the classifier.
      *
-     * Implemented as a `allOrError().getOrThrow()` wrapper per the
-     * RFC's "throwing APIs should be implemented as wrappers over
-     * xOrError()" guideline — keeps the privacy / driver mapping in
-     * one place and guarantees the structured-exception contract
+     * Implemented as a `allOrError().getOrThrow()` wrapper so the
+     * privacy / driver mapping stays in one place and guarantees the
+     * structured-exception contract
      * across the *OrThrow family.
      */
     private fun buildAllOrThrow(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
@@ -393,8 +391,7 @@ internal class QueryGenerator(
      * a denied target throws `PrivacyDeniedException` from this
      * call, the same way it does for `allOrThrow`. The rationale
      * (and the workaround — chain visible queries on the target
-     * side) is documented in the RFC's "Visible-only API contract"
-     * section.
+     * side) is to chain visible queries on the target side.
      *
      * **When the repo has LOAD privacy rules**, the storage scan is
      * bounded by `EntClientConfig.visibleOverfetchLimit` (default
@@ -472,9 +469,8 @@ internal class QueryGenerator(
      * **Visible filtering is root-only.** Eager-loaded edge targets
      * via `with...()` still enforce target LOAD privacy strictly —
      * a denied target surfaces as `Err(PrivacyDenied)` from this
-     * call, not as a silent root-row drop. See the RFC's
-     * "Visible-only API contract" section for the rationale and the
-     * chain-visible-queries workaround.
+     * call, not as a silent root-row drop. Chain visible queries on the
+     * target side when target filtering should be non-throwing.
      *
      * **When the repo has LOAD privacy rules**, returns
      * `Err(OverfetchCapExceeded)` when the storage scan hit
@@ -687,13 +683,12 @@ internal class QueryGenerator(
      * a denied target throws `PrivacyDeniedException` from this
      * call. The "visible" name guarantees the *root entity*
      * survives privacy filtering; it does not recursively apply to
-     * the eager subgraph. See the RFC's "Visible-only API contract"
-     * for the rationale and the chain-visible-queries workaround.
+     * the eager subgraph.
      *
      * **When the repo has LOAD privacy rules**, scanning is bounded
      * by `EntClientConfig.visibleOverfetchLimit` (default 100): at
      * most `min(queryLimit ?: cap, cap)` rows are pulled from
-     * storage. Per the RFC, cap-exhaustion is silent — the "no
+     * storage. Cap-exhaustion is silent — the "no
      * visible row found within the work budget" outcome is
      * indistinguishable from genuine absence, which is fine for the
      * optimistic-read shape this method advertises.
@@ -1162,7 +1157,7 @@ internal class QueryGenerator(
             .addKdoc(
                 "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
                 "Interceptors run with operation = FIRST; limit operations are silent\n" +
-                "no-ops per the RFC's limit-shape rules. Plan limit is hardwired to 1.\n" +
+                "no-ops for this terminal. Plan limit is hardwired to 1.\n" +
                 "On interceptor rejection, returns a plan with `rejected = true`."
             )
             .returns(queryPlan)
@@ -1175,7 +1170,7 @@ internal class QueryGenerator(
             .addKdoc(
                 "Return a [QueryPlan] describing the query shape [visibleCount] would execute.\n" +
                 "Interceptors run with operation = VISIBLE_COUNT; limit operations are\n" +
-                "silent no-ops per the RFC. On interceptor rejection, returns a plan with\n" +
+                "silent no-ops by contract. On interceptor rejection, returns a plan with\n" +
                 "`rejected = true`."
             )
             .returns(queryPlan)
@@ -1203,7 +1198,7 @@ internal class QueryGenerator(
             .addKdoc(
                 "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
                 "Interceptors run with operation = $operationName; limit operations are\n" +
-                "silent no-ops per the RFC. Plan mirrors the runtime exactly:\n" +
+                "silent no-ops by contract. Plan mirrors the runtime exactly:\n" +
                 "`orderBy = emptyList()` (existence probe doesn't order),\n" +
                 "`limit = minOf(1, spec.limit ?: 1)` (usually 1, 0 when the caller\n" +
                 "passed `query { limit(0) }`), and `offset = spec.offset` (caller's\n" +
@@ -1352,7 +1347,7 @@ internal class QueryGenerator(
             .addKdoc(
                 "Return a [QueryPlan] describing the COUNT query [rawCount] would execute.\n" +
                 "Interceptors run with operation = RAW_COUNT; predicate contributions show\n" +
-                "up in the plan, limit operations are silent no-ops per the RFC.\n" +
+                "up in the plan, limit operations are silent no-ops by contract.\n" +
                 "On interceptor rejection, returns a plan with `rejected = true`."
             )
             .returns(queryPlan)
@@ -1412,8 +1407,7 @@ internal class QueryGenerator(
         // interceptors).
         val helper = FunSpec.builder("buildQueryPlan")
             .addModifiers(KModifier.INTERNAL)
-            // Spec is typed in this query's entity scope per RFC
-            // §"Driver Boundary" — every layer above the driver
+            // Spec is typed in this query's entity scope; every layer above the driver
             // call carries E through.
             .addParameter("spec", FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
             .addParameter("includeEager", BOOLEAN)
@@ -1527,9 +1521,8 @@ internal class QueryGenerator(
         // in `edges` rather than failing the whole parent plan —
         // the root + sibling eager subplans still appear, the
         // caller can inspect `plan.eagerQueries["X"]?.rejected` to
-        // see which step rejected. Per the RFC's
-        // explain-doesn't-throw contract, rejection metadata lives
-        // on the plan, not as an exception.
+        // see which step rejected. Explain rejection lives on the
+        // plan, not as an exception.
         val queryPlanLocal = ClassName("entkt.runtime", "QueryPlan")
         if (info.edge.kind is EdgeKind.ManyToMany) {
             // M2M: junction table explain stands alone (no
@@ -1750,8 +1743,8 @@ internal class QueryGenerator(
                         String::class.asClassName(),
                     )
                     // frozen.predicates is typed `List<Predicate<EntityClass>>`
-                    // because FrozenQuerySpec<E> carries E through (RFC
-                    // §"Driver Boundary"). No cast needed at the walker
+                    // because FrozenQuerySpec<E> carries E through.
+                    // No cast needed at the walker
                     // call.
                     .addStatement(
                         "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
@@ -1781,7 +1774,7 @@ internal class QueryGenerator(
      * by source-table (rather than this query's outgoing edge name)
      * needs a separate global registry. Workaround: use the
      * traversal form (`queryX()`) for M2M, which fires source
-     * interceptors via Phase 5a.
+     * interceptors via.
      *
      * The dispatch `when` on the edge name is generated per-source-
      * entity from the schema's outgoing edges. Edges whose targets
@@ -1831,9 +1824,9 @@ internal class QueryGenerator(
         // HasEdgeWith dispatch. Predicate.HasEdgeWith<E, Target>.inner
         // is typed Predicate<Target>, but the smart-cast lands at
         // HasEdgeWith<E, *> so .inner is Predicate<*>. The edge-name
-        // serves as the runtime witness for recovering Target — see
-        // RFC §"Edge-Predicate Walker". Each branch knows its target
-        // statically (from the schema), does an unchecked cast inside
+        // serves as the runtime witness for recovering Target. Each
+        // branch knows its target statically (from the schema), does
+        // an unchecked cast inside
         // the branch, and rebuilds a typed HasEdgeWith for the
         // candidate before returning.
         body.add("  is %T.HasEdgeWith<%T, *> -> when (predicate.edge) {\n", predicateClass, entityClass)
@@ -1860,8 +1853,7 @@ internal class QueryGenerator(
                 predicateClass, targetClass,
             )
             // Use the public DSL (target.where) rather than writing the
-            // backing list directly — preserves the encapsulation
-            // story documented in RFC §"Proposed API".
+            // backing list directly, preserving encapsulation.
             body.add("      targetQ.where(typedInner)\n")
             // Cross-class write through the @EntktInternal seeder.
             body.add(
@@ -2718,9 +2710,8 @@ internal class QueryGenerator(
                         predicateClass, sourceEntityClass, predicateClass,
                     )
                     // Bridge is target-scoped: HasEdgeWith<Target, Source>
-                    // (the inner predicate is on Source). Per RFC
-                    // §"Query Traversal": "the candidate entity is the
-                    // target". The walker's edge-name witness +
+                    // (the inner predicate is on Source). The candidate
+                    // entity is the target. The walker's edge-name witness +
                     // unchecked cast soundness applies symmetrically
                     // to the construction site here — codegen knows
                     // both Source and Target by schema.

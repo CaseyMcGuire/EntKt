@@ -24,7 +24,7 @@ internal fun ensureFinalized(schemas: List<SchemaInput>) {
     validateEdgeTargetIdentity(schemas)
     validateUniqueNamesAndTables(schemas)
     val schemaNames = schemas.associate { it.schema to it.name }
-    // Generated-member-name collision detection (RFC 07) is run by
+    // Generated-member-name collision detection (generated-member collision checks) is run by
     // [EntGenerator.generate] after this finalization step via
     // [runMemberCollisionCheck], producing per-artifact diagnostics.
     // The older single-namespace `validateMemberNames` was removed
@@ -184,7 +184,7 @@ private fun validateRelationNames(
  *   other's `(targetEdge, sourceEdge)`) are *allowed* — this is how
  *   callers declare bidirectional traversal.
  *
- * Phase 2's `ManyToManyBuilder.resolve()` already enforces that
+ * `ManyToManyBuilder.resolve()` already enforces that
  * `sourceEdge` points back at the declaring schema and `targetEdge` at
  * the M2M target type parameter, so a same-orientation alias across
  * two distinct declaring schemas is unreachable here (the junction
@@ -268,7 +268,7 @@ private fun validateM2MOrientation(
         // Same-orientation declarations are alias traversal names over the
         // same relationship and direction; reject them. (Three or more over a
         // two-element edge pair always force a same-orientation collision by
-        // pigeonhole, so this also covers the ≥3 case.) RFC 10 makes
+        // pigeonhole, so this also covers the ≥3 case.) symmetric link-table writes makes
         // throughLink consistent with the throughEntity bidirectional shape.
         val byOrientation = group.groupBy { it.sourceEdge to it.targetEdge }
         for ((orientation, sameOrientation) in byOrientation) {
@@ -290,7 +290,7 @@ private fun validateM2MOrientation(
 
 /**
  * Verify that every `throughLink(...)` M2M edge points at a junction
- * schema satisfying the direct-helper safety constraints from RFC #3
+ * schema satisfying the direct-helper safety constraints from M2M schema modeling
  * (junction-shape rules). Schemas that fail any rule are rejected with
  * a message naming the failing junction and the rule that didn't hold;
  * the caller's options are to fix the junction shape or switch the
@@ -307,7 +307,7 @@ private fun validateM2MOrientation(
  *    client-UUID only).
  * 6. Junction declares a non-partial unique index on the unordered FK
  *    pair `{sourceFkColumn, targetFkColumn}` (either column order).
- * 6b. (RFC 10) For a relationship declared from both endpoints, each side
+ * 6b. For a relationship declared from both endpoints, each side
  *    additionally needs a non-partial index leading with its own source FK.
  */
 private fun validateThroughLinkJunctions(
@@ -315,7 +315,7 @@ private fun validateThroughLinkJunctions(
     schemaNames: Map<EntSchema, String>,
 ) {
     // Canonical relationship identities (junction + unordered edge pair)
-    // declared from BOTH endpoints (RFC 10 symmetric link tables). Each side
+    // declared from BOTH endpoints. Each side
     // of such a declaration reads by its OWN source FK, so each needs a
     // source-FK-leading index (Rule 6b). A lone declaration is exempt.
     val twoSidedKeys: Set<Triple<String, String, String>> = run {
@@ -500,7 +500,7 @@ private fun validateThroughLinkJunctions(
                 // Note: a `.unique()` on the backing field can't survive
                 // schema finalization unless the belongsTo edge is also
                 // `.unique()` (the existing edge/field consistency check
-                // from RFC #2 rejects the mismatch). When the edge IS
+                // from to-one FK nullability rejects the mismatch). When the edge IS
                 // `.unique()`, Rule 4a above fires before we ever look
                 // at the backing field — so a separate Rule 3 unique
                 // check would be dead code.
@@ -517,7 +517,7 @@ private fun validateThroughLinkJunctions(
             }
 
             // Rule 6: a non-partial unique composite index on the unordered
-            // FK pair — either column order satisfies it (RFC 10). Pair
+            // FK pair — either column order satisfies it (symmetric link-table writes). Pair
             // uniqueness is order-independent, and a pair-swapped second
             // declaration's "source-first" order is the reverse.
             val indexes = try { junction.indexes() } catch (e: Exception) {
@@ -538,7 +538,7 @@ private fun validateThroughLinkJunctions(
                 )
             }
 
-            // Rule 6b (RFC 10): when the relationship is declared from both
+            // Rule 6b (symmetric link-table writes): when the relationship is declared from both
             // endpoints, THIS side does source-keyed reads (set exact-set,
             // add/remove deltas, read traversal, eager-load) by its own
             // source FK — require a non-partial index whose LEADING column is
@@ -565,7 +565,7 @@ private fun validateThroughLinkJunctions(
             // column (partial or not). A `unique()` index on just
             // `source_fk` or `target_fk` would force at most one junction
             // row per endpoint — same broken-M2M effect as Rule 4a's
-            // `.unique()` on the belongsTo edge. The RFC explicitly
+            // `.unique()` on the belongsTo edge. The contract explicitly
             // allows additional non-unique single-column indexes (for
             // join planning), so we only reject the unique single-FK
             // case here.
@@ -603,7 +603,7 @@ class EntGenerator(
         ensureFinalized(schemas)
         val schemaNames: Map<EntSchema, String> = schemas.associate { it.schema to it.name }
 
-        // RFC 07: reject schemas that would emit duplicate Kotlin
+        // generated-member collision checks: reject schemas that would emit duplicate Kotlin
         // member names on the same generated artifact. Runs here
         // (not only via SchemaInspector.validate) so direct callers
         // of EntGenerator.generate(...) can't bypass the check.
@@ -621,7 +621,7 @@ class EntGenerator(
             )
         }
 
-        // RFC 06: reject schemas whose belongsTo(...).field(handle)
+        // declaration-name capture: reject schemas whose belongsTo(...).field(handle)
         // backing has no captured Kotlin val name. SchemaInspector
         // runs the same check, but direct callers of
         // EntGenerator.generate(...) (no inspector pass) must not

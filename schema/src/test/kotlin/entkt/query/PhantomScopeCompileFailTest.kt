@@ -11,14 +11,13 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * Compile-fail negative tests for the phantom-typed query scopes RFC.
+ * Compile-fail negative tests for the phantom-typed query scopes.
  *
  * Each test compiles a small Kotlin snippet in-process via
  * `kotlin-compile-testing`'s fork (`dev.zacsweers.kctfork:core`),
  * asserts the compile fails (`exitCode != OK`), and matches the
  * compiler's diagnostic against an expected substring. The snippets
- * exercise the compile-time guards documented in the RFC's "Test
- * Requirements" section that no runtime test can catch.
+ * exercise compile-time guards that no runtime test can catch.
  *
  * The snippets live as inline `.kt` strings so each test is
  * self-contained and the assertion + minimal reproducer are visible
@@ -382,7 +381,7 @@ class PhantomScopeCompileFailTest {
     fun `explicit OptIn at call site allows restricted construction`() {
         // Sanity check that the escape hatch works — code that opts in
         // explicitly compiles. The opt-in cost is documented and
-        // intentional per the RFC's "Constructor Visibility" section.
+        // intentional: direct fabrication is opt-in-restricted.
         val result = compile("""
             @OptIn(EntktInternal::class)
             fun ok(): Predicate<User> = Predicate.HasEdge<User>("posts")
@@ -397,7 +396,7 @@ class PhantomScopeCompileFailTest {
     // ---- Public-DSL surface: Column / OrderField / Predicate.Leaf
     //      stay constructible without opt-in (the residual gap is
     //      wrong-column-name-within-entity, surfaced at driver-render
-    //      time per the RFC's V1 lock-in). These are sanity-checks. ----
+    //      time). These are sanity-checks. ----
 
     @Test
     fun `Predicate Leaf is constructible without opt-in`() {
@@ -407,7 +406,7 @@ class PhantomScopeCompileFailTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Predicate.Leaf should be public per RFC \"Constructor Visibility\". " +
+            "Predicate.Leaf should be public by contract \"Constructor Visibility\". " +
                 "Messages:\n${result.messages}",
         )
     }
@@ -420,7 +419,7 @@ class PhantomScopeCompileFailTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Column<E, T> should be public per RFC \"Constructor Visibility\". " +
+            "Column<E, T> should be public by contract \"Constructor Visibility\". " +
                 "Messages:\n${result.messages}",
         )
     }
@@ -433,7 +432,7 @@ class PhantomScopeCompileFailTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "OrderField<E> should be public per RFC \"Constructor Visibility\". " +
+            "OrderField<E> should be public by contract \"Constructor Visibility\". " +
                 "Messages:\n${result.messages}",
         )
     }

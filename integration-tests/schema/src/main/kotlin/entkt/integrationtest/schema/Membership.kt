@@ -5,7 +5,7 @@ import entkt.schema.EntSchema
 
 /**
  * Domain-entity junction for the [Group] ↔ [User] many-to-many
- * relationship. Junction-shape RFC #3 doesn't apply here — this
+ * relationship. Junction-shape rules doesn't apply here — this
  * is a `throughEntity` junction (a real domain entity callers
  * can `client.memberships.create { ... }.save()` directly), so
  * its FK columns may be nullable and it carries a payload.

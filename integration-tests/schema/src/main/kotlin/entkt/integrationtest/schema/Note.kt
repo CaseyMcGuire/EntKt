@@ -4,7 +4,7 @@ import entkt.schema.EntId
 import entkt.schema.EntSchema
 
 /**
- * Fixture for RFC 06 field-backed FK declaration-name capture.
+ * Fixture for declaration-name capture field-backed FK declaration-name capture.
  * The backing field's Kotlin `val` name (`writer`) diverges from
  * the storage column name (`author_id`). Generated code must
  * expose the FK as `writer` (entity property, create / update

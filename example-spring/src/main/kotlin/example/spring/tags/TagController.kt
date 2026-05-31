@@ -60,7 +60,7 @@ class TagController(private val client: EntClient) {
      * against each candidate `Post` row; the runtime walks the junction
      * backwards using `Tag`'s own forward-edge metadata. No reverse-edge
      * entry is synthesized on `Post`'s schema — this is the explicit-API
-     * contract from RFC #3.
+     * contract from M2M schema modeling.
      */
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: Int): List<PostResponse> {

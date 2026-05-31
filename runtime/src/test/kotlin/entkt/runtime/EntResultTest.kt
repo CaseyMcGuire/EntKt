@@ -79,7 +79,7 @@ class EntResultTest {
                 ),
             ).getOrNullForAbsenceOnly()
         }
-        // NoChanges → throws (NoChanges is NOT expected absence per RFC)
+        // NoChanges → throws (NoChanges is NOT expected absence by contract)
         assertFailsWith<EntNoChangesException> {
             err(EntError.NoChanges("Post", EntOperation.UPDATE, id = 1)).getOrNullForAbsenceOnly()
         }

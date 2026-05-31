@@ -11,7 +11,7 @@ import entkt.schema.OnDelete
  * or running codegen.
  */
 /**
- * RFC 06 diagnostic pass. Walk every `belongsTo(...).field(handle)`
+ * declaration-name capture diagnostic pass. Walk every `belongsTo(...).field(handle)`
  * on [input]'s schema, look up the backing field by column name,
  * and return a diagnostic string for each backing field whose
  * `declarationName` is null. Shared between
@@ -26,7 +26,7 @@ import entkt.schema.OnDelete
  * to avoid drowning the root-cause diagnostic.
  */
 /**
- * RFC 06 duplicate-alias diagnostic. Returns one error per
+ * declaration-name capture duplicate-alias diagnostic. Returns one error per
  * [entkt.schema.DeclarationAlias] the capture pass recorded on
  * [input]'s schema — each one names a field whose backing
  * builder is referenced from two or more direct public `val`
@@ -39,7 +39,7 @@ internal fun findDuplicateDeclarationAliases(input: SchemaInput): List<String> {
     return input.schema.declarationAliases().map { alias ->
         "Schema '${input.name}': field '${alias.fieldColumn}' is referenced from " +
             alias.properties.size + " direct public vals (${alias.properties.joinToString(", ") { "'$it'" }}). " +
-            "RFC 06 requires exactly one direct val per FieldBuilder so codegen has a single " +
+            "declaration-name capture requires exactly one direct val per FieldBuilder so codegen has a single " +
             "deterministic declaration name to follow. Remove the aliasing val(s)."
     }
 }
@@ -106,7 +106,7 @@ object SchemaInspector {
             }
         }
 
-        // RFC 07: generated-member-name collision detection. Runs
+        // generated-member collision checks: generated-member-name collision detection. Runs
         // AFTER per-schema column/edge/index resolution so that
         // FK metadata is available to the manifest builder.
         // Shared with [EntGenerator.generate] via
@@ -185,7 +185,7 @@ object SchemaInspector {
             }
         }
 
-        // RFC 06: a `belongsTo(...).field(handle)` whose backing
+        // declaration-name capture: a `belongsTo(...).field(handle)` whose backing
         // field has no captured Kotlin val name on the concrete
         // schema (computed getter, delegated, inherited, mixin-
         // backed, var, or registered programmatically) can't have
@@ -198,7 +198,7 @@ object SchemaInspector {
         // [EntGenerator.generate] via [findFieldBackedFkDeclarationErrors]
         // so direct codegen callers can't bypass the check.
         errors.addAll(findFieldBackedFkDeclarationErrors(input))
-        // RFC 06: a FieldBuilder referenced from multiple direct
+        // declaration-name capture: a FieldBuilder referenced from multiple direct
         // public vals (`val a = uuid("x"); val b = a`) has no
         // single canonical declaration name; reject the schema.
         errors.addAll(findDuplicateDeclarationAliases(input))
@@ -242,7 +242,7 @@ object SchemaInspector {
 
     /**
      * Render an [ExplainedSchemaGraph] as human-readable text matching the
-     * format described in the schema-validation-explain RFC.
+     * format described in the schema-validation explain feature.
      */
     fun renderText(graph: ExplainedSchemaGraph): String {
         return graph.schemas.joinToString("\n") { renderSchemaText(it) }
@@ -383,7 +383,7 @@ object SchemaInspector {
                 is EdgeKind.ManyToMany -> {
                     val through = kind.through
                     val junctionTable = through.junction.tableName
-                    // RFC 10: surface the concrete write surface. A writable
+                    // symmetric link-table writes: surface the concrete write surface. A writable
                     // throughLink side exposes add/remove/set; a `.readOnly()`
                     // side still appears (read traversal) but exposes none; a
                     // throughEntity edge has no link-table helpers (null).

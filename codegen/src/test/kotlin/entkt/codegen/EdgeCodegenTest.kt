@@ -240,7 +240,7 @@ private class DefaultedFkParent : EntSchema("defaulted_parents") {
 
 /**
  * Required field-backed FK whose backing field carries a default.
- * Per RFC: unset → default fires; required-FK can never be assigned null.
+ * Unset → default fires; required-FK can never be assigned null.
  */
 private class RequiredFkWithDefaultChild : EntSchema("required_default_children") {
     override fun id() = EntId.int()
@@ -251,7 +251,7 @@ private class RequiredFkWithDefaultChild : EntSchema("required_default_children"
 
 /**
  * Nullable field-backed FK whose backing field carries a default.
- * Per RFC: untouched → default fires; explicit null → suppresses
+ * Untouched → default fires; explicit null → suppresses
  * default (explicit-null-wins).
  */
 private class NullableFkWithDefaultChild : EntSchema("nullable_default_children") {
@@ -345,7 +345,7 @@ private class NullabilityMismatchParent : EntSchema("nullability_parents") {
 }
 
 /**
- * Required relationship backed by a nullable field. Per RFC,
+ * Required relationship backed by a nullable field.
  * codegen should reject this — a required edge can't be backed by a
  * nullable column.
  */
@@ -356,7 +356,7 @@ private class RequiredEdgeNullableFieldChild : EntSchema("required_edge_nullable
 }
 
 /**
- * Nullable relationship backed by a non-null field. Per RFC,
+ * Nullable relationship backed by a non-null field.
  * codegen should reject this — a nullable edge can't be backed by a
  * NOT NULL column.
  */
@@ -435,8 +435,8 @@ private class Follow : EntSchema("follows") {
     val followed = belongsTo<FollowUser>("followed")
 }
 
-// Cross-schema pair-swap with throughLink is ACCEPTED (RFC 10 symmetric
-// link tables) when the junction carries the unique pair index plus a
+// Cross-schema pair-swap with throughLink is accepted when the
+// junction carries the unique pair index plus a
 // leading-column index for each side's source FK.
 private class LinkUser : EntSchema("link_users") {
     override fun id() = EntId.long()
@@ -834,7 +834,7 @@ class EdgeCodegenTest {
             "Should have ownerId: Long? property\n$output"
         }
         assert(!output.contains("var owner: Owner?")) {
-            "Must not have owner: Owner? entity setter (removed in to-one FK RFC)\n$output"
+            "Must not have owner: Owner? entity setter (removed in to-one FK behavior)\n$output"
         }
         assert(!output.contains("ownerId = value?.id")) {
             "Must not synthesize an owner-setter body that writes ownerId\n$output"
@@ -862,7 +862,7 @@ class EdgeCodegenTest {
             "Should have ownerId: Long? property\n$output"
         }
         assert(!output.contains("var owner: Owner?")) {
-            "Must not have owner: Owner? entity setter (removed in to-one FK RFC)\n$output"
+            "Must not have owner: Owner? entity setter (removed in to-one FK behavior)\n$output"
         }
     }
 
@@ -904,7 +904,7 @@ class EdgeCodegenTest {
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Per RFC "Resolved FK Getter Behavior": on create builders for
+        // On create builders for
         // required relationships, reading the FK before assignment must
         // throw because there is no valid FK value yet. The non-null
         // public property reads from the private staging field.
@@ -924,7 +924,7 @@ class EdgeCodegenTest {
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Per RFC: on create builders for nullable relationships, reading
+        // On create builders for nullable relationships, reading
         // the FK before assignment returns `null`. No custom getter is
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"owner is required\")")) {
@@ -934,7 +934,7 @@ class EdgeCodegenTest {
 
     @Test
     fun `every generated FK property carries the baseline relationship-write KDoc`() {
-        // RFC: "Generated resolved FK properties must include KDoc
+        //  "Generated resolved FK properties must include KDoc
         // explaining the relationship-write semantics. FK properties
         // write only target ids, do not load the target row, and do not
         // evaluate target LOAD privacy."
@@ -1042,7 +1042,7 @@ class EdgeCodegenTest {
             .replace("\\s+".toRegex(), " ")
 
         // The `.positive()` check (`if (prop <= 0) throw ...`) should
-        // appear in the save body keyed off the FK property name. Phase 12
+        // appear in the save body keyed off the FK property name.2
         // routes the failure through ValidationException so saveOrError
         // returns EntError.ValidationFailed; the backing column name lands
         // in the ValidationDecision.Invalid `field` slot.
@@ -1165,7 +1165,7 @@ class EdgeCodegenTest {
             columnMetadataFor(child, names)
         }
         // Symmetric to the required+nullable case: a nullable edge
-        // must have a nullable backing column (per RFC).
+        // must have a nullable backing column (by contract).
         assertContains(err.message!!, "is nullable but")
         assertContains(err.message!!, "is non-null")
     }
@@ -1177,7 +1177,7 @@ class EdgeCodegenTest {
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Per RFC: beforeCreate hooks receive a restricted CreateHookContext
+        // beforeCreate hooks receive a restricted CreateHookContext
         // (mutation view + client), not the concrete Create builder. The
         // save body constructs the context and passes it to each hook so
         // the hook can't reach `save()`, `driver`, hook lists, or the
@@ -1185,10 +1185,10 @@ class EdgeCodegenTest {
         assert(output.contains("beforeCreateHooks: List<(PetCreateHookContext) -> Unit>")) {
             "beforeCreateHooks list should be typed against PetCreateHookContext\n$output"
         }
-        // RFC 08: the CreateHookContext now wraps the private
+        // create-hook adapter: the CreateHookContext now wraps the private
         // `_createMutationView` adapter, not the concrete builder
         // (`this`). This matches the runtime-enforced contract
-        // the update path has had since RFC #4 / #5 — a hook
+        // the update path has had since transaction locking and link-table M2M helpers — a hook
         // attempting `ctx.mutation as PetCreate` throws.
         assert(output.contains("val createCtx = PetCreateHookContext(client, _createMutationView)")) {
             "save() should construct a CreateHookContext wrapping _createMutationView\n$output"
@@ -1258,7 +1258,7 @@ class EdgeCodegenTest {
             .generate("TeamMember", byName["TeamMember"]!!, names).toString()
 
         // TeamMember has `val teamId = int("team_id"); val team =
-        // belongsTo<Team>("team").field(teamId)`. Per the RFC, a
+        // belongsTo<Team>("team").field(teamId)`. A
         // required field-backed FK must get the same setter/getter
         // behavior as an implicit FK: non-null public type, private
         // nullable staging, throw on unassigned read, requireNotNull
@@ -1327,7 +1327,7 @@ class EdgeCodegenTest {
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
-        // Per RFC "Public Types": required to-one edges must expose
+        // Required to-one edges must expose
         // non-null FK types on the generated builder. The internal
         // staging field stays nullable.
         assert(output.contains("override var ownerId: Long\n")) {
@@ -1359,7 +1359,7 @@ class EdgeCodegenTest {
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Per RFC: required FK setters defensively reject Java/platform
+        // Required FK setters defensively reject Java/platform
         // null calls at setter entry. The post-hook backstop only
         // catches paths that bypass the setter entirely.
         assert(output.contains("@Suppress(\"SENSELESS_COMPARISON\")")) {
@@ -1392,7 +1392,7 @@ class EdgeCodegenTest {
             .replace("\\s+".toRegex(), " ")
 
         // Reading an untouched edge FK on the update builder must throw
-        // (per RFC) — a default-null getter would conflate Unset and
+        // (by contract) — a default-null getter would conflate Unset and
         // explicit Set(null) for nullable FKs. Hooks should read
         // pending state from `ctx.patch.ownerId` instead.
         assert(
@@ -1604,7 +1604,7 @@ class EdgeCodegenTest {
 
     @Test
     fun `M2M target schema does not synthesize reverse edge metadata`() {
-        // RFC #3 (post-revert): no auto-synthesized reverse-edge entries
+        // M2M schema modeling (post-revert): no auto-synthesized reverse-edge entries
         // on the target's SCHEMA.edges. Bidirectional traversal needs an
         // explicit declaration on the opposite schema.
         val (_, names, byName) = createAllSchemas()
@@ -1863,7 +1863,7 @@ class EdgeCodegenTest {
 
     @Test
     fun `cross-schema pair-swapped throughLink is accepted with indexes`() {
-        // RFC 10: pair-swapped throughLink declarations are the two endpoints
+        // Pair-swapped throughLink declarations are the two endpoints
         // of one symmetric link table. With the unique pair index + a
         // leading-column index per side, this finalizes and generates.
         EntGenerator("com.example.ent").generate(listOf(
@@ -1982,7 +1982,7 @@ class EdgeCodegenTest {
 
 
 
-    // ---------- Phase 5: throughLink junction-shape rules ----------
+    // ---------- throughLink junction-shape rules ----------
 
     @Test
     fun `helper-eligible throughLink junction passes validation`() {
@@ -2059,7 +2059,7 @@ class EdgeCodegenTest {
 
     @Test
     fun `throughLink junction accepts a reverse-order unique pair index`() {
-        // RFC 10: the unique pair index matches unordered, so (tag_id, post_id)
+        // The unique pair index matches unordered, so (tag_id, post_id)
         // is accepted for a lone declaration just like (post_id, tag_id).
         EntGenerator("com.example.ent").generate(listOf(
             SchemaInput("ReverseOrderIdxLinkPost", ReverseOrderIdxLinkPost()),

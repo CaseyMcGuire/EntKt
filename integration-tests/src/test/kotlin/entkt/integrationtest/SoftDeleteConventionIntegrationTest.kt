@@ -116,7 +116,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `restore through the unfiltered client is the recommended pattern`() {
-        // The RFC recommends restore through the unfiltered client.
+        // The contract recommends restore through the unfiltered client.
         // Verify it works end-to-end: soft-delete → unfiltered restore →
         // row reappears through the filtered client.
         val driver = resetAndDriver()
@@ -146,7 +146,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         // driver.byId(...) directly today, NOT through the
         // read-interceptor chain. So the filtered client can in
         // fact restore a soft-deleted row. This test pins the
-        // current behavior; the RFC text recommends the unfiltered
+        // current behavior; the contract text recommends the unfiltered
         // client anyway because if the framework later routes the
         // owner-row load through interceptors (a reasonable
         // consistency fix), the filtered-restore path would

@@ -26,8 +26,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for the repo-level byId family (Phase 5a of the
- * Result Variants RFC). Pins the contract for each variant:
+ * End-to-end coverage for the repo-level byId family (of the
+ * result variants). Pins the contract for each variant:
  *
  *  - `byIdOrNull(id): T?`         absence → null; denial throws raw
  *                                 PrivacyDeniedException

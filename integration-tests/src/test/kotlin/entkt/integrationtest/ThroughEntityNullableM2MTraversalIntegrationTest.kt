@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * End-to-end Postgres coverage for RFC 09's null-skip semantics on
+ * End-to-end Postgres coverage for nullable M2M traversal's null-skip semantics on
  * `throughEntity` M2M traversal. Junction is [Membership], which has
  * nullable `group_id` / `user_id` columns. Every form of
  * `Group.users` / `User.groups` traversal must skip rows where
@@ -21,14 +21,14 @@ import kotlin.test.assertTrue
  * Three distinct SQL lowering shapes — each verified independently
  * because a regression in one can't be hidden by another:
  *
- *  - **Query-chain** (this file's Phase 1 block): `GroupQuery.queryUsers()`
+ *  - **Query-chain** (this file's block): `GroupQuery.queryUsers()`
  *    and `UserQuery.queryGroups()`. Lowers to a chained query
  *    against the target entity with a junction-bridging predicate.
- *  - **Predicate** (Phase 2): `Group.users.exists()` /
+ *  - **Predicate**: `Group.users.exists()` /
  *    `Group.users.has { where(...) }` and the inverse. Lowers to
  *    `Predicate.HasEdge` / `Predicate.HasEdgeWith` EXISTS
  *    subqueries.
- *  - **Eager loading** (Phase 3): `withUsers { ... }` /
+ *  - **Eager loading**: `withUsers { ... }` /
  *    `withGroups { ... }`. Two-step driver call (junction fetch
  *    then target fetch).
  *
@@ -49,7 +49,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 1 — Query-chain traversal: queryUsers / queryGroups
+    // Query-chain traversal: queryUsers / queryGroups
     // ──────────────────────────────────────────────────────────────
 
     @Test
@@ -144,7 +144,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 2 — Predicate traversal: EdgeRef.exists() / .has { }
+    // Predicate traversal: EdgeRef.exists() / .has { }
     // ──────────────────────────────────────────────────────────────
     //
     // Predicate lowering walks the junction with an EXISTS subquery:
@@ -300,7 +300,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 3 — Eager loading: withUsers / withGroups
+    // Eager loading: withUsers / withGroups
     // ──────────────────────────────────────────────────────────────
     //
     // Eager loading uses two driver calls:

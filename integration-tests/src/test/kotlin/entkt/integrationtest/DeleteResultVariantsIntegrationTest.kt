@@ -24,7 +24,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for the delete family added in Phase 6a:
+ * End-to-end coverage for the delete family.
  *
  *   deleteOrThrow(entity): Unit         throws on real failures;
  *                                       silent on missing-row

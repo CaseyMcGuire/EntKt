@@ -8,7 +8,7 @@ class Tag : EntSchema("tags") {
 
     val name = string("name").unique()
 
-    // RFC 10: the symmetric reverse of `Post.tags` — same `PostTag` junction,
+    // symmetric link-table writes: the symmetric reverse of `Post.tags` — same `PostTag` junction,
     // FK pair swapped. Both orientations are writable by default, so this side
     // gets the full add/remove/set surface and idempotent junction inserts.
     val posts = manyToMany<Post>("posts")

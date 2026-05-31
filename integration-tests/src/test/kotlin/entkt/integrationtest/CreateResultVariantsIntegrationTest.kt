@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
 
 /**
  * End-to-end coverage for create-side `saveOrError()` / `saveOrThrow()`
- * (Result Variants RFC, Phase 3). Exercises the full failure surface
+ * (result variants). Exercises the full failure surface
  * — validation, privacy, unique constraint, FK constraint — against
  * `PostgresDriver`. Constraint-classification (SQLSTATE 23xxx) is also
  * covered driver-side in `SqlstateConstraintMappingPostgresIntegrationTest`;

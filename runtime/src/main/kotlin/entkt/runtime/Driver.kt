@@ -39,7 +39,7 @@ interface Driver {
      * Whether [insertIgnore] is supported. Drivers that can express a
      * targeted upsert-skip (e.g. Postgres `ON CONFLICT ... DO NOTHING`)
      * override this to `true`. Generated symmetric link-table writes
-     * (RFC 10) preflight this flag before issuing junction inserts.
+     * preflight this flag before issuing junction inserts.
      */
     val supportsInsertIgnore: Boolean
         get() = false
@@ -55,7 +55,7 @@ interface Driver {
      * The conflict target is *scoped* to [conflictColumns] — a violation
      * of any *other* constraint still throws, so this never silently
      * swallows unrelated integrity errors. Used for junction-row inserts
-     * in symmetric link-table M2M writes (RFC 10), where re-adding an
+     * in symmetric link-table M2M writes, where re-adding an
      * existing pair must be a no-op rather than an error.
      *
      * A driver that does not support this leaves [supportsInsertIgnore]
@@ -191,13 +191,13 @@ interface Driver {
      * True when this [Driver] is the transaction-scoped driver passed
      * inside [withTransaction]. False on a normal client-level driver.
      * Generated saves use this at save-start to enforce a configured
-     * [entkt.runtime.TransactionRequirement] (RFC #4) without having
+     * [entkt.runtime.TransactionRequirement] (transaction locking) without having
      * to thread a separate flag through every layer.
      */
     val inTransaction: Boolean
         get() = false
 
-    // ---------- Owner-row locking capabilities (RFC #4) ----------
+    // ---------- Owner-row locking capabilities (transaction locking) ----------
     //
     // Generated saves use these capabilities for two distinct purposes
     // that ride on different lock semantics:
@@ -351,7 +351,7 @@ interface Driver {
      * transaction-scoped advisory-lock primitive (e.g. Postgres
      * `pg_advisory_xact_lock`) override this to `true`. Generated saves
      * preflight this flag when `relationshipLocking = Canonical` is
-     * selected for a symmetric link-table write (RFC 10).
+     * selected for a symmetric link-table write.
      */
     val supportsRelationshipSerialization: Boolean
         get() = false
@@ -423,7 +423,7 @@ interface Driver {
      *  - the framework's own exceptions (TransactionRequiredException,
      *    UnsupportedDriverCapabilityException, EntException subclasses)
      *    are never offered to the classifier — they always propagate
-     *    as themselves, per the RFC Status carve-out;
+     *    as themselves, by contract Status carve-out;
      *  - PSQLException, IllegalStateException from driver-side
      *    validators, etc. get one shot at being classified;
      *  - if the classifier returns `null` for an unrecognized
@@ -485,7 +485,7 @@ interface Driver {
  * following rules:
  *
  *  1. [TransactionRequiredException] / [UnsupportedDriverCapabilityException]
- *     re-throw — RFC-defined configuration errors, not surfaced as
+ *     re-throw — framework-defined configuration errors, not surfaced as
  *     `EntError`.
  *  2. The driver's own `classifyException` runs next; whatever it
  *     returns wins (typically `ConstraintViolation` for SQLSTATE

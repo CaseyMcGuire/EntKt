@@ -20,7 +20,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
- * End-to-end coverage for RFC 08's create-hook adapter pattern
+ * End-to-end coverage for create-hook adapter's create-hook adapter pattern
  * (`docs/implemented-features/edge-mutation/08-create-hook-mutation-view-adapter.md`).
  *
  * Pins both the runtime narrowing and the behavioral

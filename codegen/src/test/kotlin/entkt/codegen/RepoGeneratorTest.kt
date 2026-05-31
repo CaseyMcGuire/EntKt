@@ -68,7 +68,7 @@ class RepoGeneratorTest {
 
         // User has UUID id; every byId variant's param type matches.
         // The repo-level `byId(id)` is removed per the Result Variants
-        // RFC — callers use the explicit *OrNull / *OrThrow /
+        // contract — callers use the explicit *OrNull / *OrThrow /
         // visibleOr* / *OrError names instead.
         assert(!output.contains("public fun byId(id:")) {
             "Repo-level byId(id) should be removed in favor of the *Or* family\n$output"
@@ -169,7 +169,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // Per the Result Variants RFC the legacy Boolean-returning
+        // Per the result variants the legacy Boolean-returning
         // public delete(entity) and deleteById(id) are removed in
         // favor of the structured *OrThrow / *OrError variants.
         assert(!output.contains("public fun delete(entity:")) {
@@ -346,7 +346,7 @@ class RepoGeneratorTest {
 
         // The legacy throwing `createMany(*blocks): List<Car>` is
         // removed in favor of the structured-result variant per the
-        // Result Variants RFC. createManyOrError is transaction-
+        // result variants. createManyOrError is transaction-
         // required (preflight throws TransactionRequiredException
         // outside a tx, regardless of the client's TransactionRequirement).
         assert(!output.contains("public fun createMany(")) {
@@ -509,14 +509,13 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // Per the read-path-interceptors + soft-delete RFCs:
-        // deleteMany candidate selection now fires interceptors
+        // deleteMany candidate selection fires interceptors
         // with operation = DELETE_CANDIDATES (entOperation = DELETE)
         // so tenant-scoping / soft-delete predicate-shaping
         // interceptors apply uniformly to bulk deletes. The driver
         // call uses the post-interceptor spec.predicates rather
         // than raw `predicates.toList()`.
-        // After the P2 fix, the generated query's `predicates` backing
+        // The generated query's `predicates` backing
         // field is `private`, so deleteMany seeds it via the public
         // `where()` DSL inside `apply { ... }` rather than writing the
         // backing list directly. Functionally equivalent (both append
@@ -611,7 +610,7 @@ class RepoGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 5: edgeChanges parameter on evaluateUpdate signatures ----------
+    // ---------- link-table M2M helpers edgeChanges parameter on evaluateUpdate signatures ----------
 
     @Test
     fun `evaluateUpdatePrivacy takes edgeChanges of the per-entity view type`() {

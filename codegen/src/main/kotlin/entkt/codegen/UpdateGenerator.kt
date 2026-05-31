@@ -78,11 +78,11 @@ internal class UpdateGenerator(
         val beforeUpdateHookType = hookListType(updateHookCtxClass)
         val afterUpdateHookType = hookListType(entityClass)
 
-        // Helper-eligible link-table M2M edges (RFC #5). Each gets a
+        // Helper-eligible link-table M2M edges. Each gets a
         // nested mutator class on the Update builder and a public
         // property bound to it. The mutator is NOT propagated to the
         // hook-facing `${schemaName}UpdateMutationView` — hooks see
-        // pending edge ops through a read-only sidecar added in Phase 3.
+        // pending edge ops through a read-only sidecar.
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
         // The Update builder implements only the shared Mutation
@@ -144,7 +144,7 @@ internal class UpdateGenerator(
             // inherited from the client's `defaultRelationshipLocking`).
             // Read by save() to decide whether to take the canonical
             // cross-orientation relationship lock for symmetric link-table
-            // M2M writes (RFC 10).
+            // M2M writes.
             .addProperty(
                 PropertySpec.builder("relationshipLocking", RELATIONSHIP_LOCKING)
                     .addModifiers(KModifier.PRIVATE)
@@ -190,7 +190,7 @@ internal class UpdateGenerator(
                     .initializer("mutableSetOf()")
                     .build()
             )
-            // RFC #5 Phase 8 (P3): captured pendingEdges snapshot. The
+            // Captured pendingEdges snapshot. The
             // adapter's `pendingEdges` getter routes through this field
             // so that ctx.mutation.pendingEdges returns the *same*
             // snapshot ctx.pendingEdges holds — not a freshly-rebuilt
@@ -231,7 +231,7 @@ internal class UpdateGenerator(
                     pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
                 ),
             )
-            // RFC #5 Phase 8 (P2-residual): private `_beforeSaveView`
+            // Private `_beforeSaveView`
             // adapter that implements ONLY the shared `${Schema}Mutation`
             // interface — no `pendingEdges`, no `unsetX()`, none of the
             // update-specific patch operations. Passed to beforeSave
@@ -248,7 +248,7 @@ internal class UpdateGenerator(
                     edgeFks = edgeFks,
                 ),
             )
-            // RFC #5 Phase 2: link-table M2M mutator properties. Public
+            // Link-table M2M mutator properties. Public
             // DSL surface — callers reach add/remove/set through
             // `update(id) { tags.add(tagId) }`. Constructor is internal
             // so only this builder instantiates the mutator.
@@ -261,7 +261,7 @@ internal class UpdateGenerator(
             .addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
             .addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
             .addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            // RFC #5 Phase 4: M2M preflight helpers. Only emitted when
+            // M2M preflight helpers. Only emitted when
             // the schema has at least one helper-eligible link-table
             // M2M edge — schemas without M2M skip the helpers and the
             // save-pipeline preflight block entirely.
@@ -276,7 +276,7 @@ internal class UpdateGenerator(
             .addFunction(buildSaveOrNullFunction(schemaName))
             .addFunction(buildSaveOrThrowFunction(schemaName))
             .addFunction(buildSaveOrErrorFunction(schemaName))
-            // RFC #5 Phase 2: nested mutator class declarations. Nested
+            // Nested mutator class declarations. Nested
             // inside the Update builder so two entities with the same
             // edge name don't collide on the mutator class symbol.
             .also { builder ->
@@ -298,7 +298,7 @@ internal class UpdateGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
-            // Reading an untouched update field must throw (per RFC). The
+            // Reading an untouched update field must throw (by contract). The
             // builder has no current-state value before save(); for nullable
             // fields, a default-null getter would also collapse Unset and
             // explicit Set(null) into the same observable value. Hooks that
@@ -336,9 +336,9 @@ internal class UpdateGenerator(
     private fun buildEdgeFkProperty(fk: EdgeFk): PropertySpec {
         if (fk.required) {
             // Required FKs:
-            //   - public property is non-null typed (per RFC "Public Types")
+            //   - public property is non-null typed (by contract "Public Types")
             //   - private nullable staging field holds the value until assigned
-            //   - getter throws on untouched read (per RFC); reading
+            //   - getter throws on untouched read (by contract); reading
             //     pending update state goes through `ctx.patch.authorId`
             //   - setter rejects null at entry so Java/platform callers
             //     can't put the builder into a dirty+null state
@@ -465,7 +465,7 @@ internal class UpdateGenerator(
         for (fk in edgeFks) {
             adapter.addFunction(buildAdapterUnsetFunction(updateClassName, fk.propertyName))
         }
-        // RFC #5 Phase 3 + Phase 8 (P3): read-only `pendingEdges`
+        // Read-only `pendingEdges`
         // forwarder routes through the captured snapshot on the
         // enclosing Update class, so ctx.mutation.pendingEdges returns
         // the SAME object ctx.pendingEdges holds. Rebuilding here
@@ -501,7 +501,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 8 (P2-residual): build the private `_beforeSaveView`
+     * Build the private `_beforeSaveView`
      * adapter. Implements ONLY `${Schema}Mutation` — the shared
      * write surface — without the `pendingEdges` read, the
      * `unsetX()` patch operations, or any other update-specific
@@ -581,7 +581,7 @@ internal class UpdateGenerator(
      * representable. Hooks that want to inspect the underlying state
      * can read `ctx.mutation.foo` directly. The required-null check
      * fires once after all hooks have run, before the canonical patch
-     * is built — this matches the RFC's "field-shape checks after
+     * is built — this matches the "field-shape checks after
      * hooks" ordering and lets a hook repair a null assignment via
      * `mutation.unsetFoo()` or by reassigning `mutation.foo`.
      */
@@ -689,7 +689,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 2: build the public `val ${edge}: ${Edge}EdgeMutator`
+     * Build the public `val ${edge}: ${Edge}EdgeMutator`
      * property on the Update builder. The mutator's constructor is
      * `internal`, so only this builder instantiates it; the public DSL
      * surface is `update(id) { tags.add(tagId) }`.
@@ -705,7 +705,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 2: build the nested `${Edge}EdgeMutator` class that
+     * Build the nested `${Edge}EdgeMutator` class that
      * carries the per-edge op log and exposes the public id-only
      * `add(id)` / `remove(id)` / `set(ids)` mutator surface.
      *
@@ -727,8 +727,7 @@ internal class UpdateGenerator(
      * The constructor is `internal` so callers cannot construct a
      * standalone mutator outside the builder.
      *
-     * Two mixed-mode rules fire at the call site (per RFC #5 spec
-     * §Generated Builder Shape):
+     * Two mixed-mode rules fire at the call site:
      *
      *  1. **Replacement vs delta** — `set(...)` and `add(...)` /
      *     `remove(...)` are mutually exclusive within one mutation for
@@ -761,7 +760,7 @@ internal class UpdateGenerator(
 
         return TypeSpec.classBuilder(edge.mutatorClassSimpleName)
             .addKdoc(
-                "Link-table M2M mutator for `%L` (RFC #5). Public DSL surface\n" +
+                "Link-table M2M mutator for `%L`. Public DSL surface\n" +
                     "is `add(id)` / `remove(id)` / `set(ids)`. Two mixed-mode rules\n" +
                     "fire fail-fast at the call site: replacement-vs-delta (`set` and\n" +
                     "`add`/`remove` are mutually exclusive) and same-id mixed-direction\n" +
@@ -857,7 +856,7 @@ internal class UpdateGenerator(
                     .build(),
             )
             .addFunction(
-                // RFC 10: true when this edge has a pending op that can
+                // True when this edge has a pending op that can
                 // INSERT a junction row — any `add(...)` or `set(...)`.
                 // Remove-only mutations cannot insert, so they stay false
                 // and skip the `supportsInsertIgnore` preflight. This is a
@@ -911,7 +910,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 4: build `_hasPendingLinkTableM2MOps()`. ORs each
+     * Build `_hasPendingLinkTableM2MOps()`. ORs each
      * helper-eligible mutator's `hasOps()` flag — the gate for the
      * M2M preflight in save(). Generated only when the schema has at
      * least one helper-eligible link-table M2M edge.
@@ -929,7 +928,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC 10: build `_hasPendingLinkTableM2MInserts()`. ORs each
+     * Build `_hasPendingLinkTableM2MInserts()`. ORs each
      * helper-eligible mutator's `hasInserts()` flag — the gate for the
      * `supportsInsertIgnore` capability preflight in save(). True when any
      * edge has a pending `add` or `set`; remove-only saves stay false and
@@ -950,7 +949,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC 10: emit the canonical relationship-lock acquisition into save().
+     * Emit the canonical relationship-lock acquisition into save().
      * For each distinct link-table relationship (junction + unordered FK pair)
      * touched by a helper-eligible edge, emit a guarded
      * `driver.serializeRelationship(...)` call that fires only when
@@ -1003,7 +1002,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 4: build `_checkLinkTableM2MMixedMode()`, the
+     * Build `_checkLinkTableM2MMixedMode()`, the
      * defense-in-depth check that re-runs the per-mutator-call mixed-mode
      * rule against the captured op-log state at save preflight. The per-call
      * check on the mutator methods is the fail-fast surface; this is the
@@ -1034,7 +1033,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 3: build `_buildPendingEdgeOps()`, a private method
+     * Build `_buildPendingEdgeOps()`, a private method
      * that snapshots each per-edge mutator's op log into the per-entity
      * `${Schema}PendingEdgeOps` aggregator. The result is the read-only
      * view that hooks see through `ctx.pendingEdges` and
@@ -1077,7 +1076,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * RFC #5 Phase 5: build `_buildEdgeChanges()`, the private method
+     * Build `_buildEdgeChanges()`, the private method
      * that reads current junction rows for each helper-eligible edge
      * with pending ops and computes the per-entity `${Schema}EdgeChangesView`
      * sidecar surfaced through update privacy and validation contexts.
@@ -1165,7 +1164,7 @@ internal class UpdateGenerator(
      *
      * **Internal current-row load.** Otherwise `save()` loads the
      * current owner row before any hook runs. The path branches on
-     * the per-save `consistency` parameter (RFC #4):
+     * the per-save `consistency` parameter (transaction locking):
      *
      * - `UpdateConsistency.ReadCurrent` (the default) reads the row
      *   via `driver.byId(id)` — no lock; another transaction may
@@ -1215,7 +1214,7 @@ internal class UpdateGenerator(
         // All FKs including immutable. Used by candidate construction so
         // immutable FK values come from `entity.before` unchanged.
         allEdgeFks: List<EdgeFk>,
-        // RFC #5 Phase 4: helper-eligible link-table M2M edges. When
+        // Helper-eligible link-table M2M edges. When
         // non-empty, save() emits an M2M preflight block (tx +
         // capability + defense-in-depth mixed-mode) before the
         // owner-row read.
@@ -1234,18 +1233,18 @@ internal class UpdateGenerator(
         // ---- Syntactically empty patch: NoChanges before owner-row load. ----
         // Reporting NoChanges before the load avoids existence-leaking
         // `update(missingId) {}` calls. saveOrNull throws here too —
-        // NoChanges is not "expected absence" per the result-variants RFC.
+        // NoChanges is not "expected absence" per the result variants.
         // This also fires before the transaction-requirement preflight
-        // below, matching the RFC #4 pipeline ("syntactically empty
+        // below, matching the pipeline ("syntactically empty
         // update classification — report NoChanges before any other
         // observable work, including transaction requirement checks").
         //
-        // RFC #5 Phase 7: an M2M-only update (caller invoked
+        // An M2M-only update (caller invoked
         // `tags.add(...)` etc. but assigned no scalar/FK fields) has
         // `dirtyFields.isEmpty()` since `dirtyFields` tracks scalar
         // assignments only. Gate this top-of-save NoChanges throw on
         // `!_hasPendingLinkTableM2MOps()` so M2M-only updates proceed
-        // to the preflights below. The Phase 6 hook-cleared-empty
+        // to the preflights below. The hook-cleared-empty
         // branch downstream uses the same gate.
         val topEmptyCondition = if (helperEligibleEdges.isNotEmpty()) {
             "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps())"
@@ -1262,13 +1261,13 @@ internal class UpdateGenerator(
         )
         builder.endControlFlow()
 
-        // ---- Transaction-requirement preflight (RFC #4). Throws
+        // ---- Transaction-requirement preflight. Throws
         // TransactionRequiredException before the owner-row load,
         // hooks, defaults, validation, driver writes when the
         // configured TransactionRequirement isn't satisfied. ----
         builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName update")
 
-        // ---- Pessimistic preflight (RFC #4): require a transaction
+        // ---- Pessimistic preflight: require a transaction
         // and a driver with true row-lock support. Both rejections
         // fire before the owner-row load, hooks, privacy, validation,
         // or driver writes. ----
@@ -1292,7 +1291,7 @@ internal class UpdateGenerator(
         builder.endControlFlow()
         builder.endControlFlow()
 
-        // ---- M2M preflight (RFC #5 Phase 4). When the schema has any
+        // ---- M2M preflight. When the schema has any
         // helper-eligible link-table M2M edge AND the caller has staged
         // ops on at least one of them, require a transaction-scoped
         // client and a driver that supports either true row-lock or
@@ -1318,7 +1317,7 @@ internal class UpdateGenerator(
                     "supportsReadRowForUpdate or supportsOwnerEdgeSerialization",
             )
             builder.endControlFlow()
-            // RFC 10: junction inserts go through driver.insertIgnore for
+            // Junction inserts go through driver.insertIgnore for
             // idempotency, so a save that stages any add/set needs the
             // insertIgnore capability. Remove-only saves don't insert and are
             // exempt — hence the gate on _hasPendingLinkTableM2MInserts()
@@ -1330,7 +1329,7 @@ internal class UpdateGenerator(
                 "$schemaName link-table M2M add/set requires a driver with supportsInsertIgnore = true",
             )
             builder.endControlFlow()
-            // RFC 10: opting into Canonical relationship locking needs a driver
+            // Opting into Canonical relationship locking needs a driver
             // that can take the cross-orientation relationship lock. Checked
             // here (before any read/write) so the rejection is never racy.
             builder.beginControlFlow(
@@ -1348,7 +1347,7 @@ internal class UpdateGenerator(
             builder.endControlFlow()
         }
 
-        // ---- RFC 10: canonical relationship lock acquisition. When
+        // ---- Canonical relationship lock acquisition. When
         // `relationshipLocking == Canonical`, take a cross-orientation lock on
         // every distinct link-table relationship the pending ops touch — keyed
         // by the junction + sorted FK pair, so both orientations contend on the
@@ -1366,7 +1365,7 @@ internal class UpdateGenerator(
         emitCanonicalRelationshipLocks(builder, helperEligibleEdges)
 
         // ---- Internal current-row load. The primitive choice is per
-        // driver, not per consistency mode (RFC #4 Many-To-Many Pipeline):
+        // driver, not per consistency mode:
         //
         //   - Pessimistic                                 → readRowForUpdate (true row lock)
         //   - ReadCurrent + M2M pending + RRFU            → readRowForUpdate
@@ -1426,17 +1425,17 @@ internal class UpdateGenerator(
         }
         builder.addStatement("entity = %T.fromRow(row0)", entityClass)
 
-        // ---- Pending edge ops snapshot (RFC #5 Phase 3). Captured once
+        // ---- Pending edge ops snapshot. Captured once
         // after the owner-row read and before any hook fires. The
         // underlying op log is read-only to hooks (the mutator surface
         // is not on the hook-facing view), so a single snapshot is
         // stable across the whole hook block. Surfaced to update hooks
         // as `ctx.pendingEdges` and also reachable through
         // `ctx.mutation.pendingEdges` — both routed through the same
-        // captured value (Phase 8 / P3) so the two views are object-
+        // captured value so the two views are object-
         // identity equal, not just structurally equal. ----
         builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
-        // RFC #5 Phase 8 (P3-residual): wrap the post-assignment region
+        // Wrap the post-assignment region
         // in try/finally so every save exit path (return null on
         // missing rows, throw EntNoChangesException, return
         // updatedEntity, or any exception out of hooks/privacy/
@@ -1481,7 +1480,7 @@ internal class UpdateGenerator(
         builder.endControlFlow()
 
         // ---- Required-null check (after hooks, before canonical patch). ----
-        // Per the RFC's pipeline ordering, field-shape and required-edge
+        // Field-shape and required-edge
         // checks run after beforeUpdate hooks. A hook can repair an
         // explicit `name = null` assignment via `mutation.unsetName()`
         // (removes from dirtyFields) or by reassigning a value;
@@ -1491,7 +1490,7 @@ internal class UpdateGenerator(
         // ---- Build the canonical requested patch after all before hooks. ----
         builder.addStatement("val requestedPatch = _buildRequestedPatch()")
 
-        // ---- RFC #5 Phase 5: read current junction state and compute
+        // ---- Read current junction state and compute
         // per-edge EdgeChanges sidecar. The helper short-circuits to an
         // empty aggregator when no mutator has pending ops, so the
         // junction database round-trips only happen when there's work.
@@ -1500,7 +1499,7 @@ internal class UpdateGenerator(
         builder.addStatement("val edgeChanges = _buildEdgeChanges(pendingEdges)")
 
         // ---- Hook-cleared empty path (must run BEFORE update defaults). ----
-        // Per the RFC, "hook-cleared empty updates skip update defaults".
+        // Hook-cleared empty updates skip update defaults.
         // dirtyFields.isEmpty() here ⇔ requested patch is all Unset.
         // Build an unchanged effective patch (= requested, all Unset),
         // run UPDATE privacy on the unchanged after-state candidate
@@ -1508,7 +1507,7 @@ internal class UpdateGenerator(
         // then throw NoChanges. Validation, driver write, after-hooks,
         // and returned LOAD privacy are skipped.
         //
-        // RFC #5 Phase 6: an M2M-only update (caller cleared all dirty
+        // An M2M-only update (caller cleared all dirty
         // scalar fields via hooks but staged link-table M2M ops) is
         // NOT a no-op — it still emits junction writes. Gate this
         // empty-scalar NoChanges branch on `!_hasPendingLinkTableM2MOps()`
@@ -1614,12 +1613,12 @@ internal class UpdateGenerator(
         )
 
         // ---- Driver write + after hooks + return load privacy. ----
-        // RFC #5 Phase 6: for M2M-capable schemas, the owner UPDATE is
+        // For M2M-capable schemas, the owner UPDATE is
         // conditional. An edge-only update (caller staged M2M ops,
         // hooks cleared every scalar field, no update defaults apply)
         // produces an empty `values` map — issuing a no-op UPDATE
-        // would be wrong (the RFC explicitly says "generated code must
-        // not issue an empty owner-row update"). When values is empty
+        // would be wrong: generated code must not issue an empty
+        // owner-row update. When values is empty
         // the loaded `before` row IS the after state, since no scalar
         // / FK changes were committed.
         if (helperEligibleEdges.isNotEmpty()) {
@@ -1643,7 +1642,7 @@ internal class UpdateGenerator(
             builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)
         }
 
-        // ---- RFC #5 Phase 6: junction writes. After the owner-row
+        // ---- Junction writes. After the owner-row
         // update (or skipped, for edge-only saves), apply the per-edge
         // computed `added` / `removed` deltas from `edgeChanges`.
         // Inserts go one row at a time (junction id minted per-row);
@@ -1659,7 +1658,7 @@ internal class UpdateGenerator(
                 // assign the id (no "id" key in the map).
                 builder.beginControlFlow("if (edgeChanges.%L.added.isNotEmpty())", prop)
                 builder.beginControlFlow("for (_targetId in edgeChanges.%L.added)", prop)
-                // RFC 10: use insertIgnore so re-adding an existing pair from
+                // Use insertIgnore so re-adding an existing pair from
                 // either orientation is an idempotent no-op rather than a
                 // unique-constraint error. The conflict target is the FK pair.
                 when (edge.junctionIdStrategy) {
@@ -1858,7 +1857,7 @@ internal class UpdateGenerator(
 
     /**
      * Explicit `OrNull` alias for the canonical [save] entry point. Per
-     * the result-variants RFC, `saveOrNull()` returns `null` for
+     * the result variants, `saveOrNull()` returns `null` for
      * expected absence (missing owner row) and throws for everything
      * else — including [EntNoChangesException] for syntactically empty
      * updates, which is classified by request shape rather than
@@ -1876,10 +1875,9 @@ internal class UpdateGenerator(
      * Throwing variant: delegates to [saveOrError] and unwraps via
      * [EntResult.getOrThrow] so callers get a structured
      * [EntException] subclass for every recognized failure surface,
-     * including driver-classified constraint failures from Phase 2.
+     * including driver-classified constraint failures.
      *
-     * Implemented as a wrapper per the RFC's "throwing APIs should be
-     * implemented as wrappers over xOrError()" guideline — keeps the
+     * Implemented as a wrapper over `saveOrError()` to keep the
      * NotFound, NoChanges, privacy, validation, and driver-classifier
      * mapping in one place rather than duplicating between the trio's
      * throwing and result variants.
@@ -1906,7 +1904,7 @@ internal class UpdateGenerator(
      *
      * The trailing `catch (e: Exception)` arm routes uncaught
      * exceptions through [classifyDriverError] so the driver-level
-     * classifier (Phase 2) emits `Err(ConstraintViolation)` for
+     * classifier emits `Err(ConstraintViolation)` for
      * SQLSTATE 23xxx (Postgres), falling back to `Err(DriverFailure)`
      * with the raw cause attached.
      *

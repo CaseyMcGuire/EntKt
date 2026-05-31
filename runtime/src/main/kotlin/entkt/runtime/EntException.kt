@@ -91,7 +91,7 @@ class EntWriteSucceededLoadDeniedException(
  * Generated `*OrThrow` and non-result `visible*` reads throw
  * this; generated `*OrError` reads convert it to
  * `Err(EntError.QueryRejected)`. See the Read-Path Interceptors
- * RFC's Rejection Semantics for the full mapping.
+ * rejection semantics for the full mapping.
  */
 class EntQueryRejectedException(
     val queryRejected: EntError.QueryRejected,

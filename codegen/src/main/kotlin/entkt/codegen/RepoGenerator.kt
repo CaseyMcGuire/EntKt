@@ -165,7 +165,7 @@ internal class RepoGenerator(
             )
             .addFunction(buildRepoCreate(schema, entityClass, createClass, createLambda))
             .addFunction(
-                // Per-save UpdateConsistency override (RFC #4). Defaults
+                // Per-save UpdateConsistency override (transaction locking). Defaults
                 // to the client's `defaultUpdateConsistency` so callers
                 // who don't pass `consistency =` get the configured
                 // baseline (`ReadCurrent` unless the EntClientConfig
@@ -177,7 +177,7 @@ internal class RepoGenerator(
                             .defaultValue("client.defaultUpdateConsistency")
                             .build(),
                     )
-                    // Per-save RelationshipLocking override (RFC 10).
+                    // Per-save RelationshipLocking override.
                     // Defaults to the client's `defaultRelationshipLocking`
                     // (OwnerOnly unless the EntClientConfig sets otherwise).
                     .addParameter(
@@ -405,7 +405,7 @@ internal class RepoGenerator(
      * plan or returns a rejected [QueryPlan] via
      * `QueryPlan.rejected(...)`. All four `explainById*` variants
      * produce the same plan — the result-shape suffix in the name
-     * is for call-site discovery, not plan content (per the RFC).
+     * is for call-site discovery, not plan content (by contract).
      */
     private fun buildByIdExplainMethod(
         name: String,
@@ -422,7 +422,7 @@ internal class RepoGenerator(
             .addKdoc(
                 "Return a [QueryPlan] describing the query [$terminalName] would\n" +
                 "execute. Interceptors run with operation = BY_ID; limit operations\n" +
-                "are silent no-ops per the RFC. On interceptor rejection, returns\n" +
+                "are silent no-ops by contract. On interceptor rejection, returns\n" +
                 "a plan with `rejected = true` carrying the rejection metadata;\n" +
                 "explain does NOT throw."
             )
@@ -497,8 +497,8 @@ internal class RepoGenerator(
      * delete. Returns `Ok(Unit)` on a successful delete OR a
      * silent no-op (the entity already vanished concurrently); the
      * Boolean "was-deleted?" signal is intentionally dropped here
-     * because the caller passed an entity it had in hand — the RFC's
-     * stance is that this is not exceptional.
+     * because the caller passed an entity it had in hand, so this is
+     * not exceptional.
      *
      * Failure mapping mirrors saveOrError: PrivacyDenied →
      * Err(PrivacyDenied); delete-side ValidationException →
@@ -575,10 +575,9 @@ internal class RepoGenerator(
     /**
      * `deleteByIdOrError(id): EntResult<Boolean>` — structured-result
      * idempotent delete-by-id. Returns `Ok(true)` when a row was
-     * actually deleted, `Ok(false)` when no row existed (idempotent
-     * no-op — missing-row is not framed as an error here per the
-     * RFC's "OrError suffix surfaces *exceptional* outcomes"
-     * principle). Failure variants are the same set saveOrError /
+     * actually deleted, `Ok(false)` when no row existed. Missing rows
+     * are idempotent no-ops here; failure variants are the same set
+     * saveOrError /
      * deleteOrError produce.
      *
      * Reads via the bare driver, bypassing repo-level LOAD privacy —
@@ -661,7 +660,7 @@ internal class RepoGenerator(
                     .build(),
             )
             .returns(INT)
-            // Transaction-requirement preflight (RFC #4) — fires before
+            // Transaction-requirement preflight (transaction locking) — fires before
             // the candidate query so:
             //  - an empty-result call under RequiredForAllWrites still
             //    throws (instead of silently returning 0 because
@@ -674,8 +673,8 @@ internal class RepoGenerator(
             //    rather than waiting for per-entity preflights to
             //    each report single-write. (The per-entity delete
             //    preflight then runs single-write inside the
-            //    transaction.) Mirrors the RFC's "classify before
-            //    normalization" rule for empty patches.
+            //    transaction.) This mirrors empty-patch classification:
+            //    classify request shape before normalizing it.
             .addStatement(
                 "client.checkTransactionRequirement(%S, multiWrite = true)",
                 "$schemaName deleteMany",
@@ -948,7 +947,7 @@ internal class RepoGenerator(
 
     /**
      * `createManyOrError(*blocks): EntResult<List<T>>` — transaction-
-     * required structured-result bulk create. Per the RFC:
+     * required structured-result bulk create:
      *
      *  - Outside any transaction → throws
      *    `TransactionRequiredException` at preflight (before any
@@ -964,7 +963,7 @@ internal class RepoGenerator(
      *
      *  - Zero blocks → `Ok(emptyList())` without any preflight or
      *    write, mirroring the existing classify-empty-syntactically
-     *    rule from RFC #4.
+     *    rule from transaction locking.
      *
      * **All-or-nothing is the caller's responsibility.** The helper
      * short-circuits but does not own the transaction — it cannot

@@ -22,7 +22,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for `createManyOrError` (Phase 6c).
+ * End-to-end coverage for `createManyOrError`.
  *
  * The legacy throwing `createMany(*blocks): List<T>` is removed; this
  * suite pins the structured-result variant's contract:

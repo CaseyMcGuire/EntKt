@@ -36,10 +36,8 @@ package entkt.query
  *    expected predicate scope.
  *  - [Target]: the target entity reached across [name]. Threaded into
  *    `Predicate.HasEdgeWith<Source, Target>` so the generated walker can
- *    recover the target type from the edge name (via the edge-name-
- *    validated unchecked cast described in
- *    `docs/possible-features/query/phantom-typed-query-scopes.md`
- *    §"Edge-Predicate Walker").
+ *    recover the target type from the edge name via an edge-name-
+ *    validated unchecked cast.
  *  - [Q]: the target's generated query type. Constrained to both
  *    `EdgeQuery<Target>` (so [has] can fold the block's wheres into
  *    a `Predicate<Target>` via `combinedPredicate()`) AND
@@ -49,8 +47,7 @@ package entkt.query
  * The primary constructor is marked `@EntktInternal` so application
  * code cannot fabricate an `EdgeRef` with arbitrary source/target type
  * arguments — only generated entity-companion code (which carries
- * `@file:OptIn(EntktInternal::class)`) instantiates `EdgeRef`. See
- * §"Constructor Visibility" for the cross-module rationale.
+ * `@file:OptIn(EntktInternal::class)`) instantiates `EdgeRef`.
  */
 class EdgeRef<Source : Any, Target : Any, Q> @EntktInternal constructor(
     val name: String,

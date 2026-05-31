@@ -2,7 +2,7 @@ package entkt.runtime
 
 /**
  * Read-only snapshot of pending link-table M2M edge operations for one
- * edge (RFC #5). Hooks receive this through the generated per-entity
+ * edge. Hooks receive this through the generated per-entity
  * `${Entity}PendingEdgeOps` aggregator on `${Entity}UpdateHookContext`,
  * so they can inspect what the caller has staged without seeing the
  * mutator surface itself.
@@ -57,8 +57,8 @@ public data class PendingEdgeOps<ID>(
 }
 
 /**
- * The full view of one link-table M2M edge's changes for one save
- * (RFC #5): the caller's intent (the literal call log, identical to
+ * The full view of one link-table M2M edge's changes for one save:
+ * the caller's intent (the literal call log, identical to
  * the [PendingEdgeOps] surface seen in before hooks) plus the computed
  * database delta. Privacy and validation contexts receive this through
  * the generated per-entity `${Entity}EdgeChangesView` sidecar.
@@ -113,14 +113,14 @@ public data class EdgeChanges<ID>(
  * `${Schema}Update.save()` after the canonical patch is built and the
  * junction rows are read; the result feeds into the privacy / validation
  * `edgeChanges` sidecar surfaced through
- * `${Schema}EdgeChangesView` (RFC #5 Phase 5).
+ * `${Schema}EdgeChangesView`.
  *
  * **Replacement mode** (`pending.requestedSet != null`): the requested
  * set is the final intended membership, so the delta is
  * `added = requestedSet - current` and `removed = current - requestedSet`.
  * The intent fields `requestedAdds` / `requestedRemoves` stay empty
  * because the mutator rejects mixed replacement+delta at the call
- * site (RFC #5 Phase 2).
+ * site.
  *
  * **Delta mode** (`pending.requestedAdds` / `requestedRemoves`
  * populated): the two intent sets are disjoint by construction — the

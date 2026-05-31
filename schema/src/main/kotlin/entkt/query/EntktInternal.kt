@@ -4,7 +4,7 @@ package entkt.query
  * Opt-in marker for entkt-internal construction sites that must not be
  * called from application code.
  *
- * The phantom-typed-query-scopes RFC's [Edge-Predicate Walker] relies on
+ * The phantom-typed query scopes's [Edge-Predicate Walker] relies on
  * a small set of constructors being reachable only from generated codegen
  * output or from `:schema`'s own typed surface (`EdgeRef.has`,
  * `EdgeRef.exists`). The walker emits an unchecked cast
@@ -35,9 +35,6 @@ package entkt.query
  * constructors stay `public`: their residual hole
  * (wrong-column-name-within-the-right-entity) surfaces at driver-render
  * time and does not gate walker-cast soundness.
- *
- * See `docs/possible-features/query/phantom-typed-query-scopes.md`
- * §"Constructor Visibility" for the full design.
  */
 @RequiresOptIn(
     message = "Internal entkt construction site; direct fabrication can bypass " +

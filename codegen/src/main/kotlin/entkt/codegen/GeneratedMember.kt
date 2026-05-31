@@ -5,7 +5,7 @@ package entkt.codegen
  * generated artifact (an entity data class, a builder, a mutation
  * view, a patch type, etc.). The [GeneratedMemberManifest] collects
  * these and the validator rejects any artifact whose `(name, kind)`
- * grouping has more than one source — see RFC
+ * grouping has more than one source — see contract
  * `docs/possible-features/edge-mutation/07-generated-member-name-collisions.md`.
  *
  * Identity is `(artifact, name)`, **not** `(artifact, name, kind)`:
@@ -64,8 +64,7 @@ internal enum class GeneratedMemberKind {
  * per collision, listing every source so the schema author sees
  * all contributing declarations rather than only the first two.
  *
- * V1 doesn't model "intentional" duplicates — the RFC's Non-Goals
- * call out that V1 has no per-artifact override annotation. Every
+ * V1 doesn't model "intentional" duplicates. Every
  * `(artifact, name)` group with size > 1 is an error.
  */
 internal data class MemberCollision(
@@ -87,13 +86,13 @@ internal data class MemberCollision(
 
 /**
  * Per-schema accumulator for [GeneratedMember]s across all the
- * artifacts the codegen will emit for that schema. Phase 2 of the
- * RFC 07 implementation walks each schema's resolved metadata
+ * artifacts the codegen will emit for that schema. of the
+ * generated-member collision checks implementation walks each schema's resolved metadata
  * (fields, edges, FKs, helper-eligible M2M info, fixed framework
- * members) and feeds members in; Phase 3 calls [findCollisions]
+ * members) and feeds members in; calls [findCollisions]
  * to surface duplicates.
  *
- * The manifest is per-schema rather than global because the RFC
+ * The manifest is per-schema rather than global because the contract
  * scopes collisions per artifact and artifacts are named per
  * schema (`PostUpdate` is a different namespace from
  * `ArticleUpdate`). A cross-schema collision is not a real
@@ -139,7 +138,7 @@ internal class GeneratedMemberManifest(val schema: String) {
 }
 
 /**
- * Run the RFC 07 manifest + collision check across [schemas] and
+ * Run the generated-member collision checks manifest + collision check across [schemas] and
  * return every detected [MemberCollision]. Shared between
  * [SchemaInspector.validate] and [EntGenerator.generate], with
  * the two callers using different strictness modes via [strict].

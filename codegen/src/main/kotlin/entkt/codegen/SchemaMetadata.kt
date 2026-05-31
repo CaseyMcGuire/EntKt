@@ -135,7 +135,7 @@ internal fun columnMetadataFor(
             )
         }
         if (backingField.updateDefault != null) {
-            // Per RFC: update defaults on relationship FKs would silently
+            // Update defaults on relationship FKs would silently
             // rewrite untouched relationships on every update. The
             // caller should express the intent as a beforeUpdate or
             // afterUpdate hook on the owner entity instead.

@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 /**
- * End-to-end Postgres coverage for RFC 06's field-backed FK
+ * End-to-end Postgres coverage for declaration-name capture's field-backed FK
  * declaration-name capture. [Note] declares the backing field as
  * `val writer = long("author_id")` so the generated Kotlin API
  * exposes the FK as `writer` while the storage column stays
@@ -37,7 +37,7 @@ class FieldBackedFkDeclarationNameIntegrationTest : PostgresTestBase() {
         val user = client.users.create { name = "Alice"; email = "a@example.com" }.save()
 
         // Compile-time: the FK property on Note is `writer`. If the
-        // RFC 06 capture regressed and the property reverted to
+        // declaration-name capture capture regressed and the property reverted to
         // `authorId`, this assignment would not type-check.
         val note: Note = client.notes.create {
             body = "first"
@@ -57,7 +57,7 @@ class FieldBackedFkDeclarationNameIntegrationTest : PostgresTestBase() {
             writer = user.id
         }.save()
 
-        // Read the row back via the column name. If RFC 06
+        // Read the row back via the column name. If declaration-name capture
         // accidentally renamed the storage column too, this query
         // would fail with "column writer does not exist".
         val storedAuthorId: Long = dataSource.connection.use { conn ->

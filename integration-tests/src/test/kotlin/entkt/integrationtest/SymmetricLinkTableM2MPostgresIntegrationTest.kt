@@ -11,7 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Postgres-backed coverage for RFC 10 symmetric link-table writes. The
+ * Postgres-backed coverage for symmetric link-table writes. The
  * `Tag.posts` orientation is the pair-swapped reverse of `Post.tags` over
  * the same `post_tags` junction. Both orientations are writable, junction
  * inserts go through `insertIgnore` (idempotent), and reads from either

@@ -15,7 +15,7 @@ class User : EntSchema("users") {
      * Inverse side of [Group.users]. Pair-swapped junction edge
      * refs: this side passes `Membership::user` first (the
      * source-side junction edge), `Membership::group` second
-     * (the target-side junction edge). The RFC 09 acceptance
+     * (the target-side junction edge). The nullable M2M traversal acceptance
      * criteria require null-skip semantics to hold in both
      * directions; this edge is what exercises the inverse half.
      */

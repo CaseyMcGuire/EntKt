@@ -144,7 +144,7 @@ class QueryGeneratorTest {
         assert(!output.contains("withCars")) {
             "Without schemaNames, with{Edge} should be skipped\n$output"
         }
-        // loadEdges is always emitted (RFC #5 Phase 7 fix): an M2M
+        // loadEdges is always emitted (link-table M2M helpers fix): an M2M
         // eager-load block on a source query unconditionally calls
         // `subQuery.loadEdges(...)` on the target's query class, so
         // every query class needs the method even when its own schema
@@ -238,8 +238,8 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // Per RFC: every terminal gets its own explain method
-        // named after the terminal (no shared "explain()" entry).
+        // Every terminal gets its own explain method named after the
+        // terminal; there is no shared "explain()" entry.
         for (name in listOf(
             "fun explainAllOrThrow(): QueryPlan",
             "fun explainAllOrError(): QueryPlan",
@@ -302,7 +302,7 @@ class QueryGeneratorTest {
         assert(output.contains("eagerCars?.let { subQuery ->")) {
             "explain() should iterate eager edges\n$output"
         }
-        // After Phase 5b + the eager-load explain interceptor fix,
+        // After + the eager-load explain interceptor fix,
         // the parent's eager block runs EAGER_LOAD interceptors on
         // the sub-query and delegates the actual driver.explainQuery
         // call to the sub-query's own buildQueryPlan. So the parent

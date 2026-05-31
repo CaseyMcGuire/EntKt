@@ -69,7 +69,7 @@ private class InspArticleTag : EntSchema("article_tags") {
     val tag = belongsTo<InspTag>("tag").field(tagId)
 }
 
-// throughLink fixtures (RFC 10): a writable side (LinkPost.tags) and a
+// throughLink fixtures (symmetric link-table writes): a writable side (LinkPost.tags) and a
 // `.readOnly()` side (LinkTag.posts) over the same pair-swapped junction.
 private class InspLinkPost : EntSchema("link_posts") {
     override fun id() = EntId.long()
@@ -419,7 +419,7 @@ class SchemaInspectorTest {
 
     @Test
     fun `explain does not synthesize reverse manyToMany edges on target schema`() {
-        // RFC #3 (post-revert): no auto-synthesized reverse edges. The
+        // M2M schema modeling (post-revert): no auto-synthesized reverse edges. The
         // explain output reflects only declared edges.
         val graph = SchemaInspector.explain(inputs(
             InspTag(), InspArticle(), InspArticleTag(),

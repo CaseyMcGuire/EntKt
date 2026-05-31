@@ -5,10 +5,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Phase 1 verification for the RFC 07 manifest model. Pins the
+ * verification for the generated-member collision checks manifest model. Pins the
  * grouping contract (`(artifact, name)` regardless of kind),
  * ordering stability, and the single-vs-multiple-source split.
- * Phase 5 covers end-to-end collision detection against real
+ * covers end-to-end collision detection against real
  * schemas.
  */
 class GeneratedMemberManifestTest {
@@ -21,7 +21,7 @@ class GeneratedMemberManifestTest {
 
     @Test
     fun `same name on different artifacts is not a collision`() {
-        // Per the RFC §"Artifact Namespaces": a field property
+        // A field property
         // can appear on both the entity class and a mutation
         // interface independently. The collision is per-artifact.
         val manifest = GeneratedMemberManifest("Post")
@@ -47,10 +47,10 @@ class GeneratedMemberManifestTest {
 
     @Test
     fun `property-vs-function collision still triggers (V1 rejects regardless of kind)`() {
-        // RFC §"Design": "a property and a function with the same
+        // A property and a function with the same
         // generated name in the same artifact are a collision, even
         // if Kotlin might distinguish some callable forms by
-        // signature."
+        // signature.
         val manifest = GeneratedMemberManifest("Article")
         manifest.add("Article", "copy", GeneratedMemberKind.PROPERTY, source = "field 'copy'")
         manifest.add("Article", "copy", GeneratedMemberKind.FUNCTION, source = "data-class synthesized copy")

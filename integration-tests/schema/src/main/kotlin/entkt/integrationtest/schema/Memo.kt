@@ -13,7 +13,7 @@ import entkt.schema.EntSchema
  * hook setup.
  *
  * Schema-level partial-unique indexes are intentionally absent;
- * the convention RFC pushes index strategy to the application, and
+ * the convention pushes index strategy to the application, and
  * the soft-delete suite focuses on read-filter + write-mode
  * semantics rather than uniqueness behavior.
  */

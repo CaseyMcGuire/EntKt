@@ -26,8 +26,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for the query-level read-API trio (Phase 5b/c
- * of the Result Variants RFC):
+ * End-to-end coverage for the query-level read-API trio:
  *
  *   firstOrNull         — keep (absence → null; denial throws)
  *   firstOrThrow        — absence → EntNotFoundException;
@@ -276,7 +275,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `visibleAll throws raw PrivacyDeniedException on eager-edge denial (visible filtering is root-only)`() {
-        // Per the RFC's "Visible-only API contract" section:
+        // Visible-only reads filter the root entity only:
         // visibleAll's filter applies only to the root entity. Eager-
         // loaded edge targets via withAuthor() / withTags() / etc.
         // still enforce target LOAD privacy strictly — a denied
@@ -525,7 +524,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     fun `firstVisibleOrNull cap-exhaustion is silent (returns null)`() {
         // All articles deny, cap = 3 — firstVisibleOrNull scans 3
         // rows, finds none visible, returns null. No Err surface
-        // here per the RFC's optimistic-read shape.
+        // here by the optimistic-read shape.
         val client = freshClientWithCap(
             cap = 3,
             viewer = Viewer.User(1L),

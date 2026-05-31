@@ -30,7 +30,7 @@ import entkt.schema.EntSchema
  * - On Update, `m.title` **throws** when the field is not in
  *   `dirtyFields`, because a default-null getter would conflate
  *   `Unset` and explicit `Set(null)` (see the id-based update roots
- *   RFC). Hooks that need to inspect pending update state should use
+ *   contract). Hooks that need to inspect pending update state should use
  *   `beforeUpdate` and read `ctx.patch.title`, which has explicit
  *   `FieldPatch.Unset` / `Set` / `Set(null)` semantics.
  *
@@ -42,8 +42,7 @@ import entkt.schema.EntSchema
  * Also generates two restricted hook-facing views that extend the
  * shared `Mutation` interface. Both views are now
  * **runtime-enforced** via private anonymous adapter properties
- * on the respective Create / Update builders (RFC #5 introduced
- * the update adapter; RFC 08 brought the create side to parity):
+ * on the respective Create / Update builders:
  *
  * - `${SchemaName}CreateMutationView` — the typed surface for
  *   `beforeCreate` hook lambdas. Adds immutable scalar fields
@@ -155,7 +154,7 @@ internal class MutationGenerator(
         for (fk in mutableEdgeFks) {
             updateView.addFunction(unsetSpec(fk.propertyName))
         }
-        // RFC #5 Phase 3: read-only `pendingEdges` aggregator on the
+        // Read-only `pendingEdges` aggregator on the
         // hook-facing view. Hooks read pending link-table M2M edge ops
         // through `ctx.mutation.pendingEdges` (or `ctx.pendingEdges`);
         // they cannot mutate the underlying op log — the view does NOT

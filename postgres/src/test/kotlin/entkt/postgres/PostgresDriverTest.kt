@@ -2,8 +2,7 @@
 // (`Predicate.HasEdgeWith` / `HasEdge` / `HasM2MEdgeFrom`) directly
 // to exercise the SQL renderer in isolation. These types carry
 // `@EntktInternal` so application code can't fabricate them outside
-// the generated `EdgeRef.has(...)` surface (see RFC §"Constructor
-// Visibility"). Driver tests opt in once at the file header — the
+// the generated `EdgeRef.has(...)` surface. Driver tests opt in once at the file header — the
 // fabrication is intentional and scoped to driver-internal coverage.
 @file:OptIn(EntktInternal::class)
 
@@ -597,7 +596,7 @@ class PostgresDriverTest {
         assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
     }
 
-    // ---------- RFC #4 capability surface ----------
+    // ---------- transaction locking capability surface ----------
 
     @Test
     fun `inTransaction is false on the root driver and true inside withTransaction`() {
@@ -1022,7 +1021,7 @@ class PostgresDriverTest {
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
     }
 
-    // ---------- RFC 10: insertIgnore + relationship serialization ----------
+    // ---------- symmetric link-table writes: insertIgnore + relationship serialization ----------
 
     @Test
     fun `insertIgnore inserts a new junction pair and returns the persisted row`() {
@@ -1044,7 +1043,7 @@ class PostgresDriverTest {
 
     @Test
     fun `insertIgnore of an existing pair returns null and does not duplicate`() {
-        // RFC 10 Risk #1: ON CONFLICT DO NOTHING yields zero result rows on a
+        // ON CONFLICT DO NOTHING yields zero result rows on a
         // conflict; insertIgnore must map that to null rather than throwing,
         // and the existing row must remain (no duplicate, no overwrite).
         val driver = freshM2M()

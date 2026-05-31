@@ -13,14 +13,13 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * Phase 2 coverage: the engine that runs the interceptor chain
+ * coverage: the engine that runs the interceptor chain
  * against a [QuerySpecBuilder], plus the live-vs-snapshot behavior
  * of `scope.shape`, the attribution buckets, and the
  * `scope.reject(...) → AbortQueryRejected` short-circuit.
  *
  * No generated wiring yet — these tests construct builders /
- * contexts manually and exercise the engine directly. Phase 4
- * integration tests will pin end-to-end behavior on real generated
+ * contexts manually and exercise the engine directly. * integration tests will pin end-to-end behavior on real generated
  * read terminals.
  */
 class InterceptorEngineTest {

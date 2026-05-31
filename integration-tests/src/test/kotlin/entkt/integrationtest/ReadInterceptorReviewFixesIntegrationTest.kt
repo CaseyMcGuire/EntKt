@@ -1,7 +1,7 @@
 // Integration test exercises the EDGE_PREDICATE walker by directly
 // constructing `Predicate.HasEdgeWith(...)` predicates against the
 // generated query classes. Those constructors carry @EntktInternal
-// (RFC §"Constructor Visibility"); the file-level opt-in lets the
+// The file-level opt-in lets the
 // fabrication compile. The test scenario is exactly what the walker
 // is designed for, just bypassing the generated `EdgeRef.has(...)`
 // DSL to control the test inputs precisely.
@@ -32,7 +32,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Regression coverage for four fixes identified post-RFC review:
+ * Regression coverage for four fixes identified post-contract review:
  *
  * - **P1** limit interceptor methods are no-ops on read shapes where
  *   row limits have no meaning (BY_ID / FIRST / aggregates / EAGER /
@@ -58,7 +58,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
 
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
-    // ---------- P1: limit ops scoped by ReadOperation ----------
+    // ---------- Limit ops scoped by ReadOperation ----------
 
     @Test
     fun `rejectIfLimitGreaterThan is a silent no-op for rawCount`() {
@@ -256,7 +256,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         )
     }
 
-    // ---------- P3: annotations on QueryPlan ----------
+    // ---------- QueryPlan annotations ----------
 
     @Test
     fun `explain reflects scope addAnnotation on QueryPlan annotations`() {

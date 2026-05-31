@@ -12,7 +12,7 @@ import kotlin.reflect.KClass
  * clamp limits, attach annotations, or reject the query before the
  * driver call.
  *
- * Per the read-path interceptors RFC, interceptors operate under a
+ * Per the read-path interceptors, interceptors operate under a
  * "reduce or reject" safety property: they can NARROW a query
  * (additional ANDed predicates, stricter limits, rejection) but
  * cannot remove caller predicates, raise caller-set limits, change
@@ -29,7 +29,7 @@ fun interface QueryInterceptor<E : Any> {
  * enforce-max-limit guards and query tracing.
  *
  * Globals run AFTER per-entity interceptors in registration order
- * (see Ordering in the RFC). They can't add predicates because typed
+ * (see Ordering in the contract). They can't add predicates because typed
  * `Predicate<E>` would be unsafe for varying `E`; they operate on
  * the entity-agnostic mutators (limit / annotate / reject) and can
  * inspect the current shape via [GlobalInterceptScope.shape].
@@ -96,7 +96,7 @@ interface InterceptScope<E : Any> {
     /**
      * Rejects the query with the given reason. The framework
      * converts this into the per-API outcome described in the
-     * RFC's Rejection Semantics section.
+     * rejection semantics.
      */
     fun reject(reason: String, code: String? = null): Nothing
 }
@@ -227,7 +227,7 @@ data class EdgeStep(
 /**
  * Which generated read terminal is firing the interceptor. The
  * framework maps these into [EntOperation] for error reporting via
- * the table in the RFC's Rejection Semantics section: BY_ID → LOAD;
+ * the rejection table: BY_ID → LOAD;
  * everything else → QUERY.
  */
 enum class ReadOperation {
@@ -244,7 +244,7 @@ enum class ReadOperation {
      * uniformly to bulk deletes. The mapping to [EntOperation] is
      * `DELETE` (not QUERY), since the surrounding API surface is
      * a delete operation. Limit operations are silent no-ops on
-     * this shape per the RFC — a `MaxLimitInterceptor(maxLimit = 500)`
+     * this shape by contract — a `MaxLimitInterceptor(maxLimit = 500)`
      * should not turn `deleteMany(...)` into "delete the first 500
      * matching rows" without the caller knowing. `addPredicate`,
      * `addAnnotation`, and `reject` apply normally.

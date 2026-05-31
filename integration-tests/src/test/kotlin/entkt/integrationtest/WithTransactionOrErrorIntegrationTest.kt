@@ -21,8 +21,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for `EntClient.withTransactionOrError` (Phase
- * 6b). Pins:
+ * End-to-end coverage for `EntClient.withTransactionOrError`. Pins:
  *
  *  - block returns `T` (not `EntResult<T>`); the helper wraps `T`
  *    into `Ok` on normal completion

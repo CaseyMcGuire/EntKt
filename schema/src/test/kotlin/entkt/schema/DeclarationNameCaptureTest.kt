@@ -6,7 +6,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Phase 1 verification for RFC 06's declaration-name capture
+ * verification for declaration-name capture's declaration-name capture
  * mechanism. Pins:
  *
  *  - direct public `val` properties capture the property name into

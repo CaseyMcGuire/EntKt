@@ -27,7 +27,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * Phase 4 coverage: every core read terminal runs the per-entity +
+ * coverage: every core read terminal runs the per-entity +
  * global interceptor chain and honors the post-interceptor spec when
  * calling the driver. Pins:
  *
@@ -43,8 +43,7 @@ import kotlin.test.assertTrue
  *  - Global interceptors run AFTER per-entity ones (registration-order
  *    + per-entity-first per the engine contract).
  *
- * Edge / eager / explain wiring lands in Phases 5 / 8 and is not
- * covered here.
+ * Edge / eager / explain wiring is covered by separate focused tests.
  */
 class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
 

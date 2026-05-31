@@ -52,7 +52,7 @@ class EdgeOpsTest {
     @Test
     fun `PendingEdgeOps data class itself doesn't enforce disjoint-by-construction — the mutator does`() {
         // The disjoint-requestedAdds-vs-requestedRemoves invariant
-        // (RFC #5) is enforced at the *mutator* call site so the data
+        // (link-table M2M helpers) is enforced at the *mutator* call site so the data
         // class never receives a violating snapshot in normal use.
         // The data class itself is a plain immutable value with no
         // validation in its constructor, so a directly-constructed
@@ -146,7 +146,7 @@ class EdgeOpsTest {
 
     @Test
     fun `replacement mode — added is requestedSet minus current, removed is current minus requestedSet`() {
-        // The RFC's canonical replacement example: current=[a,c],
+        // Canonical replacement example: current=[a,c],
         // tags.set([a,b]) → added=[b], removed=[c].
         val ec = computeEdgeChanges(
             PendingEdgeOps(requestedSet = setOf("a", "b")),
@@ -229,7 +229,7 @@ class EdgeOpsTest {
 
     @Test
     fun `delta mode with disjoint adds and removes computes straight set algebra`() {
-        // Per RFC #5: requestedAdds and requestedRemoves are disjoint
+        // Per link-table M2M helpers: requestedAdds and requestedRemoves are disjoint
         // by construction (mutator rejects same-id mixed-direction at
         // the call site). computeEdgeChanges therefore doesn't need
         // cancellation logic — just set algebra.

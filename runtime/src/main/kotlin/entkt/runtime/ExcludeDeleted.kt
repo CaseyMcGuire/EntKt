@@ -37,8 +37,7 @@ import entkt.query.Predicate
  * `onlyDeleted()` DSL on generated query builders. Workflows that
  * need to see soft-deleted rows (restore, admin tooling, audit)
  * use a separate `EntClient` without this interceptor installed.
- * Adding per-query flag DSL later is purely additive — see the
- * RFC's §"Seeing Deleted Rows".
+ * Adding per-query flag DSL later is purely additive.
  */
 class ExcludeDeleted<E : Any>(
     private val column: String = "deleted_at",

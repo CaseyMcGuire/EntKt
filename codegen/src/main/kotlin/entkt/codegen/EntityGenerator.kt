@@ -105,8 +105,8 @@ internal class EntityGenerator(
 
         // Every generated entity file constructs `EdgeRef(...)` and
         // therefore needs `@file:OptIn(EntktInternal::class)` — the
-        // EdgeRef constructor is opt-in-restricted per RFC §"Constructor
-        // Visibility" so it can't be fabricated from application code.
+        // EdgeRef constructor is opt-in-restricted so it can't be
+        // fabricated from application code.
         // Emitting the file-level OptIn lets the per-edge initializers
         // compile without per-call annotation.
         return FileSpec.builder(packageName, className)

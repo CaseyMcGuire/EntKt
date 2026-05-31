@@ -4,7 +4,7 @@ import entkt.schema.EntId
 import entkt.schema.EntSchema
 
 /**
- * Source side of the RFC 09 fixture. The `users` edge is a
+ * Source side of the nullable M2M traversal fixture. The `users` edge is a
  * `throughEntity` M2M whose junction ([Membership]) carries
  * nullable source / target FKs. Traversal must skip junction
  * rows whose `group_id` or `user_id` is NULL.

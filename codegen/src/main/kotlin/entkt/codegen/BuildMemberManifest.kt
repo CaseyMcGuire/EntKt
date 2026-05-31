@@ -6,8 +6,8 @@ import entkt.schema.EntSchema
 /**
  * Walk a schema's resolved metadata and populate a
  * [GeneratedMemberManifest] with every name the codegen will emit
- * on each artifact in the V1 coverage scope. Phase 2 of the RFC 07
- * implementation; Phase 3 detects collisions against this output.
+ * on each artifact in the V1 coverage scope. generated-member collision checks
+ * implementation; detects collisions against this output.
  *
  * V1 coverage:
  *
@@ -111,8 +111,7 @@ private fun addEntityClassMembers(
     // Data-class synthesized members. Kotlin generates these from
     // the entity's primary constructor; user-declared property
     // names that collide with them produce confusing compile
-    // errors today. The RFC's Test Requirements include `copy` and
-    // `componentN`, so we cover them explicitly.
+    // errors, so cover `copy` and `componentN` explicitly.
     manifest.add(artifact, "copy", GeneratedMemberKind.FUNCTION, "data-class synthesized copy")
     manifest.add(artifact, "equals", GeneratedMemberKind.FUNCTION, "data-class synthesized equals")
     manifest.add(artifact, "hashCode", GeneratedMemberKind.FUNCTION, "data-class synthesized hashCode")
@@ -145,8 +144,8 @@ private fun addEntityClassMembers(
     }
 
     // FK properties. Implicit FKs are named `${edgeName}Id`;
-    // field-backed FKs are named `toCamelCase(backingColumn)`
-    // (pre-RFC-06). The RFC's V1 critical-path collision: a
+    // field-backed FKs are named `toCamelCase(backingColumn)`.
+    // The critical collision is when a
     // scalar field's generated property name equals an FK's
     // generated property name on the same entity.
     for (fk in fks) {
@@ -163,9 +162,8 @@ private fun addEntityClassMembers(
     // accessors live on `${Entity}Edges`, NOT on the entity
     // class itself, so they don't conflict here. They're tracked
     // in their own artifact if/when we add coverage for it.
-    // V1 leaves the Edges artifact out per the RFC's Required
-    // Coverage list (entity `edges` accessor is fixed, but
-    // per-edge members on the Edges class are out of V1 scope).
+    // The entity `edges` accessor is fixed, but per-edge members on
+    // the Edges class are intentionally out of scope here.
     @Suppress("UNUSED_PARAMETER") nonFkEdges
 }
 
@@ -319,12 +317,10 @@ private fun addUpdateBuilderMembers(
         )
     }
 
-    // RFC #5 Phase 2 (link-table M2M): mutator properties live on
+    // Link-table M2M mutator properties live on
     // the *public* update builder, not on the UpdateMutationView
     // interface — hooks must not reach add/remove/set through
-    // ctx.mutation. See UpdateGeneratorTest §"UpdateMutationView is
-    // not extended with the mutator property — hooks must not see
-    // it" for the pin on this contract.
+    // ctx.mutation.
     for (m2m in helperEligibleM2M) {
         manifest.add(
             artifact,
@@ -338,9 +334,7 @@ private fun addUpdateBuilderMembers(
     // intentionally does NOT expose unset methods — they live only
     // on the private hook-facing adapter (typed as
     // `${name}UpdateMutationView`), so callers can't write
-    // `client.posts.update(id) { unsetName() }`. See
-    // UpdateGeneratorTest §"unset lives on the private hook-facing
-    // view, not the public builder".
+    // `client.posts.update(id) { unsetName() }`.
 }
 
 // ── Create mutation view ─────────────────────────────────────────
@@ -467,15 +461,15 @@ private fun addFixedBuilderMembers(
             "dirtyFields" to GeneratedMemberKind.PROPERTY,
             "beforeUpdateHooks" to GeneratedMemberKind.PROPERTY,
             "afterUpdateHooks" to GeneratedMemberKind.PROPERTY,
-            // RFC #5 / #4 / #8 private adapter + snapshot properties.
+            // Private adapter and snapshot properties used by generated hooks.
             // Schema field names can't start with `_` (the snake_case
-            // regex forbids it), but RFC 06 declaration capture picks
+            // regex forbids it), but declaration capture picks
             // up Kotlin val names verbatim — and Kotlin allows `val
             // _foo`. A schema like `val _mutationView = uuid("x");
             // val rel = belongsTo<X>("rel").field(_mutationView)`
             // produces a generated FK property named `_mutationView`
             // that would collide with the private adapter on the
-            // update builder. Manifest registers these so the RFC 07
+            // update builder. Manifest registers these so the generated-member collision checks
             // collision check rejects the schema with the actionable
             // diagnostic.
             "_mutationView" to GeneratedMemberKind.PROPERTY,
@@ -490,8 +484,8 @@ private fun addFixedBuilderMembers(
         val createOnly = listOf(
             "beforeCreateHooks" to GeneratedMemberKind.PROPERTY,
             "afterCreateHooks" to GeneratedMemberKind.PROPERTY,
-            // RFC 08 private adapter properties. Same reachability
-            // story as the update side above — schemas using RFC 06
+            // create-hook adapter private adapter properties. Same reachability
+            // story as the update side above — schemas using declaration-name capture
             // declaration capture can produce a `_beforeSaveView`-
             // or `_createMutationView`-named FK property that would
             // collide with these.

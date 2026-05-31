@@ -187,7 +187,7 @@ class ValidationGeneratorTest {
         }
     }
 
-    // ---------- RFC #5 Phase 5: edgeChanges sidecar on UpdateValidationContext ----------
+    // ---------- link-table M2M helpers edgeChanges sidecar on UpdateValidationContext ----------
 
     @Test
     fun `UpdateValidationContext references edgeChanges sidecar of the per-entity view type`() {

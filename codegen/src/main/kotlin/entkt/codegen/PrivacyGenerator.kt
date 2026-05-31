@@ -60,7 +60,7 @@ internal class PrivacyGenerator(
         val fields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
 
-        // Helper-eligible link-table M2M edges (RFC #5 Phase 3). Each
+        // Helper-eligible link-table M2M edges. Each
         // contributes a typed `PendingEdgeOps<ID>` field on the per-entity
         // aggregator surfaced through the update hook context and the
         // update mutation view. Empty list → empty aggregator (uniform
@@ -111,7 +111,7 @@ internal class PrivacyGenerator(
         // UpdatePatch
         fileBuilder.addType(buildUpdatePatch(patchClass, fields, edgeFks))
 
-        // PendingEdgeOps aggregator (RFC #5 Phase 3). One typed
+        // PendingEdgeOps aggregator. One typed
         // `PendingEdgeOps<TargetIdType>` per helper-eligible M2M edge,
         // exposed read-only on the update hook context and the update
         // mutation view. Schemas without helper-eligible M2M edges still
@@ -119,7 +119,7 @@ internal class PrivacyGenerator(
         // `ctx.pendingEdges` without entity-conditional types.
         fileBuilder.addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
 
-        // EdgeChangesView aggregator (RFC #5 Phase 5, decision B2).
+        // EdgeChangesView aggregator.
         // One typed `EdgeChanges<TargetIdType>` per helper-eligible M2M
         // edge — the privacy/validation sidecar that surfaces both
         // caller intent and computed database delta. Same empty-class
@@ -304,7 +304,7 @@ internal class PrivacyGenerator(
     /**
      * Hook context for `beforeUpdate` hooks. Carries the loaded `before`
      * row, a snapshot of the requested patch accumulated up to this
-     * hook, and a restricted writable mutation view. Per the RFC,
+     * hook, and a restricted writable mutation view.
      * `patch` is a snapshot — writes through `mutation` do not change
      * `patch` within the same hook; later hooks see those writes
      * through their own snapshots.
@@ -416,7 +416,7 @@ internal class PrivacyGenerator(
 
     /**
      * Per-entity aggregator of pending link-table M2M edge ops surfaced
-     * read-only to update hooks (RFC #5 Phase 3). One typed
+     * read-only to update hooks. One typed
      * `PendingEdgeOps<TargetIdType>` field per helper-eligible edge,
      * defaulting to an empty instance so callers can construct the
      * aggregator with no overrides.
@@ -460,8 +460,8 @@ internal class PrivacyGenerator(
 
     /**
      * Per-entity aggregator of computed `EdgeChanges<TargetIdType>`
-     * surfaced on update privacy and validation contexts (RFC #5 Phase 5,
-     * decision B2). Mirrors [buildPendingEdgeOpsAggregator]'s shape but
+     * surfaced on update privacy and validation contexts. Mirrors
+     * [buildPendingEdgeOpsAggregator]'s shape but
      * carries the full [EdgeChanges] (caller intent + computed
      * `added`/`removed` deltas) per edge. Empty class for schemas with
      * zero helper-eligible M2M edges so the context shape is uniform.

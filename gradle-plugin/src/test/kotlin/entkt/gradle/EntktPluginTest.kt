@@ -127,7 +127,7 @@ class EntktPluginTest {
             assertTrue(entityContent.contains("val age: Int?"), "Should have nullable age")
             assertTrue(entityContent.contains("val ownerId: Int?"), "Should have FK from unique edge")
             // Column refs are emitted on the companion. After the
-            // phantom-typed-query-scopes RFC, every column class carries
+            // phantom-typed query scopes, every column class carries
             // the owning entity as its first type argument.
             assertTrue(
                 entityContent.contains("val name: StringColumn<Pet> = StringColumn<Pet>(\"name\")"),
@@ -170,7 +170,7 @@ class EntktPluginTest {
                 repoContent.contains("fun create(block: PetCreate.() -> Unit): PetCreate"),
                 "Repo should expose create(block)",
             )
-            // RFC #4: `update(...)` accepts an optional UpdateConsistency
+            // transaction locking: `update(...)` accepts an optional UpdateConsistency
             // per-save argument that defaults to the client's configured
             // default. The signature wraps across multiple lines under
             // KotlinPoet, so check the constituents rather than the full

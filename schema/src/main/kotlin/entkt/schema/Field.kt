@@ -15,7 +15,7 @@ data class Field(
     /**
      * Kotlin `val` name of the schema property that produced this
      * field's backing builder. Populated by `EntSchema.finalize()`'s
-     * declaration-name capture pass (RFC 06,
+     * declaration-name capture pass (declaration-name capture,
      * `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`)
      * by walking the schema class's direct `val` properties via
      * `KProperty.javaField` (no getter invocation, so computed

@@ -142,9 +142,9 @@ class HelperEligibleM2MTest {
         val tags = assertNotNull(byName["tags"])
         val labels = assertNotNull(byName["labels"])
 
-        // Naming follows the source edge, not the target type — so two
+        // Naming follows the source edge, not the target type, so two
         // edges with the same target type don't collide on the mutator
-        // class name (decision C in the RFC #5 plan).
+        // class name.
         assertEquals("TagsEdgeMutator", tags.mutatorClassSimpleName)
         assertEquals("LabelsEdgeMutator", labels.mutatorClassSimpleName)
         assertTrue(tags.mutatorClassSimpleName != labels.mutatorClassSimpleName)

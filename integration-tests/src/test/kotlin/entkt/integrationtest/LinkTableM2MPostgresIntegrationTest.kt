@@ -15,13 +15,13 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Postgres-backed coverage for the RFC #5 link-table M2M helpers
+ * Postgres-backed coverage for the link-table M2M helper surface
  * against real `REFERENCES ... ON DELETE CASCADE` constraints.
  *
  * Specifically, this suite pins:
  *  - PostgresDriver rejects junction inserts that reference
  *    non-existent target rows via the FK constraint declared by
- *    RFC #3's junction-shape rule 4 (`ON DELETE CASCADE` implies
+ *    M2M schema modeling's junction-shape rule 4 (`ON DELETE CASCADE` implies
  *    `REFERENCES`).
  *
  * Each test brings up a single Postgres container (Testcontainers,
@@ -81,7 +81,7 @@ class LinkTableM2MPostgresIntegrationTest {
 
     @Test
     fun `Postgres rejects M2M add of a nonexistent target id via the junction FK constraint`() {
-        // RFC #3 junction-shape rule 4 requires explicit
+        // M2M schema modeling junction-shape rule 4 requires explicit
         // `OnDelete.CASCADE` on both junction belongsTo edges, which
         // PostgresDriver lowers to `REFERENCES posts(id) ON DELETE
         // CASCADE` and `REFERENCES tags(id) ON DELETE CASCADE`
@@ -163,7 +163,7 @@ class LinkTableM2MPostgresIntegrationTest {
     @Test
     fun `Postgres set replaces the link set — deleteMany removes the dropped ids`() {
         // Exercises the generated `driver.deleteMany(junction, [sourceFk=ownerId, targetFk IN removed])`
-        // call against real Postgres. Pre-Phase-7 codegen quirks
+        // call against real Postgres. Earlier codegen quirks
         // around list/array binding for IN clauses would surface here.
         val client = freshClient()
         val post = client.posts.create { title = "Hello" }.save()

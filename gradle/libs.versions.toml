@@ -5,7 +5,7 @@ kotlinpoet = "1.18.1"
 # tschuchort's kotlin-compile-testing). Used by :schema's
 # compile-fail tests to assert the typed query DSL rejects
 # wrong-entity predicates / unauthorized @EntktInternal
-# constructor calls at compile time. See RFC §"Test Requirements".
+# constructor calls at compile time.
 kotlin-compile-testing = "0.5.1"
 postgresql = "42.7.4"
 testcontainers = "2.0.4"

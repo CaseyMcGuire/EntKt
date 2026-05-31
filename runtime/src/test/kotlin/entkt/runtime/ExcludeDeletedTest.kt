@@ -75,7 +75,7 @@ class ExcludeDeletedTest {
     fun `the interceptor's predicate is ANDed with existing caller predicates`() {
         // Seed the builder with a caller predicate; the interceptor
         // should add its own without replacing or removing it. The
-        // RFC's "narrow-only" safety property is enforced by the
+        // The "narrow-only" safety property is enforced by the
         // engine, but we double-check that ExcludeDeleted doesn't
         // accidentally violate it by inspecting the final predicate
         // set after interception.

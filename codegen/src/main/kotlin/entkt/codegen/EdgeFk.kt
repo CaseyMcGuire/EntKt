@@ -14,8 +14,7 @@ import entkt.schema.Validator
  * (`belongsTo(...).field(handle)`) the column comes from the
  * user-declared field, and the property is the camelCased column name.
  * True declaration-name capture (using the Kotlin `val` name when it
- * diverges from the column name) is still deferred — see the RFC's
- * Deferred Scope section.
+ * diverges from the column name) is still deferred.
  */
 data class EdgeFk(
     val edgeName: String,
@@ -46,7 +45,7 @@ data class EdgeFk(
      * `true` when the relationship is immutable — set on create only,
      * never on update. Driven by the backing field's `.immutable()` for
      * field-backed edges. Implicit FKs are always mutable until an
-     * edge-level immutability modifier is added in a future RFC.
+     * edge-level immutability modifier is added in a future feature.
      */
     val immutable: Boolean = false,
     /**
@@ -87,14 +86,14 @@ internal fun stagingFieldName(propertyName: String): String = "_${propertyName}S
  * Private "has the caller explicitly assigned this FK property?" flag
  * used by the nullable-FK-with-default path. Lets the create save body
  * distinguish "untouched (apply default)" from "explicitly set to null
- * (suppress default)" per the RFC's explicit-null-wins rule.
+ * (suppress default)"; explicit null wins over defaults.
  */
 internal fun assignedFieldName(propertyName: String): String = "_${propertyName}Assigned"
 
 /**
  * Baseline KDoc applied to every generated FK property (entity data
  * class, create/update builders, mutation interface). Documents the
- * relationship-write contract the RFC mandates: id-only surface, no
+ * relationship-write contract the contract mandates: id-only surface, no
  * target row load, no target LOAD privacy evaluation. If the schema
  * declared a user comment via `.comment(...)`, that appears first and
  * the contract notes follow underneath.
@@ -132,7 +131,7 @@ fun computeEdgeFks(
             val backingColumn = belongsTo.field
             if (backingColumn != null) {
                 val backingField = fieldsByName[backingColumn]
-                // RFC 06: derive the generated FK API name from the
+                // declaration-name capture: derive the generated FK API name from the
                 // backing field's Kotlin val name when capture
                 // populated it, falling back to toCamelCase(column)
                 // for backing fields whose declaration site can't
@@ -140,7 +139,7 @@ fun computeEdgeFks(
                 // inherited / mixin-backed / pre-finalize). The
                 // fallback preserves today's behavior for those
                 // cases so no schema breaks silently — but the
-                // Phase 3 diagnostic refuses to compile when a
+                // diagnostic refuses to compile when a
                 // belongsTo(...).field(handle) backing has null
                 // declarationName, so the fallback path is only
                 // ever reached for non-field-backed edges or for
