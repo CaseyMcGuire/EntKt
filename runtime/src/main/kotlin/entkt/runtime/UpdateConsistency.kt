@@ -36,3 +36,44 @@ enum class UpdateConsistency {
  * writes.
  */
 class UnsupportedDriverCapabilityException(message: String) : RuntimeException(message)
+
+/**
+ * Per-update relationship-locking mode for symmetric link-table M2M writes
+ * (RFC 10). Layered *on top of* the always-on owner-edge serialization, which
+ * is unaffected by this selector.
+ *
+ * - [OwnerOnly]: the default. The save takes only the owner-edge lock, which
+ *   does not coordinate writes from the opposite orientation of the same link
+ *   table — so concurrent cross-orientation writes can deadlock (retryable) or
+ *   last-writer-win.
+ * - [Canonical]: additionally take a canonical relationship lock keyed by the
+ *   junction + unordered FK pair, so both orientations of the same link table
+ *   serialize. Cooperative — it only protects against other writers that also
+ *   select `Canonical`. Requires a transaction-scoped client and a driver
+ *   reporting `supportsRelationshipSerialization = true`.
+ *
+ * Has no effect on saves with no pending link-table M2M writes (there is no
+ * relationship to lock).
+ */
+enum class RelationshipLocking {
+    OwnerOnly,
+    Canonical,
+}
+
+/**
+ * Canonical identity of a link-table relationship, used as the key for the
+ * relationship lock ([Driver.serializeRelationship]). [fkColumns] is the
+ * unordered FK pair stored in canonical (sorted) order so both orientations
+ * of the same link table produce an equal key. Build via [canonical] to
+ * enforce the sort.
+ */
+data class RelationshipLockKey(
+    val junctionTable: String,
+    val fkColumns: List<String>,
+) {
+    companion object {
+        /** Build a key with [fkColumns] sorted into canonical order. */
+        fun canonical(junctionTable: String, fkColumns: List<String>): RelationshipLockKey =
+            RelationshipLockKey(junctionTable, fkColumns.sorted())
+    }
+}

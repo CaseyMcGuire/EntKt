@@ -36,6 +36,42 @@ interface Driver {
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
 
     /**
+     * Whether [insertIgnore] is supported. Drivers that can express a
+     * targeted upsert-skip (e.g. Postgres `ON CONFLICT ... DO NOTHING`)
+     * override this to `true`. Generated symmetric link-table writes
+     * (RFC 10) preflight this flag before issuing junction inserts.
+     */
+    val supportsInsertIgnore: Boolean
+        get() = false
+
+    /**
+     * Idempotent insert: insert a row, but if it would violate the
+     * unique/primary-key constraint over exactly [conflictColumns], do
+     * nothing instead of throwing. Keys in [values] are snake_case column
+     * names, same as [insert]. Returns the persisted row when a row was
+     * inserted, or `null` when the insert was skipped because a matching
+     * row already existed.
+     *
+     * The conflict target is *scoped* to [conflictColumns] — a violation
+     * of any *other* constraint still throws, so this never silently
+     * swallows unrelated integrity errors. Used for junction-row inserts
+     * in symmetric link-table M2M writes (RFC 10), where re-adding an
+     * existing pair must be a no-op rather than an error.
+     *
+     * A driver that does not support this leaves [supportsInsertIgnore]
+     * false; the default implementation throws.
+     */
+    fun insertIgnore(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+    ): Map<String, Any?>? =
+        throw UnsupportedOperationException(
+            "Driver ${this::class.simpleName} does not support insertIgnore; " +
+                "check supportsInsertIgnore before calling.",
+        )
+
+    /**
      * Update a row by id. Returns the new row state on success, or
      * `null` if no row exists with that id. Generated `save()` returns
      * `null` to its caller in that case; `saveOrThrow()` throws.
@@ -296,11 +332,55 @@ interface Driver {
      * hold explicitly until transaction end. A driver that does not
      * support this leaves [supportsOwnerEdgeSerialization] false; the
      * default implementation throws.
+     *
+     * **Scope.** This lock keys on a single owner row `(table, id)`, so it
+     * serializes saves that share an owner but does NOT coordinate writes
+     * coming from the *opposite orientation* of the same link table (those
+     * are anchored on a different owner row). Cross-orientation
+     * coordination is the job of the canonical relationship lock —
+     * [serializeRelationship] — which both sides opt into.
      */
     fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? =
         throw UnsupportedOperationException(
             "Driver ${this::class.simpleName} does not support serializeOwnerEdgeAndRead; " +
                 "check supportsOwnerEdgeSerialization before calling.",
+        )
+
+    /**
+     * Whether [serializeRelationship] is supported. Drivers with a
+     * transaction-scoped advisory-lock primitive (e.g. Postgres
+     * `pg_advisory_xact_lock`) override this to `true`. Generated saves
+     * preflight this flag when `relationshipLocking = Canonical` is
+     * selected for a symmetric link-table write (RFC 10).
+     */
+    val supportsRelationshipSerialization: Boolean
+        get() = false
+
+    /**
+     * Serialize access to a whole link-table *relationship*, keyed by the
+     * canonical [RelationshipLockKey] (junction table + sorted FK pair),
+     * against other callers using the same discipline. Unlike
+     * [serializeOwnerEdgeAndRead] — which keys on a single owner row and
+     * therefore does NOT coordinate writes coming from the opposite
+     * orientation of the same link table — this lock is symmetric: both
+     * orientations compute the same key and so serialize against each
+     * other. It reads no row; it only takes the lock.
+     *
+     * The serialization must hold from the call through the rest of the
+     * save's transaction, in practice until the enclosing transaction
+     * commits or rolls back. This lock is *cooperative*: it only protects
+     * against other writers that also opt in via `RelationshipLocking.Canonical`.
+     *
+     * **Implementation contract.** Same as [serializeOwnerEdgeAndRead]:
+     * implementations MUST reject calls when [inTransaction] is false (use
+     * [requireTransactionForLocking]); the token's duration is the
+     * surrounding transaction. A driver that does not support this leaves
+     * [supportsRelationshipSerialization] false; the default throws.
+     */
+    fun serializeRelationship(key: RelationshipLockKey): Unit =
+        throw UnsupportedOperationException(
+            "Driver ${this::class.simpleName} does not support serializeRelationship; " +
+                "check supportsRelationshipSerialization before calling.",
         )
 
     /**

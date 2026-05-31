@@ -20,13 +20,18 @@ import entkt.runtime.EntitySchema
 import entkt.runtime.ForeignKeyRef
 import entkt.runtime.IdStrategy
 import entkt.runtime.IndexMetadata
+import entkt.runtime.RelationshipLockKey
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 import javax.sql.DataSource
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -123,6 +128,11 @@ private val M2M_USER_GROUP_SCHEMA = EntitySchema(
         ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
         ColumnMetadata("user_id", FieldType.LONG, nullable = false),
         ColumnMetadata("group_id", FieldType.LONG, nullable = false),
+    ),
+    // The unique pair index is what `insertIgnore(... ON CONFLICT (user_id,
+    // group_id) DO NOTHING)` targets — a real link table always carries it.
+    indexes = listOf(
+        IndexMetadata(columns = listOf("user_id", "group_id"), unique = true, name = "idx_m2m_user_group_pair"),
     ),
     edges = emptyMap(),
 )
@@ -1010,6 +1020,135 @@ class PostgresDriverTest {
             emptyList(), null, null,
         )
         assertEquals(setOf("Alice"), rows.map { it["name"] }.toSet())
+    }
+
+    // ---------- RFC 10: insertIgnore + relationship serialization ----------
+
+    @Test
+    fun `insertIgnore inserts a new junction pair and returns the persisted row`() {
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice"))
+        val admins = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+
+        val inserted = driver.insertIgnore(
+            "m2m_user_groups",
+            mapOf<String, Any?>("user_id" to alice["id"], "group_id" to admins["id"]),
+            conflictColumns = listOf("user_id", "group_id"),
+        )
+
+        assertNotNull(inserted, "first insert of a fresh pair returns the row")
+        assertEquals(alice["id"], inserted["user_id"])
+        assertEquals(admins["id"], inserted["group_id"])
+        assertEquals(1L, driver.count("m2m_user_groups", emptyList()))
+    }
+
+    @Test
+    fun `insertIgnore of an existing pair returns null and does not duplicate`() {
+        // RFC 10 Risk #1: ON CONFLICT DO NOTHING yields zero result rows on a
+        // conflict; insertIgnore must map that to null rather than throwing,
+        // and the existing row must remain (no duplicate, no overwrite).
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice"))
+        val admins = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+        val pair = mapOf<String, Any?>("user_id" to alice["id"], "group_id" to admins["id"])
+
+        val first = driver.insertIgnore("m2m_user_groups", pair, conflictColumns = listOf("user_id", "group_id"))
+        assertNotNull(first)
+
+        val second = driver.insertIgnore("m2m_user_groups", pair, conflictColumns = listOf("user_id", "group_id"))
+        assertNull(second, "re-adding an existing pair is a no-op that returns null")
+
+        assertEquals(1L, driver.count("m2m_user_groups", emptyList()), "row count stays 1")
+    }
+
+    @Test
+    fun `insertIgnore still throws on a conflict outside the conflictColumns`() {
+        // The ON CONFLICT target is scoped to (user_id, group_id). A violation
+        // of a *different* constraint — here the primary key on id — must still
+        // throw rather than being silently swallowed.
+        val driver = freshM2M()
+        val alice = driver.insert("m2m_users", mapOf<String, Any?>("name" to "Alice"))
+        val admins = driver.insert("m2m_groups", mapOf<String, Any?>("name" to "Admins"))
+
+        val first = driver.insertIgnore(
+            "m2m_user_groups",
+            mapOf<String, Any?>("user_id" to alice["id"], "group_id" to admins["id"]),
+            conflictColumns = listOf("user_id", "group_id"),
+        )
+        assertNotNull(first)
+        val existingId = first["id"]
+
+        // A fresh pair (so the (user_id, group_id) conflict does NOT fire) but a
+        // colliding explicit primary key → unique violation on the PK, which is
+        // outside the conflict target and therefore propagates.
+        assertFailsWith<Exception> {
+            driver.insertIgnore(
+                "m2m_user_groups",
+                mapOf<String, Any?>("id" to existingId, "user_id" to 999L, "group_id" to 999L),
+                conflictColumns = listOf("user_id", "group_id"),
+            )
+        }
+    }
+
+    @Test
+    fun `Postgres driver advertises insertIgnore and relationship-serialization support`() {
+        val driver = freshM2M()
+        assertTrue(driver.supportsInsertIgnore)
+        assertTrue(driver.supportsRelationshipSerialization)
+        driver.withTransaction { tx ->
+            assertTrue(tx.supportsInsertIgnore)
+            assertTrue(tx.supportsRelationshipSerialization)
+        }
+    }
+
+    @Test
+    fun `serializeRelationship on the root driver throws because the advisory lock is xact-scoped`() {
+        val driver = freshM2M()
+        val key = RelationshipLockKey.canonical("m2m_user_groups", listOf("user_id", "group_id"))
+        // Outside a transaction the pg_advisory_xact_lock would release at
+        // statement end, defeating the contract — so the root rejects the call.
+        assertFailsWith<IllegalStateException> {
+            driver.serializeRelationship(key)
+        }
+    }
+
+    @Test
+    fun `serializeRelationship serializes two transactions on the same canonical key`() {
+        val driver = freshM2M()
+        val key = RelationshipLockKey.canonical("m2m_user_groups", listOf("user_id", "group_id"))
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val bEntered = CountDownLatch(1)
+        val bError = AtomicReference<Throwable?>(null)
+
+        // Contender: takes the same relationship lock in its own transaction.
+        // It must block until the holder's transaction commits.
+        val contender = thread(start = false, name = "relationship-lock-contender") {
+            try {
+                driver.withTransaction { tx ->
+                    bEntered.countDown()
+                    tx.serializeRelationship(key) // blocks until the holder releases
+                    order.add("B-acquired")
+                }
+            } catch (t: Throwable) {
+                bError.set(t)
+            }
+        }
+
+        driver.withTransaction { tx ->
+            tx.serializeRelationship(key) // holder takes the lock first
+            order.add("A-acquired")
+            contender.start()
+            bEntered.await() // contender is now inside its own transaction
+            // Give it ample time to reach (and block on) its lock acquisition.
+            Thread.sleep(500)
+            // It must still be blocked — only the holder has acquired so far.
+            assertEquals(listOf("A-acquired"), order.toList())
+            order.add("A-releasing")
+        } // holder's transaction commits → advisory lock released
+
+        contender.join(5_000)
+        assertNull(bError.get(), "contender thread failed: ${bError.get()}")
+        assertEquals(listOf("A-acquired", "A-releasing", "B-acquired"), order.toList())
     }
 
     // ---------- count ----------

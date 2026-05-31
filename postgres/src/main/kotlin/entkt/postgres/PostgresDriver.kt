@@ -92,6 +92,13 @@ class PostgresDriver(
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
         dataSource.connection.use { insertWith(it, table, values) }
 
+    override fun insertIgnore(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+    ): Map<String, Any?>? =
+        dataSource.connection.use { insertIgnoreWith(it, table, values, conflictColumns) }
+
     override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? =
         dataSource.connection.use { updateWith(it, table, id, values) }
 
@@ -177,6 +184,50 @@ class PostgresDriver(
             stmt.executeQuery().use { rs ->
                 check(rs.next()) { "INSERT into $table returned no row" }
                 decodeRow(rs, schema.columns)
+            }
+        }
+    }
+
+    /**
+     * Idempotent insert: `INSERT ... ON CONFLICT (conflictColumns) DO
+     * NOTHING RETURNING *`. Returns the inserted row, or `null` when the
+     * insert was skipped because a row already matched [conflictColumns].
+     *
+     * Mirrors [insertWith], with two differences: the targeted
+     * `ON CONFLICT` clause, and — critically — it does NOT assert a row
+     * came back. `DO NOTHING` produces zero result rows on a conflict, and
+     * that skip is the whole point (re-adding an existing junction pair is
+     * a no-op), so `rs.next() == false` maps to `null` rather than an error.
+     * The conflict target is scoped to [conflictColumns]; any *other*
+     * constraint violation still propagates as a thrown exception.
+     */
+    private fun insertIgnoreWith(
+        conn: Connection,
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+    ): Map<String, Any?>? {
+        val schema = schemaFor(table)
+
+        val skipId = (schema.idStrategy == IdStrategy.AUTO_INT ||
+            schema.idStrategy == IdStrategy.AUTO_LONG) &&
+            values[schema.idColumn] == null
+
+        val cols = values.keys.filter { !(skipId && it == schema.idColumn) }
+        val placeholders = cols.joinToString(", ") { "?" }
+        val colList = cols.joinToString(", ") { quote(it) }
+        val conflictList = conflictColumns.joinToString(", ") { quote(it) }
+        val valuesClause = if (cols.isEmpty()) "DEFAULT VALUES" else "($colList) VALUES ($placeholders)"
+        val sql =
+            "INSERT INTO ${quote(table)} $valuesClause ON CONFLICT ($conflictList) DO NOTHING RETURNING *"
+
+        return conn.prepareStatement(sql).use { stmt ->
+            for ((i, col) in cols.withIndex()) {
+                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
+            }
+            stmt.executeQuery().use { rs ->
+                // No assertion: a conflict legitimately produces zero rows.
+                if (rs.next()) decodeRow(rs, schema.columns) else null
             }
         }
     }
@@ -912,6 +963,28 @@ class PostgresDriver(
         )
     }
 
+    // Postgres expresses targeted upsert-skip via `ON CONFLICT DO NOTHING`,
+    // so insertIgnore is supported on the root (auto-commit) driver too —
+    // it's a single idempotent statement, not a multi-step lock.
+    override val supportsInsertIgnore: Boolean
+        get() = true
+
+    // Like the other lock primitives, the relationship lock only does
+    // useful work inside a transaction (an advisory lock taken in
+    // auto-commit releases immediately), so the root driver advertises the
+    // capability but rejects the call; callers reach it via the
+    // transaction-scoped driver.
+    override val supportsRelationshipSerialization: Boolean
+        get() = true
+
+    override fun serializeRelationship(key: entkt.runtime.RelationshipLockKey) {
+        requireTransactionForLocking("serializeRelationship")
+        error(
+            "PostgresDriver.serializeRelationship reached the root-class body despite passing " +
+                "the transaction check — root must not advertise inTransaction = true.",
+        )
+    }
+
     /**
      * Lock the row by id with `SELECT ... FOR UPDATE` and return its
      * current contents. Caller is responsible for the surrounding
@@ -956,6 +1029,32 @@ class PostgresDriver(
         }
         // Then read the row inside the held lock.
         return byIdWith(conn, table, id)
+    }
+
+    /**
+     * Take a transaction-scoped advisory lock keyed by a canonical
+     * [RelationshipLockKey][entkt.runtime.RelationshipLockKey] (junction
+     * table + sorted FK pair), reading no row. Both orientations of the
+     * same link table produce an equal key — `fkColumns` is canonically
+     * sorted by the key factory — so they serialize against each other.
+     *
+     * The lock key folds the junction-table name's `hashCode` and the
+     * (order-independent, because sorted) `fkColumns` list `hashCode` into
+     * the two `int4` arguments of `pg_advisory_xact_lock`. Collisions only
+     * over-serialize (false sharing), never under-serialize. The lock
+     * releases automatically at transaction end.
+     *
+     * Distinct from [serializeOwnerEdgeAndReadWith], whose key is a single
+     * owner row and so cannot coordinate the two orientations.
+     */
+    internal fun serializeRelationshipWith(conn: Connection, key: entkt.runtime.RelationshipLockKey) {
+        val junctionKey = key.junctionTable.hashCode()
+        val columnsKey = key.fkColumns.hashCode()
+        conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").use { stmt ->
+            stmt.setInt(1, junctionKey)
+            stmt.setInt(2, columnsKey)
+            stmt.executeQuery().close()
+        }
     }
 
     private val EntitySchema.idType: FieldType?
@@ -1043,6 +1142,14 @@ class PostgresDriver(
             checkOpen(); return insertWith(conn, table, values)
         }
 
+        override fun insertIgnore(
+            table: String,
+            values: Map<String, Any?>,
+            conflictColumns: List<String>,
+        ): Map<String, Any?>? {
+            checkOpen(); return insertIgnoreWith(conn, table, values, conflictColumns)
+        }
+
         override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? {
             checkOpen(); return updateWith(conn, table, id, values)
         }
@@ -1122,6 +1229,16 @@ class PostgresDriver(
 
         override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
             checkOpen(); return root.serializeOwnerEdgeAndReadWith(conn, table, id)
+        }
+
+        override val supportsInsertIgnore: Boolean
+            get() = root.supportsInsertIgnore
+
+        override val supportsRelationshipSerialization: Boolean
+            get() = root.supportsRelationshipSerialization
+
+        override fun serializeRelationship(key: entkt.runtime.RelationshipLockKey) {
+            checkOpen(); root.serializeRelationshipWith(conn, key)
         }
 
         // Exception classification delegates to root — the PSQLException

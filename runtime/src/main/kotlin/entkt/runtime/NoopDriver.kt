@@ -30,6 +30,16 @@ object NoopDriver : Driver {
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
         error("NoopDriver cannot insert — was a terminal op called inside EdgeRef.has { }?")
 
+    override fun insertIgnore(
+        table: String,
+        values: Map<String, Any?>,
+        conflictColumns: List<String>,
+    ): Map<String, Any?>? =
+        error("NoopDriver cannot insertIgnore — was a terminal op called inside EdgeRef.has { }?")
+
+    override fun serializeRelationship(key: RelationshipLockKey): Unit =
+        error("NoopDriver cannot serializeRelationship — was a terminal op called inside EdgeRef.has { }?")
+
     override fun update(
         table: String,
         id: Any,
