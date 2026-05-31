@@ -50,6 +50,12 @@ open class ComparableColumn<E : Any, T : Comparable<T>>(name: String) : Column<E
 
     fun asc(): OrderField<E> = OrderField(name, OrderDirection.ASC)
     fun desc(): OrderField<E> = OrderField(name, OrderDirection.DESC)
+
+    /**
+     * Order by a [direction] chosen at runtime — lets dynamic-sort callers
+     * write `column.order(dir)` instead of branching on [asc]/[desc].
+     */
+    fun order(direction: OrderDirection): OrderField<E> = OrderField(name, direction)
 }
 
 /**
@@ -98,6 +104,12 @@ open class EnumColumn<E : Any, T : Enum<T>>(name: String) : Column<E, T>(name) {
     // not `T : Comparable<T>`, and we store the .name.
     fun asc(): OrderField<E> = OrderField(name, OrderDirection.ASC)
     fun desc(): OrderField<E> = OrderField(name, OrderDirection.DESC)
+
+    /**
+     * Order by a [direction] chosen at runtime — lets dynamic-sort callers
+     * write `column.order(dir)` instead of branching on [asc]/[desc].
+     */
+    fun order(direction: OrderDirection): OrderField<E> = OrderField(name, direction)
 }
 
 class NullableColumn<E : Any, T>(name: String) : Column<E, T>(name), Nullable
