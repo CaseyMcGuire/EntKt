@@ -325,8 +325,8 @@ for the DSL reference. The table mapping:
 | `belongsTo<User>("owner").onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
 
 `belongsTo(...)` is required by default; add `.nullable()` to declare an
-optional relationship. When no explicit `.onDelete()` is set, the default
-is inferred from nullability: `SET NULL` for optional FKs, `RESTRICT` for
+nullable relationship. When no explicit `.onDelete()` is set, the default
+is inferred from nullability: `SET NULL` for nullable FKs, `RESTRICT` for
 required FKs.
 
 `PostgresDriver` enforces these actions via `REFERENCES ... ON DELETE`

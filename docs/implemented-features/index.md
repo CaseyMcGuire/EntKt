@@ -28,6 +28,7 @@ Open or speculative RFCs remain in the
 
 - [Schema Validation Explain](schema/schema-validation-explain.md)
 - [Soft Delete](schema/soft-delete.md)
+- [Schema Nullability Terminology](schema/schema-nullability-terminology.md)
 
 ## Results, Codegen, And Tooling
 

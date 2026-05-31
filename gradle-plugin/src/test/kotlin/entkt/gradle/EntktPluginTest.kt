@@ -70,7 +70,7 @@ class EntktPluginTest {
                 class Pet : EntSchema("pets") {
                     override fun id() = EntId.int()
                     val name = string("name")
-                    val age = int("age").optional()
+                    val age = int("age").nullable()
 
                     val owner = belongsTo<Owner>("owner").nullable()
                 }

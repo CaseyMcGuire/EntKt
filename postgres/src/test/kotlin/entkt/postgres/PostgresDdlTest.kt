@@ -127,7 +127,7 @@ class PostgresDdlTest {
         class Users : EntSchema("users") {
             override fun id() = EntId.int()
             val name = string("name")
-            val bio = text("bio").optional()
+            val bio = text("bio").nullable()
         }
 
         val ddl = renderDdl(Users())
@@ -239,7 +239,7 @@ class PostgresDdlTest {
             val ratio = double("ratio").default(1.5)
             val priority = enum<Priority>("priority").default(Priority.MEDIUM)
             val createdAt = time("created_at").defaultNow()
-            val note = string("note").default("n/a").optional()
+            val note = string("note").default("n/a").nullable()
         }
 
         val ddl = renderDdl(Defaults())

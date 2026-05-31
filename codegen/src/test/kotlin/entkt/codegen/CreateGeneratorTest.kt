@@ -29,7 +29,7 @@ class ValidatedEntity : EntSchema("validated_entities") {
     override fun id() = EntId.int()
     val name = string("name").minLength(3).maxLength(100).notEmpty()
     val age = int("age").positive()
-    val nickname = string("nickname").optional().match(Regex("^[a-z]+$"))
+    val nickname = string("nickname").nullable().match(Regex("^[a-z]+$"))
     val code = string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
 }
 

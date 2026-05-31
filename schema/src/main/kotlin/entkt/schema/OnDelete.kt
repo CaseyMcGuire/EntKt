@@ -11,7 +11,7 @@ package entkt.schema
 enum class OnDelete {
     /** Delete the child row when the parent is deleted. */
     CASCADE,
-    /** Set the FK column to NULL when the parent is deleted. Only valid on optional edges. */
+    /** Set the FK column to NULL when the parent is deleted. Only valid on nullable edges. */
     SET_NULL,
     /** Prevent deletion of the parent while children exist. */
     RESTRICT,

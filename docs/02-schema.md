@@ -74,7 +74,7 @@ These are available on all field types:
 
 | Modifier | Effect |
 |----------|--------|
-| `.optional()` | Field is nullable in the generated code |
+| `.nullable()` | Field is nullable; generated as a Kotlin `T?` |
 | `.unique()` | Adds a unique constraint |
 | `.immutable()` | Omitted from update builder setters |
 | `.sensitive()` | Excluded from string representations |
@@ -189,7 +189,7 @@ class User : EntSchema("users") {
 
 `belongsTo<Target>(name)` declares the FK-owning side. This synthesizes
 a FK column (e.g. `author_id`) on the current entity. Relationships are
-required-by-default; add `.nullable()` to make the FK optional.
+required-by-default; add `.nullable()` to make the FK nullable.
 
 ```kotlin
 class Post : EntSchema("posts") {
@@ -223,7 +223,7 @@ class Pet : EntSchema("pets") {
 | Action | Effect |
 |--------|--------|
 | `OnDelete.CASCADE` | Delete child rows when the parent is deleted |
-| `OnDelete.SET_NULL` | Set the FK column to NULL (only valid on optional edges) |
+| `OnDelete.SET_NULL` | Set the FK column to NULL (only valid on nullable edges) |
 | `OnDelete.RESTRICT` | Prevent deletion of the parent while children exist |
 
 `PostgresDriver` enforces these actions via `REFERENCES ... ON DELETE`

@@ -38,7 +38,6 @@ Implemented RFCs have moved to the
 
 ## Model Behavior
 
-- [Schema Nullability Terminology](schema/schema-nullability-terminology.md)
 - [Typed Schema Handles](schema/typed-schema-handles.md)
 - [Optimistic Locking](schema/optimistic-locking.md)
 - [Edge Groups](schema/edge-groups.md)

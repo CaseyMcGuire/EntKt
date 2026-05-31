@@ -111,13 +111,13 @@ class User : EntSchema("users") {
 
     val name = string("name").minLength(1).maxLength(64)
     val email = string("email").unique()
-    val age = int("age").optional().min(0).max(150)
+    val age = int("age").nullable().min(0).max(150)
     val active = bool("active").default(true)
 }
 ```
 
 This declares a `users` table with a UUID primary key, a required `name`
-with length constraints, a unique `email`, an optional `age`, and a
+with length constraints, a unique `email`, a nullable `age`, and a
 boolean `active` that defaults to `true`.
 
 ## Using the Generated Code

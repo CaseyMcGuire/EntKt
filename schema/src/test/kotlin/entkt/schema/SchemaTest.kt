@@ -22,13 +22,13 @@ class Car : EntSchema("cars") {
     override fun id() = EntId.int()
     val model = string("model")
     val year = int("year")
-    val price = float("price").optional()
+    val price = float("price").nullable()
 }
 
 class User : EntSchema("users") {
     override fun id() = EntId.int()
     val name = string("name").minLength(1).maxLength(100)
-    val age = int("age").optional().positive()
+    val age = int("age").nullable().positive()
     val email = string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
     val role = enum<Role>("role").default(Role.USER)
     val active = bool("active").default(true)

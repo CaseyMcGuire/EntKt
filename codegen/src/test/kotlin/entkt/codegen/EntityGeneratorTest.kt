@@ -16,7 +16,7 @@ class Car : EntSchema("cars") {
     override fun id() = EntId.int()
     val model = string("model")
     val year = int("year")
-    val price = float("price").optional()
+    val price = float("price").nullable()
 
     val user = belongsTo<User>("user").inverse(User::cars)
 }
@@ -34,7 +34,7 @@ class User : EntSchema("users") {
     val createdAt = time("created_at").immutable()
     val updatedAt = time("updated_at")
     val name = string("name")
-    val age = int("age").optional()
+    val age = int("age").nullable()
     val email = string("email").unique()
     val active = bool("active").default(true)
 

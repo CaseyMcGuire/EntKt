@@ -46,7 +46,6 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     private fun self(): Self = this as Self
 
     fun nullable(): Self = apply { checkNotFrozen(); nullable = true }.let { self() }
-    fun optional(): Self = nullable()
     fun unique(): Self = apply { checkNotFrozen(); unique = true }.let { self() }
     fun immutable(): Self = apply { checkNotFrozen(); immutable = true }.let { self() }
     fun sensitive(): Self = apply { checkNotFrozen(); sensitive = true }.let { self() }

@@ -47,7 +47,7 @@ sealed class Predicate<E : Any> {
 
     /**
      * "Has any related row across [edge]." For required edges this is
-     * trivially true; for optional edges it filters out rows whose FK is
+     * trivially true; for nullable edges it filters out rows whose FK is
      * null (or whose join-table row is missing).
      *
      * Not a `data class` — Kotlin would auto-generate a public

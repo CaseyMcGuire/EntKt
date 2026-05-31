@@ -38,7 +38,7 @@ private class InspPost : EntSchema("posts") {
 
 private class InspProfile : EntSchema("profiles") {
     override fun id() = EntId.uuid()
-    val bio = text("bio").optional()
+    val bio = text("bio").nullable()
     val user = belongsTo<InspProfileUser>("user")
         .inverse(InspProfileUser::profile).unique()
 }

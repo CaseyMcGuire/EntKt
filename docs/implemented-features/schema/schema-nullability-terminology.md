@@ -2,7 +2,8 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Implemented. The schema DSL exposes `.nullable()` as the only nullability
+modifier; `.optional()` has been removed from field builders.
 
 ## Summary
 
