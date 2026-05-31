@@ -5,15 +5,17 @@ import entkt.schema.EntSchema
 import entkt.schema.OnDelete
 
 /**
- * Junction table for the `Post.tags` link-table M2M edge. Satisfies
- * the RFC #3 helper-eligibility shape:
+ * Junction table for the symmetric `Post.tags` / `Tag.posts` link-table
+ * M2M edge (RFC 10). Satisfies the RFC #3 helper-eligibility shape:
  *   1. id + the two FK columns (no payload)
  *   2. both junction belongsTo edges are non-null
  *   3. backing fields carry no write-time modifiers
  *   4. both FKs declare OnDelete.CASCADE explicitly
  *   5. id strategy is AUTO_LONG (not EXPLICIT)
- *   6. non-partial unique composite index on (post_id, tag_id) in
- *      source-first order
+ *   6. a non-partial unique index over the (unordered) FK pair, plus —
+ *      for each declared orientation — a non-partial index leading with
+ *      that side's source FK (post_id for `Post.tags`, tag_id for
+ *      `Tag.posts`).
  */
 class PostTag : EntSchema("post_tags") {
     override fun id() = EntId.long()
@@ -21,5 +23,11 @@ class PostTag : EntSchema("post_tags") {
     val post = belongsTo<Post>("post").onDelete(OnDelete.CASCADE)
     val tag = belongsTo<Tag>("tag").onDelete(OnDelete.CASCADE)
 
+    // Unique pair index — the conflict target for idempotent insertIgnore and
+    // the leading-column index for the `Post.tags` orientation (leads post_id).
     val pair = index("idx_post_tags_post_tag", post.fk, tag.fk).unique()
+
+    // RFC 10: the `Tag.posts` orientation needs its own non-partial index
+    // leading with its source FK (tag_id) to validate.
+    val byTag = index("idx_post_tags_tag_post", tag.fk, post.fk)
 }

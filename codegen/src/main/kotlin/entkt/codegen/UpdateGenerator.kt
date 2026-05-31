@@ -254,6 +254,7 @@ internal class UpdateGenerator(
             .also { builder ->
                 if (helperEligibleEdges.isNotEmpty()) {
                     builder.addFunction(buildHasPendingLinkTableM2MOpsFunction(helperEligibleEdges))
+                    builder.addFunction(buildHasPendingLinkTableM2MInsertsFunction(helperEligibleEdges))
                     builder.addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
                 }
             }
@@ -842,6 +843,20 @@ internal class UpdateGenerator(
                     .build(),
             )
             .addFunction(
+                // RFC 10: true when this edge has a pending op that can
+                // INSERT a junction row — any `add(...)` or `set(...)`.
+                // Remove-only mutations cannot insert, so they stay false
+                // and skip the `supportsInsertIgnore` preflight. This is a
+                // conservative over-approximation: `set(ids)` counts even if
+                // the diff turns out to insert nothing, since the actual
+                // added set is only known after the current-state read.
+                FunSpec.builder("hasInserts")
+                    .addModifiers(KModifier.INTERNAL)
+                    .returns(BOOLEAN)
+                    .addStatement("return _requestedSet != null || _adds.isNotEmpty()")
+                    .build(),
+            )
+            .addFunction(
                 // Materializes the immutable PendingEdgeOps snapshot
                 // consumed by _buildPendingEdgeOps. Replaces the
                 // previous inline field reads in the aggregator
@@ -895,6 +910,27 @@ internal class UpdateGenerator(
             .returns(BOOLEAN)
         // helperEligibleEdges is non-empty (caller-side guard).
         val expr = helperEligibleEdges.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasOps()" }
+        builder.addStatement("return %L", expr)
+        return builder.build()
+    }
+
+    /**
+     * RFC 10: build `_hasPendingLinkTableM2MInserts()`. ORs each
+     * helper-eligible mutator's `hasInserts()` flag — the gate for the
+     * `supportsInsertIgnore` capability preflight in save(). True when any
+     * edge has a pending `add` or `set`; remove-only saves stay false and
+     * are exempt from the preflight (they never call `insertIgnore`).
+     * Generated only when the schema has at least one helper-eligible
+     * link-table M2M edge.
+     */
+    private fun buildHasPendingLinkTableM2MInsertsFunction(
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): FunSpec {
+        val builder = FunSpec.builder("_hasPendingLinkTableM2MInserts")
+            .addModifiers(KModifier.PRIVATE)
+            .returns(BOOLEAN)
+        // helperEligibleEdges is non-empty (caller-side guard).
+        val expr = helperEligibleEdges.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasInserts()" }
         builder.addStatement("return %L", expr)
         return builder.build()
     }
@@ -1215,6 +1251,18 @@ internal class UpdateGenerator(
                     "supportsReadRowForUpdate or supportsOwnerEdgeSerialization",
             )
             builder.endControlFlow()
+            // RFC 10: junction inserts go through driver.insertIgnore for
+            // idempotency, so a save that stages any add/set needs the
+            // insertIgnore capability. Remove-only saves don't insert and are
+            // exempt — hence the gate on _hasPendingLinkTableM2MInserts()
+            // rather than _hasPendingLinkTableM2MOps().
+            builder.beginControlFlow("if (_hasPendingLinkTableM2MInserts() && !driver.supportsInsertIgnore)")
+            builder.addStatement(
+                "throw %T(%S)",
+                UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
+                "$schemaName link-table M2M add/set requires a driver with supportsInsertIgnore = true",
+            )
+            builder.endControlFlow()
             builder.addStatement("_checkLinkTableM2MMixedMode()")
             builder.endControlFlow()
         }
@@ -1513,15 +1561,20 @@ internal class UpdateGenerator(
                 // assign the id (no "id" key in the map).
                 builder.beginControlFlow("if (edgeChanges.%L.added.isNotEmpty())", prop)
                 builder.beginControlFlow("for (_targetId in edgeChanges.%L.added)", prop)
+                // RFC 10: use insertIgnore so re-adding an existing pair from
+                // either orientation is an idempotent no-op rather than a
+                // unique-constraint error. The conflict target is the FK pair.
                 when (edge.junctionIdStrategy) {
                     "CLIENT_UUID" -> builder.addStatement(
-                        "driver.insert(%S, mapOf(%S to %T.randomUUID(), %S to id, %S to _targetId))",
+                        "driver.insertIgnore(%S, mapOf(%S to %T.randomUUID(), %S to id, %S to _targetId), conflictColumns = listOf(%S, %S))",
                         edge.junctionTable, "id", UUID_CLASS,
+                        edge.junctionSourceColumn, edge.junctionTargetColumn,
                         edge.junctionSourceColumn, edge.junctionTargetColumn,
                     )
                     "AUTO_INT", "AUTO_LONG" -> builder.addStatement(
-                        "driver.insert(%S, mapOf(%S to id, %S to _targetId))",
+                        "driver.insertIgnore(%S, mapOf(%S to id, %S to _targetId), conflictColumns = listOf(%S, %S))",
                         edge.junctionTable,
+                        edge.junctionSourceColumn, edge.junctionTargetColumn,
                         edge.junctionSourceColumn, edge.junctionTargetColumn,
                     )
                     else -> error(

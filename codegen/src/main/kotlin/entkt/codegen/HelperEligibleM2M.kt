@@ -13,14 +13,18 @@ import entkt.schema.ManyToManyThrough
  * generators can splice junction reads and writes into the save
  * pipeline without re-walking the schema.
  *
- * A `throughLink(...)` declaration that survives
+ * A writable `throughLink(...)` declaration that survives
  * [validateThroughLinkJunctions] is helper-eligible by definition —
  * that validation enforces the junction shape constraints from RFC #3
  * (id + 2 FK columns only, OnDelete.CASCADE, no payload, no write-time
- * modifiers, source-first non-partial unique composite index, etc.).
- * [helperEligibleM2MEdges] just filters M2M edges to the
- * `ManyToManyThrough.LinkTable` variant and resolves the FK column
- * names through [resolveM2MEdgeJoin].
+ * modifiers, an unordered unique pair index, and a non-partial index
+ * leading with this side's source FK, etc.).
+ * [helperEligibleM2MEdges] filters M2M edges to the
+ * `ManyToManyThrough.LinkTable` variant, drops any side declared
+ * `.readOnly()` (read traversal only, no write surface — RFC 10), and
+ * resolves the FK column names through [resolveM2MEdgeJoin]. With
+ * symmetric link tables both pair-swapped endpoints are writable, so a
+ * junction can surface here from both sides.
  *
  * The mutator is named after the source edge (`tags` →
  * `TagsEdgeMutator`, not `TagEdgeMutator`) so two M2M edges to the
@@ -67,7 +71,12 @@ internal fun helperEligibleM2MEdges(
 ): List<HelperEligibleM2M> {
     return schema.edges().mapNotNull { edge ->
         val m2m = edge.kind as? EdgeKind.ManyToMany ?: return@mapNotNull null
-        if (m2m.through !is ManyToManyThrough.LinkTable) return@mapNotNull null
+        val through = m2m.through as? ManyToManyThrough.LinkTable ?: return@mapNotNull null
+        // A `.readOnly()` side keeps its read traversal but generates no write
+        // surface (RFC 10). Excluding it here is the single chokepoint: privacy
+        // aggregators, the UpdateGenerator write splice, and explain all derive
+        // their write surface from this list, so the exclusion propagates.
+        if (through.readOnly) return@mapNotNull null
         val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: return@mapNotNull null
         val junctionTable = join.junctionTable
             ?: error("resolveM2MEdgeJoin returned null junctionTable for M2M edge '${edge.name}'")
@@ -76,7 +85,7 @@ internal fun helperEligibleM2MEdges(
         val junctionTargetColumn = join.junctionTargetColumn
             ?: error("resolveM2MEdgeJoin returned null junctionTargetColumn for M2M edge '${edge.name}'")
         val targetId = edge.target.id()
-        val junction = (m2m.through as ManyToManyThrough.LinkTable).junction
+        val junction = through.junction
         HelperEligibleM2M(
             edge = edge,
             edgeName = edge.name,

@@ -1320,6 +1320,78 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `update builder emits _hasPendingLinkTableM2MInserts that ORs mutator hasInserts flags`() {
+        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
+        val output = generator.generate("M2MDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("private fun _hasPendingLinkTableM2MInserts(): Boolean")) {
+            "Expected _hasPendingLinkTableM2MInserts helper\n$output"
+        }
+        assert(output.contains("return this.tags.hasInserts() || this.labels.hasInserts()") ||
+               output.contains("_hasPendingLinkTableM2MInserts(): Boolean = this.tags.hasInserts() || this.labels.hasInserts()")) {
+            "Expected OR across each helper-eligible mutator's hasInserts()\n$output"
+        }
+    }
+
+    @Test
+    fun `edge mutator exposes hasInserts that is true only for a pending add or set`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Anchor on the function name so this can't accidentally match the
+        // hasOps() body (which also starts with `_requestedSet != null ||
+        // _adds.isNotEmpty()` but additionally ORs `_removes`).
+        assert(output.contains("hasInserts(): Boolean = _requestedSet != null || _adds.isNotEmpty()") ||
+               output.contains("hasInserts(): Boolean { return _requestedSet != null || _adds.isNotEmpty() }")) {
+            "hasInserts must be true for a pending set or add and exclude remove-only state\n$output"
+        }
+    }
+
+    @Test
+    fun `save emits supportsInsertIgnore preflight gated on pending inserts`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Gated on _hasPendingLinkTableM2MInserts() (not _hasPendingLinkTableM2MOps())
+        // so a remove-only save — which never calls insertIgnore — is exempt
+        // from the capability requirement.
+        assert(output.contains("if (_hasPendingLinkTableM2MInserts() && !driver.supportsInsertIgnore)")) {
+            "supportsInsertIgnore preflight must be gated on pending inserts\n$output"
+        }
+        assert(output.contains("requires a driver with supportsInsertIgnore = true")) {
+            "Expected the insertIgnore capability error message\n$output"
+        }
+    }
+
+    @Test
+    fun `readOnly throughLink side generates no write surface while the writable side does`() {
+        val (doc, names) = makeReadOnlyMixedSchemas()
+        val output = generator.generate("RoDoc", doc, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        // Writable side keeps its full write surface.
+        assert(output.contains("class TagsEdgeMutator")) {
+            "Writable throughLink side must still get its edge mutator\n$output"
+        }
+        assert(output.contains("edgeChanges.tags.added")) {
+            "Writable side must drive junction writes via edgeChanges\n$output"
+        }
+
+        // .readOnly() side is dropped at the helperEligibleM2MEdges chokepoint,
+        // so it has no mutator, no pending-edge plumbing, and no junction
+        // writes anywhere in the generated save surface.
+        assert(!output.contains("WatchersEdgeMutator")) {
+            ".readOnly() side must not get an edge mutator\n$output"
+        }
+        assert(!output.contains("watchers")) {
+            ".readOnly() side must not appear in the write surface (edge prop or junction)\n$output"
+        }
+    }
+
+    @Test
     fun `update builder emits _checkLinkTableM2MMixedMode that dispatches per-edge to validateInvariants`() {
         // Phase 8: the mixed-mode invariants live on the mutator
         // itself (`validateInvariants()`) now that the op-log fields
@@ -1734,9 +1806,9 @@ class UpdateGeneratorTest {
         // so the driver mints the junction id and the values map only
         // carries the two FK columns.
         assert(output.contains(
-            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { driver.insert(\"m2m_post_tags\", mapOf(\"post_id\" to id, \"tag_id\" to _targetId)) } }",
+            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { driver.insertIgnore(\"m2m_post_tags\", mapOf(\"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) } }",
         )) {
-            "AUTO_LONG junction inserts should omit the id key (driver mints) and iterate added\n$output"
+            "AUTO_LONG junction inserts should use insertIgnore, omit the id key (driver mints), and iterate added\n$output"
         }
     }
 
@@ -1764,9 +1836,9 @@ class UpdateGeneratorTest {
         // CLIENT_UUID junction → values map carries an "id" key with
         // UUID.randomUUID() in addition to the two FK columns.
         assert(output.contains(
-            "driver.insert(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to id, \"tag_id\" to _targetId))",
+            "driver.insertIgnore(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\"))",
         )) {
-            "CLIENT_UUID junction inserts should mint id via UUID.randomUUID() in the values map\n$output"
+            "CLIENT_UUID junction inserts should mint id via UUID.randomUUID() in the values map and use insertIgnore\n$output"
         }
     }
 
@@ -1778,11 +1850,11 @@ class UpdateGeneratorTest {
 
         // Each helper-eligible edge gets its own insert + deleteMany
         // pair, scoped by the per-edge junction table and FK columns.
-        assert(output.contains("driver.insert(\"m2m_doc_tags\", mapOf(\"doc_id\" to id, \"tag_id\" to _targetId))")) {
-            "Expected per-edge insert for the tags edge\n$output"
+        assert(output.contains("driver.insertIgnore(\"m2m_doc_tags\", mapOf(\"doc_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"tag_id\"))")) {
+            "Expected per-edge insertIgnore for the tags edge\n$output"
         }
-        assert(output.contains("driver.insert(\"m2m_doc_labels\", mapOf(\"doc_id\" to id, \"label_id\" to _targetId))")) {
-            "Expected per-edge insert for the labels edge\n$output"
+        assert(output.contains("driver.insertIgnore(\"m2m_doc_labels\", mapOf(\"doc_id\" to id, \"label_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"label_id\"))")) {
+            "Expected per-edge insertIgnore for the labels edge\n$output"
         }
         assert(output.contains("driver.deleteMany(\"m2m_doc_tags\"")) {
             "Expected per-edge deleteMany for the tags edge\n$output"
@@ -1960,6 +2032,61 @@ private fun makeMultiEdgeSchemas(): MultiEdgeSchemas {
             label to "M2MLabel",
             docTag to "M2MDocTag",
             docLabel to "M2MDocLabel",
+        ),
+    )
+}
+
+// ---------- RFC 10 test schemas: writable + .readOnly() throughLink ----------
+
+// One writable throughLink (`tags`) and one `.readOnly()` throughLink
+// (`watchers`) on the same source. The readOnly side keeps read traversal
+// but generates no write surface, so it must be filtered out of the
+// helper-eligible set the UpdateGenerator consumes.
+private class RoDoc : EntSchema("ro_docs") {
+    override fun id() = EntId.long()
+    val tags = manyToMany<RoTag>("tags")
+        .throughLink<RoDocTag>(RoDocTag::doc, RoDocTag::tag)
+    val watchers = manyToMany<RoWatcher>("watchers")
+        .throughLink<RoDocWatcher>(RoDocWatcher::doc, RoDocWatcher::watcher)
+        .readOnly()
+}
+private class RoTag : EntSchema("ro_tags") {
+    override fun id() = EntId.long()
+}
+private class RoWatcher : EntSchema("ro_watchers") {
+    override fun id() = EntId.long()
+}
+private class RoDocTag : EntSchema("ro_doc_tags") {
+    override fun id() = EntId.long()
+    val doc = belongsTo<RoDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag = belongsTo<RoTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_ro_doc_tags_pair", doc.fk, tag.fk).unique()
+}
+private class RoDocWatcher : EntSchema("ro_doc_watchers") {
+    override fun id() = EntId.long()
+    val doc = belongsTo<RoDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val watcher = belongsTo<RoWatcher>("watcher").onDelete(entkt.schema.OnDelete.CASCADE)
+    val pair = index("idx_ro_doc_watchers_pair", doc.fk, watcher.fk).unique()
+}
+private data class ReadOnlyMixedSchemas(
+    val doc: RoDoc,
+    val names: Map<EntSchema, String>,
+)
+private fun makeReadOnlyMixedSchemas(): ReadOnlyMixedSchemas {
+    val doc = RoDoc()
+    val tag = RoTag()
+    val watcher = RoWatcher()
+    val docTag = RoDocTag()
+    val docWatcher = RoDocWatcher()
+    finalize(doc, tag, watcher, docTag, docWatcher)
+    return ReadOnlyMixedSchemas(
+        doc,
+        mapOf(
+            doc to "RoDoc",
+            tag to "RoTag",
+            watcher to "RoWatcher",
+            docTag to "RoDocTag",
+            docWatcher to "RoDocWatcher",
         ),
     )
 }
