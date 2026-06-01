@@ -253,8 +253,7 @@ private fun validateM2MOrientation(
                 "Mixed M2M write models for the same canonical relationship over junction " +
                     "'${group[0].junctionName}' with edge pair {${group[0].sourceEdge}, ${group[0].targetEdge}}: " +
                     "$descriptions. The same junction edge pair must be modelled consistently — " +
-                    "either both sides as throughEntity (bidirectional traversal) or a single " +
-                    "throughLink (link-table relationship; no opposite-side declaration in V1).",
+                    "both sides as throughLink (pair-swapped) or both as throughEntity, not one of each.",
             )
         }
 

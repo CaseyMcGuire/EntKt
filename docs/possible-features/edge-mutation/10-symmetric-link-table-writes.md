@@ -2,7 +2,8 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Implemented (six phases plus audit follow-ups; full suite green). This doc still
+lives under `possible-features/` and can be moved to `implemented-features/`.
 
 **Relaxes** the single-write-orientation rule from
 [Many-To-Many Schema Modeling](../../implemented-features/edge-mutation/03-m2m-schema-modeling.md)
