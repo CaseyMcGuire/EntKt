@@ -7,6 +7,8 @@ an implementation contract** — every decision is tied to the current code so i
 be built without guesswork. Phases 2+ (custom scalar converters, JSON, arrays,
 native database enums) remain a design sketch on top of the Phase-1 foundation.
 
+Phased execution order: [pgvector-phase-1-implementation-plan.md](pgvector-phase-1-implementation-plan.md).
+
 ## Summary
 
 Allow schema fields to use application-specific Kotlin types while storing
