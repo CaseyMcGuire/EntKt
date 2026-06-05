@@ -36,4 +36,11 @@ data class Field(
      * declarationName.
      */
     val declarationName: String? = null,
+    /**
+     * Native/rich storage metadata when this field is more than a plain
+     * [FieldType] → SQL-type mapping (RFC "Native Database Column Types").
+     * Null for ordinary scalar/enum fields. Set by builders via
+     * `FieldBuilder.setNativeStorage(...)` and folded in by `build()`.
+     */
+    val storage: ColumnStorage? = null,
 )

@@ -28,6 +28,17 @@ interface Driver {
     fun register(schema: EntitySchema)
 
     /**
+     * Whether this driver can bind/decode/render the native storage [codec]
+     * (e.g. `"postgres.vector"`). Default `false`: a driver supports a native
+     * codec only by overriding this. Generated repos check it in `register`
+     * for every `ColumnStorage.Native` column and fail construction with
+     * [UnsupportedDriverCapabilityException] when a needed codec is
+     * unsupported, so an incompatible schema is rejected up front rather than
+     * at first read/write. RFC "Native Database Column Types", §9.
+     */
+    fun supportsNativeStorage(codec: String): Boolean = false
+
+    /**
      * Insert a row. The map's keys are snake_case column names; the id
      * column may be absent (driver mints one) or present (driver
      * stores as-is). Returns the persisted row, including the assigned

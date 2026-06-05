@@ -1,5 +1,6 @@
 package entkt.runtime
 
+import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
@@ -78,6 +79,14 @@ data class ColumnMetadata(
      * `NormalizedSchema.fromEntitySchemas` can emit `DEFAULT` clauses.
      */
     val default: Any? = null,
+    /**
+     * Native storage metadata (Postgres `pgvector`, etc.) when this column is
+     * more than a plain [type] → SQL-type mapping. Null for ordinary columns.
+     * Drivers dispatch bind/decode on `ColumnStorage.Native.codec`; migrations
+     * render its `sqlType` and required extension. RFC "Native Database Column
+     * Types", §5.
+     */
+    val storage: ColumnStorage? = null,
 )
 
 /**
@@ -113,6 +122,20 @@ data class IndexMetadata(
     val name: String,
     /** Optional SQL WHERE clause for partial indexes (e.g. `"active = true"`). */
     val where: String? = null,
+    /**
+     * Index access method, e.g. `"hnsw"` / `"ivfflat"` for `pgvector`. Null =
+     * the dialect default (btree). RFC "Native Database Column Types", §6.
+     */
+    val using: String? = null,
+    /**
+     * Per-column operator class, e.g. `["vector_cosine_ops"]`. Null for btree.
+     */
+    val opclasses: List<String>? = null,
+    /**
+     * Index storage parameters rendered as `WITH (k = v, ...)`, e.g. IVFFlat
+     * `{"lists": "100"}` or HNSW `{"m": "16"}`. Null/empty = no `WITH` clause.
+     */
+    val with: Map<String, String>? = null,
 )
 
 /**
