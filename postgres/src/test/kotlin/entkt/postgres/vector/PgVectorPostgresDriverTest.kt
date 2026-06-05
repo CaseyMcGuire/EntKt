@@ -217,6 +217,46 @@ class PgVectorPostgresDriverTest {
     }
 
     @Test
+    fun `predicate eq with a wrong-dimension vector fails with a field-named entkt error`() {
+        val driver = fresh()
+        driver.insert("vec_items", mapOf("name" to "a", "embedding" to PgVector.of(floatArrayOf(1f, 2f, 3f))))
+        val pred = Column<Any, PgVector>("embedding").eq(PgVector.of(floatArrayOf(1f, 2f)))
+        val ex = assertFailsWith<IllegalArgumentException> {
+            driver.query("vec_items", listOf(pred), emptyList(), null, null)
+        }
+        assertTrue("embedding" in ex.message!!, ex.message ?: "")
+        assertTrue("3" in ex.message!! && "2" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
+    fun `predicate in with a wrong-dimension vector item fails with a field-named entkt error`() {
+        val driver = fresh()
+        val pred = Column<Any, PgVector>("embedding").`in`(
+            listOf(PgVector.of(floatArrayOf(1f, 2f, 3f)), PgVector.of(floatArrayOf(1f, 2f, 3f, 4f))),
+        )
+        val ex = assertFailsWith<IllegalArgumentException> {
+            driver.query("vec_items", listOf(pred), emptyList(), null, null)
+        }
+        assertTrue("embedding" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
+    fun `predicate eq with a correct-dimension vector matches exactly`() {
+        val driver = fresh()
+        val v = PgVector.of(floatArrayOf(1f, 2f, 3f))
+        driver.insert("vec_items", mapOf("name" to "match", "embedding" to v))
+        driver.insert("vec_items", mapOf("name" to "other", "embedding" to PgVector.of(floatArrayOf(9f, 9f, 9f))))
+        val rows = driver.query(
+            "vec_items",
+            listOf(Column<Any, PgVector>("embedding").eq(v)),
+            emptyList(),
+            null,
+            null,
+        )
+        assertEquals(listOf("match"), rows.map { it["name"] }, "exact-match equality on a vector column")
+    }
+
+    @Test
     fun `autoDdl creates the extension, vector column, and a real hnsw index`() {
         val schema = EntitySchema(
             table = "vec_indexed",

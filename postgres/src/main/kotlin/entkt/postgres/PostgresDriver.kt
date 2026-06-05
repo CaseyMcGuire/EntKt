@@ -320,8 +320,7 @@ class PostgresDriver(
                         // so without this a wrong-size query vector would surface
                         // as an opaque Postgres error instead of a field-named one.
                         val operand = distance.operand
-                        val native = schema.columns
-                            .firstOrNull { it.name == of.field }?.storage as? ColumnStorage.Native
+                        val native = nativeStorageOf(schema, of.field)
                         checkVectorDimensions(native, operand, "orderBy distance on '$table.${of.field}'")
                         builder.params.add(Param(FieldType.PGVECTOR, operand))
                         // NULLS LAST always: a null embedding has no distance, so it
@@ -602,6 +601,9 @@ class PostgresDriver(
     private fun columnTypeOf(schema: EntitySchema, name: String): FieldType? =
         schema.columns.firstOrNull { it.name == name }?.type
 
+    private fun nativeStorageOf(schema: EntitySchema, name: String): ColumnStorage.Native? =
+        schema.columns.firstOrNull { it.name == name }?.storage as? ColumnStorage.Native
+
     /**
      * Bind a column value, first validating any native-storage constraint the
      * generic [bind] can't enforce (it sees only [FieldType], not the column's
@@ -615,6 +617,10 @@ class PostgresDriver(
         checkVectorDimensions(column?.storage as? ColumnStorage.Native, value, "Column '${schema.table}.$col'")
         bind(stmt, idx, column?.type, value)
     }
+
+    /** Field-named label for a predicate operand on `schema.field`. */
+    private fun predicateLabel(schema: EntitySchema, field: String): String =
+        "predicate on '${schema.table}.$field'"
 
     /** Reject a [PgVector] whose dimension doesn't match a native vector column. */
     private fun checkVectorDimensions(native: ColumnStorage.Native?, value: Any?, label: String) {
@@ -728,6 +734,14 @@ class PostgresDriver(
         private fun lowerLeaf(leaf: Predicate.Leaf<*>, schema: EntitySchema, alias: String): String {
             val col = "$alias.${quote(leaf.field)}"
             val type = columnTypeOf(schema, leaf.field)
+            // Validate native operands (e.g. a wrong-dimension vector in
+            // `embedding eq v` / `embedding in [...]`) here, so a predicate
+            // gives the same field-named entkt error as writes and distance
+            // ordering instead of falling through to an opaque Postgres error.
+            // No-ops for non-native columns and non-PgVector operands; the
+            // collection ops validate per-item in lowerInList.
+            val native = nativeStorageOf(schema, leaf.field)
+            checkVectorDimensions(native, leaf.value, predicateLabel(schema, leaf.field))
             return when (leaf.op) {
                 Op.EQ -> {
                     params.add(Param(type, leaf.value))
@@ -755,8 +769,8 @@ class PostgresDriver(
                 }
                 Op.IS_NULL -> "$col IS NULL"
                 Op.IS_NOT_NULL -> "$col IS NOT NULL"
-                Op.IN -> lowerInList(col, leaf.value, type, negated = false)
-                Op.NOT_IN -> lowerInList(col, leaf.value, type, negated = true)
+                Op.IN -> lowerInList(col, leaf.value, type, native, predicateLabel(schema, leaf.field), negated = false)
+                Op.NOT_IN -> lowerInList(col, leaf.value, type, native, predicateLabel(schema, leaf.field), negated = true)
                 Op.CONTAINS -> {
                     // Escape `%`, `_`, and `\` in the caller's value
                     // before splicing it into the LIKE pattern, then
@@ -806,6 +820,8 @@ class PostgresDriver(
             col: String,
             value: Any?,
             type: FieldType?,
+            native: ColumnStorage.Native?,
+            label: String,
             negated: Boolean,
         ): String {
             val items = (value as Collection<*>).toList()
@@ -814,7 +830,10 @@ class PostgresDriver(
                 return if (negated) "TRUE" else "FALSE"
             }
             val placeholders = items.joinToString(", ") { "?" }
-            for (item in items) params.add(Param(type, item))
+            for (item in items) {
+                checkVectorDimensions(native, item, label)
+                params.add(Param(type, item))
+            }
             return if (negated) "$col NOT IN ($placeholders)" else "$col IN ($placeholders)"
         }
 
