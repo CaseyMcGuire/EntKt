@@ -18,9 +18,9 @@ fun FieldType.toTypeName(): TypeName = when (this) {
     FieldType.UUID -> ClassName("java.util", "UUID")
     FieldType.BYTES -> ByteArray::class.asTypeName()
     FieldType.ENUM -> String::class.asTypeName()
-    // Real mapping (-> PgVector) lands in Phase 3; toTypeName is never called
-    // for PGVECTOR before then (resolvedTypeName special-cases it).
-    FieldType.PGVECTOR -> error("PGVECTOR property type is resolved via resolvedTypeName (Phase 3)")
+    // The generated entity property + fromRow cast use the PgVector value type;
+    // the driver owns decode (returns PgVector), so no per-field conversion.
+    FieldType.PGVECTOR -> ClassName("entkt.postgres.vector", "PgVector")
 }
 
 /**

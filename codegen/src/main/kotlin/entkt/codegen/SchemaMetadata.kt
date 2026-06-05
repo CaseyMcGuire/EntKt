@@ -16,6 +16,7 @@ internal val FOREIGN_KEY_REF = ClassName("entkt.runtime", "ForeignKeyRef")
 internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
+internal val COLUMN_STORAGE_NATIVE = ClassName("entkt.schema", "ColumnStorage").nestedClass("Native")
 
 /**
  * The [IdStrategy] enum variant that matches this schema's id declaration.
@@ -92,6 +93,8 @@ internal data class ColumnDescriptor(
      * differ can emit `DEFAULT` clauses.
      */
     val default: Any? = null,
+    /** Native storage metadata (pgvector, etc.) from `Field.storage`, or null. */
+    val storage: entkt.schema.ColumnStorage? = null,
 )
 
 /**
@@ -216,6 +219,7 @@ internal fun columnMetadataFor(
                     onDelete = edgeRef?.onDelete,
                     comment = field.comment,
                     default = field.default,
+                    storage = field.storage,
                 ),
             )
         }
@@ -450,6 +454,22 @@ internal fun entitySchemaCodeBlock(
                 }
                 if (col.comment != null) {
                     colCb.add(", comment = %S", col.comment)
+                }
+                val storage = col.storage
+                if (storage is entkt.schema.ColumnStorage.Native) {
+                    if (storage.requiredExtension != null) {
+                        colCb.add(
+                            ", storage = %T(dialect = %S, typeName = %S, sqlType = %S, codec = %S, requiredExtension = %S, dimensions = %L)",
+                            COLUMN_STORAGE_NATIVE, storage.dialect, storage.typeName, storage.sqlType,
+                            storage.codec, storage.requiredExtension, storage.dimensions,
+                        )
+                    } else {
+                        colCb.add(
+                            ", storage = %T(dialect = %S, typeName = %S, sqlType = %S, codec = %S, requiredExtension = null, dimensions = %L)",
+                            COLUMN_STORAGE_NATIVE, storage.dialect, storage.typeName, storage.sqlType,
+                            storage.codec, storage.dimensions,
+                        )
+                    }
                 }
                 colCb.add("),\n")
                 cb.add(colCb.build())

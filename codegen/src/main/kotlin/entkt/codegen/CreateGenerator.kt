@@ -581,6 +581,16 @@ internal class CreateGenerator(
                 } else {
                     rowBuilder.add("  %S to %L.name,\n", col, prop)
                 }
+            } else if (field.type == FieldType.PGVECTOR) {
+                // Validate the vector's dimension at save() build time, with a
+                // field-named error (the driver re-checks defensively at bind).
+                val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
+                    ?: error("pgvector field '${field.name}' missing dimensions metadata")
+                val opt = if (field.nullable) "?" else ""
+                rowBuilder.add(
+                    "  %S to %L$opt.also { require(it.dimensions == %L) { %S } },\n",
+                    col, prop, dims, "${field.name} expects vector($dims)",
+                )
             } else {
                 rowBuilder.add("  %S to %L,\n", col, prop)
             }

@@ -1578,6 +1578,16 @@ internal class UpdateGenerator(
                     "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value.name }\n",
                     prop, FIELD_PATCH, col,
                 )
+            } else if (field.type == FieldType.PGVECTOR) {
+                // Validate the vector dimension on update (field-named; the
+                // driver re-checks defensively at bind).
+                val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
+                    ?: error("pgvector field '${field.name}' missing dimensions metadata")
+                val opt = if (field.nullable) "?" else ""
+                builder.addCode(
+                    "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value$opt.also { vec -> require(vec.dimensions == %L) { %S } } }\n",
+                    prop, FIELD_PATCH, col, dims, "${field.name} expects vector($dims)",
+                )
             } else {
                 builder.addCode(
                     "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value }\n",

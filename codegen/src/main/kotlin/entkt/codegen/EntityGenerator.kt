@@ -431,9 +431,14 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
             else ClassName("entkt.query", "Column")
             cls.parameterizedBy(entityClass, type.toTypeName())
         }
-        // The companion column for a vector field (incl. distance helpers)
-        // lands in Phase 3/6; no vector entity is generated before then.
-        FieldType.PGVECTOR -> error("pgvector companion column lands in a later phase")
+        // Vector field: a plain Column<E, PgVector> (no comparable/equality
+        // helpers — those make no sense for a vector). Distance-ordering helpers
+        // are added on top in Phase 6.
+        FieldType.PGVECTOR -> {
+            val cls = if (nullable) ClassName("entkt.query", "NullableColumn")
+            else ClassName("entkt.query", "Column")
+            cls.parameterizedBy(entityClass, type.toTypeName())
+        }
     }
 }
 
