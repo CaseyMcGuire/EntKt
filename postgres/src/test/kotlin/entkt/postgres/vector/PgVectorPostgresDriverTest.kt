@@ -163,6 +163,21 @@ class PgVectorPostgresDriverTest {
     }
 
     @Test
+    fun `orderBy distance with a wrong-dimension query vector fails with a field-named entkt error`() {
+        val driver = fresh()
+        driver.insert("vec_items", mapOf("name" to "a", "embedding" to PgVector.of(floatArrayOf(1f, 0f, 0f))))
+
+        // The column is vector(3); a 2-dim query vector must be rejected at the
+        // query builder (field-named) rather than as an opaque Postgres error.
+        val order = Column<Any, PgVector>("embedding").cosineDistance(PgVector.of(floatArrayOf(1f, 0f))).asc()
+        val ex = assertFailsWith<IllegalArgumentException> {
+            driver.query("vec_items", emptyList(), listOf(order), null, null)
+        }
+        assertTrue("embedding" in ex.message!!, ex.message ?: "")
+        assertTrue("3" in ex.message!! && "2" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
     fun `autoDdl creates the extension, vector column, and a real hnsw index`() {
         val schema = EntitySchema(
             table = "vec_indexed",

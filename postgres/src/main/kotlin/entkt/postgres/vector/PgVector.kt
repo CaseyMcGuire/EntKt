@@ -13,9 +13,21 @@ package entkt.postgres.vector
  * that is surprising inside generated `data class` entities).
  *
  * Carries no fixed dimension itself: the column's declared `dimensions` is the
- * source of truth, checked at the generated write boundary and at bind.
+ * source of truth, checked at the generated write boundary and at the
+ * distance-query boundary, with the `vector(n)` column as the DB-side backstop.
  */
 class PgVector private constructor(private val values: FloatArray) {
+    init {
+        // pgvector rejects NaN / ±Infinity in a vector, and there is no
+        // portable text literal for them. Reject at the source so a bad
+        // component surfaces as a clear entkt error here, not an opaque
+        // JDBC/Postgres failure deep in a write or distance query.
+        val bad = values.indexOfFirst { !it.isFinite() }
+        require(bad < 0) {
+            "PgVector components must all be finite; component $bad is ${values[bad]}"
+        }
+    }
+
     /** Number of components. */
     val dimensions: Int get() = values.size
 

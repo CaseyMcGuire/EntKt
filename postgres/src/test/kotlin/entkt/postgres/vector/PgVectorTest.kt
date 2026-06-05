@@ -2,10 +2,23 @@ package entkt.postgres.vector
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class PgVectorTest {
+
+    @Test
+    fun `rejects non-finite components at construction`() {
+        for (bad in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+            assertFailsWith<IllegalArgumentException>("NaN/Inf must be rejected: $bad") {
+                PgVector.of(floatArrayOf(1f, bad, 3f))
+            }
+            assertFailsWith<IllegalArgumentException>("via List too: $bad") {
+                PgVector.of(listOf(1f, bad, 3f))
+            }
+        }
+    }
 
     @Test
     fun `content equality and hashCode, not referential`() {

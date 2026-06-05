@@ -10,6 +10,7 @@ import entkt.runtime.EdgeMetadata
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
 import entkt.runtime.QueryExplanation
+import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import java.sql.Connection
@@ -313,7 +314,21 @@ class PostgresDriver(
                         // as a vector parameter (never inlined). Appended after the
                         // WHERE params (which are already in builder.params) so the
                         // placeholder order matches the SQL text.
-                        builder.params.add(Param(FieldType.PGVECTOR, distance.operand))
+                        //
+                        // Validate the operand dimension against the column's
+                        // declared dimensions here — bind() only sees FieldType,
+                        // so without this a wrong-size query vector would surface
+                        // as an opaque Postgres error instead of a field-named one.
+                        val operand = distance.operand
+                        val native = schema.columns
+                            .firstOrNull { it.name == of.field }?.storage as? ColumnStorage.Native
+                        if (native != null && operand is entkt.postgres.vector.PgVector) {
+                            require(operand.dimensions == native.dimensions) {
+                                "orderBy distance on '$table.${of.field}' expects a " +
+                                    "${native.dimensions}-dimensional vector, got ${operand.dimensions}"
+                            }
+                        }
+                        builder.params.add(Param(FieldType.PGVECTOR, operand))
                         "$baseAlias.${quote(of.field)} ${distance.operator.sql} ? $dir"
                     } else {
                         "$baseAlias.${quote(of.field)} $dir"
