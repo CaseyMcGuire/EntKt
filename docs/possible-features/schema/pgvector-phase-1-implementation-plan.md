@@ -53,13 +53,22 @@ Purely additive; **no `FieldType` change**, so nothing exhaustive breaks. Fully 
 ## Phase 2 — Schema DSL: `FieldType.PGVECTOR` + `postgresVector` + exhaustive-site triage
 
 - `schema/.../FieldType.kt`: add `PGVECTOR`.
-- `schema/.../PgVectorFieldBuilder.kt` (new): internal ctor, `FieldType.PGVECTOR`,
-  exposes only `.nullable()` / `.comment()`; `build()` sets `Field.storage =
-  ColumnStorage.Native("postgres", "vector", "vector($dimensions)", "postgres.vector",
-  "vector", dimensions)`.
-- `schema/.../EntSchema.kt`: `@PublishedApi internal fun EntSchema.registerPostgresVector(name, dimensions)`
-  mirroring `enum(name, KClass)` (validateName, checkNotFinalized, declarationOwner,
-  `_fields.add`), with `require(dimensions in 1..2000)`.
+- `schema/.../FieldBuilder.kt`: add a `@PublishedApi internal fun setNativeStorage(s:
+  ColumnStorage)` (mirrors `setEnumClass`), and in the **final** `build()` fold
+  `storage` into `Field` **and** reject incompatible modifiers on a native column
+  (`if (storage is ColumnStorage.Native && unique) error("Field '$fieldName' is a
+  native ${storage.typeName} column; .unique() is not supported")`). `build()` is final
+  — do **not** override it (see RFC §2/§3).
+- `schema/.../PgVectorFieldBuilder.kt` (new): internal ctor, `FieldType.PGVECTOR`, **no
+  declared modifiers and no `build()` override** — `.nullable()`/`.comment()` are
+  inherited; `.unique()`/`.immutable()`/`.sensitive()` are inherited too (the first is
+  rejected at `build()`, the rest tolerated); `.default()`/`.minLength()`/`.maxLength()`
+  are subclass-only so simply absent.
+- `schema/.../EntSchema.kt` registration: `@PublishedApi internal fun
+  EntSchema.registerPostgresVector(name, dimensions)` mirroring `enum(name, KClass)`
+  (`require(dimensions in 1..2000)`, validateName, checkNotFinalized, `setNativeStorage(
+  Native("postgres","vector","vector($dimensions)","postgres.vector","vector",dimensions))`,
+  declarationOwner, `_fields.add`).
 - `schema/.../postgres/vector/Dsl.kt` (new, package `entkt.postgres.vector`, physically
   in the schema module): `inline fun EntSchema.postgresVector(name, dimensions) =
   registerPostgresVector(...)`.
@@ -69,9 +78,10 @@ Purely additive; **no `FieldType` change**, so nothing exhaustive breaks. Fully 
   mapping deferred); cheap real branches are fine where obvious.
 
 **Tests (schema):** `postgresVector("e", 1536)` builds `Field(type = PGVECTOR,
-storage = Native(...))`; `dimensions = 0` and `= 2001` throw at declaration; the
-restricted modifier surface (a `postgresVector(...).unique()` does not compile —
-assert via a compile-fail fixture, or reflectively that the method is absent).
+storage = Native(...))`; `dimensions = 0`/`2001` throw at declaration;
+`postgresVector(...).unique()` throws at `build()`/finalize with the field-named
+message; `postgresVector(...).maxLength(…)` does not compile (subclass-only modifier
+absent).
 
 **Green:** yes — placeholders satisfy the now-exhaustive matches.
 
@@ -99,9 +109,12 @@ a non-vector schema is byte-identical to before.
   value = "[f0,f1,...]")`. Mirror in the decode path. `supportsNativeStorage("postgres.vector")
   = true` on the root **and** the transactional sub-driver. In `register`, reject any
   `ColumnStorage.Native` whose codec is unsupported with `UnsupportedDriverCapabilityException`.
-- `postgres/.../PostgresTypeMapper.kt:29`: `FieldType.PGVECTOR -> storage.sqlType`
-  (the mapper must receive storage; thread `ColumnMetadata`/storage into `sqlTypeFor`
-  or special-case before the `when`).
+- **`TypeMapper.sqlTypeFor` signature change** (`migrations/.../Interfaces.kt:16`):
+  today `sqlTypeFor(fieldType, isPrimaryKey, idStrategy)` gets no storage, and
+  `NormalizedSchema.kt:31` calls it with `col.type` only — so it cannot return
+  `vector(1536)`. Add a defaulted `storage: ColumnStorage? = null` param
+  (backward-compatible for every existing mapper/caller); `NormalizedSchema` passes
+  `col.storage`; `PostgresTypeMapper.kt:29` returns `storage.sqlType` for `PGVECTOR`.
 - Replace the Phase-2 driver placeholders.
 
 **Tests (postgres integration, testcontainer):** round-trip a `PgVector` through
@@ -116,13 +129,21 @@ non-supporting driver throws `UnsupportedDriverCapabilityException` at `register
   `.hnsw(VectorMetric.Cosine)` / `.ivfflat(metric, lists = N)`, producing
   `IndexMetadata(using = "hnsw", opclasses = ["vector_cosine_ops"])`; `VectorMetric`
   enum + opclass map (RFC §6). Registered like `index(...)`.
-- `migrations/.../NormalizedSchema.kt`: carry `storage` on the normalized column and
-  `using`/`opclasses` on the normalized index; in the diff, classify a
-  `storage.dimensions` change as **manual/destructive** (reuse the existing
-  type-change-defers-to-manual machinery).
-- `postgres/.../PostgresSqlRenderer.kt` (`renderAddIndex` `:83`): render `USING <method>
-  (<col> <opclass>)`; emit `CREATE EXTENSION IF NOT EXISTS vector` once when any
-  column in the migration carries `requiredExtension = "vector"`.
+- `migrations/.../NormalizedSchema.kt`: carry `storage` on `NormalizedColumn`; add
+  `using`/`opclasses` (and `with` for IVFFlat `lists`) to `NormalizedIndex`
+  (`:111`, today has none). In `SchemaDiffer`, fold `using`/`opclasses` into the index
+  identity `IndexKey` (`:141`, today `(columns, unique, where)`) so a `btree→hnsw`/
+  opclass change is a detected drop+recreate; classify a `storage.dimensions` change as
+  **manual/destructive** (reuse the existing type-change-defers-to-manual machinery).
+- **`CREATE EXTENSION` as a first-class ordered op** (not loose SQL):
+  `migrations/.../MigrationOp.kt` add `data class CreateExtension(val name: String)`;
+  `SchemaDiffer.sortOps` (`:251`) give it priority **−1** (before `CreateTable(0)`); the
+  differ emits one `CreateExtension("vector")` (deduped) when any column carries
+  `requiredExtension = "vector"`. Without this, a `vector(n)` column can be created
+  before the extension exists.
+- `postgres/.../PostgresSqlRenderer.kt`: render `CreateExtension` →
+  `CREATE EXTENSION IF NOT EXISTS <name>`; extend `renderAddIndex` (`:83`) to render
+  `USING <method> (<col> <opclass>)` + optional `WITH (lists = N)`.
 - `postgres/.../PostgresIntrospector.kt`: read a live `vector(n)` column + HNSW/IVFFlat
   index (via `pg_attribute`/`pg_type`/`pg_index`/`pg_opclass`) back into
   `ColumnStorage.Native` / `IndexMetadata`.
@@ -134,12 +155,29 @@ introspection round-trips a created vector column + index.
 
 ## Phase 6 — Query: nearest-neighbor distance ordering
 
+- **New order model** (RFC §10). `OrderField` is `(field, direction)` only
+  (`schema/.../query/OrderField.kt:9`) and the driver renders `alias.field DIR`
+  (`PostgresDriver.kt:295`) — no room for a distance expression. Generalize the
+  order-by element to a sealed `OrderExpression`: `Column(field, dir)` (the existing
+  case, kept byte-identical) and `NativeDistance(field, operator, operand, dir)`.
+  `OrderField` becomes an alias of / is replaced by `OrderExpression.Column` (mechanical
+  — every existing `orderBy` yields `Column`).
 - Generated distance helpers on vector fields only: `cosineDistance(q)` /
-  `l2Distance(q)` / `innerProduct(q)` → order-by expressions lowering to `<=>` /
-  `<->` / `<#>`; gated by `supportsNativeStorage("postgres.vector")` so a
-  non-Postgres driver fails with a capability error rather than invalid SQL.
-- Touches `codegen` (helper generation) + `postgres` (operator lowering) + the query
-  AST (`schema/.../query/Column.kt` order-by surface).
+  `l2Distance(q)` / `innerProduct(q)` build an `OrderExpression.NativeDistance` with the
+  `<=>`/`<->`/`<#>` operator.
+- Driver ORDER BY renderer switches on the variant: `Column` keeps `alias.field DIR`;
+  `NativeDistance` renders `alias.field <=> ? DIR` and **binds the operand `PgVector` as
+  a parameter** (never inlined into SQL). Gated by
+  `supportsNativeStorage("postgres.vector")` — a non-Postgres driver rejects a
+  `NativeDistance` element at lowering with a capability error.
+- Touches the query AST (`schema/.../query/OrderField.kt`), `codegen` (helper
+  generation + threading the new order type), and `postgres` (the ORDER BY renderer +
+  param binding).
+
+**Tests:** `orderBy(embedding.cosineDistance(q).asc()).limit(k)` returns rows in
+ascending distance order with the operand bound as a parameter; an existing scalar
+`orderBy` is unchanged (`Column` path); the helper on a non-Postgres driver fails with a
+capability error.
 
 **Tests (postgres integration):** `orderBy(embedding.cosineDistance(q).asc()).limit(k)`
 returns rows in ascending distance order; the same helper on a non-Postgres driver

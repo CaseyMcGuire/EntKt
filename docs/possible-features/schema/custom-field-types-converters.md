@@ -111,35 +111,39 @@ two pieces, **all inside the `schema` module** (an inline function may only refe
 `@PublishedApi internal` members of its *own* module, so the public entry lives in
 `schema`, under a Postgres-flavored package):
 
+`FieldBuilder.build()` is **final** (`FieldBuilder.kt:61`) and per-type state is
+attached the way `enum` does it: a `@PublishedApi internal` setter the registration
+calls, which the final base `build()` folds into the emitted `Field` (`enum` uses
+`setEnumClass`, read by `build()`; `FieldBuilder.kt:55-93`). Phase 1 mirrors that —
+the builder carries no overridden `build()`, only the FK to a `setNativeStorage`:
+
 ```kotlin
 // schema/src/main/kotlin/entkt/schema/PgVectorFieldBuilder.kt  (internal ctor, like every builder)
-class PgVectorFieldBuilder internal constructor(
-    name: String,
-    private val dimensions: Int,
-) : FieldBuilder<PgVectorFieldBuilder, FloatArray>(name, FieldType.PGVECTOR) {
-    // exposes ONLY the modifiers valid for vectors — see §3
-    fun nullable(): PgVectorFieldBuilder = apply { /* set nullable */ }
-    fun comment(text: String): PgVectorFieldBuilder = apply { /* set comment */ }
+// Carries no extra state: dimensions/storage are set via setNativeStorage below.
+// .nullable()/.comment() are inherited from the base; no build() override (build is final).
+class PgVectorFieldBuilder internal constructor(name: String) :
+    FieldBuilder<PgVectorFieldBuilder, FloatArray>(name, FieldType.PGVECTOR)
 
-    override fun build(): Field = baseBuild().copy(
-        storage = ColumnStorage.Native(
-            dialect = "postgres",
-            typeName = "vector",
-            sqlType = "vector($dimensions)",
-            codec = "postgres.vector",
-            requiredExtension = "vector",
-            dimensions = dimensions,
-        ),
-    )
-}
+// schema/src/main/kotlin/entkt/schema/FieldBuilder.kt  (ADD — mirrors setEnumClass)
+@PublishedApi internal fun setNativeStorage(s: ColumnStorage) { this.storage = s }
+// ...and the final build() folds `storage` into Field, plus rejects invalid
+// modifiers for native columns (see §3): e.g.
+//   if (storage is ColumnStorage.Native && unique)
+//       error("Field '$fieldName' is a native ${storage.typeName} column; .unique() is not supported")
 
 // schema module, registration function — mirrors enum(name, KClass)
 @PublishedApi
-internal fun EntSchema.registerPostgresVector(name: String, dimensions: Int): PgVectorFieldBuilder =
-    PgVectorFieldBuilder(name, dimensions).also {
+internal fun EntSchema.registerPostgresVector(name: String, dimensions: Int): PgVectorFieldBuilder {
+    require(dimensions in 1..2000) { "postgresVector('$name') dimensions must be 1..2000, got $dimensions" }
+    return PgVectorFieldBuilder(name).also {
         validateName(name, "Field"); checkNotFinalized()
+        it.setNativeStorage(ColumnStorage.Native(
+            dialect = "postgres", typeName = "vector", sqlType = "vector($dimensions)",
+            codec = "postgres.vector", requiredExtension = "vector", dimensions = dimensions,
+        ))
         it.declarationOwner = this; _fields.add(it)
     }
+}
 
 // schema/src/main/kotlin/entkt/postgres/vector/Dsl.kt  (package entkt.postgres.vector; physically in schema module)
 inline fun EntSchema.postgresVector(name: String, dimensions: Int): PgVectorFieldBuilder =
@@ -147,10 +151,12 @@ inline fun EntSchema.postgresVector(name: String, dimensions: Int): PgVectorFiel
 ```
 
 This needs **no** change to `registerField`'s privacy or `FieldBuilder`'s `internal`
-ctor — it reuses the `enum` pattern verbatim. The runtime `PgVector` value type and
-the driver codec live in the **postgres** module (§7); the schema module never
-references them (`PgVectorFieldBuilder`'s value param is `FloatArray`, not `PgVector`),
-so there is no `schema → postgres` dependency.
+ctor, and does **not** override the final `build()` — it reuses the `enum`
+`setEnumClass` + final-`build()` pattern verbatim. The base `build()` gains: fold
+`storage` into `Field`, and one storage-aware modifier check (§3). The runtime
+`PgVector` value type and the driver codec live in the **postgres** module (§7); the
+schema module never references them (`PgVectorFieldBuilder`'s value param is
+`FloatArray`, not `PgVector`), so there is no `schema → postgres` dependency.
 
 > **Decision:** Phase 1 keeps the *builder* in the `schema` module (forced by the
 > `internal` ctor) but gates the *DSL entry* behind `import entkt.postgres.vector.*`.
@@ -160,23 +166,37 @@ so there is no `schema → postgres` dependency.
 
 ### 3. Field modifiers (resolves "inherited modifiers need rules")
 
-`PgVectorFieldBuilder` exposes **only** the modifiers that are meaningful for a
-vector, exactly as `EnumFieldBuilder` exposes only `default(Enum)` and not
-`minLength`. Invalid modifiers are a **compile error** (the method does not exist),
-not a runtime check.
+Enforcement is split, because the modifier surface is split in the current builder
+hierarchy:
 
-| Modifier | On `postgresVector`? | Why |
+- **Subclass-only modifiers are absent at compile time.** `.default(...)`,
+  `.minLength()`, `.maxLength()`, `.defaultNow()` etc. live on the *concrete* scalar
+  builders (`StringFieldBuilder`, `EnumFieldBuilder`, …), not the base. Since
+  `PgVectorFieldBuilder` declares none of them, calling `postgresVector(...).maxLength(…)`
+  simply does not compile. Good — these are the genuinely length/scalar-specific ones.
+- **Base modifiers are inherited and cannot be removed, so they are checked at
+  `build()`.** `.nullable()`, `.unique()`, `.immutable()`, `.sensitive()`, `.comment()`
+  are `public` on the base `FieldBuilder` (`FieldBuilder.kt:48-53`) and inherited by
+  *every* builder — there is no way to make `.unique()` a compile error on a subclass
+  without a base-class refactor. And `build()` is `final` (`FieldBuilder.kt:61`). So
+  the one genuinely-broken modifier is rejected in the final `build()` with a clear,
+  field-named error (the same place `build()` already rejects `immutable ⊕ updateDefault`
+  and non-finite defaults).
+
+| Modifier | On `postgresVector`? | Enforcement |
 | --- | --- | --- |
-| `.nullable()` | **yes** | `vector` columns are nullable in Postgres; round-trips null. |
-| `.comment(...)` | **yes** | plain column comment. |
-| `.unique()` | **no** | a `UNIQUE` index over a 1536-d vector is nonsensical/huge. |
-| `.default(...)` | **no** | no sensible default embedding. |
-| `.minLength()/.maxLength()` | **no** | length is the fixed `dimensions`, set at declaration. |
-| `.immutable()` | **no** | re-embedding is the common case; the inherited immutable⊕updateDefault invariant only adds confusion. |
+| `.nullable()` | **yes** | inherited; `vector` is nullable in Postgres, round-trips null. |
+| `.comment(...)` | **yes** | inherited; plain column comment. |
+| `.unique()` | **no** | inherited but **rejected at `build()`**: a `UNIQUE` index over a high-dim vector is broken. Error: `Field 'embedding' is a native vector column; .unique() is not supported`. |
+| `.immutable()` / `.sensitive()` | tolerated | inherited and harmless on a vector; accepted (not worth a special error). |
+| `.default(...)`, `.minLength()/.maxLength()` | **no** | subclass-only → **absent at compile time** (`PgVectorFieldBuilder` doesn't declare them). |
 | validators | **no (Phase 1)** | dimension is the only constraint and is built-in (§4). |
 
-Because these are simply absent from the builder subclass, no build-time validation
-is needed for them — the type system enforces it.
+> This is weaker than "every invalid modifier is a compile error" — `.unique()`
+> compiles and fails at finalize. Making it a compile error would require extracting a
+> minimal modifier base class shared by all builders, a refactor out of scope for
+> Phase 1. The `build()`-time rejection is the same mechanism the codebase already uses
+> for incompatible-modifier combinations.
 
 ### 4. Dimension validation (resolves "dimension validation needs a rule")
 
@@ -236,12 +256,12 @@ turning "did we cover the driver/migration/codegen path?" into a compiler check.
 
 | Hop | File (today) | Phase-1 change |
 | --- | --- | --- |
-| Builder → `Field` | `FieldBuilder.build()` / `Field.kt` | add `Field.storage: ColumnStorage? = null`; `PgVectorFieldBuilder.build()` sets it (§2). |
+| Builder → `Field` | `FieldBuilder` (`build()` final) / `Field.kt` | add `Field.storage: ColumnStorage? = null`; the `@PublishedApi internal setNativeStorage` is set at registration and folded in by the final `build()` (§2). |
 | `Field` → `ColumnDescriptor` | `codegen/.../SchemaMetadata.kt:104-243` | copy `field.storage` into the descriptor. |
 | descriptor → emitted `ColumnMetadata` | `SchemaMetadata.kt:421-531` | add `ColumnMetadata.storage: ColumnStorage? = null`; emit the literal. |
-| `ColumnMetadata` → migrations | `NormalizedSchema` | add `NormalizedColumn.storage`; copy through. |
+| `ColumnMetadata` → migrations | `NormalizedSchema.kt:31` | add `NormalizedColumn.storage`; copy through. |
 | driver bind/decode | `PostgresDriver` (§8) | dispatch on `storage`. |
-| DDL type | `PostgresTypeMapper.sqlTypeFor` | `PGVECTOR` → `storage.sqlType`. |
+| DDL type | `TypeMapper.sqlTypeFor` (`migrations/.../Interfaces.kt:16`) | **signature change required**: today it is `sqlTypeFor(fieldType, isPrimaryKey, idStrategy)` and `NormalizedSchema.kt:31` calls it with `col.type` only. Add a defaulted `storage: ColumnStorage? = null` param (backward-compatible) and pass `col.storage`; `PostgresTypeMapper` returns `storage.sqlType` for `PGVECTOR`. |
 | introspection (read-back) | `PostgresIntrospector` | reconstruct `Native` from `pg_attribute`/`pg_type` + `pg_index`/`pg_opclass`. |
 
 ### 6. Native index metadata (resolves "vector indexes need new metadata")
@@ -279,6 +299,13 @@ postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.
 `.ivfflat(metric, lists = N)` is the IVFFlat variant (`using = "ivfflat"`, plus a
 `with` clause). Migrations render `CREATE INDEX <name> ON <table> USING hnsw
 (embedding vector_cosine_ops)` (§9).
+
+The migration layer needs matching plumbing: `migrations/.../NormalizedSchema.kt:111`
+(`NormalizedIndex`) has no `using`/`opclasses`/`with`, and the differ's index identity
+is `IndexKey(columns, unique, where)` (`SchemaDiffer.kt:141`) — so today a
+`btree → hnsw` or opclass change would be invisible. Phase 1 adds `using`/`opclasses`
+(and `with` for IVFFlat `lists`) to `NormalizedIndex` and folds them into the differ's
+`IndexKey`, so changing the method/opclass is detected as a drop+recreate.
 
 ### 7. The `PgVector` value type
 
@@ -356,12 +383,22 @@ UnsupportedDriverCapabilityException:
 articles.embedding uses postgres vector(1536), but SQLiteDriver does not support codec 'postgres.vector'
 ```
 
-**Extension availability (DDL path, not `register`).** `register` does **not** query
-the live DB for the extension (keeps construction cheap). Migration/`autoDdl` emits
-`CREATE EXTENSION IF NOT EXISTS vector` once when any column in the migration needs it
-(collected from `requiredExtension` across `NormalizedSchema`).
+**Extension availability — a first-class, ordered migration op.** `register` does
+**not** query the live DB for the extension (keeps construction cheap). The DDL is the
+migration's job, and it must be a real `MigrationOp`, not free-floating text:
+`MigrationOp` today has no extension variant (`MigrationOp.kt:10`) and `sortOps`
+(`SchemaDiffer.kt:251`) ranks only `CreateTable(0)/AddColumn(1)/AddIndex(2)/AddForeignKey(3)`,
+so emitting `CREATE EXTENSION` as loose SQL could land *after* a `vector(n)` column.
+Phase 1 adds:
 
-**Migration DDL** (`PostgresTypeMapper` / the SQL renderer):
+- `MigrationOp.CreateExtension(name: String)`;
+- sort priority **−1** (before `CreateTable`), so the extension always precedes any
+  column that needs it;
+- the differ emits one `CreateExtension("vector")` when any column carries
+  `requiredExtension = "vector"` (deduped across the schema set).
+
+**Migration DDL** (`PostgresTypeMapper` returns `storage.sqlType` for `PGVECTOR`; the
+renderer renders the new ops):
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -398,10 +435,38 @@ client.articles.query()
 ```
 
 `cosineDistance` / `l2Distance` / `innerProduct` are generated only on vector fields
-and lower to the `<=>` / `<->` / `<#>` operators. They are gated by
+and lower to the `<=>` / `<->` / `<#>` operators, gated by
 `supportsNativeStorage("postgres.vector")` so a non-Postgres driver fails with a
 capability error rather than emitting invalid SQL. **Filtering** (`WHERE distance <
 threshold`) and other operator families are Phase 2.
+
+**This requires a richer order model.** `OrderField` today is a bare
+`(field: String, direction)` (`schema/.../query/OrderField.kt:9`), and Postgres renders
+it as `"alias"."field" ASC|DESC` (`PostgresDriver.kt:295`) — there is nowhere to put a
+distance expression or its bound parameter. Phase 1 generalizes the order-by element to
+a sealed type (preserving the existing column case byte-identically):
+
+```kotlin
+sealed interface OrderExpression<E : Any> {
+    val direction: OrderDirection
+    data class Column<E : Any>(val field: String, override val direction: OrderDirection) : OrderExpression<E>
+    // native distance ordering: `<col> <op> <bound vector>` (Phase 1, pgvector)
+    data class NativeDistance<E : Any>(
+        val field: String,
+        val operator: String,   // "<=>" / "<->" / "<#>", from VectorMetric
+        val operand: Any,       // the query PgVector — bound as a parameter, never inlined
+        override val direction: OrderDirection,
+    ) : OrderExpression<E>
+}
+```
+
+The driver's ORDER BY renderer switches on the variant: `Column` keeps today's
+`alias.field DIR`; `NativeDistance` renders `alias.field <=> ? DIR` and **binds the
+operand as a parameter** (so embeddings never land in the SQL string). A driver lacking
+`supportsNativeStorage("postgres.vector")` rejects a `NativeDistance` element at lowering
+time with a capability error. (`OrderField` either becomes a type alias for
+`OrderExpression.Column` or is replaced; the migration is mechanical because every
+existing `orderBy` produces the `Column` case.)
 
 ---
 
@@ -413,8 +478,12 @@ These reuse the §5/§8 machinery; this RFC fixes only *where* they attach.
   add `ColumnStorage.Converted(storageFieldType, codec)`; codegen emits the
   encode/decode at the boundary (the *converted* rule in §8); the driver binds the
   underlying `FieldType` primitive and stays unaware.
-- **JSON** (`json<T>(name, serializer)`): `ColumnStorage.Native(typeName="jsonb")` +
-  a serializer-dependency decision; converted-style encode to a `String`/`jsonb`.
+- **JSON** (`json("pet_metadata", PetMetadata::class)` + explicit mapper
+  configuration — *not* a reified `json<T>(name, serializer)`; the `(name, KClass)` +
+  configured-mapper shape matches the rest of the DSL, e.g. `enum(name, KClass)`, and
+  keeps the serializer choice an explicit, swappable configuration rather than a
+  per-call argument): `ColumnStorage.Native(typeName="jsonb")`; converted-style encode
+  to a `String`/`jsonb` via the configured mapper.
 - **Arrays** (`array<String>`): `ColumnStorage.Native(typeName="text[]")`; driver
   array binding; element-nullability rules.
 - **Native database enums** (`databaseEnum<E>("status") { postgresName(...) }`): a
