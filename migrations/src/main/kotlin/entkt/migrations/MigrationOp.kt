@@ -11,6 +11,13 @@ sealed interface MigrationOp {
 
     // ---- Auto-generated in v1 ----
 
+    /**
+     * `CREATE EXTENSION IF NOT EXISTS <name>`. Sorted before [CreateTable] so a
+     * column whose type the extension provides (e.g. pgvector's `vector`) can be
+     * created. Emitted when a new table/column needs the extension.
+     */
+    data class CreateExtension(val name: String) : MigrationOp
+
     /** Emits CREATE TABLE with columns + PK only. Indexes and FKs are separate ops. */
     data class CreateTable(val table: NormalizedTable) : MigrationOp
 

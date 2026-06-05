@@ -41,7 +41,7 @@ class PgVectorDslTest {
     }
 
     @Test
-    fun `dimensions out of 1_2000 throw at declaration`() {
+    fun `dimensions out of 1_16000 throw at declaration`() {
         assertFailsWith<IllegalArgumentException> {
             object : EntSchema("t0") {
                 override fun id() = EntId.long()
@@ -51,8 +51,13 @@ class PgVectorDslTest {
         assertFailsWith<IllegalArgumentException> {
             object : EntSchema("t1") {
                 override fun id() = EntId.long()
-                val e = postgresVector("e", 2001)
+                val e = postgresVector("e", 16001)
             }
+        }
+        // 3072 (e.g. OpenAI text-embedding-3-large) is valid.
+        object : EntSchema("t2") {
+            override fun id() = EntId.long()
+            val e = postgresVector("e", 3072)
         }
     }
 

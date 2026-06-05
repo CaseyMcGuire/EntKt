@@ -1,6 +1,8 @@
 package entkt.postgres.vector
 
 import entkt.schema.EntSchema
+import entkt.schema.IndexBuilder
+import entkt.schema.IndexableColumn
 import entkt.schema.PgVectorFieldBuilder
 
 /**
@@ -15,3 +17,30 @@ import entkt.schema.PgVectorFieldBuilder
  */
 inline fun EntSchema.postgresVector(name: String, dimensions: Int): PgVectorFieldBuilder =
     registerPostgresVector(name, dimensions)
+
+/**
+ * Distance metric for a `pgvector` index / nearest-neighbor ordering. Each
+ * maps to a pgvector operator class (and, in Phase 6, the matching operator).
+ */
+enum class VectorMetric(val opclass: String) {
+    Cosine("vector_cosine_ops"),
+    L2("vector_l2_ops"),
+    InnerProduct("vector_ip_ops"),
+}
+
+/**
+ * Declare a `pgvector` index on [field]. Spell out the access method + metric
+ * explicitly via `.hnsw(...)` / `.ivfflat(...)` — vector indexes are not btree.
+ * Import-gated and registered through the same `@PublishedApi internal` bridge
+ * as `postgresVector` (RFC §6).
+ */
+inline fun EntSchema.postgresVectorIndex(name: String, field: IndexableColumn): IndexBuilder =
+    registerPostgresVectorIndex(name, field)
+
+/** Configure this index as HNSW with the given [metric]. */
+inline fun IndexBuilder.hnsw(metric: VectorMetric): IndexBuilder =
+    apply { setVectorIndex("hnsw", listOf(metric.opclass), null) }
+
+/** Configure this index as IVFFlat with the given [metric] and `lists` partition count. */
+inline fun IndexBuilder.ivfflat(metric: VectorMetric, lists: Int): IndexBuilder =
+    apply { setVectorIndex("ivfflat", listOf(metric.opclass), mapOf("lists" to lists.toString())) }

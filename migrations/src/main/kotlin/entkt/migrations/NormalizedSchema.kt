@@ -34,6 +34,7 @@ data class NormalizedSchema(
                         nullable = col.nullable,
                         primaryKey = col.primaryKey,
                         default = typeMapper.formatDefault(col.type, col.default),
+                        requiredExtension = (col.storage as? entkt.schema.ColumnStorage.Native)?.requiredExtension,
                     )
                 }
 
@@ -54,6 +55,9 @@ data class NormalizedSchema(
                         unique = idx.unique,
                         name = typeMapper.normalizeIdentifier(idx.name),
                         where = idx.where,
+                        using = idx.using,
+                        opclasses = idx.opclasses,
+                        with = idx.with,
                     )
                 }
 
@@ -106,6 +110,8 @@ data class NormalizedColumn(
      * spurious changes for cosmetic differences (type casts, parens).
      */
     val default: String? = null,
+    /** Extension this column's type needs (e.g. `"vector"`), or null. */
+    val requiredExtension: String? = null,
 )
 
 data class NormalizedIndex(
@@ -117,6 +123,12 @@ data class NormalizedIndex(
     val name: String?,
     /** SQL WHERE clause for partial indexes — part of semantic identity. */
     val where: String? = null,
+    /** Access method (`"hnsw"` / `"ivfflat"`) — part of semantic identity. Null = btree. */
+    val using: String? = null,
+    /** Per-column operator class (e.g. `["vector_cosine_ops"]`) — part of identity. */
+    val opclasses: List<String>? = null,
+    /** Index storage params rendered `WITH (k = v, …)` — part of identity. */
+    val with: Map<String, String>? = null,
 )
 
 /**

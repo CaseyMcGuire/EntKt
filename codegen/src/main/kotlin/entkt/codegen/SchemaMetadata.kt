@@ -533,6 +533,15 @@ internal fun entitySchemaCodeBlock(
             val cb = CodeBlock.builder()
                 .add("  %T(columns = listOf($fieldsLiteral), unique = %L, name = %S", INDEX_METADATA, idx.unique, idx.name)
             if (idx.where != null) cb.add(", where = %S", idx.where)
+            if (idx.using != null) cb.add(", using = %S", idx.using)
+            if (idx.opclasses != null) {
+                val opcs = idx.opclasses!!.joinToString(", ") { "\"$it\"" }
+                cb.add(", opclasses = listOf($opcs)")
+            }
+            if (idx.with != null) {
+                val entries = idx.with!!.entries.joinToString(", ") { "\"${it.key}\" to \"${it.value}\"" }
+                cb.add(", with = mapOf($entries)")
+            }
             cb.add("),\n")
             indexesLiteral.add(cb.build())
         }

@@ -84,6 +84,7 @@ enum class ManualMode {
 
 /** Human-readable description of a migration operation. */
 fun describeOp(op: MigrationOp): String = when (op) {
+    is MigrationOp.CreateExtension -> "CreateExtension: ${op.name}"
     is MigrationOp.CreateTable -> "CreateTable: ${op.table.name}"
     is MigrationOp.AddColumn -> "AddColumn: ${op.table}.${op.column.name} (${op.column.sqlType}${if (op.column.nullable) "" else " NOT NULL"})"
     is MigrationOp.AddIndex -> {

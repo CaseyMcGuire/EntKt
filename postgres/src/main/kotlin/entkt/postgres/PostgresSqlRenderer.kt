@@ -13,6 +13,7 @@ class PostgresSqlRenderer(
 ) : MigrationSqlRenderer {
 
     override fun render(op: MigrationOp): List<String> = when (op) {
+        is MigrationOp.CreateExtension -> listOf("CREATE EXTENSION IF NOT EXISTS ${quote(op.name)}")
         is MigrationOp.CreateTable -> renderCreateTable(op.table)
         is MigrationOp.AddColumn -> renderAddColumn(op.table, op.column)
         is MigrationOp.AddIndex -> renderAddIndex(op.table, op.index)
@@ -84,11 +85,21 @@ class PostgresSqlRenderer(
         table: String,
         index: entkt.migrations.NormalizedIndex,
     ): List<String> {
-        val cols = index.columns.joinToString(", ") { quote(it) }
         val name = truncateIdentifier(index.name ?: deriveIndexName(table, index.columns, index.unique, index.where))
         val keyword = if (index.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
+        // Native (pgvector) index: USING <method> (col opclass[, ...]) WITH (...).
+        val cols = if (index.using != null) {
+            index.columns.mapIndexed { i, c -> "${quote(c)} ${index.opclasses?.getOrNull(i).orEmpty()}".trim() }
+                .joinToString(", ")
+        } else {
+            index.columns.joinToString(", ") { quote(it) }
+        }
+        val usingClause = if (index.using != null) " USING ${index.using}" else ""
+        val withClause = index.with?.takeIf { it.isNotEmpty() }
+            ?.entries?.joinToString(", ") { "${it.key} = ${it.value}" }
+            ?.let { " WITH ($it)" } ?: ""
         val whereSuffix = if (index.where != null) " WHERE ${index.where}" else ""
-        return listOf("$keyword ${quote(name)} ON ${quote(table)} ($cols)$whereSuffix")
+        return listOf("$keyword ${quote(name)} ON ${quote(table)}$usingClause ($cols)$withClause$whereSuffix")
     }
 
     private fun renderAddForeignKey(

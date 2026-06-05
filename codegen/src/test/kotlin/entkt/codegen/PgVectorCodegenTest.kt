@@ -1,6 +1,9 @@
 package entkt.codegen
 
+import entkt.postgres.vector.VectorMetric
+import entkt.postgres.vector.hnsw
 import entkt.postgres.vector.postgresVector
+import entkt.postgres.vector.postgresVectorIndex
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
@@ -15,6 +18,7 @@ private class VecArticle : EntSchema("articles") {
     override fun id() = EntId.long()
     val title = string("title")
     val embedding = postgresVector("embedding", dimensions = 1536).nullable()
+    val embHnsw = postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.Cosine)
 }
 
 class PgVectorCodegenTest {
@@ -48,6 +52,13 @@ class PgVectorCodegenTest {
             """storage = ColumnStorage.Native(dialect = "postgres", typeName = "vector", sqlType = "vector(1536)", codec = "postgres.vector", requiredExtension = "vector", dimensions = 1_536)""" in entity,
             entity,
         )
+    }
+
+    @Test
+    fun `SCHEMA literal carries the vector index metadata (using + opclasses)`() {
+        val entity = gen().getValue("Article")
+        assertTrue("""using = "hnsw"""" in entity, entity)
+        assertTrue("""opclasses = listOf("vector_cosine_ops")""" in entity, entity)
     }
 
     @Test

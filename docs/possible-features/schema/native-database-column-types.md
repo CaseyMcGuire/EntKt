@@ -136,7 +136,7 @@ class PgVectorFieldBuilder internal constructor(name: String) :
 // schema module, registration function — mirrors enum(name, KClass)
 @PublishedApi
 internal fun EntSchema.registerPostgresVector(name: String, dimensions: Int): PgVectorFieldBuilder {
-    require(dimensions in 1..2000) { "postgresVector('$name') dimensions must be 1..2000, got $dimensions" }
+    require(dimensions in 1..16000) { "postgresVector('$name') dimensions must be 1..16000, got $dimensions" }
     return PgVectorFieldBuilder(name).also {
         validateName(name, "Field"); checkNotFinalized()
         it.setNativeStorage(ColumnStorage.Native(
@@ -207,8 +207,9 @@ hierarchy:
 Three layers, each with a distinct job:
 
 1. **Declaration (fail fast).** `postgresVector(name, dimensions)` requires
-   `dimensions in 1..2000` (pgvector's hard ceiling) in the registration function:
-   `require(dimensions in 1..2000) { "postgresVector('$name') dimensions must be 1..2000, got $dimensions" }`.
+   `dimensions in 1..16000` (the `vector` type's max; HNSW/IVFFlat indexes are
+   further capped at 2000, enforced where the index is declared) in the registration function:
+   `require(dimensions in 1..16000) { "postgresVector('$name') dimensions must be 1..16000, got $dimensions" }`.
 2. **Write (precise, field-named).** The generated `create`/`update` setter for a
    vector field checks the value's dimension against the column's declared
    `dimensions` *before* handing it to the driver:
@@ -543,7 +544,7 @@ Schema / codegen:
   entity/create/update property; `postgresVector(...).unique()` **compiles but throws at
   `build()`/finalize** with the field-named message (§3), while a subclass-only modifier
   like `postgresVector(...).maxLength(…)` **does not compile** (absent from the builder).
-- `postgresVector(name, 0)` and `postgresVector(name, 2001)` fail at declaration.
+- `postgresVector(name, 0)` and `postgresVector(name, 16001)` fail at declaration; a real size like `3072` (OpenAI text-embedding-3-large) is accepted.
 - `Field.storage` / `ColumnMetadata.storage` carry `ColumnStorage.Native("postgres",
   "vector", "vector(1536)", "postgres.vector", "vector", 1536)`.
 - `postgresVectorIndex(...).hnsw(Cosine)` threads `using="hnsw"`,

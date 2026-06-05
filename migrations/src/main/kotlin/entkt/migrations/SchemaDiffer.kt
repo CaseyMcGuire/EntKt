@@ -47,6 +47,17 @@ class SchemaDiffer {
             diffTable(name, desiredTable, currentTable, autoOps, manualOps)
         }
 
+        // Ensure any extension a new table/column needs is created first. Tied
+        // to CreateTable/AddColumn so an unchanged schema emits nothing.
+        val neededExtensions = (autoOps + manualOps).flatMap { op ->
+            when (op) {
+                is MigrationOp.CreateTable -> op.table.columns.mapNotNull { it.requiredExtension }
+                is MigrationOp.AddColumn -> listOfNotNull(op.column.requiredExtension)
+                else -> emptyList()
+            }
+        }.distinct()
+        for (ext in neededExtensions) autoOps.add(MigrationOp.CreateExtension(ext))
+
         // Sort auto ops in dependency order
         val sorted = sortOps(autoOps)
 
@@ -138,13 +149,25 @@ class SchemaDiffer {
         autoOps: MutableList<MigrationOp>,
         manualOps: MutableList<MigrationOp>,
     ) {
-        // Match indexes by semantic identity: (columns, unique, where)
+        // Match indexes by semantic identity: (columns, unique, where) plus the
+        // native access method / operator class / storage params, so a
+        // btree→hnsw, opclass, or `lists` change is a detected drop+recreate.
         // Predicates are normalized so that PostgreSQL's deparsed form
         // (with outer parens, extra whitespace) matches the user-written form.
-        data class IndexKey(val columns: List<String>, val unique: Boolean, val where: String?)
+        data class IndexKey(
+            val columns: List<String>,
+            val unique: Boolean,
+            val where: String?,
+            val using: String?,
+            val opclasses: List<String>?,
+            val with: Map<String, String>?,
+        )
 
-        val currentByKey = current.indexes.associateBy { IndexKey(it.columns, it.unique, normalizeWhere(it.where)) }
-        val desiredByKey = desired.indexes.associateBy { IndexKey(it.columns, it.unique, normalizeWhere(it.where)) }
+        fun keyOf(it: NormalizedIndex) =
+            IndexKey(it.columns, it.unique, normalizeWhere(it.where), it.using, it.opclasses, it.with)
+
+        val currentByKey = current.indexes.associateBy { keyOf(it) }
+        val desiredByKey = desired.indexes.associateBy { keyOf(it) }
 
         // A column added to an existing table with a constant default
         // backfills every existing row to that same value. A new UNIQUE
@@ -243,6 +266,7 @@ class SchemaDiffer {
 
     /**
      * Sort ops in dependency order:
+     * 0. CreateExtension (the type a new column uses must exist first)
      * 1. CreateTable (to satisfy FK targets)
      * 2. AddColumn
      * 3. AddIndex (FK targets may require a unique index)
@@ -250,6 +274,7 @@ class SchemaDiffer {
      */
     private fun sortOps(ops: List<MigrationOp>): List<MigrationOp> {
         fun priority(op: MigrationOp): Int = when (op) {
+            is MigrationOp.CreateExtension -> -1
             is MigrationOp.CreateTable -> 0
             is MigrationOp.AddColumn -> 1
             is MigrationOp.AddIndex -> 2

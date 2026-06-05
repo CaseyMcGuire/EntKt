@@ -5,6 +5,7 @@ import entkt.runtime.ColumnMetadata
 import entkt.runtime.Driver
 import entkt.runtime.EntitySchema
 import entkt.runtime.IdStrategy
+import entkt.runtime.IndexMetadata
 import entkt.runtime.NoopDriver
 import entkt.runtime.UnsupportedDriverCapabilityException
 import entkt.schema.ColumnStorage
@@ -111,5 +112,43 @@ class PgVectorPostgresDriverTest {
         val ex = assertFailsWith<UnsupportedDriverCapabilityException> { noVector.register(vecSchema) }
         assertTrue("postgres.vector" in ex.message!!, ex.message ?: "")
         assertTrue("vec_items.embedding" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
+    fun `autoDdl creates the extension, vector column, and a real hnsw index`() {
+        val schema = EntitySchema(
+            table = "vec_indexed",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                ColumnMetadata(
+                    "embedding", FieldType.PGVECTOR, nullable = true,
+                    storage = ColumnStorage.Native("postgres", "vector", "vector(3)", "postgres.vector", "vector", 3),
+                ),
+            ),
+            edges = emptyMap(),
+            indexes = listOf(
+                IndexMetadata(
+                    columns = listOf("embedding"), name = "idx_vec_indexed_hnsw",
+                    using = "hnsw", opclasses = listOf("vector_cosine_ops"),
+                ),
+            ),
+        )
+        // Start clean so autoDdl runs the full CREATE EXTENSION + CREATE TABLE + index path.
+        dataSource.connection.use { conn ->
+            conn.createStatement().use { it.execute("DROP TABLE IF EXISTS \"vec_indexed\"") }
+        }
+        // A fresh driver (no in-memory cache) so register() runs autoDdl.
+        PostgresDriver(dataSource, autoDdl = true).register(schema)
+
+        val indexDef = dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_vec_indexed_hnsw'").use { st ->
+                st.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+            }
+        }
+        assertTrue(indexDef != null, "autoDdl must have created the hnsw index")
+        assertTrue("hnsw" in indexDef!!, indexDef)
+        assertTrue("vector_cosine_ops" in indexDef, indexDef)
     }
 }

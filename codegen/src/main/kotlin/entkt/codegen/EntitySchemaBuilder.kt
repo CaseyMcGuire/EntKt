@@ -187,6 +187,7 @@ private fun buildEntitySchema(
                 references = col.references?.let { (t, c) -> ForeignKeyRef(t, c, col.onDelete) },
                 comment = col.comment,
                 default = col.default,
+                storage = col.storage,
             )
         },
         edges = buildEdgeMap(schema, schemaNames),
@@ -196,6 +197,9 @@ private fun buildEntitySchema(
                 unique = idx.unique,
                 name = idx.name,
                 where = idx.where,
+                using = idx.using,
+                opclasses = idx.opclasses,
+                with = idx.with,
             )
         },
     )

@@ -77,10 +77,16 @@ class PostgresDriver(
         checkNativeStorageSupported(schema)
 
         if (autoDdl) {
+            // Required extensions (e.g. pgvector) must exist before a column
+            // using their type is created.
+            val extensions = schema.columns
+                .mapNotNull { (it.storage as? entkt.schema.ColumnStorage.Native)?.requiredExtension }
+                .distinct()
             val ddl = createTableSql(schema)
             val indexDdl = createIndexesSql(schema)
             dataSource.connection.use { conn ->
                 conn.createStatement().use { stmt ->
+                    for (ext in extensions) stmt.execute("CREATE EXTENSION IF NOT EXISTS ${quote(ext)}")
                     stmt.execute(ddl)
                     for (sql in indexDdl) stmt.execute(sql)
                 }
@@ -612,12 +618,22 @@ class PostgresDriver(
             }
 
         val compositeIndexes = schema.indexes.map { idx ->
-            val cols = idx.columns.joinToString(", ") { quote(it) }
-            val rawName = idx.name
-            val name = typeMapper.normalizeIdentifier(rawName)
+            val name = typeMapper.normalizeIdentifier(idx.name)
             val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
+            // Native (pgvector) index: USING <method> (col opclass[, ...]) WITH (...).
+            // Btree: (col[, ...]) with an optional partial WHERE.
+            val cols = if (idx.using != null) {
+                idx.columns.mapIndexed { i, c -> "${quote(c)} ${idx.opclasses?.getOrNull(i).orEmpty()}".trim() }
+                    .joinToString(", ")
+            } else {
+                idx.columns.joinToString(", ") { quote(it) }
+            }
+            val usingClause = if (idx.using != null) " USING ${idx.using}" else ""
+            val withClause = idx.with?.takeIf { it.isNotEmpty() }
+                ?.entries?.joinToString(", ") { "${it.key} = ${it.value}" }
+                ?.let { " WITH ($it)" } ?: ""
             val whereSuffix = if (idx.where != null) " WHERE ${idx.where}" else ""
-            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} ($cols)$whereSuffix"
+            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)}$usingClause ($cols)$withClause$whereSuffix"
         }
 
         return columnUniques + compositeIndexes

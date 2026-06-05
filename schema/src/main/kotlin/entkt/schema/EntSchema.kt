@@ -190,8 +190,11 @@ abstract class EntSchema(val tableName: String) {
      */
     @PublishedApi
     internal fun registerPostgresVector(name: String, dimensions: Int): PgVectorFieldBuilder {
-        require(dimensions in 1..2000) {
-            "postgresVector('$name') dimensions must be 1..2000, got $dimensions"
+        // pgvector's `vector` type allows up to 16000 dimensions. (HNSW/IVFFlat
+        // indexes are further limited to 2000, enforced where the index is
+        // declared, not on the column.)
+        require(dimensions in 1..16000) {
+            "postgresVector('$name') dimensions must be 1..16000, got $dimensions"
         }
         return PgVectorFieldBuilder(name).also {
             validateName(name, "Field")
@@ -285,6 +288,29 @@ abstract class EntSchema(val tableName: String) {
             }
         }
         return IndexBuilder(name, fields.toList()).also { _indexes.add(it) }
+    }
+
+    /**
+     * Registration hook for the `entkt.postgres.vector.postgresVectorIndex(name,
+     * field)` extension (RFC "Native Database Column Types", §6). Mirrors [index]
+     * — same column-ownership validation — so the import-gated extension can
+     * register a native vector index without reaching `IndexBuilder`'s internal
+     * ctor or the protected `index()`.
+     */
+    @PublishedApi
+    internal fun registerPostgresVectorIndex(name: String, field: IndexableColumn): IndexBuilder {
+        checkNotFinalized()
+        validateName(name, "Index")
+        val owner = when (field) {
+            is FieldBuilder<*, *> -> field.declarationOwner
+            is FkColumn -> field.declarationOwner
+            else -> null
+        }
+        require(owner == null || owner === this) {
+            "postgresVectorIndex() references '${field.fieldName}' which belongs to schema " +
+                "'${owner!!::class.simpleName}', not '${this::class.simpleName}'"
+        }
+        return IndexBuilder(name, listOf(field)).also { _indexes.add(it) }
     }
 
     @PublishedApi internal fun indexForMixin(name: String, vararg fields: IndexableColumn): IndexBuilder =

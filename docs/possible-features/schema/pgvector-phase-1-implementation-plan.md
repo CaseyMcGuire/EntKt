@@ -68,7 +68,7 @@ Purely additive; **no `FieldType` change**, so nothing exhaustive breaks. Fully 
   are subclass-only so simply absent.
 - `schema/.../EntSchema.kt` registration: `@PublishedApi internal fun
   EntSchema.registerPostgresVector(name, dimensions)` mirroring `enum(name, KClass)`
-  (`require(dimensions in 1..2000)`, validateName, checkNotFinalized, `setNativeStorage(
+  (`require(dimensions in 1..16000)`, validateName, checkNotFinalized, `setNativeStorage(
   Native("postgres","vector","vector($dimensions)","postgres.vector","vector",dimensions))`,
   declarationOwner, `_fields.add`).
 - `schema/.../postgres/vector/Dsl.kt` (new, package `entkt.postgres.vector`, physically
@@ -80,7 +80,7 @@ Purely additive; **no `FieldType` change**, so nothing exhaustive breaks. Fully 
   mapping deferred); cheap real branches are fine where obvious.
 
 **Tests (schema):** `postgresVector("e", 1536)` builds `Field(type = PGVECTOR,
-storage = Native(...))`; `dimensions = 0`/`2001` throw at declaration;
+storage = Native(...))`; `dimensions = 0`/`16001` throw at declaration;
 `postgresVector(...).unique()` throws at `build()`/finalize with the field-named
 message; `postgresVector(...).maxLength(…)` does not compile (subclass-only modifier
 absent).
@@ -165,12 +165,16 @@ non-supporting driver throws `UnsupportedDriverCapabilityException` at `register
   path. Else `autoDdl` creates `vector(n)` before the extension exists.
 - `postgres/.../PostgresIntrospector.kt`: read a live `vector(n)` column + HNSW/IVFFlat
   index (via `pg_attribute`/`pg_type`/`pg_index`/`pg_opclass`) back into
-  `ColumnStorage.Native` / `IndexMetadata`.
+  `ColumnStorage.Native` / `IndexMetadata`. **DEFERRED** (follow-up): the autoDdl path
+  (`CREATE … IF NOT EXISTS`) is idempotent and unaffected; the only gap is the
+  *migration-file* differ, which without pgvector read-back sees a live vector index as
+  "missing" and re-emits an idempotent `AddIndex`. Not data-affecting; tracked separately.
 
 **Tests (migrations + postgres):** `vector(n)` column DDL; `CREATE EXTENSION` emitted
-once; HNSW and IVFFlat index DDL with the right opclass/`WITH (lists = N)`; a
-`vector(1536) → vector(3072)` change classified manual/destructive (de-risk #2);
-introspection round-trips a created vector column + index.
+once and ordered before `CREATE TABLE`; HNSW and IVFFlat index DDL with the right
+opclass/`WITH (lists = N)`; a `vector(1536) → vector(3072)` change classified
+manual/destructive; an unchanged vector schema emits no ops; a real autoDdl run builds
+the extension + vector column + hnsw index on pgvector.
 
 ## Phase 6 — Query: nearest-neighbor distance ordering
 
