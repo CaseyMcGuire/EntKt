@@ -3,6 +3,8 @@ package entkt.schema
 class IndexBuilder internal constructor(
     private val name: String,
     private val columns: List<IndexableColumn>,
+    /** True when created via `postgresVectorIndex(...)` — gates `.hnsw()`/`.ivfflat()`. */
+    private val isVectorIndex: Boolean = false,
 ) {
     internal var frozen: Boolean = false
 
@@ -28,6 +30,9 @@ class IndexBuilder internal constructor(
     @PublishedApi
     internal fun setVectorIndex(using: String, opclasses: List<String>, with: Map<String, String>?) {
         checkNotFrozen()
+        require(isVectorIndex) {
+            "Index '$name': .hnsw()/.ivfflat() is only valid on a postgresVectorIndex(...), not a plain index()"
+        }
         this.using = using
         this.opclasses = opclasses
         this.with = with
@@ -35,6 +40,14 @@ class IndexBuilder internal constructor(
 
     fun build(): Index {
         require(columns.isNotEmpty()) { "Index must have at least one field" }
+        if (isVectorIndex) {
+            // A pgvector index has no UNIQUE form, and needs an access method
+            // (there is no default btree opclass for `vector`).
+            require(!unique) { "pgvector index '$name' cannot be UNIQUE" }
+            require(using != null) {
+                "postgresVectorIndex('$name') requires an access method; call .hnsw(...) or .ivfflat(...)"
+            }
+        }
         return Index(
             name = name,
             fields = columns.map { it.fieldName },

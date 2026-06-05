@@ -310,7 +310,19 @@ abstract class EntSchema(val tableName: String) {
             "postgresVectorIndex() references '${field.fieldName}' which belongs to schema " +
                 "'${owner!!::class.simpleName}', not '${this::class.simpleName}'"
         }
-        return IndexBuilder(name, listOf(field)).also { _indexes.add(it) }
+        // A pgvector index is only valid over a pgvector column — reject anything
+        // else here rather than letting it fail at CREATE INDEX.
+        val native = (field as? FieldBuilder<*, *>)?.nativeStorage as? ColumnStorage.Native
+        require(native != null && native.codec == "postgres.vector") {
+            "postgresVectorIndex('$name') requires a pgvector column, but '${field.fieldName}' is not one"
+        }
+        // HNSW and IVFFlat both cap at 2000 dimensions (the column itself allows
+        // up to 16000), so an index over a wider vector can never be built.
+        require(native.dimensions <= 2000) {
+            "postgresVectorIndex('$name') on '${field.fieldName}': pgvector HNSW/IVFFlat indexes " +
+                "support at most 2000 dimensions, but the column is ${native.dimensions}-dimensional"
+        }
+        return IndexBuilder(name, listOf(field), isVectorIndex = true).also { _indexes.add(it) }
     }
 
     @PublishedApi internal fun indexForMixin(name: String, vararg fields: IndexableColumn): IndexBuilder =

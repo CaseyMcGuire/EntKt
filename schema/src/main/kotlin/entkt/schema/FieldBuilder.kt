@@ -68,6 +68,9 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
         this.storage = s
     }
 
+    /** Native storage attached to this field (e.g. pgvector), or null. */
+    internal val nativeStorage: ColumnStorage? get() = storage
+
     fun build(): Field {
         if (immutable && updateDefault != null) {
             error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")

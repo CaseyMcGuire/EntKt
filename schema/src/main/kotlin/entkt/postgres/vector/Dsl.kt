@@ -9,7 +9,8 @@ import entkt.schema.PgVectorFieldBuilder
  * Declare a Postgres `pgvector` column (RFC "Native Database Column Types").
  * Import-gated (`import entkt.postgres.vector.*`) so it does not appear on the
  * base schema DSL — a Postgres-native field looks Postgres-native at the call
- * site. `dimensions` must be 1..2000.
+ * site. `dimensions` must be 1..16000 (the `vector` column cap; HNSW/IVFFlat
+ * indexes further require <= 2000, enforced at `postgresVectorIndex`).
  *
  * `inline` so the user-module call site can reach the `@PublishedApi internal`
  * [EntSchema.registerPostgresVector] hook without exposing the private
@@ -41,6 +42,9 @@ inline fun EntSchema.postgresVectorIndex(name: String, field: IndexableColumn): 
 inline fun IndexBuilder.hnsw(metric: VectorMetric): IndexBuilder =
     apply { setVectorIndex("hnsw", listOf(metric.opclass), null) }
 
-/** Configure this index as IVFFlat with the given [metric] and `lists` partition count. */
+/** Configure this index as IVFFlat with the given [metric] and `lists` partition count (> 0). */
 inline fun IndexBuilder.ivfflat(metric: VectorMetric, lists: Int): IndexBuilder =
-    apply { setVectorIndex("ivfflat", listOf(metric.opclass), mapOf("lists" to lists.toString())) }
+    apply {
+        require(lists > 0) { "ivfflat() lists must be > 0, got $lists" }
+        setVectorIndex("ivfflat", listOf(metric.opclass), mapOf("lists" to lists.toString()))
+    }
