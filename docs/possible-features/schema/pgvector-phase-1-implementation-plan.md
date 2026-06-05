@@ -129,10 +129,17 @@ non-supporting driver throws `UnsupportedDriverCapabilityException` at `register
 
 - **Schema-side index carrier** (`schema/.../Index.kt:3`, today `name/fields/unique/where`):
   add `using`/`opclasses`/`with` (nullable → btree unchanged). `schema/.../IndexBuilder.kt`
-  / a new `postgresVectorIndex(name, field)` builder (package `entkt.postgres.vector`)
-  with `.hnsw(VectorMetric.Cosine)` / `.ivfflat(metric, lists = N)` produces a schema
-  `Index` with those fields set (`with = {"lists":"100"}` for IVFFlat); `VectorMetric`
-  enum + opclass map (RFC §6). Registered like `index(...)`.
+  gains a `@PublishedApi internal setVectorIndex(using, opclasses, with)` (mirrors
+  `setNativeStorage`), folded into the built `Index` by the final `build()`.
+- **Index registration bridge** (same blocker as the field hook — see RFC §6): the
+  `IndexBuilder` ctor is `internal`, `index()` is `protected` and does column-ownership
+  validation (`EntSchema.kt:240-256`), `_indexes` is `internal`. Add `@PublishedApi
+  internal fun EntSchema.registerPostgresVectorIndex(name, field)` (replicates the
+  ownership check, builds the `IndexBuilder`, `_indexes.add`); the public `inline
+  postgresVectorIndex` + `inline .hnsw(VectorMetric.Cosine)` / `.ivfflat(metric, lists = N)`
+  (calling `setVectorIndex`) live in `schema/.../postgres/vector/Dsl.kt`. `VectorMetric`
+  enum + opclass map (RFC §6). Produces a schema `Index` with the fields set
+  (`with = {"lists":"100"}` for IVFFlat).
 - **Codegen threading:** `codegen/.../SchemaMetadata.kt:501` (`schema.indexes()`) copies
   `using`/`opclasses`/`with` from the schema `Index` into the emitted runtime
   `IndexMetadata`.

@@ -180,8 +180,10 @@ hierarchy:
   `build()`.** `.nullable()`, `.unique()`, `.immutable()`, `.sensitive()`, `.comment()`
   are `public` on the base `FieldBuilder` (`FieldBuilder.kt:48-53`) and inherited by
   *every* builder — there is no way to make `.unique()` a compile error on a subclass
-  without a base-class refactor. And `build()` is `final` (`FieldBuilder.kt:61`). So
-  the one genuinely-broken modifier is rejected in the final `build()` with a clear,
+  without a base-class refactor. And `build()` is `final` — it is a plain `fun build()`
+  (`FieldBuilder.kt:61`), and Kotlin methods are final unless marked `open`, so a
+  subclass cannot override it. So the one genuinely-broken modifier is rejected in the
+  final `build()` with a clear,
   field-named error (the same place `build()` already rejects `immutable ⊕ updateDefault`
   and non-finite defaults).
 
@@ -285,8 +287,7 @@ val with: Map<String, String>? = null // index storage params: IVFFlat {"lists":
 The `with` map is what carries IVFFlat `lists` (and any HNSW build params) — `using` +
 `opclasses` alone cannot.
 
-The DSL parallels the existing `index(...)` builder (its `IndexBuilder` is extended /
-`postgresVectorIndex` produces an `Index` with the new fields set):
+The DSL parallels the existing `index(...)` builder:
 
 ```kotlin
 postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.Cosine)
@@ -294,6 +295,21 @@ postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.
 postgresVectorIndex("idx_articles_embedding_ivf", embedding).ivfflat(VectorMetric.L2, lists = 100)
 //  → Index(..., using="ivfflat", opclasses=["vector_l2_ops"], with=mapOf("lists" to "100"))
 ```
+
+`postgresVectorIndex` is an import-gated extension (`entkt.postgres.vector`), so — like
+`postgresVector` — it hits the same private-registration blocker §2 solves, and needs
+the **same bridge**: `IndexBuilder`'s ctor is `internal` (`IndexBuilder.kt:3`), `index()`
+is `protected` (`EntSchema.kt:240`, uncallable from an extension), and `_indexes` is
+`internal` (`:61`). Crucially, `index()` also runs **column-ownership validation**
+(`EntSchema.kt:243-255`: every referenced column's `declarationOwner` must be this
+schema), which the parallel must replicate. So Phase 1 adds a `@PublishedApi internal
+fun EntSchema.registerPostgresVectorIndex(name, field)` (does the ownership check,
+constructs the `IndexBuilder` via its internal ctor, `_indexes.add`) and a
+`@PublishedApi internal IndexBuilder.setVectorIndex(using, opclasses, with)` folded into
+the built `Index` by the final `build()` — mirroring `registerPostgresVector` /
+`setNativeStorage` exactly. The public `inline postgresVectorIndex` + the
+`inline .hnsw(metric)` / `.ivfflat(metric, lists)` (which call `setVectorIndex`) live in
+the schema module under `entkt.postgres.vector`.
 
 `VectorMetric` maps to opclass + the matching distance operator:
 
