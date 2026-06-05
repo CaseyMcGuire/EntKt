@@ -176,4 +176,31 @@ class PgVectorDslTest {
         assertEquals(listOf("vector_l2_ops"), v.opclasses)
         assertEquals(mapOf("lists" to "100"), v.with)
     }
+
+    @Test
+    fun `two vector indexes on one column with different metrics are both allowed`() {
+        // The dedup key mirrors the migration differ's index identity, so
+        // indexes that differ by operator class are distinct, not duplicates.
+        val s = object : EntSchema("multi") {
+            override fun id() = EntId.long()
+            val emb = postgresVector("emb", 4)
+            val cos = postgresVectorIndex("cos", emb).hnsw(VectorMetric.Cosine)
+            val l2 = postgresVectorIndex("l2", emb).hnsw(VectorMetric.L2)
+        }
+        finalize(s)
+        assertEquals(2, s.indexes().size)
+    }
+
+    @Test
+    fun `two identical vector indexes on one column are still rejected as duplicates`() {
+        val s = object : EntSchema("dup") {
+            override fun id() = EntId.long()
+            val emb = postgresVector("emb", 4)
+            val a = postgresVectorIndex("a", emb).hnsw(VectorMetric.Cosine)
+            val b = postgresVectorIndex("b", emb).hnsw(VectorMetric.Cosine)
+        }
+        finalize(s)
+        val err = assertFailsWith<IllegalArgumentException> { s.indexes() }
+        assertTrue("duplicate semantic indexes" in (err.message ?: ""), err.message ?: "")
+    }
 }

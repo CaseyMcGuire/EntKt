@@ -508,7 +508,22 @@ abstract class EntSchema(val tableName: String) {
     fun indexes(): List<Index> {
         val built = _indexes.map { it.build() }
         val seenNames = mutableSetOf<String>()
-        val seenShapes = mutableSetOf<Triple<List<String>, Boolean, String?>>()
+        val seenShapes = mutableSetOf<List<Any?>>()
+
+        // The semantic identity of an index — mirrors the migration differ's
+        // IndexKey (columns, uniqueness, where, access method, operator classes,
+        // storage params) so two genuinely-distinct indexes are not falsely
+        // rejected here. Two pgvector indexes on the same column that differ
+        // only by access method or operator class (e.g. hnsw vector_cosine_ops
+        // vs hnsw vector_l2_ops) are distinct and both must be allowed.
+        fun shapeOf(
+            fields: List<String>,
+            unique: Boolean,
+            where: String?,
+            using: String?,
+            opclasses: List<String>?,
+            with: Map<String, String>?,
+        ): List<Any?> = listOf(fields, unique, where, using, opclasses, with)
 
         // Pre-populate shapes from synthesized unique indexes so that
         // explicit indexes that duplicate a field.unique() or
@@ -517,7 +532,7 @@ abstract class EntSchema(val tableName: String) {
         for (field in _fields) {
             val f = field.build()
             if (f.unique) {
-                seenShapes.add(Triple(listOf(f.name), true, null))
+                seenShapes.add(shapeOf(listOf(f.name), true, null, null, null, null))
             }
         }
         for (edge in _edges) {
@@ -526,7 +541,7 @@ abstract class EntSchema(val tableName: String) {
                 val bt = e.kind as EdgeKind.BelongsTo
                 if (bt.unique) {
                     val fkCol = bt.field ?: "${e.name}_id"
-                    seenShapes.add(Triple(listOf(fkCol), true, null))
+                    seenShapes.add(shapeOf(listOf(fkCol), true, null, null, null, null))
                 }
             }
         }
@@ -535,10 +550,10 @@ abstract class EntSchema(val tableName: String) {
             require(seenNames.add(index.name)) {
                 "Duplicate index name '${index.name}' — index names must be unique per schema"
             }
-            val shape = Triple(index.fields, index.unique, index.where)
+            val shape = shapeOf(index.fields, index.unique, index.where, index.using, index.opclasses, index.with)
             require(seenShapes.add(shape)) {
-                "Index '${index.name}' has the same columns, uniqueness, and where clause " +
-                    "as another index — duplicate semantic indexes are not allowed"
+                "Index '${index.name}' has the same columns, uniqueness, where clause, access method, " +
+                    "and operator classes as another index — duplicate semantic indexes are not allowed"
             }
         }
         return built
