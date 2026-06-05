@@ -72,6 +72,10 @@ class PostgresDriver(
     override fun register(schema: EntitySchema) {
         if (schemas.containsKey(schema.table)) return
 
+        // Reject native-storage columns whose codec this driver can't handle
+        // (Postgres supports postgres.vector; everything else fails here).
+        checkNativeStorageSupported(schema)
+
         if (autoDdl) {
             val ddl = createTableSql(schema)
             val indexDdl = createIndexesSql(schema)
@@ -628,7 +632,7 @@ class PostgresDriver(
     private val typeMapper = PostgresTypeMapper()
 
     private fun sqlTypeFor(schema: EntitySchema, col: ColumnMetadata): String =
-        typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy)
+        typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy, col.storage)
 
     // ---------- Predicate lowering ----------
 
@@ -840,9 +844,16 @@ class PostgresDriver(
             }
             FieldType.UUID -> stmt.setObject(idx, value as UUID)
             FieldType.BYTES -> stmt.setBytes(idx, value as ByteArray)
-            // Real native bind (PGobject) lands in Phase 4, dispatched on the
-            // column's ColumnStorage; never reached before then.
-            FieldType.PGVECTOR -> error("pgvector bind lands in Phase 4")
+            // pgvector: bind as a PGobject of type "vector" with the canonical
+            // "[f0,f1,...]" text. Postgres rejects a wrong-dimension literal
+            // against a vector(n) column, so this is the defensive backstop to
+            // the generated setter's dimension check.
+            FieldType.PGVECTOR -> {
+                val obj = org.postgresql.util.PGobject()
+                obj.type = "vector"
+                obj.value = pgVectorLiteral(value as entkt.postgres.vector.PgVector)
+                stmt.setObject(idx, obj)
+            }
             null -> stmt.setObject(idx, value)
         }
     }
@@ -896,10 +907,19 @@ class PostgresDriver(
                 rs.getObject(col.name, OffsetDateTime::class.java)?.toInstant()
             FieldType.UUID -> rs.getObject(col.name, UUID::class.java)
             FieldType.BYTES -> rs.getBytes(col.name)
-            // Real native decode (vector text -> PgVector) lands in Phase 4,
-            // dispatched on col.storage; never reached before then.
-            FieldType.PGVECTOR -> error("pgvector decode lands in Phase 4")
+            // pgvector decodes to its "[f0,f1,...]" text; parse back to PgVector.
+            FieldType.PGVECTOR -> rs.getString(col.name)?.let { parsePgVector(it) }
         }
+    }
+
+    private fun pgVectorLiteral(v: entkt.postgres.vector.PgVector): String =
+        v.toFloatArray().joinToString(",", "[", "]")
+
+    private fun parsePgVector(text: String): entkt.postgres.vector.PgVector {
+        val inner = text.trim().removeSurrounding("[", "]").trim()
+        val floats = if (inner.isEmpty()) FloatArray(0)
+        else inner.split(",").map { it.trim().toFloat() }.toFloatArray()
+        return entkt.postgres.vector.PgVector.of(floats)
     }
 
     // ---------- Transactions ----------
@@ -974,6 +994,10 @@ class PostgresDriver(
     // it's a single idempotent statement, not a multi-step lock.
     override val supportsInsertIgnore: Boolean
         get() = true
+
+    // Phase 1 supports the Postgres pgvector codec; other native codecs are
+    // not understood (a schema using one is rejected at register).
+    override fun supportsNativeStorage(codec: String): Boolean = codec == "postgres.vector"
 
     // Like the other lock primitives, the relationship lock only does
     // useful work inside a transaction (an advisory lock taken in
@@ -1240,6 +1264,8 @@ class PostgresDriver(
 
         override val supportsInsertIgnore: Boolean
             get() = root.supportsInsertIgnore
+
+        override fun supportsNativeStorage(codec: String): Boolean = root.supportsNativeStorage(codec)
 
         override val supportsRelationshipSerialization: Boolean
             get() = root.supportsRelationshipSerialization

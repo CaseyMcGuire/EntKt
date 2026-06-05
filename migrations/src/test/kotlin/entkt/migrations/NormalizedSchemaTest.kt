@@ -17,7 +17,12 @@ class NormalizedSchemaTest {
     private enum class Color { RED, GREEN }
 
     private val typeMapper = object : TypeMapper {
-        override fun sqlTypeFor(fieldType: FieldType, isPrimaryKey: Boolean, idStrategy: IdStrategy): String {
+        override fun sqlTypeFor(
+            fieldType: FieldType,
+            isPrimaryKey: Boolean,
+            idStrategy: IdStrategy,
+            storage: entkt.schema.ColumnStorage?,
+        ): String {
             if (isPrimaryKey) {
                 when (idStrategy) {
                     IdStrategy.AUTO_INT -> return "serial"

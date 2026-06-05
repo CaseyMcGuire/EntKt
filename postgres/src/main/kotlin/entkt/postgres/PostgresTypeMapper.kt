@@ -2,6 +2,7 @@ package entkt.postgres
 
 import entkt.migrations.TypeMapper
 import entkt.runtime.IdStrategy
+import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 
 /**
@@ -18,7 +19,12 @@ class PostgresTypeMapper : TypeMapper {
         const val HASH_SUFFIX_LEN = 9
     }
 
-    override fun sqlTypeFor(fieldType: FieldType, isPrimaryKey: Boolean, idStrategy: IdStrategy): String {
+    override fun sqlTypeFor(
+        fieldType: FieldType,
+        isPrimaryKey: Boolean,
+        idStrategy: IdStrategy,
+        storage: ColumnStorage?,
+    ): String {
         if (isPrimaryKey) {
             when (idStrategy) {
                 IdStrategy.AUTO_INT -> return "serial"
@@ -36,9 +42,10 @@ class PostgresTypeMapper : TypeMapper {
             FieldType.TIME -> "timestamptz"
             FieldType.UUID -> "uuid"
             FieldType.BYTES -> "bytea"
-            // Real mapping (storage.sqlType, e.g. "vector(1536)") lands in
-            // Phase 4 when sqlTypeFor gains a storage parameter.
-            FieldType.PGVECTOR -> error("pgvector sqlType lands in Phase 4")
+            // Native type: render the column's declared SQL type verbatim,
+            // e.g. "vector(1536)" from the pgvector ColumnStorage.
+            FieldType.PGVECTOR -> (storage as? ColumnStorage.Native)?.sqlType
+                ?: error("PGVECTOR column is missing its ColumnStorage.Native (sqlType)")
         }
     }
 

@@ -3,6 +3,7 @@
 package entkt.migrations
 
 import entkt.runtime.IdStrategy
+import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 
 const val MANUAL_STEPS_MARKER = "!! MANUAL STEPS REQUIRED !!"
@@ -12,8 +13,18 @@ const val MANUAL_STEPS_MARKER = "!! MANUAL STEPS REQUIRED !!"
  * canonicalizes introspected type names for comparison.
  */
 interface TypeMapper {
-    /** Map a field type to its canonical SQL type string. */
-    fun sqlTypeFor(fieldType: FieldType, isPrimaryKey: Boolean, idStrategy: IdStrategy): String
+    /**
+     * Map a field type to its canonical SQL type string. [storage] carries
+     * native-column metadata (e.g. pgvector's `vector(1536)`) when the type
+     * is more than a plain [FieldType] mapping; defaulted for backward
+     * compatibility.
+     */
+    fun sqlTypeFor(
+        fieldType: FieldType,
+        isPrimaryKey: Boolean,
+        idStrategy: IdStrategy,
+        storage: ColumnStorage? = null,
+    ): String
 
     /** Canonicalize an introspected type for comparison (e.g. "int4" → "integer"). */
     fun canonicalize(rawSqlType: String): String

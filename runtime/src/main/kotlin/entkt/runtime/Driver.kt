@@ -39,6 +39,24 @@ interface Driver {
     fun supportsNativeStorage(codec: String): Boolean = false
 
     /**
+     * Reject a schema whose native-storage columns use a codec this driver
+     * doesn't [supportsNativeStorage]. Driver `register` implementations call
+     * this so an incompatible schema fails at `EntClient` construction (the
+     * generated repo registers in its `init`) rather than at first read/write.
+     */
+    fun checkNativeStorageSupported(schema: EntitySchema) {
+        for (col in schema.columns) {
+            val storage = col.storage
+            if (storage is entkt.schema.ColumnStorage.Native && !supportsNativeStorage(storage.codec)) {
+                throw UnsupportedDriverCapabilityException(
+                    "${schema.table}.${col.name} uses ${storage.dialect} ${storage.sqlType}, but " +
+                        "${this::class.simpleName} does not support codec '${storage.codec}'",
+                )
+            }
+        }
+    }
+
+    /**
      * Insert a row. The map's keys are snake_case column names; the id
      * column may be absent (driver mints one) or present (driver
      * stores as-is). Returns the persisted row, including the assigned

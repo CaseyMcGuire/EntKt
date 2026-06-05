@@ -30,7 +30,7 @@ data class NormalizedSchema(
                 val columns = schema.columns.map { col ->
                     NormalizedColumn(
                         name = col.name,
-                        sqlType = typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy),
+                        sqlType = typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy, col.storage),
                         nullable = col.nullable,
                         primaryKey = col.primaryKey,
                         default = typeMapper.formatDefault(col.type, col.default),
