@@ -33,9 +33,10 @@ Exhaustive `when (FieldType)` / `FieldType.X` sites that Phase 2 must touch:
 
 Purely additive; **no `FieldType` change**, so nothing exhaustive breaks. Fully green.
 
-- `postgres/.../runtime/PgVector.kt` (new): the value type from RFC §7 — `class
-  PgVector(val values: FloatArray)` with content `equals`/`hashCode`, `dimensions`,
-  `of(FloatArray)` / `of(List<Float>)`.
+- `postgres/.../runtime/PgVector.kt` (new): the value type from RFC §7 — content
+  `equals`/`hashCode`, `dimensions`, `of(FloatArray)`/`of(List<Float>)`, **private
+  ctor + defensive copy in (`of`) and out (`toFloatArray()`), read-only `get(i)`** so
+  the backing array is never shared (mutation can't destabilize identity).
 - `schema/.../ColumnStorage.kt` (new): `sealed interface ColumnStorage { data class
   Native(dialect, typeName, sqlType, codec, requiredExtension, dimensions) }` (RFC §5).
 - `schema/.../Field.kt`: add `storage: ColumnStorage? = null` (defaulted → additive).
@@ -150,6 +151,11 @@ non-supporting driver throws `UnsupportedDriverCapabilityException` at `register
 - `postgres/.../PostgresSqlRenderer.kt`: render `CreateExtension` →
   `CREATE EXTENSION IF NOT EXISTS <name>`; extend `renderAddIndex` (`:83`) to render
   `USING <method> (<col> <opclass>)` + optional `WITH (lists = N)`.
+- **`autoDdl` runtime path** (`PostgresDriver.register`, `:72-81`, which builds DDL
+  directly — *not* via the differ): for a schema with a column carrying
+  `requiredExtension`, emit `CREATE EXTENSION IF NOT EXISTS <ext>` **before**
+  `createTableSql`, and render the vector index via the same `using`/`opclasses`/`with`
+  path. Else `autoDdl` creates `vector(n)` before the extension exists.
 - `postgres/.../PostgresIntrospector.kt`: read a live `vector(n)` column + HNSW/IVFFlat
   index (via `pg_attribute`/`pg_type`/`pg_index`/`pg_opclass`) back into
   `ColumnStorage.Native` / `IndexMetadata`.
@@ -169,8 +175,12 @@ introspection round-trips a created vector column + index.
   `OrderField` becomes an alias of / is replaced by `OrderExpression.Column` (mechanical
   — every existing `orderBy` yields `Column`).
 - Generated distance helpers on vector fields only: `cosineDistance(q)` /
-  `l2Distance(q)` / `innerProduct(q)` build an `OrderExpression.NativeDistance` with the
-  `<=>`/`<->`/`<#>` operator.
+  `l2Distance(q)` / `innerProduct(q)` build an `OrderExpression.NativeDistance` whose
+  `operator` is a **closed `VectorDistanceOperator` enum** (`L2`/`Cosine`/`NegInnerProduct`,
+  each carrying its `sql`) — never a raw String, and the `NativeDistance` ctor is
+  `internal` (only these helpers build it), so no caller text reaches SQL. `innerProduct`
+  lowers to `<#>` (pgvector's **negative** inner product); its generated KDoc documents
+  that `.asc()` = most-similar-first.
 - Driver ORDER BY renderer switches on the variant: `Column` keeps `alias.field DIR`;
   `NativeDistance` renders `alias.field <=> ? DIR` and **binds the operand `PgVector` as
   a parameter** (never inlined into SQL). Gated by

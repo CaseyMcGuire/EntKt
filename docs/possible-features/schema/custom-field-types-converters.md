@@ -40,8 +40,8 @@ blueprint*.
   `supportsNativeStorage(codec)` driver capability, and storage-keyed bind/decode.
 
 **Phase 2+ — out of scope here, sketched in *Future Phases*.** Custom scalar
-converters (`Email`, `Slug`), `json<T>`, `array<T>`, `databaseEnum<E>`, and vector
-*filtering* (`WHERE distance < threshold`). They slot onto the Phase-1 foundation;
+converters (`Email`, `Slug`), `json(name, KClass)`, `array<T>`, `databaseEnum<E>`, and
+vector *filtering* (`WHERE distance < threshold`). They slot onto the Phase-1 foundation;
 this RFC states *where*, not *how*.
 
 Phase 1 deliberately does **not** retrofit the existing `enum` feature onto
@@ -299,7 +299,7 @@ postgresVectorIndex("idx_articles_embedding_ivf", embedding).ivfflat(VectorMetri
 | --- | --- | --- |
 | `Cosine` | `vector_cosine_ops` | `<=>` |
 | `L2` | `vector_l2_ops` | `<->` |
-| `InnerProduct` | `vector_ip_ops` | `<#>` |
+| `InnerProduct` | `vector_ip_ops` | `<#>` (pgvector's **negative** inner product — see §10) |
 
 Threading (the three hops): the `postgresVectorIndex` builder sets the fields on the
 schema `Index`; codegen (`SchemaMetadata.kt:501`, `schema.indexes()`) copies them into
@@ -315,10 +315,12 @@ Lives in the **postgres runtime** module (`entkt.postgres.runtime.PgVector`), so
 generated property type is Postgres-namespaced and the schema module stays clean:
 
 ```kotlin
-class PgVector(val values: FloatArray) {
+class PgVector private constructor(private val values: FloatArray) {
     val dimensions: Int get() = values.size
+    operator fun get(i: Int): Float = values[i]
+    fun toFloatArray(): FloatArray = values.copyOf()   // defensive copy out
     companion object {
-        fun of(values: FloatArray) = PgVector(values)
+        fun of(values: FloatArray) = PgVector(values.copyOf())          // defensive copy in
         fun of(values: List<Float>) = PgVector(values.toFloatArray())
     }
     override fun equals(other: Any?) = other is PgVector && values.contentEquals(other.values)
@@ -326,8 +328,12 @@ class PgVector(val values: FloatArray) {
 }
 ```
 
-It is a **regular class with content equality**, not `FloatArray` exposed directly
-and not `@JvmInline value class` (a value class over `FloatArray` inherits referential
+The backing array is **never shared**: `of(...)` copies on the way in and
+`toFloatArray()` copies on the way out (with read-only `get(i)`/`dimensions` for the
+common case), so a caller mutating their array — before or after construction — can't
+silently change a `PgVector`'s identity. It is a **regular class with content
+equality**, not `FloatArray` exposed directly and not `@JvmInline value class` (a value
+class over `FloatArray` inherits referential
 array equality, which is surprising inside generated `data class` entities).
 
 ### 8. Generated code & the bind/decode boundary (resolves "driver/domain conversion is inconsistent")
@@ -399,6 +405,15 @@ Phase 1 adds:
 - the differ emits one `CreateExtension("vector")` when any column carries
   `requiredExtension = "vector"` (deduped across the schema set).
 
+**The runtime `autoDdl` path needs the same.** `PostgresDriver.register(autoDdl = true)`
+does **not** go through the migration differ — it builds DDL directly
+(`PostgresDriver.kt:72-81`: `createTableSql` + `createIndexesSql`, executed at
+registration). So that path must, for any registered schema with a column carrying
+`requiredExtension`, issue `CREATE EXTENSION IF NOT EXISTS <ext>` **before** its
+`CREATE TABLE` (and create the HNSW/IVFFlat index via the same `using`/`opclasses`/`with`
+rendering as migrations). Without this, `autoDdl` creates the `vector(n)` column before
+the extension exists and fails.
+
 **Migration DDL** (`PostgresTypeMapper` returns `storage.sqlType` for `PGVECTOR`; the
 renderer renders the new ops):
 
@@ -442,6 +457,16 @@ and lower to the `<=>` / `<->` / `<#>` operators, gated by
 capability error rather than emitting invalid SQL. **Filtering** (`WHERE distance <
 threshold`) and other operator families are Phase 2.
 
+> **Inner-product semantics.** pgvector's `<#>` is **negative** inner product
+> (`-(a·b)`), precisely because Postgres index scans are *ascending* — so
+> `innerProduct(q).asc()` returns the rows with the *largest raw* `a·b` first
+> (most-similar-first), the same `.asc()` = most-similar convention as `cosineDistance`
+> / `l2Distance`. The helper is named for the operator family, not the raw arithmetic;
+> the generated KDoc states "orders by pgvector's `<#>` (negative inner product); use
+> `.asc()` for most-similar-first." (pgvector README: `<#>` returns negative inner
+> product and HNSW/IVFFlat scans require ascending order —
+> <https://github.com/pgvector/pgvector>.)
+
 **This requires a richer order model.** `OrderField` today is a bare
 `(field: String, direction)` (`schema/.../query/OrderField.kt:9`), and Postgres renders
 it as `"alias"."field" ASC|DESC` (`PostgresDriver.kt:295`) — there is nowhere to put a
@@ -449,22 +474,28 @@ distance expression or its bound parameter. Phase 1 generalizes the order-by ele
 a sealed type (preserving the existing column case byte-identically):
 
 ```kotlin
+// Closed operator set — NEVER caller-supplied SQL text (cf. Predicate.Op).
+enum class VectorDistanceOperator(val sql: String) { L2("<->"), Cosine("<=>"), NegInnerProduct("<#>") }
+
 sealed interface OrderExpression<E : Any> {
     val direction: OrderDirection
     data class Column<E : Any>(val field: String, override val direction: OrderDirection) : OrderExpression<E>
     // native distance ordering: `<col> <op> <bound vector>` (Phase 1, pgvector)
-    data class NativeDistance<E : Any>(
+    data class NativeDistance<E : Any> internal constructor(
         val field: String,
-        val operator: String,   // "<=>" / "<->" / "<#>", from VectorMetric
-        val operand: Any,       // the query PgVector — bound as a parameter, never inlined
+        val operator: VectorDistanceOperator,  // closed enum, not raw text — the driver reads operator.sql
+        val operand: PgVector,                  // bound as a parameter, never inlined
         override val direction: OrderDirection,
     ) : OrderExpression<E>
 }
 ```
 
-The driver's ORDER BY renderer switches on the variant: `Column` keeps today's
-`alias.field DIR`; `NativeDistance` renders `alias.field <=> ? DIR` and **binds the
-operand as a parameter** (so embeddings never land in the SQL string). A driver lacking
+`operator` is a **closed enum**, not a `String` — the driver reads `operator.sql`, so no
+caller-supplied text ever reaches the SQL (the constructor is `internal`; only the
+generated `cosineDistance`/`l2Distance`/`innerProduct` helpers build it). The driver's
+ORDER BY renderer switches on the variant: `Column` keeps today's `alias.field DIR`;
+`NativeDistance` renders `alias.field <op.sql> ? DIR` and **binds the operand as a
+parameter** (so embeddings never land in the SQL string). A driver lacking
 `supportsNativeStorage("postgres.vector")` rejects a `NativeDistance` element at lowering
 time with a capability error. (`OrderField` either becomes a type alias for
 `OrderExpression.Column` or is replaced; the migration is mechanical because every
