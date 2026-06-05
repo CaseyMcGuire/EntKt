@@ -307,7 +307,17 @@ class PostgresDriver(
             sql.append(
                 orderBy.joinToString(", ") { of ->
                     val dir = if (of.direction == OrderDirection.ASC) "ASC" else "DESC"
-                    "$baseAlias.${quote(of.field)} $dir"
+                    val distance = of.distance
+                    if (distance != null) {
+                        // pgvector distance ordering: `col <op> ?`, operand bound
+                        // as a vector parameter (never inlined). Appended after the
+                        // WHERE params (which are already in builder.params) so the
+                        // placeholder order matches the SQL text.
+                        builder.params.add(Param(FieldType.PGVECTOR, distance.operand))
+                        "$baseAlias.${quote(of.field)} ${distance.operator.sql} ? $dir"
+                    } else {
+                        "$baseAlias.${quote(of.field)} $dir"
+                    }
                 },
             )
         }
