@@ -266,26 +266,31 @@ turning "did we cover the driver/migration/codegen path?" into a compiler check.
 
 ### 6. Native index metadata (resolves "vector indexes need new metadata")
 
-`IndexMetadata` is btree-shaped today: `columns, unique, name, where`
-(`runtime/.../EntitySchema.kt:107`). Phase 1 adds two **nullable** fields so every
-existing btree index is byte-identical:
+An index travels through **three** data models — the schema-side `Index`
+(`schema/.../Index.kt:3`, what the DSL builder produces), the runtime `IndexMetadata`
+(`runtime/.../EntitySchema.kt:107`, what codegen emits and the driver/migrations read),
+and the migrations `NormalizedIndex` (`migrations/.../NormalizedSchema.kt:111`). **All
+three are btree-shaped today** (`name/fields/unique/where`) and **all three** must gain
+the same **three nullable** fields so existing btree indexes stay byte-identical:
 
 ```kotlin
-data class IndexMetadata(
-    val columns: List<String>,
-    val unique: Boolean = false,
-    val name: String,
-    val where: String? = null,
-    val using: String? = null,           // NEW: access method, e.g. "hnsw" / "ivfflat" (null = btree)
-    val opclasses: List<String>? = null, // NEW: per-column operator class, e.g. ["vector_cosine_ops"]
-)
+//   schema Index (Index.kt) · runtime IndexMetadata (EntitySchema.kt) · NormalizedIndex
+val using: String? = null,            // access method: "hnsw" / "ivfflat"  (null = btree)
+val opclasses: List<String>? = null,  // per-column operator class: ["vector_cosine_ops"]
+val with: Map<String, String>? = null // index storage params: IVFFlat {"lists":"100"}, HNSW {"m":"16",...}
 ```
 
-The DSL parallels the existing `index(...)` builder:
+The `with` map is what carries IVFFlat `lists` (and any HNSW build params) — `using` +
+`opclasses` alone cannot.
+
+The DSL parallels the existing `index(...)` builder (its `IndexBuilder` is extended /
+`postgresVectorIndex` produces an `Index` with the new fields set):
 
 ```kotlin
 postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.Cosine)
-// → IndexMetadata(columns=["embedding"], name=..., using="hnsw", opclasses=["vector_cosine_ops"])
+//  → Index(fields=["embedding"], name=..., using="hnsw", opclasses=["vector_cosine_ops"])
+postgresVectorIndex("idx_articles_embedding_ivf", embedding).ivfflat(VectorMetric.L2, lists = 100)
+//  → Index(..., using="ivfflat", opclasses=["vector_l2_ops"], with=mapOf("lists" to "100"))
 ```
 
 `VectorMetric` maps to opclass + the matching distance operator:
@@ -296,16 +301,13 @@ postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.
 | `L2` | `vector_l2_ops` | `<->` |
 | `InnerProduct` | `vector_ip_ops` | `<#>` |
 
-`.ivfflat(metric, lists = N)` is the IVFFlat variant (`using = "ivfflat"`, plus a
-`with` clause). Migrations render `CREATE INDEX <name> ON <table> USING hnsw
-(embedding vector_cosine_ops)` (§9).
-
-The migration layer needs matching plumbing: `migrations/.../NormalizedSchema.kt:111`
-(`NormalizedIndex`) has no `using`/`opclasses`/`with`, and the differ's index identity
-is `IndexKey(columns, unique, where)` (`SchemaDiffer.kt:141`) — so today a
-`btree → hnsw` or opclass change would be invisible. Phase 1 adds `using`/`opclasses`
-(and `with` for IVFFlat `lists`) to `NormalizedIndex` and folds them into the differ's
-`IndexKey`, so changing the method/opclass is detected as a drop+recreate.
+Threading (the three hops): the `postgresVectorIndex` builder sets the fields on the
+schema `Index`; codegen (`SchemaMetadata.kt:501`, `schema.indexes()`) copies them into
+the emitted `IndexMetadata`; `NormalizedSchema` copies them into `NormalizedIndex`. The
+differ's index identity is `IndexKey(columns, unique, where)` (`SchemaDiffer.kt:141`) —
+fold `using`/`opclasses`/`with` into it so a `btree → hnsw`, opclass, or `lists` change
+is a detected drop+recreate. Migrations then render `CREATE INDEX <name> ON <table>
+USING hnsw (embedding vector_cosine_ops)` / `USING ivfflat (...) WITH (lists = 100)` (§9).
 
 ### 7. The `PgVector` value type
 
@@ -502,13 +504,17 @@ no change to the foundation.
 Schema / codegen:
 
 - `postgresVector("embedding", 1536)` generates a `PgVector` (nullable + non-null)
-  entity/create/update property; the restricted modifier set is enforced at compile
-  time (a `.unique()`/`.default()` call does not compile).
+  entity/create/update property; `postgresVector(...).unique()` **compiles but throws at
+  `build()`/finalize** with the field-named message (§3), while a subclass-only modifier
+  like `postgresVector(...).maxLength(…)` **does not compile** (absent from the builder).
 - `postgresVector(name, 0)` and `postgresVector(name, 2001)` fail at declaration.
 - `Field.storage` / `ColumnMetadata.storage` carry `ColumnStorage.Native("postgres",
   "vector", "vector(1536)", "postgres.vector", "vector", 1536)`.
-- `postgresVectorIndex(...).hnsw(Cosine)` produces `IndexMetadata(using="hnsw",
-  opclasses=["vector_cosine_ops"])`; a btree `index(...)` is unchanged (`using == null`).
+- `postgresVectorIndex(...).hnsw(Cosine)` threads `using="hnsw"`,
+  `opclasses=["vector_cosine_ops"]` through schema `Index` → `IndexMetadata` →
+  `NormalizedIndex`; `.ivfflat(L2, lists = 100)` additionally carries
+  `with={"lists":"100"}`; a btree `index(...)` is unchanged (`using == null`,
+  byte-identical).
 
 Driver (Postgres integration):
 

@@ -40,7 +40,8 @@ Purely additive; **no `FieldType` change**, so nothing exhaustive breaks. Fully 
   Native(dialect, typeName, sqlType, codec, requiredExtension, dimensions) }` (RFC §5).
 - `schema/.../Field.kt`: add `storage: ColumnStorage? = null` (defaulted → additive).
 - `runtime/.../EntitySchema.kt`: add `ColumnMetadata.storage: ColumnStorage? = null`;
-  add `IndexMetadata.using: String? = null` + `opclasses: List<String>? = null` (RFC §6).
+  add `IndexMetadata.using: String? = null` + `opclasses: List<String>? = null` +
+  `with: Map<String, String>? = null` (RFC §6 — `with` carries IVFFlat `lists`).
 - `runtime/.../Driver.kt`: `fun supportsNativeStorage(codec: String): Boolean = false`
   (default; NoopDriver inherits).
 
@@ -125,15 +126,20 @@ non-supporting driver throws `UnsupportedDriverCapabilityException` at `register
 
 ## Phase 5 — Migrations + vector index DSL
 
-- `schema/.../postgres/vector/Dsl.kt`: `postgresVectorIndex(name, field)` builder with
-  `.hnsw(VectorMetric.Cosine)` / `.ivfflat(metric, lists = N)`, producing
-  `IndexMetadata(using = "hnsw", opclasses = ["vector_cosine_ops"])`; `VectorMetric`
+- **Schema-side index carrier** (`schema/.../Index.kt:3`, today `name/fields/unique/where`):
+  add `using`/`opclasses`/`with` (nullable → btree unchanged). `schema/.../IndexBuilder.kt`
+  / a new `postgresVectorIndex(name, field)` builder (package `entkt.postgres.vector`)
+  with `.hnsw(VectorMetric.Cosine)` / `.ivfflat(metric, lists = N)` produces a schema
+  `Index` with those fields set (`with = {"lists":"100"}` for IVFFlat); `VectorMetric`
   enum + opclass map (RFC §6). Registered like `index(...)`.
-- `migrations/.../NormalizedSchema.kt`: carry `storage` on `NormalizedColumn`; add
-  `using`/`opclasses` (and `with` for IVFFlat `lists`) to `NormalizedIndex`
-  (`:111`, today has none). In `SchemaDiffer`, fold `using`/`opclasses` into the index
-  identity `IndexKey` (`:141`, today `(columns, unique, where)`) so a `btree→hnsw`/
-  opclass change is a detected drop+recreate; classify a `storage.dimensions` change as
+- **Codegen threading:** `codegen/.../SchemaMetadata.kt:501` (`schema.indexes()`) copies
+  `using`/`opclasses`/`with` from the schema `Index` into the emitted runtime
+  `IndexMetadata`.
+- `migrations/.../NormalizedSchema.kt`: carry `storage` on `NormalizedColumn`; copy
+  `using`/`opclasses`/`with` into `NormalizedIndex` (`:111`, today has none). In
+  `SchemaDiffer`, fold `using`/`opclasses`/`with` into the index identity `IndexKey`
+  (`:141`, today `(columns, unique, where)`) so a `btree→hnsw`/opclass/`lists` change is
+  a detected drop+recreate; classify a `storage.dimensions` change as
   **manual/destructive** (reuse the existing type-change-defers-to-manual machinery).
 - **`CREATE EXTENSION` as a first-class ordered op** (not loose SQL):
   `migrations/.../MigrationOp.kt` add `data class CreateExtension(val name: String)`;
