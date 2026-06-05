@@ -32,7 +32,8 @@ import kotlin.system.exitProcess
  * Commands: `validate`, `generate`, `verify`
  *
  * Options:
- * - `--image=<image>` or env `ENTKT_FLYWAY_POSTGRES_IMAGE` (default: postgres:16-alpine)
+ * - `--image=<image>` or env `ENTKT_FLYWAY_POSTGRES_IMAGE` (default: pgvector/pgvector:pg16,
+ *   a drop-in Postgres superset so vector schemas' `CREATE EXTENSION "vector"` works)
  * - `--db=<name>` or env `ENTKT_FLYWAY_POSTGRES_DB` (default: entkt_shadow)
  * - `--user=<user>` or env `ENTKT_FLYWAY_POSTGRES_USER` (default: postgres)
  * - `--password=<pass>` or env `ENTKT_FLYWAY_POSTGRES_PASSWORD` (default: postgres)
@@ -53,7 +54,7 @@ fun main(args: Array<String>) {
     val config = ShadowDockerConfig(
         image = options["image"]
             ?: System.getenv("ENTKT_FLYWAY_POSTGRES_IMAGE")
-            ?: "postgres:16-alpine",
+            ?: ShadowDockerConfig().image,
         databaseName = options["db"]
             ?: System.getenv("ENTKT_FLYWAY_POSTGRES_DB")
             ?: "entkt_shadow",

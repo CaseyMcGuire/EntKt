@@ -160,18 +160,58 @@ class FlywayMigrationWorkflow(
         schemas: List<EntitySchema>,
         migrationsDir: Path,
     ): entkt.migrations.DiffResult {
-        val flyway = configureFlyway(dataSource, migrationsDir)
-        flyway.migrate()
-
         val typeMapper = PostgresTypeMapper()
         val fullDesired = NormalizedSchema.fromEntitySchemas(schemas, typeMapper)
         val desired = filterManagedSchema(fullDesired)
+
+        // Preflight before migrating: the shadow image must be able to create
+        // every extension the desired schema needs (e.g. pgvector's "vector").
+        // Otherwise flyway.migrate() fails on CREATE EXTENSION with an opaque
+        // error; this turns it into an actionable one.
+        requireExtensionsAvailable(dataSource, desired)
+
+        val flyway = configureFlyway(dataSource, migrationsDir)
+        flyway.migrate()
+
         val shadowTables = listManagedTables(dataSource)
         val introspectionSet = desired.tables.keys + shadowTables
         val introspector = PostgresIntrospector(dataSource, typeMapper)
         val current = introspector.introspect(introspectionSet)
 
         return SchemaDiffer().diff(desired, current)
+    }
+
+    /**
+     * Verify the shadow image provides every extension the desired schema
+     * needs. Reads `pg_available_extensions` (read-only, no side effects): an
+     * extension that is missing there cannot be created, so the configured
+     * image can't apply the migration — fail with an actionable message rather
+     * than letting Flyway surface an opaque `CREATE EXTENSION` failure.
+     */
+    private fun requireExtensionsAvailable(dataSource: DataSource, desired: NormalizedSchema) {
+        val needed = desired.tables.values
+            .flatMap { it.columns }
+            .mapNotNull { it.requiredExtension }
+            .toSortedSet()
+        if (needed.isEmpty()) return
+
+        val available = mutableSetOf<String>()
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT name FROM pg_available_extensions").use { stmt ->
+                stmt.executeQuery().use { rs ->
+                    while (rs.next()) available.add(rs.getString("name"))
+                }
+            }
+        }
+        val missing = needed - available
+        if (missing.isNotEmpty()) {
+            throw IllegalStateException(
+                "Shadow database image '${config.image}' does not provide required extension(s) " +
+                    "$missing. Use a pgvector-capable image — the default " +
+                    "'${ShadowDockerConfig().image}', or pass --image=<image> " +
+                    "(ShadowDockerConfig(image = ...)).",
+            )
+        }
     }
 
     /**
