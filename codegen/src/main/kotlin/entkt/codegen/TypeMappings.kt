@@ -18,6 +18,9 @@ fun FieldType.toTypeName(): TypeName = when (this) {
     FieldType.UUID -> ClassName("java.util", "UUID")
     FieldType.BYTES -> ByteArray::class.asTypeName()
     FieldType.ENUM -> String::class.asTypeName()
+    // Real mapping (-> PgVector) lands in Phase 3; toTypeName is never called
+    // for PGVECTOR before then (resolvedTypeName special-cases it).
+    FieldType.PGVECTOR -> error("PGVECTOR property type is resolved via resolvedTypeName (Phase 3)")
 }
 
 /**

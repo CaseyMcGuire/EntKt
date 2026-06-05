@@ -840,6 +840,9 @@ class PostgresDriver(
             }
             FieldType.UUID -> stmt.setObject(idx, value as UUID)
             FieldType.BYTES -> stmt.setBytes(idx, value as ByteArray)
+            // Real native bind (PGobject) lands in Phase 4, dispatched on the
+            // column's ColumnStorage; never reached before then.
+            FieldType.PGVECTOR -> error("pgvector bind lands in Phase 4")
             null -> stmt.setObject(idx, value)
         }
     }
@@ -854,6 +857,7 @@ class PostgresDriver(
         FieldType.TIME -> Types.TIMESTAMP_WITH_TIMEZONE
         FieldType.UUID -> Types.OTHER
         FieldType.BYTES -> Types.BINARY
+        FieldType.PGVECTOR -> Types.OTHER
         null -> Types.OTHER
     }
 
@@ -892,6 +896,9 @@ class PostgresDriver(
                 rs.getObject(col.name, OffsetDateTime::class.java)?.toInstant()
             FieldType.UUID -> rs.getObject(col.name, UUID::class.java)
             FieldType.BYTES -> rs.getBytes(col.name)
+            // Real native decode (vector text -> PgVector) lands in Phase 4,
+            // dispatched on col.storage; never reached before then.
+            FieldType.PGVECTOR -> error("pgvector decode lands in Phase 4")
         }
     }
 

@@ -35,6 +35,7 @@ class NormalizedSchemaTest {
                 FieldType.TIME -> "timestamptz"
                 FieldType.UUID -> "uuid"
                 FieldType.BYTES -> "bytea"
+                FieldType.PGVECTOR -> "vector" // test fake; real mapping uses storage.sqlType (Phase 4)
             }
         }
 

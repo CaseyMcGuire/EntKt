@@ -254,6 +254,9 @@ fun formatSqlDefault(fieldType: FieldType, value: Any?): String? {
         // UUID / BYTES have no DSL default surface today; treat any value
         // defensively as a quoted literal.
         FieldType.UUID, FieldType.BYTES -> sqlStringLiteral(value.toString())
+        // pgvector columns expose no default (the builder has no .default()),
+        // so this is only reached defensively (value != null can't happen).
+        FieldType.PGVECTOR -> error("pgvector columns have no default")
     }
 }
 

@@ -180,6 +180,37 @@ abstract class EntSchema(val tableName: String) {
             _fields.add(it)
         }
 
+    /**
+     * Registration hook for the `entkt.postgres.vector.postgresVector(name,
+     * dimensions)` extension (RFC "Native Database Column Types", §2). Mirrors
+     * [enum]: validates the dimension and name, attaches the native storage,
+     * and registers the field — so the public, import-gated `postgresVector`
+     * extension can build a native field without reaching the private
+     * `registerField` or the internal `FieldBuilder` ctor.
+     */
+    @PublishedApi
+    internal fun registerPostgresVector(name: String, dimensions: Int): PgVectorFieldBuilder {
+        require(dimensions in 1..2000) {
+            "postgresVector('$name') dimensions must be 1..2000, got $dimensions"
+        }
+        return PgVectorFieldBuilder(name).also {
+            validateName(name, "Field")
+            checkNotFinalized()
+            it.setNativeStorage(
+                ColumnStorage.Native(
+                    dialect = "postgres",
+                    typeName = "vector",
+                    sqlType = "vector($dimensions)",
+                    codec = "postgres.vector",
+                    requiredExtension = "vector",
+                    dimensions = dimensions,
+                ),
+            )
+            it.declarationOwner = this
+            _fields.add(it)
+        }
+    }
+
     @PublishedApi internal fun stringForMixin(name: String): StringFieldBuilder = string(name)
     @PublishedApi internal fun textForMixin(name: String): TextFieldBuilder = text(name)
     @PublishedApi internal fun boolForMixin(name: String): BoolFieldBuilder = bool(name)

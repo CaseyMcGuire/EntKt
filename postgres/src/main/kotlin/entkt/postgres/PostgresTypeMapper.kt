@@ -36,6 +36,9 @@ class PostgresTypeMapper : TypeMapper {
             FieldType.TIME -> "timestamptz"
             FieldType.UUID -> "uuid"
             FieldType.BYTES -> "bytea"
+            // Real mapping (storage.sqlType, e.g. "vector(1536)") lands in
+            // Phase 4 when sqlTypeFor gains a storage parameter.
+            FieldType.PGVECTOR -> error("pgvector sqlType lands in Phase 4")
         }
     }
 

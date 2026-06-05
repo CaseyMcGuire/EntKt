@@ -35,6 +35,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     private var default: Any? = null
     private var updateDefault: UpdateDefault? = null
     private var enumClass: kotlin.reflect.KClass<out Enum<*>>? = null
+    private var storage: ColumnStorage? = null
     protected var validators: MutableList<Validator> = mutableListOf()
 
     protected fun setUpdateDefault(value: UpdateDefault) {
@@ -58,9 +59,25 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
         this.enumClass = klass
     }
 
+    /**
+     * Attach native storage metadata (e.g. Postgres `pgvector`). Set once at
+     * registration (mirrors [setEnumClass]); folded into [Field] by [build].
+     */
+    @PublishedApi
+    internal fun setNativeStorage(s: ColumnStorage) {
+        this.storage = s
+    }
+
     fun build(): Field {
         if (immutable && updateDefault != null) {
             error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")
+        }
+        // Native columns inherit the base modifier surface but reject the ones
+        // that don't make sense (RFC §3). A UNIQUE index over a native value
+        // such as a high-dimensional vector is broken.
+        val nativeStorage = storage
+        if (nativeStorage is ColumnStorage.Native && unique) {
+            error("Field '$fieldName' is a native ${nativeStorage.typeName} column; .unique() is not supported")
         }
         // Non-finite IEEE values (NaN / ±Infinity) have no portable SQL
         // literal — Postgres needs the quoted-cast form, and generated
@@ -89,6 +106,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             validators = validators,
             comment = comment,
             declarationName = declarationName,
+            storage = storage,
         )
     }
 }
