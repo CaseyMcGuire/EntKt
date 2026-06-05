@@ -189,7 +189,7 @@ class PostgresDriver(
 
         return conn.prepareStatement(sql).use { stmt ->
             for ((i, col) in cols.withIndex()) {
-                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
+                bindColumn(stmt, i + 1, schema, col, values[col])
             }
             stmt.executeQuery().use { rs ->
                 check(rs.next()) { "INSERT into $table returned no row" }
@@ -233,7 +233,7 @@ class PostgresDriver(
 
         return conn.prepareStatement(sql).use { stmt ->
             for ((i, col) in cols.withIndex()) {
-                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
+                bindColumn(stmt, i + 1, schema, col, values[col])
             }
             stmt.executeQuery().use { rs ->
                 // No assertion: a conflict legitimately produces zero rows.
@@ -260,7 +260,7 @@ class PostgresDriver(
 
         return conn.prepareStatement(sql).use { stmt ->
             for ((i, col) in cols.withIndex()) {
-                bind(stmt, i + 1, columnTypeOf(schema, col), values[col])
+                bindColumn(stmt, i + 1, schema, col, values[col])
             }
             bind(stmt, cols.size + 1, columnTypeOf(schema, schema.idColumn), id)
             stmt.executeQuery().use { rs ->
@@ -322,12 +322,7 @@ class PostgresDriver(
                         val operand = distance.operand
                         val native = schema.columns
                             .firstOrNull { it.name == of.field }?.storage as? ColumnStorage.Native
-                        if (native != null && operand is entkt.postgres.vector.PgVector) {
-                            require(operand.dimensions == native.dimensions) {
-                                "orderBy distance on '$table.${of.field}' expects a " +
-                                    "${native.dimensions}-dimensional vector, got ${operand.dimensions}"
-                            }
-                        }
+                        checkVectorDimensions(native, operand, "orderBy distance on '$table.${of.field}'")
                         builder.params.add(Param(FieldType.PGVECTOR, operand))
                         "$baseAlias.${quote(of.field)} ${distance.operator.sql} ? $dir"
                     } else {
@@ -497,7 +492,7 @@ class PostgresDriver(
                     var idx = 1
                     for (row in rows) {
                         for (col in cols) {
-                            bind(stmt, idx++, columnTypeOf(schema, col), row[col])
+                            bindColumn(stmt, idx++, schema, col, row[col])
                         }
                     }
                     stmt.executeQuery().use { rs ->
@@ -540,7 +535,7 @@ class PostgresDriver(
         return conn.prepareStatement(sql.toString()).use { stmt ->
             var idx = 1
             for (col in cols) {
-                bind(stmt, idx++, columnTypeOf(schema, col), values[col])
+                bindColumn(stmt, idx++, schema, col, values[col])
             }
             for (p in builder.params) {
                 bind(stmt, idx++, p.type, p.value)
@@ -601,6 +596,29 @@ class PostgresDriver(
 
     private fun columnTypeOf(schema: EntitySchema, name: String): FieldType? =
         schema.columns.firstOrNull { it.name == name }?.type
+
+    /**
+     * Bind a column value, first validating any native-storage constraint the
+     * generic [bind] can't enforce (it sees only [FieldType], not the column's
+     * [ColumnStorage]). This keeps a raw `driver.insert/update` with a
+     * wrong-dimension vector from relying on Postgres' `vector(n)` to reject it
+     * — the caller gets a field-named entkt error, matching generated writes
+     * and distance queries.
+     */
+    private fun bindColumn(stmt: PreparedStatement, idx: Int, schema: EntitySchema, col: String, value: Any?) {
+        val column = schema.columns.firstOrNull { it.name == col }
+        checkVectorDimensions(column?.storage as? ColumnStorage.Native, value, "Column '${schema.table}.$col'")
+        bind(stmt, idx, column?.type, value)
+    }
+
+    /** Reject a [PgVector] whose dimension doesn't match a native vector column. */
+    private fun checkVectorDimensions(native: ColumnStorage.Native?, value: Any?, label: String) {
+        if (native != null && native.codec == "postgres.vector" && value is entkt.postgres.vector.PgVector) {
+            require(value.dimensions == native.dimensions) {
+                "$label expects a ${native.dimensions}-dimensional vector, got ${value.dimensions}"
+            }
+        }
+    }
 
     // ---------- DDL ----------
 

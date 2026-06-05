@@ -107,6 +107,28 @@ class PgVectorPostgresDriverTest {
     }
 
     @Test
+    fun `raw driver insert with a wrong-dimension vector fails with a field-named entkt error`() {
+        val driver = fresh()
+        // The column is vector(3); a 4-dim vector must be rejected by the driver
+        // (field-named) before it reaches Postgres' vector(n) backstop.
+        val ex = assertFailsWith<IllegalArgumentException> {
+            driver.insert("vec_items", mapOf("name" to "a", "embedding" to PgVector.of(floatArrayOf(1f, 2f, 3f, 4f))))
+        }
+        assertTrue("vec_items.embedding" in ex.message!!, ex.message ?: "")
+        assertTrue("3" in ex.message!! && "4" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
+    fun `raw driver update with a wrong-dimension vector fails with a field-named entkt error`() {
+        val driver = fresh()
+        val row = driver.insert("vec_items", mapOf("name" to "a", "embedding" to PgVector.of(floatArrayOf(1f, 2f, 3f))))
+        val ex = assertFailsWith<IllegalArgumentException> {
+            driver.update("vec_items", row["id"]!!, mapOf("embedding" to PgVector.of(floatArrayOf(1f, 2f))))
+        }
+        assertTrue("vec_items.embedding" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
     fun `a non-Postgres driver rejects a vector schema at register`() {
         val noVector = object : Driver by NoopDriver {
             override fun supportsNativeStorage(codec: String): Boolean = false
