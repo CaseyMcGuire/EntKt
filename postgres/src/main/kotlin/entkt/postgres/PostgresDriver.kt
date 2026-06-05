@@ -324,7 +324,12 @@ class PostgresDriver(
                             .firstOrNull { it.name == of.field }?.storage as? ColumnStorage.Native
                         checkVectorDimensions(native, operand, "orderBy distance on '$table.${of.field}'")
                         builder.params.add(Param(FieldType.PGVECTOR, operand))
-                        "$baseAlias.${quote(of.field)} ${distance.operator.sql} ? $dir"
+                        // NULLS LAST always: a null embedding has no distance, so it
+                        // belongs at the end for both nearest-first (asc) and
+                        // farthest-first (desc). Postgres otherwise defaults nulls
+                        // FIRST on DESC, which would surface missing embeddings ahead
+                        // of the actual farthest vectors.
+                        "$baseAlias.${quote(of.field)} ${distance.operator.sql} ? $dir NULLS LAST"
                     } else {
                         "$baseAlias.${quote(of.field)} $dir"
                     }

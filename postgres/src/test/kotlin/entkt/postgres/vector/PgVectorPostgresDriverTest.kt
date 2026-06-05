@@ -185,6 +185,23 @@ class PgVectorPostgresDriverTest {
     }
 
     @Test
+    fun `desc distance ordering places null embeddings last, not first`() {
+        val driver = fresh()
+        driver.insert("vec_items", mapOf("name" to "near", "embedding" to PgVector.of(floatArrayOf(1f, 0f, 0f))))
+        driver.insert("vec_items", mapOf("name" to "far", "embedding" to PgVector.of(floatArrayOf(-1f, 0f, 0f))))
+        driver.insert("vec_items", mapOf("name" to "none", "embedding" to null))
+
+        val query = PgVector.of(floatArrayOf(1f, 0f, 0f))
+        // desc() = farthest first: far (cosine dist 2) then near (0); the null
+        // embedding has no distance and must sort LAST, not first (Postgres
+        // would default it first on DESC without NULLS LAST).
+        val order = Column<Any, PgVector>("embedding").cosineDistance(query).desc()
+        val rows = driver.query("vec_items", emptyList(), listOf(order), null, null)
+
+        assertEquals(listOf("far", "near", "none"), rows.map { it["name"] })
+    }
+
+    @Test
     fun `orderBy distance with a wrong-dimension query vector fails with a field-named entkt error`() {
         val driver = fresh()
         driver.insert("vec_items", mapOf("name" to "a", "embedding" to PgVector.of(floatArrayOf(1f, 0f, 0f))))
