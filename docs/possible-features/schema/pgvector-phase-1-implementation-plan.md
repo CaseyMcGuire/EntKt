@@ -1,6 +1,6 @@
 # Implementation Plan — Phase 1: Postgres `pgvector`
 
-Execution plan for [custom-field-types-converters.md](custom-field-types-converters.md)
+Execution plan for [native-database-column-types.md](native-database-column-types.md)
 §"Phase 1: Postgres `pgvector`". The RFC is the contract (what/why); this is the
 order (how). Same discipline as the RFC 10 plan: **each phase is independently
 buildable, green, and committed to `master`** (explicit-pathspec commits), with

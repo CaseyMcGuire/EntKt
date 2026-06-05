@@ -1,31 +1,29 @@
-# RFC: Custom Field Types And Converters
+# RFC: Native Database Column Types
 
 ## Status
 
-Possible future feature. Not implemented. **Phase 1 (Postgres `pgvector`) below is
-an implementation contract** — every decision is tied to the current code so it can
-be built without guesswork. Phases 2+ (custom scalar converters, JSON, arrays,
-native database enums) remain a design sketch on top of the Phase-1 foundation.
+Possible future feature. Not implemented. The Postgres `pgvector` section below is
+an implementation contract: every decision is tied to the current code so it can be
+built without guesswork.
 
 Phased execution order: [pgvector-phase-1-implementation-plan.md](pgvector-phase-1-implementation-plan.md).
 
 ## Summary
 
-Allow schema fields to use application-specific Kotlin types while storing
-database-compatible values, and extend that same model to database-native column
-types (Postgres `pgvector` first). The work is **phased**: Phase 1 ships one
-concrete native type (`pgvector`) plus the minimal shared foundation it forces into
-existence; later phases reuse that foundation for converters, JSON, arrays, and
-native enums.
+Allow schema fields to opt into explicit database-native column types without
+making the base DSL pretend those types are portable. Postgres `pgvector` is the
+first concrete type and drives the minimal shared foundation: a `ColumnStorage`
+carrier, driver capability checks, native-index metadata, storage-aware migrations,
+and storage-keyed bind/decode.
 
 The codebase already ships the proof that this shape works: typed `enum` fields
-(`EntSchema.enum<E>(name)`) expose a Kotlin enum at the API boundary while storing a
-DB value. Phase 1 follows that pipeline exactly — see *Appendix: the `enum`
+(`EntSchema.enum<E>(name)`) expose a Kotlin enum at the API boundary while storing
+a DB value. `pgvector` follows that pipeline exactly — see *Appendix: the `enum`
 blueprint*.
 
-## Scope & Phasing
+## Scope
 
-**Phase 1 — Postgres `pgvector` only.** This is the entire first cut:
+This RFC covers Postgres `pgvector` only:
 
 - `postgresVector("embedding", dimensions = N)` schema field → generated `PgVector`
   property.
@@ -39,10 +37,14 @@ blueprint*.
   `Field`/`ColumnMetadata`, native-index metadata on `IndexMetadata`, a
   `supportsNativeStorage(codec)` driver capability, and storage-keyed bind/decode.
 
-**Phase 2+ — out of scope here, sketched in *Future Phases*.** Custom scalar
-converters (`Email`, `Slug`), `json(name, KClass)`, `array<T>`, `databaseEnum<E>`, and
-vector *filtering* (`WHERE distance < threshold`). They slot onto the Phase-1 foundation;
-this RFC states *where*, not *how*.
+Out of scope here:
+
+- Custom scalar converters (`Email`, `Slug`): see
+  [Custom Scalar Converters](custom-scalar-converters.md).
+- Typed JSON fields (`json("pet_metadata", PetMetadata::class)`): see
+  [Typed JSON Fields](typed-json-fields.md).
+- Arrays, native database enums, and vector filtering. Each needs its own design
+  note before implementation.
 
 Phase 1 deliberately does **not** retrofit the existing `enum` feature onto
 `ColumnStorage`. `enum` keeps its `FieldType.ENUM` + `Field.enumClass` path; unifying
@@ -238,7 +240,7 @@ sealed interface ColumnStorage {
         val requiredExtension: String?, // "vector" → CREATE EXTENSION IF NOT EXISTS vector
         val dimensions: Int,            // 1536 — used by the write check + diff classification
     ) : ColumnStorage
-    // Phase 2+: data class Converted(storageFieldType: FieldType, codec: String) — see Future Phases
+    // Custom scalar converters would add a separate Converted variant; see custom-scalar-converters.md.
 }
 ```
 
@@ -503,30 +505,17 @@ existing `orderBy` produces the `Column` case.)
 
 ---
 
-## Future Phases (sketch — built on the Phase-1 foundation)
+## Related Future Work
 
-These reuse the §5/§8 machinery; this RFC fixes only *where* they attach.
+Other field families may reuse pieces of this foundation, but they are intentionally
+separate proposals so the APIs stay explicit instead of overloading one generic
+"custom type" concept:
 
-- **Custom scalar converters** (`value<Email> { storeAsString(encode, decode) }`):
-  add `ColumnStorage.Converted(storageFieldType, codec)`; codegen emits the
-  encode/decode at the boundary (the *converted* rule in §8); the driver binds the
-  underlying `FieldType` primitive and stays unaware.
-- **JSON** (`json("pet_metadata", PetMetadata::class)` + explicit mapper
-  configuration — *not* a reified `json<T>(name, serializer)`; the `(name, KClass)` +
-  configured-mapper shape matches the rest of the DSL, e.g. `enum(name, KClass)`, and
-  keeps the serializer choice an explicit, swappable configuration rather than a
-  per-call argument): `ColumnStorage.Native(typeName="jsonb")`; converted-style encode
-  to a `String`/`jsonb` via the configured mapper.
-- **Arrays** (`array<String>`): `ColumnStorage.Native(typeName="text[]")`; driver
-  array binding; element-nullability rules.
-- **Native database enums** (`databaseEnum<E>("status") { postgresName(...) }`): a
-  `Native` variant over the existing `enumClass`, rendering a real PG enum type
-  instead of `text`.
-- **Vector filtering** and additional metrics/index tuning.
-
-Adding any of these is: a new builder (via the §2 hook), a `ColumnStorage` variant or
-reuse, a codegen type-map entry, and driver/migration handling for the new `codec` —
-no change to the foundation.
+- [Custom Scalar Converters](custom-scalar-converters.md) for application-domain
+  wrappers stored as ordinary scalar columns.
+- [Typed JSON Fields](typed-json-fields.md) for structured JSON/JSONB values.
+- Native database enums, arrays, and vector filtering need separate RFCs before
+  implementation.
 
 ---
 
