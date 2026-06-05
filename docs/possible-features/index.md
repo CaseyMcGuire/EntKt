@@ -22,7 +22,6 @@ Implemented RFCs have moved to the
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
 - [Transaction Options And Savepoints](mutation/transaction-options-savepoints.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
-- [Symmetric Link-Table Edges](edge-mutation/10-symmetric-link-table-writes.md)
 - [Mutation Actions](mutation/mutation-actions.md)
 - [Transactional Graph Changesets](mutation/transactional-graph-changesets.md)
 

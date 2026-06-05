@@ -2,12 +2,11 @@
 
 ## Status
 
-Implemented (six phases plus audit follow-ups; full suite green). This doc still
-lives under `possible-features/` and can be moved to `implemented-features/`.
+Implemented (six phases plus audit follow-ups; full suite green).
 
 **Relaxes** the single-write-orientation rule from
-[Many-To-Many Schema Modeling](../../implemented-features/edge-mutation/03-m2m-schema-modeling.md)
-(RFC 03) and [Link-Table M2M Mutation Helpers](../../implemented-features/edge-mutation/05-link-table-helpers.md)
+[Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
+(RFC 03) and [Link-Table M2M Mutation Helpers](05-link-table-helpers.md)
 (RFC 05).
 
 > Revised after review to correct three things the first draft got wrong or

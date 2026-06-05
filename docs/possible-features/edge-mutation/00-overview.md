@@ -2,10 +2,9 @@
 
 ## Status
 
-Planning index. The original edge-mutation baseline RFCs have been
-implemented and moved to
-[Implemented Features](../../implemented-features/index.md). Remaining work is
-tracked as smaller follow-up RFCs in this folder.
+Historical planning index. The original edge-mutation baseline RFCs and
+follow-up RFCs have been implemented and moved to
+[Implemented Features](../../implemented-features/index.md).
 
 ## Summary
 
@@ -20,11 +19,9 @@ The original edge mutation RFC was split into five baseline RFCs:
 7. [Generated Member Name Collisions](../../implemented-features/edge-mutation/07-generated-member-name-collisions.md)
 8. [Create Hook Mutation View Adapter](../../implemented-features/edge-mutation/08-create-hook-mutation-view-adapter.md)
 9. [Through-Entity Nullable M2M Traversal](../../implemented-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+10. [Symmetric Link-Table Edges](../../implemented-features/edge-mutation/10-symmetric-link-table-writes.md)
 
-Those baseline contracts are implemented. The remaining work is intentionally
-smaller and can be reviewed independently:
-
-10. [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
+Those baseline contracts and follow-up RFCs are implemented.
 
 ## Motivation
 
@@ -40,19 +37,18 @@ levels and implementation timelines:
   semantics
 
 Splitting the RFCs made it possible to land the ID-based update foundation,
-to-one behavior, M2M modeling, transaction semantics, and link-table helpers
-independently. The follow-up RFCs preserve that smaller review surface for the
-remaining naming, collision, hook-view, and M2M traversal refinements.
+to-one behavior, M2M modeling, transaction semantics, link-table helpers, and
+follow-up refinements independently.
 
 ## Current Follow-Up Order
 
-The recommended implementation order is:
+The recommended implementation order was:
 
 1. ~~[Generated Member Name Collisions](../../implemented-features/edge-mutation/07-generated-member-name-collisions.md)~~ (**implemented**, V1)
 2. ~~[Field-Backed FK Declaration Names](../../implemented-features/edge-mutation/06-field-backed-fk-declaration-names.md)~~ (**implemented**, V1)
 3. ~~[Create Hook Mutation View Adapter](../../implemented-features/edge-mutation/08-create-hook-mutation-view-adapter.md)~~ (**implemented**, V1)
 4. ~~[Through-Entity Nullable M2M Traversal](../../implemented-features/edge-mutation/09-through-entity-nullable-m2m-traversal.md)~~ (**implemented**, V1)
-5. [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
+5. ~~[Symmetric Link-Table Edges](../../implemented-features/edge-mutation/10-symmetric-link-table-writes.md)~~ (**implemented**, V1)
 
 The collision work landed first (RFC 07 V1) so that declaration-name
 capture (RFC 06 V1) emits actionable diagnostics rather than Kotlin compile

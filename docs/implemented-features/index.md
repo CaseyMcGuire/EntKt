@@ -18,6 +18,7 @@ Open or speculative RFCs remain in the
 - [Generated Member Name Collisions](edge-mutation/07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](edge-mutation/08-create-hook-mutation-view-adapter.md)
 - [Through-Entity Nullable M2M Traversal](edge-mutation/09-through-entity-nullable-m2m-traversal.md)
+- [Symmetric Link-Table Edges](edge-mutation/10-symmetric-link-table-writes.md)
 
 ## Query APIs
 
