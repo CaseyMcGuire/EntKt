@@ -1,14 +1,12 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
-import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
-import entkt.integrationtest.ent.ArticleUpdatePrivacyRule
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
-import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
+import entkt.runtime.allowAll
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
@@ -50,15 +48,15 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
             privacy {
                 load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("can't read") })
-                create(ArticleCreatePrivacyRule { PrivacyDecision.Allow })
-                update(ArticleUpdatePrivacyRule { PrivacyDecision.Allow })
+                create(allowAll)
+                update(allowAll)
             }
         }
     }
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(allowAll) }
         }
     }
 

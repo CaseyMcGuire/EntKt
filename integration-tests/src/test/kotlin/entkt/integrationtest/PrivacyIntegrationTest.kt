@@ -13,6 +13,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.postgres.PostgresDriver
 import entkt.runtime.EntError
 import entkt.runtime.EntOperation
+import entkt.runtime.allowAll
 import entkt.runtime.EntPrivacyDeniedException
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
@@ -70,16 +71,14 @@ private val OwnerCanDelete = ArticleDeletePrivacyRule { ctx ->
     else PrivacyDecision.Deny("only the author can delete")
 }
 
-/** All users are publicly visible. */
+/** All users are publicly visible (stock `allowAll` rule). */
 object UserPolicy : EntityPolicy<User, UserPolicyScope> {
     override fun configure(scope: UserPolicyScope) = scope.run {
         privacy {
-            load(AllowAllUsers)
+            load(allowAll)
         }
     }
 }
-
-private val AllowAllUsers = UserLoadPrivacyRule { PrivacyDecision.Allow }
 
 /** Users can only see themselves. */
 object RestrictiveUserPolicy : EntityPolicy<User, UserPolicyScope> {

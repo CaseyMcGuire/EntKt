@@ -64,6 +64,18 @@ fun interface PrivacyRule<in C> {
 }
 
 /**
+ * A stock rule that allows any operation on any entity. Because [PrivacyRule]
+ * is contravariant in its context, this single value satisfies every typed rule
+ * slot — `load(allowAll)`, `create(allowAll)`, `update(allowAll)`,
+ * `delete(allowAll)` — on any schema, so a public or trusted entity doesn't need
+ * a per-type "allow everything" rule.
+ *
+ * Under fail-closed privacy this is the explicit opt-in to "no restriction" for
+ * an operation; use it deliberately.
+ */
+val allowAll: PrivacyRule<Any?> = PrivacyRule { PrivacyDecision.Allow }
+
+/**
  * An entity-scoped policy that configures rules for entity operations
  * (privacy and validation) through a generated scope object. Policies
  * are registered per-entity on the generated `EntClient`.

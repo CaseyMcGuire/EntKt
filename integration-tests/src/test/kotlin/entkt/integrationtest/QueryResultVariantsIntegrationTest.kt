@@ -11,6 +11,7 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.EntError
 import entkt.runtime.EntNotFoundException
 import entkt.runtime.EntOperation
+import entkt.runtime.allowAll
 import entkt.runtime.EntPrivacyDeniedException
 import entkt.runtime.EntResult
 import entkt.runtime.EntityPolicy
@@ -56,7 +57,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(allowAll) }
         }
     }
 
@@ -68,7 +69,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(allowAll) }
         }
     }
 

@@ -93,6 +93,23 @@ fun interface PrivacyRule<in C> {
 Each operation gets its own context type (see [Operation Contexts](#operation-contexts)
 below), so rules are type-safe for the operation they guard.
 
+**Stock rule — `allowAll`.** The runtime ships `allowAll`, a rule that
+permits any operation on any entity. Because `PrivacyRule` is contravariant
+in its context, the single value works in every slot on every schema, so a
+public or trusted entity doesn't need its own allow-everything rule:
+
+```kotlin
+import entkt.runtime.allowAll
+
+privacy {
+    load(allowAll)     // anyone can read
+    create(allowAll)   // anyone can create
+}
+```
+
+Under fail-closed privacy this is the explicit opt-in to "no restriction"
+for an operation — use it deliberately.
+
 ## Setting Up Privacy
 
 ### Privacy Context Provider
