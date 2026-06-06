@@ -535,17 +535,17 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         assertNull(client.articles.query().firstVisibleOrNull())
     }
 
-    // ---- No-LOAD-privacy fast paths (cap is skipped entirely) ----
+    // ---- No LOAD rules → deny all reads (fail-closed; no fast path) ----
 
     /**
-     * Builds a fresh Postgres-backed client whose Article policy has
-     * NO LOAD privacy rules — the "visible" APIs collapse to "all"
-     * because there's nothing to filter in-process.
+     * A fresh client whose Article policy declares NO load rules. Under
+     * fail-closed privacy every read is denied, so the visible-* variants
+     * filter everything out — there is no "no-privacy fast path" anymore.
      */
-    private fun freshClientNoPrivacy(cap: Int): EntClient {
+    private fun freshClientNoLoadRules(): EntClient {
         val noLoadPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
-                // No `load(...)` rules — repo.hasLoadPrivacy() == false.
+                // No `load(...)` rules — every load is denied (fail-closed).
             }
         }
         val driver = resetAndDriver()
@@ -555,46 +555,36 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
                 articles(noLoadPolicy)
                 users(OpenUser)
             }
-            visibleOverfetchLimit = cap
+            visibleOverfetchLimit = 100
         }
     }
 
     @Test
-    fun `visibleAll returns every row when the repo has no LOAD privacy (cap is skipped)`() {
-        val client = freshClientNoPrivacy(cap = 3)
-        seedNArticles(client, n = 10)
+    fun `visibleAll returns empty when the repo has no LOAD rules (fail-closed denies all)`() {
+        val client = freshClientNoLoadRules()
+        seedNArticles(client, n = 5)
 
-        // 10 rows exist; the no-privacy fast path skips the cap so
-        // all 10 come back. Without the fix, this would return 3.
-        val visible = client.articles.query().visibleAll()
-        assertEquals(10, visible.size)
+        // No load rule → every row is denied → nothing is visible.
+        assertTrue(client.articles.query().visibleAll().isEmpty())
     }
 
     @Test
-    fun `visibleAllOrError returns Ok with every row and no OverfetchCapExceeded when repo has no LOAD privacy`() {
-        val client = freshClientNoPrivacy(cap = 3)
-        seedNArticles(client, n = 10)
+    fun `visibleAllOrError returns Ok(empty) when the repo has no LOAD rules`() {
+        val client = freshClientNoLoadRules()
+        seedNArticles(client, n = 5)
 
-        // Without the fix, the cap-exhaustion check would fire and
-        // return Err(OverfetchCapExceeded) — but there's nothing to
-        // filter, so "exhaustion" has no meaning here.
+        // Cap (100) is never hit, so this is a clean Ok with no visible rows
+        // rather than Err(OverfetchCapExceeded).
         val result = client.articles.query().visibleAllOrError()
         assertTrue(result is EntResult.Ok)
-        assertEquals(10, result.value.size)
+        assertTrue(result.value.isEmpty())
     }
 
     @Test
-    fun `firstVisibleOrNull fetches at most one row when repo has no LOAD privacy`() {
-        // Indirect verification: with cap=3 and 10 rows, the fix
-        // changes the driver query limit from 3 to 1. We can't
-        // observe the driver limit directly, but we can confirm the
-        // result is correct (first row by storage order) and equals
-        // what allOrThrow returns first.
-        val client = freshClientNoPrivacy(cap = 3)
-        seedNArticles(client, n = 10)
+    fun `firstVisibleOrNull returns null when the repo has no LOAD rules`() {
+        val client = freshClientNoLoadRules()
+        seedNArticles(client, n = 5)
 
-        val firstVisible = client.articles.query { orderBy(Article.id.asc()) }.firstVisibleOrNull()
-        val firstAll = client.articles.query { orderBy(Article.id.asc()) }.allOrThrow().first()
-        assertEquals(firstAll.id, firstVisible?.id)
+        assertNull(client.articles.query { orderBy(Article.id.asc()) }.firstVisibleOrNull())
     }
 }

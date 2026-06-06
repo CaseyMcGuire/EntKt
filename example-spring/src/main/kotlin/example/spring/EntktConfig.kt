@@ -6,8 +6,11 @@ import entkt.runtime.Viewer
 import example.ent.EntClient
 import example.spring.auth.AuthContext
 import example.spring.friendships.FriendshipHooksConfig
+import example.spring.friendships.FriendshipPolicy
 import example.spring.posts.PostHooksConfig
 import example.spring.posts.PostPolicy
+import example.spring.posts.PostTagPolicy
+import example.spring.tags.TagPolicy
 import example.spring.users.UserHooksConfig
 import example.spring.users.UserPolicy
 import org.springframework.context.annotation.Bean
@@ -38,6 +41,9 @@ class EntktConfig {
             policies {
                 users(UserPolicy)
                 posts(PostPolicy)
+                tags(TagPolicy)
+                postTags(PostTagPolicy)
+                friendships(FriendshipPolicy)
             }
             hooks {
                 users { userHooks.apply(this) }

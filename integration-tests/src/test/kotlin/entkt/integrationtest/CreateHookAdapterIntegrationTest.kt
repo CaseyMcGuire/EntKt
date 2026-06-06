@@ -51,7 +51,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     private fun newClient(
         beforeSave: ((ArticleMutation) -> Unit)? = null,
         beforeCreate: ((ArticleCreateHookContext) -> Unit)? = null,
-    ): EntClient = EntClient(driver) {
+    ): EntClient = sysClient(driver) {
         hooks {
             articles {
                 if (beforeSave != null) beforeSave(beforeSave)
@@ -241,7 +241,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `beforeSave can rewrite a required FK through the adapter`() {
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 articles {
                     beforeSave { mutation ->
@@ -286,7 +286,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `beforeCreate can rewrite a required FK through ctx-mutation`() {
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 articles {
                     beforeCreate { ctx ->
@@ -319,7 +319,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     @Test
     fun `beforeSave nullable-FK adapter read returns null when unassigned`() {
         var observed: Long? = 1L  // sentinel; overwritten by the hook
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation: ReminderMutation ->
@@ -335,7 +335,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     @Test
     fun `beforeSave nullable-FK adapter read returns the staged id when set`() {
         var observed: Long? = null
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation -> observed = mutation.assigneeId }
@@ -353,7 +353,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `beforeSave can write a non-null id to a nullable FK through the adapter`() {
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation -> mutation.assigneeId = 7777L }
@@ -367,7 +367,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `beforeSave can write null to clear a nullable FK through the adapter`() {
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation -> mutation.assigneeId = null }
@@ -390,7 +390,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
         // `_createMutationView` side, parallel to the per-direction
         // beforeSave coverage above.
         var observed: Long? = null
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 reminders {
                     beforeCreate { ctx: ReminderCreateHookContext ->

@@ -49,7 +49,7 @@ class SymmetricLinkTableM2MPostgresIntegrationTest {
                 it.execute("TRUNCATE TABLE $tables RESTART IDENTITY CASCADE")
             }
         }
-        return EntClient(driver)
+        return sysClient(driver)
     }
 
     private fun junctionRowCount(): Long =

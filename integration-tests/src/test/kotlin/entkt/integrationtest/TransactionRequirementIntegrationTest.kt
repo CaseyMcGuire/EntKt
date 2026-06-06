@@ -29,7 +29,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `Optional permits writes outside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             // default — explicit for clarity
             transactionRequirement = TransactionRequirement.Optional
         }
@@ -43,7 +43,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `RequiredForAllWrites rejects create outside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         val ex = assertFailsWith<TransactionRequiredException> {
@@ -59,7 +59,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `RequiredForAllWrites accepts create inside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         client.withTransaction { tx ->
@@ -74,7 +74,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `RequiredForAllWrites rejects update outside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.Optional
         }
         // Seed inside Optional so the assertion below targets the
@@ -85,7 +85,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         }.save()
 
         // Re-create the client with the strict requirement and try to update.
-        val strict = EntClient(driver) {
+        val strict = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         val ex = assertFailsWith<TransactionRequiredException> {
@@ -100,7 +100,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `RequiredForAllWrites rejects delete outside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.Optional
         }
         val user = client.users.create {
@@ -108,7 +108,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
             email = "alice@example.com"
         }.save()
 
-        val strict = EntClient(driver) {
+        val strict = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         // deleteByIdOrError catches the TransactionRequiredException
@@ -130,7 +130,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // transaction-requirement check. The preflight must fire first
         // so the strict requirement still surfaces.
         val driver = freshDriver()
-        val strict = EntClient(driver) {
+        val strict = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         val ex = assertFailsWith<TransactionRequiredException> {
@@ -148,7 +148,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // is dispatched and the per-entity preflight never runs.
         // deleteMany must check the requirement before the query.
         val driver = freshDriver()
-        val strict = EntClient(driver) {
+        val strict = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         val ex = assertFailsWith<TransactionRequiredException> {
@@ -168,7 +168,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // matching row so the candidate query *would* return data,
         // then assert the call still throws without partial work.
         val driver = freshDriver()
-        val seed = EntClient(driver) {
+        val seed = sysClient(driver) {
             transactionRequirement = TransactionRequirement.Optional
         }
         seed.users.create {
@@ -176,7 +176,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
             email = "alice@example.com"
         }.save()
 
-        val strict = EntClient(driver) {
+        val strict = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         val ex = assertFailsWith<TransactionRequiredException> {
@@ -193,7 +193,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // doesn't apply to it. Link-table M2M update paths trigger
         // the rejection because they perform multiple writes.
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForMultiWrite
         }
         val user = client.users.create {
@@ -212,7 +212,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // "classify syntactically empty before any other observable
         // work" rule from transaction locking.
         val driver = freshDriver()
-        val client = EntClient(driver)
+        val client = sysClient(driver)
         val result = client.users.createManyOrError()
         assertEquals(entkt.runtime.EntResult.Ok<List<entkt.integrationtest.ent.User>>(emptyList()), result)
     }
@@ -220,7 +220,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `createManyOrError throws TransactionRequiredException outside a tx (even with one block)`() {
         val driver = freshDriver()
-        val client = EntClient(driver)
+        val client = sysClient(driver)
         val ex = assertFailsWith<TransactionRequiredException> {
             client.users.createManyOrError({
                 name = "Alice"
@@ -236,7 +236,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `createManyOrError accepts multi-block calls inside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver)
+        val client = sysClient(driver)
         val result = client.withTransaction { tx ->
             tx.users.createManyOrError(
                 {
@@ -263,7 +263,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // through N delegated single-write deletes and never trigger
         // the multi-write requirement.
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForMultiWrite
         }
         val ex = assertFailsWith<TransactionRequiredException> {
@@ -276,7 +276,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
     @Test
     fun `RequiredForMultiWrite accepts deleteMany inside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForMultiWrite
         }
         val deleted = client.withTransaction { tx ->
@@ -291,7 +291,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // requirement so nested saves still see it (and the inTransaction
         // gate stops rejecting because tx.driver.inTransaction is true).
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         client.withTransaction { tx ->
@@ -310,7 +310,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // NoChanges before any other observable work, including
         // transaction requirement checks." This pins that ordering.
         val driver = freshDriver()
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             transactionRequirement = TransactionRequirement.Optional
         }
         val user = client.users.create {
@@ -318,7 +318,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
             email = "alice@example.com"
         }.save()
 
-        val strict = EntClient(driver) {
+        val strict = sysClient(driver) {
             transactionRequirement = TransactionRequirement.RequiredForAllWrites
         }
         // Empty patch + strict requirement: NoChanges fires first

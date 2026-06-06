@@ -57,8 +57,10 @@ private val AllowAuthorLoad = ArticleLoadPrivacyRule { ctx ->
 }
 
 private val RequireAuth = ArticleCreatePrivacyRule { ctx ->
+    // Fail-closed: an authenticated viewer must be explicitly allowed, not left
+    // to fall through (which would now deny).
     if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
-    else PrivacyDecision.Continue
+    else PrivacyDecision.Allow
 }
 
 private val OwnerCanDelete = ArticleDeletePrivacyRule { ctx ->
@@ -888,10 +890,10 @@ class PrivacyIntegrationTest {
         assertTrue(remaining.isEmpty())
     }
 
-    // ---- No policy = no enforcement ----
+    // ---- No policy = deny everything (fail-closed) ----
 
     @Test
-    fun `no policy means no privacy enforcement`() {
+    fun `no policy means every operation is denied (fail-closed)`() {
         val driver = PostgresDriver(dataSource)
         seedSchemas()
         dataSource.connection.use { conn ->
@@ -900,16 +902,23 @@ class PrivacyIntegrationTest {
             }
         }
 
-        // Client with no policies configured
+        // Client with NO policies configured, authenticated viewer.
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.Anonymous) }
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
         }
 
-        val user = client.users.create { name = "U"; email = "u@test.com" }.save()
-        client.articles.create { title = "Draft"; published = false; authorId = user.id }.save()
+        // Fail-closed: with no create rule, even an authenticated create denies.
+        assertFailsWith<PrivacyDeniedException> {
+            client.users.create { name = "U"; email = "u@test.com" }.save()
+        }
 
-        // Without load policy, all() returns everything — no enforcement
-        val all = client.articles.query().allOrThrow()
-        assertEquals(1, all.size)
+        // Seed a row via System (the bypass), then confirm LOAD denies too.
+        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+            val u = sys.users.create { name = "U"; email = "u2@test.com" }.save()
+            sys.articles.create { title = "Draft"; published = false; authorId = u.id }.save()
+        }
+        assertFailsWith<EntPrivacyDeniedException> {
+            client.articles.query().allOrThrow()
+        }
     }
 }

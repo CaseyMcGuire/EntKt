@@ -21,9 +21,11 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
             )
             create(
                 PrivacyRule { ctx ->
+                    // Privacy is fail-closed, so authenticated callers must be
+                    // explicitly allowed — a fallthrough Continue would deny.
                     if (ctx.privacy.viewer is Viewer.Anonymous)
                         PrivacyDecision.Deny("only system can create users")
-                    else PrivacyDecision.Continue
+                    else PrivacyDecision.Allow
                 },
             )
             updateDerivesFromCreate()
@@ -137,11 +139,18 @@ takes a `vararg` of rules that are evaluated in order.
 
 ## Evaluation Semantics
 
-### LOAD -- allow-list
+Privacy is **fail-closed**. Every CRUD operation -- LOAD, CREATE, UPDATE,
+DELETE -- requires an explicit `Allow` to proceed. Rules are evaluated in
+order and the first non-`Continue` decision wins:
 
-LOAD rules use **allow-list** semantics: if every rule returns
-`Continue`, the entity is **denied**. At least one rule must explicitly
-`Allow`.
+- an explicit `Allow` permits the operation,
+- an explicit `Deny(reason)` rejects it,
+- if every rule returns `Continue` -- **or the operation has no rules, or
+  no policy is registered at all** -- the operation is **denied**.
+
+This is allow-list semantics for all four operations: absent a matching
+`Allow`, access is refused. An entity with no policy is fully locked down;
+you opt into access explicitly.
 
 ```kotlin
 load(
@@ -155,8 +164,9 @@ load(
 )
 ```
 
-> **Note:** `Viewer.System` automatically bypasses all privacy checks at
-> the framework level — you do not need a rule for it.
+> **`Viewer.System` bypasses all privacy checks** at the framework level --
+> it is the escape hatch for trusted/internal operations. You do not need
+> (and cannot write) a rule for it.
 
 LOAD privacy is enforced on:
 
@@ -171,18 +181,17 @@ privacy on each, and returns the count of allowed entities (denied
 entities are silently excluded). `rawCount()` is a raw aggregate that
 does not materialize entities and is **not** subject to LOAD privacy.
 
-### Write operations -- deny-list
+### Write operations (CREATE, UPDATE, DELETE)
 
-CREATE, UPDATE, and DELETE rules use **deny-list** semantics: if every
-rule returns `Continue`, the operation is **allowed**. A rule must
-explicitly `Deny` to block the operation.
+Writes follow the same fail-closed rule as LOAD: a CREATE, UPDATE, or
+DELETE proceeds only if a rule explicitly `Allow`s it. A common shape
+denies one class of viewer and explicitly allows the rest:
 
 ```kotlin
 create(
-    // Block anonymous users
     PrivacyRule { ctx ->
         if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("login required")
-        else PrivacyDecision.Continue
+        else PrivacyDecision.Allow   // explicit Allow — a Continue here would deny
     },
 )
 ```
@@ -304,7 +313,9 @@ privacy {
 
 When derivation is active, the operation's own rules are evaluated
 first. If all return `Continue`, the create rules are evaluated as a
-fallback (using a `CreatePrivacyContext` built from the candidate).
+fallback (using a `CreatePrivacyContext` built from the candidate). If
+the create rules also fail to `Allow`, the operation is denied
+(fail-closed).
 
 ## Scoped Context
 

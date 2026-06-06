@@ -305,12 +305,13 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `explainVisibleExists no-privacy fast path drops orderBy and preserves offset`() {
+    fun `explainVisibleExists keeps orderBy under fail-closed (no no-privacy fast path)`() {
         val driver = freshDriver()
-        // Post has no LOAD privacy → visibleExists goes through
-        // the no-privacy fast path, which is identical to rawExists.
-        // Explain on this path must drop orderBy + preserve offset
-        // (pre-fix: explain kept spec.orderBy and forced offset = null).
+        // Fail-closed: every entity is privacy-enforced (hasLoadPrivacy is
+        // always true), so visibleExists no longer collapses to the rawExists
+        // fast path — explain keeps the caller's orderBy for the privacy-aware
+        // materialization. (The genuine drop-orderBy path is rawExists, covered
+        // by `explainRawExists drops orderBy ...`.)
         val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
         val plan = client.posts.query {
             orderBy(entkt.query.OrderField("title", entkt.query.OrderDirection.ASC))
@@ -319,12 +320,8 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         assertNotNull(plan.root)
         val desc = plan.root.toString()
         assertTrue(
-            !desc.contains("ORDER BY") && !desc.contains("orderBy=[OrderField"),
-            "explainVisibleExists no-privacy path should drop orderBy; was: $desc",
-        )
-        assertTrue(
-            desc.contains("OFFSET 3") || desc.contains("offset=3") || desc.contains("offset: 3"),
-            "explainVisibleExists no-privacy path should preserve caller offset; was: $desc",
+            desc.contains("ORDER BY") || desc.contains("orderBy=[OrderField"),
+            "fail-closed: explainVisibleExists keeps orderBy; was: $desc",
         )
     }
 

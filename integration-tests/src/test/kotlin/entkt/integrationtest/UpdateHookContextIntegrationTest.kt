@@ -40,7 +40,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
     private fun newClient(
         beforeUpdate: ((ArticleUpdateHookContext) -> Unit)? = null,
-    ): EntClient = EntClient(driver) {
+    ): EntClient = sysClient(driver) {
         if (beforeUpdate != null) {
             hooks {
                 articles {

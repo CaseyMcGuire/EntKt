@@ -476,6 +476,32 @@ class RepoGeneratorTest {
     }
 
     @Test
+    fun `write privacy is fail-closed - denies when no rule allows`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        // The create/update/delete privacy evaluators end in a deny throw
+        // (fail-closed: with no allowing rule — including no rules at all — the
+        // empty loop falls straight through to the throw, so an explicit Allow
+        // is required). Validation keeps its own no-rules short-circuit.
+        assert(output.contains("PrivacyOperation.CREATE, \"no create rule allowed access\"")) {
+            "evaluateCreatePrivacy should end in a CREATE deny throw\n$output"
+        }
+        assert(output.contains("PrivacyOperation.UPDATE, \"no update rule allowed access\"")) {
+            "evaluateUpdatePrivacy should end in an UPDATE deny throw\n$output"
+        }
+        assert(output.contains("PrivacyOperation.DELETE, \"no delete rule allowed access\"")) {
+            "evaluateDeletePrivacy should end in a DELETE deny throw\n$output"
+        }
+        // hasXPrivacy no longer reflects rule presence — privacy is always
+        // enforced under fail-closed (the flags report true).
+        assert(!output.contains("loadRules.isNotEmpty()")) {
+            "hasLoadPrivacy should not depend on rule presence anymore\n$output"
+        }
+    }
+
+    @Test
     fun `byId enforces load privacy`() {
         val car = Car()
         finalize(car, User())

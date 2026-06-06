@@ -39,7 +39,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
     @Test
     fun `default consistency is ReadCurrent and update succeeds outside a transaction`() {
         val driver = freshDriver()
-        val client = EntClient(driver)
+        val client = sysClient(driver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
@@ -56,7 +56,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
     @Test
     fun `Pessimistic update outside a transaction throws TransactionRequiredException`() {
         val driver = freshDriver()
-        val client = EntClient(driver)
+        val client = sysClient(driver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
@@ -75,7 +75,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         // PostgresDriver natively advertises `supportsReadRowForUpdate
         // = true`, so the capability gate accepts the save and the
         // SELECT ... FOR UPDATE actually runs against the row.
-        val client = EntClient(lockingDriver())
+        val client = sysClient(lockingDriver())
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
@@ -92,7 +92,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `Pessimistic update returns null when the owner row is missing`() {
-        val client = EntClient(lockingDriver())
+        val client = sysClient(lockingDriver())
 
         val result = client.withTransaction { tx ->
             tx.users.update(9999L, consistency = UpdateConsistency.Pessimistic) {
@@ -111,7 +111,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         // if reached, then assert it doesn't fire.
         val driver = freshDriver()
         var hookFired = false
-        val client = EntClient(driver) {
+        val client = sysClient(driver) {
             hooks {
                 users {
                     beforeUpdate { hookFired = true }
@@ -135,7 +135,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
     fun `defaultUpdateConsistency on the client is honored when no per-save override is passed`() {
         // PostgresDriver's native lock support lets the inside-tx
         // case actually run the SELECT ... FOR UPDATE.
-        val client = EntClient(lockingDriver()) {
+        val client = sysClient(lockingDriver()) {
             defaultUpdateConsistency = UpdateConsistency.Pessimistic
         }
         val user = client.users.create {
@@ -165,7 +165,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         // fires. Other driver methods delegate to the wrapped instance.
         val real = freshDriver()
         val noLockDriver = NoLockSupportDriver(real)
-        val client = EntClient(noLockDriver)
+        val client = sysClient(noLockDriver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"

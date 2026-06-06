@@ -112,7 +112,7 @@ class RelationshipLockingPostgresIntegrationTest {
     fun `Canonical save takes the canonical relationship lock — identical key from both orientations`() {
         setupDb()
         val keys = Collections.synchronizedList(mutableListOf<RelationshipLockKey>())
-        val client = EntClient(RecordingDriver(PostgresDriver(dataSource), keys)) {
+        val client = sysClient(RecordingDriver(PostgresDriver(dataSource), keys)) {
             defaultRelationshipLocking = RelationshipLocking.Canonical
         }
         val post = client.posts.create { title = "p" }.save()
@@ -136,7 +136,7 @@ class RelationshipLockingPostgresIntegrationTest {
         setupDb()
         val keys = Collections.synchronizedList(mutableListOf<RelationshipLockKey>())
         // No config override → defaultRelationshipLocking = OwnerOnly.
-        val client = EntClient(RecordingDriver(PostgresDriver(dataSource), keys))
+        val client = sysClient(RecordingDriver(PostgresDriver(dataSource), keys))
         val post = client.posts.create { title = "p" }.save()
         val tag = client.tags.create { name = "a" }.save()
 
@@ -148,7 +148,7 @@ class RelationshipLockingPostgresIntegrationTest {
     @Test
     fun `concurrent opposite-side Canonical writes converge without deadlock`() {
         setupDb()
-        val client = EntClient(PostgresDriver(dataSource)) {
+        val client = sysClient(PostgresDriver(dataSource)) {
             defaultRelationshipLocking = RelationshipLocking.Canonical
         }
         val post = client.posts.create { title = "p" }.save()
@@ -201,7 +201,7 @@ class RelationshipLockingPostgresIntegrationTest {
     @Test
     fun `add or set is rejected on a driver lacking insertIgnore, but remove-only commits`() {
         setupDb()
-        val base = EntClient(PostgresDriver(dataSource))
+        val base = sysClient(PostgresDriver(dataSource))
         val post = base.posts.create { title = "p" }.save()
         val tagA = base.tags.create { name = "a" }.save()
         val tagB = base.tags.create { name = "b" }.save()
@@ -209,7 +209,7 @@ class RelationshipLockingPostgresIntegrationTest {
         base.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tagA.id) }.save() }
         assertEquals(1L, junctionRowCount())
 
-        val capped = EntClient(CapabilityOverrideDriver(PostgresDriver(dataSource), insertIgnore = false))
+        val capped = sysClient(CapabilityOverrideDriver(PostgresDriver(dataSource), insertIgnore = false))
 
         // add / set stage an insert → require supportsInsertIgnore → rejected
         // before any write.
@@ -229,12 +229,12 @@ class RelationshipLockingPostgresIntegrationTest {
     @Test
     fun `Canonical save is rejected on a driver lacking relationship serialization while OwnerOnly commits`() {
         setupDb()
-        val base = EntClient(PostgresDriver(dataSource))
+        val base = sysClient(PostgresDriver(dataSource))
         val post = base.posts.create { title = "p" }.save()
         val tag = base.tags.create { name = "a" }.save()
 
         // Canonical needs supportsRelationshipSerialization → rejected.
-        val canonicalClient = EntClient(
+        val canonicalClient = sysClient(
             CapabilityOverrideDriver(PostgresDriver(dataSource), relationshipSerialization = false),
         ) { defaultRelationshipLocking = RelationshipLocking.Canonical }
         assertFailsWith<UnsupportedDriverCapabilityException> {
@@ -244,7 +244,7 @@ class RelationshipLockingPostgresIntegrationTest {
 
         // The same capability-lacking driver under the default OwnerOnly needs
         // no relationship lock, so the write proceeds.
-        val ownerOnlyClient = EntClient(
+        val ownerOnlyClient = sysClient(
             CapabilityOverrideDriver(PostgresDriver(dataSource), relationshipSerialization = false),
         )
         ownerOnlyClient.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }

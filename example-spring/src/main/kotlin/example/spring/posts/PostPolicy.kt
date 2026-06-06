@@ -41,11 +41,11 @@ class AllowAuthorLoad : PostLoadPrivacyRule {
     }
 }
 
-/** Must be authenticated to create posts. */
+/** Any authenticated user can create posts; anonymous callers are denied. */
 class RequireAuthToCreate : PostCreatePrivacyRule {
     override fun run(ctx: PostCreatePrivacyContext): PrivacyDecision =
         if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
-        else PrivacyDecision.Continue
+        else PrivacyDecision.Allow
 }
 
 /** Only the author can update their post. */

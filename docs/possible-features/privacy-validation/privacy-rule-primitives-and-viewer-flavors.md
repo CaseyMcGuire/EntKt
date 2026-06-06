@@ -15,9 +15,9 @@ privacy model:
 - stable rule names that feed privacy-denial messages and future explain
   output
 
-This should not change EntKt's existing enforcement model. LOAD remains a
-strict allow-list safety net; write operations remain deny-list by default
-with explicit opt-in rule composition.
+This should not change EntKt's existing enforcement model. All CRUD
+operations are fail-closed allow-lists — an explicit `Allow` is required to
+pass — and these helpers just compose those decisions ergonomically.
 
 ## Motivation
 
@@ -66,23 +66,26 @@ capabilities such as admin or archive access.
 
 ## Current Semantics To Preserve
 
-### LOAD
+Privacy is **fail-closed**: all four CRUD operations are allow-list based —
+an explicit `Allow` is required, and falling off the end (or having no
+rules / no policy) denies.
 
-LOAD privacy is allow-list based:
+### LOAD
 
 - `PrivacyDecision.Allow` stops evaluation and permits the load
 - `PrivacyDecision.Deny(reason)` stops evaluation and rejects
 - `PrivacyDecision.Continue` moves to the next rule
-- falling off the end denies
+- falling off the end (or having no rules) denies
 
 ### CREATE / UPDATE / DELETE
 
-Write privacy is deny-list based:
+Same allow-list semantics as LOAD (this changed from the earlier
+write-deny-list model when CRUD privacy became fail-closed):
 
 - `PrivacyDecision.Allow` stops evaluation and permits the write
 - `PrivacyDecision.Deny(reason)` stops evaluation and rejects
 - `PrivacyDecision.Continue` moves to the next rule
-- falling off the end allows
+- falling off the end (or having no rules) denies
 
 This RFC adds helpers that produce those same decisions. It does not
 change the evaluator.
@@ -402,7 +405,7 @@ Before implementation, add tests for:
 - `allowIf` returns `Allow` on true and `Continue` on false
 - `denyIf` returns `Deny` on true and `Continue` on false
 - `require` returns `Continue` on true and `Deny` on false
-- `require` composes correctly under write deny-list semantics
+- `require` composes correctly under fail-closed (allow-list) write semantics
 - `require` alone does not accidentally allow LOAD privacy
 - named rules surface their names in privacy denial messages
 - anonymous rules still work and use a fallback name

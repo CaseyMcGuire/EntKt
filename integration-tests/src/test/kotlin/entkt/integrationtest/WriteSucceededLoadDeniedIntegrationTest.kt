@@ -1,8 +1,10 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
+import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
+import entkt.integrationtest.ent.ArticleUpdatePrivacyRule
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
@@ -43,10 +45,14 @@ import kotlin.test.assertTrue
  */
 class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
-    /** Article LOAD denies for the active viewer; CREATE/UPDATE allow. */
+    /** Article LOAD denies for the active viewer; CREATE/UPDATE explicitly allow. */
     private object DenyLoadAllowWrite : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("can't read") }) }
+            privacy {
+                load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("can't read") })
+                create(ArticleCreatePrivacyRule { PrivacyDecision.Allow })
+                update(ArticleUpdatePrivacyRule { PrivacyDecision.Allow })
+            }
         }
     }
 

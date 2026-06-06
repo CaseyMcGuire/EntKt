@@ -2,6 +2,8 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.postgres.PostgresDriver
+import entkt.runtime.PrivacyContext
+import entkt.runtime.Viewer
 import org.postgresql.ds.PGSimpleDataSource
 import org.postgresql.util.PSQLException
 import org.testcontainers.junit.jupiter.Container
@@ -61,7 +63,8 @@ class LinkTableM2MPostgresIntegrationTest {
             }
         }
 
-        return EntClient(driver)
+        // Not testing privacy — run as System so fail-closed defaults don't block.
+        return EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
     }
 
     private fun linkedTagIds(postId: Long): List<Long> {

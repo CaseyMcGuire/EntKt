@@ -215,10 +215,10 @@ internal class RepoGenerator(
             .addFunction(buildCopyHooksFrom(repoClass))
             .addFunction(buildApplyPrivacy(privacyConfigClass))
             .addFunction(buildCopyPrivacyFrom(repoClass))
-            .addFunction(buildHasPrivacy("hasLoadPrivacy", "loadRules"))
-            .addFunction(buildHasPrivacy("hasCreatePrivacy", "createRules"))
-            .addFunction(buildHasPrivacy("hasUpdatePrivacy", "updateRules", "updateDerivesFromCreate"))
-            .addFunction(buildHasPrivacy("hasDeletePrivacy", "deleteRules", "deleteDerivesFromCreate"))
+            .addFunction(buildHasPrivacy("hasLoadPrivacy"))
+            .addFunction(buildHasPrivacy("hasCreatePrivacy"))
+            .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
+            .addFunction(buildHasPrivacy("hasDeletePrivacy"))
             .addFunction(buildEvaluateLoadPrivacy(schemaName, entityClass, loadCtxClass))
             .addFunction(buildEvaluateCreatePrivacy(schemaName, candidateClass))
             .addFunction(buildEvaluateUpdatePrivacy(schemaName, entityClass, candidateClass))
@@ -738,17 +738,16 @@ internal class RepoGenerator(
             .addStatement("privacyConfig.deleteDerivesFromCreate = other.privacyConfig.deleteDerivesFromCreate")
             .build()
 
-    private fun buildHasPrivacy(name: String, field: String, deriveFlag: String? = null): FunSpec {
-        val builder = FunSpec.builder(name)
+    // Privacy is fail-closed: every operation requires an explicit Allow, so
+    // every entity is privacy-enforced regardless of which rules are declared.
+    // These flags therefore always report true (the call sites that gate on
+    // them always take the enforce path).
+    private fun buildHasPrivacy(name: String): FunSpec =
+        FunSpec.builder(name)
             .addModifiers(KModifier.INTERNAL)
             .returns(Boolean::class)
-        if (deriveFlag != null) {
-            builder.addStatement("return privacyConfig.%L.isNotEmpty() || privacyConfig.%L", field, deriveFlag)
-        } else {
-            builder.addStatement("return privacyConfig.%L.isNotEmpty()", field)
-        }
-        return builder.build()
-    }
+            .addStatement("return true")
+            .build()
 
     private fun buildEvaluateLoadPrivacy(
         schemaName: String,
@@ -762,7 +761,6 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.System) return", VIEWER)
                 .addStatement("val rules = privacyConfig.loadRules")
-                .addStatement("if (rules.isEmpty()) return")
                 .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, entity)", loadCtxClass)
                 .beginControlFlow("for (rule in rules)")
@@ -791,7 +789,6 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.System) return", VIEWER)
                 .addStatement("val rules = privacyConfig.createRules")
-                .addStatement("if (rules.isEmpty()) return")
                 .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in rules)")
@@ -801,7 +798,8 @@ internal class RepoGenerator(
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
-                // End-of-list for write ops: allow (deny-list style)
+                // Fail-closed: no rule allowed → deny.
+                .addStatement("throw %T(%S, %T.CREATE, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no create rule allowed access")
                 .build()
             )
             .build()
@@ -827,7 +825,6 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.System) return", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
-                .addStatement("if (rules.isEmpty() && !privacyConfig.updateDerivesFromCreate) return")
                 .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
                 .addStatement(
                     "val ctx = %T(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
@@ -850,6 +847,8 @@ internal class RepoGenerator(
                 .endControlFlow()
                 .endControlFlow()
                 .endControlFlow()
+                // Fail-closed: no rule (incl. derived create rules) allowed → deny.
+                .addStatement("throw %T(%S, %T.UPDATE, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no update rule allowed access")
                 .build()
             )
             .build()
@@ -870,7 +869,6 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.System) return", VIEWER)
                 .addStatement("val rules = privacyConfig.deleteRules")
-                .addStatement("if (rules.isEmpty() && !privacyConfig.deleteDerivesFromCreate) return")
                 .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, entity, candidate)", deleteCtxClass)
                 .beginControlFlow("for (rule in rules)")
@@ -890,6 +888,8 @@ internal class RepoGenerator(
                 .endControlFlow()
                 .endControlFlow()
                 .endControlFlow()
+                // Fail-closed: no rule (incl. derived create rules) allowed → deny.
+                .addStatement("throw %T(%S, %T.DELETE, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no delete rule allowed access")
                 .build()
             )
             .build()

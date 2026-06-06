@@ -4,8 +4,12 @@ import entkt.runtime.EntityPolicy
 import entkt.runtime.PrivacyDecision
 import entkt.runtime.Viewer
 import example.ent.User
+import example.ent.UserCreatePrivacyContext
+import example.ent.UserCreatePrivacyRule
 import example.ent.UserDeletePrivacyContext
 import example.ent.UserDeletePrivacyRule
+import example.ent.UserLoadPrivacyContext
+import example.ent.UserLoadPrivacyRule
 import example.ent.UserPolicyScope
 import example.ent.UserUpdatePrivacyContext
 import example.ent.UserUpdatePrivacyRule
@@ -13,10 +17,24 @@ import example.ent.UserUpdatePrivacyRule
 object UserPolicy : EntityPolicy<User, UserPolicyScope> {
     override fun configure(scope: UserPolicyScope) = scope.run {
         privacy {
+            // Privacy is fail-closed, so the previously-implicit public access
+            // to user profiles and registration is now spelled out explicitly.
+            load(AllowPublicRead())
+            create(AllowOpenRegistration())
             update(AllowSelfUpdate())
             delete(AllowSelfDelete())
         }
     }
+}
+
+/** User profiles are public in this demo. */
+class AllowPublicRead : UserLoadPrivacyRule {
+    override fun run(ctx: UserLoadPrivacyContext): PrivacyDecision = PrivacyDecision.Allow
+}
+
+/** Anyone can register a new user in this demo. */
+class AllowOpenRegistration : UserCreatePrivacyRule {
+    override fun run(ctx: UserCreatePrivacyContext): PrivacyDecision = PrivacyDecision.Allow
 }
 
 /** Only the user themselves can update their profile. */
