@@ -14,12 +14,15 @@ Implemented RFCs have moved to the
 - [Checked Aggregate Privacy](privacy-validation/checked-aggregate-privacy.md)
 - [Edge-Derived LOAD Privacy](privacy-validation/edge-derived-load-privacy.md)
 - [Preflighted Bulk Operations](privacy-validation/preflighted-bulk-operations.md)
+- [Read-Only Validation Client](privacy-validation/read-only-validation-client.md)
 
 ## Mutation APIs
 
 - [Structured Mutation Pipeline](mutation/structured-mutation-pipeline.md)
+- [Explicit Save Terminals](mutation/explicit-save-terminals.md)
 - [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
+- [Update Hook Context Clarity](mutation/update-hook-context-clarity.md)
 - [Transaction Options And Savepoints](mutation/transaction-options-savepoints.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
 - [Mutation Actions](mutation/mutation-actions.md)
@@ -29,6 +32,8 @@ Implemented RFCs have moved to the
 
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
 - [Query Observability Diagnostics](query/query-observability-diagnostics.md)
+- [Edge Traversal Source Shape](query/edge-traversal-source-shape.md)
+- [Loaded Edge State](query/loaded-edge-state.md)
 - [Cursor Pagination](query/cursor-pagination.md)
 - [Projection / Select API](query/projection-select-api.md)
 - [Aggregations](query/aggregations.md)
