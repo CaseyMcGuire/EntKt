@@ -50,7 +50,7 @@ production crash later.
 
 - **Not** native PostgreSQL `ENUM` types or `ALTER TYPE … RENAME VALUE`.
   That is a separate, larger direction that would build on the native storage
-  foundation in [Native Database Column Types](native-database-column-types.md).
+  foundation in [Native Database Column Types](../../implemented-features/schema/native-database-column-types.md).
   This RFC keeps the existing `text` storage and adds enforcement on top of it.
 - **Not** automatic rename *detection*. entkt cannot know that `MEDIUM` was
   renamed to `NORMAL` rather than `MEDIUM` removed and `NORMAL` added —
@@ -256,7 +256,7 @@ sealed interface MigrationOp {
 - **Native PostgreSQL enum types.** Stronger typing and `ALTER TYPE …
   RENAME VALUE` for true renames, but a much larger change (new storage
   model, type lifecycle, driver work) that should get its own RFC on top of
-  [Native Database Column Types](native-database-column-types.md).
+  [Native Database Column Types](../../implemented-features/schema/native-database-column-types.md).
 - **Application-level validation only.** Already effectively present
   (`valueOf` throws), but it fails at read time on arbitrary rows rather
   than at migration time on the change itself — exactly the problem.

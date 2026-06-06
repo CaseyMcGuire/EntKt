@@ -115,6 +115,36 @@ client.users.query {
 
 Multiple `orderBy()` calls add successive sort keys.
 
+### Vector distance ordering (pgvector)
+
+For `pgvector` columns (see
+[Schema -> Native Column Types](02-schema.md#native-column-types-postgres-pgvector)),
+order by distance to a query vector for nearest-neighbor search. Import
+`entkt.postgres.vector.*` for the distance helpers:
+
+```kotlin
+import entkt.postgres.vector.*
+
+val q = PgVector.of(embeddingModel.embed("kotlin orm"))
+
+client.articles.query {
+    orderBy(Article.embedding.cosineDistance(q).asc())   // nearest first
+    limit(20)
+}
+```
+
+- `cosineDistance(q)` / `l2Distance(q)` / `innerProduct(q)` lower to pgvector's
+  `<=>` / `<->` / `<#>` operators. The query vector is bound as a parameter, never
+  inlined into the SQL.
+- Use `.asc()` for most-similar-first -- this holds for `innerProduct` too, since
+  pgvector's `<#>` is the *negative* inner product. `.desc()` is farthest-first.
+- Rows with a null embedding sort last in both directions.
+- The query vector's dimensions must match the column or you get a field-named
+  error; a non-Postgres driver rejects distance ordering with a capability error.
+
+Vector columns also support exact-match `eq` / `neq` / `in` / `notIn`, though
+similarity ordering is the typical access path.
+
 ## Pagination
 
 ```kotlin

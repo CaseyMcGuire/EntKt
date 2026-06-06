@@ -41,7 +41,6 @@ Implemented RFCs have moved to the
 - [Optimistic Locking](schema/optimistic-locking.md)
 - [Edge Groups](schema/edge-groups.md)
 - [Audit Fields](schema/audit-fields.md)
-- [Native Database Column Types](schema/native-database-column-types.md)
 - [Custom Scalar Converters](schema/custom-scalar-converters.md)
 - [Typed JSON Fields](schema/typed-json-fields.md)
 - [Enum Value CHECK Constraints](schema/enum-value-check-constraints.md)

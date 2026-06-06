@@ -4,7 +4,7 @@
 
 Possible future feature. Not implemented. This RFC is intentionally separate from
 [Custom Scalar Converters](custom-scalar-converters.md) and
-[Native Database Column Types](native-database-column-types.md): JSON values need a
+[Native Database Column Types](../../implemented-features/schema/native-database-column-types.md): JSON values need a
 structured object mapper and dialect-specific storage choices, but should have a
 small, obvious schema API.
 

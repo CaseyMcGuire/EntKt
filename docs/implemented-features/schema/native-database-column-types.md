@@ -2,11 +2,35 @@
 
 ## Status
 
-Possible future feature. Not implemented. The Postgres `pgvector` section below is
-an implementation contract: every decision is tied to the current code so it can be
-built without guesswork.
+**Implemented** (Postgres `pgvector`). The sections below are the original
+implementation contract, kept as a design record. User-facing docs are
+[Schema -> Native Column Types](../../02-schema.md#native-column-types-postgres-pgvector)
+and [Queries -> Vector distance ordering](../../04-queries.md#vector-distance-ordering-pgvector).
 
-Phased execution order: [pgvector-phase-1-implementation-plan.md](pgvector-phase-1-implementation-plan.md).
+### As-built deltas from the contract
+
+The implementation followed this contract closely, with these intentional changes:
+
+- **`PgVector` package.** The value type ships in `entkt.postgres.vector` (alongside
+  the `postgresVector` DSL and distance helpers), not `entkt.postgres.runtime` as §7
+  sketches -- so a single `import entkt.postgres.vector.*` brings the whole surface.
+- **Order model (§10).** Rather than a sealed `OrderExpression`, `OrderField` gained
+  an optional `distance: DistanceOrder?` (additive, backward-compatible). The closed
+  `VectorDistanceOperator` enum + parameter-bound operand are as designed, and the
+  distance helpers are import-gated extensions on `Column<E, PgVector>`, so no codegen
+  change was needed. Distance ordering renders `NULLS LAST` -- a null embedding has no
+  distance and sorts last in both directions.
+- **Validation surface (§4) is wider.** Dimensions are validated not only at
+  declaration / generated write, but also at raw `driver.insert/update`, at query
+  predicates (`eq`/`neq`/`in`/`notIn`), and at the distance-query operand -- all with
+  field-named errors. `PgVector.of` rejects non-finite (`NaN`/`Infinity`) components.
+  Vector indexes are validated at declaration: a non-vector column, `dimensions > 2000`,
+  `ivfflat lists <= 0`, `.unique()`, or a missing access method are all rejected.
+- **Introspection (§5 hop table) is implemented.** `PostgresIntrospector` reconstructs
+  `vector(n)` via `format_type` and reads a non-btree index's access method, operator
+  classes, and storage params, so a pgvector schema round-trips with no spurious drift.
+- **Flyway shadow image.** The shadow workflow defaults to a pgvector-capable image
+  and preflights required extensions, so vector schemas apply in the shadow DB.
 
 ## Summary
 
@@ -40,9 +64,9 @@ This RFC covers Postgres `pgvector` only:
 Out of scope here:
 
 - Custom scalar converters (`Email`, `Slug`): see
-  [Custom Scalar Converters](custom-scalar-converters.md).
+  [Custom Scalar Converters](../../possible-features/schema/custom-scalar-converters.md).
 - Typed JSON fields (`json("pet_metadata", PetMetadata::class)`): see
-  [Typed JSON Fields](typed-json-fields.md).
+  [Typed JSON Fields](../../possible-features/schema/typed-json-fields.md).
 - Arrays, native database enums, and vector filtering. Each needs its own design
   note before implementation.
 
@@ -330,8 +354,9 @@ USING hnsw (embedding vector_cosine_ops)` / `USING ivfflat (...) WITH (lists = 1
 
 ### 7. The `PgVector` value type
 
-Lives in the **postgres runtime** module (`entkt.postgres.runtime.PgVector`), so the
-generated property type is Postgres-namespaced and the schema module stays clean:
+Lives in the **postgres** module (`entkt.postgres.vector.PgVector` — see the
+as-built note above), so the generated property type is Postgres-namespaced and the
+schema module stays clean:
 
 ```kotlin
 class PgVector private constructor(private val values: FloatArray) {
@@ -528,9 +553,9 @@ Other field families may reuse pieces of this foundation, but they are intention
 separate proposals so the APIs stay explicit instead of overloading one generic
 "custom type" concept:
 
-- [Custom Scalar Converters](custom-scalar-converters.md) for application-domain
+- [Custom Scalar Converters](../../possible-features/schema/custom-scalar-converters.md) for application-domain
   wrappers stored as ordinary scalar columns.
-- [Typed JSON Fields](typed-json-fields.md) for structured JSON/JSONB values.
+- [Typed JSON Fields](../../possible-features/schema/typed-json-fields.md) for structured JSON/JSONB values.
 - Native database enums, arrays, and vector filtering need separate RFCs before
   implementation.
 

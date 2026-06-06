@@ -3,7 +3,7 @@
 ## Status
 
 Possible future feature. Not implemented. This RFC is intentionally separate from
-[Native Database Column Types](native-database-column-types.md): scalar converters
+[Native Database Column Types](../../implemented-features/schema/native-database-column-types.md): scalar converters
 store ordinary database column types and should not require driver-specific bind or
 decode behavior.
 
@@ -68,7 +68,7 @@ storage scalar type, encode function, decode function.
 
 - No driver plugin system.
 - No generic "custom SQL type" support; use
-  [Native Database Column Types](native-database-column-types.md) for that.
+  [Native Database Column Types](../../implemented-features/schema/native-database-column-types.md) for that.
 - No implicit global converter lookup in the first cut.
 - No serialization framework dependency.
 - No polymorphic or dynamically typed values.

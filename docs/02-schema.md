@@ -68,6 +68,9 @@ class Ticket : EntSchema("tickets") {
 | `bytes()` | `BYTES` | `ByteArray` | `bytea` |
 | `enum<E>()` | `ENUM` | `E` | `text` |
 
+Postgres-specific native types (e.g. `pgvector`) are import-gated and not on the
+base DSL -- see [Native Column Types (Postgres pgvector)](#native-column-types-postgres-pgvector).
+
 ### Common Modifiers
 
 These are available on all field types:
@@ -638,6 +641,62 @@ differently from the user-written form (adding outer parentheses, type
 casts, etc.). The migration differ normalizes both sides before comparing,
 so `active = true` and `((active)::boolean = true)` are treated as
 equivalent.
+
+## Native Column Types (Postgres pgvector)
+
+Some column types are specific to one database and are deliberately kept off the
+portable base DSL. Postgres [`pgvector`](https://github.com/pgvector/pgvector) is
+the first: `import entkt.postgres.vector.*` to declare `vector(n)` columns and
+their indexes, so a Postgres-native field looks Postgres-native at the call site
+(a schema that never imports it never sees these builders).
+
+```kotlin
+import entkt.postgres.vector.*   // postgresVector, postgresVectorIndex, VectorMetric
+
+class Article : EntSchema("articles") {
+    override fun id() = EntId.long()
+
+    val title = text("title")
+
+    // A vector(1536) column, generated as a `PgVector` property.
+    val embedding = postgresVector("embedding", dimensions = 1536).nullable()
+
+    // Vector indexes spell out the access method + metric (they are not btree).
+    val embeddingHnsw = postgresVectorIndex("idx_articles_embedding_hnsw", embedding)
+        .hnsw(VectorMetric.Cosine)
+}
+```
+
+- `dimensions` must be `1..16000` (the `vector` column cap). HNSW/IVFFlat indexes
+  additionally require `<= 2000`, enforced at `postgresVectorIndex(...)`.
+- The generated property type is `PgVector` (from `entkt.postgres.vector`), a
+  content-equal wrapper over `FloatArray`; build one with `PgVector.of(floats)`.
+- `.nullable()` and `.comment(...)` apply; `.unique()` is rejected at build time
+  (a UNIQUE index over a vector is not meaningful).
+- Index metrics are `VectorMetric.Cosine` / `L2` / `InnerProduct`. Use
+  `.hnsw(metric)` or `.ivfflat(metric, lists = N)` (with `lists > 0`). Two vector
+  indexes on the same column are allowed when they differ by access method or
+  metric.
+
+**Dimension validation.** A `PgVector` carries no fixed dimension; the column's
+declared `dimensions` is the single source of truth. A wrong-size vector is
+rejected with a field-named error at every boundary -- generated `save()`, raw
+driver writes, query predicates (`embedding eq v`), and distance ordering --
+rather than reaching Postgres. Non-finite components (`NaN`/`Infinity`) are
+rejected when the `PgVector` is constructed.
+
+**Migrations / DDL.** A vector schema emits `CREATE EXTENSION IF NOT EXISTS
+"vector"` (ordered before the table), a `vector(n)` column, and
+`USING hnsw (col vector_cosine_ops)` / `USING ivfflat (...) WITH (lists = N)`
+index DDL. A dimension change (`vector(1536)` -> `vector(3072)`) is classified
+manual/destructive. The Flyway shadow workflow defaults to a pgvector-capable
+image so these apply in the shadow database.
+
+**Driver support.** A non-Postgres driver rejects a vector schema at `register()`
+with `UnsupportedDriverCapabilityException` rather than failing later.
+
+See [Queries -> Vector distance ordering](04-queries.md#vector-distance-ordering-pgvector)
+for nearest-neighbor search.
 
 ## Reusable Mixins
 

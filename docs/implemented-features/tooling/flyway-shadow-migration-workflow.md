@@ -230,6 +230,14 @@ run. The workflow should:
 - wait for readiness before running Flyway
 - destroy the container after validation or generation completes
 
+The default shadow image is pgvector-capable (`pgvector/pgvector:pg16`, a drop-in
+Postgres superset) so a schema with a native-extension column -- e.g. pgvector's
+`vector(n)`, which emits `CREATE EXTENSION "vector"` -- applies in the shadow
+database. Before migrating, the workflow preflights every extension the desired
+schema needs against `pg_available_extensions` and fails with an actionable message
+if an overridden image cannot provide one, rather than surfacing an opaque Flyway
+`CREATE EXTENSION` error.
+
 This avoids `flyway.clean()` against a persistent database and removes
 the need for database-name heuristics or disposable-database override
 flags in the default path.

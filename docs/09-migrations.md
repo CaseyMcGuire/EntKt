@@ -14,6 +14,7 @@ entkt auto-generates only safe additive operations:
 
 | Operation | Auto-generated? | Notes |
 |-----------|:---:|-------|
+| `CreateExtension` | Yes | `CREATE EXTENSION IF NOT EXISTS` for a native column type (e.g. pgvector's `vector`); ordered before the table that needs it |
 | `CreateTable` | Yes | Columns + PK only; indexes and FKs are separate ops |
 | `AddColumn` (nullable) | Yes | |
 | `AddColumn` (NOT NULL) | No | Requires a default or backfill strategy |

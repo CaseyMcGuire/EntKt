@@ -30,6 +30,7 @@ Open or speculative RFCs remain in the
 - [Schema Validation Explain](schema/schema-validation-explain.md)
 - [Soft Delete](schema/soft-delete.md)
 - [Schema Nullability Terminology](schema/schema-nullability-terminology.md)
+- [Native Database Column Types (Postgres pgvector)](schema/native-database-column-types.md)
 
 ## Results, Codegen, And Tooling
 

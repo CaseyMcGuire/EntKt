@@ -151,9 +151,17 @@ When you explicitly opt in with `PostgresDriver(dataSource, autoDdl = true)`,
 | `TIME` | `timestamptz` |
 | `UUID` | `uuid` |
 | `BYTES` | `bytea` |
+| `PGVECTOR` | `vector(n)` (pgvector) |
 
 ID strategies `AUTO_INT` and `AUTO_LONG` map to `serial` and `bigserial`
 respectively.
+
+`PGVECTOR` is a native-storage column type carried by `ColumnStorage.Native`
+rather than a portable `FieldType`. A driver advertises native support via
+`supportsNativeStorage(codec)` (PostgresDriver returns `true` for
+`"postgres.vector"`); a driver that does not rejects a vector schema at
+`register()` with `UnsupportedDriverCapabilityException`. See
+[Schema -> Native Column Types](02-schema.md#native-column-types-postgres-pgvector).
 
 ### Query Lowering
 
