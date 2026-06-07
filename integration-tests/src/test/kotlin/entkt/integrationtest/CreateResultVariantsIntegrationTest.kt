@@ -172,7 +172,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `saveOrError returns Err(PrivacyDenied) when CREATE privacy denies`() {
         val requireAuth = ArticleCreatePrivacyRule { ctx ->
             if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
-            else PrivacyDecision.Continue
+            else PrivacyDecision.Allow
         }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {

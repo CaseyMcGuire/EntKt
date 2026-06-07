@@ -79,7 +79,7 @@ private val AllowAllLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allow }
 private val AllowAllUserLoads = UserLoadPrivacyRule { PrivacyDecision.Allow }
 private val RequireAuthForCreate = ArticleCreatePrivacyRule { ctx ->
     if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
-    else PrivacyDecision.Continue
+    else PrivacyDecision.Allow
 }
 
 // ---- Policies ----
