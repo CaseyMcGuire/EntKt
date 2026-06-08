@@ -181,6 +181,37 @@ abstract class EntSchema(val tableName: String) {
         }
 
     /**
+     * Declare a typed JSON column backed by the `@Serializable` Kotlin class
+     * [klass] (RFC "Typed JSON Fields"). The class is exposed at the generated
+     * API boundary; values are stored as Postgres `jsonb` and encoded/decoded
+     * through the class's kotlinx serializer (generated code references
+     * `klass.serializer()`, so a non-serializable class fails at compile time).
+     *
+     * `.nullable()` and `.comment()` apply; `.unique()`, defaults, primary keys,
+     * and JSON indexes are rejected. Equality/membership/ordering predicates are
+     * out of scope in V1 — the generated column ref exposes null checks only.
+     *
+     * Registering a JSON field with a driver that does not support typed JSON
+     * fails at `register()`.
+     */
+    protected fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder =
+        registerJson(name, klass)
+
+    /** Reified convenience for [json] — `json<PetMetadata>("pet_metadata")`. */
+    protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder =
+        registerJson(name, T::class)
+
+    @PublishedApi
+    internal fun registerJson(name: String, klass: KClass<*>): JsonFieldBuilder =
+        JsonFieldBuilder(name).also {
+            validateName(name, "Field")
+            checkNotFinalized()
+            it.setJsonClass(klass)
+            it.declarationOwner = this
+            _fields.add(it)
+        }
+
+    /**
      * Registration hook for the `entkt.postgres.vector.postgresVector(name,
      * dimensions)` extension (RFC "Native Database Column Types", §2). Mirrors
      * [enum]: validates the dimension and name, attaches the native storage,
