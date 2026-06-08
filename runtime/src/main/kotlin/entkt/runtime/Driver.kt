@@ -57,6 +57,29 @@ interface Driver {
     }
 
     /**
+     * Whether this driver can store typed JSON columns (`FieldType.JSON`).
+     * Defaults to false; Postgres overrides to true. RFC "Typed JSON Fields".
+     */
+    fun supportsTypedJson(): Boolean = false
+
+    /**
+     * Reject a schema with typed JSON columns when this driver does not
+     * [supportsTypedJson]. Called by `register` so an incompatible schema fails
+     * at `EntClient` construction rather than at first read/write.
+     */
+    fun checkTypedJsonSupported(schema: EntitySchema) {
+        if (supportsTypedJson()) return
+        for (col in schema.columns) {
+            if (col.type == entkt.schema.FieldType.JSON) {
+                throw UnsupportedDriverCapabilityException(
+                    "${schema.table}.${col.name} is a typed JSON column, but " +
+                        "${this::class.simpleName} does not support typed JSON storage",
+                )
+            }
+        }
+    }
+
+    /**
      * Insert a row. The map's keys are snake_case column names; the id
      * column may be absent (driver mints one) or present (driver
      * stores as-is). Returns the persisted row, including the assigned

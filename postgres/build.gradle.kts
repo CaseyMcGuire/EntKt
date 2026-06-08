@@ -1,5 +1,7 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // For @Serializable JSON fixtures in the test source set.
+    alias(libs.plugins.kotlin.serialization)
     `java-library`
     `maven-publish`
 }
@@ -24,6 +26,8 @@ dependencies {
     api(project(":migrations"))
     implementation(project(":codegen"))
     implementation(libs.postgresql)
+    // Configured Json instance + typed encode/decode for JSON columns.
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)

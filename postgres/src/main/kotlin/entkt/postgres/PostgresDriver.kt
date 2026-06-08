@@ -66,6 +66,13 @@ private fun List<Predicate<*>>.andTogether(): Predicate<*>? =
 class PostgresDriver(
     private val dataSource: DataSource,
     private val autoDdl: Boolean = false,
+    /**
+     * `Json` instance used for all typed JSON encode/decode (RFC "Typed JSON
+     * Fields"). Defaults to `Json.Default`; pass e.g. `Json { ignoreUnknownKeys
+     * = true }` to configure behavior. Serializers come from column metadata,
+     * not from here.
+     */
+    private val json: kotlinx.serialization.json.Json = kotlinx.serialization.json.Json.Default,
 ) : Driver {
 
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
@@ -76,6 +83,8 @@ class PostgresDriver(
         // Reject native-storage columns whose codec this driver can't handle
         // (Postgres supports postgres.vector; everything else fails here).
         checkNativeStorageSupported(schema)
+        // Reject typed JSON only if unsupported (Postgres supports it).
+        checkTypedJsonSupported(schema)
 
         if (autoDdl) {
             // Required extensions (e.g. pgvector) must exist before a column
@@ -193,7 +202,7 @@ class PostgresDriver(
             }
             stmt.executeQuery().use { rs ->
                 check(rs.next()) { "INSERT into $table returned no row" }
-                decodeRow(rs, schema.columns)
+                decodeRow(rs, schema.table, schema.columns)
             }
         }
     }
@@ -237,7 +246,7 @@ class PostgresDriver(
             }
             stmt.executeQuery().use { rs ->
                 // No assertion: a conflict legitimately produces zero rows.
-                if (rs.next()) decodeRow(rs, schema.columns) else null
+                if (rs.next()) decodeRow(rs, schema.table, schema.columns) else null
             }
         }
     }
@@ -264,7 +273,7 @@ class PostgresDriver(
             }
             bind(stmt, cols.size + 1, columnTypeOf(schema, schema.idColumn), id)
             stmt.executeQuery().use { rs ->
-                if (rs.next()) decodeRow(rs, schema.columns) else null
+                if (rs.next()) decodeRow(rs, schema.table, schema.columns) else null
             }
         }
     }
@@ -275,7 +284,7 @@ class PostgresDriver(
         return conn.prepareStatement(sql).use { stmt ->
             bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
             stmt.executeQuery().use { rs ->
-                if (rs.next()) decodeRow(rs, schema.columns) else null
+                if (rs.next()) decodeRow(rs, schema.table, schema.columns) else null
             }
         }
     }
@@ -359,7 +368,7 @@ class PostgresDriver(
             }
             stmt.executeQuery().use { rs ->
                 val out = ArrayList<Map<String, Any?>>()
-                while (rs.next()) out.add(decodeRow(rs, schema.columns))
+                while (rs.next()) out.add(decodeRow(rs, schema.table, schema.columns))
                 out
             }
         }
@@ -502,7 +511,7 @@ class PostgresDriver(
                     stmt.executeQuery().use { rs ->
                         for (ir in indexedRows) {
                             check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
-                            results[ir.index] = decodeRow(rs, schema.columns)
+                            results[ir.index] = decodeRow(rs, schema.table, schema.columns)
                         }
                     }
                 }
@@ -614,8 +623,51 @@ class PostgresDriver(
      */
     private fun bindColumn(stmt: PreparedStatement, idx: Int, schema: EntitySchema, col: String, value: Any?) {
         val column = schema.columns.firstOrNull { it.name == col }
+        if (column?.type == FieldType.JSON) {
+            bindJson(stmt, idx, schema.table, col, column.json, value)
+            return
+        }
         checkVectorDimensions(column?.storage as? ColumnStorage.Native, value, "Column '${schema.table}.$col'")
         bind(stmt, idx, column?.type, value)
+    }
+
+    /**
+     * Encode a typed JSON value to a `jsonb` parameter using the column's
+     * serializer and the driver's configured [json]. A null value binds SQL
+     * NULL. Missing serializer metadata (a raw write without registered schema
+     * info) and a wrong runtime type both fail with a field-named entkt error
+     * rather than reaching Postgres.
+     */
+    private fun bindJson(
+        stmt: PreparedStatement,
+        idx: Int,
+        table: String,
+        col: String,
+        meta: entkt.runtime.JsonColumnMetadata?,
+        value: Any?,
+    ) {
+        if (value == null) {
+            stmt.setNull(idx, Types.OTHER)
+            return
+        }
+        if (meta == null) {
+            error(
+                "Cannot write JSON to '$table.$col': the column has no serializer metadata. Use the " +
+                    "generated repos or register the schema so typed-JSON metadata is available.",
+            )
+        }
+        if (!meta.klass.isInstance(value)) {
+            error(
+                "Column '$table.$col' expects JSON of ${meta.klass.qualifiedName}, " +
+                    "got ${value::class.qualifiedName}",
+            )
+        }
+        @Suppress("UNCHECKED_CAST")
+        val serializer = meta.serializer as kotlinx.serialization.KSerializer<Any>
+        val obj = org.postgresql.util.PGobject()
+        obj.type = "jsonb"
+        obj.value = json.encodeToString(serializer, value)
+        stmt.setObject(idx, obj)
     }
 
     /** Field-named label for a predicate operand on `schema.field`. */
@@ -959,15 +1011,15 @@ class PostgresDriver(
         null -> Types.OTHER
     }
 
-    private fun decodeRow(rs: ResultSet, columns: List<ColumnMetadata>): Map<String, Any?> {
+    private fun decodeRow(rs: ResultSet, table: String, columns: List<ColumnMetadata>): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>(columns.size)
         for (col in columns) {
-            out[col.name] = decodeColumn(rs, col)
+            out[col.name] = decodeColumn(rs, table, col)
         }
         return out
     }
 
-    private fun decodeColumn(rs: ResultSet, col: ColumnMetadata): Any? {
+    private fun decodeColumn(rs: ResultSet, table: String, col: ColumnMetadata): Any? {
         return when (col.type) {
             FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> rs.getString(col.name)
             FieldType.BOOL -> {
@@ -996,8 +1048,22 @@ class PostgresDriver(
             FieldType.BYTES -> rs.getBytes(col.name)
             // pgvector decodes to its "[f0,f1,...]" text; parse back to PgVector.
             FieldType.PGVECTOR -> rs.getString(col.name)?.let { parsePgVector(it) }
-            // JSON decode needs the column's serializer + driver Json (Phase 4).
-            FieldType.JSON -> error("JSON decode lands in Phase 4")
+            // JSON: SQL NULL bypasses decode; otherwise decode the jsonb text
+            // through the column's serializer + the driver's configured Json.
+            FieldType.JSON -> rs.getString(col.name)?.let { text ->
+                val meta = col.json
+                    ?: error("JSON column '$table.${col.name}' has no serializer metadata")
+                @Suppress("UNCHECKED_CAST")
+                val serializer = meta.serializer as kotlinx.serialization.KSerializer<Any>
+                try {
+                    json.decodeFromString(serializer, text)
+                } catch (e: Exception) {
+                    throw IllegalStateException(
+                        "Failed to decode JSON column '$table.${col.name}' as ${meta.klass.qualifiedName}",
+                        e,
+                    )
+                }
+            }
         }
     }
 
@@ -1088,6 +1154,8 @@ class PostgresDriver(
     // not understood (a schema using one is rejected at register).
     override fun supportsNativeStorage(codec: String): Boolean = codec == "postgres.vector"
 
+    override fun supportsTypedJson(): Boolean = true
+
     // Like the other lock primitives, the relationship lock only does
     // useful work inside a transaction (an advisory lock taken in
     // auto-commit releases immediately), so the root driver advertises the
@@ -1115,7 +1183,7 @@ class PostgresDriver(
         return conn.prepareStatement(sql).use { stmt ->
             bind(stmt, 1, schema.idType, id)
             stmt.executeQuery().use { rs ->
-                if (rs.next()) decodeRow(rs, schema.columns) else null
+                if (rs.next()) decodeRow(rs, schema.table, schema.columns) else null
             }
         }
     }
@@ -1355,6 +1423,8 @@ class PostgresDriver(
             get() = root.supportsInsertIgnore
 
         override fun supportsNativeStorage(codec: String): Boolean = root.supportsNativeStorage(codec)
+
+        override fun supportsTypedJson(): Boolean = root.supportsTypedJson()
 
         override val supportsRelationshipSerialization: Boolean
             get() = root.supportsRelationshipSerialization
