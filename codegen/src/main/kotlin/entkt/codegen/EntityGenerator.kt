@@ -161,7 +161,10 @@ internal class EntityGenerator(
                     )
                 }
             } else {
-                val base = field.type.toTypeName()
+                // resolvedTypeName is JSON-aware (returns the @Serializable
+                // class); identical to toTypeName for scalars/pgvector. The
+                // driver returns the decoded Kotlin value, so this is a plain cast.
+                val base = field.resolvedTypeName()
                 val target = base.copy(nullable = nullable)
                 body.add("  %L = row[%S] as %T,\n", prop, col, target)
             }
@@ -315,6 +318,12 @@ internal class EntityGenerator(
             // Phantom-typed columns: first type arg is the owning entity
             // (`E`), second is the value type (`T`).
             cls.parameterizedBy(entityClass, enumTypeName)
+        } else if (field.type == FieldType.JSON) {
+            // Narrow JSON column ref: JsonColumn<E, T> (null checks only).
+            val jsonTypeName = field.resolvedTypeName()
+            val cls = if (nullable) ClassName("entkt.query", "NullableJsonColumn")
+            else ClassName("entkt.query", "JsonColumn")
+            cls.parameterizedBy(entityClass, jsonTypeName)
         } else {
             columnClassFor(field.type, nullable, entityClass)
         }

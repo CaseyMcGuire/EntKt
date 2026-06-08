@@ -17,6 +17,7 @@ internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
 internal val COLUMN_STORAGE_NATIVE = ClassName("entkt.schema", "ColumnStorage").nestedClass("Native")
+internal val JSON_COLUMN_METADATA = ClassName("entkt.runtime", "JsonColumnMetadata")
 
 /**
  * The [IdStrategy] enum variant that matches this schema's id declaration.
@@ -95,6 +96,8 @@ internal data class ColumnDescriptor(
     val default: Any? = null,
     /** Native storage metadata (pgvector, etc.) from `Field.storage`, or null. */
     val storage: entkt.schema.ColumnStorage? = null,
+    /** `@Serializable` Kotlin class for a JSON column (`Field.jsonClass`), or null. */
+    val jsonClass: kotlin.reflect.KClass<*>? = null,
 )
 
 /**
@@ -220,6 +223,7 @@ internal fun columnMetadataFor(
                     comment = field.comment,
                     default = field.default,
                     storage = field.storage,
+                    jsonClass = field.jsonClass,
                 ),
             )
         }
@@ -470,6 +474,18 @@ internal fun entitySchemaCodeBlock(
                             storage.codec, storage.dimensions,
                         )
                     }
+                }
+                val jsonClass = col.jsonClass
+                if (jsonClass != null) {
+                    // json = JsonColumnMetadata(klass = X::class, serializer = X.serializer()).
+                    // Referencing X.serializer() makes a non-@Serializable class fail to compile.
+                    val jsonCn = ClassName.bestGuess(
+                        jsonClass.qualifiedName ?: error("JSON class ${jsonClass.simpleName} must have a qualified name"),
+                    )
+                    colCb.add(
+                        ", json = %T(klass = %T::class, serializer = %T.serializer())",
+                        JSON_COLUMN_METADATA, jsonCn, jsonCn,
+                    )
                 }
                 colCb.add("),\n")
                 cb.add(colCb.build())

@@ -38,5 +38,14 @@ fun Field.resolvedTypeName(): TypeName {
             ?: error("Enum class ${klass.simpleName} must have a qualified name")
         return ClassName.bestGuess(qualifiedName)
     }
+    // JSON fields expose the supplied @Serializable class (like enum's actual
+    // type), resolved from jsonClass.
+    if (type == FieldType.JSON) {
+        val klass = jsonClass
+            ?: error("JSON field '${name}' must have a jsonClass — use json(\"$name\", X::class)")
+        val qualifiedName = klass.qualifiedName
+            ?: error("JSON class ${klass.simpleName} must have a qualified name")
+        return ClassName.bestGuess(qualifiedName)
+    }
     return type.toTypeName()
 }
