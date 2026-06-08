@@ -937,6 +937,9 @@ class PostgresDriver(
                 obj.value = pgVectorLiteral(value as entkt.postgres.vector.PgVector)
                 stmt.setObject(idx, obj)
             }
+            // JSON encode needs the column's serializer (not just FieldType), so
+            // it is handled in bindColumn before reaching here (Phase 4).
+            FieldType.JSON -> error("JSON values are bound in bindColumn, not bind (Phase 4)")
             null -> stmt.setObject(idx, value)
         }
     }
@@ -952,6 +955,7 @@ class PostgresDriver(
         FieldType.UUID -> Types.OTHER
         FieldType.BYTES -> Types.BINARY
         FieldType.PGVECTOR -> Types.OTHER
+        FieldType.JSON -> Types.OTHER
         null -> Types.OTHER
     }
 
@@ -992,6 +996,8 @@ class PostgresDriver(
             FieldType.BYTES -> rs.getBytes(col.name)
             // pgvector decodes to its "[f0,f1,...]" text; parse back to PgVector.
             FieldType.PGVECTOR -> rs.getString(col.name)?.let { parsePgVector(it) }
+            // JSON decode needs the column's serializer + driver Json (Phase 4).
+            FieldType.JSON -> error("JSON decode lands in Phase 4")
         }
     }
 

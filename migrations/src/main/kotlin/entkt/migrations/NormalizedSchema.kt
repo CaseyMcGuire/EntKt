@@ -269,6 +269,9 @@ fun formatSqlDefault(fieldType: FieldType, value: Any?): String? {
         // pgvector columns expose no default (the builder has no .default()),
         // so this is only reached defensively (value != null can't happen).
         FieldType.PGVECTOR -> error("pgvector columns have no default")
+        // JSON columns expose no default (rejected at the builder), so this is
+        // only reached defensively (value != null can't happen).
+        FieldType.JSON -> error("json columns have no default")
     }
 }
 

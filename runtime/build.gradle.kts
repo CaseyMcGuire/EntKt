@@ -26,6 +26,9 @@ dependencies {
     // for now this dependency is fine.
     api(project(":schema"))
 
+    // KSerializer appears in JsonColumnMetadata (public runtime metadata).
+    api(libs.kotlinx.serialization.core)
+
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

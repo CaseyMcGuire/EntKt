@@ -21,6 +21,9 @@ fun FieldType.toTypeName(): TypeName = when (this) {
     // The generated entity property + fromRow cast use the PgVector value type;
     // the driver owns decode (returns PgVector), so no per-field conversion.
     FieldType.PGVECTOR -> ClassName("entkt.postgres.vector", "PgVector")
+    // JSON's property type is the supplied @Serializable class, resolved from
+    // Field.jsonClass in resolvedTypeName() (like ENUM) — never via this map.
+    FieldType.JSON -> error("JSON field type is resolved from jsonClass, not FieldType (Phase 3)")
 }
 
 /**

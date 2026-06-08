@@ -87,6 +87,24 @@ data class ColumnMetadata(
      * Types", §5.
      */
     val storage: ColumnStorage? = null,
+    /**
+     * Serialization metadata for a `FieldType.JSON` column (RFC "Typed JSON
+     * Fields"). Null for non-JSON columns; required for JSON columns at
+     * registration. The driver encodes/decodes the field through
+     * [JsonColumnMetadata.serializer] with its own configured `Json` instance.
+     */
+    val json: JsonColumnMetadata? = null,
+)
+
+/**
+ * Serialization metadata attached to a typed JSON column. Carries the Kotlin
+ * class and its kotlinx serializer so the driver can encode/decode the field
+ * without guessing a serializer from a runtime value. The configured `Json`
+ * instance belongs to the driver, not here.
+ */
+data class JsonColumnMetadata(
+    val klass: kotlin.reflect.KClass<*>,
+    val serializer: kotlinx.serialization.KSerializer<*>,
 )
 
 /**

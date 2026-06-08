@@ -46,6 +46,8 @@ class PostgresTypeMapper : TypeMapper {
             // e.g. "vector(1536)" from the pgvector ColumnStorage.
             FieldType.PGVECTOR -> (storage as? ColumnStorage.Native)?.sqlType
                 ?: error("PGVECTOR column is missing its ColumnStorage.Native (sqlType)")
+            // Typed JSON is stored as jsonb (RFC "Typed JSON Fields").
+            FieldType.JSON -> "jsonb"
         }
     }
 

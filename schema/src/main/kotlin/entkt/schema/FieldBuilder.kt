@@ -36,6 +36,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     private var updateDefault: UpdateDefault? = null
     private var enumClass: kotlin.reflect.KClass<out Enum<*>>? = null
     private var storage: ColumnStorage? = null
+    private var jsonClass: kotlin.reflect.KClass<*>? = null
     protected var validators: MutableList<Validator> = mutableListOf()
 
     protected fun setUpdateDefault(value: UpdateDefault) {
@@ -71,6 +72,15 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     /** Native storage attached to this field (e.g. pgvector), or null. */
     internal val nativeStorage: ColumnStorage? get() = storage
 
+    /**
+     * Attach the `@Serializable` Kotlin class for a typed JSON field. Set once
+     * at registration (mirrors [setEnumClass]); folded into [Field] by [build].
+     */
+    @PublishedApi
+    internal fun setJsonClass(klass: kotlin.reflect.KClass<*>) {
+        this.jsonClass = klass
+    }
+
     fun build(): Field {
         if (immutable && updateDefault != null) {
             error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")
@@ -81,6 +91,12 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
         val nativeStorage = storage
         if (nativeStorage is ColumnStorage.Native && unique) {
             error("Field '$fieldName' is a native ${nativeStorage.typeName} column; .unique() is not supported")
+        }
+        // Typed JSON columns inherit the base modifier surface but reject the
+        // ones the RFC defers: a UNIQUE/default over a whole jsonb document.
+        if (type == FieldType.JSON) {
+            if (unique) error("Field '$fieldName' is a JSON column; .unique() is not supported")
+            if (default != null) error("Field '$fieldName' is a JSON column; defaults are not supported")
         }
         // Non-finite IEEE values (NaN / ±Infinity) have no portable SQL
         // literal — Postgres needs the quoted-cast form, and generated
@@ -110,6 +126,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             comment = comment,
             declarationName = declarationName,
             storage = storage,
+            jsonClass = jsonClass,
         )
     }
 }
