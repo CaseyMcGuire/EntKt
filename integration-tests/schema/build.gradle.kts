@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 base {
@@ -12,6 +13,8 @@ repositories {
 
 dependencies {
     implementation(project(":schema"))
+    // For the @Serializable JSON fixture (ArticleMeta).
+    implementation(libs.kotlinx.serialization.core)
 }
 
 java {
