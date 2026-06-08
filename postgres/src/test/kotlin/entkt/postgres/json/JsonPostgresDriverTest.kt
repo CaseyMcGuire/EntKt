@@ -138,6 +138,23 @@ class JsonPostgresDriverTest {
     }
 
     @Test
+    fun `a json schema round-trips through introspection with no drift`() {
+        fresh() // autoDdl creates the jsonb table
+        val typeMapper = entkt.postgres.PostgresTypeMapper()
+        val desired = entkt.migrations.NormalizedSchema.fromEntitySchemas(listOf(jsonSchema), typeMapper)
+        val current = entkt.postgres.PostgresIntrospector(dataSource).introspect(setOf("json_items"))
+
+        // Sanity: the metadata column introspects as jsonb.
+        assertEquals(
+            "jsonb",
+            current.tables.getValue("json_items").columns.first { it.name == "metadata" }.sqlType,
+        )
+        val diff = entkt.migrations.SchemaDiffer().diff(desired, current)
+        assertTrue(diff.ops.isEmpty(), "expected no auto ops, got: ${diff.ops}")
+        assertTrue(diff.manual.isEmpty(), "expected no manual ops, got: ${diff.manual}")
+    }
+
+    @Test
     fun `configured Json (ignoreUnknownKeys) decodes documents with extra keys`() {
         // Default Json rejects the extra key; a configured driver accepts it.
         dataSource.connection.use { conn ->

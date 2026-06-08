@@ -81,6 +81,9 @@ class PostgresTypeMapper : TypeMapper {
         "timestamp", "timestamp without time zone" -> "timestamp"
         "uuid" -> "uuid"
         "bytea" -> "bytea"
+        // entkt stores typed JSON as jsonb; treat a plain `json` column as the
+        // same JSON-compatible storage so it doesn't read as drift.
+        "json", "jsonb" -> "jsonb"
         else -> rawSqlType.lowercase()
     }
 }
