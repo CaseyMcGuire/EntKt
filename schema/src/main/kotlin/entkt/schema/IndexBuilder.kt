@@ -40,6 +40,12 @@ class IndexBuilder internal constructor(
 
     fun build(): Index {
         require(columns.isNotEmpty()) { "Index must have at least one field" }
+        // Typed JSON columns can't be indexed in V1 (whole-document equality and
+        // JSON indexes are deferred); reject them in any index, unique or not.
+        val jsonColumn = columns.firstOrNull { (it as? FieldHandle<*>)?.fieldType == FieldType.JSON }
+        if (jsonColumn != null) {
+            error("Index '$name' includes JSON column '${jsonColumn.fieldName}'; JSON columns cannot be indexed")
+        }
         if (isVectorIndex) {
             // A pgvector index has no UNIQUE form, and needs an access method
             // (there is no default btree opclass for `vector`).

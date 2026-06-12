@@ -67,8 +67,8 @@ class PostgresDriver(
     private val dataSource: DataSource,
     private val autoDdl: Boolean = false,
     /**
-     * `Json` instance used for all typed JSON encode/decode (RFC "Typed JSON
-     * Fields"). Defaults to `Json.Default`; pass e.g. `Json { ignoreUnknownKeys
+     * `Json` instance used for all typed JSON encode/decode. Defaults to
+     * `Json.Default`; pass e.g. `Json { ignoreUnknownKeys
      * = true }` to configure behavior. Serializers come from column metadata,
      * not from here.
      */
@@ -990,8 +990,8 @@ class PostgresDriver(
                 stmt.setObject(idx, obj)
             }
             // JSON encode needs the column's serializer (not just FieldType), so
-            // it is handled in bindColumn before reaching here (Phase 4).
-            FieldType.JSON -> error("JSON values are bound in bindColumn, not bind (Phase 4)")
+            // it is handled in bindColumn (via bindJson) before reaching here.
+            FieldType.JSON -> error("JSON values are encoded in bindColumn, not bind")
             null -> stmt.setObject(idx, value)
         }
     }

@@ -43,6 +43,32 @@ class JsonFieldTest {
     }
 
     @Test
+    fun `a json column in an index is rejected at build`() {
+        val s = object : EntSchema("idx") {
+            override fun id() = EntId.long()
+            val m = json("m", Meta::class).nullable()
+            val i = index("idx_m", m)
+        }
+        finalize(s)
+        // build() runs in indexes(); JSON columns can't be indexed in V1.
+        val err = assertFailsWith<IllegalStateException> { s.indexes() }
+        assertTrue("JSON column" in (err.message ?: ""), "got: ${err.message}")
+        assertTrue("'m'" in (err.message ?: ""), "should name the column: ${err.message}")
+    }
+
+    @Test
+    fun `a unique index over a json column is rejected at build`() {
+        val s = object : EntSchema("uidx") {
+            override fun id() = EntId.long()
+            val m = json("m", Meta::class).nullable()
+            val i = index("idx_m", m).unique()
+        }
+        finalize(s)
+        val err = assertFailsWith<IllegalStateException> { s.indexes() }
+        assertTrue("JSON column" in (err.message ?: ""), "got: ${err.message}")
+    }
+
+    @Test
     fun `unique on a json field is rejected at build`() {
         val s = object : EntSchema("u") {
             override fun id() = EntId.long()

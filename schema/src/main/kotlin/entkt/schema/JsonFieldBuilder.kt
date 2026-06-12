@@ -1,7 +1,7 @@
 package entkt.schema
 
 /**
- * Builder for a typed JSON column (RFC "Typed JSON Fields"). Declares no
+ * Builder for a typed JSON column. Declares no
  * modifiers of its own and does not override the final `build()`: `.nullable()`
  * / `.comment()` are inherited and valid; `.unique()` is inherited but rejected
  * by `build()`, as is any default. Length/scalar modifiers live only on the

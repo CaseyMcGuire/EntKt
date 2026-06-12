@@ -448,9 +448,9 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
             else ClassName("entkt.query", "Column")
             cls.parameterizedBy(entityClass, type.toTypeName())
         }
-        // JSON: a narrow JsonColumn<E, T> (null checks only, no scalar helpers).
-        // Implemented in Phase 3 — needs Field.jsonClass, not just FieldType.
-        FieldType.JSON -> error("JSON column type is resolved from jsonClass (Phase 3)")
+        // JSON: a narrow JsonColumn<E, T> (null checks only, no scalar helpers),
+        // built in buildColumnRef from Field.jsonClass — never via this map.
+        FieldType.JSON -> error("JSON column type is resolved from jsonClass in buildColumnRef")
     }
 }
 

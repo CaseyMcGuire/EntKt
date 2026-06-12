@@ -112,6 +112,27 @@ class JsonPostgresDriverTest {
     }
 
     @Test
+    fun `registering a JSON column without serializer metadata fails clearly`() {
+        val noMeta = EntitySchema(
+            table = "json_no_meta",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true),
+                // FieldType.JSON but json = null — must be rejected at register, not
+                // deferred to first write/read.
+                ColumnMetadata("metadata", FieldType.JSON, nullable = true),
+            ),
+            edges = emptyMap(),
+        )
+        val ex = assertFailsWith<IllegalStateException> {
+            PostgresDriver(dataSource).register(noMeta)
+        }
+        assertTrue("json_no_meta.metadata" in ex.message!!, ex.message ?: "")
+        assertTrue("JsonColumnMetadata" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
     fun `a wrong-type JSON write fails with a field-named entkt error`() {
         val driver = fresh()
         val ex = assertFailsWith<IllegalStateException> {

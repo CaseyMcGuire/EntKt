@@ -23,7 +23,7 @@ fun FieldType.toTypeName(): TypeName = when (this) {
     FieldType.PGVECTOR -> ClassName("entkt.postgres.vector", "PgVector")
     // JSON's property type is the supplied @Serializable class, resolved from
     // Field.jsonClass in resolvedTypeName() (like ENUM) — never via this map.
-    FieldType.JSON -> error("JSON field type is resolved from jsonClass, not FieldType (Phase 3)")
+    FieldType.JSON -> error("JSON field type is resolved from jsonClass via resolvedTypeName(), not this map")
 }
 
 /**

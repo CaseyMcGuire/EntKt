@@ -182,7 +182,7 @@ abstract class EntSchema(val tableName: String) {
 
     /**
      * Declare a typed JSON column backed by the `@Serializable` Kotlin class
-     * [klass] (RFC "Typed JSON Fields"). The class is exposed at the generated
+     * [klass]. The class is exposed at the generated
      * API boundary; values are stored as Postgres `jsonb` and encoded/decoded
      * through the class's kotlinx serializer (generated code references
      * `klass.serializer()`, so a non-serializable class fails at compile time).

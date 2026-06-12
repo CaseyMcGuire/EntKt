@@ -58,22 +58,36 @@ interface Driver {
 
     /**
      * Whether this driver can store typed JSON columns (`FieldType.JSON`).
-     * Defaults to false; Postgres overrides to true. RFC "Typed JSON Fields".
+     * Defaults to false; Postgres overrides to true.
      */
     fun supportsTypedJson(): Boolean = false
 
     /**
-     * Reject a schema with typed JSON columns when this driver does not
-     * [supportsTypedJson]. Called by `register` so an incompatible schema fails
-     * at `EntClient` construction rather than at first read/write.
+     * Validate a schema's typed JSON columns at `register` time so problems
+     * fail at `EntClient` construction rather than at first read/write:
+     *  - a JSON column on a driver that doesn't [supportsTypedJson] is rejected;
+     *  - a JSON column must carry its [ColumnMetadata.json] serializer metadata
+     *    (the generated schema attaches it; a hand-built one must too);
+     *  - a non-JSON column must NOT carry JSON metadata.
      */
     fun checkTypedJsonSupported(schema: EntitySchema) {
-        if (supportsTypedJson()) return
         for (col in schema.columns) {
-            if (col.type == entkt.schema.FieldType.JSON) {
+            val isJson = col.type == entkt.schema.FieldType.JSON
+            if (isJson && !supportsTypedJson()) {
                 throw UnsupportedDriverCapabilityException(
                     "${schema.table}.${col.name} is a typed JSON column, but " +
                         "${this::class.simpleName} does not support typed JSON storage",
+                )
+            }
+            if (isJson && col.json == null) {
+                throw IllegalStateException(
+                    "${schema.table}.${col.name} is a JSON column but has no JsonColumnMetadata; " +
+                        "register the generated schema (codegen attaches it) or supply JsonColumnMetadata",
+                )
+            }
+            if (!isJson && col.json != null) {
+                throw IllegalStateException(
+                    "${schema.table}.${col.name} carries JsonColumnMetadata but is not a JSON column",
                 )
             }
         }

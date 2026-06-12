@@ -93,7 +93,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             error("Field '$fieldName' is a native ${nativeStorage.typeName} column; .unique() is not supported")
         }
         // Typed JSON columns inherit the base modifier surface but reject the
-        // ones the RFC defers: a UNIQUE/default over a whole jsonb document.
+        // ones deferred in V1: a UNIQUE/default over a whole jsonb document.
         if (type == FieldType.JSON) {
             if (unique) error("Field '$fieldName' is a JSON column; .unique() is not supported")
             if (default != null) error("Field '$fieldName' is a JSON column; defaults are not supported")

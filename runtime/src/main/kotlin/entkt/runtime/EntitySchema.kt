@@ -88,8 +88,8 @@ data class ColumnMetadata(
      */
     val storage: ColumnStorage? = null,
     /**
-     * Serialization metadata for a `FieldType.JSON` column (RFC "Typed JSON
-     * Fields"). Null for non-JSON columns; required for JSON columns at
+     * Serialization metadata for a `FieldType.JSON` column. Null for non-JSON
+     * columns; required for JSON columns at
      * registration. The driver encodes/decodes the field through
      * [JsonColumnMetadata.serializer] with its own configured `Json` instance.
      */

@@ -44,8 +44,8 @@ data class Field(
      */
     val storage: ColumnStorage? = null,
     /**
-     * The `@Serializable` Kotlin class for a `FieldType.JSON` field (RFC "Typed
-     * JSON Fields"). Null for non-JSON fields. Set by `JsonFieldBuilder` via
+     * The `@Serializable` Kotlin class for a `FieldType.JSON` field. Null for
+     * non-JSON fields. Set by `JsonFieldBuilder` via
      * `FieldBuilder.setJsonClass(...)`; codegen derives `X.serializer()` from it
      * (the schema module never touches the serializer, only the class).
      */

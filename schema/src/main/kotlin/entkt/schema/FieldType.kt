@@ -22,7 +22,7 @@ enum class FieldType {
     PGVECTOR,
 
     /**
-     * A typed JSON column (RFC "Typed JSON Fields"). The Kotlin class and its
+     * A typed JSON column. The Kotlin class and its
      * kotlinx serializer live on the column's `JsonColumnMetadata`; this is just
      * the discriminator codegen and the driver switch on. Declared via
      * `json(name, KClass)` / `json<T>(name)`; stored as Postgres `jsonb`.
