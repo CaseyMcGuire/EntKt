@@ -7,7 +7,7 @@ query builders, and repositories that talk to a pluggable `Driver`.
 ## Guides
 
 - [Getting Started](01-getting-started.md) -- setup, first schema, running codegen
-- [Schema](02-schema.md) -- fields, edges, indexes, ID strategies, native column types (pgvector)
+- [Schema](02-schema.md) -- fields, edges, indexes, ID strategies, native column types (pgvector, typed JSON)
 - [Edges](03-edges.md) -- how edge types map to tables, columns, and generated code
 - [Queries](04-queries.md) -- predicates, ordering, pagination, edge traversal, eager loading, read-path interceptors
 - [Hooks](05-hooks.md) -- lifecycle hooks for create, update, and delete

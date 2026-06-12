@@ -70,6 +70,8 @@ class Ticket : EntSchema("tickets") {
 
 Postgres-specific native types (e.g. `pgvector`) are import-gated and not on the
 base DSL -- see [Native Column Types (Postgres pgvector)](#native-column-types-postgres-pgvector).
+Typed JSON columns (a `@Serializable` class stored as `jsonb`) are declared with
+`json(...)` -- see [Typed JSON Fields](#typed-json-fields-postgres-jsonb).
 
 ### Common Modifiers
 
@@ -697,6 +699,57 @@ with `UnsupportedDriverCapabilityException` rather than failing later.
 
 See [Queries -> Vector distance ordering](04-queries.md#vector-distance-ordering-pgvector)
 for nearest-neighbor search.
+
+## Typed JSON Fields (Postgres jsonb)
+
+A `json(...)` field exposes a `@Serializable` Kotlin class at the generated API
+boundary while storing the value as Postgres `jsonb`. It follows the same
+`(name, KClass)` shape as `enum`:
+
+```kotlin
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class PetMetadata(val nickname: String?, val tags: List<String>)
+
+class Pet : EntSchema("pets") {
+    override fun id() = EntId.long()
+
+    val name = string("name")
+    val metadata = json("pet_metadata", PetMetadata::class).nullable()
+    // Reified convenience: json<PetMetadata>("pet_metadata")
+}
+```
+
+Applications must apply the Kotlin serialization compiler plugin
+(`org.jetbrains.kotlin.plugin.serialization`) and have `kotlinx-serialization-json`
+available.
+
+- The generated property type is the supplied class (`metadata: PetMetadata?`).
+  Generated code references `PetMetadata.serializer()`, so a **non-`@Serializable`
+  class fails at compile time** rather than as a late read failure.
+- Encoding/decoding go through `kotlinx.serialization`. Configure the behavior on
+  the driver: `PostgresDriver(dataSource, json = Json { ignoreUnknownKeys = true })`
+  (default `Json.Default`). Serializers come from the column, not the `Json` config.
+- `.nullable()` and `.comment()` apply; **defaults, `.unique()`, primary keys, and
+  JSON indexes are rejected** with a clear error. Database-specific JSON indexes
+  can be added via manual migrations.
+- The generated column ref is a narrow `JsonColumn` -- it exposes **null checks
+  only** (`Pet.metadata.isNull()` / `.isNotNull()` on nullable columns). Equality,
+  membership, ordering, containment, and path predicates are out of scope in V1.
+
+**Errors.** A wrong-type write, a raw write without registered serializer
+metadata, and a decode failure each throw a field-named error carrying the
+table, column, and expected class (decode failures keep the original
+serialization exception as the cause).
+
+**Migrations.** A JSON column renders `jsonb`. Migrations diff only database
+facts (column existence, `jsonb` type, nullability) -- changing the Kotlin class,
+property names, `@SerialName`s, or serializer config produces **no** automatic
+migration, since the database can't reconstruct them.
+
+**Driver support.** A non-Postgres driver rejects a typed JSON schema at
+`register()` with `UnsupportedDriverCapabilityException`.
 
 ## Reusable Mixins
 

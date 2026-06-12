@@ -66,7 +66,7 @@ Out of scope here:
 - Custom scalar converters (`Email`, `Slug`): see
   [Custom Scalar Converters](../../possible-features/schema/custom-scalar-converters.md).
 - Typed JSON fields (`json("pet_metadata", PetMetadata::class)`): see
-  [Typed JSON Fields](../../possible-features/schema/typed-json-fields.md).
+  [Typed JSON Fields](typed-json-fields.md).
 - Arrays, native database enums, and vector filtering. Each needs its own design
   note before implementation.
 
@@ -555,7 +555,7 @@ separate proposals so the APIs stay explicit instead of overloading one generic
 
 - [Custom Scalar Converters](../../possible-features/schema/custom-scalar-converters.md) for application-domain
   wrappers stored as ordinary scalar columns.
-- [Typed JSON Fields](../../possible-features/schema/typed-json-fields.md) for structured JSON/JSONB values.
+- [Typed JSON Fields](typed-json-fields.md) for structured JSON/JSONB values.
 - Native database enums, arrays, and vector filtering need separate RFCs before
   implementation.
 

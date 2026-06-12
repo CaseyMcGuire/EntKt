@@ -152,6 +152,7 @@ When you explicitly opt in with `PostgresDriver(dataSource, autoDdl = true)`,
 | `UUID` | `uuid` |
 | `BYTES` | `bytea` |
 | `PGVECTOR` | `vector(n)` (pgvector) |
+| `JSON` | `jsonb` (typed JSON) |
 
 ID strategies `AUTO_INT` and `AUTO_LONG` map to `serial` and `bigserial`
 respectively.
@@ -162,6 +163,12 @@ rather than a portable `FieldType`. A driver advertises native support via
 `"postgres.vector"`); a driver that does not rejects a vector schema at
 `register()` with `UnsupportedDriverCapabilityException`. See
 [Schema -> Native Column Types](02-schema.md#native-column-types-postgres-pgvector).
+
+`JSON` carries serialization metadata (`JsonColumnMetadata`: the Kotlin class +
+its kotlinx serializer). A driver advertises support via `supportsTypedJson()`
+(PostgresDriver returns `true` and encodes/decodes `jsonb` through a configurable
+`Json`); a driver that does not rejects a typed JSON schema at `register()`. See
+[Schema -> Typed JSON Fields](02-schema.md#typed-json-fields-postgres-jsonb).
 
 ### Query Lowering
 
