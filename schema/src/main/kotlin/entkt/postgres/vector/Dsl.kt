@@ -6,7 +6,7 @@ import entkt.schema.IndexableColumn
 import entkt.schema.PgVectorFieldBuilder
 
 /**
- * Declare a Postgres `pgvector` column (RFC "Native Database Column Types").
+ * Declare a Postgres `pgvector` column.
  * Import-gated (`import entkt.postgres.vector.*`) so it does not appear on the
  * base schema DSL — a Postgres-native field looks Postgres-native at the call
  * site. `dimensions` must be 1..16000 (the `vector` column cap; HNSW/IVFFlat
@@ -33,7 +33,7 @@ enum class VectorMetric(val opclass: String) {
  * Declare a `pgvector` index on [field]. Spell out the access method + metric
  * explicitly via `.hnsw(...)` / `.ivfflat(...)` — vector indexes are not btree.
  * Import-gated and registered through the same `@PublishedApi internal` bridge
- * as `postgresVector` (RFC §6).
+ * as `postgresVector`.
  */
 inline fun EntSchema.postgresVectorIndex(name: String, field: IndexableColumn): IndexBuilder =
     registerPostgresVectorIndex(name, field)

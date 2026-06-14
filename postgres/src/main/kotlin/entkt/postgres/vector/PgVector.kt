@@ -2,7 +2,7 @@ package entkt.postgres.vector
 
 /**
  * A Postgres `pgvector` value: a fixed-length list of 32-bit floats with
- * **content** equality (RFC "Native Database Column Types", §7).
+ * **content** equality.
  *
  * The backing array is never shared — [of] copies on the way in and
  * [toFloatArray] copies on the way out (with read-only [get] / [dimensions]

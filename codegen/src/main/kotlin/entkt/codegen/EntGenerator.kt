@@ -185,8 +185,8 @@ private fun m2mCanonicalKey(junctionName: String, sourceEdge: String, targetEdge
  * - **One** declaration: always allowed (the lone-side case).
  * - **Two** declarations: allowed **only if pair-swapped** — one's
  *   `(sourceEdge, targetEdge)` is the other's `(targetEdge, sourceEdge)`.
- *   This is how both orientations of a symmetric link table are declared
- *   (RFC 10). Two declarations with the **same** orientation are rejected as
+ *   This is how both orientations of a symmetric link table are declared.
+ *   Two declarations with the **same** orientation are rejected as
  *   a same-orientation alias.
  * - **Three or more** declarations: rejected (only two distinct orientations
  *   exist over a 2-edge junction, so 3+ necessarily repeats one).

@@ -86,7 +86,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")
         }
         // Native columns inherit the base modifier surface but reject the ones
-        // that don't make sense (RFC §3). A UNIQUE index over a native value
+        // that don't make sense. A UNIQUE index over a native value
         // such as a high-dimensional vector is broken.
         val nativeStorage = storage
         if (nativeStorage is ColumnStorage.Native && unique) {

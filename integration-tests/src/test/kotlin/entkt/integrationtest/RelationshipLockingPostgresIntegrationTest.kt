@@ -68,7 +68,7 @@ class RelationshipLockingPostgresIntegrationTest {
     }
 
     /**
-     * A [Driver] decorator that forces the two RFC 10 capability flags to a
+     * A [Driver] decorator that forces the two relationship-locking capability flags to a
      * fixed value while delegating everything else (including the real lock
      * primitives) to [inner]. Lets the capability preflights be exercised
      * against a real Postgres database.

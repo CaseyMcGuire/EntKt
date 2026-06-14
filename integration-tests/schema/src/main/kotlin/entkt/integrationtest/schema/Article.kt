@@ -4,7 +4,7 @@ import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlinx.serialization.Serializable
 
-/** A typed JSON document stored on `articles.metadata` (RFC "Typed JSON Fields"). */
+/** A typed JSON document stored on `articles.metadata`. */
 @Serializable
 data class ArticleMeta(
     val source: String?,

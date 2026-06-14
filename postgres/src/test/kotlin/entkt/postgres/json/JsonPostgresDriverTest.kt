@@ -27,7 +27,7 @@ data class Meta(val nickname: String?, val tags: List<String>)
 
 /**
  * Driver-level bind/decode/DDL/capability coverage for typed JSON columns
- * against a real Postgres (RFC "Typed JSON Fields", Phase 4). Uses a hand-built
+ * against a real Postgres. Uses a hand-built
  * [EntitySchema] carrying [JsonColumnMetadata]; `jsonb` needs no extension, so a
  * plain Postgres image suffices.
  */

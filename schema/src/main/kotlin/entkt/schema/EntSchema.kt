@@ -213,7 +213,7 @@ abstract class EntSchema(val tableName: String) {
 
     /**
      * Registration hook for the `entkt.postgres.vector.postgresVector(name,
-     * dimensions)` extension (RFC "Native Database Column Types", §2). Mirrors
+     * dimensions)` extension. Mirrors
      * [enum]: validates the dimension and name, attaches the native storage,
      * and registers the field — so the public, import-gated `postgresVector`
      * extension can build a native field without reaching the private
@@ -323,7 +323,7 @@ abstract class EntSchema(val tableName: String) {
 
     /**
      * Registration hook for the `entkt.postgres.vector.postgresVectorIndex(name,
-     * field)` extension (RFC "Native Database Column Types", §6). Mirrors [index]
+     * field)` extension. Mirrors [index]
      * — same column-ownership validation — so the import-gated extension can
      * register a native vector index without reaching `IndexBuilder`'s internal
      * ctor or the protected `index()`.

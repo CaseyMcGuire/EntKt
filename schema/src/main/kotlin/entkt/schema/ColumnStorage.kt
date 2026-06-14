@@ -2,7 +2,7 @@ package entkt.schema
 
 /**
  * Describes how a field is stored when the storage is richer than a plain
- * [FieldType] → SQL-type mapping (RFC "Native Database Column Types", §5).
+ * [FieldType] → SQL-type mapping.
  *
  * Defined in the schema module so both the schema-side [Field] and the runtime
  * `ColumnMetadata` (which already depends on `entkt.schema`) can carry one

@@ -34,7 +34,7 @@ interface Driver {
      * for every `ColumnStorage.Native` column and fail construction with
      * [UnsupportedDriverCapabilityException] when a needed codec is
      * unsupported, so an incompatible schema is rejected up front rather than
-     * at first read/write. RFC "Native Database Column Types", §9.
+     * at first read/write.
      */
     fun supportsNativeStorage(codec: String): Boolean = false
 

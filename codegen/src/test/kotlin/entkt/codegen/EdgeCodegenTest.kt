@@ -1943,7 +1943,7 @@ class EdgeCodegenTest {
 
     @Test
     fun `pair-swapped readOnly side missing its leading index is rejected`() {
-        // RFC 10: every two-sided declaration — writable OR .readOnly() — needs
+        // Every two-sided declaration — writable OR .readOnly() — needs
         // its source-FK leading index, because a readOnly side still reads by
         // source. The readOnly `users` side here lacks a group_id-leading index.
         val err = assertFailsWith<IllegalStateException> {

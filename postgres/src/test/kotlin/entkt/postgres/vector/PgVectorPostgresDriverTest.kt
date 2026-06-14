@@ -27,7 +27,7 @@ import kotlin.test.assertTrue
 
 /**
  * Driver-level bind/decode/DDL coverage for pgvector against a real
- * pgvector-enabled Postgres (RFC "Native Database Column Types", Phase 4).
+ * pgvector-enabled Postgres.
  * Uses a hand-built [EntitySchema] carrying [ColumnStorage.Native]; the
  * generated-entity end-to-end path is exercised in the integration-tests module.
  */

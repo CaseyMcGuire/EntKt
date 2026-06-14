@@ -14,7 +14,7 @@ enum class FieldType {
     ENUM,
 
     /**
-     * Postgres `pgvector` column (RFC "Native Database Column Types"). The
+     * Postgres `pgvector` column. The
      * specifics live on the column's [ColumnStorage.Native]; this is just the
      * discriminator codegen and the driver switch on. Declared via the
      * `entkt.postgres.vector.postgresVector(name, dimensions)` extension.

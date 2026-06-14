@@ -83,8 +83,7 @@ data class ColumnMetadata(
      * Native storage metadata (Postgres `pgvector`, etc.) when this column is
      * more than a plain [type] → SQL-type mapping. Null for ordinary columns.
      * Drivers dispatch bind/decode on `ColumnStorage.Native.codec`; migrations
-     * render its `sqlType` and required extension. RFC "Native Database Column
-     * Types", §5.
+     * render its `sqlType` and required extension.
      */
     val storage: ColumnStorage? = null,
     /**
@@ -142,7 +141,7 @@ data class IndexMetadata(
     val where: String? = null,
     /**
      * Index access method, e.g. `"hnsw"` / `"ivfflat"` for `pgvector`. Null =
-     * the dialect default (btree). RFC "Native Database Column Types", §6.
+     * the dialect default (btree).
      */
     val using: String? = null,
     /**

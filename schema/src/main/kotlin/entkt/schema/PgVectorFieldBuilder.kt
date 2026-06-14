@@ -1,8 +1,8 @@
 package entkt.schema
 
 /**
- * Builder for a Postgres `pgvector` column (RFC "Native Database Column
- * Types"). Declares no modifiers of its own and does not override the final
+ * Builder for a Postgres `pgvector` column. Declares no modifiers of its own
+ * and does not override the final
  * `build()`: `.nullable()` / `.comment()` are inherited and valid;
  * `.unique()` is inherited too but rejected by `build()`; length/default
  * modifiers live only on the scalar builders, so they are absent here.
