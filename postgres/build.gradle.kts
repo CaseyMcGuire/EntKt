@@ -26,8 +26,10 @@ dependencies {
     api(project(":migrations"))
     implementation(project(":codegen"))
     implementation(libs.postgresql)
-    // Configured Json instance + typed encode/decode for JSON columns.
-    implementation(libs.kotlinx.serialization.json)
+    // `Json` appears in the public PostgresDriver constructor, so a consumer
+    // compiling `PostgresDriver(ds, json = Json { ... })` needs it on their
+    // compile classpath — hence `api`, not `implementation`.
+    api(libs.kotlinx.serialization.json)
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
