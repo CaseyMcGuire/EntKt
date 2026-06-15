@@ -12,10 +12,10 @@ val users = client.users.query {
     orderBy(User.name.asc())
     limit(10)
     offset(20)
-}.all()
+}.allOrThrow()
 ```
 
-`.all()` returns a `List<User>`. Use `.firstOrNull()` for single results,
+`.allOrThrow()` returns a `List<User>`. Use `.firstOrNull()` for single results,
 `.visibleCount()` for a privacy-aware count, `.rawCount()` for a fast
 aggregate count, or `.rawExists()` / `.visibleExists()` to check whether
 a match exists (raw skips LOAD privacy; visible applies it).
@@ -310,7 +310,7 @@ val users = client.users.query {
         where(Post.published eq true)
         orderBy(Post.createdAt.desc())
     }
-}.all()
+}.allOrThrow()
 
 // Access loaded edges
 users.forEach { user ->
@@ -334,7 +334,7 @@ val users = client.users.query {
     withPosts {
         where(Post.published eq true)
     }
-}.all()
+}.allOrThrow()
 ```
 
 ### The `Edges` Data Class
@@ -500,7 +500,7 @@ client.withTransaction { tx ->
     val user = tx.users.create { name = "Alice"; email = "a@b.com" }.save()
     val posts = tx.posts.query {
         where(Post.authorId eq user.id)
-    }.all()
+    }.allOrThrow()
     // Both operations run in the same transaction
 }
 ```

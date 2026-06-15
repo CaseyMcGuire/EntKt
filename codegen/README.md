@@ -22,10 +22,10 @@ For each schema the generator emits:
   of `save()` (bypassing LOAD privacy); hooks receive a `{Entity}UpdateHookContext`
   with `before`, `patch`, and a restricted `mutation` view.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
-  `.offset(...)`, `.all()`, `.firstOrNull()`, edge traversal methods
+  `.offset(...)`, `.allOrThrow()`, `.firstOrNull()`, edge traversal methods
   (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
 - **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
-  `.byId(id)`, `.delete(entity)`, `.deleteById(id)`,
+  `.byId(id)`, `.deleteOrThrow(entity)`, `.deleteByIdOrError(id)`,
   `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)`.
   Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
@@ -74,7 +74,7 @@ hook works for both creates and updates. Hooks are declared once and
 automatically apply within transactions — no re-registration needed.
 
 **Bulk operations run hooks.** `createMany` delegates to `create { }.save()`
-per entry, and `deleteMany` queries then deletes through `delete(entity)` —
+per entry, and `deleteMany` queries then deletes through `deleteOrThrow(entity)` —
 all lifecycle hooks fire for every row.
 
 ## Eager loading
@@ -90,7 +90,7 @@ val users = client.users.query {
         where(Post.published eq true)    // optional: filter/order the edge
         orderBy(Post.createdAt.desc())
     }
-}.all()
+}.allOrThrow()
 
 users[0].edges.posts  // → List<Post> (loaded)
 users[0].edges.posts  // → null if withPosts() wasn't called
@@ -107,5 +107,5 @@ val owners = client.owners.query {
     withPets {
         withOwner()  // nested: also load each pet's owner
     }
-}.all()
+}.allOrThrow()
 ```

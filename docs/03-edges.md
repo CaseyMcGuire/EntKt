@@ -83,12 +83,12 @@ method on the query builder:
 
 ```kotlin
 // Query traversal: "find all posts for this user"
-val posts = client.users.query { ... }.first().queryPosts().all()
+val posts = client.users.query { ... }.firstOrThrow().queryPosts().allOrThrow()
 
 // Eager loading: batch-load posts for all queried users
 val users = client.users.query {
     withPosts { orderBy(Post.createdAt.desc()) }
-}.all()
+}.allOrThrow()
 users[0].edges.posts  // → List<Post>
 ```
 

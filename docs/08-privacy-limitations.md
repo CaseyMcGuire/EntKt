@@ -7,7 +7,7 @@ The following limitations are part of the current contract.
 
 `query.rawCount()` uses a driver aggregate fast path and does not
 evaluate LOAD privacy. This means it can reveal how many rows match a
-predicate, even if those rows would cause `query.all()` to throw
+predicate, even if those rows would cause `query.allOrThrow()` to throw
 `PrivacyDeniedException`.
 
 Use `query.visibleCount()` when you need a privacy-aware count. It
@@ -20,7 +20,7 @@ so it is subject to the same strict read contract as `firstOrNull()`.
 
 ## Strict Read Model
 
-`query.all()` throws `PrivacyDeniedException` if any matching entity is
+`query.allOrThrow()` throws `PrivacyDeniedException` if any matching entity is
 denied by LOAD privacy. Eager-loaded edges throw in the same way —
 if any eagerly loaded related entity is denied, the entire query fails.
 
@@ -28,7 +28,7 @@ if any eagerly loaded related entity is denied, the entire query fails.
 row is denied. It returns `null` only when no matching row exists.
 
 Because privacy is evaluated after the driver applies `limit` and
-`offset`, a query like `limit(10).all()` evaluates privacy on at most
+`offset`, a query like `limit(10).allOrThrow()` evaluates privacy on at most
 ten rows. If any of those rows are denied, the query throws rather than
 returning a partial result. Callers should ensure their predicates
 narrow results to entities the viewer is allowed to see, or handle

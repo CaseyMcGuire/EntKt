@@ -164,7 +164,7 @@ The `EntClient` is configured as a Spring bean:
 Each controller injects the `EntClient` and uses the generated repos:
 
 - `client.users.create { ... }.save()` -- type-safe builders
-- `client.users.query { where(...) }.all()` -- type-safe queries
+- `client.users.query { where(...) }.allOrThrow()` -- type-safe queries
 - `client.users.byId(id)` -- primary key lookup
 - `client.users.update(id) { ... }.saveOrThrow()` -- partial updates
-- `client.users.deleteById(id)` -- delete by ID
+- `client.users.deleteByIdOrError(id)` -- delete by ID

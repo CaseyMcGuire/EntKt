@@ -492,7 +492,7 @@ case):
 val q = PgVector.of(embeddingModel.embed("kotlin orm"))
 client.articles.query()
     .orderBy(Article.embedding.cosineDistance(q).asc())
-    .limit(20).all()
+    .limit(20).allOrThrow()
 ```
 
 `cosineDistance` / `l2Distance` / `innerProduct` are generated only on vector fields

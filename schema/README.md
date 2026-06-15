@@ -15,7 +15,7 @@ Stored as strings in the database.
 
 ## Field modifiers
 
-`.optional()`, `.unique()`, `.immutable()`,
+`.nullable()`, `.unique()`, `.immutable()`,
 `.sensitive()`, `.comment(...)`, `.default(value)` (type-safe per field type).
 Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
@@ -32,8 +32,9 @@ Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instan
 
 `belongsTo<Target>(name)` (FK-owning side), `hasMany<Target>(name)` (one-to-many),
 `hasOne<Target>(name)` (one-to-one), `manyToMany<Target>(name)` (via junction).
-Modifiers: `.inverse(Target::edge)`, `.required()`, `.unique()`,
-`.field(handle)`, `.through<Junction>(Junction::src, Junction::tgt)`,
+Modifiers: `.inverse(Target::edge)`, `.nullable()` (to-one edges are required by
+default), `.unique()`, `.field(handle)`,
+`throughLink<Junction>(Junction::src, Junction::tgt)` / `throughEntity<Junction>(...)`,
 `.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.
 
 ## Reusable mixins

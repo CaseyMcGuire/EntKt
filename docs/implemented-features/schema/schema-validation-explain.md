@@ -143,7 +143,7 @@ Today, the most important questions are answered only indirectly:
 - Which columns actually end up on the table?
 - Which FKs are synthesized vs reused from `.field(...)`?
 - Which indexes are emitted after mixins and FK helpers are applied?
-- Which `manyToMany(...).through(...)` relationships resolved successfully?
+- Which `manyToMany(...)` junctions (`throughLink` / `throughEntity`) resolved successfully?
 - Why did finalization reject a particular inverse or target?
 
 The project needs one explicit schema inspection boundary that is:
@@ -403,7 +403,7 @@ In particular:
   dedicated entry in Foreign Keys section)
 - `hasMany(...)` / `hasOne(...)` appear as traversal metadata only
   (no `fk=`, inverse resolved when available)
-- `manyToMany(...).through(...)` shows the resolved junction table and
+- `manyToMany(...).throughLink(...)` / `throughEntity(...)` shows the resolved junction table and
   the two junction edge names used for the join
 - `.field(handle)` shows that the FK reused an existing field instead of
   synthesizing one (FK column matches the declared field name)

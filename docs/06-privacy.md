@@ -188,7 +188,7 @@ load(
 LOAD privacy is enforced on:
 
 - `repo.byId(id)` -- throws `PrivacyDeniedException`
-- `query.all()` -- throws `PrivacyDeniedException` if any entity is denied
+- `query.allOrThrow()` -- throws `PrivacyDeniedException` if any entity is denied
 - `query.firstOrNull()` -- throws `PrivacyDeniedException` if the entity is denied; returns `null` only when no matching row exists
 - Eager-loaded edges (`withPosts()`, etc.) -- throws `PrivacyDeniedException` if any eagerly loaded entity is denied
 
@@ -343,7 +343,7 @@ Override the privacy context for a block of code:
 ```kotlin
 client.withPrivacyContext(PrivacyContext(Viewer.System)) { systemClient ->
     // All operations through systemClient use Viewer.System
-    systemClient.users.query().all()
+    systemClient.users.query().allOrThrow()
 }
 ```
 

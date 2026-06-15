@@ -151,7 +151,7 @@ fun main() {
     val adults = client.users.query {
         where(User.age gte 18)
         orderBy(User.age.desc())
-    }.all()
+    }.allOrThrow()
 
     // Update
     val updated = client.users.update(alice.id) {
@@ -159,7 +159,7 @@ fun main() {
     }.save()
 
     // Delete
-    client.users.delete(alice)
+    client.users.deleteOrThrow(alice)
 }
 ```
 
@@ -177,8 +177,8 @@ For each schema, the codegen emits:
 | `UserMutation.kt` | Interface shared by Create and Update builders |
 | `UserCreate.kt` | Builder with `.save()` for inserts |
 | `UserUpdate.kt` | Builder with `.save()` for updates (omits immutable fields) |
-| `UserQuery.kt` | Query builder with `.where()`, `.orderBy()`, `.all()`, edge traversal, eager loading |
-| `UserRepo.kt` | Repository with `.create {}`, `.update() {}`, `.query {}`, `.byId()`, `.delete()` |
+| `UserQuery.kt` | Query builder with `.where()`, `.orderBy()`, `.allOrThrow()`, edge traversal, eager loading |
+| `UserRepo.kt` | Repository with `.create {}`, `.update() {}`, `.query {}`, `.byId()`, `.deleteOrThrow()` |
 | `UserPrivacy.kt` | Privacy contexts, rules, WriteCandidate, and policy scope (see [Privacy](06-privacy.md)) |
 | `EntClient.kt` | Single entry point holding all repos, constructed with a `Driver` |
 

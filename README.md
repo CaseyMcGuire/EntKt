@@ -17,7 +17,7 @@ class User : EntSchema("users") {
 
     val name = string("name").minLength(1).maxLength(64)
     val email = string("email").unique()
-    val age = int("age").optional().min(0).max(150)
+    val age = int("age").nullable().min(0).max(150)
     val active = bool("active").default(true)
 
     val posts = hasMany<Post>("posts")
@@ -38,11 +38,11 @@ val alice = client.users.create {
 val adults = client.users.query {
     where(User.active eq true and (User.age gte 18))
     orderBy(User.age.desc())
-}.all()
+}.allOrThrow()
 
 val authorsWithPublishedPosts = client.users.query {
     where(User.posts.has { where(Post.published eq true) })
-}.all()
+}.allOrThrow()
 
 // Eager loading
 val usersWithPosts = client.users.query {
@@ -50,11 +50,11 @@ val usersWithPosts = client.users.query {
     withPosts {                        // batch-load posts for each user
         where(Post.published eq true)  // optional: filter the loaded edge
     }
-}.all()
+}.allOrThrow()
 usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if withPosts wasn't called)
 
 // Delete
-client.users.delete(alice)       // or client.users.deleteById(alice.id)
+client.users.deleteOrThrow(alice)  // or client.users.deleteByIdOrError(alice.id)
 
 // Transactions
 client.withTransaction { tx ->
