@@ -258,6 +258,13 @@ data class AggregateResultRow(val key: Any?, val value: Any?)
   ("driver _X_ does not support aggregate queries"); only `PostgresDriver`
   overrides it in V1, gated by `supportsAggregates(): Boolean = false` → `true` on
   Postgres (mirroring `supportsTypedJson`).
+- Because the method takes raw `String?` identifiers, an implementation **must
+  validate `column` and `groupBy` against the registered `EntitySchema` for
+  `table` before rendering SQL**, and reject an unknown column with a clear,
+  field-named entkt error — a bad identifier must never reach the database as a
+  driver error. The generated terminals only ever pass real `Column<E,*>` names,
+  so this is defense-in-depth for the low-level entry point (and the contract a
+  future non-generated caller can rely on).
 
 ### Postgres lowering
 
@@ -270,8 +277,12 @@ SELECT <FN>(<col> | *) FROM "<table>" [WHERE <preds>];
 SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<group>";
 ```
 
-- Identifiers (`table`, `group`, `col`) are quoted from schema metadata, never
-  caller input; predicate values are parameterized (`?`) — the same
+- Before rendering, `PostgresDriver.aggregate` resolves the registered
+  `EntitySchema` for `table` (the driver already caches it from `register`) and
+  validates that `column`/`groupBy` (when non-null) are real columns on it — an
+  unknown identifier fails with a field-named error (e.g.
+  `"orders.bogus is not a column on orders"`) before any SQL is built. Validated
+  identifiers are then quoted; predicate values are parameterized (`?`) — the same
   SQL-injection posture as `count`.
 - Decode: `COUNT → Long`; `SUM(int/long) → Long`; `SUM(float/double) → Double`;
   `AVG → Double`; `MIN/MAX →` the metric column's decoded type for comparable
@@ -315,7 +326,8 @@ SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<grou
   types, ungrouped and grouped-by-one-column; **an enum group key decodes to the
   enum, not its String**; empty-set returns (`0` for count, `null` otherwise);
   NULL-input skipping; nullable group key → one `key == null` bucket typed `K?`;
-  integral `sum` widens to `Long`; `avg` of integers is fractional.
+  integral `sum` widens to `Long`; `avg` of integers is fractional; **an unknown
+  metric or group column throws a field-named error before any SQL runs**.
 - **Unsupported driver:** a non-Postgres `Driver` throws from `aggregate`
   (`supportsAggregates() == false`).
 
