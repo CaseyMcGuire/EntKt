@@ -2,12 +2,23 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Proposed. V1 is fully specified below and ready to implement; not yet implemented.
+
+This RFC **extends the existing read-terminal spine** (`rawCount` / `visibleCount`
+/ `rawExists` / `visibleExists`) rather than introducing a parallel query system.
+Today the only aggregate is `rawCount()` over `Driver.count(table, predicates)`;
+V1 generalizes that one shape to the other four SQL aggregates, reusing the same
+interceptor pipeline, the same `ReadOperation`-driven privacy contract, and the
+same `…OrError` result variants.
 
 ## Summary
 
-Add typed aggregation helpers for count, min, max, sum, average, and group-by
-queries.
+Add typed **raw** aggregate terminals for `count`, `min`, `max`, `sum`, and `avg`,
+computed in the database over a query's predicates. Each terminal computes a
+**single** metric, optionally grouped by **one** column, and returns either a
+plain typed value (ungrouped) or a list of typed buckets (grouped). V1 is
+Postgres-only and, like `rawCount`, bypasses LOAD privacy — the `raw` prefix names
+that contract.
 
 ## Motivation
 
@@ -18,63 +29,266 @@ Applications often need reporting queries:
 - average age by account status
 - sum order totals by day
 
-Today users must drop to driver-specific SQL or build custom repository
-helpers.
+Today users must drop to driver-specific SQL or build custom repository helpers.
 
-## Non-Goals
+Each need maps to exactly one V1 terminal:
 
-- Do not build a full SQL expression DSL in the first version.
-- Do not support arbitrary joins in the first version.
-- Do not hide privacy implications of aggregate queries.
-- Do not replace raw driver escape hatches.
+| Need | V1 terminal |
+| --- | --- |
+| count posts by author | `posts.query { … }.rawCountBy(Post.authorId)` |
+| find latest post date | `posts.query { … }.rawMax(Post.createdAt)` |
+| average age by status | `users.query { … }.rawAvgBy(User.status, User.age)` |
+| sum order totals by day | `orders.query { … }.rawSumBy(Order.day, Order.total)` \* |
+
+\* "by day" here groups by a stored `day`/date column. Grouping by a *derived
+expression* (`date_trunc('day', created_at)`) is deferred — see Non-Goals.
+
+## V1 scope (decisions)
+
+These resolve the questions the earlier draft left open:
+
+1. **Result shape — generic typed values, no generated types** (see below).
+2. **Privacy — raw only.** Terminals are `raw*`; they do not evaluate LOAD
+   privacy. `visible*` / `checked*` are deferred.
+3. **One metric per call.** No multi-metric `aggregate { }` block in V1; the
+   single-metric terminals compose, and a block is a clean future extension.
+4. **Group by zero or one plain column.** Multiple/expression group keys deferred.
+5. **Postgres only.** Other drivers throw until they implement the contract.
 
 ## Proposed API
 
-Example:
+### Ungrouped terminals
 
 ```kotlin
-val stats = client.posts.query {
-    where(Post.published eq true)
-}.aggregate {
-    count()
-    max(Post.createdAt)
-    groupBy(Post.authorId)
+val total:  Long     = client.posts.query { where(Post.published eq true) }.rawCount()
+val latest: Instant? = client.posts.query { where(Post.published eq true) }.rawMax(Post.createdAt)
+val oldest: Instant? = client.posts.query { }.rawMin(Post.createdAt)
+val views:  Long?    = client.posts.query { }.rawSum(Post.viewCount)   // integral column → Long?
+val avgLen: Double?  = client.posts.query { }.rawAvg(Post.length)      // → Double?
+```
+
+An ungrouped metric returns `null` when no row matches (the SQL aggregate of the
+empty set), except `rawCount()`, which returns `0`.
+
+### Grouped terminals (one group column)
+
+```kotlin
+val perAuthor: List<AggregateBucket<Long, Long>> =
+    client.posts.query { where(Post.published eq true) }.rawCountBy(Post.authorId)
+
+for (b in perAuthor) {
+    val author: Long = b.key      // typed by Post.authorId : Column<Post, Long>
+    val n:      Long = b.value
 }
+
+val avgAgeByStatus: List<AggregateBucket<Status, Double?>> =
+    client.users.query { }.rawAvgBy(User.status, User.age)
 ```
 
-Possible result:
+`AggregateBucket` is a generic runtime type (in `entkt.runtime`), **not** generated:
 
 ```kotlin
-data class PostAggregateRow(
-    val authorId: Long,
-    val count: Long,
-    val maxCreatedAt: Instant?,
-)
+data class AggregateBucket<K, V>(val key: K, val value: V)
 ```
 
-## Privacy Behavior
+There is one bucket per distinct key that has at least one matching row. Bucket
+order is unspecified (post-sort in Kotlin if needed). `rawCountBy` values are `≥ 1`;
+`min/max/sum/avg` bucket values are nullable (a bucket whose metric column is NULL
+for all of its rows yields a `null` value).
 
-Aggregations are observability-sensitive. V1 should make the contract explicit
-in method names or docs.
+### Result-shape decision (data class vs. row API)
 
-Options:
+A per-call generated data class — the earlier draft's
+`PostAggregateRow(authorId, count, maxCreatedAt)` — is **not implementable**:
+entkt's generator runs over the *schema* at build time and never sees call sites,
+so it cannot know that a given call selected `count + max grouped by authorId`,
+nor give the group key a precise type when any column could be the key.
 
-- raw aggregations use driver aggregate paths and do not evaluate LOAD
-  privacy
-- visible aggregations materialize rows, enforce LOAD privacy, and aggregate
-  in memory
-- checked aggregations throw if any matched row is denied
+V1 therefore returns **generic, strongly-typed runtime values** — plain scalars
+and `AggregateBucket<K, V>` — with all typing carried by the `Column<E, T>` handle
+you pass in. **No aggregate result types are generated.**
 
-The first implementation should probably start with raw aggregations only and
-name them clearly.
+### `…OrError` variants
 
-## Test Requirements
+Every terminal has an `…OrError` twin returning `EntResult<…>`, with the exact
+failure mapping of the shipped `rawCountOrError`:
 
-Before implementation, add tests for:
+- interceptor rejection → `EntResult.Err(QueryRejected)`
+- any other driver exception → `EntResult.Err(classifyDriverError(…))`
+- no `PrivacyDenied` arm — raw terminals never evaluate LOAD privacy
 
-- count, min, max, sum, and avg on supported field types
-- group-by one field
-- group-by multiple fields if supported
-- null handling matches database semantics
-- privacy behavior is covered for every aggregation mode
+```kotlin
+val r: EntResult<List<AggregateBucket<Long, Long>>> =
+    client.posts.query { }.rawCountByOrError(Post.authorId)
+```
 
+## Type rules
+
+`min`/`max` accept any comparable scalar column; `sum`/`avg` accept numeric
+columns only. The bounds are enforced **at compile time** via column-handle
+markers — the one small generator change V1 needs: numeric scalar columns
+(`FieldType.INT/LONG/FLOAT/DOUBLE`) additionally implement `NumericColumn`, split
+into `IntegralColumn` (INT, LONG) and `FloatingColumn` (FLOAT, DOUBLE). These are
+plumbing markers on the existing `Column` handles — users never name them; they
+just pass `Order.total` and overload resolution picks the right return type.
+Non-comparable columns (`BYTES`, `JSON`, `PGVECTOR`) are excluded from `min`/`max`
+by type; non-numeric columns are excluded from `sum`/`avg` by type.
+
+| Function | Accepts | Returns (ungrouped) | Bucket value (grouped) | `null` / empty |
+| --- | --- | --- | --- | --- |
+| `count` | (no column) | `Long` | `Long` (`≥ 1` per bucket) | never — `0` when empty |
+| `min` | `ComparableColumn<E,T>` | `T?` | `T?` | `null` when empty / all-NULL |
+| `max` | `ComparableColumn<E,T>` | `T?` | `T?` | `null` when empty / all-NULL |
+| `sum` | `IntegralColumn<E,*>` | `Long?` | `Long?` | `null` when empty / all-NULL |
+| `sum` | `FloatingColumn<E,*>` | `Double?` | `Double?` | `null` when empty / all-NULL |
+| `avg` | `NumericColumn<E,*>` | `Double?` | `Double?` | `null` when empty / all-NULL |
+
+Notes:
+
+- `sum` of an integral column returns `Long?` (Postgres widens `int4` → `int8`),
+  **not** `Int?`, to avoid overflow on row-count-scale sums. A sum exceeding
+  `Long` is out of V1 scope (it would need a `BigDecimal`/`DECIMAL` column type,
+  which does not exist yet).
+- `avg` is always `Double?`, including for integer inputs (`avg([1, 2]) == 1.5`).
+- SQL aggregates skip NULL inputs; `min/max/sum/avg` over zero non-NULL rows is
+  `null`. `count` counts rows (`COUNT(*)`), so it is `0`, never `null`.
+
+A lighter alternative — a single `NumericColumn` marker with `sum` returning
+`Double?` for all numeric columns — is rejected for V1 on least-surprise grounds
+(summing integers should yield an integer), but is a viable fallback if the
+integral/floating split is judged not worth the two extra markers.
+
+## Grouping semantics
+
+- `groupBy` is **zero or one** plain scalar column on the queried entity.
+- No group column → one aggregate over all matched rows (ungrouped terminals).
+- One group column → SQL `GROUP BY "col"`, one bucket per distinct key value.
+- If the group column is nullable, rows with a NULL key collapse into a single
+  bucket with `key == null` (the bucket key type widens to `K?`).
+- Bucket order is unspecified (database default); callers post-sort.
+- **Deferred:** multiple group columns, grouping by a derived expression
+  (`date_trunc`, etc.), `HAVING`, `COUNT(DISTINCT …)`, and ordering/limiting
+  buckets in SQL.
+
+## Privacy behavior
+
+V1 ships **raw** aggregates only. The `raw` prefix is the contract, identical to
+`rawCount` / `rawExists`: the metric is computed in the database over the
+(possibly interceptor-shaped) predicates, and **LOAD privacy is not evaluated** —
+no rows are materialized, so per-row privacy cannot be applied. This is the
+observability-sensitive surface the original draft flagged; naming it `raw*` makes
+the bypass explicit at every call site.
+
+Deferred privacy modes (future phases), mirroring the shipped `visibleCount`:
+
+- **`visible*`** — materialize matching rows, evaluate LOAD privacy on each, and
+  aggregate the survivors in memory. (`visibleSum` / `visibleAvg` would load every
+  matching row; that cost is why they are deferred, not the default.)
+- **`checked*`** — throw if any matched row is denied.
+
+Interceptors still apply to raw aggregates exactly as they do to `rawCount`:
+predicate-shaping interceptors (tenant scoping, the generated `soft-delete` filter)
+run through the same pipeline, so soft-deleted rows are excluded from
+`rawCount` / `rawSum` / buckets by default.
+
+## Interceptor & `ReadOperation` alignment
+
+- Add `RAW_AGGREGATE` to `entkt.runtime.ReadOperation`, beside `RAW_COUNT`.
+- It maps to `EntOperation.QUERY` for rejection reporting (the existing rule is
+  "everything except `BY_ID` → `QUERY`").
+- `limitOpsApply(RAW_AGGREGATE) = false` — aggregates ignore `limit` / `offset`,
+  so a `MaxLimitInterceptor` never silently caps an aggregate (the same reasoning
+  that lists `RAW_COUNT` as a no-op there).
+- Each terminal runs `val spec = runReadInterceptors(ReadOperation.RAW_AGGREGATE,
+  EntOperation.QUERY)` and forwards `spec.predicates` to the driver. `orderBy`,
+  `limit`, and `offset` are **not** forwarded (consistent with `rawCount`).
+- `…OrError` twins reuse `rawCountOrError`'s try/catch:
+  `EntQueryRejectedException → Err(e.queryRejected)`; any other `Exception →
+  Err(classifyDriverError(driver, e, schema, EntOperation.QUERY))`.
+
+## Driver contract
+
+One new method on `entkt.runtime.Driver`, threading predicates exactly like
+`count`:
+
+```kotlin
+fun aggregate(
+    table: String,
+    function: AggregateFunction,      // COUNT, SUM, AVG, MIN, MAX
+    column: String?,                  // metric column; null only for COUNT(*)
+    predicates: List<Predicate<*>>,   // AND-ed, same contract as count()
+    groupBy: String? = null,          // single group column, or null
+): List<AggregateResultRow>
+
+enum class AggregateFunction { COUNT, SUM, AVG, MIN, MAX }
+
+/** One result row. [key] is null when ungrouped; [value] is the metric (null per SQL NULL). */
+data class AggregateResultRow(val key: Any?, val value: Any?)
+```
+
+- An ungrouped call returns exactly one `AggregateResultRow` (`key == null`).
+- The default `Driver.aggregate` throws `UnsupportedDriverCapabilityException`
+  ("driver _X_ does not support aggregate queries"); only `PostgresDriver`
+  overrides it in V1, gated by `supportsAggregates(): Boolean = false` → `true` on
+  Postgres (mirroring `supportsTypedJson`).
+
+### Postgres lowering
+
+Reuses the predicate/`WHERE` rendering that `count()` already uses:
+
+```sql
+-- ungrouped
+SELECT <FN>(<col> | *) FROM "<table>" [WHERE <preds>];
+-- grouped
+SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<group>";
+```
+
+- Identifiers (`table`, `group`, `col`) are quoted from schema metadata, never
+  caller input; predicate values are parameterized (`?`) — the same
+  SQL-injection posture as `count`.
+- Decode: `COUNT → Long`; `SUM(int/long) → Long`; `SUM(float/double) → Double`;
+  `AVG → Double`; `MIN/MAX →` the metric column's decoded type (reuse the existing
+  per-column decoder, so `MIN(created_at) → Instant`, `MAX(status) → Status`). The
+  group key decodes as the group column's type.
+- `explainAggregate` should mirror `explainCount` (it feeds the
+  explain-interceptor surface). It may land in the same phase or just after; it is
+  not required for the core terminals.
+
+## Non-Goals (V1)
+
+- Multi-metric selection in one pass (`count()` **and** `max()` in one row). The
+  single-metric terminals compose; a multi-metric `aggregate { }` block is a clean
+  future extension (it would return a typed row-accessor object, **not** generated
+  classes — the same no-codegen constraint applies).
+- `visible*` / `checked*` privacy-aware aggregates.
+- Multiple group columns; expression / `date_trunc` group keys; `HAVING`;
+  `COUNT(DISTINCT …)`; SQL-side bucket ordering or limiting.
+- Aggregates across edges / joins.
+- Non-Postgres drivers.
+- A full SQL expression DSL; replacing the raw driver escape hatches.
+
+## Test requirements
+
+- **Schema / codegen:** numeric columns expose the `NumericColumn` /
+  `IntegralColumn` / `FloatingColumn` markers; `min`/`max` reject non-comparable
+  columns and `sum`/`avg` reject non-numeric columns at compile time (negative
+  compile fixtures or codegen unit assertions).
+- **Runtime / interceptor:** `RAW_AGGREGATE` maps to `QUERY`; `limitOpsApply` is
+  `false`; a predicate-shaping interceptor (and the soft-delete filter) affects
+  aggregate results; a rejecting interceptor yields `Err(QueryRejected)` from the
+  `…OrError` twin.
+- **Driver (Postgres, testcontainers):** `count/min/max/sum/avg` over supported
+  types, ungrouped and grouped-by-one-column; empty-set returns (`0` for count,
+  `null` otherwise); NULL-input skipping; nullable group key → one `null` bucket;
+  integral `sum` widens to `Long`; `avg` of integers is fractional.
+- **Unsupported driver:** a non-Postgres `Driver` throws from `aggregate`
+  (`supportsAggregates() == false`).
+
+## Future extensions
+
+- Multi-metric block — `rawAggregate { count(); max(...); groupBy(...) }` — over a
+  typed row-accessor result (still no generated result types).
+- `visibleAggregate` / `checkedAggregate` privacy modes.
+- Expression group keys (so "sum totals by day" needs no stored `day` column),
+  multi-column grouping, `HAVING`, `COUNT(DISTINCT)`.
+- Additional drivers once a second SQL driver exists.
