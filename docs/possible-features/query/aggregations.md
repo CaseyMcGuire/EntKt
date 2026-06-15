@@ -124,15 +124,25 @@ val r: EntResult<List<AggregateBucket<Long, Long>>> =
 
 ## Type rules
 
-`min`/`max` accept any comparable scalar column; `sum`/`avg` accept numeric
-columns only. The bounds are enforced **at compile time** via column-handle
-markers — the one small generator change V1 needs: numeric scalar columns
-(`FieldType.INT/LONG/FLOAT/DOUBLE`) additionally implement `NumericColumn`, split
-into `IntegralColumn` (INT, LONG) and `FloatingColumn` (FLOAT, DOUBLE). These are
-plumbing markers on the existing `Column` handles — users never name them; they
-just pass `Order.total` and overload resolution picks the right return type.
-Non-comparable columns (`BYTES`, `JSON`, `PGVECTOR`) are excluded from `min`/`max`
-by type; non-numeric columns are excluded from `sum`/`avg` by type.
+`min`/`max` accept any **comparable** scalar column (`ComparableColumn<E,T>`):
+string/text, int/long/float/double, time. `sum`/`avg` accept **numeric** columns
+only. Both bounds are enforced **at compile time** by marker interfaces emitted on
+the generated column handles:
+
+- `NumericColumn<E,T>` gates `sum`/`avg`, split into `IntegralColumn` (INT, LONG)
+  and `FloatingColumn` (FLOAT, DOUBLE) so overload resolution returns `Long?` vs
+  `Double?`.
+
+Users never name these markers — they pass `Order.total` and the right overload is
+chosen. **Enum, bytes, JSON, and pgvector are excluded from `min`/`max` by type**:
+`EnumColumn` and the base `Column` (bytes/pgvector) do not extend `ComparableColumn`,
+and `JsonColumn` is not a `Column` at all. Excluding enums is deliberate — enum
+ordering here is alphabetical on `.name`, which is rarely the intended min/max.
+
+These markers (plus the `GroupableColumn` markers in **Grouping** and enum-decode
+metadata on `EnumColumn`) are the column-handle layer V1 adds. No aggregate **result
+types** are generated — that decision stands; the additions are markers/metadata on
+the column handles that already exist.
 
 | Function | Accepts | Returns (ungrouped) | Bucket value (grouped) | `null` / empty |
 | --- | --- | --- | --- | --- |
@@ -160,11 +170,28 @@ integral/floating split is judged not worth the two extra markers.
 
 ## Grouping semantics
 
-- `groupBy` is **zero or one** plain scalar column on the queried entity.
+- `groupBy` is **zero or one** column, accepted as a `GroupableColumn<E,K>` — a
+  marker emitted on the groupable kinds: **string/text, bool, int/long/float/double,
+  time, UUID, enum**. **Bytes and pgvector are excluded** (the marker is required
+  precisely because bool/uuid and bytes/pgvector all share the base `Column` type
+  today and can't otherwise be told apart); JSON is already excluded (`JsonColumn`
+  isn't a `Column`).
 - No group column → one aggregate over all matched rows (ungrouped terminals).
 - One group column → SQL `GROUP BY "col"`, one bucket per distinct key value.
-- If the group column is nullable, rows with a NULL key collapse into a single
-  bucket with `key == null` (the bucket key type widens to `K?`).
+- **Nullable keys are typed by overload, not type-param widening** — a nullable
+  column carries its nullability on a marker, not in `K`, so each grouped terminal
+  has two overloads:
+  - `rawCountBy(key: GroupableColumn<E,K>): List<AggregateBucket<K, Long>>`
+  - `rawCountBy(key: NullableGroupableColumn<E,K>): List<AggregateBucket<K?, Long>>`
+
+  so `rawCountBy(Post.authorId)` → `AggregateBucket<Long, Long>` and
+  `rawCountBy(Post.deletedAt)` → `AggregateBucket<Instant?, Long>`. A nullable group
+  column folds its NULLs into the single `key == null` bucket.
+- **Enum group keys decode via column metadata.** The driver returns an enum column
+  as its stored `String` (the `Enum.valueOf` has always lived in entity `fromRow`,
+  which the aggregate path bypasses), so the grouped terminal converts the key back
+  to the enum using decode metadata carried on `EnumColumn`. This is what makes
+  `rawAvgBy(User.status, User.age): List<AggregateBucket<Status, Double?>>` typed.
 - Bucket order is unspecified (database default); callers post-sort.
 - **Deferred:** multiple group columns, grouping by a derived expression
   (`date_trunc`, etc.), `HAVING`, `COUNT(DISTINCT …)`, and ordering/limiting
@@ -247,9 +274,12 @@ SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<grou
   caller input; predicate values are parameterized (`?`) — the same
   SQL-injection posture as `count`.
 - Decode: `COUNT → Long`; `SUM(int/long) → Long`; `SUM(float/double) → Double`;
-  `AVG → Double`; `MIN/MAX →` the metric column's decoded type (reuse the existing
-  per-column decoder, so `MIN(created_at) → Instant`, `MAX(status) → Status`). The
-  group key decodes as the group column's type.
+  `AVG → Double`; `MIN/MAX →` the metric column's decoded type for comparable
+  scalars (`MIN(created_at) → Instant`; enums are not min/max-able). The group key
+  decodes as the group column's type — **except enum keys**, which the driver
+  returns as their stored `String`; the terminal maps them back to the enum via
+  `EnumColumn` decode metadata (the driver never does enum `valueOf` — that lives in
+  `fromRow`, which aggregates bypass).
 - `explainAggregate` should mirror `explainCount` (it feeds the
   explain-interceptor surface). It may land in the same phase or just after; it is
   not required for the core terminals.
@@ -261,6 +291,8 @@ SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<grou
   future extension (it would return a typed row-accessor object, **not** generated
   classes — the same no-codegen constraint applies).
 - `visible*` / `checked*` privacy-aware aggregates.
+- `min`/`max`/`sum`/`avg` over enum columns — enums are **group keys only** in V1
+  (their natural ordering is alphabetical-by-name, rarely the intended aggregate).
 - Multiple group columns; expression / `date_trunc` group keys; `HAVING`;
   `COUNT(DISTINCT …)`; SQL-side bucket ordering or limiting.
 - Aggregates across edges / joins.
@@ -269,17 +301,20 @@ SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<grou
 
 ## Test requirements
 
-- **Schema / codegen:** numeric columns expose the `NumericColumn` /
-  `IntegralColumn` / `FloatingColumn` markers; `min`/`max` reject non-comparable
-  columns and `sum`/`avg` reject non-numeric columns at compile time (negative
-  compile fixtures or codegen unit assertions).
+- **Schema / codegen:** numeric columns expose `NumericColumn` / `IntegralColumn` /
+  `FloatingColumn`; groupable columns expose `GroupableColumn` /
+  `NullableGroupableColumn`; `EnumColumn` carries enum-decode metadata. Compile-time
+  negative fixtures (or codegen unit assertions): `min`/`max` reject
+  enum/bytes/JSON/pgvector; `sum`/`avg` reject non-numeric; `groupBy` rejects
+  bytes/pgvector/JSON.
 - **Runtime / interceptor:** `RAW_AGGREGATE` maps to `QUERY`; `limitOpsApply` is
   `false`; a predicate-shaping interceptor (and the soft-delete filter) affects
   aggregate results; a rejecting interceptor yields `Err(QueryRejected)` from the
   `…OrError` twin.
 - **Driver (Postgres, testcontainers):** `count/min/max/sum/avg` over supported
-  types, ungrouped and grouped-by-one-column; empty-set returns (`0` for count,
-  `null` otherwise); NULL-input skipping; nullable group key → one `null` bucket;
+  types, ungrouped and grouped-by-one-column; **an enum group key decodes to the
+  enum, not its String**; empty-set returns (`0` for count, `null` otherwise);
+  NULL-input skipping; nullable group key → one `key == null` bucket typed `K?`;
   integral `sum` widens to `Long`; `avg` of integers is fractional.
 - **Unsupported driver:** a non-Postgres `Driver` throws from `aggregate`
   (`supportsAggregates() == false`).
