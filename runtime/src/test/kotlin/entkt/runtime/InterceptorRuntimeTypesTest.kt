@@ -237,6 +237,7 @@ class InterceptorRuntimeTypesTest {
             ReadOperation.VISIBLE_COUNT,
             ReadOperation.RAW_EXISTS,
             ReadOperation.VISIBLE_EXISTS,
+            ReadOperation.RAW_AGGREGATE,
             ReadOperation.EDGE_TRAVERSAL,
             ReadOperation.EDGE_PREDICATE,
             ReadOperation.EAGER_LOAD,

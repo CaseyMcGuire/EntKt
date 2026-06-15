@@ -172,6 +172,37 @@ interface Driver {
      */
     fun exists(table: String, predicates: List<Predicate<*>>): Boolean
 
+    /**
+     * Whether this driver can execute aggregate queries (a single min / max /
+     * sum / avg / count metric, optionally grouped by one column). Defaults to
+     * false; Postgres overrides to true.
+     */
+    fun supportsAggregates(): Boolean = false
+
+    /**
+     * Compute a single aggregate [function] over rows matching [predicates],
+     * optionally grouped by [groupBy]. [column] is the metric column name (null
+     * only for `COUNT(*)`); [groupBy] is a single group-column name or null.
+     *
+     * Implementations MUST validate [column] and [groupBy] against the
+     * registered schema before rendering SQL, rejecting an unknown identifier
+     * with a clear, field-named error rather than letting it reach the database.
+     * Returns exactly one [AggregateResultRow] when ungrouped (`key == null`),
+     * or one per distinct key when grouped. The default throws
+     * [UnsupportedDriverCapabilityException]; only drivers reporting
+     * [supportsAggregates] `= true` override it.
+     */
+    fun aggregate(
+        table: String,
+        function: AggregateFunction,
+        column: String?,
+        predicates: List<Predicate<*>>,
+        groupBy: String? = null,
+    ): List<AggregateResultRow> =
+        throw UnsupportedDriverCapabilityException(
+            "driver ${this::class.simpleName} does not support aggregate queries",
+        )
+
     /** Returns true if a row was actually removed. */
     fun delete(table: String, id: Any): Boolean
 

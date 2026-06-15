@@ -241,6 +241,9 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
     ReadOperation.VISIBLE_COUNT,
     ReadOperation.RAW_EXISTS,
     ReadOperation.VISIBLE_EXISTS,
+    // RAW_AGGREGATE: aggregates ignore limit/offset, so a MaxLimitInterceptor
+    // must never silently cap them (same reasoning as RAW_COUNT above).
+    ReadOperation.RAW_AGGREGATE,
     ReadOperation.EAGER_LOAD,
     ReadOperation.EDGE_PREDICATE,
     ReadOperation.EDGE_TRAVERSAL,
