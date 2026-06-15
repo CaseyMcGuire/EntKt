@@ -547,12 +547,12 @@ internal class RepoGenerator(
     /**
      * Private internal-only delete pipeline that assumes the caller
      * already ran the transaction-requirement preflight. Used by
-     * `delete(entity)` (public, runs preflight first), `deleteById`
-     * (runs preflight + byId, then this), and `deleteMany` (runs
-     * multi-write preflight + query, then this in a loop). Extracting
-     * this avoids the double preflight that `deleteById ->
-     * delete(entity)` and `deleteMany -> delete(entity)` would
-     * otherwise do.
+     * `deleteOrError` (public; `deleteOrThrow` delegates to it, runs
+     * preflight first), `deleteByIdOrError` (runs preflight + byId,
+     * then this), and `deleteMany` (runs multi-write preflight +
+     * query, then this in a loop). Extracting this avoids the double
+     * preflight that `deleteByIdOrError -> deleteOrError` and
+     * `deleteMany -> deleteOrError` would otherwise do.
      */
     private fun buildDeleteLoaded(
         entityClass: ClassName,
@@ -707,7 +707,7 @@ internal class RepoGenerator(
             .addStatement("var count = 0")
             // Per-entity deletes go through the private `deleteLoaded` so
             // they don't re-run the multi-write preflight that already
-            // ran above. (Going through public `delete(entity)` would
+            // ran above. (Going through public `deleteOrError` would
             // call `checkTransactionRequirement` once per matching row.)
             .addStatement("for (entity in entities) { if (deleteLoaded(entity)) count++ }")
             .addStatement("return count")
