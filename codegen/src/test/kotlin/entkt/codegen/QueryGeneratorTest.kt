@@ -14,6 +14,39 @@ class QueryGeneratorTest {
     private val generator = QueryGenerator("com.example.ent")
 
     @Test
+    fun `generates raw aggregate terminals`() {
+        // Car has year (Int → IntegralColumn), price (Float? → FloatingColumn).
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        // The shared helper routes through RAW_AGGREGATE + driver.aggregate.
+        assert(output.contains("ReadOperation.RAW_AGGREGATE")) { "aggregateRows uses RAW_AGGREGATE\n$output" }
+        assert(output.contains("driver.aggregate(Car.TABLE,")) { "aggregateRows calls driver.aggregate\n$output" }
+
+        // Ungrouped scalar terminals, typed by the column marker.
+        assert(output.contains("rawSum(column: IntegralColumn<Car, *>): Long?")) { "rawSum on integral → Long?\n$output" }
+        assert(output.contains("rawSum(column: FloatingColumn<Car, *>): Double?")) { "rawSum on floating → Double?\n$output" }
+        assert(output.contains("rawAvg(column: NumericColumn<Car, *>): Double?")) { "rawAvg → Double?\n$output" }
+        assert(output.contains("rawMin(column: ComparableColumn<Car, T>)")) { "rawMin takes ComparableColumn\n$output" }
+        assert(output.contains("rawMax(column: ComparableColumn<Car, T>)")) { "rawMax takes ComparableColumn\n$output" }
+
+        // Grouped terminals: non-null key → K, nullable key → K?.
+        assert(output.contains("rawCountBy(groupBy: GroupableColumn<Car, K>)")) { "rawCountBy non-null key overload\n$output" }
+        assert(output.contains("AggregateBucket<K, Long>")) { "non-null key bucket is AggregateBucket<K, Long>\n$output" }
+        assert(output.contains("rawCountBy(groupBy: NullableGroupableColumn<Car, K>)")) { "rawCountBy nullable key overload\n$output" }
+        assert(output.contains("AggregateBucket<K?, Long>")) { "nullable key bucket is AggregateBucket<K?, Long>\n$output" }
+
+        // Group keys are decoded via the column (enum-safe), not a raw cast.
+        assert(output.contains("groupBy.decodeKey(it.key)")) { "group keys decode via the column\n$output" }
+
+        // Grouped value terminals + …OrError twins exist.
+        assert(output.contains("rawAvgBy")) { "rawAvgBy grouped terminal exists\n$output" }
+        assert(output.contains("rawSumOrError")) { "rawSum has an OrError twin\n$output" }
+        assert(output.contains("rawCountByOrError")) { "rawCountBy has an OrError twin\n$output" }
+    }
+
+    @Test
     fun `generates query builder class`() {
         val car = Car()
         finalize(car, User())
