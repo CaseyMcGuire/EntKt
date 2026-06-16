@@ -8,6 +8,27 @@ package entkt.query
 interface Nullable
 
 /**
+ * Marker for a column usable as an aggregate group key (the `raw…By` terminals).
+ * Carries the column [name] and a [decodeKey] that turns the driver's raw group
+ * value into the typed key [K] — identity for most columns, enum-name → enum for
+ * [EnumColumn]. Implemented by string/text, numeric, time, bool, UUID, and enum
+ * columns; NOT by `Column<E, ByteArray>` (BYTES) or the pgvector column, so
+ * grouping by those is rejected at compile time.
+ */
+interface GroupableColumn<E : Any, K> {
+    val name: String
+    fun decodeKey(raw: Any?): K?
+}
+
+/**
+ * A nullable group column. Extends [GroupableColumn] so that, by overload
+ * specificity, the grouped terminals' `NullableGroupableColumn` overload (which
+ * yields `AggregateBucket<K?, …>`) is chosen for a nullable column — its NULLs
+ * fold into the single `key == null` bucket.
+ */
+interface NullableGroupableColumn<E : Any, K> : GroupableColumn<E, K>
+
+/**
  * A typed reference to a column in a generated entity. Exposes the
  * predicates that are valid for *every* column kind (equality and set
  * membership).
@@ -42,7 +63,13 @@ open class Column<E : Any, T>(val name: String) {
  * ops. See the [Column] KDoc for why ordering lives here and not on
  * the base.
  */
-open class ComparableColumn<E : Any, T : Comparable<T>>(name: String) : Column<E, T>(name) {
+open class ComparableColumn<E : Any, T : Comparable<T>>(name: String) :
+    Column<E, T>(name), GroupableColumn<E, T> {
+    // Group keys for comparable columns are already decoded to their Kotlin type
+    // by the driver (e.g. TIME → Instant, INT → Int), so decoding is identity.
+    @Suppress("UNCHECKED_CAST")
+    override fun decodeKey(raw: Any?): T? = raw as T?
+
     infix fun gt(value: T): Predicate<E> = Predicate.Leaf(name, Op.GT, value)
     infix fun gte(value: T): Predicate<E> = Predicate.Leaf(name, Op.GTE, value)
     infix fun lt(value: T): Predicate<E> = Predicate.Leaf(name, Op.LT, value)
@@ -71,6 +98,28 @@ open class StringColumn<E : Any>(name: String) : ComparableColumn<E, String>(nam
         Predicate.Leaf(name, Op.HAS_SUFFIX, value)
 }
 
+/**
+ * A numeric column (INT / LONG / FLOAT / DOUBLE). Gates `sum` / `avg`; split into
+ * [IntegralColumn] and [FloatingColumn] so `sum` resolves to `Long?` vs `Double?`.
+ */
+open class NumericColumn<E : Any, T : Comparable<T>>(name: String) : ComparableColumn<E, T>(name)
+
+/** An integer-typed numeric column (INT, LONG). `sum` over it returns `Long?`. */
+open class IntegralColumn<E : Any, T : Comparable<T>>(name: String) : NumericColumn<E, T>(name)
+
+/** A floating-typed numeric column (FLOAT, DOUBLE). `sum` over it returns `Double?`. */
+open class FloatingColumn<E : Any, T : Comparable<T>>(name: String) : NumericColumn<E, T>(name)
+
+/**
+ * A groupable but non-comparable scalar column (BOOL, UUID). Usable as an
+ * aggregate group key, but not for min/max/sum/avg — it is not a
+ * [ComparableColumn].
+ */
+open class GroupableScalarColumn<E : Any, T>(name: String) : Column<E, T>(name), GroupableColumn<E, T> {
+    @Suppress("UNCHECKED_CAST")
+    override fun decodeKey(raw: Any?): T? = raw as T?
+}
+
 // ---------- Nullable variants ----------
 //
 // Each kind has a parallel Nullable* class that mixes in the [Nullable]
@@ -87,7 +136,21 @@ open class StringColumn<E : Any>(name: String) : ComparableColumn<E, String>(nam
  * `Column` subclasses); [T] is the enum value type. The on-the-wire
  * representation is `T.name: String`, set by the overrides below.
  */
-open class EnumColumn<E : Any, T : Enum<T>>(name: String) : Column<E, T>(name) {
+open class EnumColumn<E : Any, T : Enum<T>>(
+    name: String,
+    /**
+     * Maps a stored enum-name `String` back to the enum constant — used to decode
+     * an enum **group key** ([decodeKey]). codegen always supplies
+     * `{ MyEnum.valueOf(it) }`; the throwing default only guards a hand-built
+     * column that was never wired for aggregate grouping.
+     */
+    private val fromName: (String) -> T = {
+        error("EnumColumn '$name' has no enum-decode metadata; build it via codegen to group by it")
+    },
+) : Column<E, T>(name), GroupableColumn<E, T> {
+    /** Decode an enum group key — the driver returns the stored `.name` String. */
+    override fun decodeKey(raw: Any?): T? = (raw as String?)?.let(fromName)
+
     override infix fun eq(value: T): Predicate<E> =
         Predicate.Leaf(name, Op.EQ, value.name)
     override infix fun neq(value: T): Predicate<E> =
@@ -114,9 +177,21 @@ open class EnumColumn<E : Any, T : Enum<T>>(name: String) : Column<E, T>(name) {
 
 class NullableColumn<E : Any, T>(name: String) : Column<E, T>(name), Nullable
 class NullableComparableColumn<E : Any, T : Comparable<T>>(name: String) :
-    ComparableColumn<E, T>(name), Nullable
-class NullableStringColumn<E : Any>(name: String) : StringColumn<E>(name), Nullable
-class NullableEnumColumn<E : Any, T : Enum<T>>(name: String) : EnumColumn<E, T>(name), Nullable
+    ComparableColumn<E, T>(name), Nullable, NullableGroupableColumn<E, T>
+class NullableStringColumn<E : Any>(name: String) :
+    StringColumn<E>(name), Nullable, NullableGroupableColumn<E, String>
+class NullableIntegralColumn<E : Any, T : Comparable<T>>(name: String) :
+    IntegralColumn<E, T>(name), Nullable, NullableGroupableColumn<E, T>
+class NullableFloatingColumn<E : Any, T : Comparable<T>>(name: String) :
+    FloatingColumn<E, T>(name), Nullable, NullableGroupableColumn<E, T>
+class NullableGroupableScalarColumn<E : Any, T>(name: String) :
+    GroupableScalarColumn<E, T>(name), Nullable, NullableGroupableColumn<E, T>
+class NullableEnumColumn<E : Any, T : Enum<T>>(
+    name: String,
+    fromName: (String) -> T = {
+        error("EnumColumn '$name' has no enum-decode metadata; build it via codegen to group by it")
+    },
+) : EnumColumn<E, T>(name, fromName), Nullable, NullableGroupableColumn<E, T>
 
 /**
  * isNull predicate. Only visible when the receiver column is both a
