@@ -311,14 +311,21 @@ internal class EntityGenerator(
     private fun buildFieldColumnRef(field: Field, entityClass: ClassName): PropertySpec {
         val propertyName = toCamelCase(field.name)
         val nullable = field.nullable
-        val columnType = if (field.type == FieldType.ENUM) {
+        if (field.type == FieldType.ENUM) {
+            // EnumColumn carries a `fromName` decoder so it can be an aggregate
+            // group key (the driver returns the stored `.name` String, which the
+            // grouped terminal maps back to the enum via this lambda).
             val enumTypeName = field.resolvedTypeName()
             val cls = if (nullable) ClassName("entkt.query", "NullableEnumColumn")
             else ClassName("entkt.query", "EnumColumn")
             // Phantom-typed columns: first type arg is the owning entity
             // (`E`), second is the value type (`T`).
-            cls.parameterizedBy(entityClass, enumTypeName)
-        } else if (field.type == FieldType.JSON) {
+            val columnType = cls.parameterizedBy(entityClass, enumTypeName)
+            return PropertySpec.builder(propertyName, columnType)
+                .initializer("%T(%S) { %T.valueOf(it) }", columnType, field.columnName, enumTypeName)
+                .build()
+        }
+        val columnType = if (field.type == FieldType.JSON) {
             // Narrow JSON column ref: JsonColumn<E, T> (null checks only).
             val jsonTypeName = field.resolvedTypeName()
             val cls = if (nullable) ClassName("entkt.query", "NullableJsonColumn")
@@ -424,18 +431,36 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
             cls.parameterizedBy(entityClass)
         }
         FieldType.INT,
-        FieldType.LONG,
+        FieldType.LONG -> {
+            // Integral numeric → sum returns Long?; also comparable (min/max) and groupable.
+            val cls = if (nullable) ClassName("entkt.query", "NullableIntegralColumn")
+            else ClassName("entkt.query", "IntegralColumn")
+            cls.parameterizedBy(entityClass, type.toTypeName())
+        }
         FieldType.FLOAT,
-        FieldType.DOUBLE,
+        FieldType.DOUBLE -> {
+            // Floating numeric → sum returns Double?; also comparable and groupable.
+            val cls = if (nullable) ClassName("entkt.query", "NullableFloatingColumn")
+            else ClassName("entkt.query", "FloatingColumn")
+            cls.parameterizedBy(entityClass, type.toTypeName())
+        }
         FieldType.TIME -> {
             val cls = if (nullable) ClassName("entkt.query", "NullableComparableColumn")
             else ClassName("entkt.query", "ComparableColumn")
             cls.parameterizedBy(entityClass, type.toTypeName())
         }
         FieldType.BOOL,
-        FieldType.UUID,
+        FieldType.UUID -> {
+            // Groupable but not comparable: usable as a group key, not for min/max/sum/avg.
+            val cls = if (nullable) ClassName("entkt.query", "NullableGroupableScalarColumn")
+            else ClassName("entkt.query", "GroupableScalarColumn")
+            cls.parameterizedBy(entityClass, type.toTypeName())
+        }
         FieldType.BYTES,
         FieldType.ENUM -> {
+            // BYTES is neither groupable nor comparable. (ENUM field refs are
+            // built in buildFieldColumnRef; ENUM only reaches here for the rare
+            // case of an enum-typed id/FK column.)
             val cls = if (nullable) ClassName("entkt.query", "NullableColumn")
             else ClassName("entkt.query", "Column")
             cls.parameterizedBy(entityClass, type.toTypeName())

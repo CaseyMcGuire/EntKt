@@ -1454,11 +1454,11 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("val ownerId: NullableComparableColumn<Pet, Long>")) {
-            "Should declare ownerId as NullableComparableColumn<Pet, Long>\n$output"
+        assert(output.contains("val ownerId: NullableIntegralColumn<Pet, Long>")) {
+            "Should declare ownerId as NullableIntegralColumn<Pet, Long>\n$output"
         }
-        assert(output.contains("NullableComparableColumn<Pet, Long>(\"owner_id\")")) {
-            "Should emit NullableComparableColumn<Pet, Long>(\"owner_id\") initializer\n$output"
+        assert(output.contains("NullableIntegralColumn<Pet, Long>(\"owner_id\")")) {
+            "Should emit NullableIntegralColumn<Pet, Long>(\"owner_id\") initializer\n$output"
         }
     }
 
@@ -1468,11 +1468,11 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
-        assert(output.contains("val ownerId: ComparableColumn<RequiredPet, Long>")) {
-            "Should declare ownerId as ComparableColumn<RequiredPet, Long>\n$output"
+        assert(output.contains("val ownerId: IntegralColumn<RequiredPet, Long>")) {
+            "Should declare ownerId as IntegralColumn<RequiredPet, Long>\n$output"
         }
-        assert(output.contains("ComparableColumn<RequiredPet, Long>(\"owner_id\")")) {
-            "Should emit ComparableColumn<RequiredPet, Long>(\"owner_id\") initializer\n$output"
+        assert(output.contains("IntegralColumn<RequiredPet, Long>(\"owner_id\")")) {
+            "Should emit IntegralColumn<RequiredPet, Long>(\"owner_id\") initializer\n$output"
         }
     }
 
@@ -1532,7 +1532,7 @@ class EdgeCodegenTest {
             "Should emit EdgeRef<Pet, Owner, OwnerQuery> for the owner edge\n$output"
         }
         // The FK column ref still lives next to it
-        assert(output.contains("val ownerId: NullableComparableColumn<Pet, Long>")) {
+        assert(output.contains("val ownerId: NullableIntegralColumn<Pet, Long>")) {
             "FK column ref should coexist with the EdgeRef\n$output"
         }
     }

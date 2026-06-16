@@ -204,23 +204,23 @@ class EntityGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // Car uses EntId.int() so the column ref is ComparableColumn<Int>
-        assert(output.contains("val id: ComparableColumn<Car, Int> = ComparableColumn<Car, Int>(\"id\")")) {
-            "Should emit ComparableColumn<Car, Int> for id on Car (which declares EntId.int())\n$output"
+        // Car uses EntId.int() so the column ref is IntegralColumn<Int>
+        assert(output.contains("val id: IntegralColumn<Car, Int> = IntegralColumn<Car, Int>(\"id\")")) {
+            "Should emit IntegralColumn<Car, Int> for id on Car (which declares EntId.int())\n$output"
         }
     }
 
     @Test
     fun `id column ref type follows the schema's id() declaration`() {
-        // User uses EntId.uuid() → Column<UUID> (UUID isn't comparable in
-        // the entkt query DSL, matching how the existing UUID-typed FK
-        // column refs are emitted).
+        // User uses EntId.uuid() → GroupableScalarColumn<UUID> (UUID isn't
+        // comparable in the entkt query DSL, but is usable as an aggregate
+        // group key).
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("val id: Column<User, UUID> = Column<User, UUID>(\"id\")")) {
-            "Should emit Column<User, UUID> for id on User (which declares EntId.uuid())\n$output"
+        assert(output.contains("val id: GroupableScalarColumn<User, UUID> = GroupableScalarColumn<User, UUID>(\"id\")")) {
+            "Should emit GroupableScalarColumn<User, UUID> for id on User (which declares EntId.uuid())\n$output"
         }
     }
 
@@ -233,29 +233,34 @@ class EntityGeneratorTest {
         assert(output.contains("val model: StringColumn<Car> = StringColumn<Car>(\"model\")")) {
             "Should have StringColumn<Car> for model\n$output"
         }
-        assert(output.contains("val year: ComparableColumn<Car, Int> = ComparableColumn<Car, Int>(\"year\")")) {
-            "Should have ComparableColumn<Car, Int> for year\n$output"
+        assert(output.contains("val year: IntegralColumn<Car, Int> = IntegralColumn<Car, Int>(\"year\")")) {
+            "Should have IntegralColumn<Car, Int> for year\n$output"
         }
         // KotlinPoet wraps the price column over two lines because
-        // the doubled `NullableComparableColumn<Car, Float>` initializer
+        // the doubled `NullableFloatingColumn<Car, Float>` initializer
         // pushes the line past KotlinPoet's column threshold. Check the
         // type declaration and the initializer-call substring separately.
-        assert(output.contains("val price: NullableComparableColumn<Car, Float>")) {
-            "Should have NullableComparableColumn<Car, Float> for optional price\n$output"
+        assert(output.contains("val price: NullableFloatingColumn<Car, Float>")) {
+            "Should have NullableFloatingColumn<Car, Float> for optional price\n$output"
         }
-        assert(output.contains("NullableComparableColumn<Car, Float>(\"price\")")) {
-            "Should have NullableComparableColumn<Car, Float>(\"price\") initializer\n$output"
+        assert(output.contains("NullableFloatingColumn<Car, Float>(\"price\")")) {
+            "Should have NullableFloatingColumn<Car, Float>(\"price\") initializer\n$output"
         }
     }
 
     @Test
-    fun `emits Column (non-comparable) for bool fields`() {
+    fun `emits GroupableScalarColumn (non-comparable) for bool fields`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("val active: Column<User, Boolean> = Column<User, Boolean>(\"active\")")) {
-            "Should have Column<User, Boolean> for active\n$output"
+        // GroupableScalarColumn<User, Boolean> is long enough that KotlinPoet wraps
+        // the `= ` onto the next line, so check the decl and initializer separately.
+        assert(output.contains("val active: GroupableScalarColumn<User, Boolean>")) {
+            "Should have GroupableScalarColumn<User, Boolean> for active\n$output"
+        }
+        assert(output.contains("GroupableScalarColumn<User, Boolean>(\"active\")")) {
+            "Should have GroupableScalarColumn<User, Boolean>(\"active\") initializer\n$output"
         }
     }
 
@@ -411,6 +416,11 @@ class EntityGeneratorTest {
 
         assert(output.contains("val priority: EnumColumn<Ticket, Priority> = EnumColumn<Ticket, Priority>(\"priority\")")) {
             "Should emit EnumColumn parameterized with entity and enum classes\n$output"
+        }
+        // The enum column carries a name-decode lambda so it can be an aggregate
+        // group key (the `it` form distinguishes it from the fromRow valueOf).
+        assert(output.contains("Priority.valueOf(it)")) {
+            "EnumColumn should carry the enum-decode lambda\n$output"
         }
     }
 
