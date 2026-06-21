@@ -4,6 +4,8 @@ import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.runtime.AggregateFunction
+import entkt.runtime.AggregateResultRow
 import entkt.runtime.ColumnMetadata
 import entkt.runtime.Driver
 import entkt.runtime.EdgeMetadata
@@ -157,6 +159,15 @@ class PostgresDriver(
 
     override fun exists(table: String, predicates: List<Predicate<*>>): Boolean =
         dataSource.connection.use { existsWith(it, table, predicates) }
+
+    override fun aggregate(
+        table: String,
+        function: AggregateFunction,
+        column: String?,
+        predicates: List<Predicate<*>>,
+        groupBy: String?,
+    ): List<AggregateResultRow> =
+        dataSource.connection.use { aggregateWith(it, table, function, column, predicates, groupBy) }
 
     override fun delete(table: String, id: Any): Boolean =
         dataSource.connection.use { deleteWith(it, table, id) }
@@ -408,6 +419,99 @@ class PostgresDriver(
                 rs.getLong(1)
             }
         }
+    }
+
+    private fun aggregateWith(
+        conn: Connection,
+        table: String,
+        function: AggregateFunction,
+        column: String?,
+        predicates: List<Predicate<*>>,
+        groupBy: String?,
+    ): List<AggregateResultRow> {
+        val schema = schemaFor(table)
+        // Validate identifiers against the registered schema BEFORE rendering SQL.
+        // The method takes raw String?, so a bad column must fail with a clear,
+        // field-named error rather than reaching Postgres as a query error.
+        require(function == AggregateFunction.COUNT || column != null) {
+            "$function requires a metric column"
+        }
+        require(column == null || schema.columns.any { it.name == column }) {
+            "$table.$column is not a column on $table"
+        }
+        require(groupBy == null || schema.columns.any { it.name == groupBy }) {
+            "$table.$groupBy is not a column on $table"
+        }
+
+        val builder = SqlBuilder()
+        val baseAlias = "t0"
+        val metricSql = when (function) {
+            AggregateFunction.COUNT -> "COUNT(*)"
+            AggregateFunction.SUM -> "SUM($baseAlias.${quote(column!!)})"
+            AggregateFunction.AVG -> "AVG($baseAlias.${quote(column!!)})"
+            AggregateFunction.MIN -> "MIN($baseAlias.${quote(column!!)})"
+            AggregateFunction.MAX -> "MAX($baseAlias.${quote(column!!)})"
+        }
+
+        // Alias the group key as "k" and the metric as "v" so the by-name
+        // [decodeColumn] / getX("v") below read the right ResultSet columns.
+        val sql = StringBuilder("SELECT ")
+        if (groupBy != null) {
+            sql.append(baseAlias).append('.').append(quote(groupBy))
+                .append(" AS ").append(quote("k")).append(", ")
+        }
+        sql.append(metricSql).append(" AS ").append(quote("v"))
+        sql.append(" FROM ").append(quote(table)).append(" AS ").append(baseAlias)
+
+        val combined = predicates.andTogether()
+        if (combined != null) {
+            sql.append(" WHERE ").append(builder.lower(combined, schema, baseAlias))
+        }
+        if (groupBy != null) {
+            sql.append(" GROUP BY ").append(baseAlias).append('.').append(quote(groupBy))
+        }
+
+        val groupCol = groupBy?.let { gb -> schema.columns.first { it.name == gb } }
+        val metricCol = column?.let { c -> schema.columns.first { it.name == c } }
+
+        return conn.prepareStatement(sql.toString()).use { stmt ->
+            for ((i, p) in builder.params.withIndex()) {
+                bind(stmt, i + 1, p.type, p.value)
+            }
+            stmt.executeQuery().use { rs ->
+                val out = ArrayList<AggregateResultRow>()
+                while (rs.next()) {
+                    // The group key decodes as its column's type; an enum column
+                    // decodes to its stored String, which the generated terminal
+                    // maps back to the enum via the column's metadata.
+                    val key = groupCol?.let { decodeColumn(rs, table, it.copy(name = "k")) }
+                    val value = decodeAggregateValue(rs, function, metricCol, table)
+                    out.add(AggregateResultRow(key, value))
+                }
+                out
+            }
+        }
+    }
+
+    private fun decodeAggregateValue(
+        rs: ResultSet,
+        function: AggregateFunction,
+        metricCol: ColumnMetadata?,
+        table: String,
+    ): Any? = when (function) {
+        // COUNT(*) is never NULL — 0 for an empty (ungrouped) result.
+        AggregateFunction.COUNT -> rs.getLong("v")
+        // AVG is double regardless of input; null over an empty/all-NULL set.
+        AggregateFunction.AVG -> rs.getDouble("v").let { if (rs.wasNull()) null else it }
+        // SUM widens integral inputs to Long and keeps floating as Double.
+        AggregateFunction.SUM -> when (metricCol!!.type) {
+            FieldType.INT, FieldType.LONG -> rs.getLong("v").let { if (rs.wasNull()) null else it }
+            FieldType.FLOAT, FieldType.DOUBLE -> rs.getDouble("v").let { if (rs.wasNull()) null else it }
+            else -> error("SUM is only valid on a numeric column, not ${metricCol.type}")
+        }
+        // MIN/MAX return the metric column's own type — reuse the row decoder.
+        AggregateFunction.MIN, AggregateFunction.MAX ->
+            decodeColumn(rs, table, metricCol!!.copy(name = "v"))
     }
 
     private fun existsWith(
@@ -1156,6 +1260,8 @@ class PostgresDriver(
 
     override fun supportsTypedJson(): Boolean = true
 
+    override fun supportsAggregates(): Boolean = true
+
     // Like the other lock primitives, the relationship lock only does
     // useful work inside a transaction (an advisory lock taken in
     // auto-commit releases immediately), so the root driver advertises the
@@ -1364,6 +1470,16 @@ class PostgresDriver(
             checkOpen(); return existsWith(conn, table, predicates)
         }
 
+        override fun aggregate(
+            table: String,
+            function: AggregateFunction,
+            column: String?,
+            predicates: List<Predicate<*>>,
+            groupBy: String?,
+        ): List<AggregateResultRow> {
+            checkOpen(); return aggregateWith(conn, table, function, column, predicates, groupBy)
+        }
+
         override fun explainQuery(
             table: String,
             predicates: List<Predicate<*>>,
@@ -1425,6 +1541,8 @@ class PostgresDriver(
         override fun supportsNativeStorage(codec: String): Boolean = root.supportsNativeStorage(codec)
 
         override fun supportsTypedJson(): Boolean = root.supportsTypedJson()
+
+        override fun supportsAggregates(): Boolean = root.supportsAggregates()
 
         override val supportsRelationshipSerialization: Boolean
             get() = root.supportsRelationshipSerialization
