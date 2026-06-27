@@ -34,7 +34,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
     fun `interceptors block accepts per-entity and global registrations`() {
         val driver = freshDriver()
         EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     interceptor = QueryInterceptor { _, _ -> },
@@ -54,7 +54,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ex = assertFailsWith<IllegalArgumentException> {
             EntClient(driver) {
-                privacyContext { PrivacyContext(Viewer.System) }
+                privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
                 interceptors {
                     posts(QueryInterceptor { _, _ -> }, name = "dup")
                     posts(QueryInterceptor { _, _ -> }, name = "dup")
@@ -70,7 +70,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ex = assertFailsWith<IllegalArgumentException> {
             EntClient(driver) {
-                privacyContext { PrivacyContext(Viewer.System) }
+                privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
                 interceptors {
                     global(GlobalQueryInterceptor { _, _ -> }, name = "audit")
                     global(GlobalQueryInterceptor { _, _ -> }, name = "audit")
@@ -85,7 +85,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ex = assertFailsWith<IllegalArgumentException> {
             EntClient(driver) {
-                privacyContext { PrivacyContext(Viewer.System) }
+                privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
                 interceptors {
                     posts(QueryInterceptor { _, _ -> }, name = "framework:tenant-scope")
                 }
@@ -103,7 +103,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
         // runtime is wired through terminals.
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, _ -> }, name = "p1")
                 global(GlobalQueryInterceptor { _, _ -> }, name = "g1")

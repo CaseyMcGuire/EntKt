@@ -60,7 +60,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `traversal-source rejection surfaces as Err(QueryRejected) on chained allOrError`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 users(
                     QueryInterceptor { scope, _ -> scope.reject("source nope", code = "src_rej") },
@@ -84,7 +84,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `traversal-source rejection surfaces as Err(QueryRejected) on chained firstOrError and rawCountOrError`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 users(QueryInterceptor { scope, _ -> scope.reject("nope") }, name = "rej")
             }
@@ -97,7 +97,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `traversal-source rejection still throws on chained allOrThrow path`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 users(QueryInterceptor { scope, _ -> scope.reject("nope", code = "src") }, name = "rej")
             }
@@ -112,7 +112,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `traversal-source rejection surfaces as rejected QueryPlan on chained explain`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 users(QueryInterceptor { scope, _ -> scope.reject("src nope", code = "src") }, name = "rej")
             }
@@ -134,7 +134,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `traversal-source annotations surface on terminal QueryPlan`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 users(
                     QueryInterceptor { scope, _ -> scope.addAnnotation("tenant", "acme") },
@@ -158,7 +158,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `terminal interceptor overwrites a source annotation with the same key (last-writer-wins)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 users(
                     QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-user") },
@@ -184,7 +184,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         var fired = false
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 articles(
                     QueryInterceptor { _, _ -> fired = true },
@@ -205,7 +205,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `edge-predicate interceptor cycle trips the recursion guard`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // User interceptor adds User.articles.has → walker
                 // dispatches to Article. Article interceptor adds
@@ -247,7 +247,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     @Test
     fun `explainVisibleExists with limit(0) shows limit 0, matching runtime`() {
         val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
 
         // No interceptors so spec.limit = caller's limit(0) = 0.
         // Runtime: `minOf(1, 0 ?: 1) = 0` → driver.query with limit 0.
@@ -266,7 +266,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     @Test
     fun `explainRawExists with limit(0) shows limit 0, matching runtime`() {
         val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
         val plan = client.posts.query { limit(0) }.explainRawExists()
         assertNotNull(plan.root)
         val desc = plan.root.toString()
@@ -279,7 +279,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     @Test
     fun `explainRawExists drops orderBy and preserves offset, matching runtime`() {
         val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
         // Runtime rawExists calls driver.query with orderBy =
         // emptyList() and offset = spec.offset. Explain must
         // mirror exactly. Pre-fix: explain kept spec.orderBy and
@@ -312,7 +312,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // fast path — explain keeps the caller's orderBy for the privacy-aware
         // materialization. (The genuine drop-orderBy path is rawExists, covered
         // by `explainRawExists drops orderBy ...`.)
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
         val plan = client.posts.query {
             orderBy(entkt.query.OrderField("title", entkt.query.OrderDirection.ASC))
             offset(3)
@@ -333,7 +333,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `mutating source query after queryX does not leak into target's terminal`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
         // Two users, one article each. The post-queryX where on
         // the source MUST NOT affect what posts queryArticles
@@ -367,7 +367,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `M2M traversal also snapshots source at queryX time`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
         // Seed: two posts, one tag each (linked via the junction
         // table). The snapshot case returns [keeperTag]; a leak
@@ -426,7 +426,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             }
         }
         // Seed via system viewer (bypasses policies).
-        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.System)) { sys ->
+        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.PrivacyBypass("test"))) { sys ->
             val u = sys.users.create { name = "denied-user"; email = "d@x" }.saveOrThrow()
             sys.articles.create { title = "with-denied-author"; authorId = u.id }.saveOrThrow()
         }
@@ -468,7 +468,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         }
         // Seed via System viewer (bypasses privacy) so the create
         // path's post-write LOAD check on "draft" doesn't trip.
-        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.System)) { sys ->
+        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.PrivacyBypass("test"))) { sys ->
             val u = sys.users.create { name = "u"; email = "u@x" }.saveOrThrow()
             sys.articles.create { title = "draft"; published = false; authorId = u.id }.saveOrThrow()
             sys.articles.create { title = "published"; published = true; authorId = u.id }.saveOrThrow()
@@ -486,7 +486,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { _, ctx -> ops.add(ctx.operation) },
@@ -506,7 +506,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `deleteMany honors interceptor-added predicate on candidate fetch`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // Tenant-scoping-style interceptor: only "scope-A"
                 // posts are candidates. Pre-fix deleteMany bypassed
@@ -538,7 +538,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `deleteMany interceptor rejection throws EntQueryRejectedException`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("no broad delete", code = "broad_delete_denied") },
@@ -559,7 +559,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `deleteMany limit interceptor mutators are silent no-ops on DELETE_CANDIDATES`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // requireLimitAtMost(2) on DELETE_CANDIDATES MUST
                 // NOT clamp the candidate fetch — that would turn
@@ -584,7 +584,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `edge-predicate target interceptor annotations surface on outer QueryPlan`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // Article EDGE_PREDICATE step adds annotations.
                 // Without this fix they vanish — only spec.predicates
@@ -610,7 +610,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `outer-step annotation wins when edge-predicate target uses the same key`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 articles(
                     QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-article-edge") },
@@ -635,7 +635,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `requireNotRejected throws with the original entity and operation, not synthetic values`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope", code = "x") },

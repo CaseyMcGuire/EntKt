@@ -36,7 +36,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
     /** Client with `ExcludeDeleted` installed — hides soft-deleted rows by default. */
     private fun filteredClient(driver: PostgresDriver): EntClient =
         EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 memos(ExcludeDeleted(), name = "soft-delete")
             }
@@ -45,7 +45,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
     /** Client without the interceptor — sees every row, deleted or not. */
     private fun unfilteredClient(driver: PostgresDriver): EntClient =
         EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
 
     // ---- Read-filter behavior ----

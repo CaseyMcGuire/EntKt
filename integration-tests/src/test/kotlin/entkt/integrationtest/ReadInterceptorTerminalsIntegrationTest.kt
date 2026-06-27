@@ -58,7 +58,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `allOrThrow honors interceptor predicate added via scope addPredicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -77,7 +77,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `allOrError honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -98,7 +98,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `firstOrNull honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -119,7 +119,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `rawCount honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -138,7 +138,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `rawExists honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -160,7 +160,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `visibleCount honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -179,7 +179,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `byIdOrNull honors interceptor predicate -- denying row that does not match`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -207,7 +207,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `byIdOrError returns Err(NotFound) when interceptor narrows row out`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -230,7 +230,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject surfaces as EntQueryRejectedException on allOrThrow`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -252,7 +252,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject surfaces as Err(QueryRejected) on allOrError`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -276,7 +276,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject surfaces as EntQueryRejectedException on firstOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -291,7 +291,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject surfaces as EntQueryRejectedException on rawCount`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -306,7 +306,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject surfaces as EntQueryRejectedException on byIdOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("denied", code = "byid_denied") },
@@ -324,7 +324,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject surfaces as Err(QueryRejected) on byIdOrError`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -341,7 +341,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor reject is NOT swallowed by visibleByIdOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -362,7 +362,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val seen = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { _, ctx -> seen.add(ctx.operation) },
@@ -401,7 +401,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val order = mutableListOf<String>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, _ -> order.add("per-entity-1") }, name = "p1")
                 posts(QueryInterceptor { _, _ -> order.add("per-entity-2") }, name = "p2")
@@ -425,7 +425,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `global rejectIfLimitGreaterThan surfaces as EntQueryRejectedException with max_limit_exceeded code`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ ->
@@ -445,7 +445,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `interceptor requireLimitAtMost clamps the driver fetch on allOrThrow`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.requireLimitAtMost(2) },
@@ -464,7 +464,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     fun `with no interceptors registered, terminals behave exactly as before`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             // intentionally no interceptors block
         }
         seedPosts(client, listOf("a", "b", "c"))

@@ -72,7 +72,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedAuthor(client: EntClient): User {
-        return client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
         }
     }
@@ -120,7 +120,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         assertTrue(result is EntResult.Err)
         val error = result.error as EntError.WriteSucceededLoadDenied
 
-        val stillExists = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        val stillExists = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.articles.byIdOrNull(error.id as Long)
         }
         assertNotNull(stillExists, "row should be persisted even though saveOrError returned Err")
@@ -151,7 +151,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val author = seedAuthor(client)
         // Seed via System so the row exists and we have an id to update.
-        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.articles.create {
                 title = "original"
                 published = true
@@ -177,7 +177,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     fun `update Err(WriteSucceededLoadDenied) leaves the new value in the database`() {
         val client = freshClient()
         val author = seedAuthor(client)
-        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.articles.create {
                 title = "original"
                 published = true
@@ -191,7 +191,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         assertTrue(result is EntResult.Err)
 
         // Verify the write actually committed despite Err.
-        val reread = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        val reread = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.articles.byIdOrNull(articleId)
         }
         assertNotNull(reread)
@@ -221,7 +221,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
                 users(OpenUser)
             }
         }
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
         }
 
@@ -241,7 +241,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
         // No row was written (verified to distinguish from the
         // post-write LOAD path which DOES write).
-        assertEquals(0L, client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        assertEquals(0L, client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.articles.query().rawCount()
         })
     }

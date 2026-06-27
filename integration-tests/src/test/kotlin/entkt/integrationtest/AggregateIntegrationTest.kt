@@ -30,7 +30,7 @@ class AggregateIntegrationTest : PostgresTestBase() {
     private val t0 = Instant.parse("2024-01-01T00:00:00Z")
 
     private fun client(driver: PostgresDriver = resetAndDriver()): EntClient =
-        EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
 
     private fun seed(c: EntClient) {
         c.orders.create { quantity = 2; price = 10.0; status = OrderStatus.PENDING; region = "us"; placedAt = t0 }.saveOrThrow()
@@ -108,7 +108,7 @@ class AggregateIntegrationTest : PostgresTestBase() {
     fun `OrError surfaces interceptor rejection as Err(QueryRejected)`() {
         val driver = resetAndDriver()
         val c = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 orders(
                     QueryInterceptor { scope, _ -> scope.reject("nope", code = "agg_rej") },

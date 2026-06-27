@@ -181,7 +181,7 @@ class ValidationIntegrationTest {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.System,
+        viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ValidatedArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUserPolicy,
     ): EntClient {
@@ -205,7 +205,7 @@ class ValidationIntegrationTest {
     }
 
     private fun seedAuthor(client: EntClient): User {
-        return client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.users.create { name = "Alice"; email = "alice@test.com" }.save()
         }
     }
@@ -353,7 +353,7 @@ class ValidationIntegrationTest {
             viewer = Viewer.Anonymous,
             articlePolicy = PrivacyBeforeValidationPolicy,
         )
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             sys.users.create { name = "U"; email = "u@test.com" }.save()
         }
 
@@ -369,11 +369,11 @@ class ValidationIntegrationTest {
         assertEquals("authentication required", ex.reason)
     }
 
-    // ---- Viewer.System does NOT bypass validation ----
+    // ---- Viewer.PrivacyBypass does NOT bypass validation ----
 
     @Test
     fun `System viewer does not bypass create validation`() {
-        val client = freshClient(viewer = Viewer.System)
+        val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
         assertFailsWith<ValidationException> {
@@ -388,7 +388,7 @@ class ValidationIntegrationTest {
     @Test
     fun `System viewer does not bypass update validation`() {
         val client = freshClient(
-            viewer = Viewer.System,
+            viewer = Viewer.PrivacyBypass("test"),
             articlePolicy = FullyValidatedArticlePolicy,
         )
         val author = seedAuthor(client)
@@ -407,7 +407,7 @@ class ValidationIntegrationTest {
     @Test
     fun `System viewer does not bypass delete validation`() {
         val client = freshClient(
-            viewer = Viewer.System,
+            viewer = Viewer.PrivacyBypass("test"),
             articlePolicy = FullyValidatedArticlePolicy,
         )
         val author = seedAuthor(client)
@@ -467,11 +467,11 @@ class ValidationIntegrationTest {
 
     @Test
     fun `withPrivacyContext preserves validation config`() {
-        val client = freshClient(viewer = Viewer.System)
+        val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
         // Validation should still be enforced inside a scoped client
-        client.withPrivacyContext(PrivacyContext(Viewer.System)) { scoped ->
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { scoped ->
             assertFailsWith<ValidationException> {
                 scoped.articles.create {
                     title = "AB"
@@ -484,7 +484,7 @@ class ValidationIntegrationTest {
 
     @Test
     fun `withTransaction preserves validation config`() {
-        val client = freshClient(viewer = Viewer.System)
+        val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
         assertFailsWith<ValidationException> {
@@ -511,7 +511,7 @@ class ValidationIntegrationTest {
         }
 
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
 
         val user = client.users.create { name = "U"; email = "u@test.com" }.save()

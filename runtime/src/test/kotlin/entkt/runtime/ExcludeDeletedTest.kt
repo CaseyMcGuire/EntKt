@@ -29,7 +29,7 @@ class ExcludeDeletedTest {
     )
 
     private fun rootContext(): QueryContext = QueryContext(
-        privacy = PrivacyContext(Viewer.System),
+        privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
         operation = ReadOperation.ALL,
         rootEntity = Post::class,
         currentEntity = Post::class,

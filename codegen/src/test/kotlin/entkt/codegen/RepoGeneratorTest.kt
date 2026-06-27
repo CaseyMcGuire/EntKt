@@ -686,13 +686,13 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `evaluateCreateValidation uses system-scoped client`() {
+    fun `evaluateCreateValidation uses a privacy-bypass-scoped client`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.System))")) {
-            "Validation evaluator should use system-scoped client\n$output"
+        assert(output.contains("client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.PrivacyBypass(\"validation read\")))")) {
+            "Validation evaluator should use a privacy-bypass-scoped client with the 'validation read' reason\n$output"
         }
     }
 }

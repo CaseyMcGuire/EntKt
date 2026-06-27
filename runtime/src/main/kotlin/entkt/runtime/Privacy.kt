@@ -8,8 +8,23 @@ sealed interface Viewer {
     data object Anonymous : Viewer
     /** An authenticated user identified by their primary key. */
     data class User(val id: Any) : Viewer
-    /** A system-level caller that bypasses privacy checks. */
-    data object System : Viewer
+
+    /**
+     * Trusted framework/application escape hatch that bypasses generated privacy
+     * checks (LOAD / CREATE / UPDATE / DELETE). It does NOT bypass validation,
+     * hooks, query interceptors, transactions, or database constraints. Use only
+     * for seed data, migrations, validation reads, tests, and similarly explicit
+     * internal operations — prefer the generated `bypassPrivacy_DANGEROUS(reason)`
+     * client helper at application call sites. The required [reason] forces
+     * authors to say why the escape hatch is being used.
+     */
+    data class PrivacyBypass(val reason: String) : Viewer {
+        init {
+            require(reason.isNotBlank()) {
+                "Viewer.PrivacyBypass requires a non-blank reason"
+            }
+        }
+    }
 }
 
 /**

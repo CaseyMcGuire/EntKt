@@ -44,7 +44,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     fun setUp() {
         val driver = resetAndDriver()
         client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
     }
 

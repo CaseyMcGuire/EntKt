@@ -39,7 +39,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     private fun freshClient(driver: PostgresDriver = freshDriver()): EntClient =
-        EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
 
     // ---------- rawCountOrError ----------
 
@@ -58,7 +58,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawCountOrError honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -81,7 +81,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawCountOrError surfaces interceptor rejection as Err(QueryRejected)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope", code = "rc_rej") },
@@ -114,7 +114,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `visibleCountOrError surfaces interceptor rejection as Err(QueryRejected)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -148,7 +148,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawExistsOrError honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -174,7 +174,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawExistsOrError surfaces interceptor rejection as Err(QueryRejected)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -207,7 +207,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `visibleExistsOrError surfaces interceptor rejection as Err(QueryRejected)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },

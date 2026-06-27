@@ -64,7 +64,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `rejectIfLimitGreaterThan is a silent no-op for rawCount`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ ->
@@ -84,7 +84,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `rejectIfLimitGreaterThan is a silent no-op for byIdOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ ->
@@ -103,7 +103,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `setDefaultLimitIfAbsent is a silent no-op for visibleCount`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // Without the P1 fix this would set spec.limit = 2,
                 // and visibleCount would return "count of first 2
@@ -126,7 +126,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `requireLimitAtMost(0) is a silent no-op for visibleExists`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // Without the P1 fix this would clamp spec.limit to 0,
                 // and visibleExists' driver call would fetch 0 rows
@@ -145,7 +145,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `requireLimitAtMost applies normally for allOrThrow`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ -> scope.requireLimitAtMost(2) },
@@ -166,7 +166,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 articles(
                     QueryInterceptor { _, ctx -> ops.add(ctx.operation) },
@@ -193,7 +193,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `eager-load explain plan reflects target interceptor predicates`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 articles(
                     QueryInterceptor { scope, _ ->
@@ -223,7 +223,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // A by-id User interceptor adds an Edge predicate.
                 // The walker should fire Article's EDGE_PREDICATE
@@ -262,7 +262,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `explain reflects scope addAnnotation on QueryPlan annotations`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -289,7 +289,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `explainRawCount carries annotations on QueryPlan`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.addAnnotation("k", "v") },

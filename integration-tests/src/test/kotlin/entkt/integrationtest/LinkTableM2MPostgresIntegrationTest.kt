@@ -64,7 +64,7 @@ class LinkTableM2MPostgresIntegrationTest {
         }
 
         // Not testing privacy — run as System so fail-closed defaults don't block.
-        return EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        return EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
     }
 
     private fun linkedTagIds(postId: Long): List<Long> {

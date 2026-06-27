@@ -266,6 +266,7 @@ internal class ClientGenerator(
                     .build()
             )
             .addFunction(buildWithPrivacyContext(clientClass, t, sorted))
+            .addFunction(buildBypassPrivacyDangerous(clientClass, t))
             .addFunction(
                 FunSpec.builder("withFixedPrivacyContextForInternalUse")
                     .addModifiers(KModifier.INTERNAL)
@@ -835,6 +836,42 @@ internal class ClientGenerator(
             )
             .returns(t)
             .addCode(body.build())
+            .build()
+    }
+
+    /**
+     * The intentionally-noisy privacy escape hatch. Scopes a
+     * [Viewer.PrivacyBypass] over [block], preserving the current driver,
+     * transaction scope, policies, hooks, and interceptors (it delegates to
+     * `withPrivacyContext`). The loud name + required reason make bypass call
+     * sites stand out in review and easy to grep for.
+     */
+    private fun buildBypassPrivacyDangerous(clientClass: ClassName, t: com.squareup.kotlinpoet.TypeVariableName): FunSpec {
+        return FunSpec.builder("bypassPrivacy_DANGEROUS")
+            .addKdoc(
+                "Run [block] with privacy checks bypassed (LOAD/CREATE/UPDATE/DELETE only —\n" +
+                    "validation, hooks, interceptors, transactions, and DB constraints still apply).\n" +
+                    "Prefer this over `withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass(...)))`\n" +
+                    "so bypass call sites are obvious. [reason] must be non-blank.",
+            )
+            .addTypeVariable(t)
+            .addParameter("reason", String::class)
+            .addParameter(
+                "block",
+                LambdaTypeName.get(
+                    parameters = listOf(ParameterSpec.unnamed(clientClass)),
+                    returnType = t,
+                ),
+            )
+            .returns(t)
+            .addStatement(
+                "require(reason.isNotBlank()) { %S }",
+                "bypassPrivacy_DANGEROUS requires a non-blank reason",
+            )
+            .addStatement(
+                "return withPrivacyContext(%T(%T.PrivacyBypass(reason)), block)",
+                PRIVACY_CONTEXT, VIEWER,
+            )
             .build()
     }
 

@@ -60,7 +60,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.System,
+        viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): EntClient {
         val driver = resetAndDriver()
@@ -74,7 +74,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedArticle(client: EntClient): Article {
-        return client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
             sys.articles.create {
                 title = "Hello"

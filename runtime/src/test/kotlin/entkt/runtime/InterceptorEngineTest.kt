@@ -43,7 +43,7 @@ class InterceptorEngineTest {
 
     private fun rootContext(operation: ReadOperation = ReadOperation.ALL): QueryContext =
         QueryContext(
-            privacy = PrivacyContext(Viewer.System),
+            privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
             operation = operation,
             rootEntity = Post::class,
             currentEntity = Post::class,

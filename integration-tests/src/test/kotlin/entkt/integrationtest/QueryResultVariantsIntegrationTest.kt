@@ -74,7 +74,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.System,
+        viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
         val driver = resetAndDriver()
@@ -89,7 +89,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     /** Seed three articles under System and return them in insertion order. */
     private fun seedThree(client: EntClient): Triple<Article, Article, Article> {
-        return client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
             val first = sys.articles.create { title = "First"; published = true; authorId = author.id }.saveOrThrow()
             val second = sys.articles.create { title = "Second"; published = true; authorId = author.id }.saveOrThrow()
@@ -217,7 +217,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
             }
             visibleOverfetchLimit = 3
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
             repeat(10) { i ->
                 sys.articles.create {
@@ -258,7 +258,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         }
         // Seed via System (privacy bypass) so we have a User row to
         // eager-load.
-        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
             sys.articles.create { title = "X"; published = true; authorId = author.id }.saveOrThrow()
         }
@@ -295,7 +295,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
                 users(denyAllUsers)
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
             sys.articles.create { title = "X"; published = true; authorId = author.id }.saveOrThrow()
         }
@@ -448,7 +448,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedNArticles(client: EntClient, n: Int) {
-        client.withPrivacyContext(PrivacyContext(Viewer.System)) { sys ->
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
             repeat(n) { i ->
                 sys.articles.create {

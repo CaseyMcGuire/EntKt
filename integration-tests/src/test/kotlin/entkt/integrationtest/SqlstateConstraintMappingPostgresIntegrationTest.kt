@@ -86,7 +86,7 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
         }
 
         return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)

@@ -49,7 +49,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     private fun freshClient(): EntClient {
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             policies {
                 articles(AllowAll)
                 users(OpenUser)

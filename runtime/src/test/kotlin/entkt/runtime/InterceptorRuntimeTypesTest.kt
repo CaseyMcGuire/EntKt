@@ -132,7 +132,7 @@ class InterceptorRuntimeTypesTest {
     @Test
     fun `QueryContext isEagerSubquery is true only for EAGER_LOAD operation`() {
         val rootCtx = QueryContext(
-            privacy = PrivacyContext(Viewer.System),
+            privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
             operation = ReadOperation.ALL,
             rootEntity = A::class,
             currentEntity = A::class,
@@ -151,7 +151,7 @@ class InterceptorRuntimeTypesTest {
     fun `QueryContext path carries each EdgeStep in chain order`() {
         val step1 = EdgeStep(source = A::class, edgeName = "bs", target = B::class)
         val ctx = QueryContext(
-            privacy = PrivacyContext(Viewer.System),
+            privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
             operation = ReadOperation.EDGE_TRAVERSAL,
             rootEntity = A::class,
             currentEntity = B::class,

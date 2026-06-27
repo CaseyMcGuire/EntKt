@@ -47,7 +47,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
@@ -61,7 +61,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
@@ -78,7 +78,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
@@ -95,7 +95,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
@@ -120,7 +120,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
@@ -138,7 +138,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `explain output reflects interceptor-added predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -161,7 +161,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `explainRawCount reflects interceptor-added predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -183,7 +183,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `explain plans carry annotations`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -203,7 +203,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `interceptor reject produces a rejected plan with metadata, not a throw`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope", code = "ex_rej") },
@@ -224,7 +224,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `every explain variant returns a rejected plan, never throws, on reject`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -262,7 +262,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
 
         // Rejected case: throws.
         val rejectingClient = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { scope, _ -> scope.reject("nope") }, name = "rej")
             }
@@ -274,7 +274,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
 
         // Happy case: identity.
         val driver2 = freshDriver()
-        val happyClient = EntClient(driver2) { privacyContext { PrivacyContext(Viewer.System) } }
+        val happyClient = EntClient(driver2) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
         val plan = happyClient.posts.query().explainAllOrThrow()
         assertFalse(plan.rejected)
         assertTrue(plan === plan.requireNotRejected())
@@ -284,7 +284,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `rejected plan render includes the rejection metadata`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.System) }
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("no broad scans", code = "broad") },
@@ -303,7 +303,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     @Test
     fun `with no interceptors explainAllOrThrow produces a plan with no synthetic predicates`() {
         val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.System) } }
+        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
         val plan = client.posts.query().explainAllOrThrow()
         assertFalse(plan.rejected)
         assertNotNull(plan.root)
