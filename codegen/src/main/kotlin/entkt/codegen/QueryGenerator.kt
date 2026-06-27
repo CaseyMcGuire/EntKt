@@ -48,7 +48,7 @@ private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime", "InterceptorEngine")
 private val MEMBER_GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime", "getOrThrow")
 private val MEMBER_CLASSIFY = com.squareup.kotlinpoet.MemberName("entkt.runtime", "classifyDriverError")
 
-// Aggregate terminals (RFC: query/aggregations).
+// Raw aggregate terminals.
 private val AGG_FUNCTION = ClassName("entkt.runtime", "AggregateFunction")
 private val AGG_BUCKET = ClassName("entkt.runtime", "AggregateBucket")
 private val AGG_RESULT_ROW = ClassName("entkt.runtime", "AggregateResultRow")
@@ -827,7 +827,7 @@ internal class QueryGenerator(
     }
 
     /**
-     * The single-metric raw aggregate terminals (RFC: query/aggregations):
+     * The single-metric raw aggregate terminals:
      * ungrouped `rawMin/rawMax/rawSum/rawAvg` returning a typed scalar, and
      * grouped `raw…By` returning `List<AggregateBucket<K, V>>`, each with an
      * `…OrError` twin. All route through the private `aggregateRows` helper, which

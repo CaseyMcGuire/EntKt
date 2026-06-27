@@ -181,6 +181,15 @@ class AggregatePostgresDriverTest {
     }
 
     @Test
+    fun `COUNT with a metric column is rejected rather than silently ignored`() {
+        val d = fresh()
+        val ex = assertFailsWith<IllegalArgumentException> {
+            d.agg(AggregateFunction.COUNT, "amount")
+        }
+        assertTrue("COUNT" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
     fun `the driver reports aggregate support`() {
         assertTrue(fresh().supportsAggregates())
     }

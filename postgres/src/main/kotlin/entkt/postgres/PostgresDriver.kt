@@ -436,6 +436,11 @@ class PostgresDriver(
         require(function == AggregateFunction.COUNT || column != null) {
             "$function requires a metric column"
         }
+        // COUNT lowers to COUNT(*) and ignores a column, so reject a stray one
+        // rather than silently dropping it (least surprise on the raw driver API).
+        require(function != AggregateFunction.COUNT || column == null) {
+            "COUNT does not take a metric column; pass column = null"
+        }
         require(column == null || schema.columns.any { it.name == column }) {
             "$table.$column is not a column on $table"
         }
