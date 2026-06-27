@@ -338,11 +338,13 @@ SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<grou
   aggregate results; a rejecting interceptor yields `Err(QueryRejected)` from the
   `…OrError` twin.
 - **Driver (Postgres, testcontainers):** `count/min/max/sum/avg` over supported
-  types, ungrouped and grouped-by-one-column; **an enum group key decodes to the
-  enum, not its String**; empty-set returns (`0` for count, `null` otherwise);
-  NULL-input skipping; nullable group key → one `key == null` bucket typed `K?`;
-  integral `sum` widens to `Long`; `avg` of integers is fractional; **an unknown
-  metric or group column throws a field-named error before any SQL runs**.
+  types, ungrouped and grouped-by-one-column; **an enum group key comes back as
+  its stored `String`** (the generated terminal does the enum decode — proven at
+  the integration level); empty-set returns (`0` for count, `null` otherwise);
+  NULL-input skipping; nullable group key → one `key == null` bucket; integral
+  `sum` widens to `Long`; `avg` of integers is fractional; **an unknown metric or
+  group column, a type-incompatible metric (`SUM(text)`, `MIN(enum)`), or a
+  `COUNT` with a column throws a field-named error before any SQL runs**.
 - **Unsupported driver:** a non-Postgres `Driver` throws from `aggregate`
   (`supportsAggregates() == false`).
 

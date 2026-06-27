@@ -190,6 +190,21 @@ class AggregatePostgresDriverTest {
     }
 
     @Test
+    fun `sum over a non-numeric column is rejected before SQL`() {
+        val d = fresh()
+        val ex = assertFailsWith<IllegalArgumentException> { d.agg(AggregateFunction.SUM, "category") }
+        assertTrue("numeric" in ex.message!!, ex.message ?: "")
+        assertTrue("stats.category" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
+    fun `min over an enum column is rejected before SQL`() {
+        val d = fresh()
+        val ex = assertFailsWith<IllegalArgumentException> { d.agg(AggregateFunction.MIN, "status") }
+        assertTrue("comparable" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
     fun `the driver reports aggregate support`() {
         assertTrue(fresh().supportsAggregates())
     }

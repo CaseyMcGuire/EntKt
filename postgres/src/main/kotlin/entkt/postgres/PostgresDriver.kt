@@ -45,6 +45,13 @@ private fun List<Predicate<*>>.andTogether(): Predicate<*>? =
         Predicate.And(left as Predicate<Any>, right as Predicate<Any>)
     }
 
+// Aggregate metric-column type compatibility (mirrors the generated column
+// markers): sum/avg are numeric-only; min/max are over comparable scalars.
+private val NUMERIC_FIELD_TYPES =
+    setOf(FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE)
+private val COMPARABLE_FIELD_TYPES =
+    NUMERIC_FIELD_TYPES + setOf(FieldType.STRING, FieldType.TEXT, FieldType.TIME)
+
 /**
  * A [Driver] backed by a JDBC [DataSource] talking to PostgreSQL.
  *
@@ -446,6 +453,20 @@ class PostgresDriver(
         }
         require(groupBy == null || schema.columns.any { it.name == groupBy }) {
             "$table.$groupBy is not a column on $table"
+        }
+        // The metric must be type-compatible with the function. The generated API
+        // enforces this at compile time via column markers, but the raw String?
+        // entry point must too, so SUM(text) / MIN(enum) fail with a clear error
+        // instead of a Postgres error or undocumented behavior.
+        val metricType = column?.let { c -> schema.columns.first { it.name == c }.type }
+        when (function) {
+            AggregateFunction.COUNT -> {}
+            AggregateFunction.SUM, AggregateFunction.AVG -> require(metricType in NUMERIC_FIELD_TYPES) {
+                "$function requires a numeric column, but $table.$column is $metricType"
+            }
+            AggregateFunction.MIN, AggregateFunction.MAX -> require(metricType in COMPARABLE_FIELD_TYPES) {
+                "$function requires a comparable column, but $table.$column is $metricType"
+            }
         }
 
         val builder = SqlBuilder()

@@ -5,9 +5,13 @@ import entkt.integrationtest.ent.Order
 import entkt.integrationtest.schema.OrderStatus
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
+import entkt.query.Op
+import entkt.query.Predicate
 import entkt.runtime.AggregateBucket
+import entkt.runtime.EntError
 import entkt.runtime.EntResult
 import entkt.runtime.PrivacyContext
+import entkt.runtime.QueryInterceptor
 import entkt.runtime.Viewer
 import java.time.Instant
 import kotlin.test.Test
@@ -98,6 +102,25 @@ class AggregateIntegrationTest : PostgresTestBase() {
         val r = c.orders.query().rawSumOrError(Order.quantity)
         assertTrue(r is EntResult.Ok)
         assertEquals(11L, (r as EntResult.Ok).value)
+    }
+
+    @Test
+    fun `OrError surfaces interceptor rejection as Err(QueryRejected)`() {
+        val driver = resetAndDriver()
+        val c = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.System) }
+            interceptors {
+                orders(
+                    QueryInterceptor { scope, _ -> scope.reject("nope", code = "agg_rej") },
+                    name = "agg-rejector",
+                )
+            }
+        }
+        val r = c.orders.query().rawSumOrError(Order.quantity)
+        assertTrue(r is EntResult.Err)
+        val err = (r as EntResult.Err).error
+        assertTrue(err is EntError.QueryRejected, "expected QueryRejected, got $err")
+        assertEquals("agg_rej", (err as EntError.QueryRejected).code)
     }
 
     @Test
