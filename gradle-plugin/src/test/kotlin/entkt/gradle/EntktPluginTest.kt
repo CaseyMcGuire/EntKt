@@ -134,8 +134,8 @@ class EntktPluginTest {
                 "Should emit StringColumn<Pet> for name field",
             )
             assertTrue(
-                entityContent.contains("val ownerId: NullableComparableColumn<Pet, Int>"),
-                "Should emit NullableComparableColumn<Pet, Int> for optional edge FK",
+                entityContent.contains("val ownerId: NullableIntegralColumn<Pet, Int>"),
+                "Should emit NullableIntegralColumn<Pet, Int> for optional edge FK",
             )
             // I/O entry points live on the repo, not the entity companion
             assertTrue(!entityContent.contains("fun create("), "create() should not live on entity")
