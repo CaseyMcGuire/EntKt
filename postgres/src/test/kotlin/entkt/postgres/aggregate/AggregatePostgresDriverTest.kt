@@ -53,6 +53,7 @@ class AggregatePostgresDriverTest {
             ColumnMetadata("category", FieldType.STRING, nullable = false),
             ColumnMetadata("status", FieldType.ENUM, nullable = false),
             ColumnMetadata("created_at", FieldType.TIME, nullable = false),
+            ColumnMetadata("payload", FieldType.BYTES, nullable = true),
         ),
         edges = emptyMap(),
     )
@@ -202,6 +203,17 @@ class AggregatePostgresDriverTest {
         val d = fresh()
         val ex = assertFailsWith<IllegalArgumentException> { d.agg(AggregateFunction.MIN, "status") }
         assertTrue("comparable" in ex.message!!, ex.message ?: "")
+    }
+
+    @Test
+    fun `grouping by a non-groupable column is rejected before SQL`() {
+        val d = fresh()
+        // payload is BYTES — excluded from group keys (like pgvector / JSON).
+        val ex = assertFailsWith<IllegalArgumentException> {
+            d.agg(AggregateFunction.COUNT, null, groupBy = "payload")
+        }
+        assertTrue("group key" in ex.message!!, ex.message ?: "")
+        assertTrue("stats.payload" in ex.message!!, ex.message ?: "")
     }
 
     @Test

@@ -51,6 +51,10 @@ private val NUMERIC_FIELD_TYPES =
     setOf(FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE)
 private val COMPARABLE_FIELD_TYPES =
     NUMERIC_FIELD_TYPES + setOf(FieldType.STRING, FieldType.TEXT, FieldType.TIME)
+// Group keys add the non-comparable scalars (bool/uuid/enum); bytes, pgvector,
+// and JSON are excluded (they have no group-key meaning).
+private val GROUPABLE_FIELD_TYPES =
+    COMPARABLE_FIELD_TYPES + setOf(FieldType.BOOL, FieldType.UUID, FieldType.ENUM)
 
 /**
  * A [Driver] backed by a JDBC [DataSource] talking to PostgreSQL.
@@ -453,6 +457,13 @@ class PostgresDriver(
         }
         require(groupBy == null || schema.columns.any { it.name == groupBy }) {
             "$table.$groupBy is not a column on $table"
+        }
+        // The group key must be a groupable type — the generated API gates this
+        // via GroupableColumn; the raw entry point must too, so grouping by a
+        // bytes / pgvector / JSON column fails clearly instead of reaching SQL.
+        val groupType = groupBy?.let { g -> schema.columns.first { it.name == g }.type }
+        require(groupBy == null || groupType in GROUPABLE_FIELD_TYPES) {
+            "$table.$groupBy is $groupType, which cannot be a group key"
         }
         // The metric must be type-compatible with the function. The generated API
         // enforces this at compile time via column markers, but the raw String?

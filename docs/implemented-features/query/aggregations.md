@@ -343,8 +343,9 @@ SELECT "<group>", <FN>(<col> | *) FROM "<table>" [WHERE <preds>] GROUP BY "<grou
   the integration level); empty-set returns (`0` for count, `null` otherwise);
   NULL-input skipping; nullable group key → one `key == null` bucket; integral
   `sum` widens to `Long`; `avg` of integers is fractional; **an unknown metric or
-  group column, a type-incompatible metric (`SUM(text)`, `MIN(enum)`), or a
-  `COUNT` with a column throws a field-named error before any SQL runs**.
+  group column, a type-incompatible metric (`SUM(text)`, `MIN(enum)`), a
+  non-groupable group key (bytes / pgvector / JSON), or a `COUNT` with a column
+  throws a field-named error before any SQL runs**.
 - **Unsupported driver:** a non-Postgres `Driver` throws from `aggregate`
   (`supportsAggregates() == false`).
 
