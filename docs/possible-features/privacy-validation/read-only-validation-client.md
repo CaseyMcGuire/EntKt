@@ -111,7 +111,7 @@ val validationClient = client.asReadOnlySystemClient()
 val ctx = PostCreateValidationContext(validationClient, candidate)
 ```
 
-`Viewer.System` bypasses privacy checks, but it does not bypass validation of
+`Viewer.PrivacyBypass` bypasses privacy checks, but it does not bypass validation of
 the outer operation.
 
 ## Transaction Semantics
@@ -127,7 +127,7 @@ still preventing validator writes.
 Read-path interceptors should still run for validation queries unless the
 validator explicitly uses a raw driver-level escape hatch. Since validation
 uses System privacy, interceptor behavior that depends on `PrivacyContext`
-should see `Viewer.System`.
+should see `Viewer.PrivacyBypass`.
 
 Open question: should there be a generated internal read mode for validation
 that bypasses application query interceptors for invariants? V1 should preserve

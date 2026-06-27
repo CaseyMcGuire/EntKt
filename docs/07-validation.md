@@ -205,14 +205,14 @@ enforced by the time validators run — validators are viewer-agnostic.
 If a rule cares about who is performing the operation, it belongs in
 privacy, not validation.
 
-The `client` in validation contexts is a **System-scoped client** —
-generated evaluators pass a fixed `Viewer.System` client so that
-validator reads bypass LOAD privacy:
+The `client` in validation contexts is a **privacy-bypass-scoped client** —
+generated evaluators pass a fixed `Viewer.PrivacyBypass("validation read")` client
+so that validator reads bypass LOAD privacy:
 
 ```kotlin
-// Generated evaluator wires a System-scoped client
+// Generated evaluator wires a privacy-bypass-scoped client
 val validationClient =
-    client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.System))
+    client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))
 val ctx = PostCreateValidationContext(validationClient, candidate)
 ```
 
@@ -247,9 +247,9 @@ collected into a list and thrown together:
 fun evaluateCreateValidation(client: EntClient, candidate: WriteCandidate) {
     val rules = validationConfig.createRules
     if (rules.isEmpty()) return
-    val systemClient =
-        client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.System))
-    val ctx = CreateValidationContext(systemClient, candidate)
+    val bypassClient =
+        client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))
+    val ctx = CreateValidationContext(bypassClient, candidate)
     val violations = rules.mapNotNull { rule ->
         when (val decision = rule.validate(ctx)) {
             is ValidationDecision.Valid -> null
@@ -262,9 +262,9 @@ fun evaluateCreateValidation(client: EntClient, candidate: WriteCandidate) {
 }
 ```
 
-`Viewer.System` does **not** bypass validation. Validation enforces
+`Viewer.PrivacyBypass` does **not** bypass validation. Validation enforces
 data model invariants that apply regardless of who is performing the
-operation. This differs from privacy, where `Viewer.System` bypasses
+operation. This differs from privacy, where `Viewer.PrivacyBypass` bypasses
 all checks.
 
 ## Execution Order

@@ -219,7 +219,7 @@ privacy {
 }
 ```
 
-`Viewer.System` remains a framework-level bypass. Flavors are for
+`Viewer.PrivacyBypass` remains a framework-level bypass. Flavors are for
 application-level capabilities that should still pass through explicit
 policy rules and appear in rule traces.
 
@@ -412,7 +412,7 @@ Before implementation, add tests for:
 - `PrivacyContext` remains source-compatible with existing construction
   through a default `flavors = emptyList()` parameter
 - `hasFlavor<T>()` and `flavor<T>()` work for application-defined flavors
-- `Viewer.System` continues to bypass all privacy checks
+- `Viewer.PrivacyBypass` continues to bypass all privacy checks
 - generated "FK points to viewer" helpers handle required and nullable FKs
 - generated "can read outgoing edge" helpers return false for missing,
   null, or unreadable targets

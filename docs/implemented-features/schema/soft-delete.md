@@ -120,7 +120,7 @@ owner-row load through the interceptor chain (a reasonable
 consistency fix), filtered restore would silently break. The
 robust pattern is to reach for the unfiltered client for restore
 workflows — same shape applications already use for
-`Viewer.System`-elevated reads (see [Seeing Deleted Rows](#seeing-deleted-rows)).
+`Viewer.PrivacyBypass`-elevated reads (see [Seeing Deleted Rows](#seeing-deleted-rows)).
 Restore is an "I know what I'm doing" path, and the unfiltered
 client is the natural affordance.
 

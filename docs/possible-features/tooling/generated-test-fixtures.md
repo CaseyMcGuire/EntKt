@@ -69,6 +69,6 @@ Before implementation, add tests for:
 - required fields without defaults fail clearly
 - edge fields can be assigned by entity object
 - privacy runs by default
-- system fixture mode uses `Viewer.System` explicitly
+- system fixture mode uses `Viewer.PrivacyBypass` explicitly
 - generated fixtures update when schema fields change
 

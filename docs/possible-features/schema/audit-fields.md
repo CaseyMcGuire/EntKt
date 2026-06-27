@@ -51,7 +51,7 @@ For actor fields, generated code can read from `PrivacyContext.viewer`:
 ```kotlin
 when (val viewer = privacy.viewer) {
     is Viewer.User -> viewer.id
-    Viewer.System -> null
+    is Viewer.PrivacyBypass -> null
     Viewer.Anonymous -> null
 }
 ```
@@ -67,6 +67,6 @@ Before implementation, add tests for:
 - update changes `updated_at`
 - create sets `created_by` from viewer when configured
 - update sets `updated_by` from viewer when configured
-- `Viewer.System` behavior is documented and tested
+- `Viewer.PrivacyBypass` behavior is documented and tested
 - audit fields interact correctly with explicit user-provided values
 

@@ -181,9 +181,11 @@ load(
 )
 ```
 
-> **`Viewer.System` bypasses all privacy checks** at the framework level --
-> it is the escape hatch for trusted/internal operations. You do not need
-> (and cannot write) a rule for it.
+> **`Viewer.PrivacyBypass(reason)` bypasses all privacy checks** at the framework
+> level -- it is the escape hatch for trusted/internal operations (the required
+> `reason` says why). You do not need (and cannot write) a rule for it. At
+> application call sites prefer the generated `bypassPrivacy_DANGEROUS(reason)`
+> client helper (below), whose loud name makes bypasses obvious in review.
 
 LOAD privacy is enforced on:
 
@@ -336,14 +338,28 @@ the create rules also fail to `Allow`, the operation is denied
 
 ## Scoped Context
 
-### withPrivacyContext
+### bypassPrivacy_DANGEROUS
 
-Override the privacy context for a block of code:
+Run a block with privacy checks bypassed. The loud name + required `reason` make
+escape-hatch call sites obvious and easy to grep for:
 
 ```kotlin
-client.withPrivacyContext(PrivacyContext(Viewer.System)) { systemClient ->
-    // All operations through systemClient use Viewer.System
-    systemClient.users.query().allOrThrow()
+client.bypassPrivacy_DANGEROUS(reason = "migration backfill") { bypassed ->
+    bypassed.users.create { email = "admin@example.com" }.saveOrThrow()
+}
+```
+
+It bypasses only generated privacy checks (LOAD/CREATE/UPDATE/DELETE) — validation,
+hooks, query interceptors, transactions, and database constraints still apply.
+
+### withPrivacyContext
+
+Override the privacy context for a block of code — use this for ordinary identity
+changes (e.g. acting as `Viewer.User(id)`), not for bypassing privacy:
+
+```kotlin
+client.withPrivacyContext(PrivacyContext(Viewer.User(42L))) { scoped ->
+    scoped.users.query().allOrThrow()
 }
 ```
 
