@@ -2367,8 +2367,11 @@ internal class QueryGenerator(
     ) {
         // Find the FK property name on the source entity
         val edgeFks = computeEdgeFks(schema, schemaNames)
-        val fkPropName = edgeFks.find { it.columnName == join.sourceColumn }?.propertyName
-            ?: toCamelCase(join.sourceColumn)
+        val fk = edgeFks.find { it.columnName == join.sourceColumn }
+        val fkPropName = fk?.propertyName ?: toCamelCase(join.sourceColumn)
+        // A required FK is a non-null property, so the safe-call below would be
+        // redundant (and Kotlin warns). Unknown → treat as nullable (safe).
+        val fkRequired = fk?.required ?: false
 
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
         body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
@@ -2390,10 +2393,19 @@ internal class QueryGenerator(
         emitEagerPrivacyCheck(body, targetName, "loaded", grouped = false)
         body.addStatement("loaded = subQuery.loadEdges(loaded, eagerPrivacyContext)")
         body.addStatement("val targetMap = loaded.associateBy { it.id }")
-        body.addStatement(
-            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = entity.%L?.let { targetMap[it] })) }",
-            edgePropName, fkPropName,
-        )
+        if (fkRequired) {
+            // Non-null FK: map lookup directly (still nullable — the target may
+            // have been filtered by eager LOAD privacy).
+            body.addStatement(
+                "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = targetMap[entity.%L])) }",
+                edgePropName, fkPropName,
+            )
+        } else {
+            body.addStatement(
+                "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = entity.%L?.let { targetMap[it] })) }",
+                edgePropName, fkPropName,
+            )
+        }
         body.nextControlFlow("else")
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = null)) }",

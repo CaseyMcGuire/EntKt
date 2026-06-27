@@ -1757,6 +1757,29 @@ class EdgeCodegenTest {
     }
 
     @Test
+    fun `to-one eager resolution omits the redundant safe-call for a required FK`() {
+        val (_, names, byName) = createAllSchemas()
+
+        // Pet.owner is nullable → ownerId is Long?, so the safe-call is needed.
+        val petOut = QueryGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+        assert(petOut.contains("entity.ownerId?.let { targetMap[it] }")) {
+            "Nullable FK should keep the safe-call\n$petOut"
+        }
+
+        // RequiredPet.owner is required → ownerId is Long (non-null), so the
+        // safe-call would be a redundant-warning; resolve via a plain lookup.
+        val reqOut = QueryGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        assert(reqOut.contains("targetMap[entity.ownerId]")) {
+            "Required FK should use a plain map lookup (no redundant ?.)\n$reqOut"
+        }
+        assert(!reqOut.contains("entity.ownerId?.let")) {
+            "Required FK should not emit a redundant safe-call\n$reqOut"
+        }
+    }
+
+    @Test
     fun `query generates withMembers for M2M edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
