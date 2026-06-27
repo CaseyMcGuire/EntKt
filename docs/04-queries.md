@@ -241,6 +241,70 @@ as `Err(PrivacyDenied)` (same shape as `allOrError`). The raw
 variants intentionally bypass LOAD privacy and have no PrivacyDenied
 surface.
 
+## Aggregations
+
+Beyond count, each query exposes single-metric **raw** aggregate terminals —
+`min`, `max`, `sum`, `avg` — computed in the database over the query's
+predicates. Like `rawCount`, they bypass LOAD privacy (hence the `raw` prefix)
+and ignore `orderBy` / `limit` / `offset`. Each terminal computes one metric,
+optionally grouped by one column.
+
+### Ungrouped — a typed scalar
+
+The return type follows the column you pass:
+
+```kotlin
+val orders = client.orders.query { where(Order.status eq Status.SHIPPED) }
+
+val latest:  Instant? = orders.rawMax(Order.placedAt)   // min/max → the column's type
+val units:   Long?    = orders.rawSum(Order.quantity)   // sum of an integer column → Long?
+val revenue: Double?  = orders.rawSum(Order.price)      // sum of a floating column → Double?
+val avgLine: Double?  = orders.rawAvg(Order.price)      // avg is always Double?
+```
+
+`min`/`max` accept any comparable column; `sum`/`avg` accept only numeric
+columns — both are enforced at compile time. An ungrouped metric over an empty
+match is `null` (only `rawCount()` returns `0`).
+
+### Grouped — a list of buckets
+
+`raw…By(groupColumn[, metricColumn])` returns `List<AggregateBucket<K, V>>`, one
+bucket per distinct key:
+
+```kotlin
+val perStatus: List<AggregateBucket<Status, Long>> =
+    client.orders.query().rawCountBy(Order.status)        // key is the decoded enum
+
+val unitsByStatus: List<AggregateBucket<Status, Long?>> =
+    client.orders.query().rawSumBy(Order.status, Order.quantity)
+
+for (b in perStatus) println("${b.key}: ${b.value}")
+```
+
+The group key is typed by the column handle (an enum column yields the decoded
+enum, not its stored string). Grouping by a **nullable** column types the key as
+`K?` and folds its NULLs into a single `key == null` bucket. You can group by
+string/text, numeric, time, bool, UUID, or enum columns; bytes, JSON, and
+pgvector columns are rejected at compile time. Bucket order is unspecified —
+sort in Kotlin if you need a stable order.
+
+### `*OrError` variants
+
+Every terminal has an `…OrError` twin returning `EntResult<…>`, mapping
+interceptor rejection and driver failure to `EntError` exactly like
+`rawCountOrError` (raw aggregates never surface `PrivacyDenied`):
+
+```kotlin
+when (val r = client.orders.query().rawSumOrError(Order.quantity)) {
+    is EntResult.Ok  -> println("units: ${r.value}")
+    is EntResult.Err -> println("failed: ${r.error}")
+}
+```
+
+V1 is Postgres-only and raw-only; privacy-aware (`visible…`) aggregates,
+multi-metric selection, and multi-column / expression grouping are deferred —
+see [Aggregations](implemented-features/query/aggregations.md).
+
 ## Edge Traversal
 
 Query builders expose methods for traversing edges. Given a `User` with

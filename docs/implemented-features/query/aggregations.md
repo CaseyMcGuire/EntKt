@@ -2,7 +2,22 @@
 
 ## Status
 
-Proposed. V1 is fully specified below and ready to implement; not yet implemented.
+Implemented (V1). The generated `<Entity>Query` exposes the single-metric raw
+aggregate terminals (`rawMin`/`rawMax`/`rawSum`/`rawAvg` + the grouped `raw…By`
+forms, each with an `…OrError` twin) over Postgres. As-built notes vs. this spec:
+
+- The compile-time type gating is carried by column-handle markers on the
+  generated companion columns: `IntegralColumn`/`FloatingColumn` (under
+  `NumericColumn`) gate `sum`/`avg`; `GroupableColumn`/`NullableGroupableColumn`
+  gate group keys (bool/uuid use a non-comparable `GroupableScalarColumn`); bytes
+  and pgvector are non-groupable. No aggregate **result** types are generated.
+- Enum group keys decode through `EnumColumn`'s generated `fromName` lambda — the
+  driver returns the stored `String`, the terminal maps it back to the enum.
+- The low-level `Driver.aggregate` validates `column`/`groupBy` against the
+  registered schema (field-named error) and rejects a stray `COUNT` column before
+  rendering SQL.
+
+See the user guide at [Queries → Aggregations](../../04-queries.md#aggregations).
 
 This RFC **extends the existing read-terminal spine** (`rawCount` / `visibleCount`
 / `rawExists` / `visibleExists`) rather than introducing a parallel query system.

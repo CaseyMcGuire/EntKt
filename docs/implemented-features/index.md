@@ -24,6 +24,7 @@ Open or speculative RFCs remain in the
 
 - [Read-Path Interceptors](query/read-path-interceptors.md)
 - [Phantom-Typed Query Scopes](query/phantom-typed-query-scopes.md)
+- [Aggregations](query/aggregations.md)
 
 ## Model Behavior
 
