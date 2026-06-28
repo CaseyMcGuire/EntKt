@@ -619,6 +619,11 @@ class Friendship : EntSchema("friendships") {
 Single-column unique constraints are simpler -- just use `.unique()` on the
 field directly. The index name is the first argument and is required.
 
+Declared indexes also generate type-safe, index-friendly read helpers under
+the repo's `indexes` namespace
+(`client.users.indexes.email(...).orNull()`) -- see
+[Queries -> Indexed Query Helpers](04-queries.md#indexed-query-helpers).
+
 ### Partial indexes
 
 Partial (conditional) indexes include only rows matching a `WHERE` predicate:

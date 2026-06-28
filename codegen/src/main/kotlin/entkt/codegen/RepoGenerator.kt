@@ -69,6 +69,7 @@ internal class RepoGenerator(
         val createClass = ClassName(packageName, "${schemaName}Create")
         val updateClass = ClassName(packageName, "${schemaName}Update")
         val queryClass = ClassName(packageName, "${schemaName}Query")
+        val indexesClass = ClassName(packageName, "${schemaName}Indexes")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
@@ -163,6 +164,24 @@ internal class RepoGenerator(
                     .addStatement("return %T(driver, client).apply(block)", queryClass)
                     .build()
             )
+            // Index-helper namespace. Emitted only when the schema has at
+            // least one eligible index (matching the conditional
+            // `${schemaName}Indexes` file). A computed getter so the
+            // lateinit `client` is read at access time, not construction;
+            // the namespace itself is stateless (driver + client only).
+            .also { builder ->
+                if (indexHelperTree(schema, schemaNames) != null) {
+                    builder.addProperty(
+                        PropertySpec.builder("indexes", indexesClass)
+                            .getter(
+                                FunSpec.getterBuilder()
+                                    .addStatement("return %T(driver, client)", indexesClass)
+                                    .build(),
+                            )
+                            .build(),
+                    )
+                }
+            }
             .addFunction(buildRepoCreate(schema, entityClass, createClass, createLambda))
             .addFunction(
                 // Per-save UpdateConsistency override (transaction locking). Defaults

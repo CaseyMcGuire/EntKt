@@ -69,6 +69,13 @@ data class ExplainedIndex(
     val columns: List<String>,
     val unique: Boolean,
     val where: String? = null,
+    /**
+     * The generated index-helper access paths this index produces, e.g.
+     * `indexes.authorId(authorId).query()`. One per left prefix. Empty
+     * when the index is ineligible for helper generation (partial,
+     * native/non-btree, or a btree-incompatible column type).
+     */
+    val helpers: List<String> = emptyList(),
 )
 
 data class ValidationResult(

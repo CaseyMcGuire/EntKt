@@ -20,4 +20,9 @@ class Article : EntSchema("articles") {
     val metadata = json("metadata", ArticleMeta::class).nullable()
 
     val author = belongsTo<User>("author").inverse(User::articles)
+
+    // Exercises indexed query helpers: a composite over the implicit FK
+    // (author_id → authorId) plus a comparable text column (title → range
+    // blocks). `User.email.unique()` covers the unique-terminal path.
+    val byAuthorTitle = index("idx_articles_author_title", author.fk, title)
 }

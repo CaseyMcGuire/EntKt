@@ -20,6 +20,102 @@ val users = client.users.query {
 aggregate count, or `.rawExists()` / `.visibleExists()` to check whether
 a match exists (raw skips LOAD privacy; visible applies it).
 
+## Indexed Query Helpers
+
+When an entity declares indexes, the generated repo exposes an `indexes`
+namespace of staged, type-safe builders that make the index-friendly read
+paths discoverable from IDE completion. Each helper just seeds the indexed
+predicate and hands back the **normal** query builder, so privacy, read
+interceptors, eager loading, ordering, and the terminal choices are all
+unchanged.
+
+Given:
+
+```kotlin
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+    val authorId = long("author_id")
+    val createdAt = time("created_at")
+    val byAuthorCreated = index("idx_posts_author_created", authorId, createdAt)
+}
+```
+
+a composite index generates one method per **valid left prefix** — each
+stage offers only the next indexed column, which keeps you on the index:
+
+```kotlin
+// equivalent to query { where(Post.authorId eq userId) }
+client.posts.indexes
+    .authorId(userId)
+    .query()
+    .allOrThrow()
+
+// equivalent to query { where(Post.authorId eq userId); where(Post.createdAt eq t) }
+client.posts.indexes
+    .authorId(userId)
+    .createdAt(t)
+    .query()
+```
+
+`query { ... }` accepts the same DSL as `client.posts.query { ... }`;
+extra `where(...)` predicates are AND'd with the seeded indexed prefix,
+and ordering / pagination / eager loading / terminals all stay available:
+
+```kotlin
+client.posts.indexes
+    .authorId(userId)
+    .query {
+        where(Post.published eq true)
+        orderBy(Post.createdAt.desc())
+        limit(20)
+    }
+    .allOrError()
+```
+
+### Range blocks
+
+The next comparable indexed column after an equality prefix
+(string/text, numeric, or time) also gets a range-block overload. A range
+block adds at least one bound and at most one lower (`gt`/`gte`) and one
+upper (`lt`/`lte`); a range stage ends the chain (it exposes only
+`query()`):
+
+```kotlin
+client.posts.indexes
+    .authorId(userId)
+    .createdAt { gte(since); lt(until) }
+    .query { orderBy(Post.createdAt.desc()) }
+    .allOrError()
+```
+
+### Unique terminals
+
+When a bound prefix exactly matches a non-nullable **unique** index, the
+stage exposes single-row terminals instead of (well, alongside) `query()`:
+
+```kotlin
+client.users.indexes.email("a@example.com").orNull()        // User? — miss is null, denial throws
+client.users.indexes.email("a@example.com").visibleOrNull() // miss OR denial → null
+client.users.indexes.email("a@example.com").orError()       // EntResult<User> — miss is Err(NotFound, QUERY)
+client.users.indexes.email("a@example.com").orThrow()       // User, or a structured exception
+```
+
+A composite unique index exposes the terminals only at its full stage —
+a partial prefix exposes `query()` but not `orNull()` and friends.
+
+### What generates a helper
+
+Helpers come from explicit `index(...)` declarations and the unique
+indexes synthesized by `field.unique()` / `belongsTo(...).unique()`.
+Method names are the generated column-ref property names (e.g.
+`author_id` → `authorId`), never the storage column name. V1 helper
+parameters are non-null, so to query a `NULL` indexed value use the
+normal `query { where(col.isNull()) }`. The generator skips
+raw-SQL partial indexes, native / non-btree indexes (e.g. pgvector
+HNSW/IVFFlat), and indexes over btree-incompatible columns (JSON,
+pgvector, bytes). See the design note:
+[Indexed Query Helpers](implemented-features/query/indexed-query-helpers.md).
+
 ## Predicates
 
 Predicates are built from the typed column references on the entity's

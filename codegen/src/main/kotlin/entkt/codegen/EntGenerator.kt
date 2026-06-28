@@ -597,6 +597,7 @@ class EntGenerator(
     private val updateGenerator = UpdateGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
     private val repoGenerator = RepoGenerator(packageName)
+    private val indexHelperGenerator = IndexHelperGenerator(packageName)
     private val privacyGenerator = PrivacyGenerator(packageName)
     private val validationGenerator = ValidationGenerator(packageName)
     private val clientGenerator = ClientGenerator(packageName)
@@ -638,16 +639,20 @@ class EntGenerator(
             )
         }
         val perSchema = schemas.flatMap { (name, schema) ->
-            listOf(
-                entityGenerator.generate(name, schema, schemaNames),
-                mutationGenerator.generate(name, schema, schemaNames),
-                createGenerator.generate(name, schema, schemaNames),
-                updateGenerator.generate(name, schema, schemaNames),
-                queryGenerator.generate(name, schema, schemaNames),
-                repoGenerator.generate(name, schema, schemaNames),
-                privacyGenerator.generate(name, schema, schemaNames),
-                validationGenerator.generate(name, schema, schemaNames),
-            )
+            buildList {
+                add(entityGenerator.generate(name, schema, schemaNames))
+                add(mutationGenerator.generate(name, schema, schemaNames))
+                add(createGenerator.generate(name, schema, schemaNames))
+                add(updateGenerator.generate(name, schema, schemaNames))
+                add(queryGenerator.generate(name, schema, schemaNames))
+                add(repoGenerator.generate(name, schema, schemaNames))
+                // Index helpers: only emitted when the schema has at least
+                // one eligible index, so schemas without helpers don't get
+                // an empty `${name}Indexes` file.
+                indexHelperGenerator.generate(name, schema, schemaNames)?.let { add(it) }
+                add(privacyGenerator.generate(name, schema, schemaNames))
+                add(validationGenerator.generate(name, schema, schemaNames))
+            }
         }
         return perSchema + clientGenerator.generate(schemas)
     }

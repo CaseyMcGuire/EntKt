@@ -36,7 +36,6 @@ Implemented RFCs have moved to the
 - [Loaded Edge State](query/loaded-edge-state.md)
 - [Cursor Pagination](query/cursor-pagination.md)
 - [Projection / Select API](query/projection-select-api.md)
-- [Indexed Query Helpers](query/indexed-query-helpers.md)
 - [Typed SQL DSL Escape Hatch](query/typed-sql-dsl-escape-hatch.md)
 
 ## Model Behavior

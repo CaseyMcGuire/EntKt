@@ -185,6 +185,19 @@ object SchemaInspector {
             }
         }
 
+        // Index-helper generation collisions (two columns resolving to the
+        // same helper name at one stage, or two index prefixes resolving to
+        // the same generated stage-class name) fail codegen. Build the helper
+        // tree here too so validate() / explain() report the same problem
+        // instead of advertising (via ExplainedIndex.helpers) a helper
+        // surface codegen would reject. Shared with codegen through
+        // [indexHelperTree].
+        try {
+            indexHelperTree(input.schema, schemaNames)
+        } catch (e: Exception) {
+            errors.add(e.message ?: e.toString())
+        }
+
         // declaration-name capture: a `belongsTo(...).field(handle)` whose backing
         // field has no captured Kotlin val name on the concrete
         // schema (computed getter, delegated, inherited, mixin-
@@ -435,12 +448,17 @@ object SchemaInspector {
         schemaNames: Map<EntSchema, String>,
     ): List<ExplainedIndex> {
         val idxColMap = indexableColumnMap(schema, schemaNames)
+        // Generated helper access paths keyed by raw (pre-normalization)
+        // index name, so explain output can advertise the index-helper
+        // surface. Empty for ineligible indexes.
+        val helperPaths = indexHelperPathsByName(schema, schemaNames)
         val explicit = schema.indexes().map { idx ->
             ExplainedIndex(
                 name = normalizeIdentifier(idx.name),
                 columns = idx.fields.map { idxColMap[it] ?: it },
                 unique = idx.unique,
                 where = idx.where,
+                helpers = helperPaths[idx.name] ?: emptyList(),
             )
         }
 
@@ -452,10 +470,12 @@ object SchemaInspector {
         val synthesized = columns
             .filter { it.unique && !it.primaryKey }
             .map { col ->
+                val rawName = "idx_${table}_${col.name}_unique"
                 ExplainedIndex(
-                    name = normalizeIdentifier("idx_${table}_${col.name}_unique"),
+                    name = normalizeIdentifier(rawName),
                     columns = listOf(col.name),
                     unique = true,
+                    helpers = helperPaths[rawName] ?: emptyList(),
                 )
             }
 
@@ -534,6 +554,16 @@ object SchemaInspector {
                 listOf(idx.name, "($cols)", attrs)
             }
             sb.append(renderTable(listOf("Name", "Columns", "Attributes"), rows))
+
+            val withHelpers = schema.indexes.filter { it.helpers.isNotEmpty() }
+            if (withHelpers.isNotEmpty()) {
+                sb.appendLine()
+                sb.appendLine("Index helpers:")
+                for (idx in withHelpers) {
+                    sb.appendLine("  ${idx.name}:")
+                    for (path in idx.helpers) sb.appendLine("    $path")
+                }
+            }
         }
 
         sb.appendLine()
@@ -631,6 +661,10 @@ object SchemaInspector {
             val cols = idx.columns.joinToString(", ") { jsonString(it) }
             sb.append("$indent    { \"name\": ${jsonString(idx.name)}, \"columns\": [$cols], \"unique\": ${idx.unique}")
             if (idx.where != null) sb.append(", \"where\": ${jsonString(idx.where)}")
+            if (idx.helpers.isNotEmpty()) {
+                val helpers = idx.helpers.joinToString(", ") { jsonString(it) }
+                sb.append(", \"helpers\": [$helpers]")
+            }
             sb.appendLine(" }$comma")
         }
         sb.appendLine("$indent  ]")
