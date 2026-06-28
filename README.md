@@ -1,8 +1,8 @@
 # entkt
 
-A Kotlin port of [Ent](https://entgo.io/), Go's entity framework. Declare your
-entities in a Kotlin DSL, run code generation, and get typed data classes,
-query builders, and repositories that talk to a pluggable `Driver`.
+A Kotlin entity framework. Declare your entities in a Kotlin DSL, run code
+generation, and get typed data classes, query builders, and repositories
+that talk to a pluggable `Driver`.
 
 This project is under active development — see the module READMEs for
 details on each component, and [Roadmap](#roadmap) for what's missing.
