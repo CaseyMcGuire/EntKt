@@ -5,11 +5,11 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.EntQueryRejectedException
-import entkt.runtime.PrivacyContext
-import entkt.runtime.QueryInterceptor
-import entkt.runtime.ReadOperation
-import entkt.runtime.Viewer
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.ReadOperation
+import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

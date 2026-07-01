@@ -20,25 +20,25 @@ import entkt.schema.FieldType
 import entkt.schema.UpdateDefault
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
-private val FIELD_PATCH_OR_ELSE = MemberName("entkt.runtime", "orElse")
-private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
-private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime", "EntNoChangesException")
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
-private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
-private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
-private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime", "RelationshipLocking")
-private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime", "RelationshipLockKey")
-private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
-private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime", "UnsupportedDriverCapabilityException")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
+private val FIELD_PATCH_OR_ELSE = MemberName("entkt.runtime.mutation", "orElse")
+private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
+private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime.result", "EntNoChangesException")
+private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
+private val VALIDATION_INVALID = ClassName("entkt.runtime.validation", "ValidationDecision", "Invalid")
+private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
+private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
+private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "RelationshipLockKey")
+private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
+private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION = ClassName("entkt.runtime.mutation", "UnsupportedDriverCapabilityException")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val ILLEGAL_STATE_EXCEPTION = ClassName("kotlin", "IllegalStateException")
-private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
-private val COMPUTE_EDGE_CHANGES = MemberName("entkt.runtime", "computeEdgeChanges")
+private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
+private val COMPUTE_EDGE_CHANGES = MemberName("entkt.runtime.mutation", "computeEdgeChanges")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
@@ -1088,7 +1088,7 @@ internal class UpdateGenerator(
      *  - When the edge has pending ops, read the junction table for
      *    rows whose source FK matches the owner id, deduplicate the
      *    target ids into a set, and delegate to
-     *    [entkt.runtime.computeEdgeChanges] for the actual added /
+     *    [entkt.runtime.mutation.computeEdgeChanges] for the actual added /
      *    removed delta.
      *
      * For schemas with zero helper-eligible M2M edges the function just
@@ -1723,11 +1723,11 @@ internal class UpdateGenerator(
         builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, updatedEntity)", repoPropName)
         builder.nextControlFlow(
             "catch (e: %T)",
-            ClassName("entkt.runtime", "PrivacyDeniedException"),
+            ClassName("entkt.runtime.privacy", "PrivacyDeniedException"),
         )
         builder.addStatement(
             "throw %T(%T.WriteSucceededLoadDenied(e.entity, %T.UPDATE, updatedEntity.id, e.reason))",
-            ClassName("entkt.runtime", "EntWriteSucceededLoadDeniedException"),
+            ClassName("entkt.runtime.result", "EntWriteSucceededLoadDeniedException"),
             ENT_ERROR,
             ENT_OPERATION,
         )
@@ -1898,7 +1898,7 @@ internal class UpdateGenerator(
             .returns(entityClass)
             .addStatement(
                 "return saveOrError().%M()",
-                MemberName("entkt.runtime", "getOrThrow"),
+                MemberName("entkt.runtime.result", "getOrThrow"),
             )
             .build()
     }
@@ -1933,10 +1933,10 @@ internal class UpdateGenerator(
      */
     private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
-        val resultClass = ClassName("entkt.runtime", "EntResult")
-        val entExceptionClass = ClassName("entkt.runtime", "EntException")
-        val privacyDeniedClass = ClassName("entkt.runtime", "PrivacyDeniedException")
-        val validationClass = ClassName("entkt.runtime", "ValidationException")
+        val resultClass = ClassName("entkt.runtime.result", "EntResult")
+        val entExceptionClass = ClassName("entkt.runtime.result", "EntException")
+        val privacyDeniedClass = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
+        val validationClass = ClassName("entkt.runtime.validation", "ValidationException")
         val resultType = resultClass.parameterizedBy(entityClass)
         return FunSpec.builder("saveOrError")
             .returns(resultType)
@@ -1972,13 +1972,13 @@ internal class UpdateGenerator(
                         resultClass,
                         ENT_ERROR,
                         ENT_OPERATION,
-                        MemberName("entkt.runtime", "toValidationViolation"),
+                        MemberName("entkt.runtime.result", "toValidationViolation"),
                     )
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.UPDATE))\n",
                         resultClass,
-                        MemberName("entkt.runtime", "classifyDriverError"),
+                        MemberName("entkt.runtime.driver", "classifyDriverError"),
                         schemaName,
                         ENT_OPERATION,
                     )

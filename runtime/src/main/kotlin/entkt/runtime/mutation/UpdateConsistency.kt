@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.mutation
 
 /**
  * Per-save owner-row-stability mode for generated `update(...)` saves

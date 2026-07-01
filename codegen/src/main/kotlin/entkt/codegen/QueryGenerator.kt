@@ -28,30 +28,30 @@ import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val EDGE_QUERY = ClassName("entkt.query", "EdgeQuery")
-private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP = ClassName("entkt.query", "Op")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val PRIVACY_DENIED = ClassName("entkt.runtime", "PrivacyDeniedException")
-private val QUERY_EXPLANATION = ClassName("entkt.runtime", "QueryExplanation")
-private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
-private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
-private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime", "EntQueryRejectedException")
-private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime", "AbortQueryRejected")
-private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime", "FrozenQuerySpec")
-private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime", "QuerySpecBuilder")
-private val QUERY_CONTEXT = ClassName("entkt.runtime", "QueryContext")
-private val READ_OPERATION = ClassName("entkt.runtime", "ReadOperation")
-private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime", "InterceptorEngine")
-private val MEMBER_GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime", "getOrThrow")
-private val MEMBER_CLASSIFY = com.squareup.kotlinpoet.MemberName("entkt.runtime", "classifyDriverError")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_DENIED = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
+private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
+private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
+private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
+private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
+private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
+private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
+private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime.query", "QuerySpecBuilder")
+private val QUERY_CONTEXT = ClassName("entkt.runtime.query", "QueryContext")
+private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
+private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime.query", "InterceptorEngine")
+private val MEMBER_GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "getOrThrow")
+private val MEMBER_CLASSIFY = com.squareup.kotlinpoet.MemberName("entkt.runtime.driver", "classifyDriverError")
 
 // Raw aggregate terminals.
-private val AGG_FUNCTION = ClassName("entkt.runtime", "AggregateFunction")
-private val AGG_BUCKET = ClassName("entkt.runtime", "AggregateBucket")
-private val AGG_RESULT_ROW = ClassName("entkt.runtime", "AggregateResultRow")
+private val AGG_FUNCTION = ClassName("entkt.runtime.query", "AggregateFunction")
+private val AGG_BUCKET = ClassName("entkt.runtime.query", "AggregateBucket")
+private val AGG_RESULT_ROW = ClassName("entkt.runtime.query", "AggregateResultRow")
 private val COMPARABLE_COLUMN = ClassName("entkt.query", "ComparableColumn")
 private val NUMERIC_COLUMN = ClassName("entkt.query", "NumericColumn")
 private val INTEGRAL_COLUMN = ClassName("entkt.query", "IntegralColumn")
@@ -219,7 +219,7 @@ internal class QueryGenerator(
             .addProperty(
                 PropertySpec.builder(
                     "traversalPath",
-                    List::class.asClassName().parameterizedBy(ClassName("entkt.runtime", "EdgeStep")),
+                    List::class.asClassName().parameterizedBy(ClassName("entkt.runtime.query", "EdgeStep")),
                 )
                     .addModifiers(KModifier.PRIVATE)
                     .mutable(true)
@@ -244,7 +244,7 @@ internal class QueryGenerator(
                     "deferredSourceStep",
                     LambdaTypeName.get(
                         receiver = null,
-                        returnType = ClassName("entkt.runtime", "TraversalSourceResult")
+                        returnType = ClassName("entkt.runtime.query", "TraversalSourceResult")
                             .parameterizedBy(entityClass),
                     ).copy(nullable = true),
                 )
@@ -1249,7 +1249,7 @@ internal class QueryGenerator(
      * (or `QueryPlan(driver.explainCount(...))`) expression.
      */
     private fun explainBody(operationName: String, bodyOnSuccess: CodeBlock): CodeBlock {
-        val queryPlan = ClassName("entkt.runtime", "QueryPlan")
+        val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
         return CodeBlock.builder()
             .add("return try {\n")
             .add(
@@ -1495,7 +1495,7 @@ internal class QueryGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): List<FunSpec> {
-        val queryPlan = ClassName("entkt.runtime", "QueryPlan")
+        val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
         val resolvableEdges = resolveExplainableEdges(schema, schemaNames)
         val hasEager = resolvableEdges.isNotEmpty()
 
@@ -1641,7 +1641,7 @@ internal class QueryGenerator(
         queryPlan: ClassName,
         sourceClass: ClassName,
     ): CodeBlock {
-        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
         val body = CodeBlock.builder()
         body.beginControlFlow("%L?.let { subQuery ->", info.eagerPropName)
         // Mirror runtime emit*EagerBlock context setup so the
@@ -1658,7 +1658,7 @@ internal class QueryGenerator(
         // caller can inspect `plan.eagerQueries["X"]?.rejected` to
         // see which step rejected. Explain rejection lives on the
         // plan, not as an exception.
-        val queryPlanLocal = ClassName("entkt.runtime", "QueryPlan")
+        val queryPlanLocal = ClassName("entkt.runtime.query", "QueryPlan")
         if (info.edge.kind is EdgeKind.ManyToMany) {
             // M2M: junction table explain stands alone (no
             // interceptors on the junction), then the target-table
@@ -1921,7 +1921,7 @@ internal class QueryGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
-        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
         val mutableMap = ClassName("kotlin.collections", "MutableMap")
         val body = CodeBlock.builder()
         body.addStatement("val c = requireClient()")
@@ -1940,7 +1940,7 @@ internal class QueryGenerator(
         )
         body.add("  %P\n",
             "edge-predicate interceptor recursion exceeded depth " +
-                "\${entkt.runtime.InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH} on path " +
+                "\${entkt.runtime.query.InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH} on path " +
                 "\${parentPath.joinToString(\" → \") { \"\${it.source.simpleName}.\${it.edgeName}\" }}. " +
                 "Likely cause: interceptors on two entities each add a HasEdge[With] predicate that " +
                 "references back to the other (e.g. Post adds Post.author.has(), User adds " +
@@ -2531,7 +2531,7 @@ internal class QueryGenerator(
         sourceClass: ClassName,
         targetClass: ClassName,
     ) {
-        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
+        val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
         // Cross-class write through the @EntktInternal seeder
         // (traversal context fields are `private` on the target
         // query class).
@@ -2652,7 +2652,7 @@ internal class QueryGenerator(
             .addParameter("edgeName", String::class.asClassName())
             .addParameter(
                 "path",
-                List::class.asClassName().parameterizedBy(ClassName("entkt.runtime", "EdgeStep")),
+                List::class.asClassName().parameterizedBy(ClassName("entkt.runtime.query", "EdgeStep")),
             )
             .addStatement("this.traversalSourceEntity = sourceEntity")
             .addStatement("this.traversalEdgeName = edgeName")
@@ -2673,7 +2673,7 @@ internal class QueryGenerator(
     private fun buildSetDeferredSourceStep(entityClass: ClassName): FunSpec {
         val lambdaType = LambdaTypeName.get(
             receiver = null,
-            returnType = ClassName("entkt.runtime", "TraversalSourceResult")
+            returnType = ClassName("entkt.runtime.query", "TraversalSourceResult")
                 .parameterizedBy(entityClass),
         ).copy(nullable = true)
         return FunSpec.builder("setDeferredSourceStep")
@@ -2705,8 +2705,8 @@ internal class QueryGenerator(
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
         val sourceTable = source.tableName
-        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
-        val traversalSourceResult = ClassName("entkt.runtime", "TraversalSourceResult")
+        val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
+        val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)
@@ -2804,8 +2804,8 @@ internal class QueryGenerator(
         val targetEntityClass = ClassName(packageName, targetName)
         val targetQueryClass = ClassName(packageName, "${targetName}Query")
         val methodName = "query${toPascalCase(edge.name)}"
-        val edgeStepClass = ClassName("entkt.runtime", "EdgeStep")
-        val traversalSourceResult = ClassName("entkt.runtime", "TraversalSourceResult")
+        val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
+        val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
         return FunSpec.builder(methodName)
             .returns(targetQueryClass)

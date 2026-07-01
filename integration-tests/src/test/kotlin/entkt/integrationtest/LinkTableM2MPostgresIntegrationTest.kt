@@ -2,8 +2,8 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.postgres.PostgresDriver
-import entkt.runtime.PrivacyContext
-import entkt.runtime.Viewer
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.Viewer
 import org.postgresql.ds.PGSimpleDataSource
 import org.postgresql.util.PSQLException
 import org.testcontainers.junit.jupiter.Container

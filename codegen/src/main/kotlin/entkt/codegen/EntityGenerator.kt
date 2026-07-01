@@ -21,7 +21,7 @@ import entkt.schema.FieldType
 
 private val EDGE_REF = ClassName("entkt.query", "EdgeRef")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
-private val NOOP_DRIVER = ClassName("entkt.runtime", "NoopDriver")
+private val NOOP_DRIVER = ClassName("entkt.runtime.driver", "NoopDriver")
 private val ANY_NULLABLE = Any::class.asTypeName().copy(nullable = true)
 private val ROW_TYPE = ClassName("kotlin.collections", "Map")
     .parameterizedBy(STRING, ANY_NULLABLE)

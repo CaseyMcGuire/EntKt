@@ -10,7 +10,7 @@ import entkt.migrations.parseVersionNumber
 import entkt.postgres.PostgresIntrospector
 import entkt.postgres.PostgresSqlRenderer
 import entkt.postgres.PostgresTypeMapper
-import entkt.runtime.EntitySchema
+import entkt.runtime.driver.EntitySchema
 import org.flywaydb.core.Flyway
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.postgresql.PostgreSQLContainer

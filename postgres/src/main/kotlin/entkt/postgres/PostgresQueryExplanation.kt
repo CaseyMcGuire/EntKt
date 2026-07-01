@@ -1,6 +1,6 @@
 package entkt.postgres
 
-import entkt.runtime.QueryExplanation
+import entkt.runtime.query.QueryExplanation
 
 /**
  * Explanation returned by [PostgresDriver.explainQuery]. Exposes

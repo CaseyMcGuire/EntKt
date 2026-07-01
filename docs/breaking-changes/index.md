@@ -30,4 +30,14 @@ above it.
 
 ## Unreleased
 
+- **`entkt.runtime` split into concern-based subpackages** (`runtime`)
+  Runtime types moved from the flat `entkt.runtime` package into
+  `entkt.runtime.{driver,privacy,validation,query,mutation,result}`.
+  _Migration:_ update imports — e.g. `entkt.runtime.Viewer` →
+  `entkt.runtime.privacy.Viewer`, `entkt.runtime.Driver` →
+  `entkt.runtime.driver.Driver`, `entkt.runtime.EntResult` →
+  `entkt.runtime.result.EntResult`. Generated code already targets the new
+  packages; only hand-written imports need updating. See the mapping in
+  [runtime/README.md](../../runtime/README.md#package-layout).
+
 _No breaking changes yet._

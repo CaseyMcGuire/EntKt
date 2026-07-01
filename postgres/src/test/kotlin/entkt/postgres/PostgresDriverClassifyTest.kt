@@ -1,8 +1,8 @@
 package entkt.postgres
 
-import entkt.runtime.EntError
-import entkt.runtime.EntOperation
-import entkt.runtime.classifyDriverError
+import entkt.runtime.result.EntError
+import entkt.runtime.result.EntOperation
+import entkt.runtime.driver.classifyDriverError
 import org.postgresql.util.PSQLException
 import org.postgresql.util.PSQLState
 import kotlin.test.Test

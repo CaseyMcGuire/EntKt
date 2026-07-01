@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.result
 
 /**
  * Base class for exceptions thrown by generated save/throwing code

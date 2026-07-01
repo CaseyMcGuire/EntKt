@@ -4,8 +4,8 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Group
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.PrivacyContext
-import entkt.runtime.Viewer
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.Viewer
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals

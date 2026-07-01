@@ -1,4 +1,9 @@
 package entkt.runtime
+import entkt.runtime.query.limitOpsApply
+import entkt.runtime.query.AggregateFunction
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.runtime.driver.NoopDriver
+import entkt.runtime.query.ReadOperation
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

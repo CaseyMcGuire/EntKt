@@ -1,4 +1,7 @@
-package entkt.runtime
+package entkt.runtime.query
+
+import entkt.runtime.result.EntError
+import entkt.runtime.result.EntQueryRejectedException
 
 /**
  * A tree of [QueryExplanation]s describing the **shapes** of the

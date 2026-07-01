@@ -1,4 +1,10 @@
 package entkt.runtime
+import entkt.runtime.driver.NoopDriver
+import entkt.runtime.mutation.RelationshipLocking
+import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.query.QueryExplanation
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.Driver
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

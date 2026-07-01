@@ -14,16 +14,16 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.EntError
-import entkt.runtime.EntOperation
-import entkt.runtime.EntQueryRejectedException
-import entkt.runtime.EntResult
-import entkt.runtime.GlobalQueryInterceptor
-import entkt.runtime.InterceptorEngine
-import entkt.runtime.PrivacyContext
-import entkt.runtime.QueryInterceptor
-import entkt.runtime.ReadOperation
-import entkt.runtime.Viewer
+import entkt.runtime.result.EntError
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.EntResult
+import entkt.runtime.query.GlobalQueryInterceptor
+import entkt.runtime.query.InterceptorEngine
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.ReadOperation
+import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -409,29 +409,29 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // when the article's author is denied — NOT silently skip
         // to the next article (the contract is visible filtering is
         // root-only, eager target denials are strict).
-        val viewer = entkt.runtime.Viewer.User("denied-user")
+        val viewer = entkt.runtime.privacy.Viewer.User("denied-user")
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {
-                articles(object : entkt.runtime.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
+                articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
-                        privacy { load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { entkt.runtime.PrivacyDecision.Allow }) }
+                        privacy { load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { entkt.runtime.privacy.PrivacyDecision.Allow }) }
                     }
                 })
-                users(object : entkt.runtime.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
+                users(object : entkt.runtime.privacy.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
-                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.PrivacyDecision.Deny("user is hidden") }) }
+                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.privacy.PrivacyDecision.Deny("user is hidden") }) }
                     }
                 })
             }
         }
         // Seed via system viewer (bypasses policies).
-        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.PrivacyBypass("test"))) { sys ->
+        client.withPrivacyContext(PrivacyContext(entkt.runtime.privacy.Viewer.PrivacyBypass("test"))) { sys ->
             val u = sys.users.create { name = "denied-user"; email = "d@x" }.saveOrThrow()
             sys.articles.create { title = "with-denied-author"; authorId = u.id }.saveOrThrow()
         }
 
-        assertFailsWith<entkt.runtime.PrivacyDeniedException> {
+        assertFailsWith<entkt.runtime.privacy.PrivacyDeniedException> {
             client.articles.query().withAuthor().firstVisibleOrNull()
         }
     }
@@ -447,28 +447,28 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // bypasses privacy entirely (in which case the draft
         // would be returned and the test would defeat itself).
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(entkt.runtime.Viewer.User("u1")) }
+            privacyContext { PrivacyContext(entkt.runtime.privacy.Viewer.User("u1")) }
             policies {
-                articles(object : entkt.runtime.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
+                articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
                         privacy {
                             load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { ctx ->
-                                if (ctx.entity.published) entkt.runtime.PrivacyDecision.Allow
-                                else entkt.runtime.PrivacyDecision.Deny("draft")
+                                if (ctx.entity.published) entkt.runtime.privacy.PrivacyDecision.Allow
+                                else entkt.runtime.privacy.PrivacyDecision.Deny("draft")
                             })
                         }
                     }
                 })
-                users(object : entkt.runtime.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
+                users(object : entkt.runtime.privacy.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
-                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.PrivacyDecision.Allow }) }
+                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.privacy.PrivacyDecision.Allow }) }
                     }
                 })
             }
         }
         // Seed via System viewer (bypasses privacy) so the create
         // path's post-write LOAD check on "draft" doesn't trip.
-        client.withPrivacyContext(PrivacyContext(entkt.runtime.Viewer.PrivacyBypass("test"))) { sys ->
+        client.withPrivacyContext(PrivacyContext(entkt.runtime.privacy.Viewer.PrivacyBypass("test"))) { sys ->
             val u = sys.users.create { name = "u"; email = "u@x" }.saveOrThrow()
             sys.articles.create { title = "draft"; published = false; authorId = u.id }.saveOrThrow()
             sys.articles.create { title = "published"; published = true; authorId = u.id }.saveOrThrow()

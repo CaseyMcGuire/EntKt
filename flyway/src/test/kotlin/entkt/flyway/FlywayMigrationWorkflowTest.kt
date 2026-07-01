@@ -3,10 +3,10 @@ package entkt.flyway
 import entkt.migrations.ManualMigrationRequiredException
 import entkt.migrations.ManualMode
 import entkt.migrations.MigrationOp
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.EntitySchema
-import entkt.runtime.ForeignKeyRef
-import entkt.runtime.IdStrategy
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.ForeignKeyRef
+import entkt.runtime.driver.IdStrategy
 import entkt.schema.FieldType
 import java.nio.file.Files
 import java.nio.file.Path

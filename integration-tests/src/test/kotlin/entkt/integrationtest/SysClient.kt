@@ -2,9 +2,9 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
-import entkt.runtime.Driver
-import entkt.runtime.PrivacyContext
-import entkt.runtime.Viewer
+import entkt.runtime.driver.Driver
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.Viewer
 
 /**
  * Build an [EntClient] with the [Viewer.PrivacyBypass] viewer, which bypasses

@@ -1,4 +1,7 @@
 package entkt.runtime
+import entkt.runtime.privacy.PrivacyRule
+import entkt.runtime.privacy.allowAll
+import entkt.runtime.privacy.PrivacyDecision
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -6,8 +6,8 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.EntNoChangesException
-import entkt.runtime.FieldPatch
+import entkt.runtime.result.EntNoChangesException
+import entkt.runtime.mutation.FieldPatch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals

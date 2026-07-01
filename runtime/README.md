@@ -3,6 +3,19 @@
 `Driver` interface, `EntitySchema`/`ColumnMetadata`/`EdgeMetadata`,
 query `Predicate` hierarchy, `Op` enum.
 
+## Package layout
+
+Runtime types are grouped by concern under `entkt.runtime.*`:
+
+| Subpackage | Holds |
+|---|---|
+| `entkt.runtime.driver` | `Driver` SPI, `NoopDriver`, `classifyDriverError`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
+| `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, `PrivacyDecision`/`PrivacyRule`, `PrivacyDeniedException`, `allowAll`, `EntityPolicy` |
+| `entkt.runtime.validation` | `ValidationDecision`, `ValidationRule`, `ValidationException` |
+| `entkt.runtime.query` | interceptors (`QueryInterceptor`, `InterceptScope`, `InterceptorEngine`, `ReadOperation`, …), `QueryPlan`/`QueryExplanation`, aggregate types, `ExcludeDeleted` |
+| `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
+| `entkt.runtime.result` | `EntResult` (+ `map`/`flatMap`/`getOrThrow`), `EntResultScope`, `EntError`, and the `Ent*Exception` family |
+
 ## Driver interface
 
 ```kotlin

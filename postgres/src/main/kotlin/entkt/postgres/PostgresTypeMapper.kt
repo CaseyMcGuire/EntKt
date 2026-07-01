@@ -1,7 +1,7 @@
 package entkt.postgres
 
 import entkt.migrations.TypeMapper
-import entkt.runtime.IdStrategy
+import entkt.runtime.driver.IdStrategy
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 

@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.privacy
 
 /**
  * Represents the identity of the current viewer performing an operation.

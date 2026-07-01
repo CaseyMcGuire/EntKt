@@ -164,7 +164,7 @@ class EntktPluginTest {
             // Repo is the DI seam — takes a Driver, exposes create/query/update/byId
             val repoContent = generatedDir.resolve("PetRepo.kt").readText()
             assertTrue(repoContent.contains("class PetRepo"), "Should generate PetRepo class")
-            assertTrue(repoContent.contains("import entkt.runtime.Driver"), "Should import Driver")
+            assertTrue(repoContent.contains("import entkt.runtime.driver.Driver"), "Should import Driver")
             assertTrue(repoContent.contains("driver: Driver"), "Should take Driver in constructor")
             assertTrue(
                 repoContent.contains("fun create(block: PetCreate.() -> Unit): PetCreate"),

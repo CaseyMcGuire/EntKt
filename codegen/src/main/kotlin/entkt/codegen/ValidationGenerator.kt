@@ -11,7 +11,7 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import entkt.schema.EntSchema
 
-private val VALIDATION_RULE = ClassName("entkt.runtime", "ValidationRule")
+private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationRule")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 
 /**

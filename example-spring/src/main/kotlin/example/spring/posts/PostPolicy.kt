@@ -1,8 +1,8 @@
 package example.spring.posts
 
-import entkt.runtime.EntityPolicy
-import entkt.runtime.PrivacyDecision
-import entkt.runtime.Viewer
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.Viewer
 import example.ent.PostCreatePrivacyContext
 import example.ent.PostCreatePrivacyRule
 import example.ent.PostDeletePrivacyContext

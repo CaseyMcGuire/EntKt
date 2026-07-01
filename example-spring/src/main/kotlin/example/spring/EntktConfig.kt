@@ -1,8 +1,8 @@
 package example.spring
 
 import entkt.postgres.PostgresDriver
-import entkt.runtime.PrivacyContext
-import entkt.runtime.Viewer
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.Viewer
 import example.ent.EntClient
 import example.spring.auth.AuthContext
 import example.spring.friendships.FriendshipHooksConfig

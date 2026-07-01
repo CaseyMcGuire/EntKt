@@ -1,4 +1,6 @@
-package entkt.runtime
+package entkt.runtime.result
+
+import entkt.runtime.validation.ValidationDecision
 
 /**
  * Operations that can produce an [EntError]. Mirrors [PrivacyOperation]

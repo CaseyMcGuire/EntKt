@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.result
 
 /**
  * Structured outcome of a generated operation. Returned by `*OrError()`

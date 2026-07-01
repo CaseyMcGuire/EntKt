@@ -37,7 +37,7 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("import entkt.runtime.Driver")) { "Should import Driver\n$output" }
+        assert(output.contains("import entkt.runtime.driver.Driver")) { "Should import Driver\n$output" }
         assert(output.contains("driver: Driver")) { "Should take Driver in constructor\n$output" }
         assert(output.contains("config: EntClientConfig.() -> Unit = {}")) {
             "Should take optional config lambda\n$output"

@@ -13,13 +13,13 @@ import com.squareup.kotlinpoet.UNIT
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val PRIVACY_RULE = ClassName("entkt.runtime", "PrivacyRule")
-private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_RULE = ClassName("entkt.runtime.privacy", "PrivacyRule")
+private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
-private val FIELD_PATCH = ClassName("entkt.runtime", "FieldPatch")
-private val PENDING_EDGE_OPS = ClassName("entkt.runtime", "PendingEdgeOps")
-private val EDGE_CHANGES = ClassName("entkt.runtime", "EdgeChanges")
+private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
+private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
+private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
 
 /**
  * Emits per-entity privacy infrastructure:

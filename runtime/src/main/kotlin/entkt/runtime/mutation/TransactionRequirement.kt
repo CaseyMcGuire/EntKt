@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.mutation
 
 /**
  * Client-level transaction discipline requested by the application.

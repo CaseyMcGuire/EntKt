@@ -1,4 +1,6 @@
-package entkt.runtime
+package entkt.runtime.driver
+import entkt.runtime.query.QueryExplanation
+import entkt.runtime.mutation.RelationshipLockKey
 
 import entkt.query.OrderField
 import entkt.query.Predicate

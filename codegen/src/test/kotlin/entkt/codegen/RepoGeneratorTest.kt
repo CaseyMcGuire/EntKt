@@ -28,7 +28,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("import entkt.runtime.Driver")) { "Should import Driver\n$output" }
+        assert(output.contains("import entkt.runtime.driver.Driver")) { "Should import Driver\n$output" }
         assert(output.contains("driver: Driver")) { "Should take Driver in constructor\n$output" }
     }
 

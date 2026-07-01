@@ -1,4 +1,5 @@
 package entkt.runtime
+import entkt.runtime.privacy.Viewer
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

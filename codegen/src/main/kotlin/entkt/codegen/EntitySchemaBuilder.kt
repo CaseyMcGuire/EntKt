@@ -1,11 +1,11 @@
 package entkt.codegen
 
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.EdgeMetadata
-import entkt.runtime.EntitySchema
-import entkt.runtime.ForeignKeyRef
-import entkt.runtime.IdStrategy
-import entkt.runtime.IndexMetadata
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.EdgeMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.ForeignKeyRef
+import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.IndexMetadata
 import entkt.schema.EntSchema
 import java.io.File
 import java.net.URLClassLoader

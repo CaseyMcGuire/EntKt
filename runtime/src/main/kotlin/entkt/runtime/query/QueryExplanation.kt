@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.query
 
 /**
  * Describes the query a driver would execute for a given set of

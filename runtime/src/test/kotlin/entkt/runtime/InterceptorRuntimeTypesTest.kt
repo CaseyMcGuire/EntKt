@@ -1,4 +1,18 @@
 package entkt.runtime
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.query.QueryShape
+import entkt.runtime.query.QueryFlag
+import entkt.runtime.query.AbortQueryRejected
+import entkt.runtime.result.EntResult
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntError
+import entkt.runtime.query.EdgeStep
+import entkt.runtime.query.ReadOperation
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.query.QueryContext
+import entkt.runtime.query.UntypedQueryShape
 
 import entkt.query.Op
 import entkt.query.OrderField

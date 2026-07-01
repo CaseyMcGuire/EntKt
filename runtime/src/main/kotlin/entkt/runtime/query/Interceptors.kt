@@ -1,4 +1,6 @@
-package entkt.runtime
+package entkt.runtime.query
+import entkt.runtime.result.EntError
+import entkt.runtime.privacy.PrivacyContext
 
 import entkt.query.OrderField
 import entkt.query.Predicate

@@ -1,7 +1,7 @@
 package example.spring.tags
 
-import entkt.runtime.EntityPolicy
-import entkt.runtime.allowAll
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.allowAll
 import example.ent.Tag
 import example.ent.TagPolicyScope
 

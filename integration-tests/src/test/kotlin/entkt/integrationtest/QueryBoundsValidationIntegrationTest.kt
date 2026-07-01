@@ -8,10 +8,10 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.EntityPolicy
-import entkt.runtime.PrivacyContext
-import entkt.runtime.PrivacyDecision
-import entkt.runtime.Viewer
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue

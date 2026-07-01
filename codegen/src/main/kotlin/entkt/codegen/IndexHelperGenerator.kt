@@ -17,9 +17,9 @@ import entkt.schema.ColumnStorage
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
 
-private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
-private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
+private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
 private val INDEX_RANGE_BUILDER = ClassName("entkt.query", "IndexRangeBuilder")
 private val LIST = ClassName("kotlin.collections", "List")
 private const val ENT_CLIENT_NAME = "EntClient"

@@ -4,9 +4,9 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Memo
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.ExcludeDeleted
-import entkt.runtime.PrivacyContext
-import entkt.runtime.Viewer
+import entkt.runtime.query.ExcludeDeleted
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.Viewer
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
  *
  *  - the `entkt.schema.DeletedAt` mixin (declares a nullable
  *    `deleted_at` timestamp on the host schema)
- *  - the `entkt.runtime.ExcludeDeleted` interceptor (filters
+ *  - the `entkt.runtime.query.ExcludeDeleted` interceptor (filters
  *    rows with non-null `deleted_at` out of default read paths)
  *
  * Neither artifact requires soft-delete-specific codegen.
@@ -195,7 +195,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val memo = filtered.memos.create { body = "rm" }.save()
 
         val result = filtered.memos.deleteByIdOrError(memo.id)
-        assertTrue(result is entkt.runtime.EntResult.Ok)
+        assertTrue(result is entkt.runtime.result.EntResult.Ok)
         assertTrue(result.value)
 
         assertEquals(0L, unfiltered.memos.query().rawCount())

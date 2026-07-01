@@ -1,6 +1,6 @@
 package example.spring.users
 
-import entkt.runtime.getOrThrow
+import entkt.runtime.result.getOrThrow
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.User

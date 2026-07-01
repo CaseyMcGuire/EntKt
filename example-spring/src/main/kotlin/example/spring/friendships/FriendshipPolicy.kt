@@ -1,7 +1,7 @@
 package example.spring.friendships
 
-import entkt.runtime.EntityPolicy
-import entkt.runtime.allowAll
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.allowAll
 import example.ent.Friendship
 import example.ent.FriendshipPolicyScope
 

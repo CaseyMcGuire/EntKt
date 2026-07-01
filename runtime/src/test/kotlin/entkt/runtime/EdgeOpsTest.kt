@@ -1,4 +1,7 @@
 package entkt.runtime
+import entkt.runtime.mutation.PendingEdgeOps
+import entkt.runtime.mutation.computeEdgeChanges
+import entkt.runtime.mutation.EdgeChanges
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

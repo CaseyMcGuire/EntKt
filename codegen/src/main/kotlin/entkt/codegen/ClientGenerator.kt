@@ -17,16 +17,16 @@ import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 
-private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val VIEWER = ClassName("entkt.runtime", "Viewer")
-private val ENTITY_POLICY = ClassName("entkt.runtime", "EntityPolicy")
-private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime", "TransactionRequirement")
-private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime", "TransactionRequiredException")
-private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
-private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime", "RelationshipLocking")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
+private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
+private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
+private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
+private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
+private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -205,12 +205,12 @@ internal class ClientGenerator(
                 // reaches it via @file:OptIn at the top of this file.
                 PropertySpec.builder(
                     "entityInterceptors",
-                    ClassName("entkt.runtime", "EntInterceptorsConfig"),
+                    ClassName("entkt.runtime.query", "EntInterceptorsConfig"),
                 )
                     .addAnnotation(ClassName("entkt.query", "EntktInternal"))
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
-                    .initializer("%T()", ClassName("entkt.runtime", "EntInterceptorsConfig"))
+                    .initializer("%T()", ClassName("entkt.runtime.query", "EntInterceptorsConfig"))
                     .build()
             )
             .addFunction(
@@ -592,9 +592,9 @@ internal class ClientGenerator(
         t: TypeVariableName,
         schemas: List<SchemaInput>,
     ): FunSpec {
-        val entResultClass = ClassName("entkt.runtime", "EntResult")
-        val entResultScopeClass = ClassName("entkt.runtime", "EntResultScope")
-        val abortClass = ClassName("entkt.runtime", "AbortEntResultTransaction")
+        val entResultClass = ClassName("entkt.runtime.result", "EntResult")
+        val entResultScopeClass = ClassName("entkt.runtime.result", "EntResultScope")
+        val abortClass = ClassName("entkt.runtime.result", "AbortEntResultTransaction")
         val resultType = entResultClass.parameterizedBy(t)
         val body = CodeBlock.builder()
 
@@ -706,9 +706,9 @@ internal class ClientGenerator(
         interceptorsClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
-        val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime", "EntInterceptorsConfig")
-        val QUERY_INTERCEPTOR = ClassName("entkt.runtime", "QueryInterceptor")
-        val GLOBAL_QUERY_INTERCEPTOR = ClassName("entkt.runtime", "GlobalQueryInterceptor")
+        val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
+        val QUERY_INTERCEPTOR = ClassName("entkt.runtime.query", "QueryInterceptor")
+        val GLOBAL_QUERY_INTERCEPTOR = ClassName("entkt.runtime.query", "GlobalQueryInterceptor")
 
         val builder = TypeSpec.classBuilder(interceptorsClass)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())

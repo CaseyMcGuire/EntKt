@@ -1,9 +1,9 @@
 package example.spring.users
 
-import entkt.runtime.EntityPolicy
-import entkt.runtime.PrivacyDecision
-import entkt.runtime.Viewer
-import entkt.runtime.allowAll
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.allowAll
 import example.ent.User
 import example.ent.UserDeletePrivacyContext
 import example.ent.UserDeletePrivacyRule

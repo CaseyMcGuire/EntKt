@@ -19,16 +19,16 @@ import entkt.schema.FieldType
 import entkt.schema.ValidatorSpec
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
-private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
-private val ENT_EXCEPTION = ClassName("entkt.runtime", "EntException")
-private val PRIVACY_DENIED_EXCEPTION = ClassName("entkt.runtime", "PrivacyDeniedException")
-private val VALIDATION_EXCEPTION_CLASS = ClassName("entkt.runtime", "ValidationException")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
+private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
+private val ENT_EXCEPTION = ClassName("entkt.runtime.result", "EntException")
+private val PRIVACY_DENIED_EXCEPTION = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
+private val VALIDATION_EXCEPTION_CLASS = ClassName("entkt.runtime.validation", "ValidationException")
 
 internal class CreateGenerator(
     private val packageName: String,
@@ -688,7 +688,7 @@ internal class CreateGenerator(
         builder.nextControlFlow("catch (e: %T)", PRIVACY_DENIED_EXCEPTION)
         builder.addStatement(
             "throw %T(%T.WriteSucceededLoadDenied(e.entity, %T.CREATE, %L.id, e.reason))",
-            ClassName("entkt.runtime", "EntWriteSucceededLoadDeniedException"),
+            ClassName("entkt.runtime.result", "EntWriteSucceededLoadDeniedException"),
             ENT_ERROR,
             ENT_OPERATION,
             entityVar,
@@ -775,7 +775,7 @@ internal class CreateGenerator(
                     .add(
                         "  %T.Err(%T.ValidationFailed(e.entity, %T.CREATE, e.violations.map { it.%M() }))\n",
                         ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                        MemberName("entkt.runtime", "toValidationViolation"),
+                        MemberName("entkt.runtime.result", "toValidationViolation"),
                     )
                     .add("} catch (e: %T) {\n", ENT_EXCEPTION)
                     .add("  %T.Err(e.error)\n", ENT_RESULT)
@@ -783,7 +783,7 @@ internal class CreateGenerator(
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.CREATE))\n",
                         ENT_RESULT,
-                        MemberName("entkt.runtime", "classifyDriverError"),
+                        MemberName("entkt.runtime.driver", "classifyDriverError"),
                         schemaName,
                         ENT_OPERATION,
                     )
@@ -806,7 +806,7 @@ internal class CreateGenerator(
             .returns(entityClass)
             .addStatement(
                 "return saveOrError().%M()",
-                MemberName("entkt.runtime", "getOrThrow"),
+                MemberName("entkt.runtime.result", "getOrThrow"),
             )
             .build()
     }
@@ -817,8 +817,8 @@ internal fun hookListType(paramType: ClassName) =
         LambdaTypeName.get(parameters = arrayOf(paramType), returnType = UNIT),
     )
 
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
-private val VALIDATION_INVALID = ClassName("entkt.runtime", "ValidationDecision", "Invalid")
+private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
+private val VALIDATION_INVALID = ClassName("entkt.runtime.validation", "ValidationDecision", "Invalid")
 
 /**
  * Emit inline validation checks for a single field's validators.

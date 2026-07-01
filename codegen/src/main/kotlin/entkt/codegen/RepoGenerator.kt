@@ -16,37 +16,37 @@ import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.schema.EntSchema
 
-private val DRIVER = ClassName("entkt.runtime", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val LIST = ClassName("kotlin.collections", "List")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val INT = Int::class.asClassName()
-private val UPDATE_CONSISTENCY = ClassName("entkt.runtime", "UpdateConsistency")
-private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime", "RelationshipLocking")
+private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
+private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime", "PrivacyContext")
-private val PRIVACY_OPERATION = ClassName("entkt.runtime", "PrivacyOperation")
-private val PRIVACY_DENIED = ClassName("entkt.runtime", "PrivacyDeniedException")
-private val PRIVACY_DECISION = ClassName("entkt.runtime", "PrivacyDecision")
-private val VIEWER = ClassName("entkt.runtime", "Viewer")
-private val VALIDATION_DECISION = ClassName("entkt.runtime", "ValidationDecision")
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime", "ValidationException")
-private val ENT_ERROR = ClassName("entkt.runtime", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime", "EntOperation")
-private val ENT_RESULT = ClassName("entkt.runtime", "EntResult")
-private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime", "EntQueryRejectedException")
-private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime", "AbortQueryRejected")
-private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime", "QuerySpecBuilder")
-private val QUERY_CONTEXT = ClassName("entkt.runtime", "QueryContext")
-private val READ_OPERATION = ClassName("entkt.runtime", "ReadOperation")
-private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime", "InterceptorEngine")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
+private val PRIVACY_DENIED = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
+private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
+private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
+private val VALIDATION_DECISION = ClassName("entkt.runtime.validation", "ValidationDecision")
+private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
+private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
+private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
+private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
+private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
+private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
+private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime.query", "QuerySpecBuilder")
+private val QUERY_CONTEXT = ClassName("entkt.runtime.query", "QueryContext")
+private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
+private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime.query", "InterceptorEngine")
 private val OP = ClassName("entkt.query", "Op")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
  * for I/O — it owns the [Driver] and exposes `query`, `create`,
  * `update(id)`, and `byId` accessors. Its `init` block registers the
- * entity's [entkt.runtime.EntitySchema] so the driver knows the table
+ * entity's [entkt.runtime.driver.EntitySchema] so the driver knows the table
  * layout before any other call lands, and every builder it hands back is
  * constructed with the same driver reference.
  *
@@ -335,7 +335,7 @@ internal class RepoGenerator(
             .returns(entityClass)
             .addStatement(
                 "return byIdOrError(id).%M()",
-                MemberName("entkt.runtime", "getOrThrow"),
+                MemberName("entkt.runtime.result", "getOrThrow"),
             )
             .build()
     }
@@ -407,7 +407,7 @@ internal class RepoGenerator(
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.LOAD))\n",
                         ENT_RESULT,
-                        MemberName("entkt.runtime", "classifyDriverError"),
+                        MemberName("entkt.runtime.driver", "classifyDriverError"),
                         schemaName,
                         ENT_OPERATION,
                     )
@@ -434,7 +434,7 @@ internal class RepoGenerator(
         idType: com.squareup.kotlinpoet.TypeName,
     ): FunSpec {
         val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
-        val queryPlan = ClassName("entkt.runtime", "QueryPlan")
+        val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
         return FunSpec.builder(name)
             .addParameter("id", idType)
             .returns(queryPlan)
@@ -506,7 +506,7 @@ internal class RepoGenerator(
             .returns(UNIT)
             .addStatement(
                 "deleteOrError(entity).%M()",
-                MemberName("entkt.runtime", "getOrThrow"),
+                MemberName("entkt.runtime.result", "getOrThrow"),
             )
             .build()
     }
@@ -546,15 +546,15 @@ internal class RepoGenerator(
                     .add(
                         "  %T.Err(%T.ValidationFailed(e.entity, %T.DELETE, e.violations.map { it.%M() }))\n",
                         ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                        MemberName("entkt.runtime", "toValidationViolation"),
+                        MemberName("entkt.runtime.result", "toValidationViolation"),
                     )
-                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
+                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime.result", "EntException"))
                     .add("  %T.Err(e.error)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.DELETE))\n",
                         ENT_RESULT,
-                        MemberName("entkt.runtime", "classifyDriverError"),
+                        MemberName("entkt.runtime.driver", "classifyDriverError"),
                         schemaName, ENT_OPERATION,
                     )
                     .add("}\n")
@@ -637,15 +637,15 @@ internal class RepoGenerator(
                     .add(
                         "  %T.Err(%T.ValidationFailed(e.entity, %T.DELETE, e.violations.map { it.%M() }))\n",
                         ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                        MemberName("entkt.runtime", "toValidationViolation"),
+                        MemberName("entkt.runtime.result", "toValidationViolation"),
                     )
-                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
+                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime.result", "EntException"))
                     .add("  %T.Err(e.error)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.DELETE))\n",
                         ENT_RESULT,
-                        MemberName("entkt.runtime", "classifyDriverError"),
+                        MemberName("entkt.runtime.driver", "classifyDriverError"),
                         schemaName, ENT_OPERATION,
                     )
                     .add("}\n")
@@ -1034,7 +1034,7 @@ internal class RepoGenerator(
             .beginControlFlow("if (!driver.inTransaction)")
             .addStatement(
                 "throw %T(%S)",
-                ClassName("entkt.runtime", "TransactionRequiredException"),
+                ClassName("entkt.runtime.mutation", "TransactionRequiredException"),
                 "$schemaName createManyOrError requires a transaction-scoped client",
             )
             .endControlFlow()
@@ -1056,13 +1056,13 @@ internal class RepoGenerator(
                     .add("    out.add((r as %T.Ok).value)\n", ENT_RESULT)
                     .add("  }\n")
                     .add("  firstErr ?: %T.Ok(out.toList())\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime", "EntException"))
+                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime.result", "EntException"))
                     .add("  %T.Err(e.error)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", Exception::class.asClassName())
                     .add(
                         "  %T.Err(%M(driver, e, %S, %T.CREATE))\n",
                         ENT_RESULT,
-                        MemberName("entkt.runtime", "classifyDriverError"),
+                        MemberName("entkt.runtime.driver", "classifyDriverError"),
                         schemaName, ENT_OPERATION,
                     )
                     .add("}\n")

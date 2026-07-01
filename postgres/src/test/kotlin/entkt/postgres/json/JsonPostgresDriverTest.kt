@@ -1,13 +1,13 @@
 package entkt.postgres.json
 
 import entkt.postgres.PostgresDriver
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.Driver
-import entkt.runtime.EntitySchema
-import entkt.runtime.IdStrategy
-import entkt.runtime.JsonColumnMetadata
-import entkt.runtime.NoopDriver
-import entkt.runtime.UnsupportedDriverCapabilityException
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.Driver
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.JsonColumnMetadata
+import entkt.runtime.driver.NoopDriver
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.schema.FieldType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

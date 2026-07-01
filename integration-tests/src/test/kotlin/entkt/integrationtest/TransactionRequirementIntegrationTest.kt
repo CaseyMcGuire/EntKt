@@ -3,8 +3,8 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.TransactionRequiredException
-import entkt.runtime.TransactionRequirement
+import entkt.runtime.mutation.TransactionRequiredException
+import entkt.runtime.mutation.TransactionRequirement
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -214,7 +214,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val client = sysClient(driver)
         val result = client.users.createManyOrError()
-        assertEquals(entkt.runtime.EntResult.Ok<List<entkt.integrationtest.ent.User>>(emptyList()), result)
+        assertEquals(entkt.runtime.result.EntResult.Ok<List<entkt.integrationtest.ent.User>>(emptyList()), result)
     }
 
     @Test
@@ -249,7 +249,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
                 },
             )
         }
-        require(result is entkt.runtime.EntResult.Ok)
+        require(result is entkt.runtime.result.EntResult.Ok)
         assertEquals(2, result.value.size)
     }
 
@@ -324,7 +324,7 @@ class TransactionRequirementIntegrationTest : PostgresTestBase() {
         // Empty patch + strict requirement: NoChanges fires first
         // (EntNoChangesException), TransactionRequiredException would
         // have fired second.
-        assertFailsWith<entkt.runtime.EntNoChangesException> {
+        assertFailsWith<entkt.runtime.result.EntNoChangesException> {
             strict.users.update(user.id) { /* no changes */ }.save()
         }
     }

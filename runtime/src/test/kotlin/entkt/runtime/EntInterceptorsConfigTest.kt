@@ -10,6 +10,10 @@
 @file:OptIn(entkt.query.EntktInternal::class)
 
 package entkt.runtime
+import entkt.runtime.query.FRAMEWORK_INTERCEPTOR_PREFIX
+import entkt.runtime.query.GlobalQueryInterceptor
+import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.EntInterceptorsConfig
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

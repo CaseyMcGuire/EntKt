@@ -1,4 +1,13 @@
-package entkt.runtime
+package entkt.runtime.driver
+import entkt.runtime.mutation.TransactionRequiredException
+import entkt.runtime.result.EntError
+import entkt.runtime.result.EntOperation
+import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.query.QueryExplanation
+import entkt.runtime.query.UnsupportedQueryExplanation
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.runtime.query.AggregateResultRow
+import entkt.runtime.query.AggregateFunction
 
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -288,7 +297,7 @@ interface Driver {
      * True when this [Driver] is the transaction-scoped driver passed
      * inside [withTransaction]. False on a normal client-level driver.
      * Generated saves use this at save-start to enforce a configured
-     * [entkt.runtime.TransactionRequirement] (transaction locking) without having
+     * [entkt.runtime.mutation.TransactionRequirement] (transaction locking) without having
      * to thread a separate flag through every layer.
      */
     val inTransaction: Boolean

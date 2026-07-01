@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.mutation
 
 /**
  * Read-only snapshot of pending link-table M2M edge operations for one

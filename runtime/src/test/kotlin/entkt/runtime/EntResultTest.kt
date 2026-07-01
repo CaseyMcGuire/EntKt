@@ -1,4 +1,18 @@
 package entkt.runtime
+import entkt.runtime.result.flatMap
+import entkt.runtime.result.map
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.result.EntOverfetchCapExceededException
+import entkt.runtime.result.EntNoChangesException
+import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntValidationException
+import entkt.runtime.result.getOrNullForAbsenceOnly
+import entkt.runtime.result.EntDriverException
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntNotFoundException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntError
+import entkt.runtime.result.EntResult
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.query
 
 /**
  * The aggregate function computed by [Driver.aggregate]. V1 supports a single

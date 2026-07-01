@@ -1,7 +1,7 @@
 package entkt.migrations
 
-import entkt.runtime.EntitySchema
-import entkt.runtime.IdStrategy
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 

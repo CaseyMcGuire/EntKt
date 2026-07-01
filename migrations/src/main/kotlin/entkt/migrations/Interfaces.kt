@@ -2,7 +2,7 @@
 
 package entkt.migrations
 
-import entkt.runtime.IdStrategy
+import entkt.runtime.driver.IdStrategy
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 

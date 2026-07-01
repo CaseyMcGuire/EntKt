@@ -1,9 +1,9 @@
 package entkt.flyway
 
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.EntitySchema
-import entkt.runtime.IdStrategy
-import entkt.runtime.IndexMetadata
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.IndexMetadata
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 import java.nio.file.Files

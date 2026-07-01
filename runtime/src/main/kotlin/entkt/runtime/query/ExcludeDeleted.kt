@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.query
 
 import entkt.query.Op
 import entkt.query.Predicate

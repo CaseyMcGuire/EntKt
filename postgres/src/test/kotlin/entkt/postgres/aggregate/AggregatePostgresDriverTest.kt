@@ -3,10 +3,10 @@ package entkt.postgres.aggregate
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.AggregateFunction
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.EntitySchema
-import entkt.runtime.IdStrategy
+import entkt.runtime.query.AggregateFunction
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
 import entkt.schema.FieldType
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container

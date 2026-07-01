@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.result
 
 /**
  * Scope marker for the block passed to `EntClient.withTransactionOrError`.

@@ -4,10 +4,10 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Post
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.GlobalQueryInterceptor
-import entkt.runtime.PrivacyContext
-import entkt.runtime.QueryInterceptor
-import entkt.runtime.Viewer
+import entkt.runtime.query.GlobalQueryInterceptor
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue

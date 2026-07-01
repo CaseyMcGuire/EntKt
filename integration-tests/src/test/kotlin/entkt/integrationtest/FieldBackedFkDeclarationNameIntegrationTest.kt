@@ -3,8 +3,8 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Note
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.PrivacyContext
-import entkt.runtime.Viewer
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

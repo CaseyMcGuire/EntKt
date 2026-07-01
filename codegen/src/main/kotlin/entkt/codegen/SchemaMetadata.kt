@@ -8,16 +8,16 @@ import entkt.schema.EntSchema
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
-internal val ENTITY_SCHEMA = ClassName("entkt.runtime", "EntitySchema")
-internal val COLUMN_METADATA = ClassName("entkt.runtime", "ColumnMetadata")
-internal val EDGE_METADATA = ClassName("entkt.runtime", "EdgeMetadata")
-internal val INDEX_METADATA = ClassName("entkt.runtime", "IndexMetadata")
-internal val FOREIGN_KEY_REF = ClassName("entkt.runtime", "ForeignKeyRef")
-internal val ID_STRATEGY = ClassName("entkt.runtime", "IdStrategy")
+internal val ENTITY_SCHEMA = ClassName("entkt.runtime.driver", "EntitySchema")
+internal val COLUMN_METADATA = ClassName("entkt.runtime.driver", "ColumnMetadata")
+internal val EDGE_METADATA = ClassName("entkt.runtime.driver", "EdgeMetadata")
+internal val INDEX_METADATA = ClassName("entkt.runtime.driver", "IndexMetadata")
+internal val FOREIGN_KEY_REF = ClassName("entkt.runtime.driver", "ForeignKeyRef")
+internal val ID_STRATEGY = ClassName("entkt.runtime.driver", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
 internal val COLUMN_STORAGE_NATIVE = ClassName("entkt.schema", "ColumnStorage").nestedClass("Native")
-internal val JSON_COLUMN_METADATA = ClassName("entkt.runtime", "JsonColumnMetadata")
+internal val JSON_COLUMN_METADATA = ClassName("entkt.runtime.driver", "JsonColumnMetadata")
 
 /**
  * The [IdStrategy] enum variant that matches this schema's id declaration.
@@ -72,7 +72,7 @@ internal fun indexableColumnMap(schema: EntSchema, schemaNames: Map<EntSchema, S
 /**
  * One column descriptor as it should appear in the generated
  * `EntitySchema.columns` list. Captured as a plain Kotlin record so
- * codegen can fold it into either the runtime [entkt.runtime.ColumnMetadata]
+ * codegen can fold it into either the runtime [entkt.runtime.driver.ColumnMetadata]
  * literal or other emitters without re-deriving nullability.
  */
 internal data class ColumnDescriptor(
@@ -90,7 +90,7 @@ internal data class ColumnDescriptor(
     /**
      * Raw default value from the field's `.default(...)` / `.defaultNow()`
      * modifier, or null. Carried through to
-     * [entkt.runtime.ColumnMetadata.default] on the migration path so the
+     * [entkt.runtime.driver.ColumnMetadata.default] on the migration path so the
      * differ can emit `DEFAULT` clauses.
      */
     val default: Any? = null,
@@ -103,7 +103,7 @@ internal data class ColumnDescriptor(
 /**
  * Every column backing the entity, in declaration order: `id` first,
  * then declared fields, then any synthesized edge FKs. Used to build
- * the `columns` list on the generated [entkt.runtime.EntitySchema]
+ * the `columns` list on the generated [entkt.runtime.driver.EntitySchema]
  * constant so SQL drivers can enumerate them — type and all — without
  * reflection.
  */

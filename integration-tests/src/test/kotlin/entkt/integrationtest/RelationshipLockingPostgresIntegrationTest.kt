@@ -2,10 +2,10 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.postgres.PostgresDriver
-import entkt.runtime.Driver
-import entkt.runtime.RelationshipLockKey
-import entkt.runtime.RelationshipLocking
-import entkt.runtime.UnsupportedDriverCapabilityException
+import entkt.runtime.driver.Driver
+import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.mutation.RelationshipLocking
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers

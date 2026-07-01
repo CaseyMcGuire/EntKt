@@ -13,13 +13,13 @@ import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.EdgeMetadata
-import entkt.runtime.EntitySchema
-import entkt.runtime.ForeignKeyRef
-import entkt.runtime.IdStrategy
-import entkt.runtime.IndexMetadata
-import entkt.runtime.RelationshipLockKey
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.EdgeMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.ForeignKeyRef
+import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.IndexMetadata
+import entkt.runtime.mutation.RelationshipLockKey
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import org.postgresql.ds.PGSimpleDataSource
@@ -719,7 +719,7 @@ class PostgresDriverTest {
     @Test
     fun `transaction driver throws after block returns including register`() {
         val driver = fresh()
-        var captured: entkt.runtime.Driver? = null
+        var captured: entkt.runtime.driver.Driver? = null
         driver.withTransaction { tx ->
             captured = tx
         }

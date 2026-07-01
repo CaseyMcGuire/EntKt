@@ -1,4 +1,4 @@
-package entkt.runtime
+package entkt.runtime.validation
 
 /**
  * The result of evaluating a single validation rule.

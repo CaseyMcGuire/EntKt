@@ -1,4 +1,17 @@
 package entkt.runtime
+import entkt.runtime.result.toValidationViolation
+import entkt.runtime.validation.ValidationDecision
+import entkt.runtime.result.EntOverfetchCapExceededException
+import entkt.runtime.result.EntDriverException
+import entkt.runtime.result.EntConflictException
+import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntValidationException
+import entkt.runtime.result.ValidationViolation
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntNoChangesException
+import entkt.runtime.result.EntNotFoundException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntError
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

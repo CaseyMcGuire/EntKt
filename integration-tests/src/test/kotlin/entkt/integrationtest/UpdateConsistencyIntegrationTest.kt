@@ -3,9 +3,9 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.TransactionRequiredException
-import entkt.runtime.UnsupportedDriverCapabilityException
-import entkt.runtime.UpdateConsistency
+import entkt.runtime.mutation.TransactionRequiredException
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.runtime.mutation.UpdateConsistency
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -34,7 +34,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
      * Same as [freshDriver] — kept as a named alias so test bodies
      * make their intent ("this branch needs row-lock support") clear.
      */
-    private fun lockingDriver(): entkt.runtime.Driver = resetAndDriver()
+    private fun lockingDriver(): entkt.runtime.driver.Driver = resetAndDriver()
 
     @Test
     fun `default consistency is ReadCurrent and update succeeds outside a transaction`() {
@@ -183,13 +183,13 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 }
 
 /**
- * A thin wrapper that delegates everything to a real [entkt.runtime.Driver]
+ * A thin wrapper that delegates everything to a real [entkt.runtime.driver.Driver]
  * but advertises `supportsReadRowForUpdate = false`. Lets the
  * capability-rejection branch of the Pessimistic preflight be
  * exercised without needing a second real driver implementation.
  */
-private class NoLockSupportDriver(private val real: entkt.runtime.Driver) : entkt.runtime.Driver {
-    override fun register(schema: entkt.runtime.EntitySchema) = real.register(schema)
+private class NoLockSupportDriver(private val real: entkt.runtime.driver.Driver) : entkt.runtime.driver.Driver {
+    override fun register(schema: entkt.runtime.driver.EntitySchema) = real.register(schema)
     override fun insert(table: String, values: Map<String, Any?>) = real.insert(table, values)
     override fun update(table: String, id: Any, values: Map<String, Any?>) = real.update(table, id, values)
     override fun byId(table: String, id: Any) = real.byId(table, id)
@@ -207,7 +207,7 @@ private class NoLockSupportDriver(private val real: entkt.runtime.Driver) : entk
     override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate<*>>) =
         real.updateMany(table, values, predicates)
     override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>) = real.deleteMany(table, predicates)
-    override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T =
+    override fun <T> withTransaction(block: (entkt.runtime.driver.Driver) -> T): T =
         real.withTransaction { txReal ->
             // Wrap the tx driver too, so the in-tx Pessimistic preflight
             // sees the same false capability flag.
@@ -218,8 +218,8 @@ private class NoLockSupportDriver(private val real: entkt.runtime.Driver) : entk
     override val supportsOwnerEdgeSerialization: Boolean get() = real.supportsOwnerEdgeSerialization
 }
 
-private class NoLockSupportTxDriver(private val txReal: entkt.runtime.Driver) : entkt.runtime.Driver {
-    override fun register(schema: entkt.runtime.EntitySchema) = txReal.register(schema)
+private class NoLockSupportTxDriver(private val txReal: entkt.runtime.driver.Driver) : entkt.runtime.driver.Driver {
+    override fun register(schema: entkt.runtime.driver.EntitySchema) = txReal.register(schema)
     override fun insert(table: String, values: Map<String, Any?>) = txReal.insert(table, values)
     override fun update(table: String, id: Any, values: Map<String, Any?>) = txReal.update(table, id, values)
     override fun byId(table: String, id: Any) = txReal.byId(table, id)
@@ -237,7 +237,7 @@ private class NoLockSupportTxDriver(private val txReal: entkt.runtime.Driver) : 
     override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate<*>>) =
         txReal.updateMany(table, values, predicates)
     override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.deleteMany(table, predicates)
-    override fun <T> withTransaction(block: (entkt.runtime.Driver) -> T): T = block(this)
+    override fun <T> withTransaction(block: (entkt.runtime.driver.Driver) -> T): T = block(this)
 
     override val inTransaction: Boolean get() = true
     override val supportsReadRowForUpdate: Boolean get() = false

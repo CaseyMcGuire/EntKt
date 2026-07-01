@@ -4,14 +4,14 @@ import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.AggregateFunction
-import entkt.runtime.AggregateResultRow
-import entkt.runtime.ColumnMetadata
-import entkt.runtime.Driver
-import entkt.runtime.EdgeMetadata
-import entkt.runtime.EntitySchema
-import entkt.runtime.IdStrategy
-import entkt.runtime.QueryExplanation
+import entkt.runtime.query.AggregateFunction
+import entkt.runtime.query.AggregateResultRow
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.Driver
+import entkt.runtime.driver.EdgeMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
+import entkt.runtime.query.QueryExplanation
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
@@ -784,7 +784,7 @@ class PostgresDriver(
         idx: Int,
         table: String,
         col: String,
-        meta: entkt.runtime.JsonColumnMetadata?,
+        meta: entkt.runtime.driver.JsonColumnMetadata?,
         value: Any?,
     ) {
         if (value == null) {
@@ -1307,7 +1307,7 @@ class PostgresDriver(
     override val supportsRelationshipSerialization: Boolean
         get() = true
 
-    override fun serializeRelationship(key: entkt.runtime.RelationshipLockKey) {
+    override fun serializeRelationship(key: entkt.runtime.mutation.RelationshipLockKey) {
         requireTransactionForLocking("serializeRelationship")
         error(
             "PostgresDriver.serializeRelationship reached the root-class body despite passing " +
@@ -1364,7 +1364,7 @@ class PostgresDriver(
 
     /**
      * Take a transaction-scoped advisory lock keyed by a canonical
-     * [RelationshipLockKey][entkt.runtime.RelationshipLockKey] (junction
+     * [RelationshipLockKey][entkt.runtime.mutation.RelationshipLockKey] (junction
      * table + sorted FK pair), reading no row. Both orientations of the
      * same link table produce an equal key — `fkColumns` is canonically
      * sorted by the key factory — so they serialize against each other.
@@ -1378,7 +1378,7 @@ class PostgresDriver(
      * Distinct from [serializeOwnerEdgeAndReadWith], whose key is a single
      * owner row and so cannot coordinate the two orientations.
      */
-    internal fun serializeRelationshipWith(conn: Connection, key: entkt.runtime.RelationshipLockKey) {
+    internal fun serializeRelationshipWith(conn: Connection, key: entkt.runtime.mutation.RelationshipLockKey) {
         val junctionKey = key.junctionTable.hashCode()
         val columnsKey = key.fkColumns.hashCode()
         conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").use { stmt ->
@@ -1429,13 +1429,13 @@ class PostgresDriver(
     override fun classifyException(
         throwable: Throwable,
         entity: String,
-        operation: entkt.runtime.EntOperation,
-    ): entkt.runtime.EntError? {
+        operation: entkt.runtime.result.EntOperation,
+    ): entkt.runtime.result.EntError? {
         if (throwable !is org.postgresql.util.PSQLException) return null
         val state = throwable.sqlState ?: return null
         if (!state.startsWith("23")) return null
         val server = throwable.serverErrorMessage
-        return entkt.runtime.EntError.ConstraintViolation(
+        return entkt.runtime.result.EntError.ConstraintViolation(
             entity = entity,
             operation = operation,
             constraint = server?.constraint,
@@ -1584,7 +1584,7 @@ class PostgresDriver(
         override val supportsRelationshipSerialization: Boolean
             get() = root.supportsRelationshipSerialization
 
-        override fun serializeRelationship(key: entkt.runtime.RelationshipLockKey) {
+        override fun serializeRelationship(key: entkt.runtime.mutation.RelationshipLockKey) {
             checkOpen(); root.serializeRelationshipWith(conn, key)
         }
 
@@ -1594,7 +1594,7 @@ class PostgresDriver(
         override fun classifyException(
             throwable: Throwable,
             entity: String,
-            operation: entkt.runtime.EntOperation,
-        ): entkt.runtime.EntError? = root.classifyException(throwable, entity, operation)
+            operation: entkt.runtime.result.EntOperation,
+        ): entkt.runtime.result.EntError? = root.classifyException(throwable, entity, operation)
     }
 }
