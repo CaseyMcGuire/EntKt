@@ -13,7 +13,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
             load(
                 // Users can see their own profile
                 PrivacyRule { ctx ->
-                    val v = ctx.privacy.viewer as? Viewer.User
+                    val v = ctx.privacy.userOrNull()
                         ?: return@PrivacyRule PrivacyDecision.Continue
                     if (v.id == ctx.entity.id) PrivacyDecision.Allow
                     else PrivacyDecision.Continue
@@ -52,9 +52,24 @@ val client = EntClient(driver) {
 sealed interface Viewer {
     data object Anonymous : Viewer   // unauthenticated
     data class User(val id: Any) : Viewer  // authenticated user
-    data object System : Viewer      // bypasses checks
+    data class PrivacyBypass(val reason: String) : Viewer
 }
 ```
+
+`Viewer.User.id` is `Any` because apps use different ID types. Use the
+runtime helpers instead of handwritten casts:
+
+```kotlin
+ctx.privacy.userOrNull()      // Viewer.User?
+ctx.privacy.userIdOrNull()    // Any?
+ctx.privacy.longIdOrNull()    // Long?
+ctx.privacy.intIdOrNull()     // Int?
+ctx.privacy.stringIdOrNull()  // String?
+ctx.privacy.uuidIdOrNull()    // UUID?
+```
+
+Typed helpers are exact type checks. For example, `longIdOrNull()` returns
+`null` for an `Int` id; it does not coerce numeric values.
 
 ### PrivacyContext
 
@@ -173,7 +188,7 @@ you opt into access explicitly.
 load(
     // Users can see their own profile
     PrivacyRule { ctx ->
-        val v = ctx.privacy.viewer as? Viewer.User ?: return@PrivacyRule PrivacyDecision.Continue
+        val v = ctx.privacy.userOrNull() ?: return@PrivacyRule PrivacyDecision.Continue
         if (v.id == ctx.entity.id) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     },

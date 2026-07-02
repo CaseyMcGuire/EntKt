@@ -1,5 +1,7 @@
 package entkt.runtime.privacy
 
+import java.util.UUID
+
 /**
  * Represents the identity of the current viewer performing an operation.
  */
@@ -27,6 +29,24 @@ sealed interface Viewer {
     }
 }
 
+fun Viewer.userOrNull(): Viewer.User? =
+    this as? Viewer.User
+
+fun Viewer.userIdOrNull(): Any? =
+    userOrNull()?.id
+
+fun Viewer.stringIdOrNull(): String? =
+    userOrNull()?.id as? String
+
+fun Viewer.intIdOrNull(): Int? =
+    userOrNull()?.id as? Int
+
+fun Viewer.longIdOrNull(): Long? =
+    userOrNull()?.id as? Long
+
+fun Viewer.uuidIdOrNull(): UUID? =
+    userOrNull()?.id as? UUID
+
 /**
  * Privacy context captured for a generated operation and threaded
  * through all privacy checks within that operation. Scalar operations
@@ -36,6 +56,24 @@ sealed interface Viewer {
 data class PrivacyContext(
     val viewer: Viewer,
 )
+
+fun PrivacyContext.userOrNull(): Viewer.User? =
+    viewer.userOrNull()
+
+fun PrivacyContext.userIdOrNull(): Any? =
+    viewer.userIdOrNull()
+
+fun PrivacyContext.stringIdOrNull(): String? =
+    viewer.stringIdOrNull()
+
+fun PrivacyContext.intIdOrNull(): Int? =
+    viewer.intIdOrNull()
+
+fun PrivacyContext.longIdOrNull(): Long? =
+    viewer.longIdOrNull()
+
+fun PrivacyContext.uuidIdOrNull(): UUID? =
+    viewer.uuidIdOrNull()
 
 /**
  * The kind of operation being privacy-checked.
