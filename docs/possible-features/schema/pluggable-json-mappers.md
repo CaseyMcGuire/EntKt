@@ -62,19 +62,60 @@ Both implementations are thin because `Field.jsonType` already carries the
 full `KType` (added with generic-type support): the kotlinx codec uses the
 codegen-emitted `KSerializer`; the Jackson codec derives a `JavaType` via
 `kType.javaType` → `TypeFactory.constructType(...)`, generics like
-`List<Rect>` included. `JsonColumnMetadata` grows the `KType` as the
-mapper-neutral carrier (`typeName` stays diagnostic-only); the kotlinx
-`serializer` field becomes codec-specific payload.
+`List<Rect>` included.
+
+**Metadata shape.** `JsonColumnMetadata` is redefined concretely — the
+mapper id is the discriminant `register()` checks against, and the kotlinx
+serializer becomes optional payload whose presence is tied to that id:
+
+```kotlin
+data class JsonColumnMetadata(
+    /** Erased classifier backing the write-time isInstance check (unchanged). */
+    val klass: KClass<*>,
+    /** Mapper-neutral full type — codegen emits `typeOf<List<Rect>>()`. */
+    val kType: KType,
+    /** Rendered type for diagnostics (unchanged). */
+    val typeName: String,
+    /** Stable codec id this column's generated code targets: "kotlinx", "jackson". */
+    val mapper: String,
+    /** Present iff mapper == "kotlinx" — the statically-emitted serializer. */
+    val kotlinxSerializer: KSerializer<*>? = null,
+) {
+    init {
+        require((mapper == "kotlinx") == (kotlinxSerializer != null)) {
+            "kotlinxSerializer must be present exactly when mapper == kotlinx"
+        }
+    }
+}
+```
+
+A sealed hierarchy (`JsonColumnMetadata.Kotlinx` / `.Reflective`) would make
+the invariant structural, but seals the set of mappers into core runtime — a
+flat id keeps the SPI open to third-party codecs (Moshi) without touching
+core. The `kType` carrier is emitted as a `typeOf<T>()` expression, which is
+compile-safe in generated code. Renaming today's non-null `serializer` field
+is a breaking change to log if this ships.
 
 **The codec cannot be runtime-only — the mapper choice must reach codegen.**
 Generated `SCHEMA` literals currently bake in kotlinx serializer expressions
 (`ListSerializer(Rect.serializer())`); for a Jackson project those are
-unresolved references and the generated code does not compile at all. So the
-real shape is a codegen-level setting (`entkt { jsonMapper = KOTLINX |
-JACKSON }` on the Gradle plugin) that decides whether serializer expressions
-are emitted, plus the matching runtime codec on the driver — with
-`register()` cross-checking that generated metadata and configured codec
-agree, so a mismatch fails loudly at startup instead of at first read.
+unresolved references and the generated code does not compile at all. The
+option's single source of truth is an `EntGenerator` constructor parameter
+(`jsonMapper: String = "kotlinx"`), threaded through both entry points:
+`GenerateMain` grows an optional third argument
+(`GenerateMain <packageName> <outputDir> [jsonMapper]`) so direct JavaExec
+callers set it, and the Gradle plugin DSL (`entkt { jsonMapper = "jackson" }`)
+is sugar that passes the same value through. It selects what codegen emits
+into each column's `mapper` field and whether serializer expressions are
+emitted at all. The migration path (`buildEntitySchemas`) carries no JSON
+metadata and is unaffected.
+
+**Startup cross-check.** `JsonColumnCodec` gains `val id: String`. For every
+`FieldType.JSON` column, `register()` requires
+`column.json.mapper == codec.id` and fails otherwise with an error naming the
+table.column, the metadata's mapper (what the code was generated for), and
+the configured codec — so regenerating with one mapper while the driver is
+configured with another fails at startup, not at first read.
 
 Module layout: SPI + kotlinx codec in `runtime` (kotlinx stays the default,
 zero-config path); `entkt-jackson` as its own module so core keeps zero
