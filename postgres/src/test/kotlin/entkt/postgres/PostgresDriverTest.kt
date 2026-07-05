@@ -596,6 +596,20 @@ class PostgresDriverTest {
         assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
     }
 
+    @Test
+    fun `the transaction driver cannot be used after the block returns`() {
+        val driver = fresh()
+        var leaked: entkt.runtime.driver.Driver? = null
+        driver.withTransaction { tx -> leaked = tx }
+        // The block-scoped driver's connection is returned to the pool when
+        // withTransaction exits; a captured reference must fail loudly, not
+        // run I/O on a recycled connection.
+        val ex = assertFailsWith<IllegalStateException> {
+            leaked!!.byId("users", 1L)
+        }
+        assertTrue("after transaction block" in ex.message!!, ex.message ?: "")
+    }
+
     // ---------- transaction locking capability surface ----------
 
     @Test
