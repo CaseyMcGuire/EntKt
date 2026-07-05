@@ -2,9 +2,13 @@ package entkt.schema
 
 import kotlin.reflect.KClass
 import kotlin.reflect.KMutableProperty1
+import kotlin.reflect.KType
+import kotlin.reflect.KVariance
 import kotlin.reflect.KVisibility
+import kotlin.reflect.full.createType
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.jvm.javaField
+import kotlin.reflect.typeOf
 
 /**
  * Base class for all entkt schema declarations. Each schema corresponds
@@ -187,6 +191,11 @@ abstract class EntSchema(val tableName: String) {
      * through the class's kotlinx serializer (generated code references
      * `klass.serializer()`, so a non-serializable class fails at compile time).
      *
+     * [klass] must not have type parameters — a `KClass` cannot carry type
+     * arguments, so `json("rects", List::class)` could only produce a raw
+     * `List`. Declare generic shapes with the reified overload, which captures
+     * the full type: `json<List<HighlightRect>>("rects")`.
+     *
      * `.nullable()` and `.comment()` apply; `.unique()`, defaults, primary keys,
      * and JSON indexes are rejected. Equality/membership/ordering predicates are
      * out of scope in V1 — the generated column ref exposes null checks only.
@@ -194,22 +203,72 @@ abstract class EntSchema(val tableName: String) {
      * Registering a JSON field with a driver that does not support typed JSON
      * fails at `register()`.
      */
-    protected fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder =
-        registerJson(name, klass)
+    protected fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder {
+        require(klass.typeParameters.isEmpty()) {
+            "json(\"$name\", ${klass.simpleName}::class): ${klass.simpleName} has type parameters, " +
+                "which a KClass cannot carry — declare the full type with the reified overload, " +
+                "e.g. json<${klass.simpleName}<Element>>(\"$name\")"
+        }
+        return registerJson(name, klass.createType())
+    }
 
-    /** Reified convenience for [json] — `json<PetMetadata>("pet_metadata")`. */
+    /**
+     * Reified convenience for [json] — `json<PetMetadata>("pet_metadata")`.
+     *
+     * Unlike the `KClass` overload this captures the **full type**, so generic
+     * shapes work directly: `json<List<HighlightRect>>("rects")` generates a
+     * `List<HighlightRect>` property and serializes the element type (no
+     * wrapper class needed). Every class in the type must have a kotlinx
+     * serializer: `@Serializable` classes (including `@Serializable` enums),
+     * primitives/`String`, and `List`/`Set`/`Map`/`Pair`/`Triple`.
+     */
     protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder =
-        registerJson(name, T::class)
+        registerJson(name, typeOf<T>())
 
     @PublishedApi
-    internal fun registerJson(name: String, klass: KClass<*>): JsonFieldBuilder =
+    internal fun registerJson(name: String, type: KType): JsonFieldBuilder =
         JsonFieldBuilder(name).also {
             validateName(name, "Field")
             checkNotFinalized()
-            it.setJsonClass(klass)
+            validateJsonType(name, type)
+            it.setJsonType(type)
             it.declarationOwner = this
             _fields.add(it)
         }
+
+    /**
+     * Reject JSON types codegen cannot faithfully emit or serialize. Every
+     * classifier in the tree must be a concrete class (a bare `T` that leaked
+     * from a generic context has no serializer), projections must be concrete
+     * and invariant (`List<*>` and `List<out Foo>` have no stable element
+     * serializer), and top-level nullability belongs to `.nullable()`, not the
+     * type. Failing here beats failing inside generated code the user has to
+     * reverse-engineer.
+     */
+    private fun validateJsonType(name: String, type: KType) {
+        require(!type.isMarkedNullable) {
+            "json(\"$name\") type '$type' is nullable — declare nullability with .nullable() instead"
+        }
+        fun walk(t: KType) {
+            require(t.classifier is KClass<*>) {
+                "json(\"$name\") type '$type' contains '$t', which is not a concrete class — " +
+                    "type parameters cannot be serialized; declare a fully concrete type"
+            }
+            for (arg in t.arguments) {
+                val argType = arg.type
+                    ?: throw IllegalArgumentException(
+                        "json(\"$name\") type '$type' contains a star projection — " +
+                            "declare a concrete type argument",
+                    )
+                require(arg.variance == KVariance.INVARIANT) {
+                    "json(\"$name\") type '$type' uses an 'in'/'out' projection on '$argType' — " +
+                        "declare invariant type arguments"
+                }
+                walk(argType)
+            }
+        }
+        walk(type)
+    }
 
     /**
      * Registration hook for the `entkt.postgres.vector.postgresVector(name,

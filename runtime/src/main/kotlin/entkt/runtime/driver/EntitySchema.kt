@@ -102,8 +102,21 @@ data class ColumnMetadata(
  * instance belongs to the driver, not here.
  */
 data class JsonColumnMetadata(
+    /**
+     * Raw classifier class of the field's type — `List::class` for a
+     * `json<List<Rect>>` column. Backs the driver's (erased) write-time
+     * `isInstance` check.
+     */
     val klass: kotlin.reflect.KClass<*>,
     val serializer: kotlinx.serialization.KSerializer<*>,
+    /**
+     * Rendered Kotlin type including type arguments
+     * (`kotlin.collections.List<com.example.Rect>`), for diagnostics — [klass]
+     * alone can't name the element type. Null (falling back to
+     * `klass.qualifiedName` in messages) only for metadata built before this
+     * field existed; codegen always emits it.
+     */
+    val typeName: String? = null,
 )
 
 /**

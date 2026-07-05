@@ -11,6 +11,16 @@ data class ArticleMeta(
     val tags: List<String>,
 )
 
+/** Element type of the generic `articles.rects` JSON column. */
+@Serializable
+data class HighlightRect(
+    val page: Int,
+    val x: Double,
+    val y: Double,
+    val w: Double,
+    val h: Double,
+)
+
 class Article : EntSchema("articles") {
     override fun id() = EntId.long()
 
@@ -18,6 +28,10 @@ class Article : EntSchema("articles") {
     val notes = string("notes").nullable()
     val published = bool("published").default(false)
     val metadata = json("metadata", ArticleMeta::class).nullable()
+    // Generic JSON shape: the full List<HighlightRect> type is captured, so
+    // the generated property is typed and elements round-trip through the
+    // element serializer (no wrapper class).
+    val rects = json<List<HighlightRect>>("rects").nullable()
 
     val author = belongsTo<User>("author").inverse(User::articles)
 

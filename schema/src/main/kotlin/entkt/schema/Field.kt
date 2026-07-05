@@ -44,10 +44,23 @@ data class Field(
      */
     val storage: ColumnStorage? = null,
     /**
-     * The `@Serializable` Kotlin class for a `FieldType.JSON` field. Null for
-     * non-JSON fields. Set by `JsonFieldBuilder` via
-     * `FieldBuilder.setJsonClass(...)`; codegen derives `X.serializer()` from it
-     * (the schema module never touches the serializer, only the class).
+     * The full Kotlin type of a `FieldType.JSON` field, including any type
+     * arguments (`PetMetadata`, `List<HighlightRect>`, `Map<String, Point>`).
+     * Null for non-JSON fields. Set at registration via
+     * `FieldBuilder.setJsonType(...)`; codegen derives both the generated
+     * property type and the kotlinx serializer expression from it (the schema
+     * module never touches the serializer, only the type). A `KClass` alone
+     * cannot represent type arguments — capturing the `KType` is what lets
+     * `json<List<HighlightRect>>(...)` round-trip with the element type intact.
      */
-    val jsonClass: kotlin.reflect.KClass<*>? = null,
-)
+    val jsonType: kotlin.reflect.KType? = null,
+) {
+    /**
+     * Raw classifier class of [jsonType] (`List::class` for
+     * `List<HighlightRect>`), or null for non-JSON fields. Registration
+     * guarantees every classifier in [jsonType] is a concrete class, so for
+     * JSON fields this never returns null.
+     */
+    val jsonClass: kotlin.reflect.KClass<*>?
+        get() = jsonType?.classifier as? kotlin.reflect.KClass<*>
+}

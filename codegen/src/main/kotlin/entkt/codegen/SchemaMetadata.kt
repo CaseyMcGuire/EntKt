@@ -2,6 +2,7 @@ package entkt.codegen
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.asClassName
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -96,8 +97,8 @@ internal data class ColumnDescriptor(
     val default: Any? = null,
     /** Native storage metadata (pgvector, etc.) from `Field.storage`, or null. */
     val storage: entkt.schema.ColumnStorage? = null,
-    /** `@Serializable` Kotlin class for a JSON column (`Field.jsonClass`), or null. */
-    val jsonClass: kotlin.reflect.KClass<*>? = null,
+    /** Full `@Serializable` Kotlin type for a JSON column (`Field.jsonType`), or null. */
+    val jsonType: kotlin.reflect.KType? = null,
 )
 
 /**
@@ -223,7 +224,7 @@ internal fun columnMetadataFor(
                     comment = field.comment,
                     default = field.default,
                     storage = field.storage,
-                    jsonClass = field.jsonClass,
+                    jsonType = field.jsonType,
                 ),
             )
         }
@@ -475,16 +476,22 @@ internal fun entitySchemaCodeBlock(
                         )
                     }
                 }
-                val jsonClass = col.jsonClass
-                if (jsonClass != null) {
-                    // json = JsonColumnMetadata(klass = X::class, serializer = X.serializer()).
-                    // Referencing X.serializer() makes a non-@Serializable class fail to compile.
-                    val jsonCn = ClassName.bestGuess(
-                        jsonClass.qualifiedName ?: error("JSON class ${jsonClass.simpleName} must have a qualified name"),
-                    )
+                val jsonType = col.jsonType
+                if (jsonType != null) {
+                    // json = JsonColumnMetadata(klass = X::class, serializer = <expr>, typeName = "...").
+                    // The serializer expression references statically-resolved serializers
+                    // (X.serializer(), ListSerializer(X.serializer()), ...), so a type without
+                    // kotlinx serialization support fails to compile. klass stays the raw
+                    // classifier (List::class for List<Rect>) — it backs the driver's erased
+                    // isInstance write check; typeName carries the full type for diagnostics.
+                    val raw = jsonType.classifier as? kotlin.reflect.KClass<*>
+                        ?: error("JSON column '${col.name}': type '$jsonType' is not a concrete class")
                     colCb.add(
-                        ", json = %T(klass = %T::class, serializer = %T.serializer())",
-                        JSON_COLUMN_METADATA, jsonCn, jsonCn,
+                        ", json = %T(klass = %T::class, serializer = %L, typeName = %S)",
+                        JSON_COLUMN_METADATA,
+                        raw.asClassName(),
+                        jsonSerializerCodeBlock(col.name, jsonType),
+                        jsonType.toString(),
                     )
                 }
                 colCb.add("),\n")

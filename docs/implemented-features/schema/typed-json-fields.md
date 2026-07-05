@@ -17,6 +17,24 @@ JSON mapper abstraction until there is a concrete need for more than one mapper.
 
 The implementation followed this contract closely. Specifics worth recording:
 
+- **Generic types are supported (2026-07-04), superseding the original
+  "wrap `List<PetMetadata>` in a concrete class" restriction below.** The
+  restriction was never enforced — `json<List<Rect>>` was silently accepted and
+  codegen emitted a raw `List` property (the reified overload captured only
+  `T::class`, which erases type arguments), so reads could never round-trip to
+  typed elements. The DSL now captures the full `KType`
+  (`Field.jsonType`, via `typeOf<T>()`): the generated property is
+  `List<Rect>`, and the `SCHEMA` literal registers a serializer built
+  recursively from the type
+  (`ListSerializer(Rect.serializer())`, `MapSerializer(...)`, `.nullable` for
+  nullable arguments, `Box.serializer(arg)` for generic `@Serializable`
+  classes). The `KClass` overload rejects classes with type parameters and
+  points at the reified form; star/variance projections and unresolved type
+  parameters are rejected at registration. `JsonColumnMetadata` gained a
+  `typeName` string so driver errors can name `List<Rect>` rather than the
+  erased `kotlin.collections.List`. User-facing docs:
+  [Schema -> Typed JSON Fields](../../02-schema.md#typed-json-fields-postgres-jsonb).
+
 - The narrow column ref is a standalone `JsonColumn<E, T>` /
   `NullableJsonColumn<E, T>` (in `entkt.query`) — it does **not** extend `Column`,
   so it inherits none of the scalar helpers. `isNull()` / `isNotNull()` are
@@ -87,9 +105,11 @@ Postgres should use `jsonb` by default. Other drivers may use their native JSON 
 or text storage, but compatibility must be explicit through driver capabilities and
 migration rendering.
 
-The returned Kotlin object shape is the supplied `KClass`. entkt should not infer a
-dynamic JSON object shape from data, nor expose untyped JSON through this API. If a
-raw JSON value is needed, it should be a separate, clearly named API.
+The returned Kotlin object shape is the supplied `KClass` *(as built: the
+supplied `KType`, including type arguments — see as-built notes)*. entkt should
+not infer a dynamic JSON object shape from data, nor expose untyped JSON
+through this API. If a raw JSON value is needed, it should be a separate,
+clearly named API.
 
 ## Behavior
 
@@ -159,7 +179,8 @@ raw JSON value is needed, it should be a separate, clearly named API.
   compilation.
 - JSON field types must be concrete serializable classes in V1. Generic top-level
   shapes such as `List<PetMetadata>` should be wrapped in an application data
-  class instead of being accepted directly by the schema API.
+  class instead of being accepted directly by the schema API. *(Superseded
+  2026-07-04: generic shapes are accepted directly — see as-built notes.)*
 - Polymorphic JSON is not a first-class API in V1. If a concrete field type's
   generated serializer works with the driver's configured `Json`, entkt treats it
   like any other serializable type, but V1 does not add sealed-type helpers,

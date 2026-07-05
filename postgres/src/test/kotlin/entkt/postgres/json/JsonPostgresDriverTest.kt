@@ -10,6 +10,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.schema.FieldType
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
@@ -57,6 +58,17 @@ class JsonPostgresDriverTest {
                 "metadata", FieldType.JSON, nullable = true,
                 json = JsonColumnMetadata(Meta::class, Meta.serializer()),
             ),
+            // A generic JSON column, shaped exactly like codegen emits for
+            // json<List<Meta>>: raw classifier klass, builtins element
+            // serializer, full typeName for diagnostics.
+            ColumnMetadata(
+                "rects", FieldType.JSON, nullable = true,
+                json = JsonColumnMetadata(
+                    klass = List::class,
+                    serializer = ListSerializer(Meta.serializer()),
+                    typeName = "kotlin.collections.List<entkt.postgres.json.Meta>",
+                ),
+            ),
         ),
         edges = emptyMap(),
     )
@@ -78,6 +90,27 @@ class JsonPostgresDriverTest {
         assertEquals(meta, row["metadata"], "insert RETURNING * decodes the JSON")
         val back = driver.byId("json_items", row["id"]!!)!!
         assertEquals(meta, back["metadata"], "byId decodes the JSON")
+    }
+
+    @Test
+    fun `round-trips a generic List column through the element serializer`() {
+        val driver = fresh()
+        val rects = listOf(Meta("a", listOf("x")), Meta(null, emptyList()))
+        val row = driver.insert("json_items", mapOf("name" to "a", "rects" to rects))
+        assertEquals(rects, row["rects"], "insert RETURNING * decodes List<Meta>")
+        val back = driver.byId("json_items", row["id"]!!)!!
+        assertEquals(rects, back["rects"], "byId decodes typed elements, not maps")
+    }
+
+    @Test
+    fun `a wrong-type write against a generic column names the full type`() {
+        val driver = fresh()
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.insert("json_items", mapOf("name" to "a", "rects" to Meta("m", emptyList())))
+        }
+        assertTrue("json_items.rects" in ex.message!!, ex.message ?: "")
+        // klass alone would only say kotlin.collections.List; typeName carries the element.
+        assertTrue("List<entkt.postgres.json.Meta>" in ex.message!!, ex.message ?: "")
     }
 
     @Test

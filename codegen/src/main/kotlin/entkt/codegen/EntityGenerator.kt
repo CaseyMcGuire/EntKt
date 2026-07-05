@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -178,11 +179,21 @@ internal class EntityGenerator(
 
         body.add(")")
 
-        return FunSpec.builder("fromRow")
+        val fromRow = FunSpec.builder("fromRow")
             .addParameter("row", ROW_TYPE)
             .returns(entityClass)
             .addCode(body.build())
-            .build()
+        // A parameterized JSON type (List<Rect>) can only be cast unchecked —
+        // the driver decoded it through the column's registered serializer, so
+        // the erased cast is sound. Suppress only when such a field exists.
+        if (allFields.any { it.type == FieldType.JSON && it.jsonType?.arguments?.isNotEmpty() == true }) {
+            fromRow.addAnnotation(
+                AnnotationSpec.builder(Suppress::class)
+                    .addMember("%S", "UNCHECKED_CAST")
+                    .build(),
+            )
+        }
+        return fromRow.build()
     }
 
     private fun buildConstructor(
@@ -474,8 +485,8 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
             cls.parameterizedBy(entityClass, type.toTypeName())
         }
         // JSON: a narrow JsonColumn<E, T> (null checks only, no scalar helpers),
-        // built in buildColumnRef from Field.jsonClass — never via this map.
-        FieldType.JSON -> error("JSON column type is resolved from jsonClass in buildColumnRef")
+        // built in buildColumnRef from Field.jsonType — never via this map.
+        FieldType.JSON -> error("JSON column type is resolved from jsonType in buildColumnRef")
     }
 }
 

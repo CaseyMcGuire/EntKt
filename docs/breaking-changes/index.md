@@ -30,6 +30,20 @@ above it.
 
 ## Unreleased
 
+- **`Field.jsonClass` constructor parameter replaced by `Field.jsonType: KType`** (`schema`)
+  JSON fields now capture the full Kotlin type (with type arguments) so
+  `json<List<Rect>>("rects")` generates a `List<Rect>` property and registers
+  an element-typed serializer — a `KClass` cannot carry type arguments, which
+  is why generic JSON fields previously emitted a raw `List`. `Field.jsonClass`
+  remains as a derived read-only property (the raw classifier), so reads keep
+  compiling; only constructing/copying `Field` with a named `jsonClass`
+  argument breaks. `json(name, klass)` now rejects classes with type
+  parameters (use the reified overload). `FieldBuilder.setJsonClass` is now
+  `setJsonType(KType)`.
+  _Migration:_ pass `jsonType = typeOf<X>()` instead of `jsonClass = X::class`
+  when constructing `Field` directly; schema DSL callers (`json(...)`) need no
+  change.
+
 - **`entkt.runtime` split into concern-based subpackages** (`runtime`)
   Runtime types moved from the flat `entkt.runtime` package into
   `entkt.runtime.{driver,privacy,validation,query,mutation,result}`.
@@ -39,5 +53,3 @@ above it.
   `entkt.runtime.result.EntResult`. Generated code already targets the new
   packages; only hand-written imports need updating. See the mapping in
   [runtime/README.md](../../runtime/README.md#package-layout).
-
-_No breaking changes yet._

@@ -799,7 +799,7 @@ class PostgresDriver(
         }
         if (!meta.klass.isInstance(value)) {
             error(
-                "Column '$table.$col' expects JSON of ${meta.klass.qualifiedName}, " +
+                "Column '$table.$col' expects JSON of ${meta.typeName ?: meta.klass.qualifiedName}, " +
                     "got ${value::class.qualifiedName}",
             )
         }
@@ -1200,7 +1200,7 @@ class PostgresDriver(
                     json.decodeFromString(serializer, text)
                 } catch (e: Exception) {
                     throw IllegalStateException(
-                        "Failed to decode JSON column '$table.${col.name}' as ${meta.klass.qualifiedName}",
+                        "Failed to decode JSON column '$table.${col.name}' as ${meta.typeName ?: meta.klass.qualifiedName}",
                         e,
                     )
                 }

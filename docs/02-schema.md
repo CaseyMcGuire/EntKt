@@ -70,8 +70,9 @@ class Ticket : EntSchema("tickets") {
 
 Postgres-specific native types (e.g. `pgvector`) are import-gated and not on the
 base DSL -- see [Native Column Types (Postgres pgvector)](#native-column-types-postgres-pgvector).
-Typed JSON columns (a `@Serializable` class stored as `jsonb`) are declared with
-`json(...)` -- see [Typed JSON Fields](#typed-json-fields-postgres-jsonb).
+Typed JSON columns (a `@Serializable` type — including generic shapes like
+`List<Rect>` — stored as `jsonb`) are declared with `json(...)` -- see
+[Typed JSON Fields](#typed-json-fields-postgres-jsonb).
 
 ### Common Modifiers
 
@@ -707,9 +708,8 @@ for nearest-neighbor search.
 
 ## Typed JSON Fields (Postgres jsonb)
 
-A `json(...)` field exposes a `@Serializable` Kotlin class at the generated API
-boundary while storing the value as Postgres `jsonb`. It follows the same
-`(name, KClass)` shape as `enum`:
+A `json(...)` field exposes a `@Serializable` Kotlin type at the generated API
+boundary while storing the value as Postgres `jsonb`:
 
 ```kotlin
 import kotlinx.serialization.Serializable
@@ -717,12 +717,20 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class PetMetadata(val nickname: String?, val tags: List<String>)
 
+@Serializable
+data class HighlightRect(val page: Int, val x: Double, val y: Double)
+
 class Pet : EntSchema("pets") {
     override fun id() = EntId.long()
 
     val name = string("name")
     val metadata = json("pet_metadata", PetMetadata::class).nullable()
-    // Reified convenience: json<PetMetadata>("pet_metadata")
+    // Reified form: json<PetMetadata>("pet_metadata")
+
+    // Generic shapes work directly — the full type is captured, so the
+    // generated property is List<HighlightRect> and elements round-trip
+    // through HighlightRect's serializer (no wrapper class needed):
+    val rects = json<List<HighlightRect>>("rects").nullable()
 }
 ```
 
@@ -730,9 +738,23 @@ Applications must apply the Kotlin serialization compiler plugin
 (`org.jetbrains.kotlin.plugin.serialization`) and have `kotlinx-serialization-json`
 available.
 
-- The generated property type is the supplied class (`metadata: PetMetadata?`).
-  Generated code references `PetMetadata.serializer()`, so a **non-`@Serializable`
-  class fails at compile time** rather than as a late read failure.
+- The generated property type is the supplied type (`metadata: PetMetadata?`,
+  `rects: List<HighlightRect>?`). Generated code references statically-resolved
+  serializers (`PetMetadata.serializer()`,
+  `ListSerializer(HighlightRect.serializer())`), so a **type without kotlinx
+  serialization support fails at compile time** rather than as a late read
+  failure.
+- **Generic types** must use the reified form — a `KClass` cannot carry type
+  arguments, so `json("rects", List::class)` is rejected at schema construction
+  with a pointer to `json<List<HighlightRect>>("rects")`. Star projections
+  (`List<*>`), `in`/`out` projections, and unresolved type parameters are also
+  rejected there. Type arguments may be nullable (`List<HighlightRect?>`).
+- Every class in the type needs a kotlinx serializer: `@Serializable` classes
+  (including generic ones — `Box<HighlightRect>` uses
+  `Box.serializer(HighlightRect.serializer())`), primitives and `String`, and
+  `List`/`Set`/`Map`/`Pair`/`Triple` via the `kotlinx.serialization.builtins`
+  factories. An **enum used inside a json type must itself be `@Serializable`**
+  so its companion `serializer()` is generated.
 - Encoding/decoding go through `kotlinx.serialization`. Configure the behavior on
   the driver: `PostgresDriver(dataSource, json = Json { ignoreUnknownKeys = true })`
   (default `Json.Default`). Serializers come from the column, not the `Json` config.

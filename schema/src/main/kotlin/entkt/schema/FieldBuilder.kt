@@ -36,7 +36,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     private var updateDefault: UpdateDefault? = null
     private var enumClass: kotlin.reflect.KClass<out Enum<*>>? = null
     private var storage: ColumnStorage? = null
-    private var jsonClass: kotlin.reflect.KClass<*>? = null
+    private var jsonType: kotlin.reflect.KType? = null
     protected var validators: MutableList<Validator> = mutableListOf()
 
     protected fun setUpdateDefault(value: UpdateDefault) {
@@ -73,12 +73,13 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     internal val nativeStorage: ColumnStorage? get() = storage
 
     /**
-     * Attach the `@Serializable` Kotlin class for a typed JSON field. Set once
-     * at registration (mirrors [setEnumClass]); folded into [Field] by [build].
+     * Attach the full Kotlin type (including type arguments) for a typed JSON
+     * field. Set once at registration (mirrors [setEnumClass]); folded into
+     * [Field] by [build].
      */
     @PublishedApi
-    internal fun setJsonClass(klass: kotlin.reflect.KClass<*>) {
-        this.jsonClass = klass
+    internal fun setJsonType(type: kotlin.reflect.KType) {
+        this.jsonType = type
     }
 
     fun build(): Field {
@@ -126,7 +127,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             comment = comment,
             declarationName = declarationName,
             storage = storage,
-            jsonClass = jsonClass,
+            jsonType = jsonType,
         )
     }
 }

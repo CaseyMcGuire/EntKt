@@ -2,6 +2,7 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
 import entkt.integrationtest.schema.ArticleMeta
+import entkt.integrationtest.schema.HighlightRect
 import entkt.integrationtest.support.PostgresTestBase
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,6 +39,36 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
         val newMeta = ArticleMeta(source = null, tags = listOf("updated"))
         val updated = client.articles.update(created.id) { metadata = newMeta }.saveOrThrow()
         assertEquals(newMeta, updated.metadata, "update round-trips the new value")
+    }
+
+    @Test
+    fun `generic JSON field round-trips with the element type intact`() {
+        val client = client()
+        val author = client.users.create { name = "A"; email = "a3@example.com" }.save()
+
+        val regions = listOf(
+            HighlightRect(page = 1, x = 0.1, y = 0.2, w = 0.3, h = 0.4),
+            HighlightRect(page = 2, x = 0.5, y = 0.6, w = 0.7, h = 0.8),
+        )
+        val created = client.articles.create {
+            title = "g"
+            authorId = author.id
+            rects = regions
+        }.save()
+        assertEquals(regions, created.rects, "create round-trips the typed list")
+
+        // assertEquals against HighlightRect data classes proves the driver
+        // decoded real elements via ListSerializer — a raw List<Map> (the
+        // pre-KType failure mode) would not compare equal.
+        val read = client.articles.byIdOrNull(created.id)!!
+        assertEquals(regions, read.rects, "read decodes List<HighlightRect>, not List<Map>")
+
+        val shorter = regions.take(1)
+        val updated = client.articles.update(created.id) { rects = shorter }.saveOrThrow()
+        assertEquals(shorter, updated.rects, "update round-trips the new list")
+
+        val cleared = client.articles.update(created.id) { rects = null }.saveOrThrow()
+        assertNull(cleared.rects, "a nullable generic JSON field round-trips null")
     }
 
     @Test
