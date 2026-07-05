@@ -139,7 +139,4 @@ class PostgresSqlRenderer(
 
     private fun truncateIdentifier(name: String): String =
         typeMapper.normalizeIdentifier(name)
-
-    private fun quote(identifier: String): String =
-        "\"${identifier.replace("\"", "\"\"")}\""
 }

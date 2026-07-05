@@ -1,6 +1,5 @@
 package entkt.postgres
 
-import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -14,7 +13,6 @@ import entkt.runtime.driver.IdStrategy
 import entkt.runtime.query.QueryExplanation
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
-import entkt.schema.OnDelete
 import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
@@ -25,25 +23,6 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
-
-/**
- * AND together a list of erased predicates into a single erased
- * predicate, or null when the list is empty. Used by the SQL builders
- * to combine the driver-call's `List<Predicate<*>>` into a single
- * predicate tree for [PostgresDriver.SqlBuilder.lower].
- *
- * The runtime representation of `Predicate.And<E>(left, right)` is a
- * plain wrapper that doesn't inspect E, so combining two erased
- * predicates into an erased And is sound — drivers consume predicates
- * structurally (field/op/value/edge name/source table) and don't
- * introspect the phantom type. The unchecked cast localizes the
- * "phantom doesn't matter at the driver" invariant to one place.
- */
-@Suppress("UNCHECKED_CAST")
-private fun List<Predicate<*>>.andTogether(): Predicate<*>? =
-    reduceOrNull { left, right ->
-        Predicate.And(left as Predicate<Any>, right as Predicate<Any>)
-    }
 
 // Aggregate metric-column type compatibility (mirrors the generated column
 // markers): sum/avg are numeric-only; min/max are over comparable scalars.
@@ -293,7 +272,7 @@ class PostgresDriver(
             for ((i, col) in cols.withIndex()) {
                 bindColumn(stmt, i + 1, schema, col, values[col])
             }
-            bind(stmt, cols.size + 1, columnTypeOf(schema, schema.idColumn), id)
+            bind(stmt, cols.size + 1, schema.columnType(schema.idColumn), id)
             stmt.executeQuery().use { rs ->
                 if (rs.next()) decodeRow(rs, schema.table, schema.columns) else null
             }
@@ -304,14 +283,12 @@ class PostgresDriver(
         val schema = schemaFor(table)
         val sql = "SELECT * FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ?"
         return conn.prepareStatement(sql).use { stmt ->
-            bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
+            bind(stmt, 1, schema.columnType(schema.idColumn), id)
             stmt.executeQuery().use { rs ->
                 if (rs.next()) decodeRow(rs, schema.table, schema.columns) else null
             }
         }
     }
-
-    private data class PreparedSql(val sql: String, val params: List<Param>)
 
     private fun buildSelectSql(
         table: String,
@@ -321,7 +298,7 @@ class PostgresDriver(
         offset: Int?,
     ): PreparedSql {
         val schema = schemaFor(table)
-        val builder = SqlBuilder()
+        val builder = PredicateSqlBuilder(schemas)
         val baseAlias = "t0"
 
         val sql = StringBuilder()
@@ -351,7 +328,7 @@ class PostgresDriver(
                         // so without this a wrong-size query vector would surface
                         // as an opaque Postgres error instead of a field-named one.
                         val operand = distance.operand
-                        val native = nativeStorageOf(schema, of.field)
+                        val native = schema.nativeStorage(of.field)
                         checkVectorDimensions(native, operand, "orderBy distance on '$table.${of.field}'")
                         builder.params.add(Param(FieldType.PGVECTOR, operand))
                         // NULLS LAST always: a null embedding has no distance, so it
@@ -398,7 +375,7 @@ class PostgresDriver(
 
     private fun buildCountSql(table: String, predicates: List<Predicate<*>>): PreparedSql {
         val schema = schemaFor(table)
-        val builder = SqlBuilder()
+        val builder = PredicateSqlBuilder(schemas)
         val baseAlias = "t0"
 
         val sql = StringBuilder()
@@ -480,7 +457,7 @@ class PostgresDriver(
             }
         }
 
-        val builder = SqlBuilder()
+        val builder = PredicateSqlBuilder(schemas)
         val baseAlias = "t0"
         val metricSql = when (function) {
             AggregateFunction.COUNT -> "COUNT(*)"
@@ -557,7 +534,7 @@ class PostgresDriver(
         predicates: List<Predicate<*>>,
     ): Boolean {
         val schema = schemaFor(table)
-        val builder = SqlBuilder()
+        val builder = PredicateSqlBuilder(schemas)
         val baseAlias = "t0"
 
         val sql = StringBuilder()
@@ -586,7 +563,7 @@ class PostgresDriver(
         val schema = schemaFor(table)
         val sql = "DELETE FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ?"
         return conn.prepareStatement(sql).use { stmt ->
-            bind(stmt, 1, columnTypeOf(schema, schema.idColumn), id)
+            bind(stmt, 1, schema.columnType(schema.idColumn), id)
             stmt.executeUpdate() > 0
         }
     }
@@ -673,7 +650,7 @@ class PostgresDriver(
         val cols = values.keys.filter { it != schema.idColumn }
         if (cols.isEmpty()) return 0
 
-        val builder = SqlBuilder()
+        val builder = PredicateSqlBuilder(schemas)
         val baseAlias = "t0"
 
         val setClause = cols.joinToString(", ") { "${quote(it)} = ?" }
@@ -704,7 +681,7 @@ class PostgresDriver(
         predicates: List<Predicate<*>>,
     ): Int {
         val schema = schemaFor(table)
-        val builder = SqlBuilder()
+        val builder = PredicateSqlBuilder(schemas)
         val baseAlias = "t0"
 
         val sql = StringBuilder()
@@ -747,12 +724,6 @@ class PostgresDriver(
 
     private fun schemaFor(table: String): EntitySchema =
         schemas[table] ?: error("Unregistered table: $table")
-
-    private fun columnTypeOf(schema: EntitySchema, name: String): FieldType? =
-        schema.columns.firstOrNull { it.name == name }?.type
-
-    private fun nativeStorageOf(schema: EntitySchema, name: String): ColumnStorage.Native? =
-        schema.columns.firstOrNull { it.name == name }?.storage as? ColumnStorage.Native
 
     /**
      * Bind a column value, first validating any native-storage constraint the
@@ -822,19 +793,6 @@ class PostgresDriver(
             )
         }
         stmt.setObject(idx, obj)
-    }
-
-    /** Field-named label for a predicate operand on `schema.field`. */
-    private fun predicateLabel(schema: EntitySchema, field: String): String =
-        "predicate on '${schema.table}.$field'"
-
-    /** Reject a [PgVector] whose dimension doesn't match a native vector column. */
-    private fun checkVectorDimensions(native: ColumnStorage.Native?, value: Any?, label: String) {
-        if (native != null && native.codec == "postgres.vector" && value is entkt.postgres.vector.PgVector) {
-            require(value.dimensions == native.dimensions) {
-                "$label expects a ${native.dimensions}-dimensional vector, got ${value.dimensions}"
-            }
-        }
     }
 
     // ---------- DDL ----------
@@ -909,204 +867,6 @@ class PostgresDriver(
 
     private fun sqlTypeFor(schema: EntitySchema, col: ColumnMetadata): String =
         typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy, col.storage)
-
-    // ---------- Predicate lowering ----------
-
-    /**
-     * Accumulates parameter bindings as the predicate tree is walked.
-     * Each placeholder in the produced SQL corresponds to one entry in
-     * [params], in order, so binding is just `bind(stmt, i+1, p.type, p.value)`.
-     */
-    private inner class SqlBuilder {
-        val params = mutableListOf<Param>()
-        private var aliasCounter = 0
-
-        fun nextAlias(): String = "t${++aliasCounter}"
-
-        fun lower(predicate: Predicate<*>, schema: EntitySchema, alias: String): String =
-            when (predicate) {
-                is Predicate.Leaf<*> -> lowerLeaf(predicate, schema, alias)
-                is Predicate.And<*> ->
-                    "(${lower(predicate.left, schema, alias)} AND ${lower(predicate.right, schema, alias)})"
-                is Predicate.Or<*> ->
-                    "(${lower(predicate.left, schema, alias)} OR ${lower(predicate.right, schema, alias)})"
-                is Predicate.HasEdge<*> -> lowerHasEdge(predicate.edge, null, schema, alias)
-                is Predicate.HasEdgeWith<*, *> ->
-                    lowerHasEdge(predicate.edge, predicate.inner, schema, alias)
-                is Predicate.HasM2MEdgeFrom<*, *> ->
-                    lowerInverseM2M(predicate, alias)
-            }
-
-        private fun lowerLeaf(leaf: Predicate.Leaf<*>, schema: EntitySchema, alias: String): String {
-            val col = "$alias.${quote(leaf.field)}"
-            val type = columnTypeOf(schema, leaf.field)
-            // Validate native operands (e.g. a wrong-dimension vector in
-            // `embedding eq v` / `embedding in [...]`) here, so a predicate
-            // gives the same field-named entkt error as writes and distance
-            // ordering instead of falling through to an opaque Postgres error.
-            // No-ops for non-native columns and non-PgVector operands; the
-            // collection ops validate per-item in lowerInList.
-            val native = nativeStorageOf(schema, leaf.field)
-            checkVectorDimensions(native, leaf.value, predicateLabel(schema, leaf.field))
-            return when (leaf.op) {
-                Op.EQ -> {
-                    params.add(Param(type, leaf.value))
-                    "$col = ?"
-                }
-                Op.NEQ -> {
-                    params.add(Param(type, leaf.value))
-                    "$col <> ?"
-                }
-                Op.GT -> {
-                    params.add(Param(type, leaf.value))
-                    "$col > ?"
-                }
-                Op.GTE -> {
-                    params.add(Param(type, leaf.value))
-                    "$col >= ?"
-                }
-                Op.LT -> {
-                    params.add(Param(type, leaf.value))
-                    "$col < ?"
-                }
-                Op.LTE -> {
-                    params.add(Param(type, leaf.value))
-                    "$col <= ?"
-                }
-                Op.IS_NULL -> "$col IS NULL"
-                Op.IS_NOT_NULL -> "$col IS NOT NULL"
-                Op.IN -> lowerInList(col, leaf.value, type, native, predicateLabel(schema, leaf.field), negated = false)
-                Op.NOT_IN -> lowerInList(col, leaf.value, type, native, predicateLabel(schema, leaf.field), negated = true)
-                Op.CONTAINS -> {
-                    // Escape `%`, `_`, and `\` in the caller's value
-                    // before splicing it into the LIKE pattern, then
-                    // declare the escape char explicitly. Without this,
-                    // a caller passing `%` matches almost everything
-                    // (LIKE wildcard injection) instead of the intended
-                    // literal-substring semantics.
-                    params.add(Param(FieldType.STRING, "%${escapeLikePattern(leaf.value as String)}%"))
-                    "$col LIKE ? ESCAPE '\\'"
-                }
-                Op.HAS_PREFIX -> {
-                    params.add(Param(FieldType.STRING, "${escapeLikePattern(leaf.value as String)}%"))
-                    "$col LIKE ? ESCAPE '\\'"
-                }
-                Op.HAS_SUFFIX -> {
-                    params.add(Param(FieldType.STRING, "%${escapeLikePattern(leaf.value as String)}"))
-                    "$col LIKE ? ESCAPE '\\'"
-                }
-            }
-        }
-
-        /**
-         * Escape `%`, `_`, and `\` in [value] so it can be safely
-         * spliced into a `LIKE` pattern. Used by CONTAINS / HAS_PREFIX
-         * / HAS_SUFFIX lowering, paired with `LIKE ? ESCAPE '\\'`.
-         *
-         * Without this, raw caller input flowing into the pattern lets
-         * a value like `%` match almost everything (LIKE wildcard
-         * injection) instead of the intended literal-substring
-         * semantics.
-         *
-         * The escape char `\` is escaped first so the inserted escapes
-         * in the next steps aren't double-escaped.
-         */
-        private fun escapeLikePattern(value: String): String {
-            val sb = StringBuilder(value.length + 8)
-            for (ch in value) {
-                when (ch) {
-                    '\\', '%', '_' -> sb.append('\\').append(ch)
-                    else -> sb.append(ch)
-                }
-            }
-            return sb.toString()
-        }
-
-        private fun lowerInList(
-            col: String,
-            value: Any?,
-            type: FieldType?,
-            native: ColumnStorage.Native?,
-            label: String,
-            negated: Boolean,
-        ): String {
-            val items = (value as Collection<*>).toList()
-            if (items.isEmpty()) {
-                // Empty IN: matches nothing. Empty NOT IN: matches everything.
-                return if (negated) "TRUE" else "FALSE"
-            }
-            val placeholders = items.joinToString(", ") { "?" }
-            for (item in items) {
-                checkVectorDimensions(native, item, label)
-                params.add(Param(type, item))
-            }
-            return if (negated) "$col NOT IN ($placeholders)" else "$col IN ($placeholders)"
-        }
-
-        private fun lowerHasEdge(
-            edgeName: String,
-            inner: Predicate<*>?,
-            sourceSchema: EntitySchema,
-            sourceAlias: String,
-        ): String {
-            val edge = sourceSchema.edges[edgeName]
-                ?: error("Edge ${sourceSchema.table}.$edgeName has no metadata — was the schema registered?")
-            val targetSchema = schemas[edge.targetTable]
-                ?: error("Edge ${sourceSchema.table}.$edgeName points at unregistered ${edge.targetTable}")
-
-            // M2M edge: join through the junction table.
-            if (edge.junctionTable != null) {
-                val jAlias = nextAlias()
-                val tAlias = nextAlias()
-                val onClause = "$tAlias.${quote(edge.targetColumn)} = $jAlias.${quote(edge.junctionTargetColumn!!)}"
-                val whereClause = "$jAlias.${quote(edge.junctionSourceColumn!!)} = $sourceAlias.${quote(edge.sourceColumn)}"
-                val innerSql = inner?.let { lower(it, targetSchema, tAlias) }
-                val fullWhere = if (innerSql == null) whereClause else "$whereClause AND $innerSql"
-                return "EXISTS (SELECT 1 FROM ${quote(edge.junctionTable!!)} AS $jAlias" +
-                    " JOIN ${quote(edge.targetTable)} AS $tAlias ON $onClause" +
-                    " WHERE $fullWhere)"
-            }
-
-            // Direct edge: simple subquery.
-            val targetAlias = nextAlias()
-            val join = "$targetAlias.${quote(edge.targetColumn)} = $sourceAlias.${quote(edge.sourceColumn)}"
-            val innerSql = inner?.let { lower(it, targetSchema, targetAlias) }
-            val where = if (innerSql == null) join else "$join AND $innerSql"
-            return "EXISTS (SELECT 1 FROM ${quote(edge.targetTable)} AS $targetAlias WHERE $where)"
-        }
-
-        /**
-         * Lower [Predicate.HasM2MEdgeFrom] into an EXISTS subquery that
-         * walks the junction backwards: candidate target row's id =
-         * junction.targetCol = source.id; the optional source-side
-         * filter applies to the source table.
-         */
-        private fun lowerInverseM2M(
-            predicate: Predicate.HasM2MEdgeFrom<*, *>,
-            candidateAlias: String,
-        ): String {
-            val sourceSchema = schemas[predicate.sourceTable]
-                ?: error("HasM2MEdgeFrom: unregistered source table ${predicate.sourceTable}")
-            val edge = sourceSchema.edges[predicate.edgeName]
-                ?: error("HasM2MEdgeFrom: edge ${predicate.sourceTable}.${predicate.edgeName} has no metadata")
-            val junctionTable = edge.junctionTable
-                ?: error("HasM2MEdgeFrom: edge ${predicate.sourceTable}.${predicate.edgeName} is not M2M")
-
-            val jAlias = nextAlias()
-            val sAlias = nextAlias()
-            val joinJunctionToCandidate =
-                "$jAlias.${quote(edge.junctionTargetColumn!!)} = $candidateAlias.${quote(edge.targetColumn)}"
-            val joinJunctionToSource =
-                "$jAlias.${quote(edge.junctionSourceColumn!!)} = $sAlias.${quote(edge.sourceColumn)}"
-            val innerSql = predicate.sourceFilter?.let { lower(it, sourceSchema, sAlias) }
-            val where = listOfNotNull(joinJunctionToCandidate, joinJunctionToSource, innerSql).joinToString(" AND ")
-            return "EXISTS (SELECT 1 FROM ${quote(junctionTable)} AS $jAlias" +
-                " JOIN ${quote(predicate.sourceTable)} AS $sAlias ON $joinJunctionToSource" +
-                " WHERE $where)"
-        }
-    }
-
-    private data class Param(val type: FieldType?, val value: Any?)
 
     // ---------- Binding & decoding ----------
 
@@ -1400,20 +1160,6 @@ class PostgresDriver(
             stmt.executeQuery().close()
         }
     }
-
-    private val EntitySchema.idType: FieldType?
-        get() = columns.firstOrNull { it.name == idColumn }?.type
-
-    // ---------- Identifier quoting ----------
-
-    /**
-     * Wrap an identifier in PG's `"..."` quoting and escape embedded
-     * quotes defensively. Most identifiers originate in generated
-     * schema metadata, but callers can still construct raw predicates
-     * and order fields by hand.
-     */
-    private fun quote(identifier: String): String =
-        "\"${identifier.replace("\"", "\"\"")}\""
 
     // ---------- Driver exception classification (result variants) ----------
 
