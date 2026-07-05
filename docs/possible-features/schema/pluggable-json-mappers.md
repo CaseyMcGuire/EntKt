@@ -48,15 +48,22 @@ value to/from `jsonb` text for a known column), so the SPI is small:
 
 ```kotlin
 interface JsonColumnCodec {
+    /** Stable codec id, matched against JsonColumnMetadata.mapper at register(). */
+    val id: String
     /** Reject unsupported column types at register() (fail fast, not at first read). */
-    fun validate(column: ColumnMetadata)
-    fun encode(column: ColumnMetadata, value: Any): String
-    fun decode(column: ColumnMetadata, text: String): Any
+    fun validate(table: String, column: ColumnMetadata)
+    fun encode(table: String, column: ColumnMetadata, value: Any): String
+    fun decode(table: String, column: ColumnMetadata, text: String): Any
 }
 
 PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json.Default))   // default
 PostgresDriver(dataSource, jsonCodec = JacksonJsonCodec(objectMapper))   // opt-in, separate module
 ```
+
+Every method takes the table name because `ColumnMetadata` doesn't carry it —
+codec errors must name `table.column`, matching the existing driver
+encode/decode error contract (today's `bindJson`/`decodeColumn` thread
+`table` for the same reason).
 
 Both implementations are thin because `Field.jsonType` already carries the
 full `KType` (added with generic-type support): the kotlinx codec uses the
@@ -110,12 +117,22 @@ into each column's `mapper` field and whether serializer expressions are
 emitted at all. The migration path (`buildEntitySchemas`) carries no JSON
 metadata and is unaffected.
 
-**Startup cross-check.** `JsonColumnCodec` gains `val id: String`. For every
-`FieldType.JSON` column, `register()` requires
-`column.json.mapper == codec.id` and fails otherwise with an error naming the
-table.column, the metadata's mapper (what the code was generated for), and
-the configured codec — so regenerating with one mapper while the driver is
-configured with another fails at startup, not at first read.
+**Startup cross-check.** For every `FieldType.JSON` column, `register()`
+requires `column.json.mapper == codec.id` and fails otherwise with an error
+naming the table.column, the metadata's mapper (what the code was generated
+for), and the configured codec — so regenerating with one mapper while the
+driver is configured with another fails at startup, not at first read.
+
+**Mapper ids and typos.** Built-in ids are constants shared by the codegen
+setting, the metadata init check, and the codecs —
+`JsonMapperIds.KOTLINX` / `JsonMapperIds.JACKSON` — so built-in users never
+type raw strings (the Gradle DSL and `EntGenerator` accept the constants;
+raw strings remain the escape hatch for third-party codecs). Codegen cannot
+reject an unknown id (openness to third-party codecs is the point), so a
+typo'd id flows into the generated metadata verbatim — and is then caught by
+the register() cross-check above, since no configured codec advertises the
+typo'd id. Document that behavior explicitly: an id typo is a guaranteed
+startup failure naming both ids, never a silent fallback to kotlinx.
 
 Module layout: SPI + kotlinx codec in `runtime` (kotlinx stays the default,
 zero-config path); `entkt-jackson` as its own module so core keeps zero
