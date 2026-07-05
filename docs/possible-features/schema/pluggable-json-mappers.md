@@ -30,12 +30,21 @@ annotations on element classes are ignored; a Jackson shop must apply the
 kotlinx compiler plugin and annotate json-column classes `@Serializable`
 (the two frameworks coexist without conflict, but it is a second framework).
 
-## Design sketch
+## Why not an existing abstraction
 
-A **driver-level codec option**, not a per-field one: the schema DSL stays
-mapper-agnostic (it already is — `Field.jsonType` carries a plain `KType`,
-which is exactly what Jackson's `TypeFactory` needs to build a `JavaType`,
-including generics like `List<Rect>`).
+There is no established JSON abstraction that both libraries implement.
+Jakarta JSON-B (`jakarta.json.bind.Jsonb`) is the closest standard, but
+kotlinx does not implement it, it is Java-reflective (weak Kotlin
+nullability/default-parameter semantics), and adopting it adds a third
+framework that satisfies neither camp. Wrapping Jackson as a kotlinx
+`SerialFormat` inverts the problem: every call site still needs
+`@Serializable` and the compiler plugin, which is exactly what a Jackson
+shop is trying to avoid. entkt would own its own minimal SPI.
+
+## Design sketch — two coordinated layers
+
+The runtime surface is genuinely narrow (the driver only ever converts a
+value to/from `jsonb` text for a known column), so the SPI is small:
 
 ```kotlin
 interface JsonColumnCodec {
@@ -49,25 +58,38 @@ PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json.Default))   // defa
 PostgresDriver(dataSource, jsonCodec = JacksonJsonCodec(objectMapper))   // opt-in, separate module
 ```
 
-- `JsonColumnMetadata` grows a mapper-neutral type carrier. `typeName`
-  (added with generic-type support) is diagnostic-only; Jackson needs the
-  real `KType` (or a `java.lang.reflect.Type` derived from it) in the
-  metadata so `TypeFactory.constructType(...)` can target `List<Rect>`.
-  The kotlinx `serializer` field becomes codec-specific payload.
-- The Jackson codec lives in its own module (`entkt-jackson`?) so the core
-  postgres module keeps zero Jackson dependency.
+Both implementations are thin because `Field.jsonType` already carries the
+full `KType` (added with generic-type support): the kotlinx codec uses the
+codegen-emitted `KSerializer`; the Jackson codec derives a `JavaType` via
+`kType.javaType` → `TypeFactory.constructType(...)`, generics like
+`List<Rect>` included. `JsonColumnMetadata` grows the `KType` as the
+mapper-neutral carrier (`typeName` stays diagnostic-only); the kotlinx
+`serializer` field becomes codec-specific payload.
+
+**The codec cannot be runtime-only — the mapper choice must reach codegen.**
+Generated `SCHEMA` literals currently bake in kotlinx serializer expressions
+(`ListSerializer(Rect.serializer())`); for a Jackson project those are
+unresolved references and the generated code does not compile at all. So the
+real shape is a codegen-level setting (`entkt { jsonMapper = KOTLINX |
+JACKSON }` on the Gradle plugin) that decides whether serializer expressions
+are emitted, plus the matching runtime codec on the driver — with
+`register()` cross-checking that generated metadata and configured codec
+agree, so a mismatch fails loudly at startup instead of at first read.
+
+Module layout: SPI + kotlinx codec in `runtime` (kotlinx stays the default,
+zero-config path); `entkt-jackson` as its own module so core keeps zero
+Jackson dependency.
 
 ## The hard tradeoff
 
 The **compile-time-safety contract dies for Jackson columns.** kotlinx's
 guarantee comes from codegen emitting `X.serializer()` references; Jackson is
 reflective, so the equivalent failure moves to `register()` time at best
-(`codec.validate` can preflight `TypeFactory`/`canSerialize` checks). Codegen
-must know which columns skip serializer emission — either a global codegen
-flag or a per-field `json<T>(name, codec = ...)` marker, both of which leak
-the mapper choice into the schema after all. This tension (least surprise:
-same declaration, different failure mode by configuration) is the main reason
-this stays a design note rather than a commitment.
+(`codec.validate` preflights `TypeFactory`/`canSerialize` checks). The same
+`json<T>(...)` declaration would have a different failure mode depending on a
+build setting — a least-surprise cost that must be documented prominently if
+this ships. Round-trip semantics (absent-vs-null, Kotlin default parameters)
+are also codec-owned and differ between the two; entkt just stores text.
 
 ## Alternatives considered
 
