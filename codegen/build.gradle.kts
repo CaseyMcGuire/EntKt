@@ -27,6 +27,9 @@ dependencies {
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
+    // Compile-fail harness for generated-code contracts (e.g. typed JSON's
+    // "non-@Serializable fails at consumer compile time" promise).
+    testImplementation(libs.kotlin.compile.testing)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
