@@ -64,6 +64,7 @@ class PostgresDriver(
 
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
     private val codec = PostgresValueCodec(json)
+    private val ddl = PostgresDdl()
 
     override fun register(schema: EntitySchema) {
         if (schemas.containsKey(schema.table)) return
@@ -80,12 +81,12 @@ class PostgresDriver(
             val extensions = schema.columns
                 .mapNotNull { (it.storage as? entkt.schema.ColumnStorage.Native)?.requiredExtension }
                 .distinct()
-            val ddl = createTableSql(schema)
-            val indexDdl = createIndexesSql(schema)
+            val tableDdl = ddl.createTableSql(schema)
+            val indexDdl = ddl.createIndexesSql(schema)
             dataSource.connection.use { conn ->
                 conn.createStatement().use { stmt ->
                     for (ext in extensions) stmt.execute("CREATE EXTENSION IF NOT EXISTS ${quote(ext)}")
-                    stmt.execute(ddl)
+                    stmt.execute(tableDdl)
                     for (sql in indexDdl) stmt.execute(sql)
                 }
             }
@@ -720,79 +721,6 @@ class PostgresDriver(
 
     private fun schemaFor(table: String): EntitySchema =
         schemas[table] ?: error("Unregistered table: $table")
-
-    // ---------- DDL ----------
-
-    private fun createTableSql(schema: EntitySchema): String {
-        val cols = schema.columns.joinToString(",\n  ") { col ->
-            renderColumnDdl(schema, col)
-        }
-        return "CREATE TABLE IF NOT EXISTS ${quote(schema.table)} (\n  $cols\n)"
-    }
-
-    private fun renderColumnDdl(schema: EntitySchema, col: ColumnMetadata): String {
-        val sqlType = sqlTypeFor(schema, col)
-        val constraints = buildList {
-            if (col.primaryKey) add("PRIMARY KEY")
-            if (!col.nullable && !col.primaryKey && !isAutoSerial(schema, col)) add("NOT NULL")
-            val ref = col.references
-            if (ref != null) {
-                val onDelete = ref.onDelete.toSql(col.nullable)
-                add("REFERENCES ${quote(ref.table)}(${quote(ref.column)}) ON DELETE $onDelete")
-            }
-        }.joinToString(" ")
-        val tail = if (constraints.isEmpty()) "" else " $constraints"
-        return "${quote(col.name)} $sqlType$tail"
-    }
-
-    /**
-     * Build `CREATE [UNIQUE] INDEX IF NOT EXISTS` statements for both
-     * composite indexes declared via [EntitySchema.indexes] and
-     * single-column unique constraints from [ColumnMetadata.unique].
-     * Using standalone index DDL (rather than inline `UNIQUE` in
-     * `CREATE TABLE`) ensures the constraint is applied even when the
-     * table already exists.
-     */
-    private fun createIndexesSql(schema: EntitySchema): List<String> {
-        val columnUniques = schema.columns
-            .filter { it.unique && !it.primaryKey }
-            .map { col ->
-                val name = typeMapper.normalizeIdentifier("idx_${schema.table}_${col.name}_unique")
-                "CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} (${quote(col.name)})"
-            }
-
-        val compositeIndexes = schema.indexes.map { idx ->
-            val name = typeMapper.normalizeIdentifier(idx.name)
-            val keyword = if (idx.unique) "CREATE UNIQUE INDEX" else "CREATE INDEX"
-            // Native (pgvector) index: USING <method> (col opclass[, ...]) WITH (...).
-            // Btree: (col[, ...]) with an optional partial WHERE.
-            val cols = if (idx.using != null) {
-                idx.columns.mapIndexed { i, c -> "${quote(c)} ${idx.opclasses?.getOrNull(i).orEmpty()}".trim() }
-                    .joinToString(", ")
-            } else {
-                idx.columns.joinToString(", ") { quote(it) }
-            }
-            val usingClause = if (idx.using != null) " USING ${idx.using}" else ""
-            val withClause = idx.with?.takeIf { it.isNotEmpty() }
-                ?.entries?.joinToString(", ") { "${it.key} = ${it.value}" }
-                ?.let { " WITH ($it)" } ?: ""
-            val whereSuffix = if (idx.where != null) " WHERE ${idx.where}" else ""
-            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)}$usingClause ($cols)$withClause$whereSuffix"
-        }
-
-        return columnUniques + compositeIndexes
-    }
-
-    private fun isAutoSerial(schema: EntitySchema, col: ColumnMetadata): Boolean {
-        if (!col.primaryKey) return false
-        return schema.idStrategy == IdStrategy.AUTO_INT ||
-            schema.idStrategy == IdStrategy.AUTO_LONG
-    }
-
-    private val typeMapper = PostgresTypeMapper()
-
-    private fun sqlTypeFor(schema: EntitySchema, col: ColumnMetadata): String =
-        typeMapper.sqlTypeFor(col.type, col.primaryKey, schema.idStrategy, col.storage)
 
     // ---------- Transactions ----------
 
