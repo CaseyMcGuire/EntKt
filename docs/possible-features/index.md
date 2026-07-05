@@ -45,6 +45,7 @@ Implemented RFCs have moved to the
 - [Edge Groups](schema/edge-groups.md)
 - [Audit Fields](schema/audit-fields.md)
 - [Custom Scalar Converters](schema/custom-scalar-converters.md)
+- [Pluggable JSON Mappers (Jackson Option)](schema/pluggable-json-mappers.md)
 - [Enum Value CHECK Constraints](schema/enum-value-check-constraints.md)
 - [Schema Printer](schema/schema-printer.md)
 

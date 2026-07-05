@@ -736,7 +736,14 @@ class Pet : EntSchema("pets") {
 
 Applications must apply the Kotlin serialization compiler plugin
 (`org.jetbrains.kotlin.plugin.serialization`) and have `kotlinx-serialization-json`
-available.
+available. **kotlinx.serialization is a hard requirement and the only
+supported mapper** — there is no way to swap in Jackson/Moshi/Gson, and their
+annotations on json classes are ignored. Projects already using Jackson can
+still adopt typed JSON columns: kotlinx annotations coexist with Jackson
+databind without conflict, at the cost of applying the compiler plugin and
+annotating the json-column classes. A pluggable-mapper option is a recorded
+design note, not a commitment — see
+[Pluggable JSON Mappers](possible-features/schema/pluggable-json-mappers.md).
 
 - The generated property type is the supplied type (`metadata: PetMetadata?`,
   `rects: List<HighlightRect>?`). Generated code references statically-resolved
