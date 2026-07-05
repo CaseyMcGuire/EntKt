@@ -766,9 +766,12 @@ available.
   membership, ordering, containment, and path predicates are out of scope in V1.
 
 **Errors.** A wrong-type write, a raw write without registered serializer
-metadata, and a decode failure each throw a field-named error carrying the
-table, column, and expected class (decode failures keep the original
-serialization exception as the cause).
+metadata, and an encode or decode failure each throw a field-named error
+carrying the table, column, and expected type (encode/decode failures keep the
+original serialization exception as the cause). On a generic column the
+write-time type check is erased (`List::class`), so a raw driver write with
+wrong *element* types fails at encode — with the same field-named context.
+Generated repos are statically typed and can't hit either case.
 
 **Migrations.** A JSON column renders `jsonb`. Migrations diff only database
 facts (column existence, `jsonb` type, nullability) -- changing the Kotlin class,

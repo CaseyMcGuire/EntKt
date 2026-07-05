@@ -114,6 +114,20 @@ class JsonPostgresDriverTest {
     }
 
     @Test
+    fun `a wrong element type passes the erased check but fails encode with field context`() {
+        val driver = fresh()
+        // A List of not-Meta satisfies the erased List::class isInstance check;
+        // the failure surfaces inside the element serializer and must still
+        // name the table, column, and expected type.
+        val ex = assertFailsWith<IllegalStateException> {
+            driver.insert("json_items", mapOf("name" to "a", "rects" to listOf(mapOf("nickname" to "x"))))
+        }
+        assertTrue("json_items.rects" in ex.message!!, ex.message ?: "")
+        assertTrue("List<entkt.postgres.json.Meta>" in ex.message!!, ex.message ?: "")
+        assertTrue(ex.cause != null, "original serialization failure is preserved as the cause")
+    }
+
+    @Test
     fun `round-trips a null JSON value`() {
         val driver = fresh()
         val row = driver.insert("json_items", mapOf("name" to "a", "metadata" to null))

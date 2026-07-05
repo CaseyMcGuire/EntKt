@@ -807,7 +807,20 @@ class PostgresDriver(
         val serializer = meta.serializer as kotlinx.serialization.KSerializer<Any>
         val obj = org.postgresql.util.PGobject()
         obj.type = "jsonb"
-        obj.value = json.encodeToString(serializer, value)
+        // The isInstance check above is erased — for a generic column
+        // (List::class) a raw write can smuggle in wrong-element values that
+        // only fail inside the serializer (ClassCastException / a polymorphic
+        // subclass missing from the configured Json). Wrap like decode does so
+        // the error still names the table, column, and expected type.
+        obj.value = try {
+            json.encodeToString(serializer, value)
+        } catch (e: Exception) {
+            throw IllegalStateException(
+                "Failed to encode JSON column '$table.$col' as ${meta.typeName ?: meta.klass.qualifiedName} " +
+                    "(value is ${value::class.qualifiedName})",
+                e,
+            )
+        }
         stmt.setObject(idx, obj)
     }
 
