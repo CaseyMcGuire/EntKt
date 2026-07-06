@@ -185,11 +185,14 @@ abstract class EntSchema(val tableName: String) {
         }
 
     /**
-     * Declare a typed JSON column backed by the `@Serializable` Kotlin class
-     * [klass]. The class is exposed at the generated
-     * API boundary; values are stored as Postgres `jsonb` and encoded/decoded
-     * through the class's kotlinx serializer (generated code references
-     * `klass.serializer()`, so a non-serializable class fails at compile time).
+     * Declare a typed JSON column backed by the Kotlin class [klass]. The
+     * class is exposed at the generated API boundary; values are stored as
+     * Postgres `jsonb` and encoded/decoded through the configured JSON
+     * mapper. With the default kotlinx mapper the class must be
+     * `@Serializable` — generated code references `klass.serializer()`, so a
+     * non-serializable class fails at compile time; other mappers (e.g.
+     * Jackson, selected via the codegen `jsonMapper` setting) resolve
+     * (de)serialization reflectively from the captured type instead.
      *
      * [klass] must not have type parameters — a `KClass` cannot carry type
      * arguments, so `json("rects", List::class)` could only produce a raw
@@ -218,9 +221,11 @@ abstract class EntSchema(val tableName: String) {
      * Unlike the `KClass` overload this captures the **full type**, so generic
      * shapes work directly: `json<List<HighlightRect>>("rects")` generates a
      * `List<HighlightRect>` property and serializes the element type (no
-     * wrapper class needed). Every class in the type must have a kotlinx
-     * serializer: `@Serializable` classes (including `@Serializable` enums),
-     * primitives/`String`, and `List`/`Set`/`Map`/`Pair`/`Triple`.
+     * wrapper class needed). Under the default kotlinx mapper, every class in
+     * the type must have a kotlinx serializer: `@Serializable` classes
+     * (including `@Serializable` enums), primitives/`String`, and
+     * `List`/`Set`/`Map`/`Pair`/`Triple`; other mappers resolve their own
+     * (de)serialization from the captured type.
      */
     protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder =
         registerJson(name, typeOf<T>())

@@ -63,13 +63,21 @@ class JacksonJsonCodec(
     override fun validate(table: String, column: ColumnMetadata) {
         val meta = jsonMeta(table, column)
         val javaType = javaTypeFor(table, column, meta)
-        check(objectMapper.canDeserialize(javaType)) {
+        // Jackson 2.18 deprecates the whole can(De)Serialize introspection
+        // family as unreliable, with no replacement. We keep the
+        // cause-capturing canDeserialize as a deliberate best-effort
+        // preflight: a false negative here is a clear startup failure with
+        // the cause attached, and anything it misses still fails at first
+        // encode/decode wrapped with column context (the documented
+        // tradeoff). Serializability isn't guessed at all — encode proves it.
+        val cause = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        @Suppress("DEPRECATION")
+        val deserializable = objectMapper.canDeserialize(javaType, cause)
+        check(deserializable) {
             "JSON column '$table.${column.name}': the configured ObjectMapper cannot deserialize " +
                 "${meta.typeName} — is the type visible to Jackson (and jackson-module-kotlin " +
-                "registered for Kotlin classes)?"
-        }
-        check(objectMapper.canSerialize(javaType.rawClass)) {
-            "JSON column '$table.${column.name}': the configured ObjectMapper cannot serialize ${meta.typeName}"
+                "registered for Kotlin classes)?" +
+                (cause.get()?.let { " Cause: ${it.message}" } ?: "")
         }
     }
 

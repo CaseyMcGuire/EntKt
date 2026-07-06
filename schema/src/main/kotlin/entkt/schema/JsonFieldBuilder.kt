@@ -7,8 +7,9 @@ package entkt.schema
  * by `build()`, as is any default. Length/scalar modifiers live only on the
  * scalar builders, so they are absent here.
  *
- * The full `@Serializable` Kotlin type (including any type arguments, e.g.
- * `List<HighlightRect>`) is attached at registration via `setJsonType(...)`
+ * The full Kotlin type (including any type arguments, e.g.
+ * `List<HighlightRect>`; `@Serializable` under the default kotlinx JSON
+ * mapper) is attached at registration via `setJsonType(...)`
  * (see `EntSchema.registerJson`), mirroring how `enum` attaches its
  * `enumClass`. The value type parameter is `Any?` (the schema module never
  * references the user's class or its serializer); the generated entity

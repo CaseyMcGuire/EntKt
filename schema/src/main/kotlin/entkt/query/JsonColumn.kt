@@ -8,8 +8,9 @@ package entkt.query
  * document (whole-document equality, containment, and path predicates are
  * deferred).
  *
- * [T] is the `@Serializable` Kotlin type exposed at the API boundary; it is a
- * compile-time witness here (the column ref carries no value).
+ * [T] is the typed-JSON Kotlin type exposed at the API boundary
+ * (`@Serializable` under the default kotlinx mapper); it is a compile-time
+ * witness here (the column ref carries no value).
  */
 open class JsonColumn<E : Any, T>(val name: String)
 
