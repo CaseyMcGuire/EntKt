@@ -35,10 +35,10 @@ The implementation followed this contract closely:
   return-position-only generic that Kotlin infers as `Void` in some contexts;
   the codec passes the type argument explicitly.
 
-## Problem
+## Problem (as it stood before implementation)
 
-There is **no way to configure which JSON library typed JSON columns use**.
-kotlinx.serialization is hard-wired at three layers:
+There was **no way to configure which JSON library typed JSON columns use**.
+kotlinx.serialization was hard-wired at three layers:
 
 1. **Codegen** bakes kotlinx serializer expressions into the generated
    `SCHEMA` literal — `PetMetadata.serializer()`,
@@ -50,9 +50,9 @@ kotlinx.serialization is hard-wired at three layers:
 3. **Driver** — `PostgresDriver` takes a `kotlinx.serialization.json.Json`
    and calls `encodeToString` / `decodeFromString`.
 
-The only configuration today is which kotlinx `Json` *instance* the driver
-uses (`PostgresDriver(json = Json { ignoreUnknownKeys = true })`). Jackson
-annotations on element classes are ignored; a Jackson shop must apply the
+The only configuration was which kotlinx `Json` *instance* the driver
+used (`PostgresDriver(json = Json { ignoreUnknownKeys = true })`). Jackson
+annotations on element classes were ignored; a Jackson shop had to apply the
 kotlinx compiler plugin and annotate json-column classes `@Serializable`
 (the two frameworks coexist without conflict, but it is a second framework).
 

@@ -168,9 +168,9 @@ clearly named API.
   )
   ```
 
-  The driver uses this `Json` instance for all typed JSON encode/decode.
-  Generated metadata supplies serializers, not JSON configuration, and the schema
-  DSL does not configure serialization behavior.
+  (V1) The driver used this `Json` instance for all typed JSON encode/decode;
+  it now lives on the codec. Generated metadata supplies serializers, not JSON
+  configuration, and the schema DSL does not configure serialization behavior.
 - The schema module should avoid a serialization dependency if possible. Runtime
   metadata uses `kotlinx-serialization-core`; the Postgres module uses
   `kotlinx-serialization-json` and owns the configured `Json` instance.
