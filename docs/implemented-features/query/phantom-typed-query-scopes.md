@@ -732,11 +732,12 @@ the suppression is safe. Codegen never emits this pattern outside
 of an edge-name `when` arm whose branch label came from the
 schema's `schema.edges()` iteration.
 
-The same pattern applies to `Predicate.HasM2MEdgeFrom<E, Source>`
-when its `sourceFilter` is processed by walkers that recurse into
-the source filter (today the M2M source-filter walking is a known
-V1 gap — see soft-delete RFC §"V1 gap. M2M edge predicates" — but
-the typing requirement is the same when it lands).
+The same pattern would apply to `Predicate.HasM2MEdgeFrom<E, Source>`
+if a future generated path needs to recurse directly into its
+`sourceFilter`. Today public M2M `has` / `hasWhere` predicates use
+the normal `HasEdge` / `HasEdgeWith` walker path; `HasM2MEdgeFrom`
+is traversal-internal bridge plumbing whose source query has already
+run through `EDGE_TRAVERSAL`.
 
 ## Driver Boundary
 

@@ -95,18 +95,18 @@ Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
   `Predicate.HasEdgeWith` / `Predicate.HasEdge` sub-nodes by
   firing the target entity's interceptors with `EDGE_PREDICATE`;
   HasEdge with no inner upgrades to HasEdgeWith when target
-  interceptors contribute predicates
+  interceptors contribute predicates. Public M2M `has` / `hasWhere`
+  predicates use the same `HasEdgeWith` / `HasEdge` shapes on the
+  declaring entity's edge, so target interceptors apply there too.
 
-### Known V1 gaps
+### Notes
 
-- `Predicate.HasM2MEdgeFrom` — the M2M-via-`has { ... }` /
-  `hasWhere { ... }` predicate path is NOT walked by the edge-
-  predicate processor today. The dispatcher keyed by
-  `sourceTable: String` (rather than this query's own outgoing
-  edge name) needs a separate global registry to look up the
-  source entity's interceptors. Workaround: use the M2M
-  traversal form (`queryX()`), which fires source interceptors
-  via the EDGE_TRAVERSAL path. Tracking as a follow-up.
+- `Predicate.HasM2MEdgeFrom` is the internal bridge used by
+  generated M2M traversal (`queryX()`), not the public M2M
+  `has` / `hasWhere` shape. It is skipped by the edge-predicate
+  walker because the source step has already run through
+  `EDGE_TRAVERSAL`, and the target entity's interceptors run at
+  the traversal terminal.
 - Soft-delete filtering now ships as the separate
   [Soft Delete Convention](../schema/soft-delete.md): a normal
   `DeletedAt` mixin plus an application-registered
