@@ -46,6 +46,7 @@ Implemented RFCs have moved to the
 - [Audit Fields](schema/audit-fields.md)
 - [Custom Scalar Converters](schema/custom-scalar-converters.md)
 - [Enum Value CHECK Constraints](schema/enum-value-check-constraints.md)
+- [Validator-Derived CHECK Constraints](schema/validator-check-constraints.md)
 - [Schema Printer](schema/schema-printer.md)
 
 ## Results, Codegen, And Tooling
@@ -55,6 +56,7 @@ Implemented RFCs have moved to the
 - [GraphQL Kotlin Type Generation](tooling/graphql-kotlin-generation.md)
 - [Generated Test Fixtures](tooling/generated-test-fixtures.md)
 - [Gradle Developer Experience](tooling/gradle-dx.md)
+- [Ent Viewer](tooling/ent-viewer.md)
 - [Coroutine And R2DBC Driver Track](tooling/coroutine-r2dbc-driver.md)
 - [Migration Diagnostics](tooling/migration-diagnostics.md)
 - [Driver Capability Matrix](tooling/driver-capability-matrix.md)

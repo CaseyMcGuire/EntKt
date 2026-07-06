@@ -114,7 +114,9 @@ the generated `save()` paths (create and update), throwing
 runtime `ColumnMetadata` and produce no DDL — a `maxLength(255)` string
 column is still `text`, with no `varchar(n)` or `CHECK` constraint — so
 writes that bypass the generated builders (raw `driver.insert/update`)
-bypass validators too.
+bypass validators too. Pushing translatable validators down into `CHECK`
+constraints as defense in depth is a recorded design note — see
+[Validator-Derived CHECK Constraints](possible-features/schema/validator-check-constraints.md).
 
 ### Enums
 
