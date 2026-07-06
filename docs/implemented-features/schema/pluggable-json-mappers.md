@@ -2,12 +2,38 @@
 
 ## Status
 
-**Design note — not committed.** Recorded because the deferral condition in
-[Typed JSON Fields](../../implemented-features/schema/typed-json-fields.md)
-("entkt will not introduce a generic JSON mapper abstraction until there is a
-concrete need for more than one mapper") has been met: a consuming Jackson
-project flagged that `json(...)` columns force adopting kotlinx.serialization
-alongside Jackson.
+**Implemented** (2026-07-05). Originally recorded as a design note when the
+deferral condition in [Typed JSON Fields](typed-json-fields.md) ("entkt will
+not introduce a generic JSON mapper abstraction until there is a concrete
+need for more than one mapper") was met: a consuming Jackson project flagged
+that `json(...)` columns forced adopting kotlinx.serialization alongside
+Jackson. The sections below are the design contract, kept as a record.
+User-facing docs:
+[Schema -> Typed JSON Fields](../../02-schema.md#typed-json-fields-postgres-jsonb).
+
+### As-built notes
+
+The implementation followed this contract closely:
+
+- SPI, ids, metadata, and the kotlinx codec live in `entkt.runtime.driver`
+  (`JsonColumnCodec`, `JsonMapperIds`, `JsonColumnMetadata`,
+  `KotlinxJsonCodec`); `JacksonJsonCodec` ships as its own module,
+  `io.entkt:jackson` (zero Jackson dependency in core, as specced).
+- The metadata landed exactly as the flat-with-id shape below; `register()`
+  cross-checks `column.json.mapper == codec.id` in `PostgresDriver` and then
+  calls `codec.validate(table, column)`.
+- The option threads `EntGenerator(packageName, jsonMapper)` →
+  `GenerateMain <packageName> <outputDir> [jsonMapper]` → the Gradle plugin's
+  `entkt { jsonMapper }` property (a plain string on the plugin side — it
+  deliberately stays off entkt's classloader).
+- Both compile-time contracts are pinned by tests: the same
+  non-`@Serializable` schema that fails to compile under the kotlinx mapper
+  compiles under the Jackson mapper (`JsonCompileFailTest`), and a
+  generate/configure mismatch fails at `register()` in both directions
+  (`JacksonPostgresIntegrationTest`).
+- One implementation wrinkle: Jackson's `readValue(String, JavaType)` has a
+  return-position-only generic that Kotlin infers as `Void` in some contexts;
+  the codec passes the type argument explicitly.
 
 ## Problem
 

@@ -16,16 +16,23 @@ import java.nio.file.Path
  * tasks.register<JavaExec>("generateEntkt") {
  *     classpath = yourSchemaClasspath
  *     mainClass.set("entkt.codegen.GenerateMainKt")
- *     args(packageName, outputDir)
+ *     args(packageName, outputDir)          // optionally: args(packageName, outputDir, jsonMapper)
  * }
  * ```
  *
- * Args: [packageName] [outputDir]
+ * Args: [packageName] [outputDir] [jsonMapper]
+ *
+ * [jsonMapper] (optional, default `kotlinx`) is the JSON mapper id stamped
+ * into generated JSON-column metadata — `kotlinx`, `jackson`, or a
+ * third-party codec id. Unknown ids are accepted here by design (codegen is
+ * open to third-party codecs); a typo'd id is caught by the driver's
+ * register() cross-check at startup.
  */
 fun main(args: Array<String>) {
-    require(args.size >= 2) { "Usage: GenerateMain <packageName> <outputDir>" }
+    require(args.size >= 2) { "Usage: GenerateMain <packageName> <outputDir> [jsonMapper]" }
     val packageName = args[0]
     val outputDir = Path.of(args[1])
+    val jsonMapper = args.getOrNull(2) ?: entkt.runtime.driver.JsonMapperIds.KOTLINX
 
     val classpath = System.getProperty("java.class.path")
         .split(File.pathSeparator)
@@ -57,7 +64,7 @@ fun main(args: Array<String>) {
     outputDir.toFile().deleteRecursively()
     outputDir.toFile().mkdirs()
 
-    val generator = EntGenerator(packageName)
+    val generator = EntGenerator(packageName, jsonMapper)
     val files = generator.generate(schemas)
     files.forEach { it.writeTo(outputDir) }
 

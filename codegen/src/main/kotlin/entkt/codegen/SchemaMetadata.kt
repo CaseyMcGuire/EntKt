@@ -2,7 +2,10 @@ package entkt.codegen
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.asClassName
+import com.squareup.kotlinpoet.asTypeName
+import entkt.runtime.driver.JsonMapperIds
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -19,6 +22,20 @@ internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
 internal val COLUMN_STORAGE_NATIVE = ClassName("entkt.schema", "ColumnStorage").nestedClass("Native")
 internal val JSON_COLUMN_METADATA = ClassName("entkt.runtime.driver", "JsonColumnMetadata")
+internal val JSON_MAPPER_IDS = ClassName("entkt.runtime.driver", "JsonMapperIds")
+private val TYPE_OF = MemberName("kotlin.reflect", "typeOf")
+
+/**
+ * Emission for a JSON column's `mapper` field: the shared constant for the
+ * built-in ids, a plain string literal for third-party codec ids (codegen
+ * is deliberately open to unknown ids — a typo'd one is caught by the
+ * driver's register() cross-check, never a silent fallback).
+ */
+private fun jsonMapperExpr(jsonMapper: String): CodeBlock = when (jsonMapper) {
+    JsonMapperIds.KOTLINX -> CodeBlock.of("%T.KOTLINX", JSON_MAPPER_IDS)
+    JsonMapperIds.JACKSON -> CodeBlock.of("%T.JACKSON", JSON_MAPPER_IDS)
+    else -> CodeBlock.of("%S", jsonMapper)
+}
 
 /**
  * The [IdStrategy] enum variant that matches this schema's id declaration.
@@ -431,6 +448,12 @@ internal fun entitySchemaCodeBlock(
     schemaName: String,
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
+    /**
+     * Which JSON mapper the generated metadata targets. Stamped into every
+     * JSON column's `JsonColumnMetadata.mapper`; kotlinx additionally emits
+     * the statically-resolved serializer expression.
+     */
+    jsonMapper: String = JsonMapperIds.KOTLINX,
 ): CodeBlock {
     val table = schema.tableName
     val columns = columnMetadataFor(schema, schemaNames)
@@ -478,21 +501,31 @@ internal fun entitySchemaCodeBlock(
                 }
                 val jsonType = col.jsonType
                 if (jsonType != null) {
-                    // json = JsonColumnMetadata(klass = X::class, serializer = <expr>, typeName = "...").
-                    // The serializer expression references statically-resolved serializers
-                    // (X.serializer(), ListSerializer(X.serializer()), ...), so a type without
-                    // kotlinx serialization support fails to compile. klass stays the raw
-                    // classifier (List::class for List<Rect>) — it backs the driver's erased
-                    // isInstance write check; typeName carries the full type for diagnostics.
+                    // json = JsonColumnMetadata(klass = X::class, kType = typeOf<...>(),
+                    //        typeName = "...", mapper = ..., [kotlinxSerializer = <expr>]).
+                    // klass stays the raw classifier (List::class for List<Rect>) — it backs
+                    // the driver's erased isInstance write check; kType is the mapper-neutral
+                    // carrier reflective codecs (Jackson) build from; typeName carries the
+                    // full type for diagnostics. Only the kotlinx mapper emits the serializer
+                    // expression — its statically-resolved references (X.serializer(),
+                    // ListSerializer(X.serializer()), ...) are what make a type without
+                    // kotlinx support fail at compile time; other mappers must not reference
+                    // symbols the serialization plugin would have generated.
                     val raw = jsonType.classifier as? kotlin.reflect.KClass<*>
                         ?: error("JSON column '${col.name}': type '$jsonType' is not a concrete class")
                     colCb.add(
-                        ", json = %T(klass = %T::class, serializer = %L, typeName = %S)",
+                        ", json = %T(klass = %T::class, kType = %M<%T>(), typeName = %S, mapper = %L",
                         JSON_COLUMN_METADATA,
                         raw.asClassName(),
-                        jsonSerializerCodeBlock(col.name, jsonType),
+                        TYPE_OF,
+                        jsonType.asTypeName(),
                         jsonType.toString(),
+                        jsonMapperExpr(jsonMapper),
                     )
+                    if (jsonMapper == JsonMapperIds.KOTLINX) {
+                        colCb.add(", kotlinxSerializer = %L", jsonSerializerCodeBlock(col.name, jsonType))
+                    }
+                    colCb.add(")")
                 }
                 colCb.add("),\n")
                 cb.add(colCb.build())

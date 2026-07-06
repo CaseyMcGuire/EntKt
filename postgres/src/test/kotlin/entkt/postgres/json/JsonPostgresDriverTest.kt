@@ -6,6 +6,8 @@ import entkt.runtime.driver.Driver
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.JsonColumnMetadata
+import entkt.runtime.driver.JsonMapperIds
+import entkt.runtime.driver.KotlinxJsonCodec
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.schema.FieldType
@@ -17,6 +19,7 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import javax.sql.DataSource
+import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -56,7 +59,13 @@ class JsonPostgresDriverTest {
             ColumnMetadata("name", FieldType.STRING, nullable = false),
             ColumnMetadata(
                 "metadata", FieldType.JSON, nullable = true,
-                json = JsonColumnMetadata(Meta::class, Meta.serializer()),
+                json = JsonColumnMetadata(
+                    klass = Meta::class,
+                    kType = typeOf<Meta>(),
+                    typeName = "entkt.postgres.json.Meta",
+                    mapper = JsonMapperIds.KOTLINX,
+                    kotlinxSerializer = Meta.serializer(),
+                ),
             ),
             // A generic JSON column, shaped exactly like codegen emits for
             // json<List<Meta>>: raw classifier klass, builtins element
@@ -65,8 +74,10 @@ class JsonPostgresDriverTest {
                 "rects", FieldType.JSON, nullable = true,
                 json = JsonColumnMetadata(
                     klass = List::class,
-                    serializer = ListSerializer(Meta.serializer()),
+                    kType = typeOf<List<Meta>>(),
                     typeName = "kotlin.collections.List<entkt.postgres.json.Meta>",
+                    mapper = JsonMapperIds.KOTLINX,
+                    kotlinxSerializer = ListSerializer(Meta.serializer()),
                 ),
             ),
         ),
@@ -74,7 +85,7 @@ class JsonPostgresDriverTest {
     )
 
     private fun fresh(json: Json = Json.Default): PostgresDriver {
-        val driver = PostgresDriver(dataSource, autoDdl = true, json = json)
+        val driver = PostgresDriver(dataSource, autoDdl = true, jsonCodec = KotlinxJsonCodec(json))
         driver.register(jsonSchema)
         dataSource.connection.use { conn ->
             conn.createStatement().use { it.execute("TRUNCATE TABLE \"json_items\" RESTART IDENTITY") }
@@ -235,7 +246,7 @@ class JsonPostgresDriverTest {
                 )
             }
         }
-        val lenient = PostgresDriver(dataSource, json = Json { ignoreUnknownKeys = true })
+        val lenient = PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json { ignoreUnknownKeys = true }))
         lenient.register(jsonSchema)
         val rows = lenient.query("json_items", emptyList(), emptyList(), null, null)
         assertEquals(Meta("Mochi", listOf("cat")), rows.single()["metadata"])

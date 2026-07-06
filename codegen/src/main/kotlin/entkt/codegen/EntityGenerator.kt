@@ -29,6 +29,7 @@ private val ROW_TYPE = ClassName("kotlin.collections", "Map")
 
 internal class EntityGenerator(
     private val packageName: String,
+    private val jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
 ) {
 
     fun generate(
@@ -60,7 +61,7 @@ internal class EntityGenerator(
             .initializer("%S", tableName)
             .build()
         val schemaProperty = PropertySpec.builder("SCHEMA", ENTITY_SCHEMA)
-            .initializer(entitySchemaCodeBlock(schemaName, schema, schemaNames))
+            .initializer(entitySchemaCodeBlock(schemaName, schema, schemaNames, jsonMapper))
             .build()
         val fromRowFn = buildFromRowFunction(entityClass, schema, schemaNames)
 

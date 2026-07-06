@@ -34,6 +34,7 @@ Open or speculative RFCs remain in the
 - [Schema Nullability Terminology](schema/schema-nullability-terminology.md)
 - [Native Database Column Types (Postgres pgvector)](schema/native-database-column-types.md)
 - [Typed JSON Fields (Postgres jsonb)](schema/typed-json-fields.md)
+- [Pluggable JSON Mappers (Jackson Option)](schema/pluggable-json-mappers.md)
 
 ## Results, Codegen, And Tooling
 

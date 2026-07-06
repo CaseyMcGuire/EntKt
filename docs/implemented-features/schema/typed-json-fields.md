@@ -17,6 +17,13 @@ JSON mapper abstraction until there is a concrete need for more than one mapper.
 
 The implementation followed this contract closely. Specifics worth recording:
 
+- **The JSON mapper is pluggable (2026-07-05), superseding "V1 uses
+  kotlinx.serialization directly" below.** kotlinx remains the default and
+  the compile-time-safety path; a driver-level `JsonColumnCodec` plus a
+  codegen `jsonMapper` setting let Jackson projects opt out entirely — see
+  [Pluggable JSON Mappers](pluggable-json-mappers.md). The driver's `json:
+  Json` constructor argument became `jsonCodec: JsonColumnCodec`.
+
 - **Generic types are supported (2026-07-04), superseding the original
   "wrap `List<PetMetadata>` in a concrete class" restriction below.** The
   restriction was never enforced — `json<List<Rect>>` was silently accepted and
@@ -42,8 +49,10 @@ The implementation followed this contract closely. Specifics worth recording:
 - Driver support is gated by a `Driver.supportsTypedJson()` capability +
   `checkTypedJsonSupported(schema)`, called in `register()` (parallel to the
   native-storage check); `PostgresDriver` returns true.
-- The configured `Json` is a `PostgresDriver` constructor argument (default
-  `Json.Default`); serializers come from `JsonColumnMetadata`, not the driver.
+- The configured `Json` was originally a `PostgresDriver` constructor argument
+  (default `Json.Default`); since the mapper became pluggable it is carried by
+  the codec instead — `PostgresDriver(ds, jsonCodec = KotlinxJsonCodec(Json
+  {...}))`. Serializers come from `JsonColumnMetadata`, not the driver.
 - Migrations diff only the `jsonb` SQL type + nullability (the migration-path
   schema carries no serializer), so a Kotlin-class or serializer change produces
   no migration. `json`/`jsonb` canonicalize equal so a plain `json` column
@@ -144,7 +153,10 @@ clearly named API.
 - Postgres is the only first implementation.
 - Postgres stores typed JSON fields as `jsonb`.
 - Postgres driver JSON configuration is a constructor option, defaulting to
-  `Json.Default`:
+  `Json.Default` *(superseded — the snippet below is the original V1 API;
+  since the mapper became pluggable it is
+  `PostgresDriver(ds, jsonCodec = KotlinxJsonCodec(Json {...}))` — see
+  as-built notes)*:
 
   ```kotlin
   PostgresDriver(

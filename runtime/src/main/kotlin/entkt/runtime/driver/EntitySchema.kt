@@ -89,17 +89,18 @@ data class ColumnMetadata(
     /**
      * Serialization metadata for a `FieldType.JSON` column. Null for non-JSON
      * columns; required for JSON columns at
-     * registration. The driver encodes/decodes the field through
-     * [JsonColumnMetadata.serializer] with its own configured `Json` instance.
+     * registration. The driver encodes/decodes the field through its
+     * configured [JsonColumnCodec], which reads this metadata.
      */
     val json: JsonColumnMetadata? = null,
 )
 
 /**
- * Serialization metadata attached to a typed JSON column. Carries the Kotlin
- * class and its kotlinx serializer so the driver can encode/decode the field
- * without guessing a serializer from a runtime value. The configured `Json`
- * instance belongs to the driver, not here.
+ * Serialization metadata attached to a typed JSON column: the full Kotlin
+ * type (mapper-neutral) plus which JSON [mapper] the generated code targets,
+ * and — for the kotlinx mapper — the statically-emitted serializer. The
+ * configured `Json`/`ObjectMapper` instance belongs to the driver's
+ * [JsonColumnCodec], not here.
  */
 data class JsonColumnMetadata(
     /**
@@ -108,16 +109,43 @@ data class JsonColumnMetadata(
      * `isInstance` check.
      */
     val klass: kotlin.reflect.KClass<*>,
-    val serializer: kotlinx.serialization.KSerializer<*>,
+    /**
+     * Mapper-neutral full Kotlin type, type arguments included — codegen
+     * emits `typeOf<List<Rect>>()`. Reflective codecs (Jackson) build their
+     * own type representation from this.
+     */
+    val kType: kotlin.reflect.KType,
     /**
      * Rendered Kotlin type including type arguments
      * (`kotlin.collections.List<com.example.Rect>`), for diagnostics — [klass]
-     * alone can't name the element type. Null (falling back to
-     * `klass.qualifiedName` in messages) only for metadata built before this
-     * field existed; codegen always emits it.
+     * alone can't name the element type.
      */
-    val typeName: String? = null,
-)
+    val typeName: String,
+    /**
+     * Stable id of the JSON mapper this column's generated code targets —
+     * [JsonMapperIds.KOTLINX] unless codegen ran with a different
+     * `jsonMapper`. Checked against the driver codec's [JsonColumnCodec.id]
+     * at `register()` so a generate/configure mismatch fails at startup,
+     * never silently.
+     */
+    val mapper: String,
+    /**
+     * The statically-emitted kotlinx serializer. Present exactly when
+     * [mapper] is [JsonMapperIds.KOTLINX]; other codecs resolve their own
+     * (de)serialization from [kType].
+     */
+    val kotlinxSerializer: kotlinx.serialization.KSerializer<*>? = null,
+) {
+    init {
+        require((mapper == JsonMapperIds.KOTLINX) == (kotlinxSerializer != null)) {
+            if (kotlinxSerializer == null) {
+                "JsonColumnMetadata for $typeName: mapper '${JsonMapperIds.KOTLINX}' requires kotlinxSerializer"
+            } else {
+                "JsonColumnMetadata for $typeName: kotlinxSerializer must be null for mapper '$mapper'"
+            }
+        }
+    }
+}
 
 /**
  * Describes a foreign key reference from one column to another table's

@@ -7,6 +7,8 @@ import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.driver.Driver
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.JsonColumnCodec
+import entkt.runtime.driver.KotlinxJsonCodec
 import entkt.runtime.query.QueryExplanation
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
@@ -41,17 +43,19 @@ class PostgresDriver(
     private val dataSource: DataSource,
     private val autoDdl: Boolean = false,
     /**
-     * `Json` instance used for all typed JSON encode/decode. Defaults to
-     * `Json.Default`; pass e.g. `Json { ignoreUnknownKeys
-     * = true }` to configure behavior. Serializers come from column metadata,
-     * not from here.
+     * Codec used for all typed JSON encode/decode. Defaults to
+     * kotlinx.serialization with `Json.Default`; pass e.g.
+     * `KotlinxJsonCodec(Json { ignoreUnknownKeys = true })` to configure
+     * kotlinx behavior, or a different codec (e.g. `io.entkt:jackson`'s
+     * `JacksonJsonCodec`) to switch mappers — the codec's id must match the
+     * `jsonMapper` the schema code was generated with, checked at [register].
      */
-    json: kotlinx.serialization.json.Json = kotlinx.serialization.json.Json.Default,
+    private val jsonCodec: JsonColumnCodec = KotlinxJsonCodec(),
 ) : Driver {
 
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
     private val ddl = PostgresDdl()
-    private val ops = PostgresOperations(schemas, PostgresValueCodec(json))
+    private val ops = PostgresOperations(schemas, PostgresValueCodec(jsonCodec))
 
     override fun register(schema: EntitySchema) {
         if (schemas.containsKey(schema.table)) return
@@ -61,6 +65,20 @@ class PostgresDriver(
         checkNativeStorageSupported(schema)
         // Reject typed JSON only if unsupported (Postgres supports it).
         checkTypedJsonSupported(schema)
+        // Cross-check every JSON column against the configured codec: the
+        // metadata records which mapper the code was GENERATED for; a
+        // mismatch (regenerated with one mapper, driver configured with
+        // another) must fail at startup, not at first read. Then let the
+        // codec preflight anything it can't round-trip.
+        for (col in schema.columns) {
+            val meta = col.json ?: continue
+            check(meta.mapper == jsonCodec.id) {
+                "${schema.table}.${col.name} was generated for JSON mapper '${meta.mapper}', but this " +
+                    "driver is configured with codec '${jsonCodec.id}' — regenerate with " +
+                    "jsonMapper = \"${jsonCodec.id}\" or configure the matching codec"
+            }
+            jsonCodec.validate(schema.table, col)
+        }
 
         if (autoDdl) {
             // Required extensions (e.g. pgvector) must exist before a column

@@ -708,8 +708,9 @@ for nearest-neighbor search.
 
 ## Typed JSON Fields (Postgres jsonb)
 
-A `json(...)` field exposes a `@Serializable` Kotlin type at the generated API
-boundary while storing the value as Postgres `jsonb`:
+A `json(...)` field exposes a typed Kotlin value at the generated API
+boundary while storing it as Postgres `jsonb` (`@Serializable` with the
+default kotlinx mapper — see **JSON mapper** below):
 
 ```kotlin
 import kotlinx.serialization.Serializable
@@ -734,20 +735,40 @@ class Pet : EntSchema("pets") {
 }
 ```
 
-Applications must apply the Kotlin serialization compiler plugin
-(`org.jetbrains.kotlin.plugin.serialization`) and have `kotlinx-serialization-json`
-available. **kotlinx.serialization is a hard requirement and the only
-supported mapper** — there is no way to swap in Jackson/Moshi/Gson, and their
-annotations on json classes are ignored. Projects already using Jackson can
-still adopt typed JSON columns: kotlinx annotations coexist with Jackson
-databind without conflict, at the cost of applying the compiler plugin and
-annotating the json-column classes. A pluggable-mapper option is a recorded
-design note, not a commitment — see
-[Pluggable JSON Mappers](possible-features/schema/pluggable-json-mappers.md).
+**JSON mapper.** kotlinx.serialization is the default and the zero-config
+path: apply the Kotlin serialization compiler plugin
+(`org.jetbrains.kotlin.plugin.serialization`), have
+`kotlinx-serialization-json` available, and annotate json classes
+`@Serializable`.
+
+Jackson projects can switch mappers instead of adopting kotlinx (see
+[Pluggable JSON Mappers](implemented-features/schema/pluggable-json-mappers.md)),
+opting in on both sides:
+
+```kotlin
+// build.gradle.kts — codegen stamps the mapper into the SCHEMA metadata:
+entkt { jsonMapper.set("jackson") }
+
+// driver — the codec's id must match what the code was generated with
+// (from io.entkt:jackson):
+PostgresDriver(dataSource, jsonCodec = JacksonJsonCodec(objectMapper))
+```
+
+With the Jackson mapper, generated code references no kotlinx symbols (no
+compiler plugin, no `@Serializable`), and the caller's `ObjectMapper` owns
+round-trip semantics — register `jackson-module-kotlin` for Kotlin data
+classes. The tradeoff: kotlinx's compile-time failure for unsupported types
+becomes a `register()`-time preflight at best — Jackson is reflective, so
+what its preflight can't detect (e.g. a missing `jackson-module-kotlin`)
+surfaces at first encode/decode, wrapped with the table, column, and
+expected type. Regenerating with one mapper while the
+driver is configured with another fails at startup naming both ids — never
+silently. Other mappers' annotations are ignored by whichever codec is
+active.
 
 - The generated property type is the supplied type (`metadata: PetMetadata?`,
-  `rects: List<HighlightRect>?`). Generated code references statically-resolved
-  serializers (`PetMetadata.serializer()`,
+  `rects: List<HighlightRect>?`). With the default kotlinx mapper, generated
+  code references statically-resolved serializers (`PetMetadata.serializer()`,
   `ListSerializer(HighlightRect.serializer())`), so a **type without kotlinx
   serialization support fails at compile time** rather than as a late read
   failure.
@@ -756,15 +777,17 @@ design note, not a commitment — see
   with a pointer to `json<List<HighlightRect>>("rects")`. Star projections
   (`List<*>`), `in`/`out` projections, and unresolved type parameters are also
   rejected there. Type arguments may be nullable (`List<HighlightRect?>`).
-- Every class in the type needs a kotlinx serializer: `@Serializable` classes
+- With the kotlinx mapper, every class in the type needs a kotlinx serializer: `@Serializable` classes
   (including generic ones — `Box<HighlightRect>` uses
   `Box.serializer(HighlightRect.serializer())`), primitives and `String`, and
   `List`/`Set`/`Map`/`Pair`/`Triple` via the `kotlinx.serialization.builtins`
   factories. An **enum used inside a json type must itself be `@Serializable`**
   so its companion `serializer()` is generated.
-- Encoding/decoding go through `kotlinx.serialization`. Configure the behavior on
-  the driver: `PostgresDriver(dataSource, json = Json { ignoreUnknownKeys = true })`
-  (default `Json.Default`). Serializers come from the column, not the `Json` config.
+- Encoding/decoding go through the driver's `JsonColumnCodec`. Configure
+  kotlinx behavior via
+  `PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json { ignoreUnknownKeys = true }))`
+  (default `KotlinxJsonCodec(Json.Default)`). Serializers come from the column
+  metadata, not from the codec's configuration.
 - `.nullable()` and `.comment()` apply; **defaults, `.unique()`, primary keys, and
   JSON indexes are rejected** with a clear error. Database-specific JSON indexes
   can be added via manual migrations.

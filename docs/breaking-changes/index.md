@@ -30,6 +30,21 @@ above it.
 
 ## Unreleased
 
+- **Typed JSON is mapper-pluggable: `JsonColumnMetadata` reshaped, `PostgresDriver(json)` replaced** (`runtime`, `postgres`, `codegen`)
+  JSON columns flow through a driver-level `JsonColumnCodec` (kotlinx
+  default; Jackson via the new `io.entkt:jackson` module, selected at
+  codegen time with `entkt { jsonMapper }`). `JsonColumnMetadata(klass,
+  serializer, typeName)` became `JsonColumnMetadata(klass, kType, typeName,
+  mapper, kotlinxSerializer?)`, and `PostgresDriver`'s `json:
+  Json` constructor parameter is now `jsonCodec: JsonColumnCodec`. See
+  [Pluggable JSON Mappers](../implemented-features/schema/pluggable-json-mappers.md).
+  _Migration:_ regenerate code (the `SCHEMA` literal shape changed); replace
+  `PostgresDriver(ds, json = Json {...})` with
+  `PostgresDriver(ds, jsonCodec = KotlinxJsonCodec(Json {...}))`; hand-built
+  metadata adds `kType = typeOf<T>()` and `mapper = JsonMapperIds.KOTLINX`,
+  renames `serializer` to `kotlinxSerializer`, and must now supply
+  `typeName` (previously optional, now required for diagnostics).
+
 - **`Field.jsonClass` constructor parameter replaced by `Field.jsonType: KType`** (`schema`)
   JSON fields now capture the full Kotlin type (with type arguments) so
   `json<List<Rect>>("rects")` generates a `List<Rect>` property and registers

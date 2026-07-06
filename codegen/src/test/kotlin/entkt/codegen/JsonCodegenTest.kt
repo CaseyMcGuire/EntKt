@@ -28,10 +28,14 @@ private class JsonBoard : EntSchema("boards") {
 
 class JsonCodegenTest {
 
-    private fun gen(name: String, schema: EntSchema): Map<String, String> {
+    private fun gen(
+        name: String,
+        schema: EntSchema,
+        jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
+    ): Map<String, String> {
         val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema)
         schema.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", jsonMapper)
             .generate(listOf(SchemaInput(name, schema)))
             .associate { it.name to it.toString().replace("\\s+".toRegex(), " ") }
     }
@@ -63,7 +67,7 @@ class JsonCodegenTest {
     fun `SCHEMA literal carries JsonColumnMetadata with the serializer`() {
         val entity = gen().getValue("Article")
         assertTrue(
-            """json = JsonColumnMetadata(klass = Meta::class, serializer = Meta.serializer(), typeName = "entkt.codegen.Meta")""" in entity,
+            """json = JsonColumnMetadata(klass = Meta::class, kType = typeOf<Meta>(), typeName = "entkt.codegen.Meta", mapper = JsonMapperIds.KOTLINX, kotlinxSerializer = Meta.serializer())""" in entity,
             entity,
         )
     }
@@ -107,11 +111,11 @@ class JsonCodegenTest {
     fun `SCHEMA literal builds collection serializers from builtins factories`() {
         val entity = genGeneric().getValue("Board")
         assertTrue(
-            """json = JsonColumnMetadata(klass = List::class, serializer = ListSerializer(Meta.serializer()), typeName = "kotlin.collections.List<entkt.codegen.Meta>")""" in entity,
+            """json = JsonColumnMetadata(klass = List::class, kType = typeOf<List<Meta>>(), typeName = "kotlin.collections.List<entkt.codegen.Meta>", mapper = JsonMapperIds.KOTLINX, kotlinxSerializer = ListSerializer(Meta.serializer()))""" in entity,
             entity,
         )
         assertTrue(
-            """json = JsonColumnMetadata(klass = Map::class, serializer = MapSerializer(String.serializer(), Meta.serializer()), typeName = "kotlin.collections.Map<kotlin.String, entkt.codegen.Meta>")""" in entity,
+            """json = JsonColumnMetadata(klass = Map::class, kType = typeOf<Map<String, Meta>>(), typeName = "kotlin.collections.Map<kotlin.String, entkt.codegen.Meta>", mapper = JsonMapperIds.KOTLINX, kotlinxSerializer = MapSerializer(String.serializer(), Meta.serializer()))""" in entity,
             entity,
         )
         assertTrue("import kotlinx.serialization.builtins.ListSerializer" in entity, entity)
@@ -122,7 +126,7 @@ class JsonCodegenTest {
     @Test
     fun `a nullable type argument wraps its serializer with nullable`() {
         val entity = genGeneric().getValue("Board")
-        assertTrue("serializer = ListSerializer(Meta.serializer().nullable)" in entity, entity)
+        assertTrue("kotlinxSerializer = ListSerializer(Meta.serializer().nullable)" in entity, entity)
         assertTrue("import kotlinx.serialization.builtins.nullable" in entity, entity)
     }
 
@@ -131,5 +135,37 @@ class JsonCodegenTest {
         val create = genGeneric().getValue("BoardCreate")
         assertTrue(""""rects" to rects,""" in create, create)
         assertTrue("rects: List<Meta>" in create, create)
+    }
+
+    // ── Non-kotlinx mappers ────────────────────────────────────────
+
+    @Test
+    fun `jackson mode emits mapper-neutral metadata with no serializer references`() {
+        val entity = gen("Board", JsonBoard(), jsonMapper = entkt.runtime.driver.JsonMapperIds.JACKSON)
+            .getValue("Board")
+        assertTrue(
+            """json = JsonColumnMetadata(klass = List::class, kType = typeOf<List<Meta>>(), typeName = "kotlin.collections.List<entkt.codegen.Meta>", mapper = JsonMapperIds.JACKSON)""" in entity,
+            entity,
+        )
+        // The whole point: nothing in the generated file references kotlinx
+        // symbols the serialization plugin would have had to generate.
+        assertFalse("kotlinxSerializer" in entity, entity)
+        assertFalse("kotlinx.serialization" in entity, entity)
+    }
+
+    @Test
+    fun `jackson mode keeps the typed property, column ref, and cast`() {
+        val entity = gen("Board", JsonBoard(), jsonMapper = entkt.runtime.driver.JsonMapperIds.JACKSON)
+            .getValue("Board")
+        assertTrue("rects: List<Meta>" in entity, entity)
+        assertTrue("JsonColumn<Board, List<Meta>>" in entity, entity)
+        assertTrue("""rects = row["rects"] as List<Meta>""" in entity, entity)
+    }
+
+    @Test
+    fun `a third-party mapper id is stamped verbatim as a string literal`() {
+        val entity = gen("Board", JsonBoard(), jsonMapper = "moshi").getValue("Board")
+        assertTrue("""mapper = "moshi"""" in entity, entity)
+        assertFalse("kotlinxSerializer" in entity, entity)
     }
 }

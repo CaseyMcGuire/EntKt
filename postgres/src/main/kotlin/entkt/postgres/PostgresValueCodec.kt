@@ -14,13 +14,13 @@ import java.util.UUID
 
 /**
  * Converts values between Kotlin and JDBC for every [FieldType] the Postgres
- * driver supports: statement parameter binding (including typed JSON through
- * the column's registered serializer and pgvector through its text literal)
- * and `ResultSet` row/column decoding. Owns the driver's configured [json]
- * instance; serializers come from column metadata, never from here.
+ * driver supports: statement parameter binding and `ResultSet` row/column
+ * decoding. Typed JSON text conversion is delegated to the driver's
+ * configured [jsonCodec]; this class owns only the JDBC-side handling
+ * (SQL NULL, the erased type check, the `jsonb` PGobject wrapping).
  */
 internal class PostgresValueCodec(
-    private val json: kotlinx.serialization.json.Json,
+    private val jsonCodec: entkt.runtime.driver.JsonColumnCodec,
 ) {
 
     /**
@@ -34,7 +34,7 @@ internal class PostgresValueCodec(
     fun bindColumn(stmt: PreparedStatement, idx: Int, schema: EntitySchema, col: String, value: Any?) {
         val column = schema.columns.firstOrNull { it.name == col }
         if (column?.type == FieldType.JSON) {
-            bindJson(stmt, idx, schema.table, col, column.json, value)
+            bindJson(stmt, idx, schema.table, column, value)
             return
         }
         checkVectorDimensions(column?.storage as? ColumnStorage.Native, value, "Column '${schema.table}.$col'")
@@ -42,54 +42,38 @@ internal class PostgresValueCodec(
     }
 
     /**
-     * Encode a typed JSON value to a `jsonb` parameter using the column's
-     * serializer and the driver's configured [json]. A null value binds SQL
-     * NULL. Missing serializer metadata (a raw write without registered schema
-     * info) and a wrong runtime type both fail with a field-named entkt error
-     * rather than reaching Postgres.
+     * Encode a typed JSON value to a `jsonb` parameter through the configured
+     * [jsonCodec]. A null value binds SQL NULL without reaching the codec.
+     * Missing metadata (a raw write without registered schema info) and a
+     * wrong runtime type both fail with a field-named entkt error rather than
+     * reaching Postgres; the (erased) type check stays here because it is
+     * codec-independent.
      */
     private fun bindJson(
         stmt: PreparedStatement,
         idx: Int,
         table: String,
-        col: String,
-        meta: entkt.runtime.driver.JsonColumnMetadata?,
+        column: ColumnMetadata,
         value: Any?,
     ) {
         if (value == null) {
             stmt.setNull(idx, Types.OTHER)
             return
         }
-        if (meta == null) {
-            error(
-                "Cannot write JSON to '$table.$col': the column has no serializer metadata. Use the " +
+        val meta = column.json
+            ?: error(
+                "Cannot write JSON to '$table.${column.name}': the column has no serializer metadata. Use the " +
                     "generated repos or register the schema so typed-JSON metadata is available.",
             )
-        }
         if (!meta.klass.isInstance(value)) {
             error(
-                "Column '$table.$col' expects JSON of ${meta.typeName ?: meta.klass.qualifiedName}, " +
+                "Column '$table.${column.name}' expects JSON of ${meta.typeName}, " +
                     "got ${value::class.qualifiedName}",
             )
         }
-        @Suppress("UNCHECKED_CAST")
-        val serializer = meta.serializer as kotlinx.serialization.KSerializer<Any>
         val obj = org.postgresql.util.PGobject()
         obj.type = "jsonb"
-        // The isInstance check above is erased — for a generic column
-        // (List::class) a raw write can smuggle in wrong-element values that
-        // only fail inside the serializer (ClassCastException / a polymorphic
-        // subclass missing from the configured Json). Wrap like decode does so
-        // the error still names the table, column, and expected type.
-        obj.value = try {
-            json.encodeToString(serializer, value)
-        } catch (e: Exception) {
-            throw IllegalStateException(
-                "Failed to encode JSON column '$table.$col' as ${meta.typeName ?: meta.klass.qualifiedName} " +
-                    "(value is ${value::class.qualifiedName})",
-                e,
-            )
-        }
+        obj.value = jsonCodec.encode(table, column, value)
         stmt.setObject(idx, obj)
     }
 
@@ -186,20 +170,10 @@ internal class PostgresValueCodec(
             // pgvector decodes to its "[f0,f1,...]" text; parse back to PgVector.
             FieldType.PGVECTOR -> rs.getString(col.name)?.let { parsePgVector(it) }
             // JSON: SQL NULL bypasses decode; otherwise decode the jsonb text
-            // through the column's serializer + the driver's configured Json.
+            // through the driver's configured codec.
             FieldType.JSON -> rs.getString(col.name)?.let { text ->
-                val meta = col.json
-                    ?: error("JSON column '$table.${col.name}' has no serializer metadata")
-                @Suppress("UNCHECKED_CAST")
-                val serializer = meta.serializer as kotlinx.serialization.KSerializer<Any>
-                try {
-                    json.decodeFromString(serializer, text)
-                } catch (e: Exception) {
-                    throw IllegalStateException(
-                        "Failed to decode JSON column '$table.${col.name}' as ${meta.typeName ?: meta.klass.qualifiedName}",
-                        e,
-                    )
-                }
+                if (col.json == null) error("JSON column '$table.${col.name}' has no serializer metadata")
+                jsonCodec.decode(table, col, text)
             }
         }
     }

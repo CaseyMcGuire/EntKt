@@ -164,10 +164,13 @@ rather than a portable `FieldType`. A driver advertises native support via
 `register()` with `UnsupportedDriverCapabilityException`. See
 [Schema -> Native Column Types](02-schema.md#native-column-types-postgres-pgvector).
 
-`JSON` carries serialization metadata (`JsonColumnMetadata`: the Kotlin class +
-its kotlinx serializer). A driver advertises support via `supportsTypedJson()`
-(PostgresDriver returns `true` and encodes/decodes `jsonb` through a configurable
-`Json`); a driver that does not rejects a typed JSON schema at `register()`. See
+`JSON` carries serialization metadata (`JsonColumnMetadata`: the Kotlin class,
+full `KType`, target mapper id, and — for the kotlinx mapper — its serializer).
+A driver advertises support via `supportsTypedJson()` (PostgresDriver returns
+`true` and encodes/decodes `jsonb` through its configured `JsonColumnCodec` —
+kotlinx by default, Jackson via `io.entkt:jackson`); a driver that does not
+rejects a typed JSON schema at `register()`, and a codec whose id doesn't match
+the metadata's mapper is rejected there too. See
 [Schema -> Typed JSON Fields](02-schema.md#typed-json-fields-postgres-jsonb).
 
 ### Query Lowering

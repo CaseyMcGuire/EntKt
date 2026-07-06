@@ -590,8 +590,17 @@ private fun validateThroughLinkJunctions(
 
 class EntGenerator(
     private val packageName: String,
+    /**
+     * Which JSON mapper generated metadata targets — an id from
+     * `entkt.runtime.driver.JsonMapperIds` (or a third-party codec id).
+     * Kotlinx (the default) emits statically-resolved serializer
+     * expressions, preserving the fail-at-compile-time contract; any other
+     * id emits mapper-neutral metadata (klass/kType/typeName) only, and the
+     * driver's configured codec must advertise the same id at register().
+     */
+    private val jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
 ) {
-    private val entityGenerator = EntityGenerator(packageName)
+    private val entityGenerator = EntityGenerator(packageName, jsonMapper)
     private val mutationGenerator = MutationGenerator(packageName)
     private val createGenerator = CreateGenerator(packageName)
     private val updateGenerator = UpdateGenerator(packageName)

@@ -29,6 +29,10 @@ dependencies {
     // KSerializer appears in JsonColumnMetadata (public runtime metadata).
     api(libs.kotlinx.serialization.core)
 
+    // The default JsonColumnCodec (KotlinxJsonCodec) takes a configured
+    // kotlinx `Json` instance; drivers construct it as their default codec.
+    api(libs.kotlinx.serialization.json)
+
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

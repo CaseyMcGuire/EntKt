@@ -42,6 +42,9 @@ repositories {
 
 entkt {
     packageName.set("com.example.ent")
+    // Optional: JSON mapper for typed json(...) columns — "kotlinx" (default)
+    // or "jackson" (pair with io.entkt:jackson's JacksonJsonCodec on the driver).
+    // jsonMapper.set("jackson")
 }
 
 dependencies {

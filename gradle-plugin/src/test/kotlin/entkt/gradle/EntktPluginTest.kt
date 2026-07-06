@@ -62,6 +62,8 @@ class EntktPluginTest {
 
                 import entkt.schema.*
 
+                data class PetMeta(val tags: List<String>)
+
                 class Owner : EntSchema("owners") {
                     override fun id() = EntId.int()
                     val name = string("name")
@@ -71,6 +73,7 @@ class EntktPluginTest {
                     override fun id() = EntId.int()
                     val name = string("name")
                     val age = int("age").nullable()
+                    val meta = json<PetMeta>("meta").nullable()
 
                     val owner = belongsTo<Owner>("owner").nullable()
                 }
@@ -123,6 +126,18 @@ class EntktPluginTest {
 
             val entityContent = generatedDir.resolve("Pet.kt").readText()
             assertTrue(entityContent.contains("data class Pet"), "Should generate data class")
+            // jsonMapper default threads plugin -> GenerateMain arg 3 -> EntGenerator:
+            // the JSON column's metadata must target the kotlinx mapper and carry
+            // its serializer expression.
+            val entityFlat = entityContent.replace("\\s+".toRegex(), " ")
+            assertTrue(
+                entityFlat.contains("mapper = JsonMapperIds.KOTLINX"),
+                "Default jsonMapper should stamp the kotlinx id into SCHEMA metadata",
+            )
+            assertTrue(
+                entityFlat.contains("kotlinxSerializer = PetMeta.serializer()"),
+                "Default jsonMapper should emit the kotlinx serializer expression",
+            )
             assertTrue(entityContent.contains("val name: String"), "Should have name field")
             assertTrue(entityContent.contains("val age: Int?"), "Should have nullable age")
             assertTrue(entityContent.contains("val ownerId: Int?"), "Should have FK from unique edge")
@@ -202,6 +217,119 @@ class EntktPluginTest {
             assertTrue(
                 clientContent.contains("val owners: OwnerRepo = OwnerRepo(driver)"),
                 "Client should expose owners: OwnerRepo",
+            )
+        } finally {
+            projectDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `jsonMapper setting flows through the plugin to generated jackson metadata`() {
+        val kotlinVersion = KotlinVersion.CURRENT.let { "${it.major}.${it.minor}.${it.patch}" }
+        val projectDir = File.createTempFile("entkt-test-jackson", "").apply {
+            delete()
+            mkdirs()
+        }
+
+        try {
+            val schemaJar = findClasspathEntry("entkt/schema/EntSchema.class")
+                ?: throw IllegalStateException("Cannot find entkt-schema on test classpath")
+            val codegenClasspath = System.getProperty("java.class.path")
+                .split(File.pathSeparator)
+                .filter { it.isNotBlank() }
+                .joinToString(",\n                        ") { "\"${it.replace("\\", "\\\\")}\"" }
+
+            projectDir.resolve("settings.gradle.kts").writeText(
+                """
+                include("schema")
+                include("app")
+                """.trimIndent()
+            )
+
+            val schemaModuleDir = projectDir.resolve("schema")
+            schemaModuleDir.resolve("build.gradle.kts").apply {
+                parentFile.mkdirs()
+                writeText(
+                    """
+                    plugins {
+                        kotlin("jvm") version "$kotlinVersion"
+                    }
+                    repositories { mavenCentral() }
+                    dependencies {
+                        implementation(files("${schemaJar.absolutePath.replace("\\", "\\\\")}"))
+                    }
+                    """.trimIndent()
+                )
+            }
+            val schemaSrc = schemaModuleDir.resolve("src/main/kotlin/com/example/schema")
+            schemaSrc.mkdirs()
+            // PetMeta is a plain data class — no @Serializable, no
+            // serialization plugin. That's the Jackson mapper's whole point.
+            schemaSrc.resolve("Schemas.kt").writeText(
+                """
+                package com.example.schema
+
+                import entkt.schema.*
+
+                data class PetMeta(val tags: List<String>)
+
+                class Pet : EntSchema("pets") {
+                    override fun id() = EntId.int()
+                    val name = string("name")
+                    val meta = json<PetMeta>("meta").nullable()
+                }
+                """.trimIndent()
+            )
+
+            val appDir = projectDir.resolve("app")
+            appDir.resolve("build.gradle.kts").apply {
+                parentFile.mkdirs()
+                writeText(
+                    """
+                    plugins {
+                        kotlin("jvm") version "$kotlinVersion"
+                        id("entkt")
+                    }
+                    repositories { mavenCentral() }
+
+                    entkt {
+                        packageName.set("com.example.ent")
+                        jsonMapper.set("jackson")
+                    }
+
+                    dependencies {
+                        schemas(project(":schema"))
+                        entktCodegen(files(
+                            $codegenClasspath
+                        ))
+                    }
+                    """.trimIndent()
+                )
+            }
+
+            val result = GradleRunner.create()
+                .withProjectDir(projectDir)
+                .withArguments(":app:generateEntkt", "--stacktrace")
+                .withPluginClasspath()
+                .build()
+
+            assertEquals(TaskOutcome.SUCCESS, result.task(":app:generateEntkt")?.outcome)
+
+            val entityContent = projectDir
+                .resolve("app/build/generated/entkt/com/example/ent/Pet.kt")
+                .readText()
+            val entityFlat = entityContent.replace("\\s+".toRegex(), " ")
+            assertTrue(
+                entityFlat.contains("mapper = JsonMapperIds.JACKSON"),
+                "entkt { jsonMapper.set(\"jackson\") } must reach the SCHEMA metadata: $entityFlat",
+            )
+            assertTrue(
+                !entityContent.contains("kotlinxSerializer"),
+                "Jackson-mode generated code must not emit a kotlinx serializer",
+            )
+            assertTrue(
+                !entityContent.contains("kotlinx.serialization"),
+                "Jackson-mode generated code must reference no kotlinx symbols",
             )
         } finally {
             projectDir.deleteRecursively()

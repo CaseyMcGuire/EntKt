@@ -1,7 +1,5 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
-    // For @Serializable JSON fixtures in the test source set.
-    alias(libs.plugins.kotlin.serialization)
     `java-library`
     `maven-publish`
 }
@@ -22,16 +20,21 @@ repositories {
 }
 
 dependencies {
+    // JsonColumnCodec / JsonColumnMetadata live in the runtime driver package.
     api(project(":runtime"))
-    api(project(":migrations"))
-    implementation(project(":codegen"))
-    implementation(libs.postgresql)
-    // kotlinx-serialization-json reaches consumers transitively via
-    // :runtime's `api` (KotlinxJsonCodec's constructor takes a `Json`);
-    // PostgresDriver itself no longer references it.
+    // ObjectMapper appears in JacksonJsonCodec's public constructor.
+    api(libs.jackson.databind)
+    // KType.javaType (kotlin.reflect.jvm) for building Jackson JavaTypes.
+    implementation(kotlin("reflect"))
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
+    // Kotlin data classes need the Jackson Kotlin module; the codec takes the
+    // caller's configured ObjectMapper, so this is a test-only dependency.
+    testImplementation(libs.jackson.module.kotlin)
+    // Container-backed round-trip through the real Postgres driver.
+    testImplementation(project(":postgres"))
+    testImplementation(libs.postgresql)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

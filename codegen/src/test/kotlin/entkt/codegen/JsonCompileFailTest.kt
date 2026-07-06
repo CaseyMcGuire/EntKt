@@ -44,10 +44,14 @@ private class BareBoard : EntSchema("bare_boards") {
  */
 class JsonCompileFailTest {
 
-    private fun generatedSources(name: String, schema: EntSchema): List<SourceFile> {
+    private fun generatedSources(
+        name: String,
+        schema: EntSchema,
+        jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
+    ): List<SourceFile> {
         val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema)
         schema.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", jsonMapper)
             .generate(listOf(SchemaInput(name, schema)))
             .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
     }
@@ -92,6 +96,22 @@ class JsonCompileFailTest {
         assertTrue(
             "serializer" in result.messages,
             "Expected the error to point at the missing serializer, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `jackson mode compiles the same schema with no kotlinx serialization support`() {
+        // The exact schema the kotlinx-mode test proves CANNOT compile:
+        // jackson-mode metadata is mapper-neutral (klass/kType/typeName), so
+        // no serializer symbols are referenced and PlainRect needs neither
+        // @Serializable nor the serialization compiler plugin.
+        val result = compile(
+            generatedSources("RectBoard", RectBoard(), jsonMapper = entkt.runtime.driver.JsonMapperIds.JACKSON),
+        )
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Expected jackson-mode generated code for json<List<PlainRect>> to compile, got:\n${result.messages}",
         )
     }
 }
