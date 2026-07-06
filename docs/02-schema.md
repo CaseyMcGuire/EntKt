@@ -107,8 +107,14 @@ int("balance").nonNegative()
 double("temperature").negative()
 ```
 
-Validators are enforced as inline checks in the generated `save()` methods.
-They throw `IllegalArgumentException` if the value is invalid.
+Validators are **application-tier**: they are enforced as inline checks in
+the generated `save()` paths (create and update), throwing
+`ValidationException` with structured, field-named violations (surfaced as
+`EntError.ValidationFailed` on the result variants). They do not appear in
+runtime `ColumnMetadata` and produce no DDL — a `maxLength(255)` string
+column is still `text`, with no `varchar(n)` or `CHECK` constraint — so
+writes that bypass the generated builders (raw `driver.insert/update`)
+bypass validators too.
 
 ### Enums
 
