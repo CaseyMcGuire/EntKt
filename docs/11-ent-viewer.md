@@ -85,6 +85,26 @@ above; pass the raw, still percent-encoded request path.
 `{type}` is the generated entity name in lower camel case (`User` -> `user`,
 `StudyAsset` -> `studyAsset`).
 
+## Gating access
+
+Layered, each answering a different question:
+
+```kotlin
+// 1. Who reaches the viewer: the authorize callback (deny-all by default).
+authorize { request -> (request.principal as? AppUser)?.isAdmin == true }
+
+// 2. Defense in depth (Spring Security): reject in the filter chain first.
+http.authorizeHttpRequests { it.requestMatchers("/_ent/**").hasRole("ADMIN") }
+
+// 3. Whole environments: no bean, no routes — a complete kill switch.
+@Bean @Profile("dev", "staging")
+fun entViewer(client: EntClient): EntViewer<EntClient> = ...
+```
+
+Which *rows* are visible is `privacyContext`'s job, not `authorize`'s; which
+*entities* exist is `entities { exclude(...) }`; which *columns* show values
+is `.sensitive()` / `redaction { extra(...) }` — see below.
+
 ## Security model
 
 - **Deny-all until configured.** `authorize` defaults to `{ false }`; every
