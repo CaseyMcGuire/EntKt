@@ -1,0 +1,123 @@
+# Ent Viewer
+
+An optional, read-only, server-rendered surface for inspecting generated ents
+in a browser: what entities and columns exist, which rows the configured
+privacy context can see, what one row looks like, and which edges it can
+follow. It is a debug/admin presentation layer over the normal generated read
+path — never a privileged backdoor around it.
+
+Design record: [Ent Viewer RFC](implemented-features/tooling/ent-viewer.md).
+
+## Install
+
+Enable adapter generation and add the viewer module:
+
+```kotlin
+// build.gradle.kts
+entkt {
+    packageName.set("com.example.ent")
+    viewer.set(true)
+}
+
+dependencies {
+    implementation("io.entkt:ent-viewer:0.1.0-SNAPSHOT")
+}
+```
+
+With `viewer.set(true)`, codegen emits one `<Name>ViewerEntity` adapter per
+entity plus `GeneratedEntViewerRegistry`. Default is `false`: no viewer files,
+no viewer dependency needed.
+
+## Mount
+
+The core is framework-neutral — adapt your framework's request into
+`EntViewerRequest`, hand it to `EntViewer.handle`, write the response out:
+
+```kotlin
+val viewer = EntViewer(client, GeneratedEntViewerRegistry) {
+    path = "/_ent"
+    authorize { request -> request.principal.isAdminOfSomeKind() }
+    privacyContext { request ->
+        PrivacyContext(Viewer.User((request.principal as Admin).userId))
+    }
+    entities { exclude("session") }
+    redaction { extra("users", "legacy_secret_column") }
+}
+```
+
+Spring example (the pattern in `example-spring`'s `EntViewerEndpoint`):
+
+```kotlin
+@RequestMapping("/_ent", "/_ent/**")
+fun handle(request: HttpServletRequest): ResponseEntity<String> {
+    val response = viewer.handle(
+        EntViewerRequest(
+            path = request.requestURI,
+            method = request.method,
+            query = request.parameterMap.mapValues { it.value.toList() },
+            principal = auth.userId,
+        ),
+    )
+    return ResponseEntity.status(response.status)
+        .header("Content-Type", response.contentType)
+        .body(response.body)
+}
+```
+
+## Routes
+
+```
+/_ent                       viewer home
+/_ent/schema                schema metadata (columns, edges, indexes)
+/_ent/entities              entity type index
+/_ent/entities/{type}       paginated, filterable list
+/_ent/entities/{type}/{id}  row detail + followable edges
+```
+
+`{type}` is the generated entity name in lower camel case (`User` -> `user`,
+`StudyAsset` -> `studyAsset`).
+
+## Security model
+
+- **Deny-all until configured.** `authorize` defaults to `{ false }`; every
+  request is 403 until the application supplies a check. Authorization gates
+  the *endpoint*; it grants nothing about rows.
+- **Rows come from the privacy context.** Every read runs under the
+  per-request `privacyContext` through the generated client's
+  `withPrivacyContext`, using the privacy-filtering terminals (`visibleAll`,
+  `visibleByIdOrNull`). Privacy-denied rows are omitted from lists; a
+  privacy-denied, missing, or unparseable id is the same 404 — no existence
+  disclosure. The default context is `Viewer.Anonymous` (fail-closed).
+- **Read-only.** Non-GET requests are 405. There is no write surface, no raw
+  SQL, and no `Driver.query(...)` fallback anywhere in the viewer path.
+- **Sensitive fields stay sensitive.** `.sensitive()` columns are visible as
+  fields but render as `***`; the generated adapters never materialize the
+  value (null-ness included), and sensitive columns are not filterable or
+  orderable. `redaction { extra(table, column) }` adds legacy columns to the
+  same rules; nothing can remove a schema-declared redaction.
+- **Exclusion, not inclusion.** All generated entities are viewable by
+  default; `entities { exclude(...) }` hides one, and an excluded entity is
+  indistinguishable from an unknown route. There is deliberately no
+  `include(...)` allow-list in V1.
+
+## Lists, filters, ordering, pagination
+
+List pages accept repeatable `f=column:op[:value]` filters (also produced by
+the page's filter form), `order=column&dir=asc|desc`, and `page`/`size`
+(default 50, max 200 — pagination is always applied; the viewer never issues
+an unbounded scan).
+
+Supported ops by type: comparison (`eq,neq,gt,gte,lt,lte`) for numeric,
+string, and time columns; `contains`/`prefix`/`suffix` for strings;
+`eq`/`neq` for bool, uuid, and enum (validated against constant names);
+`isnull`/`notnull` for nullable columns. JSON, pgvector, and bytes columns
+are display-only. Anything unsupported fails as a 400 with a message before
+any query executes.
+
+## Edges
+
+On a detail page, `belongsTo` edges link straight to the target row (via the
+FK value), and `hasOne`/`hasMany` edges link to the target list filtered by
+the target's FK column. M2M edges render as plain text in V1 — the viewer
+does not fall back to a raw driver join to make a link work. Links respect
+entity exclusions, and privacy still applies after navigation.

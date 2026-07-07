@@ -40,4 +40,5 @@ Open or speculative RFCs remain in the
 
 - [EntKt Result Variants](tooling/entkt-result-variants-rfc.md)
 - [Flyway Shadow Migration Workflow](tooling/flyway-shadow-migration-workflow.md)
+- [Ent Viewer](tooling/ent-viewer.md)
 - [Remove InMemoryDriver](tooling/remove-in-memory-driver.md)

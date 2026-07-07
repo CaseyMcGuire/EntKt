@@ -22,6 +22,8 @@ dependencies {
     implementation(project(":postgres"))
     implementation(project(":migrations"))
     implementation(project(":example-spring:schema"))
+    // Viewer adapters are generated below (GenerateMain viewer arg = true).
+    implementation(project(":ent-viewer"))
 
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
@@ -48,7 +50,7 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     description = "Runs entkt codegen against the example schemas"
     classpath = codegenRunner
     mainClass.set("entkt.codegen.GenerateMainKt")
-    args("example.ent", generatedDir.get().asFile.absolutePath)
+    args("example.ent", generatedDir.get().asFile.absolutePath, "kotlinx", "true")
     outputs.dir(generatedDir)
     inputs.files(project(":example-spring:schema").fileTree("src/main/kotlin"))
 }

@@ -45,6 +45,9 @@ entkt {
     // Optional: JSON mapper for typed json(...) columns — "kotlinx" (default)
     // or "jackson" (pair with io.entkt:jackson's JacksonJsonCodec on the driver).
     // jsonMapper.set("jackson")
+    // Optional: generate the read-only ent viewer bridge (see the Ent Viewer
+    // guide); requires io.entkt:ent-viewer on the implementation classpath.
+    // viewer.set(true)
 }
 
 dependencies {

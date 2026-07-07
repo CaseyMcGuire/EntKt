@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **`ColumnMetadata` gains `sensitive: Boolean = false` (positional shift)** (`runtime`)
+  `.sensitive()` now flows into runtime column metadata (it powers the ent
+  viewer's redaction and is a framework-wide display contract). The new
+  parameter sits between `comment` and `default`, so positional construction
+  past `comment` shifts; named-argument construction (the norm) is
+  unaffected.
+  _Migration:_ use named arguments for hand-built `ColumnMetadata`.
+
 - **Typed JSON is mapper-pluggable: `JsonColumnMetadata` reshaped, `PostgresDriver(json)` replaced** (`runtime`, `postgres`, `codegen`)
   JSON columns flow through a driver-level `JsonColumnCodec` (kotlinx
   default; Jackson via the new `io.entkt:jackson` module, selected at
