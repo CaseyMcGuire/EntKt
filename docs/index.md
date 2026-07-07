@@ -15,8 +15,8 @@ that talk to a pluggable `Driver`.
 - [Validation](07-validation.md) -- entity-level validation rules for data model invariants
 - [Privacy Limitations](08-privacy-limitations.md) -- V1 aggregate, filtering, and pagination caveats
 - [Migrations](09-migrations.md) -- migration planning, snapshots, and SQL file generation
-- [Drivers](10-drivers.md)
-- [Ent Viewer](11-ent-viewer.md) -- PostgresDriver, writing your own
+- [Drivers](10-drivers.md) -- PostgresDriver, writing your own
+- [Ent Viewer](11-ent-viewer.md) -- read-only browser inspection of generated ents
 - [Schema Inspection](01-getting-started.md#schema-inspection) -- validate and explain resolved schema shapes
 
 ## Possible Features

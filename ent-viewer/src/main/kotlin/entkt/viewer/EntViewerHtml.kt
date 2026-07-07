@@ -127,9 +127,16 @@ internal class EntViewerHtml(basePath: String) {
         order: EntViewerOrder?,
         page: Int,
         size: Int,
-        hasNext: Boolean,
+        hasNext: Boolean?,
+        privacyFiltered: Boolean,
     ): EntViewerResponse = respond(200, entity.displayName) {
         h1 { +"${entity.displayName} " ; span("muted") { +"(${entity.schema.table})" } }
+        if (privacyFiltered) {
+            p("muted") {
+                +"Row-level privacy applies: pages window over stored rows, so a page may "
+                +"show fewer than $size rows and later pages may still contain visible rows."
+            }
+        }
 
         // Active filters as removable chips.
         if (filters.isNotEmpty()) {
@@ -193,7 +200,7 @@ internal class EntViewerHtml(basePath: String) {
                             val cell = row.values.firstOrNull { it.column == col.name }
                             td {
                                 if (col.name == entity.schema.idColumn) {
-                                    a(href = "$base/entities/${entity.routeName}/${encode(row.id)}") { +row.id }
+                                    a(href = "$base/entities/${entity.routeName}/${pathEncode(row.id)}") { +row.id }
                                 } else {
                                     value(cell, truncateAt = listCellMax)
                                 }
@@ -208,7 +215,10 @@ internal class EntViewerHtml(basePath: String) {
         div("pager") {
             if (page > 1) a(href = listUrl(entity.routeName, filters, order, page - 1, size)) { +"< prev" }
             span("muted") { +"page $page" }
-            if (hasNext) a(href = listUrl(entity.routeName, filters, order, page + 1, size)) { +"next >" }
+            // hasNext == null (privacy-windowed): navigation is offered
+            // unconditionally rather than turning its presence into an
+            // oracle over denied rows.
+            if (hasNext != false) a(href = listUrl(entity.routeName, filters, order, page + 1, size)) { +"next >" }
         }
     }
 
@@ -217,6 +227,7 @@ internal class EntViewerHtml(basePath: String) {
         columns: List<EntViewerColumn>,
         row: EntViewerRow,
         visibleRoutes: Set<String>,
+        edges: List<EntViewerEdge> = entity.edges,
     ): EntViewerResponse = respond(200, "${entity.displayName} #${row.id}") {
         h1 { +"${entity.displayName} #${row.id}" }
 
@@ -233,11 +244,11 @@ internal class EntViewerHtml(basePath: String) {
             }
         }
 
-        if (entity.edges.isNotEmpty()) {
+        if (edges.isNotEmpty()) {
             h2 { +"Edges" }
             table {
                 tbody {
-                    for (edge in entity.edges) {
+                    for (edge in edges) {
                         tr {
                             th { +edge.name }
                             td {
@@ -297,7 +308,7 @@ internal class EntViewerHtml(basePath: String) {
                 when {
                     fk == null || fk.redacted -> span("muted") { +"${edge.cardinality} (redacted)" }
                     fk.isNull -> span("null") { +"null" }
-                    else -> a(href = "$base/entities/$target/${encode(fk.display.orEmpty())}") {
+                    else -> a(href = "$base/entities/$target/${pathEncode(fk.display.orEmpty())}") {
                         +"$target #${fk.display}"
                     }
                 }
@@ -360,5 +371,14 @@ internal class EntViewerHtml(basePath: String) {
         return "$base/entities/$route" + if (query.isEmpty()) "" else "?$query"
     }
 
+    /** Query-string encoding (application/x-www-form-urlencoded). */
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8)
+
+    /**
+     * Path-segment percent-encoding: form encoding turns space into '+',
+     * which is a literal plus in a path. The core decodes segments with the
+     * mirror rule, so string ids round-trip through their own links.
+     */
+    private fun pathEncode(value: String): String =
+        URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
 }

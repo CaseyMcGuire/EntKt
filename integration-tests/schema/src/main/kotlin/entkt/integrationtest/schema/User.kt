@@ -8,6 +8,9 @@ class User : EntSchema("users") {
 
     val name = string("name")
     val email = string("email").unique()
+    // Exercises the framework-wide .sensitive() display contract end to end
+    // (generated toString redaction + the ent viewer's redacted cells).
+    val apiToken = string("api_token").nullable().sensitive()
 
     val articles = hasMany<Article>("articles")
 

@@ -51,9 +51,23 @@ interface EntViewerEntity<C : Any> {
     val edges: List<EntViewerEdge>
 
     /**
-     * List visible rows. Must apply [EntViewerListRequest.limit]/[EntViewerListRequest.offset]
-     * exactly and go through generated privacy-filtering terminals
-     * (privacy-denied rows are omitted, matching the generated API).
+     * List visible rows for one page window. The adapter owns the
+     * privacy-coherent pagination semantics:
+     *
+     *  - entities without load privacy fetch a `pageSize + 1` probe, return
+     *    at most [EntViewerListRequest.pageSize] rows, and report an exact
+     *    [EntViewerListResult.hasNext];
+     *  - entities WITH load privacy fetch exactly the raw window
+     *    `[offset, offset + pageSize)` through the privacy-filtering
+     *    terminal, return the visible rows inside it (possibly fewer than
+     *    the page size), and report `hasNext = null` — next-page
+     *    availability is unknowable without disclosing denied-row counts,
+     *    so the viewer renders further navigation unconditionally with an
+     *    explicit sparse-pages notice;
+     *  - a page window that exceeds the client's visible-scan cap throws
+     *    [EntViewerBadRequestException] with the cap, never silently
+     *    truncates.
+     *
      * Throws [EntViewerBadRequestException] for filters/orders the entity
      * cannot translate — before any query executes.
      */
@@ -110,7 +124,9 @@ data class EntViewerEdge(
 data class EntViewerListRequest(
     val filters: List<EntViewerFilter>,
     val order: EntViewerOrder?,
-    val limit: Int,
+    /** Maximum rows to render on this page. */
+    val pageSize: Int,
+    /** Raw-window offset: `(page - 1) * pageSize`. */
     val offset: Int,
 )
 
@@ -142,7 +158,19 @@ enum class EntViewerFilterOp(val token: String, val needsValue: Boolean) {
 
 data class EntViewerOrder(val column: String, val descending: Boolean)
 
-data class EntViewerListResult(val rows: List<EntViewerRow>)
+/**
+ * One page of results. [hasNext] is `true`/`false` when the adapter knows
+ * exactly (no load privacy: probe-based), and `null` when the entity has
+ * row-level load privacy — the viewer then offers navigation
+ * unconditionally and labels pages as privacy-windowed, rather than turning
+ * next-link presence into an oracle over denied rows.
+ */
+data class EntViewerListResult(
+    val rows: List<EntViewerRow>,
+    val hasNext: Boolean? = null,
+    /** True when rows were privacy-filtered inside the raw window. */
+    val privacyFiltered: Boolean = false,
+)
 
 /**
  * One rendered row. [id] is the route id string; [values] follow the

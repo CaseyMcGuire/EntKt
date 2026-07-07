@@ -24,10 +24,28 @@ The implementation followed this contract closely:
   stay thin and call generated repo terminals only (`visibleAll`,
   `visibleByIdOrNull`) — privacy-denied, missing, and unparseable ids are
   the same 404.
-- Edge links as specced: belongsTo via the row's FK value, hasOne/hasMany via
-  an edge-scoped filter on the target list (`?f=fk:eq:id`), M2M rendered as
-  plain text in V1. Edge row counts from the RFC's layout sketch were
-  deferred (they'd add a count query per edge per detail render).
+- Edge links: belongsTo via the row's FK value; hasMany via an edge-scoped
+  filter on the target list (`?f=fk:eq:id`); M2M rendered as plain text in
+  V1. **Deviation:** the RFC's detail sketch links to-one edges directly to
+  the target detail route — that holds for belongsTo, but hasOne (FK on the
+  target) links to the filtered target list instead, since resolving the
+  target id would need an extra query per edge. Filter links are stripped
+  (rendered as plain text) when the target FK column isn't filterable
+  (sensitive or extra-redacted), so a rendered link is never a guaranteed
+  400. Edge row counts from the layout sketch were deferred (a count query
+  per edge per detail render).
+- Pagination is privacy-coherent, decided after adversarial review: entities
+  without load privacy use an exact `pageSize + 1` probe; entities with load
+  privacy page over raw windows with `hasNext` unknown (navigation offered
+  unconditionally, bannered) because visible-count-derived next links are an
+  oracle over privacy-denied rows. The generated adapter surfaces the
+  visible-scan cap (`visibleOverfetchLimit`) as an explicit 400 via
+  `visibleAllOrError`, never a silent truncation. Page depth is capped and
+  offset math is overflow-safe. Read-interceptor rejections
+  (`EntQueryRejectedException`) render as controlled 400s.
+- The stylesheet uses the kotlin-css DSL (`CssBuilder`), per the RFC's
+  rendering section; kotlinx.html renders all pages with escaping-by-default
+  (the stylesheet is the single `unsafe` block).
 - No `:ent-viewer-spring` module yet: example-spring mounts the viewer with
   the thin-wrapper pattern directly (`EntViewerEndpoint`), validated by
   MockMvc tests, which is the RFC's stated first integration goal; a

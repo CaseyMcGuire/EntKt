@@ -10,8 +10,9 @@ kotlin-compile-testing = "0.5.1"
 kotlinx-serialization = "1.9.0"
 # Jackson databind + kotlin module for the opt-in JacksonJsonCodec (:jackson).
 jackson = "2.18.2"
-# Server-side HTML DSL for the opt-in ent viewer (:ent-viewer).
+# Server-side HTML + CSS DSLs for the opt-in ent viewer (:ent-viewer).
 kotlinx-html = "0.12.0"
+kotlin-css = "2025.7.14"
 postgresql = "42.7.4"
 testcontainers = "2.0.4"
 
@@ -24,6 +25,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
 kotlinx-html = { module = "org.jetbrains.kotlinx:kotlinx-html-jvm", version.ref = "kotlinx-html" }
+kotlin-css = { module = "org.jetbrains.kotlin-wrappers:kotlin-css", version.ref = "kotlin-css" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }

@@ -28,6 +28,9 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
 private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
+private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
+private val GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "getOrThrow")
 
 /**
  * Emits the opt-in viewer bridge (`entkt { viewer.set(true) }`): one
@@ -191,8 +194,17 @@ internal class ViewerGenerator(private val packageName: String) {
         entityClass: ClassName,
         repoProp: String,
     ): FunSpec {
+        // Privacy-coherent pagination: entities without load privacy get an
+        // exact hasNext via a pageSize+1 probe (nothing is filtered, so the
+        // probe is sound). Entities WITH load privacy fetch exactly the raw
+        // window and report hasNext = null — deriving it from visible counts
+        // would make next-link presence an oracle over privacy-denied rows.
+        // The visible-scan cap surfaces as an explicit 400, never a silent
+        // truncation.
         val body = CodeBlock.builder()
-            .beginControlFlow("val rows = client.%L.query", repoProp)
+            .addStatement("val probe = !client.%L.hasLoadPrivacy()", repoProp)
+            .addStatement("val fetchLimit = if (probe) request.pageSize + 1 else request.pageSize")
+            .beginControlFlow("val result = client.%L.query", repoProp)
             .addStatement("for (filter in request.filters) `where`(predicateFor(filter))")
             .addStatement("val order = request.order")
             .beginControlFlow("if (order != null)")
@@ -209,11 +221,33 @@ internal class ViewerGenerator(private val packageName: String) {
                 ORDER_FIELD.parameterizedBy(entityClass), ORDER_DIRECTION, ORDER_DIRECTION,
             )
             .endControlFlow()
-            .addStatement("limit(request.limit)")
+            .addStatement("limit(fetchLimit)")
             .addStatement("offset(request.offset)")
             .endControlFlow()
-            .addStatement(".visibleAll()")
-            .addStatement("return %T(rows.map { toRow(it) })", VIEWER_LIST_RESULT)
+            .addStatement(".visibleAllOrError()")
+            .beginControlFlow("val rows = when (result)")
+            .addStatement("is %T.Ok -> result.value", ENT_RESULT)
+            .beginControlFlow("is %T.Err ->", ENT_RESULT)
+            .addStatement("val error = result.error")
+            .addStatement(
+                "if (error is %T.OverfetchCapExceeded) throw %T(%P)",
+                ENT_ERROR, VIEWER_BAD_REQUEST,
+                "Page size \${request.pageSize} exceeds this client's visible-scan cap (\${error.cap}); use a smaller size.",
+            )
+            .addStatement("result.%M()", GET_OR_THROW)
+            .endControlFlow()
+            .endControlFlow()
+            .beginControlFlow("return if (probe)")
+            .addStatement(
+                "%T(rows.take(request.pageSize).map { toRow(it) }, hasNext = rows.size > request.pageSize)",
+                VIEWER_LIST_RESULT,
+            )
+            .nextControlFlow("else")
+            .addStatement(
+                "%T(rows.map { toRow(it) }, hasNext = null, privacyFiltered = true)",
+                VIEWER_LIST_RESULT,
+            )
+            .endControlFlow()
             .build()
         return FunSpec.builder("list")
             .addModifiers(KModifier.OVERRIDE)

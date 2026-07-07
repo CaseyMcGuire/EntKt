@@ -79,8 +79,15 @@ class ViewerCodegenTest {
     fun `reads go through the generated repo terminals`() {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue("client.viewerUsers.query" in adapter, adapter)
-        assertTrue(".visibleAll()" in adapter, adapter)
+        assertTrue(".visibleAllOrError()" in adapter, adapter)
         assertTrue("visibleByIdOrNull(parsed)" in adapter, adapter)
+        // Privacy-coherent pagination: exact hasNext probe only where nothing
+        // is filtered; windowed (hasNext = null) under load privacy; the
+        // visible-scan cap is an explicit 400, not a silent truncation.
+        assertTrue("val probe = !client.viewerUsers.hasLoadPrivacy()" in adapter, adapter)
+        assertTrue("hasNext = rows.size > request.pageSize" in adapter, adapter)
+        assertTrue("hasNext = null, privacyFiltered = true" in adapter, adapter)
+        assertTrue("OverfetchCapExceeded" in adapter, adapter)
         assertFalse("client.driver" in adapter, "must not touch the raw driver: $adapter")
         assertFalse("Driver.query" in adapter, "must not touch the raw driver: $adapter")
     }

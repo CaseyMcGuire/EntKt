@@ -62,9 +62,16 @@ class EntViewerTest {
             ),
         ).also { rows[id] = it }
 
+        var throwOnList: RuntimeException? = null
+
         override fun list(client: FakeClient, request: EntViewerListRequest): EntViewerListResult {
             lastListRequest = request
-            return EntViewerListResult(listResult.drop(request.offset).take(request.limit))
+            throwOnList?.let { throw it }
+            val window = listResult.drop(request.offset)
+            return EntViewerListResult(
+                rows = window.take(request.pageSize),
+                hasNext = window.size > request.pageSize,
+            )
         }
 
         override fun get(client: FakeClient, id: String): EntViewerRow? = rows[id]
@@ -162,12 +169,18 @@ class EntViewerTest {
         val (viewer, _) = viewer(entity)
 
         val response = viewer.handle(get("/_ent/entities/user", "size" to "50"))
-        assertEquals(51, entity.lastListRequest!!.limit, "fetches size+1 to detect next page")
+        assertEquals(50, entity.lastListRequest!!.pageSize)
         assertEquals(0, entity.lastListRequest!!.offset)
         assertTrue("next" in response.body)
 
         viewer.handle(get("/_ent/entities/user", "page" to "2", "size" to "10"))
         assertEquals(10, entity.lastListRequest!!.offset)
+
+        assertEquals(
+            400,
+            viewer.handle(get("/_ent/entities/user", "page" to "2147483647", "size" to "200")).status,
+            "absurdly deep pages are rejected, not overflowed",
+        )
     }
 
     @Test
@@ -249,7 +262,7 @@ class EntViewerTest {
     fun `edge links follow the fk, filter, and disabled rules`() {
         val edges = listOf(
             EntViewerEdge("author", "user", "to-one", localFkColumn = "age"),
-            EntViewerEdge("posts", "post", "to-many", targetFilterColumn = "author_id"),
+            EntViewerEdge("posts", "post", "to-many", targetFilterColumn = "age"),
             EntViewerEdge("tags", "tag", "many-to-many"),
             EntViewerEdge("ghosts", "ghost", "to-many", targetFilterColumn = "x_id"),
         )
@@ -260,8 +273,147 @@ class EntViewerTest {
         val (viewer, _) = viewer(entity, post, tag)
         val body = viewer.handle(get("/_ent/entities/user/1")).body
         assertTrue("/_ent/entities/user/30" in body, "to-one links via the local FK value")
-        assertTrue("f=author_id%3Aeq%3A1" in body, "to-many links to a filtered target list")
+        assertTrue("f=age%3Aeq%3A1" in body, "to-many links to a filtered target list")
         assertTrue("no generated traversal link in V1" in body, "M2M renders disabled")
         assertTrue("not viewable" in body, "edges to unregistered targets render disabled")
+    }
+}
+
+/**
+ * Contract tests added after the adversarial review: interceptor-rejection
+ * handling, privacy-windowed pagination presentation, path-segment id
+ * round-trips, strict order direction, edge-link stripping, and fail-fast
+ * redaction config.
+ */
+class EntViewerReviewContractTest {
+
+    private class FakeClient
+
+    private class Entity(
+        override val routeName: String,
+        override val displayName: String,
+        override val edges: List<EntViewerEdge> = emptyList(),
+        fkFilterable: Boolean = true,
+    ) : EntViewerEntity<FakeClient> {
+        val gotIds = mutableListOf<String>()
+        var result: EntViewerListResult = EntViewerListResult(emptyList(), hasNext = false)
+        var throwOnList: RuntimeException? = null
+
+        override val schema = entkt.runtime.driver.EntitySchema(
+            table = routeName + "s",
+            idColumn = "id",
+            idStrategy = entkt.runtime.driver.IdStrategy.EXPLICIT,
+            columns = listOf(
+                entkt.runtime.driver.ColumnMetadata("id", entkt.schema.FieldType.STRING, nullable = false, primaryKey = true),
+                entkt.runtime.driver.ColumnMetadata("owner_id", entkt.schema.FieldType.STRING, nullable = false),
+            ),
+            edges = emptyMap(),
+        )
+        override val columns = listOf(
+            EntViewerColumn("id", entkt.schema.FieldType.STRING, nullable = false, unique = false, sensitive = false, filterable = true, orderable = true),
+            EntViewerColumn("owner_id", entkt.schema.FieldType.STRING, nullable = false, unique = false, sensitive = !fkFilterable, filterable = fkFilterable, orderable = fkFilterable),
+        )
+
+        override fun list(client: FakeClient, request: EntViewerListRequest): EntViewerListResult {
+            throwOnList?.let { throw it }
+            return result
+        }
+
+        override fun get(client: FakeClient, id: String): EntViewerRow? {
+            gotIds.add(id)
+            return EntViewerRow(id, listOf(EntViewerValue.of("id", id), EntViewerValue.of("owner_id", "o1")))
+        }
+    }
+
+    private class Registry(override val entities: List<EntViewerEntity<FakeClient>>) : EntViewerRegistry<FakeClient> {
+        override fun <T> withPrivacyContext(
+            client: FakeClient,
+            context: entkt.runtime.privacy.PrivacyContext,
+            block: (FakeClient) -> T,
+        ): T = block(client)
+    }
+
+    private fun viewer(vararg entities: Entity, configure: EntViewerConfig.() -> Unit = { authorize { true } }) =
+        EntViewer(FakeClient(), Registry(entities.toList()), configure)
+
+    private fun get(path: String, vararg params: Pair<String, String>) =
+        EntViewerRequest(path = path, query = params.groupBy({ it.first }, { it.second }))
+
+    @kotlin.test.Test
+    fun `read-interceptor rejections render as a controlled 400, not a 500`() {
+        val entity = Entity("doc", "Doc")
+        entity.throwOnList = entkt.runtime.result.EntQueryRejectedException(
+            entkt.runtime.result.EntError.QueryRejected(
+                entity = "Doc",
+                operation = entkt.runtime.result.EntOperation.QUERY,
+                reason = "tenant scope required",
+                interceptor = "tenantGuard",
+            ),
+        )
+        val response = viewer(entity).handle(get("/_ent/entities/doc"))
+        kotlin.test.assertEquals(400, response.status)
+        kotlin.test.assertTrue("tenantGuard" in response.body)
+        kotlin.test.assertTrue("tenant scope required" in response.body)
+    }
+
+    @kotlin.test.Test
+    fun `privacy-windowed pages banner and offer next unconditionally`() {
+        val entity = Entity("doc", "Doc")
+        entity.result = EntViewerListResult(emptyList(), hasNext = null, privacyFiltered = true)
+        val body = viewer(entity).handle(get("/_ent/entities/doc")).body
+        kotlin.test.assertTrue("Row-level privacy applies" in body)
+        kotlin.test.assertTrue("next" in body, "navigation offered even for a sparse window")
+    }
+
+    @kotlin.test.Test
+    fun `exact hasNext=false hides the next link`() {
+        val entity = Entity("doc", "Doc")
+        entity.result = EntViewerListResult(emptyList(), hasNext = false)
+        val body = viewer(entity).handle(get("/_ent/entities/doc")).body
+        kotlin.test.assertTrue("next &gt;" !in body)
+    }
+
+    @kotlin.test.Test
+    fun `string ids round-trip through percent-encoded path segments`() {
+        val entity = Entity("doc", "Doc")
+        val viewer = viewer(entity)
+        val response = viewer.handle(get("/_ent/entities/doc/hello%20world%2Fx"))
+        kotlin.test.assertEquals(200, response.status)
+        kotlin.test.assertEquals(listOf("hello world/x"), entity.gotIds, "segment is percent-decoded once")
+        kotlin.test.assertEquals(404, viewer.handle(get("/_ent/entities/doc/bad%zz")).status, "malformed encoding is a 404")
+    }
+
+    @kotlin.test.Test
+    fun `order direction is strict`() {
+        val entity = Entity("doc", "Doc")
+        val viewer = viewer(entity)
+        kotlin.test.assertEquals(200, viewer.handle(get("/_ent/entities/doc", "order" to "id", "dir" to "desc")).status)
+        kotlin.test.assertEquals(400, viewer.handle(get("/_ent/entities/doc", "order" to "id", "dir" to "DESC")).status)
+    }
+
+    @kotlin.test.Test
+    fun `edge filter-links are stripped when the target fk is not filterable`() {
+        val edges = listOf(EntViewerEdge("items", "item", "to-many", targetFilterColumn = "owner_id"))
+        val source = Entity("doc", "Doc", edges = edges)
+        val linkableTarget = Entity("item", "Item", fkFilterable = true)
+        val body1 = viewer(source, linkableTarget).handle(get("/_ent/entities/doc/1")).body
+        kotlin.test.assertTrue("f=owner_id" in body1, "filterable target fk keeps the link")
+
+        val unlinkableTarget = Entity("item", "Item", fkFilterable = false)
+        val body2 = viewer(source, unlinkableTarget).handle(get("/_ent/entities/doc/1")).body
+        kotlin.test.assertTrue("f=owner_id" !in body2, "non-filterable target fk must not produce a guaranteed-400 link")
+        kotlin.test.assertTrue("no generated traversal link" in body2)
+    }
+
+    @kotlin.test.Test
+    fun `redaction extra typos fail at construction`() {
+        val entity = Entity("doc", "Doc")
+        val ex = kotlin.test.assertFailsWith<IllegalArgumentException> {
+            viewer(entity, configure = {
+                authorize { true }
+                redaction { extra("docz", "owner_id") }
+            })
+        }
+        kotlin.test.assertTrue("docz" in ex.message!!)
     }
 }

@@ -23,8 +23,9 @@ dependencies {
     // EntitySchema/ColumnMetadata (schema pages, redaction flags) and
     // PrivacyContext (the per-request context contract) are runtime types.
     api(project(":runtime"))
-    // Server-side HTML rendering; internal to the renderer.
+    // Server-side HTML + CSS rendering; internal to the renderer.
     implementation(libs.kotlinx.html)
+    implementation(libs.kotlin.css)
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)

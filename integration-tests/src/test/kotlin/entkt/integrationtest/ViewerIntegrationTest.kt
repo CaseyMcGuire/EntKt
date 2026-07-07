@@ -107,20 +107,68 @@ class ViewerIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `pagination caps the page and offers next`() {
-        val sys = sysClient(resetAndDriver())
+    fun `pagination windows over raw rows for load-privacy entities`() {
+        val (sys, plain) = fresh()
         val author = sys.users.create { name = "A"; email = "p@example.com" }.save()
         repeat(5) { i -> sys.articles.create { title = "t$i"; authorId = author.id }.save() }
 
-        val client = EntClient(newDriver()) {}
-        val viewer = EntViewer(client, GeneratedEntViewerRegistry) {
-            authorize { true }
-            privacyContext { bypass() }
-        }
+        val viewer = viewer(plain, bypass())
         val page1 = get(viewer, "/_ent/entities/article", "size" to "2")
         assertEquals(200, page1.status)
+        // Every integration entity has load privacy (fail-closed model), so
+        // pages are raw windows: pagination stays bounded, and next is
+        // offered unconditionally with the windowed banner — never derived
+        // from visible counts, which would leak denied-row information.
+        assertTrue("Row-level privacy applies" in page1.body)
         assertTrue("next" in page1.body)
-        val page3 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "3")
-        assertFalse("next &gt;" in page3.body.substringAfter("pager"), "last page offers no next")
+        val page2 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "2")
+        assertTrue("t2" in page2.body && "t3" in page2.body, "windows are disjoint and in order")
+        assertFalse("t1<" in page2.body.substringAfter("tbody"), "no duplicated rows across pages")
+    }
+
+    @Test
+    fun `sensitive fields are redacted end to end and never filterable`() {
+        val (sys, plain) = fresh()
+        val author = sys.users.create {
+            name = "Casey"; email = "s@example.com"; apiToken = "super-secret-token"
+        }.save()
+
+        val viewer = viewer(plain, bypass())
+        val detail = get(viewer, "/_ent/entities/user/${author.id}")
+        assertEquals(200, detail.status)
+        assertTrue("***" in detail.body, "sensitive cell renders redacted")
+        assertFalse("super-secret-token" in detail.body, "the value must never reach HTML")
+
+        val list = get(viewer, "/_ent/entities/user")
+        assertFalse("super-secret-token" in list.body)
+        assertEquals(400, get(viewer, "/_ent/entities/user", "f" to "api_token:eq:x").status)
+        assertEquals(400, get(viewer, "/_ent/entities/user", "order" to "api_token").status)
+    }
+
+    @Test
+    fun `extra redaction masks generated-adapter values at runtime`() {
+        val (sys, plain) = fresh()
+        sys.users.create { name = "Casey"; email = "redact-me@example.com" }.save()
+        val viewer = EntViewer(plain, GeneratedEntViewerRegistry) {
+            authorize { true }
+            privacyContext { bypass() }
+            redaction { extra("users", "email") }
+        }
+        val list = get(viewer, "/_ent/entities/user")
+        assertFalse("redact-me@example.com" in list.body, "extra-redacted value must not render")
+        assertEquals(400, get(viewer, "/_ent/entities/user", "f" to "email:eq:x").status)
+    }
+
+    @Test
+    fun `privacy-windowed lists banner instead of turning next into an oracle, and M2M edges render disabled`() {
+        val (sys, plain) = fresh()
+        val user = sys.users.create { name = "Casey"; email = "m2m@example.com" }.save()
+
+        val viewer = viewer(plain, bypass())
+        val list = get(viewer, "/_ent/entities/user")
+        assertTrue("Row-level privacy applies" in list.body, "load-privacy entities are labeled as windowed")
+
+        val detail = get(viewer, "/_ent/entities/user/${user.id}")
+        assertTrue("no generated traversal link in V1" in detail.body, "M2M edges render disabled through generated adapters")
     }
 }

@@ -42,6 +42,23 @@ class EntViewer<C : Any>(
     private val defaultPageSize = 50
     private val maxPageSize = 200
 
+    /** Cap on (page-1)*size so a crafted page can't overflow or force deep scans. */
+    private val maxOffset = 1_000_000L
+
+    init {
+        // Fail fast on redaction typos: a mistyped table/column would
+        // otherwise be silently fail-open.
+        val known = registry.entities.flatMapTo(mutableSetOf()) { entity ->
+            entity.columns.map { entity.schema.table to it.name }
+        }
+        for (extra in config.redaction.extra) {
+            require(extra in known) {
+                "redaction.extra(${extra.first}, ${extra.second}) does not match any registered " +
+                    "entity column — known tables: ${registry.entities.map { it.schema.table }.sorted()}"
+            }
+        }
+    }
+
     fun handle(request: EntViewerRequest): EntViewerResponse {
         if (!request.method.equals("GET", ignoreCase = true)) {
             return html.error(405, "The ent viewer is read-only; only GET is supported.")
@@ -59,6 +76,11 @@ class EntViewer<C : Any>(
             route(request, segments)
         } catch (e: EntViewerBadRequestException) {
             html.error(400, e.message ?: "Bad request.")
+        } catch (e: entkt.runtime.result.EntQueryRejectedException) {
+            // A read interceptor (tenant guard, limit rule, ...) rejected the
+            // query. That's a policy outcome, not a viewer bug — render it as
+            // a controlled error instead of leaking a 500 to the host.
+            html.error(400, "Query rejected by read interceptor '${e.queryRejected.interceptor}': ${e.queryRejected.reason}")
         }
     }
 
@@ -69,7 +91,16 @@ class EntViewer<C : Any>(
             path.startsWith("$prefix/") -> path.removePrefix(prefix)
             else -> return null
         }
-        return rest.split('/').filter { it.isNotEmpty() }
+        // Split the RAW path first (an encoded %2F inside an id must not
+        // create a segment), then percent-decode each segment with path
+        // semantics: '+' is a literal plus in paths, not a space.
+        return rest.split('/').filter { it.isNotEmpty() }.map { segment ->
+            try {
+                java.net.URLDecoder.decode(segment.replace("+", "%2B"), Charsets.UTF_8)
+            } catch (_: IllegalArgumentException) {
+                return null // malformed percent-encoding -> 404
+            }
+        }
     }
 
     private fun visibleEntities(): List<EntViewerEntity<C>> =
@@ -130,20 +161,23 @@ class EntViewer<C : Any>(
         val size = (request.queryFirst("size")?.toIntOrNull() ?: defaultPageSize)
             .coerceIn(1, maxPageSize)
 
-        // Fetch one extra row so pagination can offer "next" without a count
-        // query; pagination is always applied — the viewer never issues an
-        // unbounded scan.
+        // Overflow-safe raw offset with a hard depth cap: pagination is
+        // always applied and bounded — the viewer never issues an unbounded
+        // or absurdly deep scan.
+        val offset = (page - 1L) * size
+        if (offset > maxOffset) {
+            throw EntViewerBadRequestException("Page $page is beyond the viewer's depth limit.")
+        }
         val listRequest = EntViewerListRequest(
             filters = filters,
             order = order,
-            limit = size + 1,
-            offset = (page - 1) * size,
+            pageSize = size,
+            offset = offset.toInt(),
         )
         val context = config.privacyContext(request)
         val result = registry.withPrivacyContext(client, context) { scoped ->
             entity.list(scoped, listRequest)
         }
-        val hasNext = result.rows.size > size
         val rows = result.rows.take(size).map { applyExtraRedaction(entity, it) }
 
         return html.listPage(
@@ -154,7 +188,8 @@ class EntViewer<C : Any>(
             order = order,
             page = page,
             size = size,
-            hasNext = hasNext,
+            hasNext = result.hasNext,
+            privacyFiltered = result.privacyFiltered,
         )
     }
 
@@ -168,12 +203,24 @@ class EntViewer<C : Any>(
             entity.get(scoped, id)
         } ?: return html.error(404, "Not found.")
 
-        val visibleRoutes = visibleEntities().mapTo(mutableSetOf()) { it.routeName }
+        val visible = visibleEntities()
+        val visibleRoutes = visible.mapTo(mutableSetOf()) { it.routeName }
+        // Strip filter-links whose target FK column can't actually be
+        // filtered (sensitive, or extra-redacted at runtime) — a rendered
+        // link must never be a guaranteed 400. The edge still renders, as
+        // plain text.
+        val edges = entity.edges.map { edge ->
+            val filterColumn = edge.targetFilterColumn ?: return@map edge
+            val target = visible.firstOrNull { it.routeName == edge.targetRouteName } ?: return@map edge
+            val targetColumn = effectiveColumns(target).firstOrNull { it.name == filterColumn }
+            if (targetColumn?.filterable == true) edge else edge.copy(targetFilterColumn = null)
+        }
         return html.detailPage(
             entity = entity,
             columns = effectiveColumns(entity),
             row = applyExtraRedaction(entity, row),
             visibleRoutes = visibleRoutes,
+            edges = edges,
         )
     }
 
@@ -234,6 +281,11 @@ class EntViewer<C : Any>(
         if (!column.orderable) {
             throw EntViewerBadRequestException("Column '${column.name}' is not orderable.")
         }
-        return EntViewerOrder(column.name, descending = request.queryFirst("dir") == "desc")
+        val descending = when (val dir = request.queryFirst("dir")) {
+            null, "asc" -> false
+            "desc" -> true
+            else -> throw EntViewerBadRequestException("Unknown order direction '$dir' — use asc or desc.")
+        }
+        return EntViewerOrder(column.name, descending)
     }
 }
