@@ -13,4 +13,12 @@ interface EntktExtension {
      * register() cross-check catches any id no configured codec advertises.
      */
     val jsonMapper: Property<String>
+
+    /**
+     * Generate the opt-in ent-viewer bridge (`<Name>ViewerEntity` adapters +
+     * `GeneratedEntViewerRegistry`). Default false: no viewer files are
+     * emitted and the application needs no `io.entkt:ent-viewer` dependency.
+     * When true, add `io.entkt:ent-viewer` to the implementation classpath.
+     */
+    val viewer: Property<Boolean>
 }

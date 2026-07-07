@@ -14,6 +14,8 @@ dependencies {
     implementation(project(":postgres"))
     implementation(project(":migrations"))
     implementation(project(":integration-tests:schema"))
+    // Viewer adapters are generated below (GenerateMain viewer arg = true).
+    implementation(project(":ent-viewer"))
 
     codegenRunner(project(":integration-tests:schema"))
     codegenRunner(project(":codegen"))
@@ -33,7 +35,7 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     description = "Runs entkt codegen against the integration-test schemas"
     classpath = codegenRunner
     mainClass.set("entkt.codegen.GenerateMainKt")
-    args("entkt.integrationtest.ent", generatedDir.get().asFile.absolutePath)
+    args("entkt.integrationtest.ent", generatedDir.get().asFile.absolutePath, "kotlinx", "true")
     outputs.dir(generatedDir)
     inputs.files(project(":integration-tests:schema").fileTree("src/main/kotlin"))
 }

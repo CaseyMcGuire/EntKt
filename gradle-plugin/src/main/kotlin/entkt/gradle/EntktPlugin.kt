@@ -42,6 +42,7 @@ class EntktPlugin : Plugin<Project> {
                 extension.packageName.get(),
                 generatedDir.get().asFile.absolutePath,
                 extension.jsonMapper.getOrElse("kotlinx"),
+                extension.viewer.getOrElse(false).toString(),
             )
             task.outputs.dir(generatedDir)
             task.description = "Generate entkt entity classes from schemas"

@@ -599,8 +599,15 @@ class EntGenerator(
      * driver's configured codec must advertise the same id at register().
      */
     private val jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
+    /**
+     * Emit the opt-in ent-viewer bridge (per-entity `<Name>ViewerEntity`
+     * adapters + `GeneratedEntViewerRegistry`). Off by default: no viewer
+     * files, no `io.entkt:ent-viewer` dependency needed.
+     */
+    private val viewer: Boolean = false,
 ) {
     private val entityGenerator = EntityGenerator(packageName, jsonMapper)
+    private val viewerGenerator = ViewerGenerator(packageName)
     private val mutationGenerator = MutationGenerator(packageName)
     private val createGenerator = CreateGenerator(packageName)
     private val updateGenerator = UpdateGenerator(packageName)
@@ -663,7 +670,8 @@ class EntGenerator(
                 add(validationGenerator.generate(name, schema, schemaNames))
             }
         }
-        return perSchema + clientGenerator.generate(schemas)
+        val viewerFiles = if (viewer) viewerGenerator.generate(schemas, schemaNames) else emptyList()
+        return perSchema + clientGenerator.generate(schemas) + viewerFiles
     }
 
     fun writeTo(outputDir: Path, schemas: List<SchemaInput>) {
