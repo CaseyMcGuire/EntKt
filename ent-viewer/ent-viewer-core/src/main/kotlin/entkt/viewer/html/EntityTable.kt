@@ -14,7 +14,7 @@ import kotlinx.html.tr
 internal fun FlowContent.entityTable(entities: List<EntViewerEntity<*>>, urls: ViewerUrls) {
     card {
         table {
-            thead { tr { th { +"entity" }; th { +"table" }; th { +"columns" }; th { +"edges" } } }
+            thead { tr { th { +"Entity" }; th { +"Table" }; th { +"Columns" }; th { +"Edges" } } }
             tbody {
                 for (entity in entities) {
                     tr {

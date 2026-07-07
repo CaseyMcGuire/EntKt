@@ -171,7 +171,7 @@ class EntViewerTest {
         val response = viewer.handle(get("/_ent/entities/user", "size" to "50"))
         assertEquals(50, entity.lastListRequest!!.pageSize)
         assertEquals(0, entity.lastListRequest!!.offset)
-        assertTrue("next" in response.body)
+        assertTrue("Next" in response.body)
 
         viewer.handle(get("/_ent/entities/user", "page" to "2", "size" to "10"))
         assertEquals(10, entity.lastListRequest!!.offset)
@@ -362,7 +362,7 @@ class EntViewerReviewContractTest {
         entity.result = EntViewerListResult(emptyList(), hasNext = null, privacyFiltered = true)
         val body = viewer(entity).handle(get("/_ent/entities/doc")).body
         kotlin.test.assertTrue("Row-level privacy applies" in body)
-        kotlin.test.assertTrue("next" in body, "navigation offered even for a sparse window")
+        kotlin.test.assertTrue("Next" in body, "navigation offered even for a sparse window")
     }
 
     @kotlin.test.Test
@@ -370,7 +370,7 @@ class EntViewerReviewContractTest {
         val entity = Entity("doc", "Doc")
         entity.result = EntViewerListResult(emptyList(), hasNext = false)
         val body = viewer(entity).handle(get("/_ent/entities/doc")).body
-        kotlin.test.assertTrue("next &gt;" !in body)
+        kotlin.test.assertTrue("Next &gt;" !in body)
     }
 
     @kotlin.test.Test

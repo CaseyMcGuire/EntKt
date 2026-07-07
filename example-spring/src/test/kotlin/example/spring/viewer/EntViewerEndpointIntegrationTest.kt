@@ -66,7 +66,7 @@ class EntViewerEndpointIntegrationTest {
         val home = mockMvc.get("/_ent") { header("X-User-Id", userId.toString()) }
             .andExpect { status { isOk() } }
             .andReturn().response.contentAsString
-        assertTrue("entkt viewer" in home)
+        assertTrue("EntKt Viewer" in home)
         assertTrue("Post" in home)
 
         mockMvc.get("/_ent/entities/user") { header("X-User-Id", userId.toString()) }

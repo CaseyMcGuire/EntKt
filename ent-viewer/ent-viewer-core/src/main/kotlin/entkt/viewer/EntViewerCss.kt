@@ -41,6 +41,7 @@ import kotlinx.css.textDecoration
 import kotlinx.css.verticalAlign
 import kotlinx.css.whiteSpace
 import kotlinx.css.width
+import kotlinx.css.LinearDimension
 import kotlinx.css.properties.LineHeight
 import kotlinx.css.properties.TextDecoration
 import kotlinx.css.properties.TextDecorationLine
@@ -78,7 +79,9 @@ private fun buildCss(): String = CssBuilder().apply {
     rule("nav.ent") {
         backgroundColor = white
         borderBottom = Border(1.px, BorderStyle.solid, line)
-        padding = Padding(10.px, 18.px)
+        // The hairline spans the page; the links align with the centered
+        // 1200px content column.
+        padding = Padding(10.px, LinearDimension("max(18px, calc((100% - 1200px) / 2))"))
     }
     rule("nav.ent a") {
         color = ink
@@ -95,6 +98,8 @@ private fun buildCss(): String = CssBuilder().apply {
     rule("main") {
         padding = Padding(16.px, 18.px)
         maxWidth = 1200.px
+        // Center the content column.
+        margin = Margin(0.px, LinearDimension.auto)
     }
     rule("h1") { fontSize = 18.px; fontWeight = FontWeight.w600; margin = Margin(8.px, 0.px, 12.px, 0.px) }
     rule("h2") { fontSize = 14.px; fontWeight = FontWeight.w600; color = muted; margin = Margin(20.px, 0.px, 8.px, 0.px) }

@@ -5,7 +5,7 @@ import entkt.viewer.EntViewerResponse
 import kotlinx.html.h1
 
 internal fun entityIndexPage(entities: List<EntViewerEntity<*>>, urls: ViewerUrls): EntViewerResponse =
-    pageShell(200, "entities", urls) {
+    pageShell(200, "Entities", urls) {
         h1 { +"Entities" }
         entityTable(entities, urls)
     }

@@ -29,6 +29,6 @@ internal fun FlowContent.filterForm(ctx: ListContext, filterable: List<EntViewer
             for (op in EntViewerFilterOp.entries) option { value = op.token; +op.token }
         }
         textInput(name = "fv") {}
-        button { +"filter" }
+        button { +"Filter" }
     }
 }

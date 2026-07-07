@@ -9,7 +9,7 @@ import kotlinx.html.h2
 internal fun schemaPage(
     entities: List<Pair<EntViewerEntity<*>, List<EntViewerColumn>>>,
     urls: ViewerUrls,
-): EntViewerResponse = pageShell(200, "schema", urls) {
+): EntViewerResponse = pageShell(200, "Schema", urls) {
     h1 { +"Schema" }
     for ((entity, columns) in entities) {
         h2 { +"${entity.displayName} (${entity.schema.table})" }

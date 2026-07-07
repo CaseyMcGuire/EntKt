@@ -120,7 +120,7 @@ class ViewerIntegrationTest : PostgresTestBase() {
         // offered unconditionally with the windowed banner — never derived
         // from visible counts, which would leak denied-row information.
         assertTrue("Row-level privacy applies" in page1.body)
-        assertTrue("next" in page1.body)
+        assertTrue("Next" in page1.body)
         val page2 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "2")
         assertTrue("t2" in page2.body && "t3" in page2.body, "windows are disjoint and in order")
         assertFalse("t1<" in page2.body.substringAfter("tbody"), "no duplicated rows across pages")

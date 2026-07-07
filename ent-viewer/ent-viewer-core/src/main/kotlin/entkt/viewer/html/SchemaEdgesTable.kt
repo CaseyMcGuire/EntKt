@@ -13,7 +13,7 @@ import kotlinx.html.tr
 internal fun FlowContent.schemaEdgesTable(edges: List<EntViewerEdge>) {
     card {
         table {
-            thead { tr { th { +"edge" }; th { +"cardinality" }; th { +"target" } } }
+            thead { tr { th { +"Edge" }; th { +"Cardinality" }; th { +"Target" } } }
             tbody {
                 for (edge in edges) {
                     tr {

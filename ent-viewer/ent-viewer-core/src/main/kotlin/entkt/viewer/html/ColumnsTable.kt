@@ -15,7 +15,7 @@ internal fun FlowContent.columnsTable(columns: List<EntViewerColumn>) {
     card {
         table {
             thead {
-                tr { th { +"column" }; th { +"type" }; th { +"flags" } }
+                tr { th { +"Column" }; th { +"Type" }; th { +"Flags" } }
             }
             tbody {
                 for (col in columns) {
@@ -23,9 +23,9 @@ internal fun FlowContent.columnsTable(columns: List<EntViewerColumn>) {
                         td { +col.name }
                         td { +col.type.name.lowercase() }
                         td {
-                            if (col.nullable) span("flag") { +"nullable" }
-                            if (col.unique) span("flag") { +"unique" }
-                            if (col.sensitive) span("flag sensitive") { +"sensitive" }
+                            if (col.nullable) span("flag") { +"Nullable" }
+                            if (col.unique) span("flag") { +"Unique" }
+                            if (col.sensitive) span("flag sensitive") { +"Sensitive" }
                         }
                     }
                 }

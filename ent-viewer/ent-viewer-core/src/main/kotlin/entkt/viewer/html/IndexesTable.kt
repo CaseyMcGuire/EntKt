@@ -13,13 +13,13 @@ import kotlinx.html.tr
 internal fun FlowContent.indexesTable(indexes: List<IndexMetadata>) {
     card {
         table {
-            thead { tr { th { +"index" }; th { +"columns" }; th { +"unique" } } }
+            thead { tr { th { +"Index" }; th { +"Columns" }; th { +"Unique" } } }
             tbody {
                 for (idx in indexes) {
                     tr {
                         td { +idx.name }
                         td { +idx.columns.joinToString(", ") }
-                        td { +if (idx.unique) "yes" else "no" }
+                        td { +if (idx.unique) "Yes" else "No" }
                     }
                 }
             }

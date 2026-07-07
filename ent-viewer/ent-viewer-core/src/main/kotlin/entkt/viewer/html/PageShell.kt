@@ -28,15 +28,15 @@ internal fun pageShell(
 ): EntViewerResponse {
     val body = createHTML().html {
         head {
-            title { +"$pageTitle - entkt viewer" }
+            title { +"$pageTitle - EntKt Viewer" }
             style { unsafe { +viewerCss } }
         }
         body {
             nav("ent") {
-                span("brand") { +"entkt" }
-                a(href = urls.home()) { +"home" }
-                a(href = urls.schema()) { +"schema" }
-                a(href = urls.entities()) { +"entities" }
+                span("brand") { +"EntKt" }
+                a(href = urls.home()) { +"Home" }
+                a(href = urls.schema()) { +"Schema" }
+                a(href = urls.entities()) { +"Entities" }
             }
             main { content() }
         }
