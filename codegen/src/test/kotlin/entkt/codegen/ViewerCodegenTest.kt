@@ -88,6 +88,10 @@ class ViewerCodegenTest {
         assertTrue("hasNext = rows.size > request.pageSize" in adapter, adapter)
         assertTrue("hasNext = null, privacyFiltered = true" in adapter, adapter)
         assertTrue("OverfetchCapExceeded" in adapter, adapter)
+        assertTrue(
+            "request.pageSize >= client.visibleOverfetchLimit" in adapter,
+            "cap boundary is pre-rejected deterministically: " + adapter,
+        )
         assertFalse("client.driver" in adapter, "must not touch the raw driver: $adapter")
         assertFalse("Driver.query" in adapter, "must not touch the raw driver: $adapter")
     }

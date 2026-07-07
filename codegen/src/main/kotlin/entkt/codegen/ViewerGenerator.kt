@@ -203,6 +203,16 @@ internal class ViewerGenerator(private val packageName: String) {
         // truncation.
         val body = CodeBlock.builder()
             .addStatement("val probe = !client.%L.hasLoadPrivacy()", repoProp)
+            // Deterministic cap boundary: visibleAllOrError treats a FULL
+            // window at the cap as conservative exhaustion, so pageSize ==
+            // cap would 400 only once the table grows past it. Pre-reject at
+            // the boundary instead of failing data-dependently.
+            .addStatement(
+                "if (!probe && request.pageSize >= client.visibleOverfetchLimit) throw %T(%P)",
+                VIEWER_BAD_REQUEST,
+                "Page size \${request.pageSize} is at or above this client's visible-scan cap " +
+                    "(\${client.visibleOverfetchLimit}); use a smaller size or raise visibleOverfetchLimit.",
+            )
             .addStatement("val fetchLimit = if (probe) request.pageSize + 1 else request.pageSize")
             .beginControlFlow("val result = client.%L.query", repoProp)
             .addStatement("for (filter in request.filters) `where`(predicateFor(filter))")
@@ -232,7 +242,7 @@ internal class ViewerGenerator(private val packageName: String) {
             .addStatement(
                 "if (error is %T.OverfetchCapExceeded) throw %T(%P)",
                 ENT_ERROR, VIEWER_BAD_REQUEST,
-                "Page size \${request.pageSize} exceeds this client's visible-scan cap (\${error.cap}); use a smaller size.",
+                "Page window hits or exceeds this client's visible-scan cap (\${error.cap}); use a smaller size.",
             )
             .addStatement("result.%M()", GET_OR_THROW)
             .endControlFlow()

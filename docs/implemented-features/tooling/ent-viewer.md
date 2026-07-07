@@ -38,9 +38,10 @@ The implementation followed this contract closely:
   without load privacy use an exact `pageSize + 1` probe; entities with load
   privacy page over raw windows with `hasNext` unknown (navigation offered
   unconditionally, bannered) because visible-count-derived next links are an
-  oracle over privacy-denied rows. The generated adapter surfaces the
-  visible-scan cap (`visibleOverfetchLimit`) as an explicit 400 via
-  `visibleAllOrError`, never a silent truncation. Page depth is capped and
+  oracle over privacy-denied rows. The generated adapter pre-rejects page
+  sizes at or above the visible-scan cap (`visibleOverfetchLimit`) as a
+  deterministic 400 (the `visibleAllOrError` cap error remains as a
+  backstop), never a silent truncation. Page depth is capped and
   offset math is overflow-safe. Read-interceptor rejections
   (`EntQueryRejectedException`) render as controlled 400s.
 - The stylesheet uses the kotlin-css DSL (`CssBuilder`), per the RFC's

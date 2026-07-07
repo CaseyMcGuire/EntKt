@@ -124,6 +124,12 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val page2 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "2")
         assertTrue("t2" in page2.body && "t3" in page2.body, "windows are disjoint and in order")
         assertFalse("t1<" in page2.body.substringAfter("tbody"), "no duplicated rows across pages")
+
+        // Exactly at the visible-scan cap (default 100): deterministic 400,
+        // regardless of how many rows exist.
+        val atCap = get(viewer, "/_ent/entities/article", "size" to "100")
+        assertEquals(400, atCap.status)
+        assertTrue("visible-scan cap (100)" in atCap.body, atCap.body)
     }
 
     @Test

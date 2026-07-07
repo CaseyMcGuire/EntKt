@@ -114,8 +114,8 @@ over raw-row windows: a page may show fewer than `size` rows (denied rows
 are omitted within the window), further navigation is offered
 unconditionally with an explicit banner — deriving it from visible counts
 would let next-link presence disclose denied-row information — and a page
-window larger than the client's `visibleOverfetchLimit` is an explicit 400
-rather than a silent truncation. Read-interceptor rejections (tenant guards
+size at or above the client's `visibleOverfetchLimit` is a deterministic,
+explicit 400 rather than a silent truncation. Read-interceptor rejections (tenant guards
 and similar) render as controlled 400s naming the interceptor.
 
 Supported ops by type: comparison (`eq,neq,gt,gte,lt,lte`) for numeric,
