@@ -13,6 +13,8 @@ jackson = "2.18.2"
 # Server-side HTML + CSS DSLs for the opt-in ent viewer (:ent-viewer).
 kotlinx-html = "0.12.0"
 kotlin-css = "2025.7.14"
+# Spring Boot for the opt-in :ent-viewer-spring auto-configuration (matches example-spring).
+spring-boot = "3.4.4"
 postgresql = "42.7.4"
 testcontainers = "2.0.4"
 
@@ -26,6 +28,9 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
 kotlinx-html = { module = "org.jetbrains.kotlinx:kotlinx-html-jvm", version.ref = "kotlinx-html" }
 kotlin-css = { module = "org.jetbrains.kotlin-wrappers:kotlin-css", version.ref = "kotlin-css" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot" }
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }

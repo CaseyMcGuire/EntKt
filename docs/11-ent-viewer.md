@@ -20,7 +20,9 @@ entkt {
 }
 
 dependencies {
-    implementation("io.entkt:ent-viewer:0.1.0-SNAPSHOT")
+    implementation("io.entkt:ent-viewer-core:0.1.0-SNAPSHOT")
+    // Spring Boot apps: auto-mounts the EntViewer bean you declare.
+    implementation("io.entkt:ent-viewer-spring:0.1.0-SNAPSHOT")
 }
 ```
 
@@ -45,24 +47,30 @@ val viewer = EntViewer(client, GeneratedEntViewerRegistry) {
 }
 ```
 
-Spring example (the pattern in `example-spring`'s `EntViewerEndpoint`):
+**Spring Boot:** with `io.entkt:ent-viewer-spring` on the classpath, declaring
+the `EntViewer` bean is all it takes — the auto-configuration mounts it at
+its configured path. The module deliberately creates no viewer of its own:
+the classpath alone changes nothing, and the security-critical configuration
+stays in your application. Bridge your auth into the viewer's principal with
+an optional resolver bean (defaults to the servlet `userPrincipal`):
 
 ```kotlin
-@RequestMapping("/_ent", "/_ent/**")
-fun handle(request: HttpServletRequest): ResponseEntity<String> {
-    val response = viewer.handle(
-        EntViewerRequest(
-            path = request.requestURI,
-            method = request.method,
-            query = request.parameterMap.mapValues { it.value.toList() },
-            principal = auth.userId,
-        ),
-    )
-    return ResponseEntity.status(response.status)
-        .header("Content-Type", response.contentType)
-        .body(response.body)
-}
+@Bean
+fun entViewer(client: EntClient): EntViewer<EntClient> =
+    EntViewer(client, GeneratedEntViewerRegistry) {
+        path = "/_ent"
+        authorize { it.principal != null }
+        privacyContext { ... }
+    }
+
+@Bean
+fun entViewerPrincipalResolver(auth: AuthContext): EntViewerPrincipalResolver =
+    EntViewerPrincipalResolver { auth.userId }
 ```
+
+(example-spring's `EntViewerEndpoint` is exactly this pattern.) Other
+frameworks adapt their request by hand — see the `EntViewerRequest` shape
+above; pass the raw, still percent-encoded request path.
 
 ## Routes
 

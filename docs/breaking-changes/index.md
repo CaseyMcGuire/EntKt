@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **`io.entkt:ent-viewer` renamed to `io.entkt:ent-viewer-core`** (`ent-viewer`)
+  The viewer family now lives under one `ent-viewer/` folder as
+  `ent-viewer-core` (framework-neutral) and `ent-viewer-spring` (Spring Boot
+  auto-configuration that mounts an application-declared `EntViewer` bean).
+  Kotlin packages are unchanged (`entkt.viewer`, `entkt.viewer.spring`).
+  _Migration:_ change the dependency coordinate to
+  `io.entkt:ent-viewer-core`; Spring Boot apps can add
+  `io.entkt:ent-viewer-spring` and delete their hand-written mount.
+
 - **`ColumnMetadata` gains `sensitive: Boolean = false` (positional shift)** (`runtime`)
   `.sensitive()` now flows into runtime column metadata (it powers the ent
   viewer's redaction and is a framework-wide display contract). The new

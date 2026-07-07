@@ -39,6 +39,9 @@ class EntViewer<C : Any>(
     private val config = EntViewerConfig().apply(configure)
     private val html = EntViewerHtml(config.path)
 
+    /** The configured mount path (`/_ent` by default), for host adapters registering routes. */
+    val path: String get() = config.path
+
     private val defaultPageSize = 50
     private val maxPageSize = 200
 

@@ -47,10 +47,17 @@ The implementation followed this contract closely:
 - The stylesheet uses the kotlin-css DSL (`CssBuilder`), per the RFC's
   rendering section; kotlinx.html renders all pages with escaping-by-default
   (the stylesheet is the single `unsafe` block).
-- No `:ent-viewer-spring` module yet: example-spring mounts the viewer with
-  the thin-wrapper pattern directly (`EntViewerEndpoint`), validated by
-  MockMvc tests, which is the RFC's stated first integration goal; a
-  packaged Spring adapter can still come later.
+- `:ent-viewer-spring` shipped as the first framework adapter, per this
+  RFC's sequencing: a Spring Boot auto-configuration conditional on an
+  application-declared `EntViewer` bean (the classpath alone mounts
+  nothing), registering a RouterFunction at the viewer's path, with an
+  `EntViewerPrincipalResolver` hook (default: servlet `userPrincipal`).
+  example-spring consumes it — its hand-written controller was deleted and
+  the unchanged MockMvc tests pass against the auto-configured mount.
+  **Naming deviation:** the modules live under one `ent-viewer/` folder as
+  `ent-viewer-core` and `ent-viewer-spring` (coordinates
+  `io.entkt:ent-viewer-core` / `io.entkt:ent-viewer-spring`); the RFC's
+  proposed `:ent-viewer` core name became `-core` for symmetry.
 - Pagination is prev/next via a size+1 fetch — no count queries; page size
   clamped to 200.
 

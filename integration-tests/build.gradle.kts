@@ -15,7 +15,7 @@ dependencies {
     implementation(project(":migrations"))
     implementation(project(":integration-tests:schema"))
     // Viewer adapters are generated below (GenerateMain viewer arg = true).
-    implementation(project(":ent-viewer"))
+    implementation(project(":ent-viewer-core"))
 
     codegenRunner(project(":integration-tests:schema"))
     codegenRunner(project(":codegen"))

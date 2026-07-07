@@ -46,7 +46,8 @@ entkt {
     // or "jackson" (pair with io.entkt:jackson's JacksonJsonCodec on the driver).
     // jsonMapper.set("jackson")
     // Optional: generate the read-only ent viewer bridge (see the Ent Viewer
-    // guide); requires io.entkt:ent-viewer on the implementation classpath.
+    // guide); requires io.entkt:ent-viewer-core on the implementation classpath
+    // (plus io.entkt:ent-viewer-spring for Spring Boot auto-mounting).
     // viewer.set(true)
 }
 
