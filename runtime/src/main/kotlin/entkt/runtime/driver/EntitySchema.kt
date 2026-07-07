@@ -64,6 +64,13 @@ data class ColumnMetadata(
     /** Documentation comment from the schema DSL, if any. */
     val comment: String? = null,
     /**
+     * True when the schema field was marked `.sensitive()`. A framework-wide
+     * display contract: surfaces that render values (generated `toString()`,
+     * the ent viewer) must redact this column by default. Storage behavior is
+     * unaffected.
+     */
+    val sensitive: Boolean = false,
+    /**
      * Default value declared on the schema DSL (`.default(...)` /
      * `.defaultNow()`), or null when none. Holds the raw Kotlin value —
      * a primitive, an enum constant, or the sentinel `"now"` for a

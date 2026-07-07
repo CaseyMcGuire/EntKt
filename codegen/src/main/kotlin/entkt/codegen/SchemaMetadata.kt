@@ -105,6 +105,8 @@ internal data class ColumnDescriptor(
     val onDelete: OnDelete? = null,
     /** Documentation comment from the schema DSL, if any. */
     val comment: String? = null,
+    /** True when the schema field was marked `.sensitive()`. */
+    val sensitive: Boolean = false,
     /**
      * Raw default value from the field's `.default(...)` / `.defaultNow()`
      * modifier, or null. Carried through to
@@ -239,6 +241,7 @@ internal fun columnMetadataFor(
                     references = edgeRef?.let { it.targetTable to "id" },
                     onDelete = edgeRef?.onDelete,
                     comment = field.comment,
+                    sensitive = field.sensitive,
                     default = field.default,
                     storage = field.storage,
                     jsonType = field.jsonType,
@@ -482,6 +485,9 @@ internal fun entitySchemaCodeBlock(
                 }
                 if (col.comment != null) {
                     colCb.add(", comment = %S", col.comment)
+                }
+                if (col.sensitive) {
+                    colCb.add(", sensitive = true")
                 }
                 val storage = col.storage
                 if (storage is entkt.schema.ColumnStorage.Native) {

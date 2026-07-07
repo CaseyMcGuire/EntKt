@@ -186,6 +186,7 @@ private fun buildEntitySchema(
                 unique = col.unique,
                 references = col.references?.let { (t, c) -> ForeignKeyRef(t, c, col.onDelete) },
                 comment = col.comment,
+                sensitive = col.sensitive,
                 default = col.default,
                 storage = col.storage,
             )

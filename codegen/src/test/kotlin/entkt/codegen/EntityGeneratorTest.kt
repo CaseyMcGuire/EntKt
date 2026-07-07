@@ -612,3 +612,33 @@ class EntityGeneratorTest {
         }
     }
 }
+
+// Appended by the ent-viewer prerequisite: `.sensitive()` must reach the
+// generated runtime ColumnMetadata so display surfaces (generated toString,
+// the ent viewer) can redact from metadata alone.
+class SensitiveColumnMetadataTest {
+    private class Vault : entkt.schema.EntSchema("vaults") {
+        override fun id() = entkt.schema.EntId.long()
+        val name = string("name")
+        val secret = string("secret").sensitive()
+    }
+
+    @kotlin.test.Test
+    fun `sensitive fields are stamped into the SCHEMA literal, non-sensitive are not`() {
+        val s = Vault()
+        s.finalize(mapOf(s::class to s))
+        val entity = EntGenerator("com.example.ent")
+            .generate(listOf(SchemaInput("Vault", s)))
+            .first { it.name == "Vault" }
+            .toString()
+            .replace("\\s+".toRegex(), " ")
+        kotlin.test.assertTrue(
+            """ColumnMetadata(name = "secret", type = FieldType.STRING, nullable = false, primaryKey = false, unique = false, sensitive = true)""" in entity,
+            entity,
+        )
+        kotlin.test.assertTrue(
+            """ColumnMetadata(name = "name", type = FieldType.STRING, nullable = false, primaryKey = false, unique = false)""" in entity,
+            entity,
+        )
+    }
+}
