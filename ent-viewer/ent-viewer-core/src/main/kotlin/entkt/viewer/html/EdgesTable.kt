@@ -16,12 +16,14 @@ internal fun FlowContent.edgesTable(
     visibleRoutes: Set<String>,
     urls: ViewerUrls,
 ) {
-    table {
-        tbody {
-            for (edge in edges) {
-                tr {
-                    th { +edge.name }
-                    td { edgeLinkCell(edge, row, visibleRoutes, urls) }
+    card {
+        table {
+            tbody {
+                for (edge in edges) {
+                    tr {
+                        th { +edge.name }
+                        td { edgeLinkCell(edge, row, visibleRoutes, urls) }
+                    }
                 }
             }
         }

@@ -25,34 +25,36 @@ internal fun FlowContent.dataTable(
     ctx: ListContext,
     urls: ViewerUrls,
 ) {
-    table {
-        thead {
-            tr {
-                for (col in columns) {
-                    th {
-                        if (col.orderable) {
-                            val descending = ctx.order?.column == col.name && !ctx.order.descending
-                            a(href = urls.entityList(ctx.route, ctx.filters, EntViewerOrder(col.name, descending), 1, ctx.size)) {
+    card {
+        table {
+            thead {
+                tr {
+                    for (col in columns) {
+                        th {
+                            if (col.orderable) {
+                                val descending = ctx.order?.column == col.name && !ctx.order.descending
+                                a(href = urls.entityList(ctx.route, ctx.filters, EntViewerOrder(col.name, descending), 1, ctx.size)) {
+                                    +col.name
+                                    if (ctx.order?.column == col.name) +(if (ctx.order.descending) " v" else " ^")
+                                }
+                            } else {
                                 +col.name
-                                if (ctx.order?.column == col.name) +(if (ctx.order.descending) " v" else " ^")
                             }
-                        } else {
-                            +col.name
                         }
                     }
                 }
             }
-        }
-        tbody {
-            for (row in rows) {
-                tr {
-                    for (col in columns) {
-                        val cell = row.values.firstOrNull { it.column == col.name }
-                        td {
-                            if (col.name == entity.schema.idColumn) {
-                                a(href = urls.entityDetail(ctx.route, row.id)) { +row.id }
-                            } else {
-                                valueCell(cell, truncateAt = LIST_CELL_MAX)
+            tbody {
+                for (row in rows) {
+                    tr {
+                        for (col in columns) {
+                            val cell = row.values.firstOrNull { it.column == col.name }
+                            td {
+                                if (col.name == entity.schema.idColumn) {
+                                    a(href = urls.entityDetail(ctx.route, row.id)) { +row.id }
+                                } else {
+                                    valueCell(cell, truncateAt = LIST_CELL_MAX)
+                                }
                             }
                         }
                     }

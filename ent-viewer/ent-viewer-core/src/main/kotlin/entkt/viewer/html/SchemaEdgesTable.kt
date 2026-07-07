@@ -11,14 +11,16 @@ import kotlinx.html.tr
 
 /** Schema-page edge listing (name, cardinality, target route). */
 internal fun FlowContent.schemaEdgesTable(edges: List<EntViewerEdge>) {
-    table {
-        thead { tr { th { +"edge" }; th { +"cardinality" }; th { +"target" } } }
-        tbody {
-            for (edge in edges) {
-                tr {
-                    td { +edge.name }
-                    td { +edge.cardinality }
-                    td { +(edge.targetRouteName ?: "-") }
+    card {
+        table {
+            thead { tr { th { +"edge" }; th { +"cardinality" }; th { +"target" } } }
+            tbody {
+                for (edge in edges) {
+                    tr {
+                        td { +edge.name }
+                        td { +edge.cardinality }
+                        td { +(edge.targetRouteName ?: "-") }
+                    }
                 }
             }
         }

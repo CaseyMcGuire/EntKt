@@ -10,12 +10,14 @@ import kotlinx.css.Display
 import kotlinx.css.FontStyle
 import kotlinx.css.FontWeight
 import kotlinx.css.Margin
+import kotlinx.css.Overflow
 import kotlinx.css.Padding
 import kotlinx.css.TextAlign
 import kotlinx.css.VerticalAlign
 import kotlinx.css.WhiteSpace
 import kotlinx.css.backgroundColor
 import kotlinx.css.border
+import kotlinx.css.borderBottom
 import kotlinx.css.borderCollapse
 import kotlinx.css.borderRadius
 import kotlinx.css.color
@@ -30,122 +32,174 @@ import kotlinx.css.lineHeight
 import kotlinx.css.margin
 import kotlinx.css.marginRight
 import kotlinx.css.maxWidth
+import kotlinx.css.overflow
 import kotlinx.css.padding
+import kotlinx.css.pct
 import kotlinx.css.px
 import kotlinx.css.textAlign
 import kotlinx.css.textDecoration
 import kotlinx.css.verticalAlign
 import kotlinx.css.whiteSpace
+import kotlinx.css.width
 import kotlinx.css.properties.LineHeight
 import kotlinx.css.properties.TextDecoration
 import kotlinx.css.properties.TextDecorationLine
 
 /**
  * The viewer stylesheet, built with the kotlin-css DSL (no frontend build
- * step). Utilitarian and dense on purpose: navigation, tables, detail
- * lists, redaction markers — no marketing surface.
+ * step). Flat and white-first: content sits on rounded white cards over a
+ * near-white page, tables use row separators instead of grid borders, and
+ * chrome is a system UI sans face with data values in mono. Utilitarian on
+ * purpose — no marketing surface.
  */
-internal val viewerCss: String = CssBuilder().apply {
-    val ink = Color("#1a1f24")
-    val paper = Color("#f7f8f9")
-    val line = Color("#d4d9de")
-    val panel = Color("#eceff2")
-    val mutedInk = Color("#8a939c")
-    val link = Color("#0b62c4")
+internal val viewerCss: String = buildCss()
+
+private fun buildCss(): String = CssBuilder().apply {
+    val ink = Color("#1c2024")
+    val muted = Color("#6a737d")
+    val line = Color("#e4e7eb")
+    val faintLine = Color("#eef1f4")
+    val page = Color("#f8f9fa")
+    val white = Color("#ffffff")
+    val accent = Color("#2563eb")
+    val sans = "-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Inter,Helvetica,Arial,sans-serif"
+    val mono = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
 
     rule("body") {
-        fontFamily = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
-        fontSize = 13.px
-        lineHeight = LineHeight("1.45")
+        fontFamily = sans
+        fontSize = 14.px
+        lineHeight = LineHeight("1.5")
         color = ink
-        backgroundColor = paper
+        backgroundColor = page
         margin = Margin(0.px)
     }
+
+    // Flat white nav: bottom hairline instead of a dark bar.
     rule("nav.ent") {
-        backgroundColor = ink
-        color = Color("#e8ebee")
-        padding = Padding(6.px, 14.px)
+        backgroundColor = white
+        borderBottom = Border(1.px, BorderStyle.solid, line)
+        padding = Padding(10.px, 18.px)
     }
     rule("nav.ent a") {
-        color = Color("#9ecbff")
+        color = ink
         textDecoration = TextDecoration.none
-        marginRight = 14.px
+        marginRight = 16.px
     }
-    rule("nav.ent a:hover") { textDecoration = TextDecoration(setOf(TextDecorationLine.underline)) }
+    rule("nav.ent a:hover") { color = accent }
     rule("nav.ent .brand") {
-        color = Color("#e8ebee")
+        color = accent
         fontWeight = FontWeight.w700
-        marginRight = 20.px
+        marginRight = 22.px
     }
+
     rule("main") {
-        padding = Padding(12.px, 14.px)
+        padding = Padding(16.px, 18.px)
         maxWidth = 1200.px
     }
-    rule("h1") { fontSize = 16.px; margin = Margin(6.px, 0.px, 10.px, 0.px) }
-    rule("h2") { fontSize = 14.px; margin = Margin(16.px, 0.px, 6.px, 0.px) }
+    rule("h1") { fontSize = 18.px; fontWeight = FontWeight.w600; margin = Margin(8.px, 0.px, 12.px, 0.px) }
+    rule("h2") { fontSize = 14.px; fontWeight = FontWeight.w600; color = muted; margin = Margin(20.px, 0.px, 8.px, 0.px) }
+
+    // Rounded white card; tables clip to its radius.
+    rule(".card") {
+        backgroundColor = white
+        border = Border(1.px, BorderStyle.solid, line)
+        borderRadius = 10.px
+        overflow = Overflow.hidden
+        margin = Margin(10.px, 0.px)
+    }
+
+    // Flat tables: no grid, row separators only.
     rule("table") {
         borderCollapse = BorderCollapse.collapse
-        margin = Margin(8.px, 0.px)
-        backgroundColor = Color("#ffffff")
+        width = 100.pct
     }
     rule("th,td") {
-        border = Border(1.px, BorderStyle.solid, line)
-        padding = Padding(3.px, 8.px)
+        padding = Padding(7.px, 12.px)
         textAlign = TextAlign.left
         verticalAlign = VerticalAlign.top
+        borderBottom = Border(1.px, BorderStyle.solid, faintLine)
     }
     rule("th") {
-        backgroundColor = panel
+        fontSize = 12.px
         fontWeight = FontWeight.w600
+        color = muted
         whiteSpace = WhiteSpace.nowrap
+        borderBottom = Border(1.px, BorderStyle.solid, line)
+        backgroundColor = white
     }
-    rule("th a") { color = ink; textDecoration = TextDecoration.none }
-    rule("th a:hover") { textDecoration = TextDecoration(setOf(TextDecorationLine.underline)) }
-    rule("td a") { color = link }
-    rule(".null") { color = mutedInk; fontStyle = FontStyle.italic }
-    rule(".redacted") { color = mutedInk; letterSpacing = 2.px }
-    rule(".muted") { color = Color("#6b747d") }
+    rule("tbody tr:last-child td") { borderBottom = Border.none }
+    rule("tbody tr:hover td") { backgroundColor = Color("#fafbfc") }
+    // Data values read best in mono; chrome stays sans.
+    rule("td") { fontFamily = mono; fontSize = 13.px }
+    rule("th a") { color = muted; textDecoration = TextDecoration.none }
+    rule("th a:hover") { color = accent }
+    rule("td a") { color = accent; textDecoration = TextDecoration.none }
+    rule("td a:hover") { textDecoration = TextDecoration(setOf(TextDecorationLine.underline)) }
+
+    rule(".null") { color = muted; fontStyle = FontStyle.italic }
+    rule(".redacted") { color = muted; letterSpacing = 2.px }
+    rule(".muted") { color = muted }
+
+    // Pill badges for column flags.
     rule(".flag") {
         display = Display.inlineBlock
-        backgroundColor = panel
-        borderRadius = 3.px
-        padding = Padding(0.px, 5.px)
+        backgroundColor = Color("#f1f3f5")
+        color = muted
+        borderRadius = 999.px
+        padding = Padding(1.px, 9.px)
         marginRight = 4.px
         fontSize = 11.px
+        fontFamily = sans
     }
-    rule(".flag.sensitive") { backgroundColor = Color("#fbe4e4"); color = Color("#8f2727") }
-    rule(".chips") { margin = Margin(6.px, 0.px) }
+    rule(".flag.sensitive") { backgroundColor = Color("#fef3f2"); color = Color("#b42318") }
+
+    // Filter chips as rounded pills.
+    rule(".chips") { margin = Margin(8.px, 0.px) }
     rule(".chip") {
         display = Display.inlineBlock
-        backgroundColor = Color("#e4ecf6")
-        borderRadius = 3.px
-        padding = Padding(1.px, 7.px)
+        backgroundColor = Color("#eff4ff")
+        color = Color("#1d4ed8")
+        borderRadius = 999.px
+        padding = Padding(2.px, 11.px)
         marginRight = 6.px
+        fontSize = 12.px
     }
-    rule(".chip a") { color = Color("#8f2727"); textDecoration = TextDecoration.none }
-    rule("form.filter") { margin = Margin(8.px, 0.px) }
+    rule(".chip a") { color = Color("#b42318"); textDecoration = TextDecoration.none }
+
+    rule("form.filter") { margin = Margin(10.px, 0.px) }
     rule("form.filter select,form.filter input,form.filter button") { marginRight = 6.px }
     rule("select,input") {
-        fontFamily = "inherit"
+        fontFamily = sans
         fontSize = 13.px
-        padding = Padding(2.px, 4.px)
-        border = Border(1.px, BorderStyle.solid, Color("#c3c9cf"))
-        backgroundColor = Color("#ffffff")
+        padding = Padding(4.px, 8.px)
+        border = Border(1.px, BorderStyle.solid, line)
+        borderRadius = 7.px
+        backgroundColor = white
+        color = ink
     }
     rule("button") {
-        fontFamily = "inherit"
+        fontFamily = sans
         fontSize = 13.px
-        padding = Padding(2.px, 10.px)
-        border = Border(1.px, BorderStyle.solid, Color("#c3c9cf"))
-        backgroundColor = panel
+        fontWeight = FontWeight.w600
+        padding = Padding(4.px, 14.px)
+        border = Border(1.px, BorderStyle.solid, line)
+        borderRadius = 7.px
+        backgroundColor = white
+        color = accent
         cursor = Cursor.pointer
     }
-    rule(".pager") { margin = Margin(8.px, 0.px) }
-    rule(".pager a") { marginRight = 12.px; color = link }
+    rule("button:hover") { backgroundColor = Color("#eff4ff") }
+
+    rule(".pager") { margin = Margin(10.px, 0.px) }
+    rule(".pager a") { marginRight = 12.px; color = accent; textDecoration = TextDecoration.none }
+    rule(".pager a:hover") { textDecoration = TextDecoration(setOf(TextDecorationLine.underline)) }
+
     rule(".error") {
-        backgroundColor = Color("#fbe4e4")
-        border = Border(1.px, BorderStyle.solid, Color("#e4b6b6"))
-        padding = Padding(8.px, 12.px)
-        margin = Margin(10.px, 0.px)
+        backgroundColor = Color("#fef3f2")
+        color = Color("#b42318")
+        border = Border(1.px, BorderStyle.solid, Color("#f7cfcb"))
+        borderRadius = 10.px
+        padding = Padding(10.px, 14.px)
+        margin = Margin(12.px, 0.px)
     }
 }.toString()
