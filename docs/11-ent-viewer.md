@@ -76,7 +76,8 @@ above; pass the raw, still percent-encoded request path.
 
 ```
 /_ent                       viewer home
-/_ent/schema                schema metadata (columns, edges, indexes)
+/_ent/schema                searchable schema index (?q= matches names, tables, columns, edges)
+/_ent/schema/{type}         one entity's schema (columns, edges, indexes)
 /_ent/entities              entity type index
 /_ent/entities/{type}       paginated, filterable list
 /_ent/entities/{type}/{id}  row detail + followable edges

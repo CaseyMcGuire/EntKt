@@ -123,7 +123,11 @@ class EntViewer<C : Any>(
         val entities = visibleEntities()
         return when {
             segments.isEmpty() -> html.home(entities)
-            segments == listOf("schema") -> html.schemaPage(entities.map { it to effectiveColumns(it) })
+            segments == listOf("schema") -> schemaIndex(request)
+            segments.size == 2 && segments[0] == "schema" ->
+                entityFor(segments[1])
+                    ?.let { html.schemaDetail(it, effectiveColumns(it), entities.mapTo(mutableSetOf()) { e -> e.routeName }) }
+                    ?: html.error(404, "Not found.")
             segments == listOf("entities") -> html.entityIndex(entities)
             segments.size == 2 && segments[0] == "entities" ->
                 entityFor(segments[1])?.let { listPage(request, it) } ?: html.error(404, "Not found.")
@@ -131,6 +135,26 @@ class EntViewer<C : Any>(
                 entityFor(segments[1])?.let { detailPage(request, it, segments[2]) } ?: html.error(404, "Not found.")
             else -> html.error(404, "Not found.")
         }
+    }
+
+    /**
+     * The schema index, searchable: `?q=` matches entity/route/table names
+     * plus column and edge names (case-insensitive); member hits are
+     * reported so "where is api_token" lands on the right entity.
+     */
+    private fun schemaIndex(request: EntViewerRequest): EntViewerResponse {
+        val q = request.queryFirst("q")?.trim().orEmpty()
+        val needle = q.lowercase()
+        val matches = visibleEntities().mapNotNull { entity ->
+            if (needle.isEmpty()) return@mapNotNull entkt.viewer.html.SchemaMatch(entity, emptyList())
+            val nameHit = entity.displayName.lowercase().contains(needle) ||
+                entity.routeName.lowercase().contains(needle) ||
+                entity.schema.table.lowercase().contains(needle)
+            val members = entity.columns.filter { needle in it.name.lowercase() }.map { it.name } +
+                entity.edges.filter { needle in it.name.lowercase() }.map { "${it.name} (edge)" }
+            if (nameHit || members.isNotEmpty()) entkt.viewer.html.SchemaMatch(entity, members) else null
+        }
+        return html.schemaIndex(matches, q)
     }
 
     private fun entityFor(route: String): EntViewerEntity<C>? =

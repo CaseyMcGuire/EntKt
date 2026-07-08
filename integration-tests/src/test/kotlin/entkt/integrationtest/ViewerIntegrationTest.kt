@@ -54,8 +54,16 @@ class ViewerIntegrationTest : PostgresTestBase() {
 
         val schema = get(viewer, "/_ent/schema")
         assertEquals(200, schema.status)
-        assertTrue("articles" in schema.body, "table names render")
-        assertTrue("rects" in schema.body, "json columns appear in schema")
+        assertTrue("articles" in schema.body, "table names render on the index")
+        assertTrue("/_ent/schema/article" in schema.body, "index drills down per entity")
+
+        val detail = get(viewer, "/_ent/schema/article")
+        assertEquals(200, detail.status)
+        assertTrue("rects" in detail.body, "json columns appear in the schema detail")
+
+        val search = get(viewer, "/_ent/schema", "q" to "rects")
+        assertTrue("Article" in search.body, "column search finds the owning entity")
+        assertFalse("/_ent/schema/user\"" in search.body, "non-matching entities are filtered out")
     }
 
     @Test

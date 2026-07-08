@@ -18,6 +18,8 @@ internal class ViewerUrls(basePath: String) {
     fun schema(): String = "$base/schema"
     fun entities(): String = "$base/entities"
 
+    fun schemaDetail(route: String): String = "$base/schema/$route"
+
     fun entityDetail(route: String, id: String): String =
         "$base/entities/$route/${pathEncode(id)}"
 

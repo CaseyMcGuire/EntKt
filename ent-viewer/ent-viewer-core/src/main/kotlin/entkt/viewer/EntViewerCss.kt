@@ -171,6 +171,8 @@ private fun buildCss(): String = CssBuilder().apply {
     }
     rule(".chip a") { color = Color("#b42318"); textDecoration = TextDecoration.none }
 
+    rule("form.search") { margin = Margin(10.px, 0.px) }
+    rule("form.search input") { width = 300.px; marginRight = 6.px }
     rule("form.filter") { margin = Margin(10.px, 0.px) }
     rule("form.filter select,form.filter input,form.filter button") { marginRight = 6.px }
     rule("select,input") {

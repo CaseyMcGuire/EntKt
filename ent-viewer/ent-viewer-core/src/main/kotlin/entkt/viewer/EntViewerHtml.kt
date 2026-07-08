@@ -7,7 +7,9 @@ import entkt.viewer.html.entityIndexPage
 import entkt.viewer.html.errorPage
 import entkt.viewer.html.homePage
 import entkt.viewer.html.listPage
-import entkt.viewer.html.schemaPage
+import entkt.viewer.html.SchemaMatch
+import entkt.viewer.html.schemaDetailPage
+import entkt.viewer.html.schemaIndexPage
 
 /**
  * The router's rendering facade. Real markup lives in the component
@@ -33,8 +35,14 @@ internal class EntViewerHtml(basePath: String) {
     fun entityIndex(entities: List<EntViewerEntity<*>>): EntViewerResponse =
         entityIndexPage(entities, urls)
 
-    fun schemaPage(entities: List<Pair<EntViewerEntity<*>, List<EntViewerColumn>>>): EntViewerResponse =
-        schemaPage(entities, urls)
+    fun schemaIndex(matches: List<SchemaMatch>, q: String): EntViewerResponse =
+        schemaIndexPage(matches, q, urls)
+
+    fun schemaDetail(
+        entity: EntViewerEntity<*>,
+        columns: List<EntViewerColumn>,
+        visibleRoutes: Set<String>,
+    ): EntViewerResponse = schemaDetailPage(entity, columns, visibleRoutes, urls)
 
     fun listPage(
         entity: EntViewerEntity<*>,

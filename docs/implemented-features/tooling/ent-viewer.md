@@ -9,8 +9,13 @@ contract, kept as a record. User-facing docs: [Ent Viewer](../../11-ent-viewer.m
 
 The implementation followed this contract closely:
 
-- `io.entkt:ent-viewer`, package `entkt.viewer`, exactly the reserved routes,
+- `io.entkt:ent-viewer`, package `entkt.viewer`, the reserved routes,
   read-only, kotlinx.html rendering with a Kotlin-generated stylesheet.
+  **Route extension beyond the RFC's list:** `/schema` became a searchable
+  index (`?q=` matches entity/route/table names plus column and edge names,
+  with member-hit hints) and `/schema/{type}` is the per-entity drill-down
+  (columns, edges cross-linked to target schemas, indexes) — the flat
+  all-entities dump did not scale past a few schemas.
 - Unauthorized requests are cloaked: authorization runs before every other
   check (including the read-only 405) and failure is a 404 indistinguishable
   from an unmapped route — unbranded in the core, and rendered by the host
