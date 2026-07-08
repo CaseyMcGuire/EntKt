@@ -56,8 +56,11 @@ class EntViewerEndpointIntegrationTest {
     }
 
     @Test
-    fun `unauthenticated requests are rejected by the viewer's authorize callback`() {
-        mockMvc.get("/_ent").andExpect { status { isForbidden() } }
+    fun `unauthenticated requests see an unmapped-route 404, not a viewer page`() {
+        val body = mockMvc.get("/_ent")
+            .andExpect { status { isNotFound() } }
+            .andReturn().response.contentAsString
+        org.junit.jupiter.api.Assertions.assertFalse("EntKt" in body, "no viewer branding for unauthorized callers")
     }
 
     @Test

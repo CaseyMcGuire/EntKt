@@ -104,11 +104,20 @@ class EntViewerTest {
     // ---------- security surface ----------
 
     @Test
-    fun `denies everything until authorize is configured`() {
+    fun `unauthorized requests are cloaked 404s that disclose nothing`() {
         val (viewer, _) = viewer(FakeEntity("user", "User"), configure = {})
         val response = viewer.handle(get("/_ent"))
-        assertEquals(403, response.status)
-        assertTrue("authorize" in response.body)
+        assertEquals(404, response.status)
+        assertTrue(response.unmapped, "hosts should render their native not-found")
+        assertFalse("EntKt" in response.body, "no branding for unauthorized callers")
+        assertFalse("viewer" in response.body.lowercase())
+        assertFalse("<nav" in response.body)
+
+        // The method check must not fire first: a POST probe without
+        // authorization is the same cloaked 404, never a revealing 405.
+        val probe = viewer.handle(EntViewerRequest(path = "/_ent", method = "POST"))
+        assertEquals(404, probe.status)
+        assertTrue(probe.unmapped)
     }
 
     @Test

@@ -11,6 +11,11 @@ The implementation followed this contract closely:
 
 - `io.entkt:ent-viewer`, package `entkt.viewer`, exactly the reserved routes,
   read-only, kotlinx.html rendering with a Kotlin-generated stylesheet.
+- Unauthorized requests are cloaked: authorization runs before every other
+  check (including the read-only 405) and failure is a 404 indistinguishable
+  from an unmapped route — unbranded in the core, and rendered by the host
+  framework's own native not-found through the Spring adapter — so probing
+  the mount path discloses nothing.
 - The RFC's `EntViewerEntity` sketch typed `client: EntClient` — pseudo-code,
   since the generated client type is application-specific. As built, the core
   is generic over the client type (`EntViewerEntity<C>`, `EntViewerRegistry<C>`)

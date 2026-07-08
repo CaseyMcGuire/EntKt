@@ -8,6 +8,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication
 import org.springframework.context.annotation.Bean
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.function.RequestPredicates
 import org.springframework.web.servlet.function.RouterFunction
 import org.springframework.web.servlet.function.RouterFunctions
@@ -78,6 +80,12 @@ class EntViewerAutoConfiguration {
                     principal = principalResolver.resolve(http),
                 ),
             )
+            if (response.unmapped) {
+                // Unauthorized cloak: surface Boot's own error handling so
+                // the response is bit-identical to any unmapped route —
+                // probing /_ent reveals nothing.
+                throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            }
             ServerResponse.status(response.status)
                 .header("Content-Type", response.contentType)
                 .body(response.body)

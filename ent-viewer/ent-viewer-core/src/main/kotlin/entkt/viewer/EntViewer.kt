@@ -25,8 +25,11 @@ package entkt.viewer
  * /entities/{type}/{id}   row detail + followable edges
  * ```
  *
- * Security model: read-only (non-GET → 405); authorization defaults to
- * deny-all; every read runs under the per-request privacy context through
+ * Security model: authorization defaults to deny-all and an unauthorized
+ * request is a cloaked 404, indistinguishable from an unmapped route (the
+ * viewer's existence is never disclosed to unauthorized callers);
+ * read-only (non-GET → 405, checked after authorization); every read runs
+ * under the per-request privacy context through
  * the generated client's normal read path; `.sensitive()` values are
  * redacted; excluded and unknown entities are the same 404; unknown,
  * unparseable, and privacy-denied ids are the same 404.
@@ -63,15 +66,22 @@ class EntViewer<C : Any>(
     }
 
     fun handle(request: EntViewerRequest): EntViewerResponse {
+        // Authorization runs before anything else — including the method
+        // check — so an unauthorized caller learns nothing: not the 405
+        // that would reveal a mapped route, not a branded error page. The
+        // cloaked 404 is unbranded, and hosts that can (the Spring adapter
+        // does) replace it with their framework's native not-found so the
+        // mount path is indistinguishable from an unmapped one.
+        if (!config.authorize(request)) {
+            return EntViewerResponse(
+                status = 404,
+                contentType = "text/plain; charset=utf-8",
+                body = "Not Found",
+                unmapped = true,
+            )
+        }
         if (!request.method.equals("GET", ignoreCase = true)) {
             return html.error(405, "The ent viewer is read-only; only GET is supported.")
-        }
-        if (!config.authorize(request)) {
-            return html.error(
-                403,
-                "Not authorized. The viewer denies all requests until the application " +
-                    "supplies an authorize { ... } callback that accepts this request.",
-            )
         }
         val segments = relativeSegments(request.path)
             ?: return html.error(404, "Not found.")

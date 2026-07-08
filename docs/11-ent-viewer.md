@@ -107,9 +107,13 @@ is `.sensitive()` / `redaction { extra(...) }` — see below.
 
 ## Security model
 
-- **Deny-all until configured.** `authorize` defaults to `{ false }`; every
-  request is 403 until the application supplies a check. Authorization gates
-  the *endpoint*; it grants nothing about rows.
+- **Deny-all until configured, cloaked when denied.** `authorize` defaults
+  to `{ false }`, and an unauthorized request — any method, before any other
+  check — gets a 404 indistinguishable from an unmapped route (the Spring
+  adapter surfaces Boot's own native not-found), so the viewer's existence
+  is never disclosed to unauthorized callers. Authorization gates the
+  *endpoint*; it grants nothing about rows. If you want 401/redirect
+  semantics instead, gate in front with Spring Security.
 - **Rows come from the privacy context.** Every read runs under the
   per-request `privacyContext` through the generated client's
   `withPrivacyContext`, using the privacy-filtering terminals (`visibleAll`,
