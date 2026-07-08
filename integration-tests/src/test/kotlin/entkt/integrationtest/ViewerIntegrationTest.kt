@@ -60,6 +60,9 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val detail = get(viewer, "/_ent/schema/article")
         assertEquals(200, detail.status)
         assertTrue("rects" in detail.body, "json columns appear in the schema detail")
+        assertTrue("List&lt;HighlightRect&gt;" in detail.body, "ent type shows the full Kotlin type")
+        assertTrue("jsonb" in detail.body, "db type shows the storage type")
+        assertTrue("bigserial" in detail.body, "auto ids show their serial db type")
 
         val search = get(viewer, "/_ent/schema", "q" to "rects")
         assertTrue("Article" in search.body, "column search finds the owning entity")

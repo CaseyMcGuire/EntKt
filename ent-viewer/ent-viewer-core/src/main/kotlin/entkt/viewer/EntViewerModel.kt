@@ -95,6 +95,12 @@ data class EntViewerColumn(
     val filterable: Boolean,
     /** Whether the viewer accepts ordering by this column. */
     val orderable: Boolean,
+    /**
+     * Kotlin-facing type as codegen resolved it — `Instant`, `Priority`,
+     * `List<HighlightRect>` — for schema pages. Empty means "derive a
+     * display from [type]" (hand-built adapters).
+     */
+    val entType: String = "",
 )
 
 /**

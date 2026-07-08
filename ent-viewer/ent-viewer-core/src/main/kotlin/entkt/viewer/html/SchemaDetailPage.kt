@@ -23,7 +23,7 @@ internal fun schemaDetailPage(
         a(href = urls.schema()) { +"All schemas" }
     }
     h2 { +"Columns" }
-    columnsTable(columns)
+    columnsTable(columns, entity.schema)
     if (entity.edges.isNotEmpty()) {
         h2 { +"Edges" }
         schemaEdgesTable(entity.edges, visibleRoutes, urls)

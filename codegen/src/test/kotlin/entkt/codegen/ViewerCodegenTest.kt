@@ -52,11 +52,11 @@ class ViewerCodegenTest {
     fun `adapter carries column metadata with sensitivity and filterability`() {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue(
-            """EntViewerColumn(name = "secret", type = FieldType.STRING, nullable = false, unique = false, sensitive = true, filterable = false, orderable = false)""" in adapter,
+            """EntViewerColumn(name = "secret", type = FieldType.STRING, nullable = false, unique = false, sensitive = true, filterable = false, orderable = false, entType = "String")""" in adapter,
             adapter,
         )
         assertTrue(
-            """EntViewerColumn(name = "name", type = FieldType.STRING, nullable = false, unique = false, sensitive = false, filterable = true, orderable = true)""" in adapter,
+            """EntViewerColumn(name = "name", type = FieldType.STRING, nullable = false, unique = false, sensitive = false, filterable = true, orderable = true, entType = "String")""" in adapter,
             adapter,
         )
     }
@@ -72,6 +72,7 @@ class ViewerCodegenTest {
     fun `enum columns validate against constant names`() {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue(""""tier" to setOf("FREE", "PRO")""" in adapter, adapter)
+        assertTrue("""entType = "Tier"""" in adapter, "enum ent type is the enum class: " + adapter)
         assertTrue("entity.tier.name" in adapter, adapter)
     }
 

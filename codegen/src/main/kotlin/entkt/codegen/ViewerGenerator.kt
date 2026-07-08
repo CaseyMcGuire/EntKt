@@ -85,7 +85,7 @@ internal class ViewerGenerator(private val packageName: String) {
                     .initializer("%S", routeName(name))
                     .build(),
             )
-            .addProperty(buildColumnsProperty(columns))
+            .addProperty(buildColumnsProperty(columns, schema))
             .addProperty(buildEdgesProperty(schema, schemaNames))
             .addProperty(
                 PropertySpec.builder(
@@ -110,13 +110,15 @@ internal class ViewerGenerator(private val packageName: String) {
             .build()
     }
 
-    private fun buildColumnsProperty(columns: List<ColumnDescriptor>): PropertySpec {
+    private fun buildColumnsProperty(columns: List<ColumnDescriptor>, schema: EntSchema): PropertySpec {
+        val fieldsByColumn = schema.fields().associateBy { it.columnName }
         val entries = columns.map { col ->
             val filterable = !col.sensitive && supportsFilters(col.type)
             CodeBlock.of(
-                "%T(name = %S, type = %T.%L, nullable = %L, unique = %L, sensitive = %L, filterable = %L, orderable = %L)",
+                "%T(name = %S, type = %T.%L, nullable = %L, unique = %L, sensitive = %L, filterable = %L, orderable = %L, entType = %S)",
                 VIEWER_COLUMN, col.name, FIELD_TYPE, col.type.name,
                 col.nullable, col.unique, col.sensitive, filterable, filterable,
+                entTypeDisplay(col, fieldsByColumn[col.name]),
             )
         }
         return PropertySpec.builder(
@@ -126,6 +128,33 @@ internal class ViewerGenerator(private val packageName: String) {
         )
             .initializer(entries.joinToCodeList())
             .build()
+    }
+
+    /** Kotlin-facing display type: scalars fixed, enums/JSON from the schema field. */
+    private fun entTypeDisplay(col: ColumnDescriptor, field: entkt.schema.Field?): String = when (col.type) {
+        FieldType.STRING, FieldType.TEXT -> "String"
+        FieldType.BOOL -> "Boolean"
+        FieldType.INT -> "Int"
+        FieldType.LONG -> "Long"
+        FieldType.FLOAT -> "Float"
+        FieldType.DOUBLE -> "Double"
+        FieldType.TIME -> "Instant"
+        FieldType.UUID -> "UUID"
+        FieldType.BYTES -> "ByteArray"
+        FieldType.ENUM -> field?.enumClass?.simpleName ?: "enum"
+        FieldType.JSON -> field?.jsonType?.let { simpleTypeName(it) } ?: "json"
+        FieldType.PGVECTOR -> "PgVector"
+    }
+
+    /** `kotlin.collections.List<com.x.Rect>` -> `List<Rect>` for display. */
+    private fun simpleTypeName(type: kotlin.reflect.KType): String = buildString {
+        append((type.classifier as? kotlin.reflect.KClass<*>)?.simpleName ?: type.toString())
+        if (type.arguments.isNotEmpty()) {
+            append('<')
+            append(type.arguments.joinToString(", ") { it.type?.let(::simpleTypeName) ?: "*" })
+            append('>')
+        }
+        if (type.isMarkedNullable) append('?')
     }
 
     private fun supportsFilters(type: FieldType): Boolean = when (type) {
