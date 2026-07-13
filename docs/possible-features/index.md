@@ -31,6 +31,7 @@ Implemented RFCs have moved to the
 ## Query APIs
 
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
+- [Privacy-Aware Visible Pagination](query/privacy-aware-visible-pagination.md)
 - [Query Observability Diagnostics](query/query-observability-diagnostics.md)
 - [Edge Traversal Source Shape](query/edge-traversal-source-shape.md)
 - [Loaded Edge State](query/loaded-edge-state.md)
