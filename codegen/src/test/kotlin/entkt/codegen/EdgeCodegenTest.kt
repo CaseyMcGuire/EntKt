@@ -1545,8 +1545,10 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString()
 
-        assert(output.contains("fun queryPets(): PetQuery")) {
-            "Should generate traversal queryPets()\n$output"
+        // Traversal methods take the same defaulted receiver block as
+        // repository / index `query { ... }` helpers.
+        assert(output.contains("fun queryPets(block: PetQuery.() -> Unit = {}): PetQuery")) {
+            "Should generate traversal queryPets(block: PetQuery.() -> Unit = {})\n$output"
         }
         // Walker generates typed HasEdgeWith<TargetEntity, SourceEntity>.
         // Owner.queryPets → Pet candidates filtered by inverse "owner"
@@ -1567,8 +1569,8 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("fun queryOwner(): OwnerQuery")) {
-            "Should generate traversal queryOwner()\n$output"
+        assert(output.contains("fun queryOwner(block: OwnerQuery.() -> Unit = {}): OwnerQuery")) {
+            "Should generate traversal queryOwner(block: OwnerQuery.() -> Unit = {})\n$output"
         }
         // Pet.queryOwner → Owner candidates filtered by inverse "pets"
         // edge on Owner pointing to Pet; HasEdgeWith<Owner, Pet>.
@@ -1671,8 +1673,8 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString()
 
-        assert(output.contains("fun queryMembers(): PetQuery")) {
-            "Should generate M2M traversal queryMembers()\n$output"
+        assert(output.contains("fun queryMembers(block: PetQuery.() -> Unit = {}): PetQuery")) {
+            "Should generate M2M traversal queryMembers(block: PetQuery.() -> Unit = {})\n$output"
         }
         // M2M traversal: bridge is HasM2MEdgeFrom<TargetEntity, SourceEntity>.
         // Team.queryMembers → Pet candidates filtered through junction

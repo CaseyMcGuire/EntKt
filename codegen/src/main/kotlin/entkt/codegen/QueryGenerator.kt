@@ -2709,6 +2709,19 @@ internal class QueryGenerator(
         val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
         return FunSpec.builder(methodName)
+            // Defaulted receiver block matching the repository / index
+            // `query { ... }` helpers: it configures the *target* query
+            // and runs after all traversal seeding, so it is exactly
+            // equivalent to chaining `.where(...)` etc. on the returned
+            // query. The source snapshot below is taken before the
+            // block runs, so the block cannot leak state into the
+            // bridge predicate.
+            .addParameter(
+                ParameterSpec.builder(
+                    "block",
+                    LambdaTypeName.get(receiver = targetQueryClass, returnType = UNIT),
+                ).defaultValue("{}").build(),
+            )
             .returns(targetQueryClass)
             // Construct the target query and stash a deferred
             // source-step lambda — the source's interceptor chain
@@ -2773,7 +2786,7 @@ internal class QueryGenerator(
                     .add("}\n")
                     .build()
             )
-            .addStatement("return target")
+            .addStatement("return target.apply(block)")
             .build()
     }
 
@@ -2808,6 +2821,19 @@ internal class QueryGenerator(
         val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
         return FunSpec.builder(methodName)
+            // Defaulted receiver block matching the repository / index
+            // `query { ... }` helpers: it configures the *target* query
+            // and runs after all traversal seeding, so it is exactly
+            // equivalent to chaining `.where(...)` etc. on the returned
+            // query. The source snapshot below is taken before the
+            // block runs, so the block cannot leak state into the
+            // bridge predicate.
+            .addParameter(
+                ParameterSpec.builder(
+                    "block",
+                    LambdaTypeName.get(receiver = targetQueryClass, returnType = UNIT),
+                ).defaultValue("{}").build(),
+            )
             .returns(targetQueryClass)
             // Construct the target query and stash a deferred
             // source-step lambda — the source's interceptor chain
@@ -2879,7 +2905,7 @@ internal class QueryGenerator(
                     .add("}\n")
                     .build()
             )
-            .addStatement("return target")
+            .addStatement("return target.apply(block)")
             .build()
     }
 }

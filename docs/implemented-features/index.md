@@ -26,6 +26,7 @@ Open or speculative RFCs remain in the
 - [Phantom-Typed Query Scopes](query/phantom-typed-query-scopes.md)
 - [Aggregations](query/aggregations.md)
 - [Indexed Query Helpers](query/indexed-query-helpers.md)
+- [Edge Traversal Query Blocks](query/edge-traversal-query-blocks.md)
 
 ## Model Behavior
 

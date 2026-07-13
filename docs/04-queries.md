@@ -418,6 +418,27 @@ val postsOfActiveUsers = client.users
     .allOrThrow()  // List<Post>
 ```
 
+Traversal methods take the same defaulted receiver block as
+`client.posts.query { ... }` and the indexed query helpers, so the
+target query's shape can live inside the call:
+
+```kotlin
+val recentPosts = client.users
+    .query { where(User.active eq true) }
+    .queryPosts {
+        where(Post.published eq true)
+        orderBy(Post.id.desc())
+        limit(10)
+    }
+    .allOrThrow()
+```
+
+The block configures the *target* query only — it is exactly
+equivalent to chaining `.where(...)`, `.orderBy(...)`, `.limit(...)`
+on the query `queryPosts()` returns. Source-query state is
+snapshotted before the block runs, so nothing in the block can
+change which source rows the traversal bridges from.
+
 > **V1 traversal limitation: source `limit` / `offset` / `orderBy`
 > are dropped at the bridge.** The bridging predicate becomes
 > an `EXISTS` subquery, which has no row-count slot. So
