@@ -147,7 +147,7 @@ class PrivacyIntegrationTest {
 
     private fun seedSchemas() {
         val driver = PostgresDriver(dataSource, autoDdl = true)
-        EntClient.SCHEMAS.forEach(driver::register)
+        driver.registerAll(EntClient.SCHEMAS)
     }
 
     /** Create a fresh driver with migrated tables, truncate between tests. */

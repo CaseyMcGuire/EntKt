@@ -43,10 +43,10 @@ abstract class PostgresTestBase {
      */
     protected fun newDriver(): PostgresDriver {
         PostgresDriver(dataSource, autoDdl = true).also { ddl ->
-            EntClient.SCHEMAS.forEach(ddl::register)
+            ddl.registerAll(EntClient.SCHEMAS)
         }
         return PostgresDriver(dataSource).also { driver ->
-            EntClient.SCHEMAS.forEach(driver::register)
+            driver.registerAll(EntClient.SCHEMAS)
         }
     }
 

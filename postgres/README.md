@@ -12,11 +12,24 @@ with `PostgresDriver(dataSource, autoDdl = true)`, it issues
 `BOOL` -> `boolean`, `INT` -> `integer`, `LONG` -> `bigint`, `FLOAT` -> `real`,
 `DOUBLE` -> `double precision`, `TIME` -> `timestamptz`, `UUID` -> `uuid`,
 `BYTES` -> `bytea`. Primary keys for `AUTO_INT`/`AUTO_LONG` become
-`serial`/`bigserial`. Edge FK columns emit `REFERENCES target("id")
-ON DELETE ...` constraints (CASCADE, SET_NULL, or RESTRICT — defaults
-inferred from nullability). Unique fields and composite indexes emit `UNIQUE`
+`serial`/`bigserial`. Unique fields and composite indexes emit `UNIQUE`
 constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
 Partial indexes append `WHERE predicate` when declared via `.where()`.
+
+Edge FK columns emit a separate
+`ALTER TABLE ... ADD CONSTRAINT fk_<table>_<column> FOREIGN KEY ...
+ON DELETE ...` (CASCADE, SET_NULL, or RESTRICT — defaults inferred from
+nullability) rather than an inline `REFERENCES`. An inline constraint
+would require the target table to already exist, which is unsatisfiable
+for mutually-referencing entities, so `registerAll()` runs two passes
+over the batch: every table, then every constraint. Ordering within the
+batch is therefore irrelevant.
+
+`registerAll(schemas)` is the entry point; the generated `EntClient`
+calls it with the complete `SCHEMAS` set before constructing any repo.
+Re-registering an unchanged set does no I/O at all. `register(schema)`
+is the single-entity form and fails with an actionable error if a
+foreign key target is neither registered nor already in the database.
 
 ## Insert / update
 

@@ -177,7 +177,7 @@ class ValidationIntegrationTest {
 
     private fun seedSchemas() {
         val driver = PostgresDriver(dataSource, autoDdl = true)
-        EntClient.SCHEMAS.forEach(driver::register)
+        driver.registerAll(EntClient.SCHEMAS)
     }
 
     private fun freshClient(

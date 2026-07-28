@@ -33,6 +33,33 @@ class ClientGeneratorTest {
     }
 
     @Test
+    fun `EntClient batch-registers the whole schema set before building repos`() {
+        val output = generator.generate(buildSchemas()).toString()
+
+        // Drivers that materialize storage need the complete set at
+        // once: foreign keys between mutually-referencing entities have
+        // no valid one-schema-at-a-time creation order.
+        assert(output.contains("driver.also { it.registerAll(SCHEMAS) }")) {
+            "driver property should batch-register the schema set\n$output"
+        }
+
+        // Ordering is the load-bearing part. Each repo registers its own
+        // schema from its property initializer, and property initializers
+        // run in declaration order — so the batch call has to live on the
+        // `driver` property (declared first), not in the init block that
+        // follows the repo properties.
+        val driverProp = output.indexOf("registerAll(SCHEMAS)")
+        val firstRepo = output.indexOf("public val cars:")
+        val initBlock = output.indexOf("init {")
+        assert(driverProp in 0 until firstRepo) {
+            "registerAll must be wired before the first repo property\n$output"
+        }
+        assert(firstRepo in 0 until initBlock) {
+            "repo properties precede the init block — an init-block call would be too late\n$output"
+        }
+    }
+
+    @Test
     fun `EntClient takes a Driver and optional config in its constructor`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()

@@ -23,16 +23,50 @@ import entkt.query.Predicate
  * the driver — that keeps drivers from depending on generated entity
  * classes.
  *
- * Implementations register each entity's [EntitySchema] up front (the
- * generated repo's `init` block does this), so by the time `query` or
- * `insert` is called, the driver already knows the table layout, the
- * id strategy, and how to walk edges.
+ * Implementations register every entity's [EntitySchema] up front (the
+ * generated `EntClient` calls [registerAll] with the complete set while
+ * initializing its driver property), so by the time `query` or `insert`
+ * is called, the driver already knows the table layout, the id
+ * strategy, and how to walk edges.
  */
 interface Driver {
     /**
-     * Tell the driver about an entity's table layout. Idempotent —
-     * registering the same schema twice should be a no-op (generated
-     * repos don't coordinate with each other).
+     * Tell the driver about the complete set of entities it will serve.
+     *
+     * The generated `EntClient` calls this once with `SCHEMAS` before
+     * constructing any repo, so a driver that materializes storage sees
+     * the whole set at once rather than one schema at a time.
+     *
+     * Implementations that emit DDL **must** create every table before
+     * adding any constraint that spans tables. Foreign keys between
+     * mutually-referencing entities have no valid one-at-a-time
+     * ordering — whichever table is created first would reference one
+     * that doesn't exist yet — so the batch is what makes such a schema
+     * expressible at all.
+     *
+     * **Must be free of I/O when there is nothing new.** Generated
+     * clients are constructed constantly — `withTransaction` builds one
+     * *inside* the open transaction, `withPrivacyContext` builds one per
+     * call — and each construction re-registers. When every incoming
+     * schema is already registered and unchanged, this must return
+     * without opening a connection or issuing a statement.
+     *
+     * Deliberately abstract rather than defaulted to
+     * `schemas.forEach(::register)`: a decorating driver that forwards
+     * `register` but inherits a sequential default would silently
+     * dissolve the batch back into one-at-a-time calls, taking the
+     * cross-table ordering guarantee with it. Implementations have to
+     * make that choice explicitly.
+     */
+    fun registerAll(schemas: List<EntitySchema>)
+
+    /**
+     * Tell the driver about one entity's table layout. Idempotent —
+     * registering the same schema twice is a no-op; registering a
+     * *different* schema for a table already claimed should fail.
+     *
+     * Prefer [registerAll]: a lone registration can't resolve a
+     * foreign key whose target hasn't been registered yet.
      */
     fun register(schema: EntitySchema)
 

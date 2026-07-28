@@ -34,6 +34,21 @@ internal class PostgresTransactionalDriver(
         root.register(schema)
     }
 
+    /**
+     * Forwarded to the root driver, like [register].
+     *
+     * Registration state belongs to the root, not to a connection: a
+     * generated client built inside `withTransaction` re-registers the
+     * same schemas, and the root's cache makes that a no-op with no I/O.
+     * Forwarding explicitly (rather than inheriting any sequential
+     * default) also keeps the create-all-tables-then-all-constraints
+     * ordering intact if a batch ever does reach here with new schemas.
+     */
+    override fun registerAll(schemas: List<EntitySchema>) {
+        checkOpen()
+        root.registerAll(schemas)
+    }
+
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
         checkOpen(); return ops.insert(conn, table, values)
     }

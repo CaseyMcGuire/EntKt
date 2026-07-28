@@ -190,6 +190,11 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
  */
 private class NoLockSupportDriver(private val real: entkt.runtime.driver.Driver) : entkt.runtime.driver.Driver {
     override fun register(schema: entkt.runtime.driver.EntitySchema) = real.register(schema)
+
+    // Forwarded, not re-derived: turning the batch back into a loop
+    // would drop the create-all-tables-before-any-constraint guarantee
+    // the wrapped driver relies on.
+    override fun registerAll(schemas: List<entkt.runtime.driver.EntitySchema>) = real.registerAll(schemas)
     override fun insert(table: String, values: Map<String, Any?>) = real.insert(table, values)
     override fun update(table: String, id: Any, values: Map<String, Any?>) = real.update(table, id, values)
     override fun byId(table: String, id: Any) = real.byId(table, id)
@@ -220,6 +225,8 @@ private class NoLockSupportDriver(private val real: entkt.runtime.driver.Driver)
 
 private class NoLockSupportTxDriver(private val txReal: entkt.runtime.driver.Driver) : entkt.runtime.driver.Driver {
     override fun register(schema: entkt.runtime.driver.EntitySchema) = txReal.register(schema)
+
+    override fun registerAll(schemas: List<entkt.runtime.driver.EntitySchema>) = txReal.registerAll(schemas)
     override fun insert(table: String, values: Map<String, Any?>) = txReal.insert(table, values)
     override fun update(table: String, id: Any, values: Map<String, Any?>) = txReal.update(table, id, values)
     override fun byId(table: String, id: Any) = txReal.byId(table, id)

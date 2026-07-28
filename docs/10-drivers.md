@@ -9,6 +9,9 @@ generated entity classes provide the typed facade.
 
 ```kotlin
 interface Driver {
+    // Both are required. The generated client calls registerAll() once
+    // with the complete schema set; register() is the single-entity form.
+    fun registerAll(schemas: List<EntitySchema>)
     fun register(schema: EntitySchema)
 
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
@@ -134,9 +137,65 @@ When you explicitly opt in with `PostgresDriver(dataSource, autoDdl = true)`,
 - `PRIMARY KEY` on the ID column
 - `NOT NULL` constraints on required columns
 - `UNIQUE` constraints on unique columns
-- `REFERENCES ... ON DELETE` for foreign key columns (action from schema
-  metadata, or inferred from nullability)
 - `CREATE INDEX` / `CREATE UNIQUE INDEX` for composite indexes
+
+Foreign keys are then added as separate
+`ALTER TABLE ... ADD CONSTRAINT fk_<table>_<column> FOREIGN KEY ...
+ON DELETE ...` statements (action from schema metadata, or inferred from
+nullability), matching the naming the migration path uses.
+
+They are split out of `CREATE TABLE` so that ordering within a batch
+doesn't matter. An inline `REFERENCES` requires the target table to
+already exist, which is impossible to arrange for mutually-referencing
+entities:
+
+```kotlin
+class User : EntSchema("users") {
+    override fun id() = EntId.long()
+    val pinnedPost = belongsTo<Post>("pinned_post").nullable()
+}
+
+class Post : EntSchema("posts") {
+    override fun id() = EntId.long()
+    val author = belongsTo<User>("author")
+}
+```
+
+Whichever table is created first would reference one that doesn't exist
+yet. Instead, `registerAll()` runs two passes over the batch: every
+table, then every constraint.
+
+### Registration
+
+`Driver.registerAll(schemas)` is the entry point. The generated
+`EntClient` calls it once with the complete `SCHEMAS` set while
+initializing its driver property — before any repo is constructed — so a
+driver that materializes storage always sees the whole set at once:
+
+```kotlin
+val client = EntClient(PostgresDriver(dataSource, autoDdl = true))
+// registerAll(EntClient.SCHEMAS) has already run by the time this returns
+```
+
+Registering by hand works the same way:
+
+```kotlin
+PostgresDriver(dataSource, autoDdl = true).registerAll(EntClient.SCHEMAS)
+```
+
+`register(schema)` handles a single entity and is equivalent to
+`registerAll(listOf(schema))`. It can only resolve foreign keys whose
+target table already exists; a cyclic or otherwise unresolved target
+fails with an error naming the constraint, the missing table, and
+`registerAll` as the fix. Nothing is ever skipped silently.
+
+Re-registering an unchanged set is free — no connection, no catalog
+lookup, no DDL. That matters because `withTransaction` builds a client
+*inside* the open transaction and `withPrivacyContext` builds one per
+call, so registration re-runs constantly.
+
+Registering a *different* schema for a table already registered is an
+error rather than a silent no-op.
 
 ### Type Mapping
 
@@ -266,7 +325,26 @@ Requires Docker to be running.
 To support a new database, implement the `Driver` interface. The key
 contract:
 
-1. `register()` must be idempotent -- called on every repo construction
+1. `registerAll()` and `register()` are both abstract and both must be
+   implemented — a driver that omits either won't compile.
+   `registerAll()` receives the complete schema set and is called once
+   per client construction, before any repo exists; `register()` handles
+   a single entity and is called from each repo's initializer. Both must
+   be idempotent, and both must do no I/O when everything they're handed
+   is already registered — clients are constructed constantly
+   (`withTransaction` builds one inside the open transaction), so any
+   work here lands on that hot path.
+
+   If the driver materializes storage, `registerAll()` must create every
+   table before adding any constraint that spans tables. Foreign keys
+   between mutually-referencing entities have no valid
+   one-schema-at-a-time ordering, so the batch is what makes those
+   schemas expressible.
+
+   A driver that wraps or decorates another must forward `registerAll()`
+   explicitly. There is deliberately no `schemas.forEach(::register)`
+   default: inheriting one would dissolve the batch back into
+   one-at-a-time calls and silently drop the ordering guarantee.
 2. `insert()` must return the full row including server-assigned values
 3. `query()` must evaluate all `Predicate` types (including edge predicates)
 4. `withTransaction()` must roll back on exception, and the inner

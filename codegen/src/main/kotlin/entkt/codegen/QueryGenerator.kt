@@ -610,6 +610,11 @@ internal class QueryGenerator(
     /**
      * Terminal op: ask the driver for one row and stop, enforcing LOAD
      * privacy on the result.
+     *
+     * The fetch is `min(queryLimit ?: 1, 1)`, so a caller-set
+     * `limit(0)` means "no rows" here just as it does on `allOrThrow` /
+     * `rawExists` / `visibleCount`. `limit(n > 0)` is already satisfied
+     * by the single-row fetch.
      */
     private fun buildFirstOrNull(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -621,11 +626,18 @@ internal class QueryGenerator(
                 "val spec = runReadInterceptors(%T.FIRST, %T.QUERY)",
                 READ_OPERATION, ENT_OPERATION,
             )
-            // `first` semantics: cap at 1 unconditionally — an
-            // interceptor clamp can only further restrict, never
-            // raise above 1.
+            // `first` semantics: at most one row — but `minOf(1, ...)`
+            // rather than a hardwired 1, so an explicit
+            // `query { limit(0) }` still means "no rows" here exactly
+            // as it does for the exists / all / count families. Note
+            // what `spec.limit` can hold at this point: interceptor
+            // limit mutators are silent no-ops on FIRST (see
+            // InterceptorEngine.limitOpsApply), so the only value that
+            // ever reaches here is the caller's own bound — discarding
+            // it would discard the one input it can't be wrong about.
+            .addStatement("val limit = minOf(1, spec.limit ?: 1)")
             .addStatement(
-                "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, 1, spec.offset).firstOrNull()",
+                "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull()",
                 entityClass,
             )
             .addStatement("val entity = row?.let { %T.fromRow(it) } ?: return null", entityClass)
@@ -711,10 +723,16 @@ internal class QueryGenerator(
      * indistinguishable from genuine absence, which is fine for the
      * optimistic-read shape this method advertises.
      *
-     * **When the repo has no LOAD privacy rules**, only one row is
-     * fetched (limit 1) — there's no in-process filter that might
-     * skip rows, so the first row from storage is the answer.
-     * Skipping the cap avoids pulling 100 rows just to return one.
+     * **When the repo has no LOAD privacy rules**, at most one row is
+     * fetched (`min(queryLimit ?: 1, 1)`) — there's no in-process
+     * filter that might skip rows, so the first row from storage is
+     * the answer. Skipping the cap avoids pulling 100 rows just to
+     * return one.
+     *
+     * Both branches bound the fetch by the caller's `limit(n)`, so
+     * `query { limit(0) }.firstVisibleOrNull()` is null either way —
+     * whether the repo has LOAD privacy rules is not observable in the
+     * result.
      */
     private fun buildFirstVisibleOrNull(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -732,9 +750,17 @@ internal class QueryGenerator(
                 // skip on the filter side, so the first storage row is
                 // the answer. Skipping the cap-sized scan avoids
                 // pulling up to 100 rows just to return one.
+                //
+                // `minOf(1, spec.limit ?: 1)`, not a bare 1: the privacy
+                // branch below derives its scan from `spec.limit` and so
+                // returns null on `limit(0)`. A hardwired 1 here would
+                // make the same call on the same rows answer differently
+                // depending on whether the repo happens to have LOAD
+                // privacy rules — the branch must not be observable.
                 .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
+                .addStatement("val limit = minOf(1, spec.limit ?: 1)")
                 .addStatement(
-                    "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, 1, spec.offset).firstOrNull() ?: return null",
+                    "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull() ?: return null",
                     entityClass,
                 )
                 .addStatement("val entity = %T.fromRow(row)", entityClass)
@@ -1234,8 +1260,8 @@ internal class QueryGenerator(
      * the execution shape of its corresponding terminal:
      *
      * - `explain()` → models `all()`: configured limit/offset + eager edges
-     * - `explainFirst()` → models `firstOrNull()`: limit 1 + eager edges
-     * - `explainExists()` → models `exists()`: limit 1, no eager edges
+     * - `explainFirst()` → models `firstOrNull()`: `min(limit ?: 1, 1)` + eager edges
+     * - `explainExists()` → models `exists()`: `min(limit ?: 1, 1)`, no eager edges
      * - `explainVisibleCount()` → models `visibleCount()`: configured limit/offset, no eager edges
      * - `explainRawCount()` → models `rawCount()`: COUNT query, no eager edges
      */
@@ -1291,12 +1317,16 @@ internal class QueryGenerator(
         return FunSpec.builder(name)
             .addKdoc(
                 "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
-                "Interceptors run with operation = FIRST; limit operations are silent\n" +
-                "no-ops for this terminal. Plan limit is hardwired to 1.\n" +
+                "Interceptors run with operation = FIRST; interceptor limit operations are\n" +
+                "silent no-ops for this terminal. Plan limit mirrors the runtime's\n" +
+                "`minOf(1, spec.limit ?: 1)` — 1 normally, 0 when the caller passed\n" +
+                "`query { limit(0) }`.\n" +
                 "On interceptor rejection, returns a plan with `rejected = true`."
             )
             .returns(queryPlan)
-            .addCode(explainBody("FIRST", CodeBlock.of("buildQueryPlan(spec.copy(limit = 1), true)")))
+            .addCode(
+                explainBody("FIRST", CodeBlock.of("buildQueryPlan(spec.copy(limit = minOf(1, spec.limit ?: 1)), true)")),
+            )
             .build()
     }
 
@@ -1402,7 +1432,7 @@ internal class QueryGenerator(
         val body = CodeBlock.builder()
             .addStatement("val c = requireClient()")
             .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
-            .addStatement("buildQueryPlan(spec.copy(limit = 1), true)")
+            .addStatement("buildQueryPlan(spec.copy(limit = minOf(1, spec.limit ?: 1)), true)")
             .nextControlFlow("else")
             .addStatement("val cap = c.visibleOverfetchLimit")
             .addStatement("val scanLimit = minOf(spec.limit ?: cap, cap)")
@@ -1413,7 +1443,7 @@ internal class QueryGenerator(
             .addKdoc(
                 "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
                 "Interceptors run with operation = FIRST. On the no-privacy fast path the\n" +
-                "plan uses `limit = 1`; on the privacy path the plan uses\n" +
+                "plan uses `limit = minOf(1, spec.limit ?: 1)`; on the privacy path it uses\n" +
                 "`minOf(spec.limit ?: cap, cap)` where `cap` is\n" +
                 "`EntClientConfig.visibleOverfetchLimit`, matching the runtime cap-bounded\n" +
                 "scan. On interceptor rejection, returns a plan with `rejected = true`."

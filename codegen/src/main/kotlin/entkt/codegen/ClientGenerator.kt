@@ -117,10 +117,24 @@ internal class ClientGenerator(
                     )
                     .build()
             )
+            // Batch-register the complete schema set while initializing
+            // the driver property — deliberately here rather than in the
+            // init block below. Repo properties are declared before that
+            // block and each repo registers its own schema from its
+            // initializer, so an init-block call would arrive after the
+            // one-at-a-time registrations had already happened. The
+            // driver property is the first thing constructed, which makes
+            // this the earliest point the whole set is available.
+            //
+            // Drivers that materialize storage need the whole set at
+            // once: foreign keys between mutually-referencing entities
+            // have no valid one-schema-at-a-time creation order. The
+            // per-repo `register` calls that follow hit the driver's
+            // already-registered fast path.
             .addProperty(
                 PropertySpec.builder("driver", DRIVER)
                     .addModifiers(KModifier.PRIVATE)
-                    .initializer("driver")
+                    .initializer("driver.also { it.registerAll(SCHEMAS) }")
                     .build()
             )
             .addProperty(

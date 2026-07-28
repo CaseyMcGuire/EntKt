@@ -97,6 +97,54 @@ class QueryGeneratorTest {
     }
 
     @Test
+    fun `first-row terminals bound the fetch by the caller's limit`() {
+        val car = Car()
+        finalize(car, User())
+        // KotlinPoet wraps long driver.query(...) calls mid-argument-list,
+        // so match against a whitespace-normalized rendering.
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
+
+        // `limit(0)` means "no rows" on every other terminal family
+        // (allOrThrow passes spec.limit straight through; rawExists /
+        // visibleExists use `minOf(1, spec.limit ?: 1)`). The first-row
+        // family used to send a hardwired 1 and return a row anyway.
+        //
+        // Interceptor limit mutators are silent no-ops at FIRST
+        // (InterceptorEngine.limitOpsApply), so spec.limit here holds
+        // nothing but the caller's own bound.
+        assert(!output.contains("spec.orderBy, 1, spec.offset")) {
+            "no first-row terminal should hardwire limit 1\n$output"
+        }
+        // The exists family passes `emptyList()` for orderBy, so
+        // `spec.orderBy, limit, spec.offset` picks out exactly the two
+        // first-row driver calls: firstOrNull and firstVisibleOrNull's
+        // no-privacy branch. (firstVisibleOrNull's privacy branch already
+        // derived its scan from spec.limit, and firstOrThrow /
+        // firstOrError delegate rather than query directly.)
+        val bounded = Regex(Regex.escape("spec.orderBy, limit, spec.offset")).findAll(output).count()
+        assert(bounded == 2) {
+            "expected firstOrNull and firstVisibleOrNull's no-privacy branch to clamp by spec.limit; found $bounded\n$output"
+        }
+    }
+
+    @Test
+    fun `first-shaped explain plans mirror the clamped runtime limit`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
+
+        // explain* is only useful if it reports what the terminal will
+        // actually send. A plan pinned at `limit = 1` would hide the
+        // caller's limit(0) rather than surface it.
+        assert(!output.contains("spec.copy(limit = 1)")) {
+            "explain should not pin a first-shaped plan at limit 1\n$output"
+        }
+        assert(output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1))")) {
+            "explainFirst / explainFirstVisibleOrNull should mirror the runtime clamp\n$output"
+        }
+    }
+
+    @Test
     fun `does not emit per-field predicate methods`() {
         val car = Car()
         finalize(car, User())

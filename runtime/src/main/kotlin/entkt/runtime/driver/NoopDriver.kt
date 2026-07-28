@@ -29,6 +29,11 @@ object NoopDriver : Driver {
         // even if its init path ever grows to register eagerly.
     }
 
+    override fun registerAll(schemas: List<EntitySchema>) {
+        // Same reasoning as `register`: nothing is materialized, so
+        // there's no ordering to honor and nothing to remember.
+    }
+
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
         error("NoopDriver cannot insert — was a terminal op called inside EdgeRef.has { }?")
 

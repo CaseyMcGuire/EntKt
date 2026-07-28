@@ -89,7 +89,7 @@ class RelationshipLockingPostgresIntegrationTest {
 
     private fun setupDb() {
         val driver = PostgresDriver(dataSource, autoDdl = true)
-        EntClient.SCHEMAS.forEach(driver::register)
+        driver.registerAll(EntClient.SCHEMAS)
         val tables = EntClient.SCHEMAS.joinToString(", ") { "\"${it.table}\"" }
         dataSource.connection.use { conn ->
             conn.createStatement().use {

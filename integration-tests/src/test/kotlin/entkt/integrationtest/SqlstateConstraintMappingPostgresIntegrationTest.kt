@@ -59,7 +59,7 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
 
     private fun seedSchemas() {
         val driver = PostgresDriver(dataSource, autoDdl = true)
-        EntClient.SCHEMAS.forEach(driver::register)
+        driver.registerAll(EntClient.SCHEMAS)
     }
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {

@@ -250,6 +250,26 @@ client.users.query {
 }
 ```
 
+Both reject negative values at the call. `limit(0)` is legal and means
+what it says — no rows — on every terminal that reads rows, including
+the single-result ones:
+
+```kotlin
+client.users.query { limit(0) }.firstOrNull()   // → null
+client.users.query { limit(0) }.rawExists()     // → false
+client.users.query { limit(0) }.allOrThrow()    // → []
+client.users.query { limit(0) }.visibleCount()  // → 0
+```
+
+Note that `limit(n)` above 1 doesn't change what a first-row terminal
+returns — it already fetches a single row.
+
+The exceptions are the terminals that never materialize rows in the
+first place: `rawCount()` and the raw aggregates ignore `orderBy`,
+`limit`, and `offset` entirely, so `limit(0)` doesn't apply to them
+either. `visibleCount()` is not an exception — it materializes rows to
+evaluate privacy, so it respects the bound like any other row read.
+
 ## Count and Exists
 
 ### `visibleCount()` -- privacy-aware count
