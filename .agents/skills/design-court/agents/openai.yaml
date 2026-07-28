@@ -1,0 +1,7 @@
+interface:
+  display_name: "Design Court"
+  short_description: "Compare API designs through three expert reviews"
+  default_prompt: "Use $design-court to evaluate this API and synthesize two designs without editing files."
+
+policy:
+  allow_implicit_invocation: false
