@@ -95,11 +95,12 @@ what the read-runtime contract below makes explicit.
 
 ### The read-runtime contract
 
-Generate an internal interface that names exactly what generated queries
-need from their host. Both `EntClient` and `EntValidationReadClient`
-implement it:
+Generate a public, `@EntktInternal`-guarded interface that names exactly
+what generated queries need from their host. Both `EntClient` and
+`EntValidationReadClient` implement it:
 
 ```kotlin
+@EntktInternal
 interface EntReadRuntime {
     fun currentPrivacyContext(): PrivacyContext
     val visibleOverfetchLimit: Int
@@ -123,9 +124,29 @@ today's property is `@EntktInternal internal` because the raw
 scope-key casts, and generated queries reach it through file-level
 `@OptIn`; hoisting it onto a contract interface must not widen that
 access (interface members can't be `internal`, so the opt-in marker is
-the guard that remains). The interface name deliberately avoids the
-overloaded terms `Context` (QueryContext, PrivacyContext, validation
-contexts) and `Client`.
+the guard that remains).
+
+The interface itself must be `public` with the same opt-in guard —
+Kotlin-`internal` is not an option, twice over. The generated query
+constructors are public, and a public constructor cannot expose an
+internal parameter type; more fundamentally, `EntClient` and
+`EntValidationReadClient` are public classes, and a public class cannot
+expose an internal supertype, so no constructor-visibility change can
+rescue an internal interface. (The index-stage constructors are already
+`internal` and unaffected either way.) Nor would `internal` guard
+anything: as the `EntktInternal` doc itself records, generated code
+compiles into the consuming application's module, where `internal` stays
+visible to exactly the application code the contract is meant to keep
+out. The per-entity read surfaces are public with the same guard, for
+the same reasons (supertypes of public repos, member types of this
+interface). `@file:OptIn(EntktInternal::class)` in generated files
+consumes the requirement without propagating it, so application code
+touching `EntClient`, the validation read client, or validation contexts
+never needs the opt-in — only code that explicitly names `EntReadRuntime`
+does.
+
+The interface name deliberately avoids the overloaded terms `Context`
+(QueryContext, PrivacyContext, validation contexts) and `Client`.
 
 ### Generated queries accept the contract
 
@@ -149,7 +170,10 @@ objects, which is exactly what the contract exists to prevent.
 
 Verification for this step: regenerated output must differ from the
 baseline only in those constructor/parameter type names — across both the
-`*Query.kt` and `*Indexes.kt` files.
+`*Query.kt` and `*Indexes.kt` files — plus one predictable header delta:
+`*Indexes.kt` files gain `@file:OptIn(EntktInternal::class)` (and the
+matching import), which `*Query.kt` and `EntClient.kt` already carry,
+because their constructors now reference the guarded contract type.
 
 ### The validation read client
 
@@ -274,15 +298,16 @@ classpath inherited, and assert on the result.
 
 ## Migration Plan
 
-1. Generate `EntReadRuntime` + per-entity read surfaces; make `EntClient`
-   implement them.
+1. Generate `EntReadRuntime` + per-entity read surfaces (public,
+   `@EntktInternal`-guarded); make `EntClient` implement them.
 2. Change generated query constructors AND the `${Entity}Indexes` /
    nested index-stage constructors to accept `EntReadRuntime?`; verify
    regenerated output (both `*Query.kt` and `*Indexes.kt`) differs only
-   in those type names.
+   in those type names plus the new `@file:OptIn` header on
+   `*Indexes.kt`.
 3. Generate `EntValidationReadClient` + per-entity validation read repos.
-4. Generate `EntClient.asValidationReadClient()` sharing the
-   fixed-context clone's state copy.
+4. Generate `EntClient.asValidationReadClient()`, copying only the
+   read-relevant adapter state listed in Adapter Semantics.
 5. Change generated validation contexts from `EntClient` to
    `EntValidationReadClient`.
 6. Add the compile-fail/compile-pass tests and update validation docs and
