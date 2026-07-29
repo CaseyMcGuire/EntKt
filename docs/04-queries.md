@@ -526,6 +526,13 @@ Eager loading avoids N+1 queries by collecting all parent IDs from the
 main query result, then batch-loading the related entities with a single
 `IN (id1, id2, ...)` query.
 
+`limit` and `offset` inside a `with...()` block apply **per parent**, not
+to that batched query — `withPosts { limit(5) }` gives each user their
+first five posts, not five posts across all users. The same holds for
+to-one edges, where at most one target exists per parent: a positive
+limit is already satisfied, while `limit(0)` loads no target and any
+positive offset steps past the only candidate.
+
 ### Nested Eager Loading
 
 You can nest eager loads to load multiple levels of relationships:

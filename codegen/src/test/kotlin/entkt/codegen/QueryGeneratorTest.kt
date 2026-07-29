@@ -9,6 +9,18 @@ private fun finalize(vararg schemas: EntSchema) {
     schemas.forEach { it.finalize(registry) }
 }
 
+// A 1:1 pair — the shared Car/User fixtures only cover hasMany /
+// belongsTo, and hasOne emits a distinct eager-load block.
+private class OneOwner : EntSchema("one_owners") {
+    override fun id() = entkt.schema.EntId.long()
+    val badge = hasOne<OneBadge>("badge")
+}
+
+private class OneBadge : EntSchema("one_badges") {
+    override fun id() = entkt.schema.EntId.long()
+    val owner = belongsTo<OneOwner>("owner").inverse(OneOwner::badge).unique()
+}
+
 class QueryGeneratorTest {
 
     private val generator = QueryGenerator("com.example.ent")
@@ -141,6 +153,47 @@ class QueryGeneratorTest {
         }
         assert(output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1))")) {
             "explainFirst / explainFirstVisibleOrNull should mirror the runtime clamp\n$output"
+        }
+    }
+
+    @Test
+    fun `eager loads skip the target fetch when the window admits nothing`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        // Eager blocks are only emitted when the edge target can be
+        // named, so the schemaNames map is required here.
+        val output = generator.generate("User", user, mapOf(user to "User", car to "Car"))
+            .toString().replace("\\s+".toRegex(), " ")
+
+        // A window that admits nothing would discard every fetched row,
+        // so the round trip is pure waste. The interceptor pass above it
+        // still runs — it fires on every eager subquery regardless of
+        // bounds — so only the fetch is conditional.
+        assert(output.contains("val targetRows = if (perGroupLimit > 0) driver.query(")) {
+            "to-many eager fetch should be skipped when limit(0) admits nothing\n$output"
+        }
+    }
+
+    @Test
+    fun `a hasOne eager load also skips the fetch for a positive offset`() {
+        // hasOne requires its inverse belongsTo to declare `.unique()`
+        // (SchemaMetadata enforces it), so the unique index guarantees at
+        // most one row per source — `drop(1)` provably leaves nothing.
+        // The to-many paths can't use offset that way: skipping rows in a
+        // group of many still leaves others.
+        val owner = OneOwner()
+        val badge = OneBadge()
+        finalize(owner, badge)
+        val output = generator
+            .generate("OneOwner", owner, mapOf(owner to "OneOwner", badge to "OneBadge"))
+            .toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("val targetInWindow = perGroupOffset == 0 && perGroupLimit > 0")) {
+            "hasOne should treat a positive offset as an empty window\n$output"
+        }
+        assert(output.contains("val targetRows = if (targetInWindow) driver.query(")) {
+            "hasOne eager fetch should be gated on that window\n$output"
         }
     }
 

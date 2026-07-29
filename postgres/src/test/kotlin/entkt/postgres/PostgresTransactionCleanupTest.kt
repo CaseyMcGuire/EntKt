@@ -3,6 +3,7 @@ package entkt.postgres
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
+import entkt.runtime.mutation.RelationshipLockKey
 import entkt.schema.FieldType
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
@@ -166,6 +167,112 @@ class PostgresTransactionCleanupTest {
         )
     }
 
+    // ---------- insertMany drives its own transaction ----------
+
+    @Test
+    fun `insertMany unwinds under the same rules as withTransaction`() {
+        freshLedger()
+        // insertMany opens its own transaction when handed an autocommit
+        // connection, so it has its own unwind path. It had the same three
+        // bugs independently; both now share the rules in
+        // PostgresTransactions.kt rather than restating them.
+        val (driver, recorder) = driverFailingOn("rollback")
+
+        // A NOT NULL violation on the second row rolls the batch back.
+        val thrown = assertFailsWith<Exception> {
+            driver.insertMany(
+                "tx_ledger",
+                listOf(mapOf("memo" to "first"), mapOf("memo" to null)),
+            )
+        }
+
+        // The constraint violation is what the caller needs to see, not
+        // the rollback's own failure.
+        assertTrue(
+            thrown.message?.contains("memo") == true || thrown.message?.contains("null") == true,
+            "the original failure should survive; got: ${thrown.message}",
+        )
+        assertFalse(
+            recorder.calls.contains("setAutoCommit(true)"),
+            "restoring autocommit would commit the half-written batch; saw ${recorder.calls}",
+        )
+        assertEquals(emptyList(), memos(), "a failed rollback must not leave the batch committed")
+    }
+
+    @Test
+    fun `insertMany commits and restores autocommit on success`() {
+        freshLedger()
+        val (driver, recorder) = driverFailingOn()
+
+        driver.insertMany("tx_ledger", listOf(mapOf("memo" to "a"), mapOf("memo" to "b")))
+
+        assertEquals(listOf("a", "b"), memos())
+        assertTrue(
+            recorder.calls.contains("setAutoCommit(true)"),
+            "a resolved transaction restores autocommit; saw ${recorder.calls}",
+        )
+    }
+
+    // ---------- connection release on non-transactional writes ----------
+    //
+    // Every write outside an explicit transaction runs in autocommit, so
+    // it is durable the moment the statement returns. Releasing the
+    // connection afterwards must not be able to report failure for it:
+    // `Closeable.use` suppresses a close failure only when the block
+    // threw, and calls close() bare on the success path.
+
+    @Test
+    fun `a failing close does not fail a committed insertMany`() {
+        freshLedger()
+        val (driver, _) = driverFailingOn("close")
+
+        val rows = driver.insertMany("tx_ledger", listOf(mapOf("memo" to "a"), mapOf("memo" to "b")))
+
+        assertEquals(2, rows.size)
+        assertEquals(listOf("a", "b"), memos())
+    }
+
+    @Test
+    fun `a failing close does not fail a committed single-statement write`() {
+        freshLedger()
+        val (driver, _) = driverFailingOn("close")
+
+        // Same hazard without a multi-row batch: one autocommit INSERT is
+        // already durable when close() fails.
+        driver.insert("tx_ledger", mapOf("memo" to "solo"))
+
+        assertEquals(listOf("solo"), memos())
+    }
+
+    @Test
+    fun `a failing close does not fail an update or delete`() {
+        freshLedger()
+        val (driver, _) = driverFailingOn("close")
+        val row = driver.insert("tx_ledger", mapOf("memo" to "before"))
+        val id = row["id"]!!
+
+        driver.update("tx_ledger", id, mapOf("memo" to "after"))
+        assertEquals(listOf("after"), memos())
+
+        driver.delete("tx_ledger", id)
+        assertEquals(emptyList(), memos())
+    }
+
+    @Test
+    fun `a failing close does not fail a read`() {
+        freshLedger()
+        realDataSource.connection.use { conn ->
+            conn.createStatement().use { it.execute("INSERT INTO tx_ledger (memo) VALUES ('r')") }
+        }
+        val (driver, _) = driverFailingOn("close")
+
+        // Reads are retry-safe, so this is a spurious failure rather than
+        // a correctness hazard — but the rule is uniform: releasing the
+        // connection never changes what the caller observes.
+        assertEquals(1, driver.query("tx_ledger", emptyList(), emptyList(), null, null).size)
+        assertEquals(1L, driver.count("tx_ledger", emptyList()))
+    }
+
     // ---------- cleanup after a SUCCESSFUL commit ----------
 
     @Test
@@ -217,6 +324,77 @@ class PostgresTransactionCleanupTest {
         assertEquals(emptyList(), memos())
     }
 
+    // ---------- statement / result-set release ----------
+    //
+    // The same hazard one layer down from the connection. `use` closes a
+    // Statement or ResultSet bare on the success path, so a close failure
+    // after an autocommit write has already executed turns durable work
+    // into a thrown exception.
+
+    /**
+     * A driver whose `Statement`s (and their `ResultSet`s) fail to close.
+     * Everything else — including the connection — behaves normally, so
+     * only the inner release is under test.
+     */
+    private fun driverWithUnclosableStatements(): PostgresDriver {
+        val failing = object : DataSource by realDataSource {
+            override fun getConnection(): Connection {
+                val delegate = realDataSource.connection
+                return Proxy.newProxyInstance(
+                    Connection::class.java.classLoader,
+                    arrayOf(Connection::class.java),
+                    StatementCloseFailingHandler(delegate),
+                ) as Connection
+            }
+        }
+        return PostgresDriver(failing, autoDdl = false).also { it.register(LEDGER) }
+    }
+
+    @Test
+    fun `a failing statement close does not fail a committed write`() {
+        freshLedger()
+        val driver = driverWithUnclosableStatements()
+
+        driver.insert("tx_ledger", mapOf("memo" to "durable"))
+
+        assertEquals(listOf("durable"), memos(), "the INSERT ran; the close failure must not mask that")
+    }
+
+    @Test
+    fun `a failing statement close does not fail insertMany or a read`() {
+        freshLedger()
+        val driver = driverWithUnclosableStatements()
+
+        driver.insertMany("tx_ledger", listOf(mapOf("memo" to "a"), mapOf("memo" to "b")))
+        assertEquals(listOf("a", "b"), memos())
+
+        assertEquals(2, driver.query("tx_ledger", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `a failing statement close does not fail the advisory-lock methods`() {
+        freshLedger()
+        val driver = driverWithUnclosableStatements()
+
+        // Both lock primitives execute a `pg_advisory_xact_lock` query
+        // purely for its side effect and discard the result set. Closing
+        // that result set is not part of taking the lock, so a close
+        // failure must not roll back a transaction whose lock was in fact
+        // acquired. They're transaction-scoped, so they only do useful
+        // work inside withTransaction.
+        val row = driver.withTransaction { tx ->
+            val inserted = tx.insert("tx_ledger", mapOf("memo" to "locked"))
+            tx.serializeOwnerEdgeAndRead("tx_ledger", inserted["id"]!!)
+            tx.serializeRelationship(
+                RelationshipLockKey.canonical("tx_ledger", listOf("a_id", "b_id")),
+            )
+            inserted
+        }
+
+        assertTrue(row["id"] != null)
+        assertEquals(listOf("locked"), memos(), "the transaction must commit, not roll back")
+    }
+
     // ---------- connection release ----------
 
     @Test
@@ -248,6 +426,51 @@ class PostgresTransactionCleanupTest {
 
     private class Recorder {
         val calls = mutableListOf<String>()
+    }
+
+    /**
+     * Wraps every `Statement` / `PreparedStatement` a connection hands
+     * out — and every `ResultSet` those produce — so that `close()`
+     * throws while all real work still succeeds.
+     */
+    private class StatementCloseFailingHandler(private val delegate: Connection) : InvocationHandler {
+        override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
+            val result = try {
+                method.invoke(delegate, *(args ?: emptyArray()))
+            } catch (e: InvocationTargetException) {
+                throw e.targetException
+            }
+            return when (result) {
+                is java.sql.PreparedStatement -> wrap(result, java.sql.PreparedStatement::class.java)
+                is java.sql.Statement -> wrap(result, java.sql.Statement::class.java)
+                else -> result
+            }
+        }
+
+        private fun <T : Any> wrap(target: T, iface: Class<T>): Any =
+            Proxy.newProxyInstance(iface.classLoader, arrayOf(iface)) { _, method, args ->
+                if (method.name == "close") throw SQLException("injected failure: ${iface.simpleName}.close")
+                val inner = try {
+                    method.invoke(target, *(args ?: emptyArray()))
+                } catch (e: InvocationTargetException) {
+                    throw e.targetException
+                }
+                if (inner is java.sql.ResultSet) {
+                    Proxy.newProxyInstance(
+                        java.sql.ResultSet::class.java.classLoader,
+                        arrayOf(java.sql.ResultSet::class.java),
+                    ) { _, rsMethod, rsArgs ->
+                        if (rsMethod.name == "close") throw SQLException("injected failure: ResultSet.close")
+                        try {
+                            rsMethod.invoke(inner, *(rsArgs ?: emptyArray()))
+                        } catch (e: InvocationTargetException) {
+                            throw e.targetException
+                        }
+                    }
+                } else {
+                    inner
+                }
+            }
     }
 
     private class FailingHandler(

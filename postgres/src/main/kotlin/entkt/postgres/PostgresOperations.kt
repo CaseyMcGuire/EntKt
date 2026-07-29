@@ -66,11 +66,11 @@ internal class PostgresOperations(
             "INSERT INTO ${quote(table)} ($colList) VALUES ($placeholders) RETURNING *"
         }
 
-        return conn.prepareStatement(sql).use { stmt ->
+        return conn.prepareStatement(sql).useQuietClose { stmt ->
             for ((i, col) in cols.withIndex()) {
                 codec.bindColumn(stmt, i + 1, schema, col, values[col])
             }
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 check(rs.next()) { "INSERT into $table returned no row" }
                 codec.decodeRow(rs, schema.table, schema.columns)
             }
@@ -110,11 +110,11 @@ internal class PostgresOperations(
         val sql =
             "INSERT INTO ${quote(table)} $valuesClause ON CONFLICT ($conflictList) DO NOTHING RETURNING *"
 
-        return conn.prepareStatement(sql).use { stmt ->
+        return conn.prepareStatement(sql).useQuietClose { stmt ->
             for ((i, col) in cols.withIndex()) {
                 codec.bindColumn(stmt, i + 1, schema, col, values[col])
             }
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 // No assertion: a conflict legitimately produces zero rows.
                 if (rs.next()) codec.decodeRow(rs, schema.table, schema.columns) else null
             }
@@ -137,12 +137,12 @@ internal class PostgresOperations(
         val setClause = cols.joinToString(", ") { "${quote(it)} = ?" }
         val sql = "UPDATE ${quote(table)} SET $setClause WHERE ${quote(schema.idColumn)} = ? RETURNING *"
 
-        return conn.prepareStatement(sql).use { stmt ->
+        return conn.prepareStatement(sql).useQuietClose { stmt ->
             for ((i, col) in cols.withIndex()) {
                 codec.bindColumn(stmt, i + 1, schema, col, values[col])
             }
             codec.bind(stmt, cols.size + 1, schema.columnType(schema.idColumn), id)
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 if (rs.next()) codec.decodeRow(rs, schema.table, schema.columns) else null
             }
         }
@@ -151,9 +151,9 @@ internal class PostgresOperations(
     fun byId(conn: Connection, table: String, id: Any): Map<String, Any?>? {
         val schema = schemaFor(table)
         val sql = "SELECT * FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ?"
-        return conn.prepareStatement(sql).use { stmt ->
+        return conn.prepareStatement(sql).useQuietClose { stmt ->
             codec.bind(stmt, 1, schema.columnType(schema.idColumn), id)
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 if (rs.next()) codec.decodeRow(rs, schema.table, schema.columns) else null
             }
         }
@@ -230,11 +230,11 @@ internal class PostgresOperations(
         val schema = schemaFor(table)
         val prepared = buildSelectSql(table, predicates, orderBy, limit, offset)
 
-        return conn.prepareStatement(prepared.sql).use { stmt ->
+        return conn.prepareStatement(prepared.sql).useQuietClose { stmt ->
             for ((i, p) in prepared.params.withIndex()) {
                 codec.bind(stmt, i + 1, p.type, p.value)
             }
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 val out = ArrayList<Map<String, Any?>>()
                 while (rs.next()) out.add(codec.decodeRow(rs, schema.table, schema.columns))
                 out
@@ -267,11 +267,11 @@ internal class PostgresOperations(
     ): Long {
         val prepared = buildCountSql(table, predicates)
 
-        return conn.prepareStatement(prepared.sql).use { stmt ->
+        return conn.prepareStatement(prepared.sql).useQuietClose { stmt ->
             for ((i, p) in prepared.params.withIndex()) {
                 codec.bind(stmt, i + 1, p.type, p.value)
             }
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 rs.next()
                 rs.getLong(1)
             }
@@ -358,11 +358,11 @@ internal class PostgresOperations(
         val groupCol = groupBy?.let { gb -> schema.columns.first { it.name == gb } }
         val metricCol = column?.let { c -> schema.columns.first { it.name == c } }
 
-        return conn.prepareStatement(sql.toString()).use { stmt ->
+        return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             for ((i, p) in builder.params.withIndex()) {
                 codec.bind(stmt, i + 1, p.type, p.value)
             }
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 val out = ArrayList<AggregateResultRow>()
                 while (rs.next()) {
                     // The group key decodes as its column's type; an enum column
@@ -418,11 +418,11 @@ internal class PostgresOperations(
         }
         sql.append(")")
 
-        return conn.prepareStatement(sql.toString()).use { stmt ->
+        return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             for ((i, p) in builder.params.withIndex()) {
                 codec.bind(stmt, i + 1, p.type, p.value)
             }
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 rs.next()
                 rs.getBoolean(1)
             }
@@ -432,7 +432,7 @@ internal class PostgresOperations(
     fun delete(conn: Connection, table: String, id: Any): Boolean {
         val schema = schemaFor(table)
         val sql = "DELETE FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ?"
-        return conn.prepareStatement(sql).use { stmt ->
+        return conn.prepareStatement(sql).useQuietClose { stmt ->
             codec.bind(stmt, 1, schema.columnType(schema.idColumn), id)
             stmt.executeUpdate() > 0
         }
@@ -489,14 +489,14 @@ internal class PostgresOperations(
                 val colList = cols.joinToString(", ") { quote(it) }
                 val sql = "INSERT INTO ${quote(table)} ($colList) VALUES $allPlaceholders RETURNING *"
 
-                conn.prepareStatement(sql).use { stmt ->
+                conn.prepareStatement(sql).useQuietClose { stmt ->
                     var idx = 1
                     for (row in rows) {
                         for (col in cols) {
                             codec.bindColumn(stmt, idx++, schema, col, row[col])
                         }
                     }
-                    stmt.executeQuery().use { rs ->
+                    stmt.executeQuery().useQuietClose { rs ->
                         for (ir in indexedRows) {
                             check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
                             results[ir.index] = codec.decodeRow(rs, schema.table, schema.columns)
@@ -533,7 +533,7 @@ internal class PostgresOperations(
             sql.append(" WHERE ").append(whereSql)
         }
 
-        return conn.prepareStatement(sql.toString()).use { stmt ->
+        return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             var idx = 1
             for (col in cols) {
                 codec.bindColumn(stmt, idx++, schema, col, values[col])
@@ -563,7 +563,7 @@ internal class PostgresOperations(
             sql.append(" WHERE ").append(whereSql)
         }
 
-        return conn.prepareStatement(sql.toString()).use { stmt ->
+        return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             for ((i, p) in builder.params.withIndex()) {
                 codec.bind(stmt, i + 1, p.type, p.value)
             }
@@ -581,9 +581,9 @@ internal class PostgresOperations(
     fun readRowForUpdate(conn: Connection, table: String, id: Any): Map<String, Any?>? {
         val schema = schemaFor(table)
         val sql = "SELECT * FROM ${quote(table)} WHERE ${quote(schema.idColumn)} = ? FOR UPDATE"
-        return conn.prepareStatement(sql).use { stmt ->
+        return conn.prepareStatement(sql).useQuietClose { stmt ->
             codec.bind(stmt, 1, schema.idType, id)
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 if (rs.next()) codec.decodeRow(rs, schema.table, schema.columns) else null
             }
         }
@@ -611,10 +611,14 @@ internal class PostgresOperations(
         // over-serialization (false sharing), never under-serialization.
         val tableKey = table.hashCode()
         val idKey = id.hashCode()
-        conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").use { stmt ->
+        conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").useQuietClose { stmt ->
             stmt.setInt(1, tableKey)
             stmt.setInt(2, idKey)
-            stmt.executeQuery().close()
+            // The lock is taken by executing the statement; the result
+            // set is only discarded. Released through useQuietClose so a
+            // close failure can't roll back a transaction whose lock was
+            // acquired successfully.
+            stmt.executeQuery().useQuietClose { }
         }
         // Then read the row inside the held lock.
         return byId(conn, table, id)
@@ -639,29 +643,50 @@ internal class PostgresOperations(
     fun serializeRelationship(conn: Connection, key: entkt.runtime.mutation.RelationshipLockKey) {
         val junctionKey = key.junctionTable.hashCode()
         val columnsKey = key.fkColumns.hashCode()
-        conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").use { stmt ->
+        conn.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)").useQuietClose { stmt ->
             stmt.setInt(1, junctionKey)
             stmt.setInt(2, columnsKey)
-            stmt.executeQuery().close()
+            // The lock is taken by executing the statement; the result
+            // set is only discarded. Released through useQuietClose so a
+            // close failure can't roll back a transaction whose lock was
+            // acquired successfully.
+            stmt.executeQuery().useQuietClose { }
         }
     }
 
     /**
      * Run [block] inside a transaction on [conn]. If autocommit is already
      * off (we're inside a transaction), just run the block directly.
+     *
+     * Unwinds under the same rules as [PostgresDriver.withTransaction] —
+     * see [rollbackAttributingFailure] and [restoreAutoCommit] for why a
+     * failing rollback must not replace the exception that caused it, and
+     * why autocommit is restored only once the transaction has resolved.
+     * This helper does not close [conn]; the caller borrowed it and owns
+     * its release.
      */
     private fun <T> inTransaction(conn: Connection, block: () -> T): T {
         if (!conn.autoCommit) return block()
         conn.autoCommit = false
+        // The exception on its way out, if any — a `finally` can't see it,
+        // so the outer catch records it for the cleanup to attach to.
+        var propagating: Throwable? = null
+        var resolved = false
         try {
-            val result = block()
-            conn.commit()
-            return result
+            try {
+                val result = block()
+                conn.commit()
+                resolved = true
+                return result
+            } catch (e: Throwable) {
+                resolved = rollbackAttributingFailure(conn, e)
+                throw e
+            }
         } catch (e: Throwable) {
-            conn.rollback()
+            propagating = e
             throw e
         } finally {
-            conn.autoCommit = true
+            restoreAutoCommit(conn, propagating, resolved)
         }
     }
 }

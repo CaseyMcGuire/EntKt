@@ -8,16 +8,23 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
+import entkt.query.OrderField
+import entkt.query.Predicate
+import entkt.runtime.driver.Driver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntError
 import entkt.runtime.result.EntNotFoundException
+import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -185,6 +192,354 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // visibleCount materializes rows to evaluate privacy, so it's
         // bounded like any other row read rather than being an exception.
         assertEquals(0L, client.articles.query { limit(0) }.visibleCount())
+    }
+
+    // ---- eager-load bounds apply per parent, whatever the cardinality ----
+
+    @Test
+    fun `limit(0) on a to-one eager load yields no target`() {
+        val client = seededClient()
+
+        // `withAuthor { limit(0) }` used to load the author anyway: the
+        // to-one eager path passed null limit/offset on the reasoning
+        // that "limit is meaningless for a to-one". Positive limits are
+        // indeed already satisfied by one target per parent — but zero
+        // is a bound, not a no-op.
+        val articles = client.articles.query { withAuthor { limit(0) } }.allOrThrow()
+
+        assertTrue(articles.isNotEmpty(), "the root rows still load")
+        assertTrue(
+            articles.all { it.edges.author == null },
+            "limit(0) should leave the eager target unloaded",
+        )
+    }
+
+    @Test
+    fun `offset on a to-one eager load steps past the only candidate`() {
+        val client = seededClient()
+
+        val articles = client.articles.query { withAuthor { offset(1) } }.allOrThrow()
+
+        assertTrue(
+            articles.all { it.edges.author == null },
+            "offset(1) skips the single target the parent has",
+        )
+    }
+
+    @Test
+    fun `an unbounded to-one eager load still loads the target`() {
+        val client = seededClient()
+
+        // Guard against over-correcting: with no bounds set, the window
+        // is wide open and behavior is unchanged.
+        val articles = client.articles.query { withAuthor() }.allOrThrow()
+
+        assertTrue(articles.isNotEmpty())
+        assertTrue(
+            articles.all { it.edges.author != null },
+            "an unbounded eager load must be unaffected",
+        )
+        // A positive limit is already satisfied by the single target.
+        assertTrue(
+            client.articles.query { withAuthor { limit(1) } }.allOrThrow()
+                .all { it.edges.author != null },
+        )
+    }
+
+    @Test
+    fun `to-one and to-many eager loads agree on limit(0)`() {
+        val client = seededClient()
+
+        // The inconsistency this fixes: to-many already sliced per
+        // parent, so the two cardinalities answered `limit(0)`
+        // differently for no reason the caller could see.
+        val users = client.users.query { withArticles { limit(0) } }.allOrThrow()
+        assertTrue(users.isNotEmpty())
+        // `== true` rather than `orEmpty()`: this must distinguish
+        // "eagerly loaded and empty" from "never loaded" (null).
+        assertTrue(users.all { it.edges.articles?.isEmpty() == true }, "to-many honors limit(0)")
+
+        val articles = client.articles.query { withAuthor { limit(0) } }.allOrThrow()
+        assertTrue(articles.all { it.edges.author == null }, "to-one now honors it too")
+    }
+
+    // ---- an empty eager window must not touch the target at all ----
+
+    private object DeniedUsers : EntityPolicy<User, UserPolicyScope> {
+        override fun configure(scope: UserPolicyScope) = scope.run {
+            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user is hidden") }) }
+        }
+    }
+
+    /** Articles readable, their authors denied to the current viewer. */
+    private fun clientWithDeniedAuthors(): EntClient {
+        val driver = resetAndDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User("reader")) }
+            policies {
+                articles(AllowAllArticles)
+                users(DeniedUsers)
+            }
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveOrThrow()
+        }
+        return client
+    }
+
+    @Test
+    fun `limit(0) on a to-one eager load does not evaluate the excluded target`() {
+        val client = clientWithDeniedAuthors()
+
+        // Eager-target denial is strict — it throws rather than filtering.
+        // But a target excluded by the caller's own window was never
+        // requested, so denying it reports a decision about a row nobody
+        // asked to load. Gating only the final assignment left the fetch,
+        // the privacy check, and nested eager loading all still running.
+        val articles = client.articles.query { withAuthor { limit(0) } }.allOrThrow()
+
+        assertTrue(articles.isNotEmpty())
+        assertTrue(articles.all { it.edges.author == null })
+    }
+
+    @Test
+    fun `offset past a to-one eager target does not evaluate it`() {
+        val client = clientWithDeniedAuthors()
+
+        val articles = client.articles.query { withAuthor { offset(1) } }.allOrThrow()
+
+        assertTrue(articles.all { it.edges.author == null })
+    }
+
+    @Test
+    fun `an in-window denied eager target still throws`() {
+        val client = clientWithDeniedAuthors()
+
+        // The other half of the contract: skipping privacy for an empty
+        // window must not weaken the strict denial when the caller does
+        // ask for the target.
+        assertFailsWith<EntPrivacyDeniedException> {
+            client.articles.query { withAuthor() }.allOrThrow()
+        }
+        assertFailsWith<EntPrivacyDeniedException> {
+            client.articles.query { withAuthor { limit(1) } }.allOrThrow()
+        }
+    }
+
+    @Test
+    fun `an empty eager window still fires the target's EAGER_LOAD interceptors`() {
+        val driver = resetAndDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+            interceptors {
+                users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
+            }
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveOrThrow()
+        }
+        ops.clear()
+
+        client.articles.query { withAuthor { limit(0) } }.allOrThrow()
+
+        // The bound decides which rows survive, not whether the eager
+        // subquery exists. Interceptors fire on every eager subquery —
+        // `explain()` does it unconditionally, and the to-many paths fire
+        // before slicing — so skipping them here would make an
+        // interceptor's view of the query depend on the caller's limit.
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "withAuthor { limit(0) } should still fire User interceptors with EAGER_LOAD; observed: $ops",
+        )
+    }
+
+    /** Records which tables were queried, delegating everything else. */
+    private class QueryCountingDriver(private val real: Driver) : Driver by real {
+        val queriedTables = mutableListOf<String>()
+
+        override fun query(
+            table: String,
+            predicates: List<Predicate<*>>,
+            orderBy: List<OrderField<*>>,
+            limit: Int?,
+            offset: Int?,
+        ): List<Map<String, Any?>> {
+            queriedTables += table
+            return real.query(table, predicates, orderBy, limit, offset)
+        }
+    }
+
+    private fun countingClient(): Pair<EntClient, QueryCountingDriver> {
+        val counting = QueryCountingDriver(resetAndDriver())
+        val client = EntClient(counting) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveOrThrow()
+        }
+        counting.queriedTables.clear()
+        return client to counting
+    }
+
+    @Test
+    fun `an empty to-one eager window issues no query for the target`() {
+        val (client, counting) = countingClient()
+
+        client.articles.query { withAuthor { limit(0) } }.allOrThrow()
+
+        assertTrue(counting.queriedTables.contains("articles"), "the root query still runs")
+        assertFalse(
+            counting.queriedTables.contains("users"),
+            "no row could survive the window, so the target fetch is pure waste; queried: ${counting.queriedTables}",
+        )
+    }
+
+    @Test
+    fun `an empty to-many eager window issues no query for the target`() {
+        val (client, counting) = countingClient()
+
+        client.users.query { withArticles { limit(0) } }.allOrThrow()
+
+        assertTrue(counting.queriedTables.contains("users"), "the root query still runs")
+        assertFalse(
+            counting.queriedTables.contains("articles"),
+            "same waste on the to-many path; queried: ${counting.queriedTables}",
+        )
+    }
+
+    @Test
+    fun `an empty many-to-many eager window issues no query for the target`() {
+        val counting = QueryCountingDriver(resetAndDriver())
+        val client = EntClient(counting) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        // A real link matters: with no junction rows the eager block
+        // short-circuits before the target fetch, so the test would pass
+        // without exercising the window at all.
+        val post = client.posts.create { title = "p" }.saveOrThrow()
+        val tag = client.tags.create { name = "t" }.saveOrThrow()
+        client.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.saveOrThrow() }
+        counting.queriedTables.clear()
+
+        val posts = client.posts.query { withTags { limit(0) } }.allOrThrow()
+
+        assertTrue(posts.all { it.edges.tags?.isEmpty() == true })
+        assertFalse(
+            counting.queriedTables.contains("tags"),
+            "no tag could survive the window; queried: ${counting.queriedTables}",
+        )
+        // The junction query is deliberately still issued: its rows
+        // produce the target ids the EAGER_LOAD interceptor pass
+        // predicates on, and interceptors fire on every eager subquery.
+        assertTrue(
+            counting.queriedTables.contains("post_tags"),
+            "the junction query feeds the interceptor pass; queried: ${counting.queriedTables}",
+        )
+    }
+
+    @Test
+    fun `a non-empty many-to-many window still issues the target query`() {
+        val counting = QueryCountingDriver(resetAndDriver())
+        val client = EntClient(counting) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        // A real link matters: with no junction rows the eager block
+        // short-circuits before the target fetch, so the test would pass
+        // without exercising the window at all.
+        val post = client.posts.create { title = "p" }.saveOrThrow()
+        val tag = client.tags.create { name = "t" }.saveOrThrow()
+        client.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.saveOrThrow() }
+        counting.queriedTables.clear()
+
+        client.posts.query { withTags { limit(5) } }.allOrThrow()
+
+        assertTrue(counting.queriedTables.contains("tags"), "queried: ${counting.queriedTables}")
+    }
+
+    @Test
+    fun `a non-empty eager window still issues the target query`() {
+        val (client, counting) = countingClient()
+
+        // Guard against over-correcting the skip into always-skip.
+        val articles = client.articles.query { withAuthor { limit(1) } }.allOrThrow()
+
+        assertTrue(articles.all { it.edges.author != null })
+        assertTrue(counting.queriedTables.contains("users"), "queried: ${counting.queriedTables}")
+    }
+
+    @Test
+    fun `eager interceptors fire even when no relationship data exists`() {
+        val driver = resetAndDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+            interceptors {
+                users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
+                tags(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "tag-observer")
+            }
+        }
+        // An article with no author and a post with no tags: both eager
+        // subqueries have an empty structural IN. Whether an interceptor
+        // runs — and whether it can reject — must not depend on which
+        // rows happen to carry relationships.
+        // Reminder.assignee is the nullable-belongsTo fixture; Article's
+        // author is required, so it can't model "every FK is null".
+        client.reminders.create { body = "unassigned" }.saveOrThrow()
+        client.posts.create { title = "untagged" }.saveOrThrow()
+        ops.clear()
+
+        client.reminders.query { withAssignee() }.allOrThrow()
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "belongs-to with every FK null should still fire target interceptors; observed: $ops",
+        )
+
+        ops.clear()
+        client.posts.query { withTags() }.allOrThrow()
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "many-to-many with an empty junction should still fire target interceptors; observed: $ops",
+        )
+    }
+
+    @Test
+    fun `no relationship data still means no target query`() {
+        val counting = QueryCountingDriver(resetAndDriver())
+        val client = EntClient(counting) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+        }
+        client.reminders.create { body = "unassigned" }.saveOrThrow()
+        counting.queriedTables.clear()
+
+        val reminders = client.reminders.query { withAssignee() }.allOrThrow()
+
+        // Firing the interceptor is not a reason to issue a query whose
+        // IN list is empty.
+        assertTrue(reminders.all { it.edges.assignee == null })
+        assertFalse(
+            counting.queriedTables.contains("users"),
+            "an empty IN can't match anything; queried: ${counting.queriedTables}",
+        )
     }
 
     @Test

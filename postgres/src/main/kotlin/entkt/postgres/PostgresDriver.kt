@@ -69,6 +69,33 @@ class PostgresDriver(
     private val registrationLock = Any()
 
     /**
+     * Borrow a pooled connection, run [block], and release it without
+     * letting the release change what the caller observes.
+     *
+     * Deliberately not `dataSource.connection.use { ... }`: `use` calls
+     * `close()` bare on the success path, so a close failure propagates.
+     * Since every operation here runs in autocommit, the write is already
+     * durable by then — reporting failure would invite a retry wrapper to
+     * apply it a second time. See [closeAttributingFailure], and
+     * [useQuietClose] for the same rule applied to statements and result
+     * sets.
+     */
+    private inline fun <T> withConnection(block: (java.sql.Connection) -> T): T {
+        val conn = dataSource.connection
+        // A `finally` can't see the in-flight exception, so the catch
+        // records it for the release to attach to.
+        var propagating: Throwable? = null
+        try {
+            return block(conn)
+        } catch (e: Throwable) {
+            propagating = e
+            throw e
+        } finally {
+            closeAttributingFailure(conn, propagating)
+        }
+    }
+
+    /**
      * Register one schema. Delegates to [registerAll] so both paths
      * share one implementation.
      *
@@ -151,8 +178,8 @@ class PostgresDriver(
             for (schema in fresh.values) validateSchema(schema)
 
             if (autoDdl) {
-                dataSource.connection.use { conn ->
-                    conn.createStatement().use { stmt ->
+                withConnection { conn ->
+                    conn.createStatement().useQuietClose { stmt ->
                         // (4) Every table, before any cross-table constraint.
                         for (schema in fresh.values) {
                             // Required extensions (e.g. pgvector) must exist before a
@@ -295,11 +322,11 @@ class PostgresDriver(
             FROM pg_constraint c
             WHERE c.conname = ? AND c.conrelid = to_regclass(?)
             """.trimIndent(),
-        ).use { stmt ->
+        ).useQuietClose { stmt ->
             stmt.setString(1, fk.targetTable)
             stmt.setString(2, fk.constraintName)
             stmt.setString(3, fk.table)
-            stmt.executeQuery().use { rs ->
+            stmt.executeQuery().useQuietClose { rs ->
                 if (!rs.next()) return null
                 ExistingConstraint(
                     isForeignKey = rs.getBoolean("is_foreign_key"),
@@ -427,20 +454,20 @@ class PostgresDriver(
     }
 
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
-        dataSource.connection.use { ops.insert(it, table, values) }
+        withConnection { ops.insert(it, table, values) }
 
     override fun insertIgnore(
         table: String,
         values: Map<String, Any?>,
         conflictColumns: List<String>,
     ): Map<String, Any?>? =
-        dataSource.connection.use { ops.insertIgnore(it, table, values, conflictColumns) }
+        withConnection { ops.insertIgnore(it, table, values, conflictColumns) }
 
     override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? =
-        dataSource.connection.use { ops.update(it, table, id, values) }
+        withConnection { ops.update(it, table, id, values) }
 
     override fun byId(table: String, id: Any): Map<String, Any?>? =
-        dataSource.connection.use { ops.byId(it, table, id) }
+        withConnection { ops.byId(it, table, id) }
 
     override fun query(
         table: String,
@@ -449,7 +476,7 @@ class PostgresDriver(
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>> =
-        dataSource.connection.use { ops.query(it, table, predicates, orderBy, limit, offset) }
+        withConnection { ops.query(it, table, predicates, orderBy, limit, offset) }
 
     override fun explainQuery(
         table: String,
@@ -471,10 +498,10 @@ class PostgresDriver(
     }
 
     override fun count(table: String, predicates: List<Predicate<*>>): Long =
-        dataSource.connection.use { ops.count(it, table, predicates) }
+        withConnection { ops.count(it, table, predicates) }
 
     override fun exists(table: String, predicates: List<Predicate<*>>): Boolean =
-        dataSource.connection.use { ops.exists(it, table, predicates) }
+        withConnection { ops.exists(it, table, predicates) }
 
     override fun aggregate(
         table: String,
@@ -483,19 +510,19 @@ class PostgresDriver(
         predicates: List<Predicate<*>>,
         groupBy: String?,
     ): List<AggregateResultRow> =
-        dataSource.connection.use { ops.aggregate(it, table, function, column, predicates, groupBy) }
+        withConnection { ops.aggregate(it, table, function, column, predicates, groupBy) }
 
     override fun delete(table: String, id: Any): Boolean =
-        dataSource.connection.use { ops.delete(it, table, id) }
+        withConnection { ops.delete(it, table, id) }
 
     override fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>> =
-        dataSource.connection.use { ops.insertMany(it, table, values) }
+        withConnection { ops.insertMany(it, table, values) }
 
     override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int =
-        dataSource.connection.use { ops.updateMany(it, table, values, predicates) }
+        withConnection { ops.updateMany(it, table, values, predicates) }
 
     override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
-        dataSource.connection.use { ops.deleteMany(it, table, predicates) }
+        withConnection { ops.deleteMany(it, table, predicates) }
 
     // ---------- Transactions ----------
 
@@ -547,12 +574,7 @@ class PostgresDriver(
                 resolved = true
                 return result
             } catch (e: Throwable) {
-                try {
-                    conn.rollback()
-                    resolved = true
-                } catch (rollbackFailure: Throwable) {
-                    e.addSuppressed(rollbackFailure)
-                }
+                resolved = rollbackAttributingFailure(conn, e)
                 throw e
             } finally {
                 txDriver.closed = true
@@ -568,50 +590,19 @@ class PostgresDriver(
     /**
      * Release [conn], routing any failure into [propagating] as a
      * suppressed exception instead of throwing. See [withTransaction] for
-     * why cleanup must never be the thing the caller observes.
-     *
-     * **Autocommit is restored only when [transactionResolved].** Setting
-     * autocommit on a connection with a live transaction *commits* it
-     * (JDBC 4.3 §10.1.1) — so doing it unconditionally would take the one
-     * path where the transaction's fate is undecided, a `rollback()` that
-     * itself failed, and turn it into a commit. The caller would receive
-     * the business exception while the work it describes was durably
-     * persisted: the exact false-negative this method exists to prevent,
-     * inverted.
-     *
-     * When the fate is undecided, [conn] is closed without touching
-     * autocommit. The Postgres driver rolls back an open transaction on
-     * close, which is the outcome the failed `rollback()` was after. The
-     * connection then returns to the pool still in manual-commit mode;
-     * pools reset that on release (HikariCP does by default), and a
-     * connection whose rollback just failed is one a pool is likely to
-     * discard anyway. Leaving that state behind is worth avoiding a
-     * commit nobody asked for.
-     *
-     * When [propagating] is null the transaction committed and there is
-     * nothing to attach to, so a release failure is dropped. The project
-     * has no logging facility to report it through; surfacing it would
-     * mean failing a committed transaction, which is the worse outcome.
+     * why cleanup must never be the thing the caller observes, and
+     * [restoreAutoCommit] for why the restore is conditional.
      */
     private fun releaseConnection(
         conn: java.sql.Connection,
         propagating: Throwable?,
         transactionResolved: Boolean,
     ) {
-        if (transactionResolved) {
-            try {
-                conn.autoCommit = true
-            } catch (restoreFailure: Throwable) {
-                propagating?.addSuppressed(restoreFailure)
-            }
-        }
-        // Deliberately outside the block above: a failed autoCommit
-        // restore must not skip close() and leak the connection.
-        try {
-            conn.close()
-        } catch (closeFailure: Throwable) {
-            propagating?.addSuppressed(closeFailure)
-        }
+        restoreAutoCommit(conn, propagating, transactionResolved)
+        // Deliberately a separate statement, not chained to the call
+        // above: a failed autoCommit restore must not skip close() and
+        // leak the connection.
+        closeAttributingFailure(conn, propagating)
     }
 
     // ---------- Locking capabilities (transaction locking) ----------

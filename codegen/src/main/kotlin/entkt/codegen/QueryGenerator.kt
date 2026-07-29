@@ -2309,16 +2309,20 @@ internal class QueryGenerator(
             "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
             READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
         )
+        // Bounds are resolved before the fetch so a window that admits
+        // nothing skips the round trip; every row would be dropped by the
+        // `take(0)` below. The interceptor pass above still runs — it
+        // fires on every eager subquery regardless of bounds.
+        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
+        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            "val targetRows = if (perGroupLimit > 0) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
             targetClass,
         )
         body.addStatement(
             "val grouped = targetRows.groupBy { it[%S] }",
             join.targetColumn,
         )
-        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
-        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement(
             "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
             targetClass,
@@ -2356,16 +2360,35 @@ internal class QueryGenerator(
             "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
             READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
         )
+        // Bounds are resolved before the fetch so a window that admits
+        // nothing skips the round trip; every row would be dropped by the
+        // `drop().take()` below. The interceptor pass above still runs —
+        // it fires on every eager subquery regardless of bounds.
+        //
+        // A positive offset also empties the window here, which it does
+        // not on the to-many path: a `hasOne` edge requires its inverse
+        // `belongsTo` to declare `.unique()` (enforced by codegen and by
+        // the schema DSL), so the unique index guarantees at most one row
+        // per source and `drop(1)` leaves nothing.
+        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
+        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
+        body.addStatement("val targetInWindow = perGroupOffset == 0 && perGroupLimit > 0")
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            "val targetRows = if (targetInWindow) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
             targetClass,
         )
         body.addStatement(
             "val grouped = targetRows.groupBy { it[%S] }",
             join.targetColumn,
         )
+        // Bounds apply per parent, exactly as they do for the to-many
+        // edges. A hasOne group holds at most one row, so a positive
+        // limit is already satisfied — but `limit(0)` means "no rows"
+        // here as everywhere else, and `offset(1)` steps past the only
+        // candidate. Ignoring them because "a to-one can't have many"
+        // answers a different question than the caller asked.
         body.addStatement(
-            "var loadedGroups = grouped.mapValues { (_, rows) -> rows.map { %T.fromRow(it) } }",
+            "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
             targetClass,
         )
         emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
@@ -2404,18 +2427,51 @@ internal class QueryGenerator(
         val fkRequired = fk?.required ?: false
 
         body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
+        // Per-parent bounds, same contract as the to-many edges. A
+        // belongsTo yields at most one target per parent, so the window
+        // collapses to "is index 0 inside it?" — false for `limit(0)`
+        // ("no rows", as everywhere else) and for any positive offset.
+        //
+        // Applied as a row slice below — before the privacy check, which
+        // is what the to-many and hasOne paths do — so an excluded target
+        // is never privacy-evaluated or nested-eager-loaded. A denial for
+        // a row the caller explicitly asked not to load would otherwise
+        // throw out of `withAuthor { limit(0) }`.
+        //
+        // Deliberately not short-circuiting the whole branch: the
+        // EAGER_LOAD interceptor pass has to fire on every eager subquery
+        // regardless of bounds, which is what the sibling paths and
+        // `explain()` both do.
+        body.addStatement("val perParentOffset = subQuery.queryOffset ?: 0")
+        body.addStatement("val perParentLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
+        body.addStatement("val targetInWindow = perParentOffset == 0 && perParentLimit > 0")
         body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
-        body.beginControlFlow("if (fkValues.isNotEmpty())")
         emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
-        // Fetch all matching targets — limit/offset is meaningless for to-one.
+        // Fetch every matching target in one `IN (...)` pass. The
+        // caller's bounds are per parent, not over this batched result,
+        // so they're applied below rather than passed to the driver —
+        // a `limit` here would cap the total across all parents.
+        //
+        // Unconditional, including when every parent's FK is null: the
+        // interceptor pass fires on every eager subquery, so whether an
+        // interceptor runs — and whether it can `reject()` — must not
+        // depend on the relationship data that happens to be present.
+        // `explain()` fires it unconditionally too. An empty `fkValues`
+        // just means the structural IN predicate is empty.
         body.addStatement(
             "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
             READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
         )
+        // Only the fetch is conditional. Skipped when nothing could
+        // match — an empty IN, or a window that admits no row — because
+        // every row it returned would be discarded anyway.
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            "val targetRows = if (targetInWindow && fkValues.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
             targetClass,
         )
+        // An empty fetch leaves nothing to privacy-check, nothing to
+        // nested-load, and an empty `targetMap`, so the assignment below
+        // yields null on its own with no special case.
         body.addStatement(
             "var loaded = targetRows.map { %T.fromRow(it) }",
             targetClass,
@@ -2436,12 +2492,8 @@ internal class QueryGenerator(
                 edgePropName, fkPropName,
             )
         }
-        body.nextControlFlow("else")
-        body.addStatement(
-            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = null)) }",
-            edgePropName,
-        )
-        body.endControlFlow()
+        // No `else` arm: an empty fetch produces an empty `targetMap`,
+        // so the lookup above already yields null for every parent.
         body.endControlFlow()
     }
 
@@ -2467,19 +2519,37 @@ internal class QueryGenerator(
             "val junctionRows = driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), emptyList(), null, null)",
             join.junctionTable, PREDICATE, Any::class.asClassName(), join.junctionSourceColumn, OP,
         )
-        body.beginControlFlow("if (junctionRows.isNotEmpty())")
         body.addStatement(
             "val targetIds = junctionRows.map { it[%S] }.distinct()",
             join.junctionTargetColumn,
         )
         emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
         // Fetch all matching targets — limit/offset are applied per group below.
+        //
+        // The interceptor pass is unconditional, including when the
+        // junction has no rows: whether an interceptor runs — and whether
+        // it can `reject()` — must not depend on the relationship data
+        // that happens to be present, and `explain()` fires it
+        // unconditionally too. No junction rows just means the structural
+        // IN predicate is empty.
         body.addStatement(
             "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
             READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, "id", OP,
         )
+        // Bounds resolved before the fetch, as on the direct-edge paths:
+        // with `limit(0)` every row would be dropped by the `take(0)`
+        // below, so the target round trip is pure waste. Offset is not
+        // part of the condition — an M2M group can hold many rows, so
+        // skipping some still leaves others.
+        //
+        // The junction query above is deliberately still issued: its rows
+        // produce the `targetIds` that the EAGER_LOAD interceptor pass
+        // predicates on, and interceptors fire on every eager subquery
+        // regardless of bounds.
+        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
+        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement(
-            "val targetRows = driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null)",
+            "val targetRows = if (perGroupLimit > 0 && targetIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
             targetClass,
         )
         // Build a target → sources membership lookup from the junction
@@ -2524,8 +2594,6 @@ internal class QueryGenerator(
         )
         body.endControlFlow()
         body.endControlFlow()
-        body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
-        body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         // Paginate, then privacy, then loadEdges — denied targets never trigger nested reads.
         body.addStatement(
             "var loadedGroups = grouped.mapValues { (_, list) -> list.drop(perGroupOffset).take(perGroupLimit) }",
@@ -2538,12 +2606,8 @@ internal class QueryGenerator(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
             edgePropName,
         )
-        body.nextControlFlow("else")
-        body.addStatement(
-            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = emptyList())) }",
-            edgePropName,
-        )
-        body.endControlFlow()
+        // No `else` arm: with no junction rows the grouping is empty, so
+        // the `?: emptyList()` above already covers every parent.
         body.endControlFlow()
     }
 
