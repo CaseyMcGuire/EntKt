@@ -101,12 +101,15 @@ private object AuthorCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicyS
 }
 
 /**
- * End-to-end semantics of the read-only validation client
- * (`asValidationReadClient()` + `EntValidationReadClient`): validator
- * reads work across the whole read surface, run System-scoped, use the
- * transaction-scoped driver, and still pass through read interceptors.
- * The compile-time no-writes guarantee is pinned separately in
- * `codegen`'s `ValidationReadClientCompileTest`.
+ * End-to-end semantics of the validation-context view of the read-only
+ * client (`asReadClientForInternalUse` with the fixed
+ * `PrivacyBypass("validation read")` context, exposed as
+ * `EntReadClient`): validator reads work across the whole read surface —
+ * including raw terminals, which the bypass posture keeps equivalent to
+ * visible ones — run System-scoped, use the transaction-scoped driver,
+ * and still pass through read interceptors. The compile-time no-writes
+ * guarantee is pinned separately in `codegen`'s
+ * `ValidationReadClientCompileTest`.
  */
 class ValidationReadClientIntegrationTest : PostgresTestBase() {
 

@@ -54,8 +54,10 @@ private val KOTLIN_COMPARABLE = ClassName("kotlin", "Comparable")
 internal fun buildRawCount(schemaName: String, entityClass: ClassName): FunSpec {
     return FunSpec.builder("rawCount")
         .addKdoc("Count matching rows. This is a raw aggregate that does not evaluate LOAD privacy.\n" +
-            "Use [visibleCount] for a privacy-aware count.")
+            "Use [visibleCount] for a privacy-aware count. Unavailable on viewer-scoped\n" +
+            "privacy-rule readers (throws IllegalStateException).")
         .returns(LONG)
+        .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "rawCount")
         .addStatement(
             "val spec = runReadInterceptors(%T.RAW_COUNT, %T.QUERY)",
             READ_OPERATION, ENT_OPERATION,
@@ -79,6 +81,10 @@ internal fun buildRawCountOrError(schemaName: String, entityClass: ClassName): F
     val resultType = ENT_RESULT.parameterizedBy(LONG)
     return FunSpec.builder("rawCountOrError")
         .returns(resultType)
+        // Gate before the try: rule-reader misuse is a programming error
+        // and must throw loudly, not fold into Err(DriverFailure) where a
+        // rule could mistake it for "no rows".
+        .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "rawCountOrError")
         .addCode(
             CodeBlock.builder()
                 .add("return try {\n")
@@ -255,8 +261,10 @@ internal fun buildRawExists(entityClass: ClassName): FunSpec {
         .addKdoc(
             "Fast existence check; skips LOAD privacy. Returns true iff at least one\n" +
             "storage row matches the predicate. Pair with [visibleExists] for the\n" +
-            "privacy-aware variant.",
+            "privacy-aware variant. Unavailable on viewer-scoped privacy-rule readers\n" +
+            "(throws IllegalStateException).",
         )
+        .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "rawExists")
         .addStatement(
             "val spec = runReadInterceptors(%T.RAW_EXISTS, %T.QUERY)",
             READ_OPERATION, ENT_OPERATION,
@@ -283,6 +291,8 @@ internal fun buildRawExistsOrError(schemaName: String, entityClass: ClassName): 
     val resultType = ENT_RESULT.parameterizedBy(BOOLEAN)
     return FunSpec.builder("rawExistsOrError")
         .returns(resultType)
+        // Gate before the try — see rawCountOrError for why.
+        .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "rawExistsOrError")
         .addCode(
             CodeBlock.builder()
                 .add("return try {\n")
@@ -505,13 +515,17 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
     val suppress = AnnotationSpec.builder(Suppress::class)
         .addMember("%S", "UNCHECKED_CAST").build()
 
-    // The private helper every aggregate terminal delegates to.
+    // The private helper every aggregate terminal delegates to. The
+    // privacy-bypassing-read gate lives here so every raw aggregate
+    // (min/max/sum/avg/countBy and their OrError twins) is covered by
+    // one choke point.
     specs += FunSpec.builder("aggregateRows")
         .addModifiers(KModifier.PRIVATE)
         .addParameter("function", AGG_FUNCTION)
         .addParameter("column", STRING.copy(nullable = true))
         .addParameter("groupBy", STRING.copy(nullable = true))
         .returns(LIST.parameterizedBy(AGG_RESULT_ROW))
+        .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "raw aggregates")
         .addStatement(
             "val spec = runReadInterceptors(%T.RAW_AGGREGATE, %T.QUERY)",
             READ_OPERATION, ENT_OPERATION,

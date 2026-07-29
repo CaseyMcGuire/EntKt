@@ -9,12 +9,41 @@ built from the caller's context via the `@EntktInternal internal`
 marker message was generalized first; the fixed-context full-client
 clone (`withFixedPrivacyContextForInternalUse`) is removed. Pinned by
 `codegen`'s `PrivacyReadClientCompileTest` (write/transaction/
-re-scoping/configuration probes plus the opt-in gate pair) and
-`integration-tests`' `PrivacyReadClientIntegrationTest` (both denial
-surfaces, transaction-scoped rule reads, interceptors observing the
-caller's viewer). See
+re-scoping/configuration probes for all four rule contexts plus the
+opt-in gate pair) and `integration-tests`'
+`PrivacyReadClientIntegrationTest` (both denial surfaces,
+transaction-scoped rule reads, interceptors observing the caller's
+viewer, and the raw-terminal gate below). See
 [Privacy → Operation Contexts](../../06-privacy.md#operation-contexts)
 for the user-facing documentation.
+
+**Post-review tightening — raw terminals are gated on viewer-scoped
+readers.** Review found that `rawCount` / `rawExists` / the raw
+aggregates, which skip LOAD privacy by design, punched a hole in this
+RFC's viewer-scoping guarantee: a rule could allow access based on a
+row the viewer cannot see, or leak hidden aggregate values into an
+authorization outcome. The implemented resolution is a runtime gate:
+`EntReadRuntime.checkPrivacyBypassingRead(terminal)` is called at the
+head of every raw terminal (one shared choke point covers all raw
+aggregates); the full client no-ops (raw terminals are its documented
+application surface), and `EntReadClient` permits them only when its
+fixed context is `PrivacyBypass` — i.e. validation readers, where raw
+and visible coincide — throwing a loud `IllegalStateException` on
+viewer-scoped privacy-rule readers. This is the one deliberate
+deviation from the Behavior preservation section: a privacy rule that
+previously called a raw terminal now fails fast instead of silently
+bypassing LOAD privacy.
+
+Static (compile-time) exclusion was evaluated and deferred: the query
+type is shared with validation contexts and application code, the
+`query { }` block's receiver is the concrete query class (so a
+narrowed return type alone would not remove the terminals from the
+builder scope), and traversal methods (`queryAuthor()` etc.) return
+other entities' full query types — an airtight static exclusion
+therefore requires a parallel narrowed query surface across the whole
+query graph. That is recorded as an open question below; the runtime
+gate covers every path (traversals included) through one mechanism
+today.
 
 Drafted 2026-07-29 as the follow-up the implemented
 [read-only-validation-client](read-only-validation-client.md)
@@ -271,6 +300,10 @@ Non-Goals section claims and nothing more.
 
 ## Open Questions
 
+- Should the raw-terminal gate become a compile-time exclusion? That
+  requires a parallel viewer-scoped query surface (narrowed builder
+  receiver + narrowed traversal return types) across the generated
+  query graph — see the Status addendum for the analysis.
 - Should hooks also get a read-only client by default, with an escape
   hatch for side-effecting hooks? (Carried from the validation RFC.)
 - Is there a legitimate cross-viewer read inside a privacy rule that

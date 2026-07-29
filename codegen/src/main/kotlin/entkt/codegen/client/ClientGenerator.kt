@@ -292,6 +292,17 @@ internal class ClientGenerator(
                     )
                     .build()
             )
+            .addFunction(
+                // No-op on the full client: raw terminals are part of the
+                // deliberate application query surface here (documented as
+                // skipping LOAD privacy). The read client's override is
+                // where the viewer-scoped gate lives.
+                FunSpec.builder("checkPrivacyBypassingRead")
+                    .addModifiers(KModifier.OVERRIDE)
+                    .addParameter("terminal", String::class)
+                    .addCode("")
+                    .build()
+            )
             .addProperties(sorted.map { buildRepoProperty(it) })
             .addInitializerBlock(buildInitBlock(configClass, sorted))
             .addFunction(

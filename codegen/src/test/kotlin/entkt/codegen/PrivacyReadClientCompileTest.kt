@@ -46,17 +46,17 @@ class PrivacyReadClientCompileTest {
             .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
     }
 
-    private fun ruleSnippet(body: String): SourceFile = SourceFile.kotlin(
+    private fun ruleSnippet(body: String, ruleType: String = "CarLoadPrivacyRule"): SourceFile = SourceFile.kotlin(
         "PrivacyRuleSnippet.kt",
         """
         package com.example.app
 
-        import com.example.ent.CarLoadPrivacyRule
+        import com.example.ent.$ruleType
         import com.example.ent.EntReadClient
         import entkt.runtime.privacy.PrivacyDecision
         import java.util.UUID
 
-        val rule = CarLoadPrivacyRule { ctx ->
+        val rule = $ruleType { ctx ->
             $body
             PrivacyDecision.Continue
         }
@@ -72,8 +72,8 @@ class PrivacyReadClientCompileTest {
             messageOutputStream = java.io.OutputStream.nullOutputStream()
         }.compile()
 
-    private fun assertUnresolved(member: String, body: String) {
-        val result = compile(generatedSources() + ruleSnippet(body))
+    private fun assertUnresolved(member: String, body: String, ruleType: String = "CarLoadPrivacyRule") {
+        val result = compile(generatedSources() + ruleSnippet(body, ruleType))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -86,15 +86,21 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
-    fun `privacy rule can read - query terminals, byId family, index helpers, explain`() {
-        // The positive twin: the read surface the RFC promises rules. If
-        // this stops compiling, the negatives below prove nothing.
+    fun `privacy rule can read - LOAD-checked terminals, byId family, index helpers, explain`() {
+        // The positive twin: the viewer-scoped read surface the RFC
+        // promises rules. Raw terminals (rawCount / rawExists / raw
+        // aggregates) still compile here — the query type is shared with
+        // validation contexts, where they are legitimate — but they are
+        // gated at runtime via EntReadRuntime.checkPrivacyBypassingRead,
+        // pinned by PrivacyReadClientIntegrationTest. If this test stops
+        // compiling, the negatives below prove nothing.
         val result = compile(
             generatedSources() + ruleSnippet(
                 """
                 val typed: EntReadClient = ctx.client
-                ctx.client.cars.query { }.rawCount()
-                ctx.client.cars.query { }.rawExists()
+                ctx.client.cars.query { }.firstOrNull()
+                ctx.client.cars.query { }.allOrThrow()
+                ctx.client.cars.query { }.visibleExists()
                 ctx.client.users.byIdOrNull(UUID.randomUUID())
                 ctx.client.users.visibleByIdOrNull(UUID.randomUUID())
                 ctx.client.users.indexes.email("a@b.c").orNull()
@@ -107,6 +113,64 @@ class PrivacyReadClientCompileTest {
             result.exitCode,
             "Expected the read-only privacy rule snippet to compile, got:\n${result.messages}",
         )
+    }
+
+    @Test
+    fun `all four privacy contexts expose the read client`() {
+        // Type pins for every operation context — a regression returning
+        // EntClient to any of them breaks the corresponding assignment.
+        val result = compile(
+            generatedSources() + SourceFile.kotlin(
+                "AllContextsSnippet.kt",
+                """
+                package com.example.app
+
+                import com.example.ent.CarLoadPrivacyRule
+                import com.example.ent.CarCreatePrivacyRule
+                import com.example.ent.CarUpdatePrivacyRule
+                import com.example.ent.CarDeletePrivacyRule
+                import com.example.ent.EntReadClient
+                import entkt.runtime.privacy.PrivacyDecision
+
+                val load = CarLoadPrivacyRule { ctx ->
+                    val t: EntReadClient = ctx.client
+                    PrivacyDecision.Continue
+                }
+                val create = CarCreatePrivacyRule { ctx ->
+                    val t: EntReadClient = ctx.client
+                    PrivacyDecision.Continue
+                }
+                val update = CarUpdatePrivacyRule { ctx ->
+                    val t: EntReadClient = ctx.client
+                    PrivacyDecision.Continue
+                }
+                val delete = CarDeletePrivacyRule { ctx ->
+                    val t: EntReadClient = ctx.client
+                    PrivacyDecision.Continue
+                }
+                """.trimIndent(),
+            ),
+        )
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Expected all four privacy contexts to expose EntReadClient, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `create rule cannot create`() {
+        assertUnresolved("create", "ctx.client.cars.create { }", ruleType = "CarCreatePrivacyRule")
+    }
+
+    @Test
+    fun `update rule cannot update`() {
+        assertUnresolved("update", "ctx.client.cars.update(1) { }", ruleType = "CarUpdatePrivacyRule")
+    }
+
+    @Test
+    fun `delete rule cannot delete`() {
+        assertUnresolved("deleteByIdOrError", "ctx.client.cars.deleteByIdOrError(1)", ruleType = "CarDeletePrivacyRule")
     }
 
     @Test

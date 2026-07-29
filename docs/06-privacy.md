@@ -257,6 +257,14 @@ never the row. This is deliberately the opposite posture from
 validation contexts, whose reads are privacy-bypass-scoped — invariant
 checks must see all rows, authorization checks must not.
 
+The raw terminals (`rawCount` / `rawExists` and the raw aggregates)
+skip LOAD privacy by design, which would break that guarantee — so on
+viewer-scoped rule readers they throw `IllegalStateException` instead
+of silently probing rows the viewer cannot see. They remain available
+everywhere else (application queries, validation rules), where their
+privacy posture is deliberate. Use a LOAD-checked terminal inside
+privacy rules.
+
 ### LoadPrivacyContext
 
 ```kotlin

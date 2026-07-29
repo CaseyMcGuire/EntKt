@@ -290,6 +290,16 @@ Uses `SELECT COUNT(*)` without materializing rows. Does **not** evaluate
 LOAD privacy, so it may count rows the viewer cannot read. Ignores
 `orderBy`, `limit`, and `offset`.
 
+Because they skip LOAD privacy, `rawCount` / `rawExists` and the raw
+aggregates are unavailable inside **privacy rules**: rule reads are
+viewer-scoped, and a privacy-bypassing probe could leak invisible rows
+into an authorization decision. Calling one there throws
+`IllegalStateException` — use a LOAD-checked terminal (`firstOrNull`,
+`allOrThrow`, the `visible*` family) instead. Validation rules keep
+them: validation reads run under `PrivacyBypass`, where raw and
+visible coincide. See
+[Privacy → Operation Contexts](06-privacy.md#operation-contexts).
+
 ```kotlin
 val totalActiveUsers = client.users.query {
     where(User.active eq true)

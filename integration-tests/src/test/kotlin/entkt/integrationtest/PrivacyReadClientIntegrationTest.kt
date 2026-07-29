@@ -59,6 +59,16 @@ private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
     else PrivacyDecision.Deny("author row not found")
 }
 
+/**
+ * A rule that misuses a raw terminal. rawExists skips LOAD privacy, so
+ * inside a viewer-scoped rule it could leak invisible rows into the
+ * authorization decision — the runtime gate must reject it loudly.
+ */
+private val LeakyRawExistsRule = ArticleLoadPrivacyRule { ctx ->
+    if (ctx.client.users.query { }.rawExists()) PrivacyDecision.Allow
+    else PrivacyDecision.Continue
+}
+
 // ---- Policies ----
 
 private object AuthenticatedReadersUserPolicy : EntityPolicy<User, UserPolicyScope> {
@@ -88,6 +98,12 @@ private object AuthorCheckedCreateArticlePolicy : EntityPolicy<Article, ArticleP
             load(AllowAllArticleLoads)
             create(AuthorRowMustExist)
         }
+    }
+}
+
+private object LeakyRawExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+    override fun configure(scope: ArticlePolicyScope) = scope.run {
+        privacy { load(LeakyRawExistsRule) }
     }
 }
 
@@ -187,6 +203,35 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
             tx.articles.create { title = "In tx"; authorId = author.id }.save()
         }
         assertNotNull(article)
+    }
+
+    // ---- Raw terminals are gated on viewer-scoped readers ----
+
+    @Test
+    fun `raw terminals throw inside privacy rules instead of bypassing LOAD privacy`() {
+        val client = freshClient {
+            privacyContext { PrivacyContext(Viewer.Anonymous) }
+            policies {
+                users(AuthenticatedReadersUserPolicy)
+                articles(LeakyRawExistsArticlePolicy)
+            }
+        }
+        val (author, article) = seedAuthorAndArticle(client)
+
+        // The rule's rawExists hits the privacy-bypassing-read gate — a
+        // loud IllegalStateException, not a silent existence probe over
+        // rows the viewer cannot see. (Validation rules keep raw
+        // terminals: their reader's bypass context makes raw ≡ visible —
+        // pinned by ValidationReadClientIntegrationTest's rawExists rule.)
+        val ex = assertFailsWith<IllegalStateException> {
+            client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
+                c.articles.byIdOrNull(article.id)
+            }
+        }
+        assertTrue(
+            "rawExists" in (ex.message ?: "") && "privacy-rule" in (ex.message ?: ""),
+            "Expected the raw-terminal gate message naming rawExists; got: ${ex.message}",
+        )
     }
 
     // ---- Interceptor semantics ----

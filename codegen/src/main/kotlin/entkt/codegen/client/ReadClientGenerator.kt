@@ -17,6 +17,7 @@ import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 
@@ -255,6 +256,29 @@ internal class ReadClientGenerator(
                 .addModifiers(KModifier.OVERRIDE)
                 .returns(PRIVACY_CONTEXT)
                 .addStatement("return privacyContext")
+                .build()
+        )
+
+        builder.addFunction(
+            // Under bypass (validation reads) raw and visible coincide, so
+            // raw terminals stay available; under a real viewer (privacy
+            // rule reads) a privacy-bypassing read could leak invisible
+            // rows into an authorization decision — fail loudly instead.
+            FunSpec.builder("checkPrivacyBypassingRead")
+                .addModifiers(KModifier.OVERRIDE)
+                .addParameter("terminal", String::class)
+                .addCode(
+                    CodeBlock.builder()
+                        .beginControlFlow("check(privacyContext.viewer is %T.PrivacyBypass)", VIEWER)
+                        .addStatement(
+                            "terminal + %S",
+                            " bypasses LOAD privacy and is unavailable on viewer-scoped privacy-rule " +
+                                "readers; use a LOAD-checked terminal (firstOrNull / allOrThrow / the " +
+                                "visible* family) instead",
+                        )
+                        .endControlFlow()
+                        .build()
+                )
                 .build()
         )
 
