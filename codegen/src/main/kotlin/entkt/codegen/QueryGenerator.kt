@@ -279,15 +279,22 @@ internal class QueryGenerator(
     }
 
     /**
-     * Generate per-terminal explain methods plus a private helper
-     * that builds the [QueryPlan] tree. Each public method mirrors
-     * the execution shape of its corresponding terminal:
+     * Assemble the per-terminal explain methods plus the internal
+     * `buildQueryPlan` helper that builds the [QueryPlan] tree. The
+     * per-terminal builders live next to their terminals — row-shaped
+     * ones in QueryRowMembers.kt, count/exists ones in
+     * QueryAggregateMembers.kt, the eager explain block in
+     * QueryEagerMembers.kt — and this assembler stitches them
+     * together. Each explain method mirrors the execution shape of
+     * its terminal:
      *
-     * - `explain()` → models `all()`: configured limit/offset + eager edges
-     * - `explainFirst()` → models `firstOrNull()`: `min(limit ?: 1, 1)` + eager edges
-     * - `explainExists()` → models `exists()`: `min(limit ?: 1, 1)`, no eager edges
-     * - `explainVisibleCount()` → models `visibleCount()`: configured limit/offset, no eager edges
-     * - `explainRawCount()` → models `rawCount()`: COUNT query, no eager edges
+     * - `explainAllOrThrow` / `explainAllOrError` → configured limit/offset + eager edges
+     * - `explainVisibleAll` / `explainVisibleAllOrError` → overfetch cap on the privacy path + eager edges
+     * - `explainFirstOrThrow` / `explainFirstOrNull` / `explainFirstOrError` → `minOf(1, spec.limit ?: 1)` + eager edges
+     * - `explainFirstVisibleOrNull` → single row or capped scan, branching on LOAD privacy
+     * - `explainVisibleCount` → configured limit/offset, no eager edges
+     * - `explainRawExists` / `explainVisibleExists` → existence probe shapes, no eager edges
+     * - `explainRawCount` → COUNT query, no eager edges
      */
     private fun buildExplainMethods(resolved: ResolvedQuerySchema): List<FunSpec> {
         val entityClass = resolved.entityClass

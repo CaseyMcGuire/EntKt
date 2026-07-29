@@ -1683,7 +1683,9 @@ internal class UpdateGenerator(
         }
 
         private fun emitOwnerWrite() {
-            // ---- Driver write + after hooks + return load privacy. ----
+            // ---- Owner-row driver write. After-hooks, the post-write
+            // LOAD privacy wrap, and the return live in
+            // emitReturnAndCleanup, after the junction writes. ----
             // For M2M-capable schemas, the owner UPDATE is
             // conditional. An edge-only update (caller staged M2M ops,
             // hooks cleared every scalar field, no update defaults apply)
