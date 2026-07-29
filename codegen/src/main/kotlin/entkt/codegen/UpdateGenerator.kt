@@ -1227,9 +1227,9 @@ internal class UpdateGenerator(
      * phase needs, and [build] runs the phase emitters in save order.
      * Each phase appends to the shared [builder]; the phase sequence in
      * [build] IS the save pipeline, so reordering calls changes the
-     * generated semantics. [emitPendingEdgeCapture] opens a try block
-     * that [emitReturnAndCleanup] closes — KotlinPoet control flow must
-     * stay balanced across the phases.
+     * generated semantics. The `_capturedPendingEdges` try/finally
+     * bracket is emitted by [build] itself, so every phase emitter is
+     * locally balanced KotlinPoet control flow.
      */
     private inner class UpdateSaveEmitter(
         private val schemaName: String,
@@ -1251,13 +1251,38 @@ internal class UpdateGenerator(
         fun build(): FunSpec {
             emitPreflight()
             emitOwnerRowLoad()
-            emitPendingEdgeCapture()
+            // ---- Pending edge ops snapshot. Captured once
+            // after the owner-row read and before any hook fires. The
+            // underlying op log is read-only to hooks (the mutator surface
+            // is not on the hook-facing view), so a single snapshot is
+            // stable across the whole hook block. Surfaced to update hooks
+            // as `ctx.pendingEdges` and also reachable through
+            // `ctx.mutation.pendingEdges` — both routed through the same
+            // captured value so the two views are object-
+            // identity equal, not just structurally equal. ----
+            builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
+            // Wrap the post-assignment region
+            // in try/finally so every save exit path (return null on
+            // missing rows, throw EntNoChangesException, return
+            // updatedEntity, or any exception out of hooks/privacy/
+            // validation/driver writes) clears _capturedPendingEdges. A
+            // hook that stashes ctx.mutation can then no longer read
+            // pendingEdges after save returns — the adapter's getter
+            // throws the "accessed outside a save()" error consistently
+            // with its documented contract. The bracket is emitted here,
+            // not split across phase emitters, so every emitter below is
+            // locally balanced and can be read — or modified — on its own.
+            builder.beginControlFlow("try")
+            builder.addStatement("_capturedPendingEdges = pendingEdges")
             emitHooks()
             emitPatchConstruction()
             emitPrivacyAndValidation()
             emitOwnerWrite()
             emitJunctionWrites()
-            emitReturnAndCleanup()
+            emitAfterHooksAndReturn()
+            builder.nextControlFlow("finally")
+            builder.addStatement("_capturedPendingEdges = null")
+            builder.endControlFlow()
             return builder.build()
         }
 
@@ -1464,35 +1489,6 @@ internal class UpdateGenerator(
                 builder.endControlFlow()
             }
             builder.addStatement("entity = %T.fromRow(row0)", entityClass)
-        }
-
-        /**
-         * Snapshot the pending edge ops and open the try block that scopes
-         * `_capturedPendingEdges` to this save. [emitReturnAndCleanup] emits
-         * the matching finally — the two phases must stay paired.
-         */
-        private fun emitPendingEdgeCapture() {
-            // ---- Pending edge ops snapshot. Captured once
-            // after the owner-row read and before any hook fires. The
-            // underlying op log is read-only to hooks (the mutator surface
-            // is not on the hook-facing view), so a single snapshot is
-            // stable across the whole hook block. Surfaced to update hooks
-            // as `ctx.pendingEdges` and also reachable through
-            // `ctx.mutation.pendingEdges` — both routed through the same
-            // captured value so the two views are object-
-            // identity equal, not just structurally equal. ----
-            builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
-            // Wrap the post-assignment region
-            // in try/finally so every save exit path (return null on
-            // missing rows, throw EntNoChangesException, return
-            // updatedEntity, or any exception out of hooks/privacy/
-            // validation/driver writes) clears _capturedPendingEdges. A
-            // hook that stashes ctx.mutation can then no longer read
-            // pendingEdges after save returns — the adapter's getter
-            // throws the "accessed outside a save()" error consistently
-            // with its documented contract.
-            builder.beginControlFlow("try")
-            builder.addStatement("_capturedPendingEdges = pendingEdges")
         }
 
         private fun emitHooks() {
@@ -1777,11 +1773,11 @@ internal class UpdateGenerator(
         }
 
         /**
-         * After-hooks, the post-write LOAD privacy wrap, the return, and the
-         * finally that clears `_capturedPendingEdges` — closing the try
-         * opened by [emitPendingEdgeCapture].
+         * After-hooks, the post-write LOAD privacy wrap, and the return.
+         * The enclosing `_capturedPendingEdges` finally is emitted by
+         * [build], which owns that bracket.
          */
-        private fun emitReturnAndCleanup() {
+        private fun emitAfterHooksAndReturn() {
             builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
             // Post-write LOAD privacy check — wrap a denial into the
             // structured EntWriteSucceededLoadDeniedException so
@@ -1805,9 +1801,6 @@ internal class UpdateGenerator(
             )
             builder.endControlFlow()
             builder.addStatement("return updatedEntity")
-            builder.nextControlFlow("finally")
-            builder.addStatement("_capturedPendingEdges = null")
-            builder.endControlFlow()
         }
     }
 
