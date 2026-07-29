@@ -54,8 +54,8 @@ class ValidationGeneratorTest {
         assert(output.contains("data class UserCreateValidationContext")) {
             "Should generate create context\n$output"
         }
-        assert(output.contains("val client: EntValidationReadClient")) {
-            "Create context should expose the read-only validation client\n$output"
+        assert(output.contains("val client: EntReadClient")) {
+            "Create context should expose the read-only client\n$output"
         }
         assert(output.contains("val candidate: UserWriteCandidate")) {
             "Create context should have candidate\n$output"

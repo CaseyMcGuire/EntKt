@@ -2,14 +2,22 @@
 
 ## Status
 
-Implemented 2026-07-29. Validation contexts expose
-`EntValidationReadClient`; generated queries and index stages accept
-the `EntReadRuntime` contract; the no-writes guarantee is pinned by
-compile-fail tests (`codegen`'s `ValidationReadClientCompileTest`) and
-the runtime semantics by
-`integration-tests`' `ValidationReadClientIntegrationTest`. See
-[Validation → Operation Contexts](../../07-validation.md#operation-contexts)
+Implemented 2026-07-29. Validation contexts expose the read-only
+client; generated queries and index stages accept the `EntReadRuntime`
+contract; the no-writes guarantee is pinned by compile-fail tests
+(`codegen`'s `ValidationReadClientCompileTest`) and the runtime
+semantics by `integration-tests`' `ValidationReadClientIntegrationTest`.
+See [Validation → Operation Contexts](../../07-validation.md#operation-contexts)
 for the user-facing documentation.
+
+Superseded naming: the follow-up
+[read-only-privacy-client](../../implemented-features/privacy-validation/read-only-privacy-client.md)
+RFC generalized the type to serve privacy contexts too, renaming
+`EntValidationReadClient` → `EntReadClient`,
+`${Entity}ValidationReadRepo` → `${Entity}ReadRepo`, and replacing the
+public `asValidationReadClient()` with the guarded internal
+`asReadClientForInternalUse(context)`. This document's body predates
+that rename and is kept as the original design record.
 
 Revised 2026-07-28 for implementation-readiness: the original sketch's
 `EntReadClient(driver, privacyContext)` shape was too small for what
@@ -320,8 +328,8 @@ classpath inherited, and assert on the result.
 6. Add the compile-fail/compile-pass tests and update validation docs and
    examples.
 7. Keep privacy contexts using the full client unless a separate RFC
-   changes them. (That RFC now exists:
-   [read-only-privacy-client](../../possible-features/privacy-validation/read-only-privacy-client.md).)
+   changes them. (That RFC is now implemented:
+   [read-only-privacy-client](read-only-privacy-client.md).)
 
 ## Open Questions
 

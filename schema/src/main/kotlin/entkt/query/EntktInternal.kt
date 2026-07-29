@@ -1,47 +1,58 @@
 package entkt.query
 
 /**
- * Opt-in marker for entkt-internal construction sites that must not be
- * called from application code.
+ * Opt-in marker for framework-internal entkt API: surfaces that are
+ * wired by generated code and are unsupported for application use.
  *
- * The phantom-typed query scopes's [Edge-Predicate Walker] relies on
- * a small set of constructors being reachable only from generated codegen
- * output or from `:schema`'s own typed surface (`EdgeRef.has`,
- * `EdgeRef.exists`). The walker emits an unchecked cast
- * (`predicate.inner as Predicate<Target>`) inside a per-edge `when` arm,
- * with the edge-name string as the runtime witness — that cast is sound
- * only if `HasEdgeWith<E, Target>` cannot be fabricated outside the typed
- * `EdgeRef.has { ... }` call site.
+ * `internal` visibility cannot express this boundary: generated code
+ * compiles into the consuming application's module, so anything
+ * `internal` that generated code can reach, same-module application
+ * code can reach too — and conversely, `internal` declarations in
+ * `:schema` / `:runtime` would be unreachable from the generated
+ * module. `@RequiresOptIn` is the mechanism that works across that
+ * layout: generated `.kt` files declare
+ * `@file:OptIn(EntktInternal::class)` at the file header, while
+ * application code touching a marked declaration gets a hard compile
+ * error until it opts in explicitly — a deliberate, greppable act, not
+ * a security boundary.
  *
- * `internal` visibility cannot express this constraint across modules:
- * the generated query/entity code lives in the consuming application
- * module, not in `:schema`, so an `internal` constructor on `EdgeRef`
- * would be unreachable from generated code; and `internal` would also
- * stay visible to user application code in that same generated module.
+ * Guarded surfaces and the invariant each protects:
  *
- * `@RequiresOptIn` propagates across module boundaries via
- * `Retention.BINARY`. Generated `.kt` files declare
- * `@file:OptIn(EntktInternal::class)` at the file header; application
- * code attempting to construct an annotated type raises a hard compile
- * error.
+ * - **Edge-predicate constructors** ([Predicate.HasEdge],
+ *   [Predicate.HasEdgeWith], [Predicate.HasM2MEdgeFrom], [EdgeRef]):
+ *   the edge-predicate walker emits an unchecked cast
+ *   (`predicate.inner as Predicate<Target>`) keyed on the edge-name
+ *   string, sound only when these types are built by the typed
+ *   `EdgeRef.has { ... }` / `EdgeRef.exists()` surface. (Predicate.Leaf,
+ *   Column subclasses, and OrderField constructors stay public: their
+ *   residual hole surfaces at driver-render time and does not gate
+ *   walker-cast soundness.)
+ * - **The raw interceptor registry** (`EntInterceptorsConfig` access via
+ *   `entityInterceptors`, `addEntity`): registration is scope-key-keyed
+ *   with an unchecked cast, so untyped access could bind a
+ *   wrong-entity interceptor to another repo's scope.
+ * - **Query traversal seeders** (`snapshotForTraversal`,
+ *   `seedEdgeTraversal`, `setDeferredSourceStep`): spoofed traversal
+ *   context would corrupt the interceptor QueryContext view and the
+ *   traversal bridge.
+ * - **The read-runtime contract** (`EntReadRuntime`, per-entity
+ *   `${Entity}ReadSurface`): the seam between generated queries and
+ *   their host clients — implementing or invoking it directly is
+ *   framework wiring, not application API.
+ * - **Read-client construction** (`asReadClientForInternalUse`,
+ *   `EntReadClient` / `${Entity}ReadRepo` constructors): mints
+ *   fixed-context read clients, including privacy-bypass-scoped ones;
+ *   generated evaluators are the supported construction path.
  *
- * Constructors carrying `@EntktInternal`:
- *  - [Predicate.HasEdge]
- *  - [Predicate.HasEdgeWith]
- *  - [Predicate.HasM2MEdgeFrom]
- *  - [EdgeRef]
- *
- * Predicate.Leaf, Column (and subclasses), and OrderField primary
- * constructors stay `public`: their residual hole
- * (wrong-column-name-within-the-right-entity) surfaces at driver-render
- * time and does not gate walker-cast soundness.
+ * If extension code genuinely needs one of these, add
+ * `@OptIn(EntktInternal::class)` (or `@file:OptIn`) and own the
+ * invariants above.
  */
 @RequiresOptIn(
-    message = "Internal entkt construction site; direct fabrication can bypass " +
-        "edge-walker soundness. Construct edge predicates only via the generated " +
-        "EdgeRef.has(...) / EdgeRef.exists() surface. If extension code requires " +
-        "direct construction, add @file:OptIn(EntktInternal::class) at the file " +
-        "header and own the soundness invariants.",
+    message = "Framework-internal entkt API: this surface is wired by generated code " +
+        "and is unsupported for application use. Its soundness invariants are " +
+        "documented on entkt.query.EntktInternal. If extension code must use it, " +
+        "add @OptIn(EntktInternal::class) (or @file:OptIn) and own those invariants.",
     level = RequiresOptIn.Level.ERROR,
 )
 @Retention(AnnotationRetention.BINARY)

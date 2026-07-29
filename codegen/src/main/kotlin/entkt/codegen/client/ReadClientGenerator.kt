@@ -21,26 +21,39 @@ private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInter
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 
 /**
- * Emits `EntValidationReadClient` plus one `${Entity}ValidationReadRepo`
- * per schema: the read-only, System-scoped client generated validation
- * contexts expose to validators.
+ * Emits `EntReadClient` plus one `${Entity}ReadRepo` per schema: the
+ * read-only client generated validation and privacy contexts expose to
+ * rule code.
  *
- * Each validation read repo exposes the read surface only — the byId
- * family, the full `query { }` DSL (all terminals come with the query
- * class), the explainById* variants, and the generated index helpers.
- * The write surface (create / update / save / delete* / edge mutators /
- * `withTransaction` / config setters) simply does not exist on these
- * types, so a validator calling it is a compile error — the read-only
- * guarantee is structural, not conventional.
+ * The client's privacy posture is instance state, not part of the type
+ * — exactly like `EntClient` itself. The `asReadClientForInternalUse`
+ * adapter fixes whatever context its call site passes:
+ * `PrivacyBypass("validation read")` from validation evaluators (so
+ * invariant checks are not blocked by LOAD privacy), the caller's own
+ * context from privacy evaluators (so authorization reads see only
+ * what the viewer sees).
+ *
+ * Each read repo exposes the read surface only — the byId family, the
+ * full `query { }` DSL (all terminals come with the query class), the
+ * explainById* variants, and the generated index helpers. The write
+ * surface (create / update / save / delete* / edge mutators /
+ * `withTransaction` / re-scoping / config setters) simply does not
+ * exist on these types, so rule code calling it is a compile error —
+ * the read-only guarantee is structural, not conventional.
  *
  * Queries and index stages constructed through these repos receive the
- * `EntValidationReadClient` itself as their [EntReadRuntime], never an
- * `EntClient` — no validator-reachable object holds a full client, even
+ * `EntReadClient` itself as their [EntReadRuntime], never an
+ * `EntClient` — no rule-reachable object holds a full client, even
  * privately. LOAD-privacy behavior is delegated to the host client's
  * repos (typed as the narrow read surfaces), so `hasLoadPrivacy` /
  * `evaluateLoadPrivacy` behave identically through either client.
+ *
+ * Construction is framework-internal: the constructors here carry
+ * `@EntktInternal internal`, and the only supported minting path is
+ * the generated evaluators' adapter calls. That is a deliberate-use
+ * gate, not a security boundary — see the marker's KDoc.
  */
-internal class ValidationReadClientGenerator(
+internal class ReadClientGenerator(
     private val packageName: String,
 ) {
 
@@ -49,14 +62,15 @@ internal class ValidationReadClientGenerator(
         schemaNames: Map<EntSchema, String>,
     ): FileSpec {
         // Same accessor/parameter order as EntClient's repo properties and
-        // asValidationReadClient()'s positional host arguments.
+        // asReadClientForInternalUse()'s positional host arguments.
         val sorted = topologicalSort(schemas)
 
-        val fileBuilder = FileSpec.builder(packageName, "EntValidationReadClient")
+        val fileBuilder = FileSpec.builder(packageName, "EntReadClient")
             // The client implements the `@EntktInternal`-guarded
-            // EntReadRuntime and the repos implement the guarded read
-            // surfaces; the file-level OptIn consumes the requirement
-            // here without propagating it to validator code.
+            // EntReadRuntime, the repos implement the guarded read
+            // surfaces, and the constructors are themselves guarded; the
+            // file-level OptIn consumes the requirement here without
+            // propagating it to rule code.
             .addAnnotation(
                 AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
                     .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
@@ -65,14 +79,14 @@ internal class ValidationReadClientGenerator(
             )
 
         for (input in schemas) {
-            fileBuilder.addType(buildValidationReadRepo(input, schemaNames))
+            fileBuilder.addType(buildReadRepo(input, schemaNames))
         }
         fileBuilder.addType(buildClient(sorted))
 
         return fileBuilder.build()
     }
 
-    private fun buildValidationReadRepo(
+    private fun buildReadRepo(
         input: SchemaInput,
         schemaNames: Map<EntSchema, String>,
     ): TypeSpec {
@@ -83,18 +97,19 @@ internal class ValidationReadClientGenerator(
         val readSurfaceClass = ClassName(packageName, "${schemaName}ReadSurface")
         val idType = input.schema.id().type.toTypeName()
 
-        return TypeSpec.classBuilder("${schemaName}ValidationReadRepo")
+        return TypeSpec.classBuilder("${schemaName}ReadRepo")
             .addKdoc(
-                "Read-only `%L` repository handed to validators via\n" +
-                    "`EntValidationReadClient`. Reads behave exactly like the full repo's\n" +
-                    "(same query machinery, read interceptors, LOAD-privacy delegation);\n" +
-                    "the write surface does not exist here, so validator writes fail to\n" +
-                    "compile.",
+                "Read-only `%L` repository handed to validators and privacy rules via\n" +
+                    "`EntReadClient`. Reads behave exactly like the full repo's (same query\n" +
+                    "machinery, read interceptors, LOAD-privacy delegation) under the\n" +
+                    "client's fixed context; the write surface does not exist here, so\n" +
+                    "rule writes fail to compile.",
                 schemaName,
             )
             .addSuperinterface(readSurfaceClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
+                    .addAnnotation(ENTKT_INTERNAL)
                     .addModifiers(KModifier.INTERNAL)
                     .addParameter("driver", DRIVER)
                     .addParameter("host", readSurfaceClass)
@@ -110,17 +125,17 @@ internal class ValidationReadClientGenerator(
                 // The host client's repo, narrowed to the read surface: the
                 // LOAD-privacy delegation target. The narrow type keeps the
                 // no-writes guarantee structural — no member anywhere in the
-                // validation read client's object graph is typed EntClient
-                // or ${schemaName}Repo.
+                // read client's object graph is typed EntClient or
+                // ${schemaName}Repo.
                 PropertySpec.builder("host", readSurfaceClass)
                     .addModifiers(KModifier.PRIVATE)
                     .initializer("host")
                     .build()
             )
             .addProperty(
-                // Set by EntValidationReadClient's init block (the client
-                // and its repos reference each other, mirroring the
-                // EntClient/repo wiring).
+                // Set by EntReadClient's init block (the client and its
+                // repos reference each other, mirroring the EntClient/repo
+                // wiring).
                 PropertySpec.builder("runtime", ClassName(packageName, "EntReadRuntime"))
                     .addModifiers(KModifier.INTERNAL, KModifier.LATEINIT)
                     .mutable(true)
@@ -159,21 +174,22 @@ internal class ValidationReadClientGenerator(
     }
 
     private fun buildClient(sorted: List<SchemaInput>): TypeSpec {
-        val builder = TypeSpec.classBuilder("EntValidationReadClient")
+        val builder = TypeSpec.classBuilder("EntReadClient")
             .addKdoc(
-                "Read-only, System-scoped client exposed in generated validation\n" +
-                    "contexts. Constructed by `EntClient.asValidationReadClient()` from the\n" +
+                "Read-only client exposed in generated validation and privacy contexts.\n" +
+                    "Constructed by `EntClient.asReadClientForInternalUse(context)` from the\n" +
                     "operation's current client: same driver instance (a\n" +
                     "transaction-scoped client yields a transaction-scoped read client),\n" +
-                    "same read interceptors, same per-repo LOAD-privacy behavior, and a\n" +
-                    "fixed `Viewer.PrivacyBypass(\"validation read\")` context so invariant\n" +
-                    "checks are not blocked by LOAD privacy. Write-side state\n" +
-                    "(`transactionRequirement`, hooks, validation config) is deliberately\n" +
-                    "absent — its absence is part of the no-writes guarantee.",
+                    "same read interceptors, same per-repo LOAD-privacy behavior, and the\n" +
+                    "passed context fixed for this instance's lifetime — bypass-scoped for\n" +
+                    "validation reads, caller-scoped for privacy rule reads. Write-side\n" +
+                    "state (`transactionRequirement`, hooks, validation config) is\n" +
+                    "deliberately absent — its absence is part of the no-writes guarantee.",
             )
             .addSuperinterface(ClassName(packageName, "EntReadRuntime"))
 
         val ctor = FunSpec.constructorBuilder()
+            .addAnnotation(ENTKT_INTERNAL)
             .addModifiers(KModifier.INTERNAL)
             .addParameter("driver", DRIVER)
             .addParameter("privacyContext", PRIVACY_CONTEXT)
@@ -216,10 +232,10 @@ internal class ValidationReadClientGenerator(
 
         for (input in sorted) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
-            val repoClass = ClassName(packageName, "${input.name}ValidationReadRepo")
+            val repoClass = ClassName(packageName, "${input.name}ReadRepo")
             builder.addProperty(
                 // Covariant override of EntReadRuntime's read-surface
-                // accessor, narrowed to the validator-facing repo.
+                // accessor, narrowed to the rule-facing repo.
                 PropertySpec.builder(propName, repoClass)
                     .addModifiers(KModifier.OVERRIDE)
                     .initializer("%T(driver, %LHost)", repoClass, propName)

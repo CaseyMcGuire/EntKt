@@ -84,7 +84,10 @@ class ClientGeneratorTest {
         assert(decls == 2) {
             "Expected the client + config to both declare defaultRelationshipLocking = OwnerOnly; found $decls\n$output"
         }
-        // Config copy + the four context-propagation sites thread it through.
+        // Config copy + the clone-propagation sites thread it through.
+        // (The former fixed-context clone is gone — read-side evaluators
+        // use asReadClientForInternalUse, which carries no write-side
+        // defaults by design.)
         assert(output.contains("defaultRelationshipLocking = cfg.defaultRelationshipLocking")) {
             "Config copy must thread defaultRelationshipLocking\n$output"
         }
@@ -93,9 +96,6 @@ class ClientGeneratorTest {
         }
         assert(output.contains("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
             "withPrivacyContext must propagate defaultRelationshipLocking\n$output"
-        }
-        assert(output.contains("fixed.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
-            "fixed-context must propagate defaultRelationshipLocking\n$output"
         }
     }
 
@@ -295,12 +295,22 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient has internal withFixedPrivacyContextForInternalUse method`() {
+    fun `EntClient has the guarded internal read-client adapter and no fixed-context clone`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("internal fun withFixedPrivacyContextForInternalUse(context: PrivacyContext): EntClient")) {
-            "Should have withFixedPrivacyContextForInternalUse method\n$output"
+        assert(output.contains("internal fun asReadClientForInternalUse(context: PrivacyContext): EntReadClient")) {
+            "Should have the asReadClientForInternalUse adapter\n$output"
+        }
+        // The opt-in marker is the gate that keeps same-module application
+        // code from minting fixed-context readers.
+        assert(output.contains("@EntktInternal\n  internal fun asReadClientForInternalUse")) {
+            "Adapter should carry the @EntktInternal guard\n$output"
+        }
+        // The full-client fixed-context clone is dead once evaluators use
+        // the adapter — removed, not kept around.
+        assert(!output.contains("withFixedPrivacyContextForInternalUse")) {
+            "The fixed-context full-client clone should be removed\n$output"
         }
     }
 

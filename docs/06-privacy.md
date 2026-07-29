@@ -235,14 +235,34 @@ Write privacy is enforced before the database call. If denied, a
 
 ## Operation Contexts
 
-Each operation's rules receive a typed context:
+Each operation's rules receive a typed context. The `client` is a
+read-only `EntReadClient`, fixed to the **caller's** privacy context —
+rules can query the graph to decide (ownership walks,
+parent-visibility checks), and those reads see exactly what the viewer
+being authorized can see. Writes, transactions, re-scoping
+(`withPrivacyContext` / `bypassPrivacy_DANGEROUS`), and configuration
+do not exist on the type, so a rule that tries to mutate does not
+compile:
+
+```kotlin
+// Generated evaluator wires the viewer-scoped read-only client
+val privacyClient = client.asReadClientForInternalUse(privacy)
+val ctx = UserLoadPrivacyContext(privacy, privacyClient, entity)
+```
+
+Rule reads evaluate LOAD privacy like any other read: a rule loading a
+row its viewer cannot see gets the denial (`byIdOrNull` throws
+`PrivacyDeniedException`; `visibleByIdOrNull` collapses it to `null`),
+never the row. This is deliberately the opposite posture from
+validation contexts, whose reads are privacy-bypass-scoped — invariant
+checks must see all rows, authorization checks must not.
 
 ### LoadPrivacyContext
 
 ```kotlin
 data class UserLoadPrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntClient,
+    val client: EntReadClient,
     val entity: User,       // the entity being loaded
 )
 ```
@@ -252,7 +272,7 @@ data class UserLoadPrivacyContext(
 ```kotlin
 data class UserCreatePrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntClient,
+    val client: EntReadClient,
     val candidate: UserWriteCandidate,  // the values being written
 )
 ```
@@ -262,7 +282,7 @@ data class UserCreatePrivacyContext(
 ```kotlin
 data class UserUpdatePrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntClient,
+    val client: EntReadClient,
     val before: User,                   // current state of the entity (loaded by save())
     val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
@@ -309,7 +329,7 @@ and `FieldPatch.Unset` as "not in this update".
 ```kotlin
 data class UserDeletePrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntClient,
+    val client: EntReadClient,
     val entity: User,                   // the entity being deleted
     val candidate: UserWriteCandidate,  // snapshot of its writable fields
 )

@@ -31,6 +31,7 @@ Open or speculative RFCs remain in the
 ## Privacy And Validation
 
 - [Read-Only Validation Client](privacy-validation/read-only-validation-client.md)
+- [Read-Only Privacy Rule Client](privacy-validation/read-only-privacy-client.md)
 
 ## Model Behavior
 

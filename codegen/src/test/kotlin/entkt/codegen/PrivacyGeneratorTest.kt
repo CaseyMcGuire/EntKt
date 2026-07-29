@@ -47,11 +47,16 @@ class PrivacyGeneratorTest {
         assert(output.contains("val privacy: PrivacyContext")) {
             "Load context should have privacy\n$output"
         }
-        assert(output.contains("val client: EntClient")) {
-            "Load context should have client\n$output"
+        assert(output.contains("val client: EntReadClient")) {
+            "Load context should expose the read-only client\n$output"
         }
         assert(output.contains("val entity: User")) {
             "Load context should have entity\n$output"
+        }
+        // Hook contexts are the deliberate exception: hooks may have side
+        // effects, so they keep the full client.
+        assert(output.contains("val client: EntClient")) {
+            "Hook contexts should keep the full EntClient\n$output"
         }
     }
 

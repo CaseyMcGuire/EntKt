@@ -2,10 +2,22 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Implemented 2026-07-29, Option A (one generalized `EntReadClient`,
+posture as instance state). Privacy contexts expose `EntReadClient`
+built from the caller's context via the `@EntktInternal internal`
+`asReadClientForInternalUse(context)` adapter; the `EntktInternal`
+marker message was generalized first; the fixed-context full-client
+clone (`withFixedPrivacyContextForInternalUse`) is removed. Pinned by
+`codegen`'s `PrivacyReadClientCompileTest` (write/transaction/
+re-scoping/configuration probes plus the opt-in gate pair) and
+`integration-tests`' `PrivacyReadClientIntegrationTest` (both denial
+surfaces, transaction-scoped rule reads, interceptors observing the
+caller's viewer). See
+[Privacy → Operation Contexts](../../06-privacy.md#operation-contexts)
+for the user-facing documentation.
 
 Drafted 2026-07-29 as the follow-up the implemented
-[read-only-validation-client](../../implemented-features/privacy-validation/read-only-validation-client.md)
+[read-only-validation-client](read-only-validation-client.md)
 RFC deferred in its migration step 7 ("Keep privacy contexts using the
 full client unless a separate RFC changes them"). That RFC built the
 machinery this one reuses: the `@EntktInternal` `EntReadRuntime`

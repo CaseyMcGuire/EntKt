@@ -54,7 +54,7 @@ class ValidationReadClientCompileTest {
         package com.example.app
 
         import com.example.ent.CarCreateValidationRule
-        import com.example.ent.EntValidationReadClient
+        import com.example.ent.EntReadClient
         import entkt.runtime.validation.ValidationDecision
         import java.util.UUID
 
@@ -100,7 +100,7 @@ class ValidationReadClientCompileTest {
         val result = compile(
             generatedSources() + validatorSnippet(
                 """
-                val typed: EntValidationReadClient = ctx.client
+                val typed: EntReadClient = ctx.client
                 ctx.client.cars.query { }.rawCount()
                 ctx.client.cars.query { }.rawExists()
                 ctx.client.users.byIdOrNull(UUID.randomUUID())

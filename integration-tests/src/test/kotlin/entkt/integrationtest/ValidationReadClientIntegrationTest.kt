@@ -7,7 +7,7 @@ import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
-import entkt.integrationtest.ent.EntValidationReadClient
+import entkt.integrationtest.ent.EntReadClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserCreateValidationRule
 import entkt.integrationtest.ent.UserLoadPrivacyRule
@@ -31,12 +31,12 @@ import kotlin.test.assertTrue
 
 /**
  * The canonical read-validator: uniqueness via the query DSL. The
- * explicit `EntValidationReadClient` type pins the context's client
- * property — this file stops compiling if contexts regress to the full
+ * explicit `EntReadClient` type pins the context's client property —
+ * this file stops compiling if contexts regress to the full
  * `EntClient`.
  */
 private val UniqueEmailViaQuery = UserCreateValidationRule { ctx ->
-    val client: EntValidationReadClient = ctx.client
+    val client: EntReadClient = ctx.client
     val taken = client.users.query { where(User.email.eq(ctx.candidate.email)) }.rawExists()
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
     else ValidationDecision.Valid

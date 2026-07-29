@@ -563,7 +563,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
                 .addStatement("val rules = privacyConfig.loadRules")
-                .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
+                .addStatement("val privacyClient = client.asReadClientForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, entity)", loadCtxClass)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
@@ -591,7 +591,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
                 .addStatement("val rules = privacyConfig.createRules")
-                .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
+                .addStatement("val privacyClient = client.asReadClientForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
@@ -627,7 +627,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
-                .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
+                .addStatement("val privacyClient = client.asReadClientForInternalUse(privacy)")
                 .addStatement(
                     "val ctx = %T(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
                     updateCtxClass,
@@ -671,7 +671,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
                 .addStatement("val rules = privacyConfig.deleteRules")
-                .addStatement("val privacyClient = client.withFixedPrivacyContextForInternalUse(privacy)")
+                .addStatement("val privacyClient = client.asReadClientForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, entity, candidate)", deleteCtxClass)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
@@ -919,7 +919,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.createRules")
                 .addStatement("if (rules.isEmpty()) return")
-                .addStatement("val validationClient = client.asValidationReadClient()")
+                .addStatement("val validationClient = client.asReadClientForInternalUse(%T(%T.PrivacyBypass(%S)))", PRIVACY_CONTEXT, VIEWER, "validation read")
                 .addStatement("val ctx = %T(validationClient, candidate)", createCtxClass)
                 .addStatement("val violations = rules.mapNotNull { rule ->")
                 .addStatement("  when (val decision = rule.validate(ctx)) {")
@@ -952,7 +952,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return")
-                .addStatement("val validationClient = client.asValidationReadClient()")
+                .addStatement("val validationClient = client.asReadClientForInternalUse(%T(%T.PrivacyBypass(%S)))", PRIVACY_CONTEXT, VIEWER, "validation read")
                 .addStatement(
                     "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
                     updateCtxClass,
@@ -992,7 +992,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.deleteRules")
                 .addStatement("if (rules.isEmpty()) return")
-                .addStatement("val validationClient = client.asValidationReadClient()")
+                .addStatement("val validationClient = client.asReadClientForInternalUse(%T(%T.PrivacyBypass(%S)))", PRIVACY_CONTEXT, VIEWER, "validation read")
                 .addStatement("val ctx = %T(validationClient, entity, candidate)", deleteCtxClass)
                 .addStatement("val violations = rules.mapNotNull { rule ->")
                 .addStatement("  when (val decision = rule.validate(ctx)) {")

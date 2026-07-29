@@ -14,7 +14,6 @@ Implemented RFCs have moved to the
 - [Checked Aggregate Privacy](privacy-validation/checked-aggregate-privacy.md)
 - [Edge-Derived LOAD Privacy](privacy-validation/edge-derived-load-privacy.md)
 - [Preflighted Bulk Operations](privacy-validation/preflighted-bulk-operations.md)
-- [Read-Only Privacy Rule Client](privacy-validation/read-only-privacy-client.md)
 
 ## Mutation APIs
 

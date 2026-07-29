@@ -24,13 +24,13 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
  * `@EntktInternal` interceptor registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
  * `evaluateLoadPrivacy(...)`, the only repo members query terminals
- * call). Both `EntClient` and `EntValidationReadClient` implement it,
- * so generated query and index-stage constructors can accept the
- * contract instead of the full client.
+ * call). Both `EntClient` and `EntReadClient` implement it, so
+ * generated query and index-stage constructors can accept the contract
+ * instead of the full client.
  *
  * Everything here is `public` + `@EntktInternal`, not Kotlin-`internal`:
  * the public query constructors cannot expose an internal parameter
- * type, the public `EntClient` / `EntValidationReadClient` cannot
+ * type, the public `EntClient` / `EntReadClient` cannot
  * expose an internal supertype, and `internal` would be no guard anyway
  * — generated code compiles into the consuming application's module,
  * where `internal` stays visible to exactly the application code the
@@ -71,8 +71,8 @@ internal class ReadRuntimeGenerator(
             .addAnnotation(ENTKT_INTERNAL)
             .addKdoc(
                 "Narrow per-entity read surface of `%LRepo`: the only repo members\n" +
-                    "generated query terminals call. `%LValidationReadRepo` implements it\n" +
-                    "by delegating to the host repo, so LOAD-privacy behavior is identical\n" +
+                    "generated query terminals call. `%LReadRepo` implements it by\n" +
+                    "delegating to the host repo, so LOAD-privacy behavior is identical\n" +
                     "through either client.",
                 input.name, input.name,
             )
@@ -98,9 +98,9 @@ internal class ReadRuntimeGenerator(
             .addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
                     "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
-                    "`EntValidationReadClient`; a query constructed with either behaves\n" +
-                    "identically on the read path (privacy context, LOAD privacy, read\n" +
-                    "interceptors, visible-family overfetch cap).",
+                    "`EntReadClient`; a query constructed with either behaves identically\n" +
+                    "on the read path (privacy context, LOAD privacy, read interceptors,\n" +
+                    "visible-family overfetch cap).",
             )
             .addFunction(
                 FunSpec.builder("currentPrivacyContext")

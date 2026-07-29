@@ -49,7 +49,12 @@ internal class PrivacyGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val entityClass = ClassName(packageName, schemaName)
+        // Hook contexts keep the full client (hooks may legitimately have
+        // side effects); privacy rule contexts get the read-only client —
+        // rule writes are compile errors, and rule reads run viewer-scoped
+        // under the caller's context fixed by the generated evaluators.
         val clientClass = ClassName(packageName, "EntClient")
+        val readClientClass = ClassName(packageName, "EntReadClient")
         val configClass = ClassName(packageName, "${schemaName}PrivacyConfig")
         val privacyScopeClass = ClassName(packageName, "${schemaName}PrivacyScope")
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
@@ -103,15 +108,15 @@ internal class PrivacyGenerator(
         )
 
         // Operation context data classes
-        fileBuilder.addType(buildLoadContext(schemaName, entityClass, clientClass, loadCtx))
-        fileBuilder.addType(buildCreateContext(schemaName, clientClass, candidateClass, createCtx))
+        fileBuilder.addType(buildLoadContext(schemaName, entityClass, readClientClass, loadCtx))
+        fileBuilder.addType(buildCreateContext(schemaName, readClientClass, candidateClass, createCtx))
         fileBuilder.addType(
             buildUpdateContext(
-                schemaName, entityClass, clientClass, candidateClass, patchClass,
+                schemaName, entityClass, readClientClass, candidateClass, patchClass,
                 edgeChangesViewClass, updateCtx,
             ),
         )
-        fileBuilder.addType(buildDeleteContext(schemaName, entityClass, clientClass, candidateClass, deleteCtx))
+        fileBuilder.addType(buildDeleteContext(schemaName, entityClass, readClientClass, candidateClass, deleteCtx))
 
         // WriteCandidate
         fileBuilder.addType(buildWriteCandidate(schemaName, candidateClass, fields, edgeFks))

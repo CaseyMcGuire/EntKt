@@ -133,7 +133,7 @@ class PhantomScopeCompileFailTest {
                 return Predicate.HasEdgeWith<User, Post>("posts", inner)
             }
         """.trimIndent())
-        assertCompileError(result, "Internal entkt construction site")
+        assertCompileError(result, "Framework-internal entkt API")
     }
 
     @Test
@@ -141,7 +141,7 @@ class PhantomScopeCompileFailTest {
         val result = compile("""
             fun bad(): Predicate<User> = Predicate.HasEdge<User>("posts")
         """.trimIndent())
-        assertCompileError(result, "Internal entkt construction site")
+        assertCompileError(result, "Framework-internal entkt API")
     }
 
     @Test
@@ -150,7 +150,7 @@ class PhantomScopeCompileFailTest {
             fun bad(): Predicate<Post> =
                 Predicate.HasM2MEdgeFrom<Post, User>("users", "posts", null)
         """.trimIndent())
-        assertCompileError(result, "Internal entkt construction site")
+        assertCompileError(result, "Framework-internal entkt API")
     }
 
     @Test
@@ -166,7 +166,7 @@ class PhantomScopeCompileFailTest {
             fun bad(): EdgeRef<User, Post, PostQuery> =
                 EdgeRef("posts") { PostQuery() }
         """.trimIndent())
-        assertCompileError(result, "Internal entkt construction site")
+        assertCompileError(result, "Framework-internal entkt API")
     }
 
     // ---- EdgeRef.has block narrowing ----
@@ -265,7 +265,7 @@ class PhantomScopeCompileFailTest {
                 c.addEntity("posts", "x")
             }
         """.trimIndent())
-        assertCompileError(result, "Internal entkt construction site")
+        assertCompileError(result, "Framework-internal entkt API")
     }
 
     @Test
@@ -288,7 +288,7 @@ class PhantomScopeCompileFailTest {
                 c.raw = 42
             }
         """.trimIndent())
-        assertCompileError(result, "Internal entkt construction site")
+        assertCompileError(result, "Framework-internal entkt API")
     }
 
     @Test

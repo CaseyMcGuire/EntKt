@@ -144,7 +144,7 @@ There is no `load` validation — validation guards writes, not reads.
 ## Operation Contexts
 
 Each operation's rules receive a typed context. Contexts include a
-read-only `EntValidationReadClient` so validators can query the
+read-only `EntReadClient` so validators can query the
 database (e.g. uniqueness checks, referential integrity) — and only
 query it. The write surface does not exist on that type, so a
 validator that tries to create, update, or delete does not compile.
@@ -153,7 +153,7 @@ validator that tries to create, update, or delete does not compile.
 
 ```kotlin
 data class PostCreateValidationContext(
-    val client: EntValidationReadClient,
+    val client: EntReadClient,
     val candidate: PostWriteCandidate,
 )
 ```
@@ -162,7 +162,7 @@ data class PostCreateValidationContext(
 
 ```kotlin
 data class PostUpdateValidationContext(
-    val client: EntValidationReadClient,
+    val client: EntReadClient,
     val before: Post,                    // current state of the entity (loaded by save())
     val requestedPatch: PostUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: PostUpdatePatch, // after framework update defaults
@@ -196,7 +196,7 @@ and `FieldPatch.Unset` as "not in this update".
 
 ```kotlin
 data class PostDeleteValidationContext(
-    val client: EntValidationReadClient,
+    val client: EntReadClient,
     val entity: Post,
     val candidate: PostWriteCandidate,
 )
@@ -207,17 +207,23 @@ enforced by the time validators run — validators are viewer-agnostic.
 If a rule cares about who is performing the operation, it belongs in
 privacy, not validation.
 
-The `client` in validation contexts is the **read-only validation
-client**: generated evaluators call `asValidationReadClient()` on the
-operation's current client, which fixes a
-`Viewer.PrivacyBypass("validation read")` context so validator reads
-bypass LOAD privacy:
+The `client` in validation contexts is the **read-only client with a
+fixed bypass context**: generated evaluators call the framework-internal
+`asReadClientForInternalUse(...)` adapter on the operation's current
+client, passing a `Viewer.PrivacyBypass("validation read")` context so
+validator reads bypass LOAD privacy:
 
 ```kotlin
 // Generated evaluator wires the read-only, System-scoped view
-val validationClient = client.asValidationReadClient()
+val validationClient =
+    client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))
 val ctx = PostCreateValidationContext(validationClient, candidate)
 ```
+
+The same `EntReadClient` type serves privacy rule contexts — there the
+adapter fixes the **caller's** context instead, so authorization reads
+are viewer-scoped. Posture is instance state, not part of the type;
+see [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
 This is important twice over: if the caller-scoped client were passed
 instead, validators that query (e.g. uniqueness checks) would be
@@ -256,7 +262,8 @@ collected into a list and thrown together:
 fun evaluateCreateValidation(client: EntClient, candidate: WriteCandidate) {
     val rules = validationConfig.createRules
     if (rules.isEmpty()) return
-    val validationClient = client.asValidationReadClient()
+    val validationClient =
+        client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))
     val ctx = CreateValidationContext(validationClient, candidate)
     val violations = rules.mapNotNull { rule ->
         when (val decision = rule.validate(ctx)) {
@@ -356,7 +363,7 @@ Since validation contexts receive a System-scoped client, validators
 can query the database without being blocked by LOAD privacy.
 
 **Validators are read-only — by type, not by convention.** The context
-exposes `EntValidationReadClient`, whose per-entity repos carry the
+exposes `EntReadClient`, whose per-entity repos carry the
 byId family, the full `query { }` DSL with every terminal (`all` /
 `first` / `visible` families, counts, exists, aggregates, `explain*`),
 and the generated index helpers — and nothing else. `create`,
@@ -467,17 +474,17 @@ separate `{Entity}Validation.kt` file alongside the existing
 | `{Entity}DeleteValidationContext` | Context for delete validators |
 | `{Entity}ValidationConfig` | Internal storage for validation rule lists |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
-| `{Entity}ValidationReadRepo` | Read-only repo exposed to validators (byId family, `query { }`, index helpers) |
+| `{Entity}ReadRepo` | Read-only repo exposed to validators (byId family, `query { }`, index helpers) |
 
 The `{Entity}PolicyScope` gains a `validation { }` method alongside
 the existing `privacy { }` method. The `{Entity}WriteCandidate` is
 shared between privacy and validation contexts.
 
 Two schema-set-level files support the read-only contexts:
-`EntValidationReadClient.kt` (the client validation contexts expose,
+`EntReadClient.kt` (the client validation contexts expose,
 plus the per-entity validation read repos) and `EntReadRuntime.kt`
 (the `@EntktInternal` read-runtime contract that both `EntClient` and
-`EntValidationReadClient` implement, which is what lets generated
+`EntReadClient` implement, which is what lets generated
 queries and index helpers run identically under either). See the
 implemented RFC
 [read-only-validation-client](implemented-features/privacy-validation/read-only-validation-client.md)

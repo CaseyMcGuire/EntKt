@@ -687,18 +687,37 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `evaluateCreateValidation hands rules the read-only validation client`() {
+    fun `evaluateCreateValidation hands rules the read-only client with the bypass context`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // The adapter bakes in the fixed PrivacyBypass("validation read")
-        // context; the evaluator no longer builds a full-client clone.
-        assert(output.contains("val validationClient = client.asValidationReadClient()")) {
-            "Validation evaluator should build the read-only validation client\n$output"
+        // The evaluator fixes the PrivacyBypass("validation read") context
+        // at the adapter call site; no full-client clone is built. Matched
+        // on the call expression alone — KotlinPoet wraps the assignment
+        // across lines.
+        assert(
+            output.contains(
+                "client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass(\"validation read\")))"
+            )
+        ) {
+            "Validation evaluator should build the read-only client with the bypass context\n$output"
         }
-        assert(!output.contains("withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.PrivacyBypass(\"validation read\")))")) {
-            "Validation evaluators must not clone a full write-capable client\n$output"
+        assert(!output.contains("withFixedPrivacyContextForInternalUse")) {
+            "Evaluators must not clone a full write-capable client\n$output"
+        }
+    }
+
+    @Test
+    fun `privacy evaluators hand rules the read-only client with the caller context`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        // Privacy rule reads are viewer-scoped: the evaluator passes the
+        // caller's context, not a bypass, into the read-client adapter.
+        assert(output.contains("val privacyClient = client.asReadClientForInternalUse(privacy)")) {
+            "Privacy evaluators should build the read-only client from the caller's context\n$output"
         }
     }
 }
