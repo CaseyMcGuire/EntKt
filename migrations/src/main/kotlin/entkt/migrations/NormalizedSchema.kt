@@ -65,9 +65,9 @@ data class NormalizedSchema(
                     .filter { it.references != null }
                     .map { col ->
                         NormalizedForeignKey(
-                            column = col.name,
+                            columns = listOf(col.name),
                             targetTable = col.references!!.table,
-                            targetColumn = col.references!!.column,
+                            targetColumns = listOf(col.references!!.column),
                             columnNullable = col.nullable,
                             onDelete = col.references!!.onDelete,
                         )
@@ -304,14 +304,61 @@ fun formatSqlDefault(fieldType: FieldType, value: Any?): String? {
 /** Single-quote a SQL string literal, doubling embedded single quotes. */
 private fun sqlStringLiteral(value: String): String = "'" + value.replace("'", "''") + "'"
 
+/**
+ * SQL referential action as PostgreSQL's catalog reports it. Wider
+ * than the DSL's [OnDelete]: hand-written migrations can use actions
+ * (`NO ACTION`, `SET DEFAULT`) the DSL never declares, and the differ
+ * must see them exactly rather than collapse them into an inferred
+ * near-equivalent.
+ */
+enum class FkAction { NO_ACTION, RESTRICT, CASCADE, SET_NULL, SET_DEFAULT }
+
 data class NormalizedForeignKey(
-    val column: String,
+    /**
+     * Referencing columns in constraint order. Every FK entkt itself
+     * declares is single-column; introspection reports composite FKs
+     * faithfully so the differ flags them instead of exploding them
+     * into invented single-column pairings.
+     */
+    val columns: List<String>,
     val targetTable: String,
-    val targetColumn: String,
-    /** Whether the FK column is nullable — drives ON DELETE behavior when [onDelete] is null. */
+    /** Referenced columns, ordinally paired with [columns]. */
+    val targetColumns: List<String>,
+    /**
+     * Whether the first FK column is nullable — drives ON DELETE
+     * inference for entity-derived FKs when [onDelete] is null.
+     */
     val columnNullable: Boolean,
     /** Actual constraint name from introspection, or null for entity-derived FKs. */
     val constraintName: String? = null,
-    /** Explicit ON DELETE action, or null to infer from [columnNullable]. */
+    /** Explicit DSL ON DELETE action, or null to infer from [columnNullable]. */
     val onDelete: OnDelete? = null,
-)
+    /**
+     * Exact catalog-reported ON DELETE action for introspected FKs, or
+     * null for entity-derived ones. The differ prefers this over
+     * [onDelete]/inference, so an action with no DSL form
+     * (`SET DEFAULT`) can never compare equal to an inferred one.
+     */
+    val onDeleteAction: FkAction? = null,
+    /** ON UPDATE action; entkt only ever creates the default. */
+    val onUpdate: FkAction = FkAction.NO_ACTION,
+    /** MATCH type (`SIMPLE` / `FULL` / `PARTIAL`); entkt only creates SIMPLE. */
+    val matchType: String = "SIMPLE",
+    val deferrable: Boolean = false,
+    val initiallyDeferred: Boolean = false,
+    /** False for `NOT VALID` constraints — existing rows were never checked. */
+    val validated: Boolean = true,
+) {
+    init {
+        require(columns.isNotEmpty()) { "foreign key must reference at least one column" }
+        require(columns.size == targetColumns.size) {
+            "foreign key columns ($columns) and target columns ($targetColumns) must pair ordinally"
+        }
+    }
+
+    /** The single referencing column of an entkt-declared FK. */
+    val column: String get() = columns.single()
+
+    /** The single referenced column of an entkt-declared FK. */
+    val targetColumn: String get() = targetColumns.single()
+}

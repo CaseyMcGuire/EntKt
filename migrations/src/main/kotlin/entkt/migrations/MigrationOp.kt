@@ -62,7 +62,7 @@ sealed interface MigrationOp {
 
     data class AlterPrimaryKey(val table: String, val columnName: String, val added: Boolean) : MigrationOp
 
-    data class DropForeignKey(val table: String, val column: String, val constraintName: String?) : MigrationOp
+    data class DropForeignKey(val table: String, val columns: List<String>, val constraintName: String?) : MigrationOp
 }
 
 /**

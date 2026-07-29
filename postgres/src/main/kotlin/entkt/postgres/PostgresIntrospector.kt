@@ -1,6 +1,7 @@
 package entkt.postgres
 
 import entkt.migrations.DatabaseIntrospector
+import entkt.migrations.FkAction
 import entkt.migrations.NormalizedColumn
 import entkt.migrations.NormalizedForeignKey
 import entkt.migrations.NormalizedIndex
@@ -285,6 +286,22 @@ class PostgresIntrospector(
         return map.ifEmpty { null }
     }
 
+    /**
+     * Read this table's FOREIGN KEY constraints from `pg_constraint`
+     * rather than the `information_schema` views. The views join by
+     * constraint *name*, which PostgreSQL only makes unique per table —
+     * a same-named constraint on another table in the schema
+     * contaminated results — and `constraint_column_usage` has no
+     * ordinal column, so a composite FK exploded into an m×n cross
+     * product of invented single-column FKs. `conkey`/`confkey` carry
+     * the exact ordinal pairing and `conrelid` anchors the lookup to
+     * this table.
+     *
+     * The full attribute set (exact ON DELETE including `SET DEFAULT`,
+     * ON UPDATE, MATCH, deferrability, `NOT VALID`) is read so the
+     * differ can hold hand-written migrations to the same standard the
+     * auto-DDL guard applies (`PostgresDriver.ensureForeignKey`).
+     */
     private fun introspectForeignKeys(
         conn: java.sql.Connection,
         tableName: String,
@@ -294,50 +311,75 @@ class PostgresIntrospector(
         val fks = mutableListOf<NormalizedForeignKey>()
         conn.prepareStatement(
             """
-            SELECT tc.constraint_name,
-                   kcu.column_name,
-                   ccu.table_name AS target_table,
-                   ccu.column_name AS target_column,
-                   rc.delete_rule
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name
-              AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage ccu
-              ON tc.constraint_name = ccu.constraint_name
-              AND tc.table_schema = ccu.table_schema
-            JOIN information_schema.referential_constraints rc
-              ON tc.constraint_name = rc.constraint_name
-              AND tc.table_schema = rc.constraint_schema
-            WHERE tc.table_schema = 'public'
-              AND tc.table_name = ?
-              AND tc.constraint_type = 'FOREIGN KEY'
+            SELECT c.conname AS constraint_name,
+                   c.confrelid::regclass::text AS target_table,
+                   c.confdeltype AS delete_code,
+                   c.confupdtype AS update_code,
+                   c.confmatchtype AS match_code,
+                   c.condeferrable AS is_deferrable,
+                   c.condeferred AS is_deferred,
+                   c.convalidated AS is_validated,
+                   (SELECT array_agg(a.attname ORDER BY k.ord)
+                      FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS columns,
+                   (SELECT array_agg(a.attname ORDER BY k.ord)
+                      FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
+                      JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum) AS target_columns
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE n.nspname = 'public'
+              AND t.relname = ?
+              AND c.contype = 'f'
+            ORDER BY c.conname
             """.trimIndent(),
         ).use { stmt ->
             stmt.setString(1, tableName)
             stmt.executeQuery().use { rs ->
                 while (rs.next()) {
-                    val colName = rs.getString("column_name")
-                    val deleteRule = rs.getString("delete_rule")
-                    val onDelete = when (deleteRule) {
-                        "CASCADE" -> entkt.schema.OnDelete.CASCADE
-                        "SET NULL" -> entkt.schema.OnDelete.SET_NULL
-                        "RESTRICT", "NO ACTION" -> entkt.schema.OnDelete.RESTRICT
-                        else -> null
-                    }
+                    val fkColumns = (rs.getArray("columns").array as Array<*>).map { it.toString() }
+                    val targetColumns = (rs.getArray("target_columns").array as Array<*>).map { it.toString() }
                     fks.add(
                         NormalizedForeignKey(
-                            column = colName,
+                            columns = fkColumns,
                             targetTable = rs.getString("target_table"),
-                            targetColumn = rs.getString("target_column"),
-                            columnNullable = nullabilityByName[colName] ?: false,
+                            targetColumns = targetColumns,
+                            columnNullable = nullabilityByName[fkColumns.first()] ?: false,
                             constraintName = rs.getString("constraint_name"),
-                            onDelete = onDelete,
+                            // The exact catalog action goes in
+                            // onDeleteAction — never lossily mapped
+                            // into the DSL's OnDelete, where SET
+                            // DEFAULT has no representation and NO
+                            // ACTION would collapse into RESTRICT.
+                            onDeleteAction = fkActionFor(rs.getString("delete_code")),
+                            onUpdate = fkActionFor(rs.getString("update_code")),
+                            matchType = matchTypeFor(rs.getString("match_code")),
+                            deferrable = rs.getBoolean("is_deferrable"),
+                            initiallyDeferred = rs.getBoolean("is_deferred"),
+                            validated = rs.getBoolean("is_validated"),
                         ),
                     )
                 }
             }
         }
         return fks
+    }
+
+    /** Map a `pg_constraint` action code to its [FkAction]. */
+    private fun fkActionFor(code: String?): FkAction = when (code?.firstOrNull()) {
+        'a' -> FkAction.NO_ACTION
+        'r' -> FkAction.RESTRICT
+        'c' -> FkAction.CASCADE
+        'n' -> FkAction.SET_NULL
+        'd' -> FkAction.SET_DEFAULT
+        else -> error("Unknown pg_constraint referential action code '$code'")
+    }
+
+    /** Map a `pg_constraint.confmatchtype` code to its SQL MATCH keyword. */
+    private fun matchTypeFor(code: String?): String = when (code?.firstOrNull()) {
+        's' -> "SIMPLE"
+        'f' -> "FULL"
+        'p' -> "PARTIAL"
+        else -> error("Unknown pg_constraint match type code '$code'")
     }
 }

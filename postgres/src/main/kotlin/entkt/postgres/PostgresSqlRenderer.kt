@@ -50,7 +50,8 @@ class PostgresSqlRenderer(
             "DROP INDEX ${quote(truncateIdentifier(op.name ?: deriveIndexName(op.table, op.columns, op.unique, op.where)))}",
         )
         is MigrationOp.DropForeignKey -> listOf(
-            "ALTER TABLE ${quote(op.table)} DROP CONSTRAINT ${quote(truncateIdentifier(op.constraintName ?: "fk_${op.table}_${op.column}"))}",
+            "ALTER TABLE ${quote(op.table)} DROP CONSTRAINT " +
+                quote(truncateIdentifier(op.constraintName ?: "fk_${op.table}_${op.columns.joinToString("_")}")),
         )
     }
 
@@ -106,11 +107,13 @@ class PostgresSqlRenderer(
         table: String,
         fk: entkt.migrations.NormalizedForeignKey,
     ): List<String> {
-        val constraintName = truncateIdentifier("fk_${table}_${fk.column}")
+        val constraintName = truncateIdentifier("fk_${table}_${fk.columns.joinToString("_")}")
         val onDelete = fk.onDelete.toSql(fk.columnNullable)
+        val cols = fk.columns.joinToString(", ") { quote(it) }
+        val targetCols = fk.targetColumns.joinToString(", ") { quote(it) }
         return listOf(
             "ALTER TABLE ${quote(table)} ADD CONSTRAINT ${quote(constraintName)} " +
-                "FOREIGN KEY (${quote(fk.column)}) REFERENCES ${quote(fk.targetTable)} (${quote(fk.targetColumn)}) " +
+                "FOREIGN KEY ($cols) REFERENCES ${quote(fk.targetTable)} ($targetCols) " +
                 "ON DELETE $onDelete",
         )
     }

@@ -39,7 +39,7 @@ class SchemaDifferTest {
         targetTable: String,
         targetColumn: String = "id",
         columnNullable: Boolean = false,
-    ) = NormalizedForeignKey(column, targetTable, targetColumn, columnNullable)
+    ) = NormalizedForeignKey(listOf(column), targetTable, listOf(targetColumn), columnNullable)
 
     private fun schema(vararg tables: NormalizedTable) =
         NormalizedSchema(tables.associateBy { it.name })
@@ -587,7 +587,7 @@ class SchemaDifferTest {
         // Should produce a manual DropForeignKey + auto AddForeignKey
         val dropFks = result.manual.filterIsInstance<MigrationOp.DropForeignKey>()
         assertEquals(1, dropFks.size)
-        assertEquals("author_id", dropFks[0].column)
+        assertEquals(listOf("author_id"), dropFks[0].columns)
         val addFks = result.ops.filterIsInstance<MigrationOp.AddForeignKey>()
         assertEquals(1, addFks.size)
         assertFalse(addFks[0].fk.columnNullable)
@@ -738,10 +738,10 @@ class SchemaDifferTest {
 
     @Test
     fun `describeOp for DropForeignKey with constraintName`() {
-        val withName = describeOp(MigrationOp.DropForeignKey("posts", "author_id", constraintName = "fk_posts_author"))
+        val withName = describeOp(MigrationOp.DropForeignKey("posts", listOf("author_id"), constraintName = "fk_posts_author"))
         assertTrue(withName.contains("[fk_posts_author]"), "Should include constraintName in brackets")
 
-        val withoutName = describeOp(MigrationOp.DropForeignKey("posts", "author_id", constraintName = null))
+        val withoutName = describeOp(MigrationOp.DropForeignKey("posts", listOf("author_id"), constraintName = null))
         assertFalse(withoutName.contains("["), "Should not have brackets when constraintName is null")
     }
 

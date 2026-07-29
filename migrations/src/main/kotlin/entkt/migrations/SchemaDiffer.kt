@@ -229,40 +229,78 @@ class SchemaDiffer {
         autoOps: MutableList<MigrationOp>,
         manualOps: MutableList<MigrationOp>,
     ) {
-        // Match FKs by (column, targetTable, targetColumn)
-        data class FkKey(val column: String, val targetTable: String, val targetColumn: String)
+        // Match FKs by their ordinally-paired endpoints. A composite FK
+        // keys on its full column lists, so it can never silently match
+        // a single-column FK that shares its first column.
+        data class FkKey(val columns: List<String>, val targetTable: String, val targetColumns: List<String>)
 
-        val currentByKey = current.foreignKeys.associateBy { FkKey(it.column, it.targetTable, it.targetColumn) }
-        val desiredByKey = desired.foreignKeys.associateBy { FkKey(it.column, it.targetTable, it.targetColumn) }
+        val currentByKey = current.foreignKeys.associateBy { FkKey(it.columns, it.targetTable, it.targetColumns) }
+        val desiredByKey = desired.foreignKeys.associateBy { FkKey(it.columns, it.targetTable, it.targetColumns) }
 
         for ((key, fk) in desiredByKey) {
             val currentFk = currentByKey[key]
             if (currentFk == null) {
                 autoOps.add(MigrationOp.AddForeignKey(table, fk))
-            } else if (effectiveOnDelete(fk) != effectiveOnDelete(currentFk)) {
-                // ON DELETE behavior changed — drop old constraint (manual)
-                // and add the new one (auto).
-                manualOps.add(MigrationOp.DropForeignKey(table, currentFk.column, currentFk.constraintName))
+            } else if (!fkSemanticsMatch(fk, currentFk)) {
+                // Constraint semantics changed — drop old constraint
+                // (manual) and add the new one (auto).
+                manualOps.add(MigrationOp.DropForeignKey(table, currentFk.columns, currentFk.constraintName))
                 autoOps.add(MigrationOp.AddForeignKey(table, fk))
             }
         }
 
         for ((key, fk) in currentByKey) {
             if (key !in desiredByKey) {
-                manualOps.add(MigrationOp.DropForeignKey(table, fk.column, fk.constraintName))
+                manualOps.add(MigrationOp.DropForeignKey(table, fk.columns, fk.constraintName))
             }
         }
     }
 
     /**
-     * Resolve the effective ON DELETE action for a FK.
-     * When [NormalizedForeignKey.onDelete] is null, the default is
-     * inferred from column nullability (SET_NULL for nullable, RESTRICT
-     * for required). This ensures a null `onDelete` compares equal to
-     * its inferred equivalent from introspection.
+     * Whether the desired and current FK agree on every semantic
+     * attribute beyond their (already matched) endpoints. ON DELETE and
+     * ON UPDATE compare with RESTRICT ≡ NO ACTION — for the immediate,
+     * non-deferred constraints entkt creates, the two behave
+     * identically. Everything else the catalog reports — MATCH type,
+     * deferrability, and `NOT VALID` — must equal what entkt would
+     * create: the auto-DDL guard ([entkt.postgres] `ensureForeignKey`)
+     * rejects those same twins as constraints "enforcing rules nobody
+     * declared", and the migration validator must not be blinder than
+     * the driver.
      */
-    private fun effectiveOnDelete(fk: NormalizedForeignKey): OnDelete =
-        fk.onDelete ?: if (fk.columnNullable) OnDelete.SET_NULL else OnDelete.RESTRICT
+    private fun fkSemanticsMatch(desired: NormalizedForeignKey, current: NormalizedForeignKey): Boolean =
+        actionsEquivalent(effectiveDeleteAction(desired), effectiveDeleteAction(current)) &&
+            actionsEquivalent(desired.onUpdate, current.onUpdate) &&
+            desired.matchType == current.matchType &&
+            desired.deferrable == current.deferrable &&
+            desired.initiallyDeferred == current.initiallyDeferred &&
+            desired.validated == current.validated
+
+    private fun actionsEquivalent(a: FkAction, b: FkAction): Boolean =
+        a == b || (a in RESTRICT_LIKE && b in RESTRICT_LIKE)
+
+    /**
+     * Resolve the effective ON DELETE action for a FK. Introspected
+     * FKs carry the catalog-exact [NormalizedForeignKey.onDeleteAction]
+     * (which can be `SET DEFAULT` — no DSL form — and must never
+     * collapse into an inferred equivalent). Entity-derived FKs use the
+     * declared [NormalizedForeignKey.onDelete], inferring from column
+     * nullability when absent (SET_NULL for nullable, RESTRICT for
+     * required) so a null `onDelete` compares equal to its inferred
+     * equivalent.
+     */
+    private fun effectiveDeleteAction(fk: NormalizedForeignKey): FkAction =
+        fk.onDeleteAction ?: when (fk.onDelete) {
+            OnDelete.CASCADE -> FkAction.CASCADE
+            OnDelete.SET_NULL -> FkAction.SET_NULL
+            OnDelete.RESTRICT -> FkAction.RESTRICT
+            null -> if (fk.columnNullable) FkAction.SET_NULL else FkAction.RESTRICT
+        }
+
+    private companion object {
+        /** Immediate RESTRICT and NO ACTION are behaviorally identical. */
+        val RESTRICT_LIKE = setOf(FkAction.RESTRICT, FkAction.NO_ACTION)
+    }
 
     /**
      * Sort ops in dependency order:

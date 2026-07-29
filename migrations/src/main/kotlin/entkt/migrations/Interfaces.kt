@@ -93,7 +93,9 @@ fun describeOp(op: MigrationOp): String = when (op) {
         val w = if (op.index.where != null) " WHERE ${op.index.where}" else ""
         "AddIndex: ${op.table} ($cols)$u$w"
     }
-    is MigrationOp.AddForeignKey -> "AddForeignKey: ${op.table}.${op.fk.column} -> ${op.fk.targetTable}.${op.fk.targetColumn}"
+    is MigrationOp.AddForeignKey ->
+        "AddForeignKey: ${op.table}.${op.fk.columns.joinToString(", ")} -> " +
+            "${op.fk.targetTable}.${op.fk.targetColumns.joinToString(", ")}"
     is MigrationOp.SetColumnDefault -> "SetColumnDefault: ${op.table}.${op.columnName} DEFAULT ${op.default}"
     is MigrationOp.DropColumnDefault -> "DropColumnDefault: ${op.table}.${op.columnName}"
     is MigrationOp.DropTable -> "DropTable: ${op.tableName}"
@@ -113,7 +115,7 @@ fun describeOp(op: MigrationOp): String = when (op) {
     }
     is MigrationOp.DropForeignKey -> {
         val name = if (op.constraintName != null) " [${op.constraintName}]" else ""
-        "DropForeignKey: ${op.table}.${op.column}$name"
+        "DropForeignKey: ${op.table}.${op.columns.joinToString(", ")}$name"
     }
 }
 
