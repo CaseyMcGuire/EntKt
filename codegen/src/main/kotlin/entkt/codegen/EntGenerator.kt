@@ -2,7 +2,9 @@ package entkt.codegen
 
 import com.squareup.kotlinpoet.FileSpec
 import entkt.codegen.client.ClientGenerator
+import entkt.codegen.client.ReadRuntimeGenerator
 import entkt.codegen.client.RepoGenerator
+import entkt.codegen.client.ValidationReadClientGenerator
 import entkt.codegen.entity.EntityGenerator
 import entkt.codegen.entity.PrivacyGenerator
 import entkt.codegen.entity.ViewerGenerator
@@ -632,6 +634,8 @@ class EntGenerator(
     private val indexHelperGenerator = IndexHelperGenerator(packageName)
     private val privacyGenerator = PrivacyGenerator(packageName)
     private val validationGenerator = ValidationGenerator(packageName)
+    private val readRuntimeGenerator = ReadRuntimeGenerator(packageName)
+    private val validationReadClientGenerator = ValidationReadClientGenerator(packageName)
     private val clientGenerator = ClientGenerator(packageName)
 
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
@@ -687,7 +691,11 @@ class EntGenerator(
             }
         }
         val viewerFiles = if (viewer) viewerGenerator.generate(schemas, schemaNames) else emptyList()
-        return perSchema + clientGenerator.generate(schemas) + viewerFiles
+        return perSchema +
+            readRuntimeGenerator.generate(schemas) +
+            validationReadClientGenerator.generate(schemas, schemaNames) +
+            clientGenerator.generate(schemas) +
+            viewerFiles
     }
 
     fun writeTo(outputDir: Path, schemas: List<SchemaInput>) {

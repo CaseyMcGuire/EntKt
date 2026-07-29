@@ -110,6 +110,11 @@ internal class ClientGenerator(
         val privacyProviderType = LambdaTypeName.get(returnType = PRIVACY_CONTEXT)
 
         val typeSpec = TypeSpec.classBuilder("EntClient")
+            // EntClient satisfies the generated read-runtime contract, so
+            // repos construct queries exactly as before the contract
+            // existed — the query constructors' `EntReadRuntime?` accepts
+            // the full client by upcast.
+            .addSuperinterface(ClassName(packageName, "EntReadRuntime"))
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -188,12 +193,17 @@ internal class ClientGenerator(
                 // visibleAllOrError would return Err(OverfetchCapExceeded)
                 // for every query — and visibleAll would silently
                 // truncate to zero rows). Reject at the setter.
+                //
+                // `override` (public getter) satisfies EntReadRuntime;
+                // the setter stays `internal` so the mutation surface is
+                // unchanged — only generated init/clone code writes it.
                 PropertySpec.builder("visibleOverfetchLimit", INT)
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.OVERRIDE)
                     .mutable(true)
                     .initializer("100")
                     .setter(
                         FunSpec.setterBuilder()
+                            .addModifiers(KModifier.INTERNAL)
                             .addParameter("value", INT)
                             .addStatement(
                                 "require(value > 0) { %S + value }",
@@ -220,14 +230,23 @@ internal class ClientGenerator(
                 // so a wrong-entity QueryInterceptor would silently
                 // bind to a different repo's scope. Generated code
                 // reaches it via @file:OptIn at the top of this file.
+                //
+                // `override` (public getter) satisfies EntReadRuntime —
+                // the marker, kept on the override, is what still gates
+                // application access; the setter stays `internal`.
                 PropertySpec.builder(
                     "entityInterceptors",
                     ClassName("entkt.runtime.query", "EntInterceptorsConfig"),
                 )
                     .addAnnotation(ClassName("entkt.query", "EntktInternal"))
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.OVERRIDE)
                     .mutable(true)
                     .initializer("%T()", ClassName("entkt.runtime.query", "EntInterceptorsConfig"))
+                    .setter(
+                        FunSpec.setterBuilder()
+                            .addModifiers(KModifier.INTERNAL)
+                            .build()
+                    )
                     .build()
             )
             .addFunction(
@@ -277,11 +296,12 @@ internal class ClientGenerator(
             .addInitializerBlock(buildInitBlock(configClass, sorted))
             .addFunction(
                 FunSpec.builder("currentPrivacyContext")
-                    .addModifiers(KModifier.INTERNAL)
+                    .addModifiers(KModifier.OVERRIDE)
                     .returns(PRIVACY_CONTEXT)
                     .addStatement("return privacyContextProvider()")
                     .build()
             )
+            .addFunction(buildAsValidationReadClient(sorted))
             .addFunction(buildWithPrivacyContext(clientClass, t, sorted))
             .addFunction(buildBypassPrivacyDangerous(clientClass, t))
             .addFunction(
@@ -917,8 +937,51 @@ internal class ClientGenerator(
     private fun buildRepoProperty(input: SchemaInput): PropertySpec {
         val repoClass = ClassName(packageName, "${input.name}Repo")
         val propertyName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+        // Covariant override of EntReadRuntime's `${prop}: ${Entity}ReadSurface`
+        // accessor — the repo IS the entity's read surface, narrowed to the
+        // full repo type for application callers.
         return PropertySpec.builder(propertyName, repoClass)
+            .addModifiers(KModifier.OVERRIDE)
             .initializer("%T(driver)", repoClass)
+            .build()
+    }
+
+    /**
+     * Generates `asValidationReadClient()`: the read-only, System-scoped
+     * view of this client that generated validation evaluators hand to
+     * validators. Copies only the read-relevant adapter state — the same
+     * driver instance (so a transaction-scoped client yields a
+     * transaction-scoped read client), a fixed
+     * `PrivacyBypass("validation read")` context, the shared interceptor
+     * registry, the overfetch cap, and the repos as per-entity read
+     * surfaces (LOAD-privacy behavior identical to this client's).
+     * `transactionRequirement`, hooks, and validation config are
+     * deliberately absent — they are write-side state, and their absence
+     * is part of the no-writes guarantee.
+     */
+    private fun buildAsValidationReadClient(schemas: List<SchemaInput>): FunSpec {
+        val readClientClass = ClassName(packageName, "EntValidationReadClient")
+        val body = CodeBlock.builder()
+        body.add("return %T(\n", readClientClass)
+        body.add("  driver,\n")
+        body.add("  %T(%T.PrivacyBypass(%S)),\n", PRIVACY_CONTEXT, VIEWER, "validation read")
+        body.add("  entityInterceptors,\n")
+        body.add("  visibleOverfetchLimit,\n")
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            body.add("  %L,\n", propName)
+        }
+        body.add(")\n")
+        return FunSpec.builder("asValidationReadClient")
+            .addKdoc(
+                "Read-only, System-scoped view of this client for validation reads.\n" +
+                    "Same driver (transaction scoping preserved), same read interceptors,\n" +
+                    "same per-repo LOAD-privacy behavior, fixed\n" +
+                    "`Viewer.PrivacyBypass(\"validation read\")` context. No write surface\n" +
+                    "compiles against it.",
+            )
+            .returns(readClientClass)
+            .addCode(body.build())
             .build()
     }
 }
@@ -927,8 +990,15 @@ internal class ClientGenerator(
  * Topologically sort schemas so that FK dependencies come before the
  * schemas that reference them. Falls back to the original order for
  * schemas with no dependency relationship (stable sort).
+ *
+ * Shared by [ClientGenerator], [ReadRuntimeGenerator], and
+ * [ValidationReadClientGenerator] so the per-entity accessor order is
+ * identical across `EntClient`, `EntReadRuntime`, and
+ * `EntValidationReadClient` — and so `asValidationReadClient()`'s
+ * positional host arguments line up with the validation read client's
+ * constructor parameters.
  */
-private fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
+internal fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
     val bySchema = schemas.associateBy { it.schema }
     // Build adjacency: schema → set of schemas it depends on (FK targets)
     val deps = schemas.associate { input ->

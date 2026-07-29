@@ -1,5 +1,6 @@
 package entkt.codegen.client
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -116,6 +117,11 @@ internal class RepoGenerator(
             MUTABLE_LIST.parameterizedBy(lambdaType)
 
         val typeSpec = TypeSpec.classBuilder(className)
+            // The repo is the entity's read surface: query terminals reach
+            // `hasLoadPrivacy()` / `evaluateLoadPrivacy(...)` through the
+            // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
+            // accessor, which EntClient overrides with this repo.
+            .addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -159,33 +165,13 @@ internal class RepoGenerator(
             .addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
-            .addFunction(
-                FunSpec.builder("query")
-                    .addParameter(
-                        ParameterSpec.builder("block", queryLambda)
-                            .defaultValue("{}")
-                            .build()
-                    )
-                    .returns(queryClass)
-                    .addStatement("return %T(driver, client).apply(block)", queryClass)
-                    .build()
-            )
+            .addFunction(buildQueryEntry(queryClass, clientRef = "client"))
             // Index-helper namespace. Emitted only when the schema has at
             // least one eligible index (matching the conditional
-            // `${schemaName}Indexes` file). A computed getter so the
-            // lateinit `client` is read at access time, not construction;
-            // the namespace itself is stateless (driver + client only).
+            // `${schemaName}Indexes` file).
             .also { builder ->
                 if (indexHelperTree(schema, schemaNames) != null) {
-                    builder.addProperty(
-                        PropertySpec.builder("indexes", indexesClass)
-                            .getter(
-                                FunSpec.getterBuilder()
-                                    .addStatement("return %T(driver, client)", indexesClass)
-                                    .build(),
-                            )
-                            .build(),
-                    )
+                    builder.addProperty(buildIndexesProperty(indexesClass, clientRef = "client"))
                 }
             }
             .addFunction(buildRepoCreate(schema, entityClass, createClass, createLambda))
@@ -218,14 +204,11 @@ internal class RepoGenerator(
                     )
                     .build()
             )
-            .addFunction(buildByIdOrNull(schemaName, entityClass, idType))
-            .addFunction(buildByIdOrThrow(schemaName, entityClass, idType))
+            .addFunction(buildByIdOrNull(schemaName, entityClass, idType, clientRef = "client"))
+            .addFunction(buildByIdOrThrow(entityClass, idType))
             .addFunction(buildVisibleByIdOrNull(entityClass, idType))
             .addFunction(buildByIdOrError(schemaName, entityClass, idType))
-            .addFunction(buildExplainByIdOrThrow(schemaName, entityClass, idType))
-            .addFunction(buildExplainByIdOrNull(schemaName, entityClass, idType))
-            .addFunction(buildExplainVisibleByIdOrNull(schemaName, entityClass, idType))
-            .addFunction(buildExplainByIdOrError(schemaName, entityClass, idType))
+            .addFunctions(buildByIdExplainMethods(schemaName, entityClass, idType, clientRef = "client"))
             .addFunction(buildDeleteOrThrow(schemaName, entityClass))
             .addFunction(buildDeleteOrError(schemaName, entityClass))
             .addFunction(buildDeleteLoaded(entityClass))
@@ -240,7 +223,7 @@ internal class RepoGenerator(
             .addFunction(buildCopyHooksFrom(repoClass))
             .addFunction(buildApplyPrivacy(privacyConfigClass))
             .addFunction(buildCopyPrivacyFrom(repoClass))
-            .addFunction(buildHasPrivacy("hasLoadPrivacy"))
+            .addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
             .addFunction(buildHasPrivacy("hasCreatePrivacy"))
             .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             .addFunction(buildHasPrivacy("hasDeletePrivacy"))
@@ -256,248 +239,20 @@ internal class RepoGenerator(
             .addFunction(buildEvaluateDeleteValidation(schemaName, entityClass, candidateClass))
             .build()
 
+        // The repo class implements the `@EntktInternal`-guarded
+        // `${schemaName}ReadSurface`; the file-level OptIn consumes the
+        // requirement at the declaration site without propagating it to
+        // application code using the repo.
         return FileSpec.builder(packageName, className)
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+                    .build()
+            )
             .addType(typeSpec)
             .build()
     }
-
-    /**
-     * `byIdOrNull(id): T?` — the absence-collapses-to-null read API.
-     *
-     * - Row missing → `null`
-     * - Row exists but LOAD privacy denies → throws `PrivacyDeniedException`
-     * - Row exists and visible → returns the hydrated entity
-     *
-     * The privacy-denial throw is the raw [PrivacyDeniedException];
-     * structured [EntException] wrapping is provided by [byIdOrError]
-     * and [byIdOrThrow] (which both wrap this method). The visible-or-
-     * null collapse is provided by [visibleByIdOrNull].
-     */
-    private fun buildByIdOrNull(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
-        val body = CodeBlock.builder()
-        body.addStatement("val privacy = client.currentPrivacyContext()")
-        // Route the by-id read through the generated *Query's
-        // runReadInterceptors so we get the same predicate-walk
-        // post-processing the query terminals get. In particular,
-        // if a by-id interceptor adds `Edge.has { ... }`, the
-        // walker fires the target entity's EDGE_PREDICATE
-        // interceptors on the inner — without this route the
-        // target soft-delete / tenant interceptors would be silently
-        // bypassed on by-id reads. extraStructural carries the
-        // `id = X` predicate; the walker skips structural
-        // predicates so the id leaf is never re-walked.
-        body.add(
-            "val q = %T(driver, client)\n",
-            queryClass,
-        )
-        body.add(
-            "val spec = q.runReadInterceptors(\n",
-        )
-        body.add("  operation = %T.BY_ID,\n", READ_OPERATION)
-        body.add("  entOperation = %T.LOAD,\n", ENT_OPERATION)
-        body.add(
-            "  extraStructural = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
-            PREDICATE, entityClass, "id", OP,
-        )
-        body.add(")\n")
-        // Use driver.query (not driver.byId) because interceptors
-        // may have added predicates (e.g. tenant_id = X) that
-        // byId's PK lookup wouldn't honor.
-        body.addStatement(
-            "val row = driver.query(%T.TABLE, spec.predicates, emptyList(), 1, null).firstOrNull()",
-            entityClass,
-        )
-        body.addStatement("if (row == null) return null")
-        body.addStatement("val entity = %T.fromRow(row)", entityClass)
-        body.addStatement("evaluateLoadPrivacy(privacy, entity)")
-        body.addStatement("return entity")
-        return FunSpec.builder("byIdOrNull")
-            .addParameter("id", idType)
-            .returns(entityClass.copy(nullable = true))
-            .addCode(body.build())
-            .build()
-    }
-
-    /**
-     * `byIdOrThrow(id): T` — the strict read API. Throws structured
-     * EntException subclasses for every failure surface; on the happy
-     * path returns the hydrated entity.
-     *
-     * Delegates to [byIdOrError] + `getOrThrow()` so the mapping table
-     * (NotFound / PrivacyDenied / DriverFailure) lives in one place.
-     */
-    private fun buildByIdOrThrow(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        return FunSpec.builder("byIdOrThrow")
-            .addParameter("id", idType)
-            .returns(entityClass)
-            .addStatement(
-                "return byIdOrError(id).%M()",
-                MemberName("entkt.runtime.result", "getOrThrow"),
-            )
-            .build()
-    }
-
-    /**
-     * `visibleByIdOrNull(id): T?` — the absence-OR-invisibility
-     * collapse. Treats both "row missing" and "row exists but LOAD
-     * privacy denies" as `null`. Driver failures still propagate.
-     *
-     * Implemented as `try { byIdOrNull(id) } catch
-     * (PrivacyDeniedException) { null }`. The driver-failure surface
-     * remains as exceptions on this path — `byIdOrError` is the
-     * structured alternative.
-     */
-    private fun buildVisibleByIdOrNull(
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        return FunSpec.builder("visibleByIdOrNull")
-            .addParameter("id", idType)
-            .returns(entityClass.copy(nullable = true))
-            .addCode(
-                CodeBlock.builder()
-                    .add("return try {\n")
-                    .add("  byIdOrNull(id)\n")
-                    .add("} catch (_: %T) {\n", PRIVACY_DENIED)
-                    .add("  null\n")
-                    .add("}\n")
-                    .build(),
-            )
-            .build()
-    }
-
-    /**
-     * `byIdOrError(id): EntResult<T>` — the structured-result read API.
-     * Maps each failure mode to its [EntError] variant:
-     *
-     * - row missing → `Err(NotFound)`
-     * - privacy denied → `Err(PrivacyDenied)`
-     * - any other uncaught Exception → routed through
-     *   [classifyDriverError] → `Err(ConstraintViolation)` for
-     *   recognized constraints or `Err(DriverFailure)` for the
-     *   fallback.
-     */
-    private fun buildByIdOrError(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        val resultType = ENT_RESULT.parameterizedBy(entityClass)
-        return FunSpec.builder("byIdOrError")
-            .addParameter("id", idType)
-            .returns(resultType)
-            .addCode(
-                CodeBlock.builder()
-                    .add("return try {\n")
-                    .add(
-                        "  byIdOrNull(id)?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.LOAD, id))\n",
-                        ENT_RESULT, ENT_RESULT, ENT_ERROR, schemaName, ENT_OPERATION,
-                    )
-                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-                    .add("  %T.Err(e.queryRejected)\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
-                    .add(
-                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                    )
-                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
-                    .add(
-                        "  %T.Err(%M(driver, e, %S, %T.LOAD))\n",
-                        ENT_RESULT,
-                        MemberName("entkt.runtime.driver", "classifyDriverError"),
-                        schemaName,
-                        ENT_OPERATION,
-                    )
-                    .add("}\n")
-                    .build(),
-            )
-            .build()
-    }
-
-    /**
-     * Shared by-id explain wrapper. Builds a *Query instance, runs
-     * its interceptor chain with operation = BY_ID, and either
-     * delegates to the query's [buildQueryPlan] for a happy-path
-     * plan or returns a rejected [QueryPlan] via
-     * `QueryPlan.rejected(...)`. All four `explainById*` variants
-     * produce the same plan — the result-shape suffix in the name
-     * is for call-site discovery, not plan content (by contract).
-     */
-    private fun buildByIdExplainMethod(
-        name: String,
-        terminalName: String,
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
-        val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
-        return FunSpec.builder(name)
-            .addParameter("id", idType)
-            .returns(queryPlan)
-            .addKdoc(
-                "Return a [QueryPlan] describing the query [$terminalName] would\n" +
-                "execute. Interceptors run with operation = BY_ID; limit operations\n" +
-                "are silent no-ops by contract. On interceptor rejection, returns\n" +
-                "a plan with `rejected = true` carrying the rejection metadata;\n" +
-                "explain does NOT throw."
-            )
-            .addCode(
-                CodeBlock.builder()
-                    .add("val q = %T(driver, client)\n", queryClass)
-                    .add("return try {\n")
-                    .add("  val spec = q.runReadInterceptors(\n")
-                    .add("    operation = %T.BY_ID,\n", READ_OPERATION)
-                    .add("    entOperation = %T.LOAD,\n", ENT_OPERATION)
-                    .add(
-                        "    extraStructural = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
-                        PREDICATE, entityClass, "id", OP,
-                    )
-                    .add("  )\n")
-                    // By-id is a single-row PK lookup; hardwire
-                    // limit = 1 / offset = null in the plan so the
-                    // explain output matches the runtime call.
-                    .add("  q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false)\n")
-                    .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-                    .add("  %T.rejected(e.queryRejected)\n", queryPlan)
-                    .add("}\n")
-                    .build(),
-            )
-            .build()
-    }
-
-    private fun buildExplainByIdOrThrow(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec = buildByIdExplainMethod("explainByIdOrThrow", "byIdOrThrow", schemaName, entityClass, idType)
-
-    private fun buildExplainByIdOrNull(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec = buildByIdExplainMethod("explainByIdOrNull", "byIdOrNull", schemaName, entityClass, idType)
-
-    private fun buildExplainVisibleByIdOrNull(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec = buildByIdExplainMethod("explainVisibleByIdOrNull", "visibleByIdOrNull", schemaName, entityClass, idType)
-
-    private fun buildExplainByIdOrError(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec = buildByIdExplainMethod("explainByIdOrError", "byIdOrError", schemaName, entityClass, idType)
 
     /**
      * `deleteOrThrow(entity): Unit` — strict delete. Throws structured
@@ -782,9 +537,13 @@ internal class RepoGenerator(
     // every entity is privacy-enforced regardless of which rules are declared.
     // These flags therefore always report true (the call sites that gate on
     // them always take the enforce path).
-    private fun buildHasPrivacy(name: String): FunSpec =
+    //
+    // hasLoadPrivacy is the read surface's flag and overrides
+    // `${Entity}ReadSurface` (public — interface members can't be
+    // internal); the write-side flags stay internal.
+    private fun buildHasPrivacy(name: String, readSurfaceOverride: Boolean = false): FunSpec =
         FunSpec.builder(name)
-            .addModifiers(KModifier.INTERNAL)
+            .addModifiers(if (readSurfaceOverride) KModifier.OVERRIDE else KModifier.INTERNAL)
             .returns(Boolean::class)
             .addStatement("return true")
             .build()
@@ -794,8 +553,11 @@ internal class RepoGenerator(
         entityClass: ClassName,
         loadCtxClass: ClassName,
     ): FunSpec {
+        // Overrides `${Entity}ReadSurface` (public, was internal): the
+        // LOAD evaluation is what validation read repos delegate to, so
+        // privacy behavior through either client is this exact body.
         return FunSpec.builder("evaluateLoadPrivacy")
-            .addModifiers(KModifier.INTERNAL)
+            .addModifiers(KModifier.OVERRIDE)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("entity", entityClass)
             .addCode(CodeBlock.builder()
@@ -1157,7 +919,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.createRules")
                 .addStatement("if (rules.isEmpty()) return")
-                .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.PrivacyBypass(%S)))", PRIVACY_CONTEXT, VIEWER, "validation read")
+                .addStatement("val validationClient = client.asValidationReadClient()")
                 .addStatement("val ctx = %T(validationClient, candidate)", createCtxClass)
                 .addStatement("val violations = rules.mapNotNull { rule ->")
                 .addStatement("  when (val decision = rule.validate(ctx)) {")
@@ -1190,7 +952,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return")
-                .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.PrivacyBypass(%S)))", PRIVACY_CONTEXT, VIEWER, "validation read")
+                .addStatement("val validationClient = client.asValidationReadClient()")
                 .addStatement(
                     "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
                     updateCtxClass,
@@ -1230,7 +992,7 @@ internal class RepoGenerator(
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.deleteRules")
                 .addStatement("if (rules.isEmpty()) return")
-                .addStatement("val validationClient = client.withFixedPrivacyContextForInternalUse(%T(%T.PrivacyBypass(%S)))", PRIVACY_CONTEXT, VIEWER, "validation read")
+                .addStatement("val validationClient = client.asValidationReadClient()")
                 .addStatement("val ctx = %T(validationClient, entity, candidate)", deleteCtxClass)
                 .addStatement("val violations = rules.mapNotNull { rule ->")
                 .addStatement("  when (val decision = rule.validate(ctx)) {")

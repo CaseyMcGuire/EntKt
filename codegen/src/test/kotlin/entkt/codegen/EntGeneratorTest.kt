@@ -41,7 +41,7 @@ class EntGeneratorTest {
     private val generator = EntGenerator("com.example.ent")
 
     @Test
-    fun `generates eight files per schema plus one EntClient`() {
+    fun `generates eight files per schema plus the client-level files`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -52,16 +52,21 @@ class EntGeneratorTest {
         val files = generator.generate(schemas)
 
         // Per schema: entity, mutation, create, update, query, repo, privacy, validation.
-        // Plus a single EntClient that wires every repo together. User also gets
+        // Plus the schema-set-level files: EntReadRuntime (the read contract
+        // + per-entity read surfaces), EntValidationReadClient (the read-only
+        // validation client + per-entity validation read repos), and the
+        // EntClient that wires every repo together. User also gets
         // a UserIndexes file (it declares eligible indexes); Car has none, so it
         // gets no index-helper file.
-        assertEquals(8 * schemas.size + 1 + 1, files.size)
+        assertEquals(8 * schemas.size + 3 + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
                 "Car", "CarMutation", "CarCreate", "CarUpdate", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
                 "User", "UserMutation", "UserCreate", "UserUpdate", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserIndexes",
+                "EntReadRuntime",
+                "EntValidationReadClient",
                 "EntClient",
             ),
             names,

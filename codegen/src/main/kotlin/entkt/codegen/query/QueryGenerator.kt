@@ -20,7 +20,13 @@ import entkt.schema.EntSchema
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val EDGE_QUERY = ClassName("entkt.query", "EdgeQuery")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
-private val ENT_CLIENT_NAME = "EntClient"
+
+// Generated queries depend on the read-runtime contract, not the full
+// EntClient: every internal use (requireClient, interceptor lookup, the
+// visible-family cap, LOAD-privacy delegation, sibling-query
+// construction) stays within EntReadRuntime's surface, so the read-only
+// EntValidationReadClient can host queries identically.
+private val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
 private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
 
@@ -63,7 +69,7 @@ internal class QueryGenerator(
 
         val hasEdges = eagerEdgeSpecs.isNotEmpty()
 
-        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
+        val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
@@ -388,7 +394,7 @@ internal class QueryGenerator(
     }
 
     private fun buildRequireClient(schemaName: String): FunSpec {
-        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
+        val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
         return FunSpec.builder("requireClient")
             .addModifiers(KModifier.PRIVATE)
             .returns(clientClass)

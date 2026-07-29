@@ -28,6 +28,10 @@ Open or speculative RFCs remain in the
 - [Indexed Query Helpers](query/indexed-query-helpers.md)
 - [Edge Traversal Query Blocks](query/edge-traversal-query-blocks.md)
 
+## Privacy And Validation
+
+- [Read-Only Validation Client](privacy-validation/read-only-validation-client.md)
+
 ## Model Behavior
 
 - [Schema Validation Explain](schema/schema-validation-explain.md)

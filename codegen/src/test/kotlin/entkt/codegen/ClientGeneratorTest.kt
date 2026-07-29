@@ -50,7 +50,7 @@ class ClientGeneratorTest {
         // `driver` property (declared first), not in the init block that
         // follows the repo properties.
         val driverProp = output.indexOf("registerAll(SCHEMAS)")
-        val firstRepo = output.indexOf("public val cars:")
+        val firstRepo = output.indexOf("override val cars:")
         val initBlock = output.indexOf("init {")
         assert(driverProp in 0 until firstRepo) {
             "registerAll must be wired before the first repo property\n$output"

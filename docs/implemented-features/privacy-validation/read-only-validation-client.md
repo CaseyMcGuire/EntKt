@@ -2,7 +2,14 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Implemented 2026-07-29. Validation contexts expose
+`EntValidationReadClient`; generated queries and index stages accept
+the `EntReadRuntime` contract; the no-writes guarantee is pinned by
+compile-fail tests (`codegen`'s `ValidationReadClientCompileTest`) and
+the runtime semantics by
+`integration-tests`' `ValidationReadClientIntegrationTest`. See
+[Validation → Operation Contexts](../../07-validation.md#operation-contexts)
+for the user-facing documentation.
 
 Revised 2026-07-28 for implementation-readiness: the original sketch's
 `EntReadClient(driver, privacyContext)` shape was too small for what

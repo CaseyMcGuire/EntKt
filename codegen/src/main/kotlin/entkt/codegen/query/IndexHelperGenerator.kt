@@ -1,5 +1,6 @@
 package entkt.codegen.query
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -29,7 +30,11 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
 private val INDEX_RANGE_BUILDER = ClassName("entkt.query", "IndexRangeBuilder")
 private val LIST = ClassName("kotlin.collections", "List")
-private const val ENT_CLIENT_NAME = "EntClient"
+
+// Index stages carry the read-runtime contract, not the full EntClient —
+// otherwise the validation read repos could not expose `indexes` without
+// smuggling a full client into validator-reachable objects.
+private const val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
 
 /**
  * Property names that, if used verbatim as the equality value parameter,
@@ -402,7 +407,7 @@ internal class IndexHelperGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
-        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
+        val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
         val emitter = Emitter(entityClass, queryClass, indexesClass, clientClass)
 
         val indexesType = TypeSpec.classBuilder(indexesClass)
@@ -440,7 +445,17 @@ internal class IndexHelperGenerator(
         for (child in root.children) emitter.emitStageClass(child.node, indexesType)
         for (rangeCol in root.rangeColumns) emitter.emitRangeTerminal(root.prefix, rangeCol, indexesType)
 
+        // The stage constructors reference the `@EntktInternal`-guarded
+        // EntReadRuntime; the file-level OptIn consumes the requirement at
+        // the declaration sites (query files already carry the same header
+        // for their own marked-type usages).
         return FileSpec.builder(packageName, "${schemaName}Indexes")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+                    .build()
+            )
             .addType(indexesType.build())
             .build()
     }

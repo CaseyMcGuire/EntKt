@@ -687,13 +687,18 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `evaluateCreateValidation uses a privacy-bypass-scoped client`() {
+    fun `evaluateCreateValidation hands rules the read-only validation client`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("client.withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.PrivacyBypass(\"validation read\")))")) {
-            "Validation evaluator should use a privacy-bypass-scoped client with the 'validation read' reason\n$output"
+        // The adapter bakes in the fixed PrivacyBypass("validation read")
+        // context; the evaluator no longer builds a full-client clone.
+        assert(output.contains("val validationClient = client.asValidationReadClient()")) {
+            "Validation evaluator should build the read-only validation client\n$output"
+        }
+        assert(!output.contains("withFixedPrivacyContextForInternalUse(PrivacyContext(Viewer.PrivacyBypass(\"validation read\")))")) {
+            "Validation evaluators must not clone a full write-capable client\n$output"
         }
     }
 }
