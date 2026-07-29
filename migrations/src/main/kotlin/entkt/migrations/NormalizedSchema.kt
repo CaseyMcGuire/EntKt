@@ -144,27 +144,53 @@ data class NormalizedIndex(
  * This function strips balanced outer parens, removes simple
  * PostgreSQL type casts, and collapses whitespace so that the
  * deparsed and user-written forms compare equal for typical
- * predicates. For exotic expressions where this isn't enough,
- * use an explicit index name to pin the index and avoid spurious
- * diffs.
+ * predicates. String-literal content is preserved verbatim — two
+ * predicates that differ only inside quotes never compare equal.
+ * For exotic expressions where this isn't enough, use an explicit
+ * index name to pin the index and avoid spurious diffs.
  */
 fun normalizeWhere(predicate: String?): String? {
     if (predicate == null) return null
-    var s = predicate.trim()
+
+    // Mask string literals before any rewrite: literal content is
+    // semantic. `pg_get_expr` round-trips it verbatim, so two
+    // predicates that differ only inside quotes select genuinely
+    // different row sets — running the cast and whitespace rewrites
+    // over literal bytes made `'foo::text'` compare equal to `'foo'`
+    // and `'in  progress'` equal to `'in progress'`, which let
+    // migration validation and auto-DDL index reconciliation accept a
+    // partial index whose predicate covers the wrong rows. Same rule
+    // [normalizeDefault] applies to DEFAULT expressions. Doubled ''
+    // escapes are part of one literal, and masking also keeps quoted
+    // parens out of the outer-paren scan below.
+    val literals = mutableListOf<String>()
+    var s = WHERE_STRING_LITERAL.replace(predicate.trim()) { m ->
+        literals.add(m.value)
+        "\u0001${literals.size - 1}\u0002"
+    }
 
     // Strip PostgreSQL type casts:
     //   (col)::type  → col
-    //   'literal'::type  → 'literal'
+    //   'literal'::type  → 'literal'  (the literal is masked here)
     //   identifier::type → identifier
     s = s.replace(Regex("\\(([^()]+)\\)::[a-z_]+"), "$1")
-    s = s.replace(Regex("('[^']*')::[a-z_]+"), "$1")
+    s = s.replace(Regex("(\u0001\\d+\u0002)::[a-z_]+"), "$1")
     s = s.replace(Regex("([a-zA-Z_][a-zA-Z0-9_]*)::[a-z_]+"), "$1")
 
     s = stripBalancedOuterParens(s)
 
-    // Collapse runs of whitespace.
-    return s.replace(Regex("\\s+"), " ")
+    // Collapse runs of whitespace — masked literal content can't be touched.
+    s = s.replace(Regex("\\s+"), " ")
+
+    // Restore the literals verbatim.
+    return WHERE_LITERAL_MASK.replace(s) { m -> literals[m.groupValues[1].toInt()] }
 }
+
+/** A single-quoted string literal, quotes doubled for escapes. */
+private val WHERE_STRING_LITERAL = Regex("'(?:[^']|'')*'")
+
+/** Placeholder emitted by [normalizeWhere]'s literal masking. */
+private val WHERE_LITERAL_MASK = Regex("\u0001(\\d+)\u0002")
 
 /**
  * Strip balanced outer parentheses from [s], repeatedly, as long as the
