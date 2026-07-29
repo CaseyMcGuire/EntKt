@@ -524,6 +524,40 @@ class PrivacyIntegrationTest {
     }
 
     @Test
+    fun `delete authorizes against the current row, not the caller's entity`() {
+        val client = freshClient(Viewer.User(0L))
+        val (alice, bob) = seedData(client)
+
+        val aliceArticle = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.articles.query {
+                where(Article.authorId eq alice.id)
+                where(Article.published eq true)
+            }.firstOrNull()
+        }
+        assertNotNull(aliceArticle)
+
+        val ex = client.withPrivacyContext(PrivacyContext(Viewer.User(bob.id))) { scoped ->
+            // Entities are public data classes, so Bob can hand delete
+            // a copy claiming HE is the author of Alice's article. The
+            // delete pipeline must treat the entity as an id handle and
+            // authorize against the reloaded row — where the author is
+            // still Alice — not against these fabricated fields.
+            val forged = aliceArticle.copy(authorId = bob.id)
+            assertFailsWith<EntPrivacyDeniedException> {
+                scoped.articles.deleteOrThrow(forged)
+            }
+        }
+        assertEquals(EntOperation.DELETE, ex.privacyDenied.operation)
+        assertEquals("only the author can delete", ex.privacyDenied.reason)
+
+        // The row survived.
+        val still = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.articles.byIdOrNull(aliceArticle.id)
+        }
+        assertNotNull(still)
+    }
+
+    @Test
     fun `delete allowed for owner`() {
         val client = freshClient(Viewer.User(0L))
         val (alice, _) = seedData(client)

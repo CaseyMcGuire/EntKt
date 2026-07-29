@@ -525,6 +525,19 @@ internal class RepoGenerator(
      * because the caller passed an entity it had in hand, so this is
      * not exceptional.
      *
+     * The passed entity is an **id handle only**: the current row is
+     * reloaded and DELETE privacy / validation / hooks all run
+     * against that fresh state, never the caller's copy. Generated
+     * entities are public data classes, so an entity's fields are
+     * caller-controlled — authorizing against them would let a
+     * fabricated or stale entity approve deleting a row whose actual
+     * state the viewer may not touch. The reload matches `save()`,
+     * which authorizes against its freshly loaded `row0`, and
+     * `deleteByIdOrError`, which has always loaded before deciding.
+     * The read bypasses repo-level LOAD privacy for the same reason
+     * `deleteByIdOrError`'s does — the delete-side privacy rule is
+     * the authoritative check.
+     *
      * Failure mapping mirrors saveOrError: PrivacyDenied →
      * Err(PrivacyDenied); delete-side ValidationException →
      * Err(ValidationFailed); EntException carried through; any other
@@ -541,7 +554,8 @@ internal class RepoGenerator(
                 CodeBlock.builder()
                     .add("return try {\n")
                     .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
-                    .add("  deleteLoaded(entity)\n")
+                    .add("  val row = driver.byId(%T.TABLE, entity.id)\n", entityClass)
+                    .add("  if (row != null) deleteLoaded(%T.fromRow(row))\n", entityClass)
                     .add("  %T.Ok(Unit)\n", ENT_RESULT)
                     .add("} catch (e: %T) {\n", PRIVACY_DENIED)
                     .add(
@@ -571,12 +585,13 @@ internal class RepoGenerator(
 
     /**
      * Private internal-only delete pipeline that assumes the caller
-     * already ran the transaction-requirement preflight. Used by
-     * `deleteOrError` (public; `deleteOrThrow` delegates to it, runs
-     * preflight first), `deleteByIdOrError` (runs preflight + byId,
-     * then this), and `deleteMany` (runs multi-write preflight +
-     * query, then this in a loop). Extracting this avoids the double
-     * preflight that `deleteByIdOrError -> deleteOrError` and
+     * already ran the transaction-requirement preflight AND passes an
+     * entity freshly loaded from the database — every caller reloads
+     * (`deleteOrError` and `deleteByIdOrError` via `byId`, `deleteMany`
+     * via its candidate query), so privacy, validation, and hooks
+     * always see current row state rather than a caller-controlled
+     * copy. Extracting this avoids the double preflight that
+     * `deleteByIdOrError -> deleteOrError` and
      * `deleteMany -> deleteOrError` would otherwise do.
      */
     private fun buildDeleteLoaded(
