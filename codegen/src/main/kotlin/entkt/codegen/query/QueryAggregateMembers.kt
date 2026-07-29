@@ -516,9 +516,12 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
         .addMember("%S", "UNCHECKED_CAST").build()
 
     // The private helper every aggregate terminal delegates to. The
-    // privacy-bypassing-read gate lives here so every raw aggregate
-    // (min/max/sum/avg/countBy and their OrError twins) is covered by
-    // one choke point.
+    // privacy-bypassing-read gate here covers the plain
+    // (expression-bodied) aggregate terminals; the *OrError twins gate
+    // again at their own heads, BEFORE their try — this helper runs
+    // inside orErrorBody's catch-all, which would fold the gate's
+    // IllegalStateException into Err(DriverFailure), where a rule could
+    // mistake misuse for "no data".
     specs += FunSpec.builder("aggregateRows")
         .addModifiers(KModifier.PRIVATE)
         .addParameter("function", AGG_FUNCTION)
@@ -568,6 +571,8 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
             .addStatement("return %L", happy).build()
         specs += FunSpec.builder("${name}OrError").addAnnotation(suppress).addTypeVariables(typeVars)
             .addParameter(columnParam).returns(ENT_RESULT.parameterizedBy(returnType))
+            // Gate before the try — see rawCountOrError for why.
+            .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "${name}OrError")
             .addCode(orErrorBody(happy)).build()
     }
 
@@ -604,6 +609,8 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
                 .addStatement("return %L", happy).build()
             specs += FunSpec.builder("${name}OrError").addAnnotation(suppress).addTypeVariables(typeVars)
                 .addParameters(params).returns(ENT_RESULT.parameterizedBy(listType))
+                // Gate before the try — see rawCountOrError for why.
+                .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "${name}OrError")
                 .addCode(orErrorBody(happy)).build()
         }
     }

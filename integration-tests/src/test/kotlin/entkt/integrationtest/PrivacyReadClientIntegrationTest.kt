@@ -69,6 +69,18 @@ private val LeakyRawExistsRule = ArticleLoadPrivacyRule { ctx ->
     else PrivacyDecision.Continue
 }
 
+/**
+ * Same misuse through an aggregate `*OrError` terminal. These wrap
+ * their bodies in a catch-all that converts exceptions to `Err`, so
+ * the gate must fire BEFORE the try — if it folded into
+ * Err(DriverFailure), this rule would proceed to Allow on a fabricated
+ * "no data" answer instead of failing loudly.
+ */
+private val LeakyAggregateOrErrorRule = ArticleLoadPrivacyRule { ctx ->
+    ctx.client.users.query { }.rawMinOrError(User.email)
+    PrivacyDecision.Allow
+}
+
 // ---- Policies ----
 
 private object AuthenticatedReadersUserPolicy : EntityPolicy<User, UserPolicyScope> {
@@ -104,6 +116,12 @@ private object AuthorCheckedCreateArticlePolicy : EntityPolicy<Article, ArticleP
 private object LeakyRawExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy { load(LeakyRawExistsRule) }
+    }
+}
+
+private object LeakyAggregateOrErrorArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+    override fun configure(scope: ArticlePolicyScope) = scope.run {
+        privacy { load(LeakyAggregateOrErrorRule) }
     }
 }
 
@@ -231,6 +249,32 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         assertTrue(
             "rawExists" in (ex.message ?: "") && "privacy-rule" in (ex.message ?: ""),
             "Expected the raw-terminal gate message naming rawExists; got: ${ex.message}",
+        )
+    }
+
+    @Test
+    fun `aggregate OrError terminals throw at the gate instead of folding into Err`() {
+        val client = freshClient {
+            privacyContext { PrivacyContext(Viewer.Anonymous) }
+            policies {
+                users(AuthenticatedReadersUserPolicy)
+                articles(LeakyAggregateOrErrorArticlePolicy)
+            }
+        }
+        val (author, article) = seedAuthorAndArticle(client)
+
+        // If the gate ran inside the OrError catch-all, rawMinOrError
+        // would return Err(DriverFailure), the rule would Allow, and this
+        // read would SUCCEED — the assertion below is what distinguishes
+        // throw-at-gate from fold-into-Err.
+        val ex = assertFailsWith<IllegalStateException> {
+            client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
+                c.articles.byIdOrNull(article.id)
+            }
+        }
+        assertTrue(
+            "rawMinOrError" in (ex.message ?: ""),
+            "Expected the gate message naming rawMinOrError; got: ${ex.message}",
         )
     }
 

@@ -24,12 +24,15 @@ RFC's viewer-scoping guarantee: a rule could allow access based on a
 row the viewer cannot see, or leak hidden aggregate values into an
 authorization outcome. The implemented resolution is a runtime gate:
 `EntReadRuntime.checkPrivacyBypassingRead(terminal)` is called at the
-head of every raw terminal (one shared choke point covers all raw
-aggregates); the full client no-ops (raw terminals are its documented
-application surface), and `EntReadClient` permits them only when its
-fixed context is `PrivacyBypass` — i.e. validation readers, where raw
-and visible coincide — throwing a loud `IllegalStateException` on
-viewer-scoped privacy-rule readers. This is the one deliberate
+head of every raw terminal — for the `*OrError` variants explicitly
+BEFORE their try/catch, so gate misuse throws instead of folding into
+`Err(DriverFailure)` where a rule could mistake it for "no data"; the
+plain expression-bodied aggregates are covered by a gate in the shared
+`aggregateRows` helper. The full client no-ops (raw terminals are its
+documented application surface), and `EntReadClient` permits them only
+when its fixed context is `PrivacyBypass` — i.e. validation readers,
+where raw and visible coincide — throwing a loud
+`IllegalStateException` on viewer-scoped privacy-rule readers. This is the one deliberate
 deviation from the Behavior preservation section: a privacy rule that
 previously called a raw terminal now fails fast instead of silently
 bypassing LOAD privacy.
