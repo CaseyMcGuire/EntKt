@@ -39,7 +39,10 @@ class SchemaDifferTest {
         targetTable: String,
         targetColumn: String = "id",
         columnNullable: Boolean = false,
-    ) = NormalizedForeignKey(listOf(column), targetTable, listOf(targetColumn), columnNullable)
+    ) = NormalizedForeignKey(
+        listOf(column), targetTable, listOf(targetColumn), columnNullable,
+        onDelete = resolveDslOnDelete(null, columnNullable),
+    )
 
     private fun schema(vararg tables: NormalizedTable) =
         NormalizedSchema(tables.associateBy { it.name })
@@ -448,7 +451,7 @@ class SchemaDifferTest {
 
         val addFks = result.ops.filterIsInstance<MigrationOp.AddForeignKey>()
         assertEquals(1, addFks.size)
-        assertEquals("author_id", addFks[0].fk.column)
+        assertEquals(listOf("author_id"), addFks[0].fk.columns)
         assertEquals("users", addFks[0].fk.targetTable)
     }
 

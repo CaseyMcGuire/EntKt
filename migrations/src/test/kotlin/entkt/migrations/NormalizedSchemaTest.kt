@@ -7,7 +7,9 @@ import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.IndexMetadata
 import entkt.schema.FieldType
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -178,6 +180,39 @@ class NormalizedSchemaTest {
     }
 
     @Test
+    fun `fromEntitySchemas rejects identifiers PostgreSQL would truncate`() {
+        // Backstop for programmatic FlywayMigrationWorkflow callers
+        // that skip SchemaInspector.validate: a name the server would
+        // silently truncate must never enter the pipeline.
+        val longName = "this_name_is_deliberately_far_too_long_to_survive_the_postgres_identifier_limit"
+        val longTable = EntitySchema(
+            table = longName,
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_INT,
+            columns = listOf(ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true)),
+            edges = emptyMap(),
+        )
+        val e = assertFailsWith<IllegalArgumentException> {
+            NormalizedSchema.fromEntitySchemas(listOf(longTable), typeMapper)
+        }
+        assertContains(e.message ?: "", "truncates")
+
+        val longColumn = EntitySchema(
+            table = "long_columns",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_INT,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+                ColumnMetadata(longName, FieldType.TEXT, nullable = true),
+            ),
+            edges = emptyMap(),
+        )
+        assertFailsWith<IllegalArgumentException> {
+            NormalizedSchema.fromEntitySchemas(listOf(longColumn), typeMapper)
+        }
+    }
+
+    @Test
     fun `foreign keys are extracted from column references`() {
         val schema = EntitySchema(
             table = "posts",
@@ -196,8 +231,8 @@ class NormalizedSchemaTest {
         val table = normalized.tables["posts"]!!
 
         assertEquals(1, table.foreignKeys.size)
-        assertEquals("author_id", table.foreignKeys[0].column)
+        assertEquals(listOf("author_id"), table.foreignKeys[0].columns)
         assertEquals("users", table.foreignKeys[0].targetTable)
-        assertEquals("id", table.foreignKeys[0].targetColumn)
+        assertEquals(listOf("id"), table.foreignKeys[0].targetColumns)
     }
 }

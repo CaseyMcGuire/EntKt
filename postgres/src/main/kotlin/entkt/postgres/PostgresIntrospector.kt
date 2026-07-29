@@ -2,6 +2,7 @@ package entkt.postgres
 
 import entkt.migrations.DatabaseIntrospector
 import entkt.migrations.FkAction
+import entkt.migrations.FkMatchType
 import entkt.migrations.NormalizedColumn
 import entkt.migrations.NormalizedForeignKey
 import entkt.migrations.NormalizedIndex
@@ -346,12 +347,11 @@ class PostgresIntrospector(
                             targetColumns = targetColumns,
                             columnNullable = nullabilityByName[fkColumns.first()] ?: false,
                             constraintName = rs.getString("constraint_name"),
-                            // The exact catalog action goes in
-                            // onDeleteAction — never lossily mapped
-                            // into the DSL's OnDelete, where SET
-                            // DEFAULT has no representation and NO
+                            // The exact catalog action — never lossily
+                            // mapped through the DSL's OnDelete, where
+                            // SET DEFAULT has no representation and NO
                             // ACTION would collapse into RESTRICT.
-                            onDeleteAction = fkActionFor(rs.getString("delete_code")),
+                            onDelete = fkActionFor(rs.getString("delete_code")),
                             onUpdate = fkActionFor(rs.getString("update_code")),
                             matchType = matchTypeFor(rs.getString("match_code")),
                             deferrable = rs.getBoolean("is_deferrable"),
@@ -375,11 +375,11 @@ class PostgresIntrospector(
         else -> error("Unknown pg_constraint referential action code '$code'")
     }
 
-    /** Map a `pg_constraint.confmatchtype` code to its SQL MATCH keyword. */
-    private fun matchTypeFor(code: String?): String = when (code?.firstOrNull()) {
-        's' -> "SIMPLE"
-        'f' -> "FULL"
-        'p' -> "PARTIAL"
+    /** Map a `pg_constraint.confmatchtype` code to its [FkMatchType]. */
+    private fun matchTypeFor(code: String?): FkMatchType = when (code?.firstOrNull()) {
+        's' -> FkMatchType.SIMPLE
+        'f' -> FkMatchType.FULL
+        'p' -> FkMatchType.PARTIAL
         else -> error("Unknown pg_constraint match type code '$code'")
     }
 }

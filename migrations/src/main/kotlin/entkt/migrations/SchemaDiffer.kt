@@ -269,7 +269,7 @@ class SchemaDiffer {
      * the driver.
      */
     private fun fkSemanticsMatch(desired: NormalizedForeignKey, current: NormalizedForeignKey): Boolean =
-        actionsEquivalent(effectiveDeleteAction(desired), effectiveDeleteAction(current)) &&
+        actionsEquivalent(desired.onDelete, current.onDelete) &&
             actionsEquivalent(desired.onUpdate, current.onUpdate) &&
             desired.matchType == current.matchType &&
             desired.deferrable == current.deferrable &&
@@ -278,24 +278,6 @@ class SchemaDiffer {
 
     private fun actionsEquivalent(a: FkAction, b: FkAction): Boolean =
         a == b || (a in RESTRICT_LIKE && b in RESTRICT_LIKE)
-
-    /**
-     * Resolve the effective ON DELETE action for a FK. Introspected
-     * FKs carry the catalog-exact [NormalizedForeignKey.onDeleteAction]
-     * (which can be `SET DEFAULT` — no DSL form — and must never
-     * collapse into an inferred equivalent). Entity-derived FKs use the
-     * declared [NormalizedForeignKey.onDelete], inferring from column
-     * nullability when absent (SET_NULL for nullable, RESTRICT for
-     * required) so a null `onDelete` compares equal to its inferred
-     * equivalent.
-     */
-    private fun effectiveDeleteAction(fk: NormalizedForeignKey): FkAction =
-        fk.onDeleteAction ?: when (fk.onDelete) {
-            OnDelete.CASCADE -> FkAction.CASCADE
-            OnDelete.SET_NULL -> FkAction.SET_NULL
-            OnDelete.RESTRICT -> FkAction.RESTRICT
-            null -> if (fk.columnNullable) FkAction.SET_NULL else FkAction.RESTRICT
-        }
 
     private companion object {
         /** Immediate RESTRICT and NO ACTION are behaviorally identical. */

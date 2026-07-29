@@ -90,7 +90,7 @@ class PostgresFkIntrospectionTest {
         val fks = introspect("fkintro_child").foreignKeys.associateBy { it.constraintName }
 
         val exotic = fks.getValue("fk_exotic")
-        assertEquals(FkAction.SET_DEFAULT, exotic.onDeleteAction, "SET DEFAULT must survive, not map to null")
+        assertEquals(FkAction.SET_DEFAULT, exotic.onDelete, "SET DEFAULT must survive, not map to an inferred action")
         assertEquals(FkAction.CASCADE, exotic.onUpdate)
         assertTrue(exotic.deferrable)
         assertFalse(exotic.initiallyDeferred)
@@ -98,6 +98,6 @@ class PostgresFkIntrospectionTest {
 
         val notValid = fks.getValue("fk_not_valid")
         assertFalse(notValid.validated, "NOT VALID must be visible to the differ")
-        assertEquals(FkAction.NO_ACTION, notValid.onDeleteAction)
+        assertEquals(FkAction.NO_ACTION, notValid.onDelete)
     }
 }

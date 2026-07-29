@@ -32,12 +32,13 @@ class FkSemanticsDiffTest {
         targetTable = "users",
         targetColumns = listOf("id"),
         columnNullable = false,
+        onDelete = FkAction.RESTRICT,
     )
 
     private fun introspectedFk(
-        onDeleteAction: FkAction = FkAction.RESTRICT,
+        onDelete: FkAction = FkAction.RESTRICT,
         onUpdate: FkAction = FkAction.NO_ACTION,
-        matchType: String = "SIMPLE",
+        matchType: FkMatchType = FkMatchType.SIMPLE,
         deferrable: Boolean = false,
         initiallyDeferred: Boolean = false,
         validated: Boolean = true,
@@ -49,7 +50,7 @@ class FkSemanticsDiffTest {
         targetColumns = targetColumns,
         columnNullable = false,
         constraintName = "fk_posts_author_id",
-        onDeleteAction = onDeleteAction,
+        onDelete = onDelete,
         onUpdate = onUpdate,
         matchType = matchType,
         deferrable = deferrable,
@@ -74,12 +75,12 @@ class FkSemanticsDiffTest {
 
     @Test
     fun `matching immediate constraint reports no drift`() {
-        assertNoDrift(diff(introspectedFk(onDeleteAction = FkAction.RESTRICT)))
+        assertNoDrift(diff(introspectedFk(onDelete = FkAction.RESTRICT)))
     }
 
     @Test
     fun `NO ACTION compares equal to the RESTRICT entkt renders`() {
-        assertNoDrift(diff(introspectedFk(onDeleteAction = FkAction.NO_ACTION)))
+        assertNoDrift(diff(introspectedFk(onDelete = FkAction.NO_ACTION)))
     }
 
     @Test
@@ -94,7 +95,7 @@ class FkSemanticsDiffTest {
 
     @Test
     fun `MATCH FULL is drift`() {
-        assertDropAndReAdd(diff(introspectedFk(matchType = "FULL")))
+        assertDropAndReAdd(diff(introspectedFk(matchType = FkMatchType.FULL)))
     }
 
     @Test
@@ -104,11 +105,11 @@ class FkSemanticsDiffTest {
 
     @Test
     fun `ON DELETE SET DEFAULT never collapses into an inferred action`() {
-        // Nullable FK: the desired side infers SET NULL. Before the
-        // exact-action model, SET DEFAULT introspected to null and the
-        // same inference made the two compare equal.
-        val desired = desiredFk.copy(columnNullable = true)
-        val current = introspectedFk(onDeleteAction = FkAction.SET_DEFAULT).copy(columnNullable = true)
+        // Nullable FK: the desired side resolves to SET NULL. Before
+        // the exact-action model, SET DEFAULT introspected to null and
+        // nullability inference made the two compare equal.
+        val desired = desiredFk.copy(columnNullable = true, onDelete = FkAction.SET_NULL)
+        val current = introspectedFk(onDelete = FkAction.SET_DEFAULT).copy(columnNullable = true)
         val result = differ.diff(
             NormalizedSchema(mapOf("posts" to postsTable(desired))),
             NormalizedSchema(mapOf("posts" to postsTable(current))),

@@ -1,5 +1,6 @@
 package entkt.postgres
 
+import entkt.migrations.FkAction
 import entkt.schema.OnDelete
 
 /**
@@ -17,4 +18,22 @@ internal fun OnDelete?.toSql(columnNullable: Boolean = false): String = when (th
     }
     OnDelete.RESTRICT -> "RESTRICT"
     null -> if (columnNullable) "SET NULL" else "RESTRICT"
+}
+
+/**
+ * Map a resolved [FkAction] to its SQL `ON DELETE` clause value. The
+ * migration model resolves DSL defaults at construction, so there is
+ * no null case here — but the SET NULL sanity guard still applies.
+ */
+internal fun FkAction.toSql(columnNullable: Boolean = false): String = when (this) {
+    FkAction.CASCADE -> "CASCADE"
+    FkAction.SET_NULL -> {
+        require(columnNullable) {
+            "ON DELETE SET NULL is invalid on a NOT NULL column"
+        }
+        "SET NULL"
+    }
+    FkAction.RESTRICT -> "RESTRICT"
+    FkAction.NO_ACTION -> "NO ACTION"
+    FkAction.SET_DEFAULT -> "SET DEFAULT"
 }

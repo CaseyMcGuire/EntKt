@@ -26,6 +26,19 @@ data class NormalizedSchema(
             schemas: List<EntitySchema>,
             typeMapper: TypeMapper,
         ): NormalizedSchema {
+            // Backstop for programmatic callers that reach the
+            // migration workflow without going through
+            // SchemaInspector.validate (the CLI path's structured
+            // check): a table or column name PostgreSQL would silently
+            // truncate must never enter the pipeline — the truncated
+            // name would never introspect back under its declared
+            // form, wedging the differ permanently.
+            for (schema in schemas) {
+                requireIdentifierFits("table", schema.table)
+                for (col in schema.columns) {
+                    requireIdentifierFits("column", "${schema.table}.${col.name}", col.name)
+                }
+            }
             val tables = schemas.associate { schema ->
                 val columns = schema.columns.map { col ->
                     NormalizedColumn(
@@ -69,7 +82,7 @@ data class NormalizedSchema(
                             targetTable = col.references!!.table,
                             targetColumns = listOf(col.references!!.column),
                             columnNullable = col.nullable,
-                            onDelete = col.references!!.onDelete,
+                            onDelete = resolveDslOnDelete(col.references!!.onDelete, col.nullable),
                         )
                     }
 
@@ -313,6 +326,9 @@ private fun sqlStringLiteral(value: String): String = "'" + value.replace("'", "
  */
 enum class FkAction { NO_ACTION, RESTRICT, CASCADE, SET_NULL, SET_DEFAULT }
 
+/** SQL `MATCH` type of a foreign key; entkt only ever creates SIMPLE. */
+enum class FkMatchType { SIMPLE, FULL, PARTIAL }
+
 data class NormalizedForeignKey(
     /**
      * Referencing columns in constraint order. Every FK entkt itself
@@ -325,25 +341,24 @@ data class NormalizedForeignKey(
     /** Referenced columns, ordinally paired with [columns]. */
     val targetColumns: List<String>,
     /**
-     * Whether the first FK column is nullable — drives ON DELETE
-     * inference for entity-derived FKs when [onDelete] is null.
+     * Whether the first FK column is nullable. Not part of constraint
+     * identity — kept for the renderer's SET NULL sanity guard.
      */
     val columnNullable: Boolean,
+    /**
+     * The resolved ON DELETE action. Always exact: entity-derived FKs
+     * resolve the DSL default (SET_NULL for nullable columns, RESTRICT
+     * for required ones) at construction in [NormalizedSchema.fromEntitySchemas];
+     * introspected FKs carry the catalog code verbatim. One
+     * representation means no contradictory declared-vs-exact state
+     * and no inference at comparison time.
+     */
+    val onDelete: FkAction,
     /** Actual constraint name from introspection, or null for entity-derived FKs. */
     val constraintName: String? = null,
-    /** Explicit DSL ON DELETE action, or null to infer from [columnNullable]. */
-    val onDelete: OnDelete? = null,
-    /**
-     * Exact catalog-reported ON DELETE action for introspected FKs, or
-     * null for entity-derived ones. The differ prefers this over
-     * [onDelete]/inference, so an action with no DSL form
-     * (`SET DEFAULT`) can never compare equal to an inferred one.
-     */
-    val onDeleteAction: FkAction? = null,
     /** ON UPDATE action; entkt only ever creates the default. */
     val onUpdate: FkAction = FkAction.NO_ACTION,
-    /** MATCH type (`SIMPLE` / `FULL` / `PARTIAL`); entkt only creates SIMPLE. */
-    val matchType: String = "SIMPLE",
+    val matchType: FkMatchType = FkMatchType.SIMPLE,
     val deferrable: Boolean = false,
     val initiallyDeferred: Boolean = false,
     /** False for `NOT VALID` constraints — existing rows were never checked. */
@@ -355,10 +370,29 @@ data class NormalizedForeignKey(
             "foreign key columns ($columns) and target columns ($targetColumns) must pair ordinally"
         }
     }
+}
 
-    /** The single referencing column of an entkt-declared FK. */
-    val column: String get() = columns.single()
+/** PostgreSQL NAMEDATALEN - 1: identifiers beyond this are silently truncated. */
+private const val MAX_IDENTIFIER_BYTES = 63
 
-    /** The single referenced column of an entkt-declared FK. */
-    val targetColumn: String get() = targetColumns.single()
+private fun requireIdentifierFits(kind: String, label: String, identifier: String = label) {
+    val bytes = identifier.toByteArray(Charsets.UTF_8).size
+    require(bytes <= MAX_IDENTIFIER_BYTES) {
+        "$kind name '$label' is $bytes bytes, but PostgreSQL silently truncates identifiers " +
+            "longer than $MAX_IDENTIFIER_BYTES bytes (quoted or not). The truncated name would " +
+            "permanently desynchronize the migration differ from the database — shorten the name."
+    }
+}
+
+/**
+ * Resolve a DSL [OnDelete] (or its absence) into the exact [FkAction]
+ * the rendered constraint will carry: an undeclared action defaults to
+ * SET NULL on nullable columns and RESTRICT on required ones, matching
+ * what the DDL renderers emit.
+ */
+internal fun resolveDslOnDelete(onDelete: OnDelete?, columnNullable: Boolean): FkAction = when (onDelete) {
+    OnDelete.CASCADE -> FkAction.CASCADE
+    OnDelete.SET_NULL -> FkAction.SET_NULL
+    OnDelete.RESTRICT -> FkAction.RESTRICT
+    null -> if (columnNullable) FkAction.SET_NULL else FkAction.RESTRICT
 }
