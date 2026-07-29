@@ -22,7 +22,6 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
-import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 
@@ -71,28 +70,31 @@ internal class QueryGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
+        // Edge metadata (target names, joins, inverses, member names)
+        // resolves once here; every member builder below reads it
+        // instead of re-deriving its own copy from the raw schema.
+        val resolved = resolveQuerySchema(packageName, schemaName, schema, schemaNames)
         val className = "${schemaName}Query"
-        val queryClass = ClassName(packageName, className)
-        val entityClass = ClassName(packageName, schemaName)
+        val queryClass = resolved.queryClass
+        val entityClass = resolved.entityClass
         // Typed convenience names for this entity's predicate/order-field
         // scopes. Used everywhere the generated query stores or accepts
         // its own predicate / order field.
         val predicateForEntity = predicateClass.parameterizedBy(entityClass)
         val orderFieldForEntity = orderFieldClass.parameterizedBy(entityClass)
 
-        val traversalMethods = schema.edges()
-            .mapNotNull { edge ->
-                if (edge.kind is EdgeKind.ManyToMany) {
-                    buildM2MTraversal(edge, schema, schemaNames)
-                } else {
-                    buildTraversal(edge, schema, schemaNames)
-                }
+        val traversalMethods = resolved.edges.mapNotNull { re ->
+            if (re.isManyToMany) {
+                buildM2MTraversal(re, resolved)
+            } else {
+                buildTraversal(re, resolved)
             }
+        }
 
         // Eager loading: with{Edge}() methods and properties
-        val eagerEdgeSpecs = schema.edges().mapNotNull { edge ->
-            buildEagerEdgeSpec(edge, schema, schemaNames)
-        }
+        val eagerEdgeSpecs = resolved.edges
+            .filter { it.join != null }
+            .map { buildEagerEdgeSpec(it, resolved) }
 
         val hasEdges = eagerEdgeSpecs.isNotEmpty()
 
@@ -268,10 +270,10 @@ internal class QueryGenerator(
             // The body's loop over `schema.edges()` produces zero
             // iterations for edge-less schemas, so the method just
             // returns its `results` parameter unchanged.
-            .addFunction(buildLoadEdges(entityClass, schema, schemaNames))
+            .addFunction(buildLoadEdges(resolved))
             .addFunction(buildRequireClient(schemaName))
             .addFunction(buildRunReadInterceptors(schemaName, entityClass))
-            .addFunction(buildRunEdgePredicateInterceptors(schemaName, entityClass, schema, schemaNames))
+            .addFunction(buildRunEdgePredicateInterceptors(resolved))
             .addFunction(buildSnapshotForTraversal(queryClass, clientClass))
             .addFunction(buildSeedEdgeTraversal())
             .addFunction(buildSetDeferredSourceStep(entityClass))
@@ -292,7 +294,7 @@ internal class QueryGenerator(
             .addFunction(buildRawExistsOrError(schemaName, entityClass))
             .addFunction(buildVisibleExists(schemaName, entityClass))
             .addFunction(buildVisibleExistsOrError(schemaName, entityClass))
-            .addFunctions(buildExplainMethods(entityClass, schema, schemaNames))
+            .addFunctions(buildExplainMethods(resolved))
             .addFunctions(traversalMethods)
             .build()
 
@@ -1520,14 +1522,12 @@ internal class QueryGenerator(
             .build()
     }
 
-    private fun buildExplainMethods(
-        entityClass: ClassName,
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): List<FunSpec> {
+    private fun buildExplainMethods(resolved: ResolvedQuerySchema): List<FunSpec> {
+        val entityClass = resolved.entityClass
         val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
-        val resolvableEdges = resolveExplainableEdges(schema, schemaNames)
-        val hasEager = resolvableEdges.isNotEmpty()
+        // Only edges with a resolved join can be explained eagerly —
+        // the same capability that gates the eager-load surface.
+        val hasEager = resolved.edges.any { it.join != null }
 
         val methods = mutableListOf<FunSpec>()
 
@@ -1598,8 +1598,9 @@ internal class QueryGenerator(
                 queryPlan,
             )
             helper.addStatement("val edges = mutableMapOf<String, %T>()", queryPlan)
-            for (info in resolvableEdges) {
-                helper.addCode(buildEagerExplainBlock(info, queryPlan, entityClass))
+            for (info in resolved.edges) {
+                val join = info.join ?: continue
+                helper.addCode(buildEagerExplainBlock(info, join, entityClass))
             }
             helper.addStatement(
                 "return %T(root, junctionQuery = junctionExplain, eagerQueries = edges, annotations = spec.annotations)",
@@ -1609,34 +1610,6 @@ internal class QueryGenerator(
         methods += helper.build()
 
         return methods
-    }
-
-    private data class ExplainableEdge(
-        val edge: Edge,
-        val targetClass: ClassName,
-        val eagerPropName: String,
-        val join: EdgeJoin,
-    )
-
-    private fun resolveExplainableEdges(
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): List<ExplainableEdge> {
-        return schema.edges().mapNotNull { edge ->
-            val targetName = schemaNames[edge.target] ?: return@mapNotNull null
-            val targetClass = ClassName(packageName, targetName)
-            val eagerPropName = "eager${toPascalCase(edge.name)}"
-            when (edge.kind) {
-                is EdgeKind.ManyToMany -> {
-                    val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: return@mapNotNull null
-                    ExplainableEdge(edge, targetClass, eagerPropName, join)
-                }
-                else -> {
-                    val join = resolveEdgeJoin(edge, schema) ?: return@mapNotNull null
-                    ExplainableEdge(edge, targetClass, eagerPropName, join)
-                }
-            }
-        }
     }
 
     /**
@@ -1667,8 +1640,8 @@ internal class QueryGenerator(
      * IN list to FALSE.
      */
     private fun buildEagerExplainBlock(
-        info: ExplainableEdge,
-        queryPlan: ClassName,
+        info: ResolvedQueryEdge,
+        join: EdgeJoin,
         sourceClass: ClassName,
     ): CodeBlock {
         val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
@@ -1679,7 +1652,7 @@ internal class QueryGenerator(
         // Cross-class write goes through the @EntktInternal seeder.
         body.addStatement(
             "subQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-            sourceClass, info.edge.name, edgeStepClass, sourceClass, info.edge.name, info.targetClass,
+            sourceClass, info.name, edgeStepClass, sourceClass, info.name, info.targetClass,
         )
 
         // A rejected eager sub-explain becomes a rejected entry
@@ -1689,7 +1662,7 @@ internal class QueryGenerator(
         // see which step rejected. Explain rejection lives on the
         // plan, not as an exception.
         val queryPlanLocal = ClassName("entkt.runtime.query", "QueryPlan")
-        if (info.edge.kind is EdgeKind.ManyToMany) {
+        if (info.isManyToMany) {
             // M2M: junction table explain stands alone (no
             // interceptors on the junction), then the target-table
             // plan uses the post-EAGER_LOAD spec with an IN on "id".
@@ -1698,9 +1671,9 @@ internal class QueryGenerator(
             // structural fields and erases at the driver call.
             body.addStatement(
                 "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
-                info.join.junctionTable, PREDICATE, Any::class.asClassName(), info.join.junctionSourceColumn, OP, QUERY_EXPLANATION,
+                join.junctionTable, PREDICATE, Any::class.asClassName(), join.junctionSourceColumn, OP, QUERY_EXPLANATION,
             )
-            body.add("edges[%S] = try {\n", info.edge.name)
+            body.add("edges[%S] = try {\n", info.name)
             body.add(
                 "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
                 READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
@@ -1723,10 +1696,10 @@ internal class QueryGenerator(
             // Direct edge: single query with IN on the join column.
             // hasMany/hasOne: IN on targetColumn (FK on target side).
             // belongsTo: IN on targetColumn ("id" on target side).
-            body.add("edges[%S] = try {\n", info.edge.name)
+            body.add("edges[%S] = try {\n", info.name)
             body.add(
                 "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
-                READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, info.join.targetColumn, OP, QUERY_EXPLANATION,
+                READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,
             )
             // See M2M branch above for why limit/offset are
             // stripped here.
@@ -1945,12 +1918,8 @@ internal class QueryGenerator(
      * entity from the schema's outgoing edges. Edges whose targets
      * aren't visible to codegen fall through unchanged.
      */
-    private fun buildRunEdgePredicateInterceptors(
-        schemaName: String,
-        entityClass: ClassName,
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): FunSpec {
+    private fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): FunSpec {
+        val entityClass = resolved.entityClass
         val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
         val mutableMap = ClassName("kotlin.collections", "MutableMap")
         val body = CodeBlock.builder()
@@ -1995,14 +1964,13 @@ internal class QueryGenerator(
         // the branch, and rebuilds a typed HasEdgeWith for the
         // candidate before returning.
         body.add("  is %T.HasEdgeWith<%T, *> -> when (predicate.edge) {\n", predicateClass, entityClass)
-        for (edge in schema.edges()) {
-            val targetName = schemaNames[edge.target] ?: continue
-            val targetClass = ClassName(packageName, targetName)
-            val targetQueryClass = ClassName(packageName, "${targetName}Query")
+        for (re in resolved.edges) {
+            val targetClass = re.targetClass
+            val targetQueryClass = re.targetQueryClass
             // The edge name in HasEdgeWith corresponds to an edge
             // on THIS query's entity (the source). Dispatch by
             // this entity's outgoing edge names.
-            body.add("    %S -> {\n", edge.name)
+            body.add("    %S -> {\n", re.name)
             // Reuse this source query's driver — the target
             // query never touches it on this code path (we only
             // call runReadInterceptors, which is pure transform),
@@ -2058,11 +2026,10 @@ internal class QueryGenerator(
         // soft-deleted articles, otherwise the existence check is
         // wrong.
         body.add("  is %T.HasEdge<%T> -> when (predicate.edge) {\n", predicateClass, entityClass)
-        for (edge in schema.edges()) {
-            val targetName = schemaNames[edge.target] ?: continue
-            val targetClass = ClassName(packageName, targetName)
-            val targetQueryClass = ClassName(packageName, "${targetName}Query")
-            body.add("    %S -> {\n", edge.name)
+        for (re in resolved.edges) {
+            val targetClass = re.targetClass
+            val targetQueryClass = re.targetQueryClass
+            body.add("    %S -> {\n", re.name)
             body.add("      val targetQ = %T(driver, c)\n", targetQueryClass)
             // Cross-class write through the @EntktInternal seeder.
             body.add(
@@ -2182,24 +2149,21 @@ internal class QueryGenerator(
 
     /**
      * Build the nullable property and `with{Edge}()` method for a single
-     * edge. Returns null if the target can't be resolved.
+     * eager-capable edge. Callers pass only edges with a resolved
+     * [ResolvedQueryEdge.join] — an unresolvable join means no eager
+     * surface at all.
      */
     private fun buildEagerEdgeSpec(
-        edge: Edge,
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): EagerEdgeSpec? {
-        val targetName = schemaNames[edge.target] ?: return null
-        // For non-M2M edges, verify we can resolve the join
-        if (edge.kind is EdgeKind.ManyToMany) {
-            resolveM2MEdgeJoin(edge, schema, schemaNames) ?: return null
-        } else {
-            resolveEdgeJoin(edge, schema) ?: return null
-        }
-        val targetQueryClass = ClassName(packageName, "${targetName}Query")
-        val queryClass = ClassName(packageName, "${schema.let { schemaNames[it] }}Query")
-        val eagerPropName = "eager${toPascalCase(edge.name)}"
-        val withMethodName = "with${toPascalCase(edge.name)}"
+        re: ResolvedQueryEdge,
+        resolved: ResolvedQuerySchema,
+    ): EagerEdgeSpec {
+        val targetQueryClass = re.targetQueryClass
+        // The with-method's return type names this query class via the
+        // schemaNames map entry, not the schemaName argument — see
+        // [ResolvedQuerySchema.sourceName] for why the lookup is kept.
+        val queryClass = ClassName(packageName, "${resolved.sourceName}Query")
+        val eagerPropName = re.eagerPropName
+        val withMethodName = re.withMethodName
 
         val property = PropertySpec.builder(
             eagerPropName,
@@ -2225,7 +2189,7 @@ internal class QueryGenerator(
             .addStatement("return this")
             .build()
 
-        return EagerEdgeSpec(edge.name, property, withMethod)
+        return EagerEdgeSpec(re.name, property, withMethod)
     }
 
     /**
@@ -2233,38 +2197,19 @@ internal class QueryGenerator(
      * Generated per-query, with edge-type-specific blocks for each
      * declared edge. Called by `all()` and `firstOrNull()`.
      */
-    private fun buildLoadEdges(
-        entityClass: ClassName,
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): FunSpec {
+    private fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
+        val entityClass = resolved.entityClass
         val body = CodeBlock.builder()
         body.addStatement("if (results.isEmpty()) return results")
         body.addStatement("var entities = results")
 
-        for (edge in schema.edges()) {
-            val targetName = schemaNames[edge.target] ?: continue
-            val targetClass = ClassName(packageName, targetName)
-            val eagerPropName = "eager${toPascalCase(edge.name)}"
-            val edgePropName = toCamelCase(edge.name)
-
-            when (edge.kind) {
-                is EdgeKind.ManyToMany -> {
-                    val join = resolveM2MEdgeJoin(edge, schema, schemaNames) ?: continue
-                    emitM2MEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName)
-                }
-                is EdgeKind.BelongsTo -> {
-                    val join = resolveEdgeJoin(edge, schema) ?: continue
-                    emitToOneEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName, schema, schemaNames)
-                }
-                is EdgeKind.HasOne -> {
-                    val join = resolveEdgeJoin(edge, schema) ?: continue
-                    emitHasOneEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName)
-                }
-                is EdgeKind.HasMany -> {
-                    val join = resolveEdgeJoin(edge, schema) ?: continue
-                    emitToManyEagerBlock(body, eagerPropName, edgePropName, edge.name, join, entityClass, targetClass, targetName)
-                }
+        for (re in resolved.edges) {
+            val join = re.join ?: continue
+            when (re.edge.kind) {
+                is EdgeKind.ManyToMany -> emitM2MEagerBlock(body, re, join, entityClass)
+                is EdgeKind.BelongsTo -> emitToOneEagerBlock(body, re, join, entityClass, resolved)
+                is EdgeKind.HasOne -> emitHasOneEagerBlock(body, re, join, entityClass)
+                is EdgeKind.HasMany -> emitToManyEagerBlock(body, re, join, entityClass)
             }
         }
 
@@ -2289,17 +2234,14 @@ internal class QueryGenerator(
      */
     private fun emitToManyEagerBlock(
         body: CodeBlock.Builder,
-        eagerPropName: String,
-        edgePropName: String,
-        edgeName: String,
+        re: ResolvedQueryEdge,
         join: EdgeJoin,
         sourceClass: ClassName,
-        targetClass: ClassName,
-        targetName: String,
     ) {
-        body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
+        val targetClass = re.targetClass
+        body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
-        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
+        emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
         // Run target interceptors with EAGER_LOAD. The IN
         // predicate that ties target rows back to the source ids
         // goes in via extraStructural so it's tagged STRUCTURAL,
@@ -2327,13 +2269,13 @@ internal class QueryGenerator(
             "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
             targetClass,
         )
-        emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
+        emitEagerPrivacyCheck(body, re.targetName, "loadedGroups", grouped = true)
         body.addStatement(
             "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
         )
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
-            edgePropName,
+            re.edgePropName,
         )
         body.endControlFlow()
     }
@@ -2345,17 +2287,14 @@ internal class QueryGenerator(
      */
     private fun emitHasOneEagerBlock(
         body: CodeBlock.Builder,
-        eagerPropName: String,
-        edgePropName: String,
-        edgeName: String,
+        re: ResolvedQueryEdge,
         join: EdgeJoin,
         sourceClass: ClassName,
-        targetClass: ClassName,
-        targetName: String,
     ) {
-        body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
+        val targetClass = re.targetClass
+        body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
-        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
+        emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
         body.addStatement(
             "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
             READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
@@ -2391,13 +2330,13 @@ internal class QueryGenerator(
             "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
             targetClass,
         )
-        emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
+        emitEagerPrivacyCheck(body, re.targetName, "loadedGroups", grouped = true)
         body.addStatement(
             "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
         )
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id]?.firstOrNull())) }",
-            edgePropName,
+            re.edgePropName,
         )
         body.endControlFlow()
     }
@@ -2408,25 +2347,20 @@ internal class QueryGenerator(
      */
     private fun emitToOneEagerBlock(
         body: CodeBlock.Builder,
-        eagerPropName: String,
-        edgePropName: String,
-        edgeName: String,
+        re: ResolvedQueryEdge,
         join: EdgeJoin,
         sourceClass: ClassName,
-        targetClass: ClassName,
-        targetName: String,
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
+        resolved: ResolvedQuerySchema,
     ) {
+        val targetClass = re.targetClass
         // Find the FK property name on the source entity
-        val edgeFks = computeEdgeFks(schema, schemaNames)
-        val fk = edgeFks.find { it.columnName == join.sourceColumn }
+        val fk = resolved.edgeFks.find { it.columnName == join.sourceColumn }
         val fkPropName = fk?.propertyName ?: toCamelCase(join.sourceColumn)
         // A required FK is a non-null property, so the safe-call below would be
         // redundant (and Kotlin warns). Unknown → treat as nullable (safe).
         val fkRequired = fk?.required ?: false
 
-        body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
+        body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
         // Per-parent bounds, same contract as the to-many edges. A
         // belongsTo yields at most one target per parent, so the window
         // collapses to "is index 0 inside it?" — false for `limit(0)`
@@ -2446,7 +2380,7 @@ internal class QueryGenerator(
         body.addStatement("val perParentLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
         body.addStatement("val targetInWindow = perParentOffset == 0 && perParentLimit > 0")
         body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
-        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
+        emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
         // Fetch every matching target in one `IN (...)` pass. The
         // caller's bounds are per parent, not over this batched result,
         // so they're applied below rather than passed to the driver —
@@ -2476,7 +2410,7 @@ internal class QueryGenerator(
             "var loaded = targetRows.map { %T.fromRow(it) }",
             targetClass,
         )
-        emitEagerPrivacyCheck(body, targetName, "loaded", grouped = false)
+        emitEagerPrivacyCheck(body, re.targetName, "loaded", grouped = false)
         body.addStatement("loaded = subQuery.loadEdges(loaded, eagerPrivacyContext)")
         body.addStatement("val targetMap = loaded.associateBy { it.id }")
         if (fkRequired) {
@@ -2484,12 +2418,12 @@ internal class QueryGenerator(
             // have been filtered by eager LOAD privacy).
             body.addStatement(
                 "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = targetMap[entity.%L])) }",
-                edgePropName, fkPropName,
+                re.edgePropName, fkPropName,
             )
         } else {
             body.addStatement(
                 "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = entity.%L?.let { targetMap[it] })) }",
-                edgePropName, fkPropName,
+                re.edgePropName, fkPropName,
             )
         }
         // No `else` arm: an empty fetch produces an empty `targetMap`,
@@ -2502,15 +2436,12 @@ internal class QueryGenerator(
      */
     private fun emitM2MEagerBlock(
         body: CodeBlock.Builder,
-        eagerPropName: String,
-        edgePropName: String,
-        edgeName: String,
+        re: ResolvedQueryEdge,
         join: EdgeJoin,
         sourceClass: ClassName,
-        targetClass: ClassName,
-        targetName: String,
     ) {
-        body.beginControlFlow("%L?.let { subQuery ->", eagerPropName)
+        val targetClass = re.targetClass
+        body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
         body.addStatement("val sourceIds = entities.map { it.id }")
         // Query junction table (no interceptors — the junction
         // is internal storage, not an entity with interceptors).
@@ -2523,7 +2454,7 @@ internal class QueryGenerator(
             "val targetIds = junctionRows.map { it[%S] }.distinct()",
             join.junctionTargetColumn,
         )
-        emitEagerSubquerySetup(body, edgeName, sourceClass, targetClass)
+        emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
         // Fetch all matching targets — limit/offset are applied per group below.
         //
         // The interceptor pass is unconditional, including when the
@@ -2598,13 +2529,13 @@ internal class QueryGenerator(
         body.addStatement(
             "var loadedGroups = grouped.mapValues { (_, list) -> list.drop(perGroupOffset).take(perGroupLimit) }",
         )
-        emitEagerPrivacyCheck(body, targetName, "loadedGroups", grouped = true)
+        emitEagerPrivacyCheck(body, re.targetName, "loadedGroups", grouped = true)
         body.addStatement(
             "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
         )
         body.addStatement(
             "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
-            edgePropName,
+            re.edgePropName,
         )
         // No `else` arm: with no junction rows the grouping is empty, so
         // the `?: emptyList()` above already covers every parent.
@@ -2780,25 +2711,22 @@ internal class QueryGenerator(
 
     /**
      * Generate a `queryX(): TargetQuery` traversal for a many-to-many
-     * [edge]. Lowered to a `Predicate.HasM2MEdgeFrom` against the
+     * edge [re]. Lowered to a `Predicate.HasM2MEdgeFrom` against the
      * candidate target row, naming the *source* schema's table and the
      * forward edge — the runtime walks the junction backwards using the
      * source schema's own edge metadata, with no dependency on a
      * synthesized reverse edge on the target.
      */
     private fun buildM2MTraversal(
-        edge: Edge,
-        source: EntSchema,
-        schemaNames: Map<EntSchema, String>,
+        re: ResolvedQueryEdge,
+        resolved: ResolvedQuerySchema,
     ): FunSpec? {
-        val sourceName = schemaNames[source] ?: return null
-        val targetName = schemaNames[edge.target] ?: return null
+        val sourceName = resolved.sourceName ?: return null
         val sourceEntityClass = ClassName(packageName, sourceName)
-        val sourceQueryClass = ClassName(packageName, "${sourceName}Query")
-        val targetEntityClass = ClassName(packageName, targetName)
-        val targetQueryClass = ClassName(packageName, "${targetName}Query")
-        val methodName = "query${toPascalCase(edge.name)}"
-        val sourceTable = source.tableName
+        val targetEntityClass = re.targetClass
+        val targetQueryClass = re.targetQueryClass
+        val methodName = "query${toPascalCase(re.name)}"
+        val sourceTable = resolved.schema.tableName
         val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
         val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
@@ -2829,7 +2757,7 @@ internal class QueryGenerator(
             // Cross-class write through the @EntktInternal seeder.
             .addStatement(
                 "target.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-                sourceEntityClass, edge.name, edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
+                sourceEntityClass, re.name, edgeStepClass, sourceEntityClass, re.name, targetEntityClass,
             )
             // Snapshot source state at queryX() time into a fresh
             // source-Query instance so the deferred lambda is
@@ -2873,7 +2801,7 @@ internal class QueryGenerator(
                         predicateClass,
                         targetEntityClass, sourceEntityClass,
                         sourceTable,
-                        edge.name,
+                        re.name,
                     )
                     .add("    annotations = sourceSpec.annotations,\n")
                     .add("  )\n")
@@ -2885,9 +2813,9 @@ internal class QueryGenerator(
     }
 
     /**
-     * Generate a `queryX(): TargetQuery` method for [edge]. This is the
-     * traversal entry point — given a query on the source schema, walk
-     * across [edge] and return a query on the target.
+     * Generate a `queryX(): TargetQuery` method for edge [re]. This is
+     * the traversal entry point — given a query on the source schema,
+     * walk across the edge and return a query on the target.
      *
      * Lowering: the parent's combined predicate becomes a HasEdgeWith
      * predicate on the target query, naming the *inverse* edge (i.e.
@@ -2899,18 +2827,15 @@ internal class QueryGenerator(
      * just skips emitting a traversal method in that case.
      */
     private fun buildTraversal(
-        edge: Edge,
-        source: EntSchema,
-        schemaNames: Map<EntSchema, String>,
+        re: ResolvedQueryEdge,
+        resolved: ResolvedQuerySchema,
     ): FunSpec? {
-        val sourceName = schemaNames[source] ?: return null
-        val targetName = schemaNames[edge.target] ?: return null
-        val inverse = findInverseEdge(edge, source) ?: return null
+        val sourceName = resolved.sourceName ?: return null
+        val inverse = re.inverse ?: return null
         val sourceEntityClass = ClassName(packageName, sourceName)
-        val sourceQueryClass = ClassName(packageName, "${sourceName}Query")
-        val targetEntityClass = ClassName(packageName, targetName)
-        val targetQueryClass = ClassName(packageName, "${targetName}Query")
-        val methodName = "query${toPascalCase(edge.name)}"
+        val targetEntityClass = re.targetClass
+        val targetQueryClass = re.targetQueryClass
+        val methodName = "query${toPascalCase(re.name)}"
         val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
         val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
@@ -2941,7 +2866,7 @@ internal class QueryGenerator(
             // Cross-class write through the @EntktInternal seeder.
             .addStatement(
                 "target.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-                sourceEntityClass, edge.name, edgeStepClass, sourceEntityClass, edge.name, targetEntityClass,
+                sourceEntityClass, re.name, edgeStepClass, sourceEntityClass, re.name, targetEntityClass,
             )
             // Snapshot source state at queryX() time into a fresh
             // source-Query instance so the deferred lambda is

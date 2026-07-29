@@ -1,0 +1,137 @@
+package entkt.codegen
+
+import com.squareup.kotlinpoet.ClassName
+import entkt.schema.Edge
+import entkt.schema.EdgeKind
+import entkt.schema.EntSchema
+
+/**
+ * Names, joins, and inverses for one generated query class, resolved
+ * once per [QueryGenerator.generate] call.
+ *
+ * Eager loading, eager explain, edge-predicate interception, and
+ * `queryX()` traversal all key off the same per-edge metadata: the
+ * target schema's generated name, the join columns, the inverse edge,
+ * and the derived member names (`eagerX` / `withX` / edge property).
+ * Each of those emitters used to re-derive that metadata from the raw
+ * schema at its own call site, which meant several copies of the same
+ * resolution rules that could drift apart. Resolution happens here,
+ * once; the member builders read the result.
+ *
+ * Edge capability is expressed through nullability:
+ *  - an edge appears in [edges] at all only when its target schema is
+ *    visible to codegen (present in `schemaNames`) — edges whose
+ *    targets aren't being generated are skipped everywhere, exactly
+ *    as the per-site `schemaNames[edge.target] ?: continue` guards
+ *    used to do;
+ *  - [ResolvedQueryEdge.join] non-null ⇔ the edge supports eager
+ *    loading and eager explain;
+ *  - [ResolvedQueryEdge.inverse] non-null ⇔ a direct edge supports
+ *    `queryX()` traversal (M2M traversal never needs an inverse).
+ */
+internal class ResolvedQuerySchema(
+    /** The generated-name argument passed to [QueryGenerator.generate]. */
+    val schemaName: String,
+    val schema: EntSchema,
+    /**
+     * This schema's own entry in the `schemaNames` map, which is what
+     * traversal codegen and the eager with-method's return-type name
+     * have always been derived from — not the [schemaName] argument.
+     * The two agree for every real caller ([EntGenerator] builds the
+     * map from the same names it passes as arguments); carrying the
+     * map lookup keeps the historical behavior for callers that pass
+     * a map that omits or renames the source schema (traversals are
+     * skipped when this is null, exactly as before).
+     */
+    val sourceName: String?,
+    val entityClass: ClassName,
+    val queryClass: ClassName,
+    /** In `schema.edges()` order, restricted to codegen-visible targets. */
+    val edges: List<ResolvedQueryEdge>,
+    /** FK surfaces for this schema's belongsTo edges, resolved once. */
+    val edgeFks: List<EdgeFk>,
+)
+
+internal class ResolvedQueryEdge(
+    val edge: Edge,
+    /** The target schema's generated name from `schemaNames`. */
+    val targetName: String,
+    val targetClass: ClassName,
+    val targetQueryClass: ClassName,
+    /** Backing property holding the eager sub-query: `eagerX`. */
+    val eagerPropName: String,
+    /** Eager-load DSL entry point: `withX`. */
+    val withMethodName: String,
+    /** Generated `Edges` property the eager result lands on. */
+    val edgePropName: String,
+    /**
+     * Join columns for eager loading / eager explain, or null when
+     * they can't be resolved (an M2M junction schema not visible to
+     * codegen). Direct-edge join resolution either succeeds or throws
+     * — see [resolveEdgeJoin] — so null here always means "skip the
+     * eager surface", never "silently broken join".
+     */
+    val join: EdgeJoin?,
+    /**
+     * The inverse edge on the target for direct-edge traversal
+     * lowering (`queryX()` filters targets by the inverse edge name).
+     * Null for M2M edges and when no inverse resolves — traversal
+     * codegen skips the method in that case.
+     */
+    val inverse: Edge?,
+) {
+    val name: String get() = edge.name
+    val isManyToMany: Boolean get() = edge.kind is EdgeKind.ManyToMany
+}
+
+internal fun resolveQuerySchema(
+    packageName: String,
+    schemaName: String,
+    schema: EntSchema,
+    schemaNames: Map<EntSchema, String>,
+): ResolvedQuerySchema {
+    val sourceName = schemaNames[schema]
+    val edges = schema.edges().mapNotNull { edge ->
+        val targetName = schemaNames[edge.target] ?: return@mapNotNull null
+        // Inverse before join, and only when the source schema is
+        // itself visible: findInverseEdge throws on a bad or
+        // ambiguous `.inverse(...)` ref, and the traversal builder —
+        // historically the first resolution site in generate() —
+        // only ran it behind its own sourceName guard. Keeping that
+        // order and guard keeps which error a broken edge surfaces
+        // unchanged for that edge. (With several broken edges,
+        // resolution is now per-edge rather than the old
+        // all-inverses-then-all-joins phase order, so which edge's
+        // error wins can differ.)
+        val inverse = if (edge.kind is EdgeKind.ManyToMany || sourceName == null) {
+            null
+        } else {
+            findInverseEdge(edge, schema)
+        }
+        val join = if (edge.kind is EdgeKind.ManyToMany) {
+            resolveM2MEdgeJoin(edge, schema, schemaNames)
+        } else {
+            resolveEdgeJoin(edge, schema)
+        }
+        ResolvedQueryEdge(
+            edge = edge,
+            targetName = targetName,
+            targetClass = ClassName(packageName, targetName),
+            targetQueryClass = ClassName(packageName, "${targetName}Query"),
+            eagerPropName = "eager${toPascalCase(edge.name)}",
+            withMethodName = "with${toPascalCase(edge.name)}",
+            edgePropName = toCamelCase(edge.name),
+            join = join,
+            inverse = inverse,
+        )
+    }
+    return ResolvedQuerySchema(
+        schemaName = schemaName,
+        schema = schema,
+        sourceName = sourceName,
+        entityClass = ClassName(packageName, schemaName),
+        queryClass = ClassName(packageName, "${schemaName}Query"),
+        edges = edges,
+        edgeFks = computeEdgeFks(schema, schemaNames),
+    )
+}
