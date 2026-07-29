@@ -135,6 +135,31 @@ Option A is recommended: posture-in-the-name does not survive contact
 with the second posture, and the repos are already generated from
 shared builders precisely so there is one read surface.
 
+### The opt-in marker's message must be generalized first
+
+`@EntktInternal`'s `@RequiresOptIn` message is edge-predicate-specific
+today: it tells the developer that "direct fabrication can bypass
+edge-walker soundness" and to "construct edge predicates only via the
+generated `EdgeRef.has(...)` / `EdgeRef.exists()` surface". That text
+is already stale for the marker's newer duties (the interceptor
+registry, the `EntReadRuntime` contract, the traversal seeders) and
+would be actively misleading on a read-client construction site —
+opting in there has nothing to do with edge predicates.
+
+This RFC therefore requires, before the marker is reused on the
+adapter: generalize the `@RequiresOptIn` message to the actual
+contract ("framework-internal API used by generated code; unsupported
+for application use; opt in explicitly and own the invariants
+documented on `EntktInternal`") and move the per-surface soundness
+notes — including the edge-walker one, which stays valuable — into the
+marker's KDoc inventory.
+
+Alternative considered: a dedicated second marker for read-client
+construction. Rejected — it fragments the single opt-in story into
+parallel markers guarding the same property ("generated-code-only
+API"), forces double `@file:OptIn` headers in generated files that
+touch both surfaces, and splits the one thing worth grepping for.
+
 ### Adapter semantics
 
 `asReadClientForInternalUse(context)` copies the same read-relevant
@@ -181,33 +206,55 @@ Mirror `ValidationReadClientCompileTest` with a privacy-rule snippet
 fixtures): negatives for `create`, `update`, `deleteByIdOrError`,
 `deleteMany`, `withTransaction`, `withTransactionOrError`,
 `withPrivacyContext`, and `bypassPrivacy_DANGEROUS` must fail with
-unresolved references, plus assignment probes for the configuration
-members named in Goals — `ctx.client.transactionRequirement = ...` and
-`ctx.client.privacyContextProvider = ...` (reachable same-module
+unresolved references, plus assignment probes for every configuration
+member named in Goals — `ctx.client.transactionRequirement = ...`,
+`ctx.client.privacyContextProvider = ...`,
+`ctx.client.defaultUpdateConsistency = ...`, and
+`ctx.client.defaultRelationshipLocking = ...` (reachable same-module
 `internal var`s on the full client today, absent members on the read
 client, so the probes fail the same unresolved-reference way). The
 positive twin compiles a rule using `query { }` + terminal, the byId
 family, and an index-helper stage.
 
+The adapter's opt-in gate gets its own pair, in an application-code
+snippet holding an `EntClient` (not a rule — rules never see the full
+client after this RFC):
+
+- `client.asReadClientForInternalUse(...)` **without** opt-in must
+  fail with the opt-in diagnostic — assert the message names
+  `EntktInternal`, not an unresolved reference; this is a different
+  failure class than the probes above, and the assertion must not
+  reuse the unresolved-reference matcher.
+- The same call under `@OptIn(EntktInternal::class)` must compile.
+
+Because kctfork compiles the snippet into the same module as the
+generated output, `internal` is satisfied in both cases — the pair
+proves the marker is the gate, which is precisely the boundary the
+Non-Goals section claims and nothing more.
+
 ## Migration Plan
 
-1. (Option A) Rename the generated read client and repos
+1. Generalize `EntktInternal`'s `@RequiresOptIn` message and KDoc from
+   the edge-predicate-specific text to the framework-internal contract
+   (per-surface soundness notes move into the KDoc inventory). No
+   call-site changes — the marker's identity is unchanged.
+2. (Option A) Rename the generated read client and repos
    (`EntReadClient`, `${Entity}ReadRepo`); update the validation
    contexts, evaluators, compile/integration tests, and docs that name
    the old types.
-2. Replace `asValidationReadClient()` with
+3. Replace `asValidationReadClient()` with
    `@EntktInternal internal asReadClientForInternalUse(context)`;
    validation evaluators inline the bypass context at the call site;
    the read client's and read repos' constructors gain the same
    `@EntktInternal` guard.
-3. Change generated privacy contexts (`Load` / `Create` / `Update` /
+4. Change generated privacy contexts (`Load` / `Create` / `Update` /
    `Delete`) from `EntClient` to the read client; privacy evaluators
    build it via `asReadClientForInternalUse(privacy)`.
-4. Remove `withFixedPrivacyContextForInternalUse` (dead after step 3).
-5. Add the compile-fail/compile-pass tests; update codegen test pins
-   (`PrivacyGeneratorTest`'s context-type assertion,
-   `ClientGeneratorTest`).
-6. Update `docs/06-privacy.md` (context shapes, evaluator wiring) and
+5. Remove `withFixedPrivacyContextForInternalUse` (dead after step 4).
+6. Add the compile-fail/compile-pass tests (including the opt-in gate
+   pair); update codegen test pins (`PrivacyGeneratorTest`'s
+   context-type assertion, `ClientGeneratorTest`).
+7. Update `docs/06-privacy.md` (context shapes, evaluator wiring) and
    the validation docs' type names.
 
 ## Open Questions
@@ -236,6 +283,10 @@ Before implementation, add tests for:
 - rule reads inside a transaction use the transaction-scoped driver
 - read interceptors run for rule queries and observe the caller's
   viewer, not a bypass
-- rule code cannot call write, transaction, or re-scoping methods
-  (compile-fail harness above)
+- rule code cannot call write, transaction, re-scoping, or
+  configuration members (compile-fail harness above, including the
+  `defaultUpdateConsistency` / `defaultRelationshipLocking` probes)
+- `asReadClientForInternalUse` is opt-in-gated: uncompilable without
+  `@OptIn(EntktInternal::class)`, compilable with it, asserted on the
+  opt-in diagnostic rather than an unresolved reference
 - existing privacy integration suites pass unchanged
