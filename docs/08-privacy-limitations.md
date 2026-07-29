@@ -34,6 +34,30 @@ returning a partial result. Callers should ensure their predicates
 narrow results to entities the viewer is allowed to see, or handle
 `PrivacyDeniedException` at the call site.
 
+## Predicate-Based Inference
+
+LOAD privacy is evaluated on materialized rows. Predicates that
+reference *other* rows without materializing them do not evaluate
+those rows' LOAD privacy:
+
+- `Edge.has { ... }` / `Edge.exists()` compile to `EXISTS` subqueries
+  against the related table (target-entity *interceptors* apply inside
+  the subquery; LOAD privacy does not — see
+  [Read-Path Interceptors → Edge-predicate existence semantics](implemented-features/query/read-path-interceptors.md)).
+- `queryX()` traversals fold the source query's predicates into a
+  structural bridge on the target; source rows are never loaded.
+
+A query can therefore be *filtered* by attributes of rows the viewer
+could not load, and its LOAD-checked results reveal that match. This
+applies uniformly to application queries and to privacy-rule reads —
+a rule that keys a decision on a hidden related row's attributes
+through `has { }` is influenced by data its viewer cannot see. When a
+decision must not be, materialize the related row explicitly
+(`byIdOrNull` / `firstOrNull`) so it passes its own LOAD check.
+Evaluating privacy through edge predicates is related ground to the
+[Edge-Derived LOAD Privacy](possible-features/privacy-validation/edge-derived-load-privacy.md)
+proposal.
+
 ## Bulk Operations
 
 Generated `createMany()` and `deleteMany()` are convenience methods that

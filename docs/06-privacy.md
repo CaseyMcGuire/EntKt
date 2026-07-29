@@ -238,11 +238,11 @@ Write privacy is enforced before the database call. If denied, a
 Each operation's rules receive a typed context. The `client` is a
 read-only `EntReadClient`, fixed to the **caller's** privacy context —
 rules can query the graph to decide (ownership walks,
-parent-visibility checks), and those reads see exactly what the viewer
-being authorized can see. Writes, transactions, re-scoping
-(`withPrivacyContext` / `bypassPrivacy_DANGEROUS`), and configuration
-do not exist on the type, so a rule that tries to mutate does not
-compile:
+parent-visibility checks), and every row those reads **materialize**
+passes the viewer's LOAD privacy: a rule cannot load what its viewer
+cannot load. Writes, transactions, re-scoping (`withPrivacyContext` /
+`bypassPrivacy_DANGEROUS`), and configuration do not exist on the
+type, so a rule that tries to mutate does not compile:
 
 ```kotlin
 // Generated evaluator wires the viewer-scoped read-only client
@@ -264,6 +264,20 @@ of silently probing rows the viewer cannot see. They remain available
 everywhere else (application queries, validation rules), where their
 privacy posture is deliberate. Use a LOAD-checked terminal inside
 privacy rules.
+
+One caveat is inherited from the entity-level privacy model rather
+than introduced by the read client: LOAD privacy is evaluated on
+**materialized** rows only. Rows a query references purely
+structurally — matched inside an `Edge.has { ... }` predicate (an
+`EXISTS` subquery) or folded in as the source side of a `queryX()`
+traversal — are never loaded as entities and therefore never
+LOAD-checked. That holds identically for application queries and rule
+reads: a rule that keys a decision on a *related* row's attributes
+through `has { }` can be influenced by rows its viewer could not load
+directly. When that matters, materialize the related row explicitly
+(`byIdOrNull` / `firstOrNull` on the related repo) so it passes its
+own LOAD check. See
+[Privacy Limitations → Predicate-Based Inference](08-privacy-limitations.md#predicate-based-inference).
 
 ### LoadPrivacyContext
 

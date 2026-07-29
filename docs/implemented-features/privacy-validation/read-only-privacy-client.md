@@ -48,6 +48,30 @@ query graph. That is recorded as an open question below; the runtime
 gate covers every path (traversals included) through one mechanism
 today.
 
+**The gate deliberately stops at raw terminals.** Review also
+surfaced the predicate-inference channel: `has { ... }` predicates
+(EXISTS subqueries) and `queryX()` traversal sources never
+materialize the related/source rows, so their LOAD privacy is never
+evaluated and a rule can be influenced by attributes of rows its
+viewer cannot load. That channel is real but is a property of the
+entity-level privacy model, not of this RFC's reader: it exists
+identically for every application query, is documented as intended
+EXISTS semantics in the read-path-interceptors design, and — unlike
+raw terminals, which have in-kind LOAD-checked replacements
+(`visible*`, `first*`) — `has { }` and traversals are the core
+authorization idiom (ownership and membership walks) with no cheap
+equivalent; the privacy-honest alternative is materializing the
+related row (`byIdOrNull`), which rules can already do. Gating them
+only inside rules would gut the primary rule pattern while leaving
+the channel open everywhere else. Resolution: the guarantee is
+documented precisely (materialized rows are LOAD-checked; structural
+references are not — [Privacy Limitations → Predicate-Based
+Inference](../../08-privacy-limitations.md#predicate-based-inference)),
+the behavior is pinned by an integration test so any future change is
+deliberate, and closing the channel for the whole framework is the
+[Edge-Derived LOAD Privacy](../../possible-features/privacy-validation/edge-derived-load-privacy.md)
+problem space, recorded below.
+
 Drafted 2026-07-29 as the follow-up the implemented
 [read-only-validation-client](read-only-validation-client.md)
 RFC deferred in its migration step 7 ("Keep privacy contexts using the
@@ -307,6 +331,12 @@ Non-Goals section claims and nothing more.
   requires a parallel viewer-scoped query surface (narrowed builder
   receiver + narrowed traversal return types) across the generated
   query graph — see the Status addendum for the analysis.
+- Should `has { }` / traversal-source predicates evaluate the related
+  entity's LOAD privacy (closing the predicate-inference channel for
+  the whole framework, not just rules)? See the Status addendum and
+  the Edge-Derived LOAD Privacy proposal — pushing LOAD rules into
+  EXISTS subqueries is the hard part (rules are arbitrary in-process
+  code, not SQL).
 - Should hooks also get a read-only client by default, with an escape
   hatch for side-effecting hooks? (Carried from the validation RFC.)
 - Is there a legitimate cross-viewer read inside a privacy rule that

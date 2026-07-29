@@ -7,6 +7,9 @@ import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
 import entkt.integrationtest.ent.EntReadClient
+import entkt.integrationtest.ent.Membership
+import entkt.integrationtest.ent.MembershipLoadPrivacyRule
+import entkt.integrationtest.ent.MembershipPolicyScope
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserCreatePrivacyRule
 import entkt.integrationtest.ent.UserLoadPrivacyRule
@@ -122,6 +125,38 @@ private object LeakyRawExistsArticlePolicy : EntityPolicy<Article, ArticlePolicy
 private object LeakyAggregateOrErrorArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy { load(LeakyAggregateOrErrorRule) }
+    }
+}
+
+// ---- Predicate-inference limitation pin ----
+
+private val AllowAllMembershipLoads = MembershipLoadPrivacyRule { PrivacyDecision.Allow }
+
+/**
+ * Documented-limitation pin (Privacy Limitations → Predicate-Based
+ * Inference): `has { }` compiles to an EXISTS subquery and never
+ * LOAD-checks the related rows, so this rule is influenced by the
+ * hidden user's email even for viewers who cannot load that user. The
+ * materialized rows (memberships) do pass LOAD privacy. Pinned so a
+ * future change (e.g. edge-derived LOAD privacy) flips this
+ * deliberately, not by accident.
+ */
+private val SecretMemberEmailUnlocksArticles = ArticleLoadPrivacyRule { ctx ->
+    val secretMembership = ctx.client.memberships.query {
+        where(Membership.user.has { where(User.email.eq("alice@test.com")) })
+    }.firstOrNull()
+    if (secretMembership != null) PrivacyDecision.Allow else PrivacyDecision.Continue
+}
+
+private object OpenMembershipPolicy : EntityPolicy<Membership, MembershipPolicyScope> {
+    override fun configure(scope: MembershipPolicyScope) = scope.run {
+        privacy { load(AllowAllMembershipLoads) }
+    }
+}
+
+private object SecretMemberGateArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+    override fun configure(scope: ArticlePolicyScope) = scope.run {
+        privacy { load(SecretMemberEmailUnlocksArticles) }
     }
 }
 
@@ -276,6 +311,40 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
             "rawMinOrError" in (ex.message ?: ""),
             "Expected the gate message naming rawMinOrError; got: ${ex.message}",
         )
+    }
+
+    // ---- Predicate-based inference (documented limitation) ----
+
+    @Test
+    fun `has predicates inside rules are EXISTS-scoped, not LOAD-checked - documented limitation`() {
+        val client = freshClient {
+            privacyContext { PrivacyContext(Viewer.Anonymous) }
+            policies {
+                users(AuthenticatedReadersUserPolicy)
+                memberships(OpenMembershipPolicy)
+                articles(SecretMemberGateArticlePolicy)
+            }
+        }
+        val (alice, article) = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val alice = sys.users.create { name = "Alice"; email = "alice@test.com" }.save()
+            val group = sys.groups.create { name = "G" }.save()
+            sys.memberships.create { groupId = group.id; userId = alice.id; role = "member" }.save()
+            val article = sys.articles.create { title = "T"; authorId = alice.id }.save()
+            alice to article
+        }
+
+        // The caller cannot load the user directly…
+        assertFailsWith<PrivacyDeniedException> { client.users.byIdOrNull(alice.id) }
+
+        // …yet the rule's has{} predicate matches her email inside the
+        // EXISTS subquery, the (LOAD-checked, allowed) membership row
+        // comes back, and the article unlocks: the hidden row influenced
+        // authorization. This pins the documented predicate-inference
+        // limitation — see docs/08-privacy-limitations.md. If this test
+        // starts failing because the related row is now LOAD-checked,
+        // that is edge-derived-LOAD-privacy-shaped work landing; update
+        // the docs with it.
+        assertNotNull(client.articles.byIdOrNull(article.id))
     }
 
     // ---- Interceptor semantics ----
