@@ -41,6 +41,34 @@ internal data class ForeignKeyDdl(
 )
 
 /**
+ * One index the schema declares, in both structured and executable
+ * form. The structured fields exist for reconciliation:
+ * `CREATE INDEX IF NOT EXISTS` skips on a name match without comparing
+ * definitions, so `PostgresDriver.ensureIndex` compares these against
+ * `pg_index` before trusting the name — the index-side analogue of
+ * [ForeignKeyDdl]'s `pg_constraint` fields.
+ */
+internal data class IndexDdl(
+    /** Table the index is created on. */
+    val table: String,
+    /** Index name: derived (`idx_<table>_<col>_unique`) or declared. */
+    val name: String,
+    val unique: Boolean,
+    /** Column names in index order. */
+    val columns: List<String>,
+    /** Declared partial-index predicate, or null. */
+    val where: String?,
+    /** Access method (`hnsw` / `ivfflat`), or null for btree. */
+    val using: String?,
+    /** Declared per-column operator classes, or null. */
+    val opclasses: List<String>?,
+    /** Declared storage parameters, or null when none. */
+    val with: Map<String, String>?,
+    /** The `CREATE [UNIQUE] INDEX IF NOT EXISTS` statement. */
+    val sql: String,
+)
+
+/**
  * Renders `register(autoDdl = true)`'s DDL from a registered
  * [EntitySchema]: the `CREATE TABLE IF NOT EXISTS` statement, the
  * `CREATE [UNIQUE] INDEX IF NOT EXISTS` statements, and the
@@ -137,19 +165,36 @@ internal class PostgresDdl {
         typeMapper.normalizeIdentifier("fk_${table}_$column")
 
     /**
-     * Build `CREATE [UNIQUE] INDEX IF NOT EXISTS` statements for both
-     * composite indexes declared via [EntitySchema.indexes] and
+     * Build structured `CREATE [UNIQUE] INDEX IF NOT EXISTS` DDL for
+     * both composite indexes declared via [EntitySchema.indexes] and
      * single-column unique constraints from [ColumnMetadata.unique].
      * Using standalone index DDL (rather than inline `UNIQUE` in
      * `CREATE TABLE`) ensures the constraint is applied even when the
      * table already exists.
+     *
+     * Each entry carries the declared attributes alongside the
+     * executable [IndexDdl.sql], because `IF NOT EXISTS` alone is not a
+     * safe idempotent apply: Postgres skips on a *name* match without
+     * comparing the definition. `PostgresDriver.ensureIndex` uses the
+     * structured fields to reconcile against `pg_index` — the same
+     * arrangement [foreignKeysFor] has with `pg_constraint`.
      */
-    fun createIndexesSql(schema: EntitySchema): List<String> {
+    fun indexesFor(schema: EntitySchema): List<IndexDdl> {
         val columnUniques = schema.columns
             .filter { it.unique && !it.primaryKey }
             .map { col ->
                 val name = typeMapper.normalizeIdentifier("idx_${schema.table}_${col.name}_unique")
-                "CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} (${quote(col.name)})"
+                IndexDdl(
+                    table = schema.table,
+                    name = name,
+                    unique = true,
+                    columns = listOf(col.name),
+                    where = null,
+                    using = null,
+                    opclasses = null,
+                    with = null,
+                    sql = "CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} (${quote(col.name)})",
+                )
             }
 
         val compositeIndexes = schema.indexes.map { idx ->
@@ -168,11 +213,24 @@ internal class PostgresDdl {
                 ?.entries?.joinToString(", ") { "${it.key} = ${it.value}" }
                 ?.let { " WITH ($it)" } ?: ""
             val whereSuffix = if (idx.where != null) " WHERE ${idx.where}" else ""
-            "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)}$usingClause ($cols)$withClause$whereSuffix"
+            IndexDdl(
+                table = schema.table,
+                name = name,
+                unique = idx.unique,
+                columns = idx.columns,
+                where = idx.where,
+                using = idx.using,
+                opclasses = idx.opclasses,
+                with = idx.with?.takeIf { it.isNotEmpty() },
+                sql = "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)}$usingClause ($cols)$withClause$whereSuffix",
+            )
         }
 
         return columnUniques + compositeIndexes
     }
+
+    /** The executable statements from [indexesFor], for callers that only render. */
+    fun createIndexesSql(schema: EntitySchema): List<String> = indexesFor(schema).map { it.sql }
 
     private fun isAutoSerial(schema: EntitySchema, col: ColumnMetadata): Boolean {
         if (!col.primaryKey) return false

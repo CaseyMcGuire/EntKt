@@ -1,5 +1,6 @@
 package entkt.postgres
 
+import entkt.migrations.normalizeWhere
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
@@ -79,6 +80,17 @@ class PostgresDriver(
      * apply it a second time. See [closeAttributingFailure], and
      * [useQuietClose] for the same rule applied to statements and result
      * sets.
+     *
+     * That durability premise is checked, not assumed: a pool configured
+     * with `autoCommit = false` would let every statement here run in an
+     * implicit transaction nobody commits — the caller sees the write
+     * succeed (RETURNING works inside the open transaction) and the
+     * pool's release path rolls it back. Rejecting the connection up
+     * front turns that silent data loss into a configuration error.
+     * `getAutoCommit()` is client-side JDBC state, so the check costs no
+     * round trip. [withTransaction] borrows its own connection and is
+     * exempt: it disables autocommit itself and commits explicitly, so
+     * the pool's setting doesn't affect its outcome.
      */
     private inline fun <T> withConnection(block: (java.sql.Connection) -> T): T {
         val conn = dataSource.connection
@@ -86,6 +98,13 @@ class PostgresDriver(
         // records it for the release to attach to.
         var propagating: Throwable? = null
         try {
+            check(conn.autoCommit) {
+                "PostgresDriver requires connections with autoCommit = true: every root operation " +
+                    "counts on its statement being durable when it returns, but this connection arrived " +
+                    "with autoCommit = false — its writes would be silently rolled back when the " +
+                    "connection is returned to the pool. Configure the pool with autoCommit = true, " +
+                    "or use withTransaction { } for explicitly transactional work."
+            }
             return block(conn)
         } catch (e: Throwable) {
             propagating = e
@@ -189,7 +208,7 @@ class PostgresDriver(
                                 .distinct()
                             for (ext in extensions) stmt.execute("CREATE EXTENSION IF NOT EXISTS ${quote(ext)}")
                             stmt.execute(ddl.createTableSql(schema))
-                            for (sql in ddl.createIndexesSql(schema)) stmt.execute(sql)
+                            for (idx in ddl.indexesFor(schema)) ensureIndex(conn, stmt, idx)
                         }
                         // (5) Now that every table in the batch exists, the
                         // constraints between them all resolve.
@@ -433,6 +452,147 @@ class PostgresDriver(
 
             /** `confmatchtype` code for `MATCH SIMPLE`. */
             const val MATCH_SIMPLE = 's'
+        }
+    }
+
+    /**
+     * Bring one index into existence, reconciling against whatever
+     * relation already holds its name.
+     *
+     * `CREATE INDEX IF NOT EXISTS` skips on a *name* match — Postgres
+     * never compares the definition, and the name blocks on *any*
+     * relation, not just indexes. Index names here are derived
+     * (`idx_<table>_<column>_unique`) or user-declared and stable, so
+     * editing a declared index's uniqueness, columns, method, or
+     * predicate produces a *different* index under the *same* name.
+     * Executing the DDL blindly would then report success while the old
+     * definition stayed in force — for a non-unique → unique flip, that
+     * means duplicates stay permitted while registration claims the
+     * constraint exists. Same policy as [ensureForeignKey]: absent →
+     * create; present and equivalent → nothing to do; present and
+     * different → fail, saying what was wanted and what is there.
+     * Reconciling the difference is a migration's job, not auto-DDL's.
+     */
+    private fun ensureIndex(conn: java.sql.Connection, stmt: java.sql.Statement, idx: IndexDdl) {
+        when (val existing = findIndex(conn, idx)) {
+            null -> stmt.execute(idx.sql)
+            else -> check(existing.matches(idx)) {
+                "Table '${idx.table}' already has a relation named '${idx.name}', but it is not the " +
+                    "index this schema describes. Auto-DDL will not alter an existing index — drop it, " +
+                    "or move this schema onto the migration path.\n" +
+                    "  schema wants: ${idx.sql}\n" +
+                    "  database has: ${existing.describe()}"
+            }
+        }
+    }
+
+    /**
+     * Look up whatever relation currently holds [idx]'s name, or null
+     * if the name is free.
+     *
+     * Unlike constraint names, index names are relation names — global
+     * within a schema, and `CREATE INDEX IF NOT EXISTS` skips when
+     * *any* relation holds the name. So the lookup is by name within
+     * the target table's namespace (not filtered to the table), and
+     * "is it even an index on the right table?" is part of the
+     * comparison rather than the query.
+     */
+    private fun findIndex(conn: java.sql.Connection, idx: IndexDdl): ExistingIndex? =
+        conn.prepareStatement(
+            """
+            SELECT r.relkind = 'i'                              AS is_index,
+                   COALESCE(ix.indrelid = to_regclass(?), false) AS table_matches,
+                   COALESCE(ix.indrelid::regclass::text, '(none)') AS table_name,
+                   COALESCE(ix.indisunique, false)              AS is_unique,
+                   am.amname                                    AS access_method,
+                   (SELECT array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
+                      FROM pg_attribute a
+                      WHERE a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)) AS columns,
+                   pg_get_expr(ix.indpred, ix.indrelid)         AS predicate,
+                   (SELECT array_agg(opc.opcname ORDER BY u.ord)
+                      FROM unnest(string_to_array(ix.indclass::text, ' ')::oid[])
+                           WITH ORDINALITY AS u(oid, ord)
+                      JOIN pg_opclass opc ON opc.oid = u.oid)   AS opclasses,
+                   r.reloptions                                 AS reloptions
+            FROM pg_class r
+            LEFT JOIN pg_index ix ON ix.indexrelid = r.oid
+            LEFT JOIN pg_am am ON am.oid = r.relam
+            WHERE r.relname = ?
+              AND r.relnamespace = (SELECT t.relnamespace FROM pg_class t WHERE t.oid = to_regclass(?))
+            """.trimIndent(),
+        ).useQuietClose { stmt ->
+            stmt.setString(1, idx.table)
+            stmt.setString(2, idx.name)
+            stmt.setString(3, idx.table)
+            stmt.executeQuery().useQuietClose { rs ->
+                if (!rs.next()) return null
+                ExistingIndex(
+                    isIndex = rs.getBoolean("is_index"),
+                    tableMatches = rs.getBoolean("table_matches"),
+                    tableName = rs.getString("table_name"),
+                    unique = rs.getBoolean("is_unique"),
+                    accessMethod = rs.getString("access_method"),
+                    columns = (rs.getArray("columns")?.array as? Array<*>)?.map { it.toString() } ?: emptyList(),
+                    predicate = rs.getString("predicate"),
+                    opclasses = (rs.getArray("opclasses")?.array as? Array<*>)?.map { it.toString() },
+                    reloptions = parseReloptions(rs.getArray("reloptions")),
+                )
+            }
+        }
+
+    /** `pg_class.reloptions` entries (`"k=v"` strings) as a map, or null when none. */
+    private fun parseReloptions(arr: java.sql.Array?): Map<String, String>? {
+        val items = (arr?.array as? Array<*>)?.map { it.toString() } ?: return null
+        if (items.isEmpty()) return null
+        return items.mapNotNull { opt ->
+            val eq = opt.indexOf('=')
+            if (eq < 0) null else opt.substring(0, eq) to opt.substring(eq + 1)
+        }.toMap()
+    }
+
+    /** A relation already present in the catalog under an index's name. */
+    private data class ExistingIndex(
+        val isIndex: Boolean,
+        val tableMatches: Boolean,
+        val tableName: String,
+        val unique: Boolean,
+        val accessMethod: String?,
+        val columns: List<String>,
+        val predicate: String?,
+        val opclasses: List<String>?,
+        val reloptions: Map<String, String>?,
+    ) {
+        /**
+         * Whether this is exactly the index [idx] describes. Uniqueness,
+         * ordered columns, access method, and the partial-index
+         * predicate are always compared — those are the attributes
+         * whose silent drift produces wrong constraints or wrong plans.
+         * Predicates go through [normalizeWhere] on both sides because
+         * `pg_get_expr` deparses with casts and parens the declared
+         * text doesn't have. Operator classes and storage parameters
+         * are compared only when the schema declares them: for btree
+         * the catalog reports implicit defaults that a null declaration
+         * can't be checked against.
+         */
+        fun matches(idx: IndexDdl): Boolean =
+            isIndex &&
+                tableMatches &&
+                unique == idx.unique &&
+                columns == idx.columns &&
+                accessMethod == (idx.using ?: "btree") &&
+                normalizeWhere(predicate) == normalizeWhere(idx.where) &&
+                (idx.opclasses == null || opclasses == idx.opclasses) &&
+                (idx.with == null || reloptions == idx.with)
+
+        /** Human-readable rendering for the mismatch error. */
+        fun describe(): String {
+            if (!isIndex) return "a relation of this name that is not an index"
+            return buildString {
+                append(if (unique) "UNIQUE INDEX" else "INDEX")
+                append(" on $tableName USING ${accessMethod ?: "btree"} (${columns.joinToString(", ")})")
+                if (predicate != null) append(" WHERE $predicate")
+                if (reloptions != null) append(" WITH (${reloptions.entries.joinToString(", ") { "${it.key} = ${it.value}" }})")
+            }
         }
     }
 
