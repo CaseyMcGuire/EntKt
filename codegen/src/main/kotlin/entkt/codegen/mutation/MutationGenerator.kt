@@ -1,10 +1,16 @@
-package entkt.codegen
+package entkt.codegen.mutation
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.fkPropertyKdoc
+import entkt.codegen.metadata.resolvedTypeName
+import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.toTypeName
+import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 
 /**

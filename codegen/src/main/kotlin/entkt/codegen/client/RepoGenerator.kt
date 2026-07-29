@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.client
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -14,6 +14,12 @@ import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.idStrategyName
+import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.toTypeName
+import entkt.codegen.query.indexHelperTree
+import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")

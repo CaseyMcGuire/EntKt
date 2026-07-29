@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.client.ClientGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test

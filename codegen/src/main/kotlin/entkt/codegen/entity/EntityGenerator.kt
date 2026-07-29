@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.entity
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
@@ -14,6 +14,16 @@ import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
+import entkt.codegen.columnName
+import entkt.codegen.metadata.ENTITY_SCHEMA
+import entkt.codegen.metadata.EdgeFk
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.entitySchemaCodeBlock
+import entkt.codegen.metadata.fkPropertyKdoc
+import entkt.codegen.metadata.resolvedTypeName
+import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.toTypeName
+import entkt.codegen.toCamelCase
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -489,14 +499,4 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
         // built in buildColumnRef from Field.jsonType — never via this map.
         FieldType.JSON -> error("JSON column type is resolved from jsonType in buildColumnRef")
     }
-}
-
-/** The database column name for this field. */
-internal val Field.columnName: String get() = name
-
-internal fun toCamelCase(snakeCase: String): String {
-    return snakeCase.split("_").mapIndexed { index, part ->
-        if (index == 0) part.lowercase()
-        else part.replaceFirstChar { it.uppercase() }
-    }.joinToString("")
 }

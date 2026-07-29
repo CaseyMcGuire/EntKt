@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.client
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
@@ -16,6 +16,9 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.SchemaInput
+import entkt.codegen.metadata.ENTITY_SCHEMA
+import entkt.codegen.pluralize
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -956,21 +959,3 @@ private fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
 }
 
 private data class HookDef(val name: String, val paramType: ClassName)
-
-/**
- * Naive English pluralization good enough for the small surface area of
- * generated repo property names. Handles the cases the example schemas
- * exercise (`user` → `users`, `post` → `posts`, `tag` → `tags`,
- * `category` → `categories`) and is conservative everywhere else: if
- * the rule is unclear, it just appends `s`.
- */
-internal fun pluralize(word: String): String {
-    if (word.isEmpty()) return word
-    return when {
-        word.endsWith("y") && word.length > 1 && word[word.length - 2] !in "aeiou" ->
-            word.dropLast(1) + "ies"
-        word.endsWith("s") || word.endsWith("x") || word.endsWith("z") ||
-            word.endsWith("ch") || word.endsWith("sh") -> word + "es"
-        else -> word + "s"
-    }
-}

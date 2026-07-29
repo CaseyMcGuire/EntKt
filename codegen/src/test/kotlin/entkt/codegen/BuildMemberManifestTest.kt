@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.manifest.buildMemberManifest
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test

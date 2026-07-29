@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.metadata.computeEdgeFks
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test

@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -8,6 +8,7 @@ import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.UNIT
+import entkt.codegen.toPascalCase
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")

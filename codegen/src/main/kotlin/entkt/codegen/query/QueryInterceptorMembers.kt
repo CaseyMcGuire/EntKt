@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -7,6 +7,7 @@ import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.pluralize
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")

@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.entity.PrivacyGenerator
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass

@@ -1,5 +1,7 @@
-package entkt.codegen
+package entkt.codegen.manifest
 
+import entkt.codegen.SchemaInput
+import entkt.codegen.metadata.helperEligibleM2MEdges
 /**
  * One generated Kotlin member that codegen will emit on a specific
  * generated artifact (an entity data class, a builder, a mutation

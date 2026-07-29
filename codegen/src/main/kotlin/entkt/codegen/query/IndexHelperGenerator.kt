@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -13,6 +13,13 @@ import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.columnName
+import entkt.codegen.metadata.columnMetadataFor
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.resolvedTypeName
+import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.toTypeName
+import entkt.codegen.toCamelCase
 import entkt.schema.ColumnStorage
 import entkt.schema.EntSchema
 import entkt.schema.FieldType

@@ -1,5 +1,9 @@
 package entkt.codegen
 
+import entkt.codegen.manifest.GeneratedMember
+import entkt.codegen.manifest.GeneratedMemberKind
+import entkt.codegen.manifest.MemberCollision
+import entkt.codegen.manifest.formatMemberCollisionDiagnostic
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

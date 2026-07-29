@@ -1,17 +1,21 @@
 package entkt.codegen
 
+import entkt.codegen.client.RepoGenerator
+import entkt.codegen.query.IndexHelperGenerator
+import entkt.codegen.query.eligibleResolvedIndexes
+import entkt.codegen.query.indexHelperPathsByName
 import entkt.postgres.vector.VectorMetric
 import entkt.postgres.vector.hnsw
 import entkt.postgres.vector.postgresVector
 import entkt.postgres.vector.postgresVectorIndex
 import entkt.schema.EntId
 import entkt.schema.EntSchema
-import kotlinx.serialization.Serializable
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.Serializable
 
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }

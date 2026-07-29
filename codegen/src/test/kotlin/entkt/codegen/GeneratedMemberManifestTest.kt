@@ -1,5 +1,7 @@
 package entkt.codegen
 
+import entkt.codegen.manifest.GeneratedMemberKind
+import entkt.codegen.manifest.GeneratedMemberManifest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

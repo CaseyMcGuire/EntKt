@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.query.QueryGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test

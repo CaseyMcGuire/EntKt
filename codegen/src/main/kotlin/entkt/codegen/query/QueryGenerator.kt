@@ -1,10 +1,10 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
@@ -14,6 +14,7 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.pluralize
 import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -493,6 +494,3 @@ internal class QueryGenerator(
             .build()
     }
 }
-
-internal fun toPascalCase(snakeCase: String): String =
-    toCamelCase(snakeCase).replaceFirstChar { it.uppercase() }

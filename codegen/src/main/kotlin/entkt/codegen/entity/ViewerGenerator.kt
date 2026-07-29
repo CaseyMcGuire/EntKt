@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.entity
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -9,6 +9,15 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
+import entkt.codegen.SchemaInput
+import entkt.codegen.columnName
+import entkt.codegen.metadata.ColumnDescriptor
+import entkt.codegen.metadata.FIELD_TYPE
+import entkt.codegen.metadata.columnMetadataFor
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.resolveEdgeJoin
+import entkt.codegen.pluralize
+import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.FieldType

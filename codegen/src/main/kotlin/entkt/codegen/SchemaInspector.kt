@@ -1,5 +1,15 @@
 package entkt.codegen
 
+import entkt.codegen.manifest.formatMemberCollisionDiagnostic
+import entkt.codegen.manifest.runMemberCollisionCheck
+import entkt.codegen.metadata.columnMetadataFor
+import entkt.codegen.metadata.findInverseEdge
+import entkt.codegen.metadata.idStrategyName
+import entkt.codegen.metadata.indexableColumnMap
+import entkt.codegen.metadata.resolveEdgeJoin
+import entkt.codegen.metadata.resolveM2MEdgeJoin
+import entkt.codegen.query.indexHelperPathsByName
+import entkt.codegen.query.indexHelperTree
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.ManyToManyThrough

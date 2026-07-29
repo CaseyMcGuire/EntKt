@@ -1,5 +1,10 @@
-package entkt.codegen
+package entkt.codegen.manifest
 
+import entkt.codegen.metadata.EdgeFk
+import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.scalarFields
+import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 

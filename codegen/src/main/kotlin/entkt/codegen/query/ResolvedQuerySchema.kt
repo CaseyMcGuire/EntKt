@@ -1,6 +1,14 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
+import entkt.codegen.metadata.EdgeFk
+import entkt.codegen.metadata.EdgeJoin
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.findInverseEdge
+import entkt.codegen.metadata.resolveEdgeJoin
+import entkt.codegen.metadata.resolveM2MEdgeJoin
+import entkt.codegen.toCamelCase
+import entkt.codegen.toPascalCase
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema

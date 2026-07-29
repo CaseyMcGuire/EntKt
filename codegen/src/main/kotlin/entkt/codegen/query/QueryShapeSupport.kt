@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock

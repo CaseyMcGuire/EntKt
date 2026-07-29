@@ -1,5 +1,6 @@
-package entkt.codegen
+package entkt.codegen.metadata
 
+import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.Field

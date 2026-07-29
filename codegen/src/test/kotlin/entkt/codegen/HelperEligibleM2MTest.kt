@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.FieldType

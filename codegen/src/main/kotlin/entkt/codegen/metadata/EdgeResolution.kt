@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.metadata
 
 import entkt.schema.Edge
 import entkt.schema.EdgeKind

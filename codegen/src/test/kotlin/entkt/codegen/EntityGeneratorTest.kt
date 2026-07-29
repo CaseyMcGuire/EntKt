@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.entity.EntityGenerator
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntId

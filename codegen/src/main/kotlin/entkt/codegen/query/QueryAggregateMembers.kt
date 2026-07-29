@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
@@ -16,6 +16,7 @@ import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.pluralize
 
 private val PRIVACY_DENIED = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
 private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")

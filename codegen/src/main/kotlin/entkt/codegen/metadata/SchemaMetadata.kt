@@ -1,10 +1,11 @@
-package entkt.codegen
+package entkt.codegen.metadata
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
+import entkt.codegen.columnName
 import entkt.runtime.driver.JsonMapperIds
 import entkt.schema.Edge
 import entkt.schema.EdgeKind

@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.mutation.ValidationGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test

@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.manifest
 
 /**
  * Format a [MemberCollision] as a single-line diagnostic suitable

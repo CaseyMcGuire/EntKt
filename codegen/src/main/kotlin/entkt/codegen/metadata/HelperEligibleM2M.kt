@@ -1,6 +1,8 @@
-package entkt.codegen
+package entkt.codegen.metadata
 
 import com.squareup.kotlinpoet.TypeName
+import entkt.codegen.toCamelCase
+import entkt.codegen.toPascalCase
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema

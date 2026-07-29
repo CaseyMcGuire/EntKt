@@ -1,5 +1,10 @@
 package entkt.codegen
 
+import entkt.codegen.metadata.columnMetadataFor
+import entkt.codegen.metadata.idStrategyName
+import entkt.codegen.metadata.indexableColumnMap
+import entkt.codegen.metadata.resolveEdgeJoin
+import entkt.codegen.metadata.resolveM2MEdgeJoin
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema

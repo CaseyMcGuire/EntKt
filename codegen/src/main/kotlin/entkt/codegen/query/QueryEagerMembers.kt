@@ -1,4 +1,4 @@
-package entkt.codegen
+package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -10,6 +10,10 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.columnName
+import entkt.codegen.metadata.EdgeJoin
+import entkt.codegen.pluralize
+import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
