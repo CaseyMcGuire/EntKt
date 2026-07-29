@@ -18,57 +18,11 @@ private val MEMBER_CLASSIFY = com.squareup.kotlinpoet.MemberName("entkt.runtime.
 // ------------------------------------------------------------------
 // Row-shaped terminals (the all / visibleAll / first / firstVisible
 // families) and their explain mirrors. Each explain builder sits next
-// to the terminal whose driver call it models, and the query-shape
-// expressions both sides send are defined once below — so the plan a
-// caller inspects cannot drift from the call the terminal makes.
-// QueryGenerator.generate() assembles the members.
+// to the terminal whose driver call it models; the query-shape
+// expressions both sides send live in QueryShapeSupport.kt — so the
+// plan a caller inspects cannot drift from the call the terminal
+// makes. QueryGenerator.generate() assembles the members.
 // ------------------------------------------------------------------
-
-/**
- * Single-row probe limit for the first/exists-shaped terminals:
- * 1 normally, 0 when the caller pre-set `query { limit(0) }` — "no
- * rows" must mean no rows on every terminal family. Interceptor limit
- * mutators are silent no-ops on these operations (see
- * `InterceptorEngine.limitOpsApply`), so the only value `spec.limit`
- * can carry here is the caller's own bound.
- */
-internal const val SINGLE_ROW_LIMIT_EXPR = "minOf(1, spec.limit ?: 1)"
-
-/**
- * Bounded storage scan for the visible family's privacy path: capped
- * at `EntClientConfig.visibleOverfetchLimit` so the in-process LOAD
- * filter has bounded work, while a caller/interceptor limit below the
- * cap tightens the scan further. [capExpr] is how the emitting site
- * names the cap — `c.visibleOverfetchLimit` inline, or a `cap` local.
- */
-internal fun overfetchScanLimitExpr(capExpr: String): String =
-    "minOf(spec.limit ?: $capExpr, $capExpr)"
-
-/**
- * Shared explain wrapper: runs the interceptor chain for
- * [operationName], converts an interceptor `scope.reject(...)`
- * into a rejected [QueryPlan] via `QueryPlan.rejected(...)`
- * instead of throwing, and otherwise calls [bodyOnSuccess] with
- * the `spec` local in scope to produce the QueryPlan body. The
- * caller's body is responsible for the final `buildQueryPlan(...)`
- * (or `QueryPlan(driver.explainCount(...))`) expression.
- */
-internal fun explainBody(operationName: String, bodyOnSuccess: CodeBlock): CodeBlock {
-    val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
-    return CodeBlock.builder()
-        .add("return try {\n")
-        .add(
-            "  val spec = runReadInterceptors(%T.%L, %T.QUERY)\n",
-            READ_OPERATION, operationName, ENT_OPERATION,
-        )
-        .add("  ")
-        .add(bodyOnSuccess)
-        .add("\n")
-        .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-        .add("  %T.rejected(e.queryRejected)\n", queryPlan)
-        .add("}\n")
-        .build()
-}
 
 /**
  * `allOrThrow(): List<T>` — strict bulk read. Returns every

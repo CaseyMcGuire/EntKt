@@ -41,9 +41,9 @@ private val KOTLIN_COMPARABLE = ClassName("kotlin", "Comparable")
 // Count, exists, and raw-aggregate terminals with their explain
 // mirrors. Same pairing rule as QueryRowMembers.kt: each explain
 // builder sits next to the terminal whose driver call it models, and
-// the shared query-shape expressions (SINGLE_ROW_LIMIT_EXPR /
-// overfetchScanLimitExpr) are defined there and spliced here.
-// QueryGenerator.generate() assembles the members.
+// the shared query-shape expressions and explainBody wrapper come
+// from QueryShapeSupport.kt. QueryGenerator.generate() assembles the
+// members.
 // ------------------------------------------------------------------
 
 /**
