@@ -320,7 +320,8 @@ classpath inherited, and assert on the result.
 6. Add the compile-fail/compile-pass tests and update validation docs and
    examples.
 7. Keep privacy contexts using the full client unless a separate RFC
-   changes them.
+   changes them. (That RFC now exists:
+   [read-only-privacy-client](../../possible-features/privacy-validation/read-only-privacy-client.md).)
 
 ## Open Questions
 
