@@ -133,12 +133,32 @@ object SchemaInspector {
         }
     }
 
+    /** PostgreSQL NAMEDATALEN - 1: identifiers beyond this are silently truncated. */
+    private const val MAX_IDENTIFIER_BYTES = 63
+
+    private fun checkIdentifierLength(
+        kind: String,
+        schemaName: String,
+        identifier: String,
+        errors: MutableList<String>,
+    ) {
+        val bytes = identifier.toByteArray(Charsets.UTF_8).size
+        if (bytes > MAX_IDENTIFIER_BYTES) {
+            errors.add(
+                "$schemaName: $kind name '$identifier' is $bytes bytes, but PostgreSQL silently " +
+                    "truncates identifiers longer than $MAX_IDENTIFIER_BYTES bytes (quoted or not). " +
+                    "The truncated name would permanently desynchronize the migration differ from " +
+                    "the database — shorten the name.",
+            )
+        }
+    }
+
     private fun validateSchema(
         input: SchemaInput,
         schemaNames: Map<EntSchema, String>,
         errors: MutableList<String>,
     ) {
-        try {
+        val columns = try {
             columnMetadataFor(input.schema, schemaNames)
         } catch (e: Exception) {
             // Column resolution touches fields() and edges() internally.
@@ -146,6 +166,21 @@ object SchemaInspector {
             // re-trigger the same root cause. Stop early for this schema.
             errors.add(e.message ?: e.toString())
             return
+        }
+
+        // PostgreSQL silently truncates identifiers longer than 63
+        // bytes (NAMEDATALEN - 1) — quoting does not exempt them. A
+        // too-long table or column name would ship, get truncated
+        // server-side, and then never introspect back under its
+        // declared name: the migration differ re-emits the same create
+        // on every run (and for columns also proposes dropping the
+        // real, truncated one). Index and FK-constraint names are
+        // hash-truncated by the renderers' normalizeIdentifier and are
+        // safe; table and column names have no such normalization, so
+        // reject them up front.
+        checkIdentifierLength("table", input.name, input.schema.tableName, errors)
+        for (col in columns) {
+            checkIdentifierLength("column", input.name, col.name, errors)
         }
 
         // Resolve edges — guard the edges() accessor so that duplicate

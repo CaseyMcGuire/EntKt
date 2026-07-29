@@ -193,6 +193,34 @@ class SchemaInspectorTest {
     }
 
     @Test
+    fun `validate rejects table names PostgreSQL would truncate`() {
+        // 64+ bytes: the server would silently truncate this to 63 and
+        // the migration differ would never find it under its declared
+        // name again.
+        class LongTable : EntSchema(
+            "this_table_name_is_deliberately_far_too_long_to_survive_the_postgres_identifier_limit",
+        ) { override fun id() = EntId.int() }
+        val result = SchemaInspector.validate(listOf(SchemaInput("LongTable", LongTable())))
+        assertFalse(result.valid)
+        assertContains(result.errors.first(), "truncates")
+        assertContains(result.errors.first(), "table name")
+    }
+
+    @Test
+    fun `validate rejects column names PostgreSQL would truncate`() {
+        class LongColumn : EntSchema("long_columns") {
+            override fun id() = EntId.int()
+            val f = string(
+                "this_column_name_is_deliberately_far_too_long_to_survive_the_postgres_identifier_limit",
+            )
+        }
+        val result = SchemaInspector.validate(listOf(SchemaInput("LongColumn", LongColumn())))
+        assertFalse(result.valid)
+        assertContains(result.errors.first(), "truncates")
+        assertContains(result.errors.first(), "column name")
+    }
+
+    @Test
     fun `explain rejects invalid schema graph`() {
         // hasMany with no matching belongsTo — validate catches this,
         // and explain should refuse to render rather than showing a
