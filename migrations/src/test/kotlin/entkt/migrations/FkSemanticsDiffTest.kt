@@ -31,7 +31,6 @@ class FkSemanticsDiffTest {
         columns = listOf("author_id"),
         targetTable = "users",
         targetColumns = listOf("id"),
-        columnNullable = false,
         onDelete = FkAction.RESTRICT,
     )
 
@@ -48,7 +47,6 @@ class FkSemanticsDiffTest {
         columns = columns,
         targetTable = "users",
         targetColumns = targetColumns,
-        columnNullable = false,
         constraintName = "fk_posts_author_id",
         onDelete = onDelete,
         onUpdate = onUpdate,
@@ -105,11 +103,11 @@ class FkSemanticsDiffTest {
 
     @Test
     fun `ON DELETE SET DEFAULT never collapses into an inferred action`() {
-        // Nullable FK: the desired side resolves to SET NULL. Before
+        // A nullable FK's DSL default resolves to SET NULL. Before
         // the exact-action model, SET DEFAULT introspected to null and
         // nullability inference made the two compare equal.
-        val desired = desiredFk.copy(columnNullable = true, onDelete = FkAction.SET_NULL)
-        val current = introspectedFk(onDelete = FkAction.SET_DEFAULT).copy(columnNullable = true)
+        val desired = desiredFk.copy(onDelete = FkAction.SET_NULL)
+        val current = introspectedFk(onDelete = FkAction.SET_DEFAULT)
         val result = differ.diff(
             NormalizedSchema(mapOf("posts" to postsTable(desired))),
             NormalizedSchema(mapOf("posts" to postsTable(current))),

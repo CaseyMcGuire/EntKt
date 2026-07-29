@@ -105,6 +105,33 @@ class FlywayMigrationWorkflowTest {
     // ---- Tests ----
 
     @Test
+    fun `validate and generate reject truncatable identifiers before any database work`() {
+        // The preflight must fire from the public entry points — a
+        // programmatic caller bypasses SchemaInspector.validate, and a
+        // name PostgreSQL would silently truncate wedges the differ
+        // permanently once applied.
+        val longTable = EntitySchema(
+            table = "this_table_name_is_deliberately_far_too_long_to_survive_the_postgres_identifier_limit",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true)),
+            edges = emptyMap(),
+        )
+        val dir = createTempDir()
+        try {
+            val e = assertFailsWith<IllegalArgumentException> {
+                createWorkflow().validate(listOf(longTable), dir)
+            }
+            assertTrue("truncates" in (e.message ?: ""), "actionable message; was: ${e.message}")
+            assertFailsWith<IllegalArgumentException> {
+                createWorkflow().generate(listOf(longTable), dir)
+            }
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `generate creates migration file for new schemas`() {
         val dir = createTempDir()
         try {

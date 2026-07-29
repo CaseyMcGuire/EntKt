@@ -59,7 +59,7 @@ class PostgresIntrospector(
                 }
 
                 val indexes = introspectIndexes(conn, tableName, primaryKeys)
-                val foreignKeys = introspectForeignKeys(conn, tableName, normalizedColumns)
+                val foreignKeys = introspectForeignKeys(conn, tableName)
 
                 tables[tableName] = NormalizedTable(
                     name = tableName,
@@ -306,9 +306,7 @@ class PostgresIntrospector(
     private fun introspectForeignKeys(
         conn: java.sql.Connection,
         tableName: String,
-        columns: List<NormalizedColumn>,
     ): List<NormalizedForeignKey> {
-        val nullabilityByName = columns.associate { it.name to it.nullable }
         val fks = mutableListOf<NormalizedForeignKey>()
         conn.prepareStatement(
             """
@@ -345,7 +343,6 @@ class PostgresIntrospector(
                             columns = fkColumns,
                             targetTable = rs.getString("target_table"),
                             targetColumns = targetColumns,
-                            columnNullable = nullabilityByName[fkColumns.first()] ?: false,
                             constraintName = rs.getString("constraint_name"),
                             // The exact catalog action — never lossily
                             // mapped through the DSL's OnDelete, where

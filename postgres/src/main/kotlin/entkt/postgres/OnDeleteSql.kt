@@ -21,18 +21,14 @@ internal fun OnDelete?.toSql(columnNullable: Boolean = false): String = when (th
 }
 
 /**
- * Map a resolved [FkAction] to its SQL `ON DELETE` clause value. The
- * migration model resolves DSL defaults at construction, so there is
- * no null case here — but the SET NULL sanity guard still applies.
+ * Map a resolved [FkAction] to its SQL `ON DELETE` clause value. A
+ * pure rendering: the migration model resolves DSL defaults — and
+ * rejects SET NULL on NOT NULL columns — at normalization
+ * (`resolveDslOnDelete`), where column nullability is still in scope.
  */
-internal fun FkAction.toSql(columnNullable: Boolean = false): String = when (this) {
+internal fun FkAction.toSql(): String = when (this) {
     FkAction.CASCADE -> "CASCADE"
-    FkAction.SET_NULL -> {
-        require(columnNullable) {
-            "ON DELETE SET NULL is invalid on a NOT NULL column"
-        }
-        "SET NULL"
-    }
+    FkAction.SET_NULL -> "SET NULL"
     FkAction.RESTRICT -> "RESTRICT"
     FkAction.NO_ACTION -> "NO ACTION"
     FkAction.SET_DEFAULT -> "SET DEFAULT"

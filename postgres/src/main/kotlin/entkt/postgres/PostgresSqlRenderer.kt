@@ -108,7 +108,7 @@ class PostgresSqlRenderer(
         fk: entkt.migrations.NormalizedForeignKey,
     ): List<String> {
         val constraintName = truncateIdentifier("fk_${table}_${fk.columns.joinToString("_")}")
-        val onDelete = fk.onDelete.toSql(fk.columnNullable)
+        val onDelete = fk.onDelete.toSql()
         val cols = fk.columns.joinToString(", ") { quote(it) }
         val targetCols = fk.targetColumns.joinToString(", ") { quote(it) }
         return listOf(

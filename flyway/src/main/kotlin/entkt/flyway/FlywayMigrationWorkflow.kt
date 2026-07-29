@@ -7,6 +7,7 @@ import entkt.migrations.NormalizedSchema
 import entkt.migrations.SchemaDiffer
 import entkt.migrations.describeOp
 import entkt.migrations.parseVersionNumber
+import entkt.migrations.requireIdentifiersWithinPostgresLimit
 import entkt.postgres.PostgresIntrospector
 import entkt.postgres.PostgresSqlRenderer
 import entkt.postgres.PostgresTypeMapper
@@ -49,6 +50,10 @@ class FlywayMigrationWorkflow(
         schemas: List<EntitySchema>,
         migrationsDir: Path,
     ): DriftResult {
+        // Preflight before any database work: a name PostgreSQL would
+        // silently truncate must fail here, not after a shadow
+        // container has been started and migrations replayed.
+        requireIdentifiersWithinPostgresLimit(schemas)
         rejectUnsupportedMigrations(migrationsDir)
         return withShadowDatabase { dataSource ->
             val diff = diffAgainstShadow(dataSource, schemas, migrationsDir)
@@ -74,6 +79,9 @@ class FlywayMigrationWorkflow(
         manualMode: ManualMode = ManualMode.FAIL,
         verify: Boolean = false,
     ): GenerateResult {
+        // Same preflight as [validate]: fail on truncatable names
+        // before starting the shadow container.
+        requireIdentifiersWithinPostgresLimit(schemas)
         rejectUnsupportedMigrations(migrationsDir)
         return withShadowDatabase { dataSource ->
             val typeMapper = PostgresTypeMapper()

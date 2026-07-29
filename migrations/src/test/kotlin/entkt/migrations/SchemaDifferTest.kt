@@ -40,7 +40,7 @@ class SchemaDifferTest {
         targetColumn: String = "id",
         columnNullable: Boolean = false,
     ) = NormalizedForeignKey(
-        listOf(column), targetTable, listOf(targetColumn), columnNullable,
+        listOf(column), targetTable, listOf(targetColumn),
         onDelete = resolveDslOnDelete(null, columnNullable),
     )
 
@@ -593,7 +593,7 @@ class SchemaDifferTest {
         assertEquals(listOf("author_id"), dropFks[0].columns)
         val addFks = result.ops.filterIsInstance<MigrationOp.AddForeignKey>()
         assertEquals(1, addFks.size)
-        assertFalse(addFks[0].fk.columnNullable)
+        assertEquals(FkAction.RESTRICT, addFks[0].fk.onDelete)
     }
 
     @Test

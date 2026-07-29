@@ -26,19 +26,10 @@ data class NormalizedSchema(
             schemas: List<EntitySchema>,
             typeMapper: TypeMapper,
         ): NormalizedSchema {
-            // Backstop for programmatic callers that reach the
-            // migration workflow without going through
-            // SchemaInspector.validate (the CLI path's structured
-            // check): a table or column name PostgreSQL would silently
-            // truncate must never enter the pipeline — the truncated
-            // name would never introspect back under its declared
-            // form, wedging the differ permanently.
-            for (schema in schemas) {
-                requireIdentifierFits("table", schema.table)
-                for (col in schema.columns) {
-                    requireIdentifierFits("column", "${schema.table}.${col.name}", col.name)
-                }
-            }
+            // Backstop for callers that reach normalization without
+            // going through SchemaInspector.validate (the CLI path's
+            // structured check) or the workflow entry preflight.
+            requireIdentifiersWithinPostgresLimit(schemas)
             val tables = schemas.associate { schema ->
                 val columns = schema.columns.map { col ->
                     NormalizedColumn(
@@ -81,7 +72,6 @@ data class NormalizedSchema(
                             columns = listOf(col.name),
                             targetTable = col.references!!.table,
                             targetColumns = listOf(col.references!!.column),
-                            columnNullable = col.nullable,
                             onDelete = resolveDslOnDelete(col.references!!.onDelete, col.nullable),
                         )
                     }
@@ -341,11 +331,6 @@ data class NormalizedForeignKey(
     /** Referenced columns, ordinally paired with [columns]. */
     val targetColumns: List<String>,
     /**
-     * Whether the first FK column is nullable. Not part of constraint
-     * identity — kept for the renderer's SET NULL sanity guard.
-     */
-    val columnNullable: Boolean,
-    /**
      * The resolved ON DELETE action. Always exact: entity-derived FKs
      * resolve the DSL default (SET_NULL for nullable columns, RESTRICT
      * for required ones) at construction in [NormalizedSchema.fromEntitySchemas];
@@ -375,6 +360,25 @@ data class NormalizedForeignKey(
 /** PostgreSQL NAMEDATALEN - 1: identifiers beyond this are silently truncated. */
 private const val MAX_IDENTIFIER_BYTES = 63
 
+/**
+ * Reject table or column names PostgreSQL would silently truncate.
+ * A truncated name never introspects back under its declared form,
+ * which wedges the migration differ permanently — so migration entry
+ * points call this *before* any database work (the CLI path already
+ * rejects through `SchemaInspector.validate`; this covers programmatic
+ * `FlywayMigrationWorkflow` callers), and [NormalizedSchema.fromEntitySchemas]
+ * applies it again as a backstop. Index and FK-constraint names are
+ * exempt: the renderers hash-truncate those to fit.
+ */
+fun requireIdentifiersWithinPostgresLimit(schemas: List<EntitySchema>) {
+    for (schema in schemas) {
+        requireIdentifierFits("table", schema.table)
+        for (col in schema.columns) {
+            requireIdentifierFits("column", "${schema.table}.${col.name}", col.name)
+        }
+    }
+}
+
 private fun requireIdentifierFits(kind: String, label: String, identifier: String = label) {
     val bytes = identifier.toByteArray(Charsets.UTF_8).size
     require(bytes <= MAX_IDENTIFIER_BYTES) {
@@ -388,11 +392,16 @@ private fun requireIdentifierFits(kind: String, label: String, identifier: Strin
  * Resolve a DSL [OnDelete] (or its absence) into the exact [FkAction]
  * the rendered constraint will carry: an undeclared action defaults to
  * SET NULL on nullable columns and RESTRICT on required ones, matching
- * what the DDL renderers emit.
+ * what the DDL renderers emit. SET NULL on a NOT NULL column is
+ * rejected here — normalization is where column nullability is last in
+ * scope, so the renderer never needs to re-derive it.
  */
 internal fun resolveDslOnDelete(onDelete: OnDelete?, columnNullable: Boolean): FkAction = when (onDelete) {
     OnDelete.CASCADE -> FkAction.CASCADE
-    OnDelete.SET_NULL -> FkAction.SET_NULL
+    OnDelete.SET_NULL -> {
+        require(columnNullable) { "ON DELETE SET NULL is invalid on a NOT NULL column" }
+        FkAction.SET_NULL
+    }
     OnDelete.RESTRICT -> FkAction.RESTRICT
     null -> if (columnNullable) FkAction.SET_NULL else FkAction.RESTRICT
 }
