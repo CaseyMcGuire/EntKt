@@ -73,8 +73,9 @@ The current docs warn against mutation, but a clear API should prevent it.
 
 Generated reads depend on more state than a driver and a privacy context.
 The existing fixed-context clone (`withFixedPrivacyContextForInternalUse`,
-see `ClientGenerator.buildFixedContextBody`) enumerates exactly what a
-functioning read path carries today:
+see `ClientGenerator.buildFixedContextBody`) is the inventory of full
+client state — the Adapter Semantics section below derives the
+read-relevant subset from it:
 
 - `privacyContextProvider` (the fixed context)
 - `transactionRequirement`
@@ -137,8 +138,18 @@ already stays within the contract's surface, so the change is a signature
 change, not a behavior change. `EntClient` satisfies the contract, so repos
 (`lateinit var client: EntClient`) construct queries exactly as today.
 
+The index helpers change in the same step: `${Entity}Indexes` and every
+nested index stage (range stages included) carry their own
+`client: EntClient?` constructor parameter today, separate from the query
+constructors (`IndexHelperGenerator`'s `Emitter` takes the client class
+and `stageConstructor()` threads it through each stage). All of those
+become `EntReadRuntime?` too — otherwise the read repos could not expose
+`indexes` without smuggling a full client into validator-reachable
+objects, which is exactly what the contract exists to prevent.
+
 Verification for this step: regenerated output must differ from the
-baseline only in the query constructor/parameter type names.
+baseline only in those constructor/parameter type names — across both the
+`*Query.kt` and `*Indexes.kt` files.
 
 ### The validation read client
 
@@ -192,11 +203,17 @@ preserve, exactly:
 - the same `entityInterceptors` (read-path interceptors still run)
 - the same per-repo privacy config (`hasLoadPrivacy` /
   `evaluateLoadPrivacy` behavior identical to the host client's)
-- the same `visibleOverfetchLimit` and `transactionRequirement`
+- the same `visibleOverfetchLimit`
 
-Implementation note: this is the same state set
-`withFixedPrivacyContextForInternalUse` already copies; the adapter should
-share that mechanism rather than duplicating the list.
+State that is deliberately **not** carried into `EntValidationReadClient`:
+`transactionRequirement` (a write-preflight check no read path consults),
+per-repo hooks config, and per-repo validation config (both write-side).
+Their absence is part of the no-writes guarantee, not an omission. The
+full-client clone in `withFixedPrivacyContextForInternalUse` copies them
+because that clone must serve writes; the validation read client copies
+only the read-relevant subset above, and the clone is cited in this RFC
+as the inventory the subset was derived from — not as the adapter's
+implementation.
 
 ### Alternative considered: delegation wrapper
 
@@ -259,8 +276,10 @@ classpath inherited, and assert on the result.
 
 1. Generate `EntReadRuntime` + per-entity read surfaces; make `EntClient`
    implement them.
-2. Change generated query constructors to accept `EntReadRuntime?`;
-   verify regenerated output differs only in those type names.
+2. Change generated query constructors AND the `${Entity}Indexes` /
+   nested index-stage constructors to accept `EntReadRuntime?`; verify
+   regenerated output (both `*Query.kt` and `*Indexes.kt`) differs only
+   in those type names.
 3. Generate `EntValidationReadClient` + per-entity validation read repos.
 4. Generate `EntClient.asValidationReadClient()` sharing the
    fixed-context clone's state copy.
@@ -284,6 +303,8 @@ Before implementation, add tests for:
 
 - validation contexts expose `EntValidationReadClient`
 - validator code can call query, terminal, index-helper, and by-id methods
+- index-helper stages constructed through the validation read client
+  operate via `EntReadRuntime` end to end (no stage holds `EntClient`)
 - validator code cannot call create/update/delete/edge-mutation methods
   (compile-fail harness above)
 - validator reads use System privacy
