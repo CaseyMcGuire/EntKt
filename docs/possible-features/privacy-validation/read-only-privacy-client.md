@@ -51,7 +51,11 @@ bypass), this RFC adds the other (read-only + viewer-scoped).
 ## Goals
 
 - Prevent privacy rules from calling generated create, update, delete,
-  edge-mutation, `withTransaction`, or configuration APIs.
+  edge-mutation, transaction (`withTransaction` /
+  `withTransactionOrError`), re-scoping (`withPrivacyContext` /
+  `bypassPrivacy_DANGEROUS`), or client-configuration
+  (`transactionRequirement`, `privacyContextProvider`, the update
+  defaults) APIs.
 - Preserve read behavior exactly: rules read through the same frozen
   caller `PrivacyContext` they get today
   (`withFixedPrivacyContextForInternalUse(privacy)` semantics), with
@@ -62,11 +66,16 @@ bypass), this RFC adds the other (read-only + viewer-scoped).
 
 ## Non-Goals
 
-- No general application-facing read facade. The read client remains
-  mintable only by generated evaluator code (the adapter is
-  `internal`); application code cannot construct a privacy-scoped or
-  bypass-scoped reader for itself. A public `client.readOnly()` is a
-  separate RFC.
+- No general application-facing read facade. The adapter and the read
+  client's constructors are **unsupported framework-internal API**,
+  guarded `@EntktInternal internal`. That is a deliberate-use gate,
+  not a security boundary: generated code compiles into the consuming
+  application's module, so Kotlin visibility alone cannot separate
+  evaluator code from application code — the validation RFC documents
+  exactly this — and an application that writes
+  `@OptIn(EntktInternal::class)` can still mint a reader, explicitly
+  and greppably, owning the consequences. A public, supported
+  `client.readOnly()` is a separate RFC.
 - No change to hooks contexts (still the full client; carried open
   question).
 - No change to which viewer privacy rules evaluate as. Rules read as
@@ -84,19 +93,27 @@ the type name at all.
 **Option A — one generated `EntReadClient`, posture as instance state
 (recommended).** Rename `EntValidationReadClient` →
 `EntReadClient` and `${Entity}ValidationReadRepo` →
-`${Entity}ReadRepo`. One `internal` adapter on `EntClient`:
+`${Entity}ReadRepo`. One adapter on `EntClient`:
 
 ```kotlin
-internal fun asReadClient(context: PrivacyContext): EntReadClient
+@EntktInternal
+internal fun asReadClientForInternalUse(context: PrivacyContext): EntReadClient
 ```
 
+The `ForInternalUse` suffix follows the existing
+`withFixedPrivacyContextForInternalUse` convention, and the
+`@EntktInternal` marker is what actually gates same-module application
+code (plain `internal` gates nothing there — see Non-Goals). The read
+client's and read repos' constructors carry the same
+`@EntktInternal internal` guard.
+
 Validation evaluators call
-`client.asReadClient(PrivacyContext(Viewer.PrivacyBypass("validation read")))`;
-privacy evaluators call `client.asReadClient(privacy)`. The public
-`asValidationReadClient()` is removed (not deprecated) — it only ever
-had generated callers, and an unguarded public method that mints
-bypass-scoped readers sits awkwardly next to the deliberately loud
-`bypassPrivacy_DANGEROUS`.
+`client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))`;
+privacy evaluators call `client.asReadClientForInternalUse(privacy)`.
+The public `asValidationReadClient()` is removed (not deprecated) — it
+only ever had generated callers, and an unguarded public method that
+mints bypass-scoped readers sits awkwardly next to the deliberately
+loud `bypassPrivacy_DANGEROUS`.
 
 This matches the framework's existing model: `EntClient` itself does
 not encode its posture in its type — a bypass-scoped clone from
@@ -120,8 +137,8 @@ shared builders precisely so there is one read surface.
 
 ### Adapter semantics
 
-`asReadClient(context)` copies the same read-relevant state the
-validation adapter copies today — same driver instance (a
+`asReadClientForInternalUse(context)` copies the same read-relevant
+state the validation adapter copies today — same driver instance (a
 transaction-scoped client yields a transaction-scoped reader), the
 passed context fixed for the client's lifetime, the shared interceptor
 registry, `visibleOverfetchLimit`, and the repos as per-entity read
@@ -137,8 +154,11 @@ implementation now).
 
 ### What privacy rules lose
 
-Beyond writes: `withTransaction`, `withPrivacyContext`,
-`bypassPrivacy_DANGEROUS`, and configuration surface. Losing
+Beyond writes: `withTransaction`, `withTransactionOrError`,
+`withPrivacyContext`, `bypassPrivacy_DANGEROUS`, and the mutable
+client configuration same-module code can reach today
+(`transactionRequirement`, `privacyContextProvider`, the update
+defaults). Losing
 `withPrivacyContext` is deliberate — a rule re-scoping its reads to a
 different viewer is doing cross-viewer authorization, which should be
 impossible to write by accident; if a real use case appears it belongs
@@ -159,9 +179,15 @@ stop compiling. That is the point.
 Mirror `ValidationReadClientCompileTest` with a privacy-rule snippet
 (`CarLoadPrivacyRule { ctx -> ... }` over the shared Car/User
 fixtures): negatives for `create`, `update`, `deleteByIdOrError`,
-`deleteMany`, `withTransaction`, and `withPrivacyContext` must fail
-with unresolved references; the positive twin compiles a rule using
-`query { }` + terminal, the byId family, and an index-helper stage.
+`deleteMany`, `withTransaction`, `withTransactionOrError`,
+`withPrivacyContext`, and `bypassPrivacy_DANGEROUS` must fail with
+unresolved references, plus assignment probes for the configuration
+members named in Goals — `ctx.client.transactionRequirement = ...` and
+`ctx.client.privacyContextProvider = ...` (reachable same-module
+`internal var`s on the full client today, absent members on the read
+client, so the probes fail the same unresolved-reference way). The
+positive twin compiles a rule using `query { }` + terminal, the byId
+family, and an index-helper stage.
 
 ## Migration Plan
 
@@ -169,12 +195,14 @@ with unresolved references; the positive twin compiles a rule using
    (`EntReadClient`, `${Entity}ReadRepo`); update the validation
    contexts, evaluators, compile/integration tests, and docs that name
    the old types.
-2. Replace `asValidationReadClient()` with the internal
-   `asReadClient(context)`; validation evaluators inline the bypass
-   context at the call site.
+2. Replace `asValidationReadClient()` with
+   `@EntktInternal internal asReadClientForInternalUse(context)`;
+   validation evaluators inline the bypass context at the call site;
+   the read client's and read repos' constructors gain the same
+   `@EntktInternal` guard.
 3. Change generated privacy contexts (`Load` / `Create` / `Update` /
    `Delete`) from `EntClient` to the read client; privacy evaluators
-   build it via `asReadClient(privacy)`.
+   build it via `asReadClientForInternalUse(privacy)`.
 4. Remove `withFixedPrivacyContextForInternalUse` (dead after step 3).
 5. Add the compile-fail/compile-pass tests; update codegen test pins
    (`PrivacyGeneratorTest`'s context-type assertion,
@@ -198,9 +226,13 @@ Before implementation, add tests for:
 
 - privacy contexts expose the read client; rule code can call query,
   terminal, index-helper, and by-id methods
-- rule reads are viewer-scoped: a load rule reading an entity the
-  caller cannot see gets the privacy-denied outcome, not the row (the
-  semantic that distinguishes this client from the validation one)
+- rule reads are viewer-scoped, asserted on **both** denial surfaces —
+  the terminals are deliberately distinct: a rule reading a
+  viewer-invisible row via `byIdOrNull` observes the thrown
+  `PrivacyDeniedException`, and the same read via `visibleByIdOrNull`
+  collapses to `null`. One test per path, so an implementation cannot
+  accidentally pin only the filtering path. This pair is the semantic
+  that distinguishes this client from the validation one.
 - rule reads inside a transaction use the transaction-scoped driver
 - read interceptors run for rule queries and observe the caller's
   viewer, not a bypass
