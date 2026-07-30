@@ -104,6 +104,10 @@ internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
     // can `reject()`, must not depend on what the database returned.
     // `explain()` fires the pass unconditionally too. Only the
     // driver fetches inside the per-edge blocks are data-gated.
+    // (Scope: a read that aborts before edge loading — a root
+    // interceptor rejection, or a strict read's LOAD-privacy denial
+    // thrown before its loadEdges call — never reaches this pass;
+    // the invariant is over reads that reach edge loading.)
     body.addStatement("var entities = results")
 
     for (re in resolved.edges) {

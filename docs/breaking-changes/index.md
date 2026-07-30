@@ -30,6 +30,22 @@ above it.
 
 ## Unreleased
 
+- **Eager-load interceptors fire on empty results** (`codegen`)
+  The EAGER_LOAD interceptor pass now runs on every configured
+  `with{Edge}()` subquery even when the root query matched nothing —
+  including the `firstOrNull` / `firstVisibleOrNull` no-match paths and
+  nested eager loads with no parent groups — matching `explain()` and the
+  existing relationship-empty / `limit(0)` behavior. Driver fetches are
+  still skipped when nothing could match. An interceptor that `reject()`s
+  on `EAGER_LOAD` now rejects such reads: `firstOrNull` throws
+  `EntQueryRejectedException` instead of returning null, `firstOrError`
+  returns `Err(QueryRejected)` instead of `Err(NotFound)`, and
+  `allOrThrow` on an empty root throws instead of returning `[]`.
+  _Migration:_ interceptors that reject on `EAGER_LOAD` must tolerate
+  empty-batch passes (or callers must expect the rejection on empty
+  results); observing interceptors see one additional `EAGER_LOAD` pass
+  per configured edge on empty reads.
+
 - **`queryX()` traversal follows the source query's shape; two new sealed `Predicate` bridges** (`schema`, `codegen`, `postgres`, `runtime`)
   Edge traversal no longer drops source `orderBy` / `limit` / `offset` at the
   bridge: generated `queryX()` embeds the post-interceptor source shape in the
@@ -51,19 +67,22 @@ above it.
 
 - **Privacy-rule and validator contexts expose a read-only `EntReadClient`** (`codegen`, `runtime`)
   `ctx.client` on the generated privacy rule contexts (LOAD / CREATE /
-  UPDATE / DELETE) and validator contexts is now the viewer-scoped,
-  read-only `EntReadClient` instead of the full `EntClient`: rule reads see
-  what the viewer being authorized can see, and writes, transactions, and
-  re-scoping no longer compile from rule code. Raw terminals (`rawCount` /
-  `rawExists` / raw aggregates, including the `*OrError` variants) throw
-  `IllegalStateException` at runtime on viewer-scoped readers. Hook
+  UPDATE / DELETE) and validator contexts is now the read-only
+  `EntReadClient` instead of the full `EntClient`: writes, transactions,
+  and re-scoping no longer compile from rule or validator code. The two
+  surfaces deliberately differ in posture: privacy-rule readers are
+  **viewer-scoped** — rule reads see what the viewer being authorized can
+  see, and raw terminals (`rawCount` / `rawExists` / raw aggregates,
+  including the `*OrError` variants) throw `IllegalStateException` at
+  runtime — while validator readers are **privacy-bypass-scoped** —
+  validation reads see all rows and raw terminals keep working. Hook
   contexts keep the full `EntClient`. See the
   [read-only privacy client note](../implemented-features/privacy-validation/read-only-privacy-client.md).
-  _Migration:_ retype rule helper signatures from `EntClient` to
-  `EntReadClient`; replace privacy-bypassing loads in rules with
+  _Migration:_ retype rule/validator helper signatures from `EntClient` to
+  `EntReadClient`; in privacy rules, replace privacy-bypassing loads with
   LOAD-checked reads (`byIdOrNull` throws on a denied row) or the
   `visible*` family (a denied row collapses to null/absent); move writes
-  out of rules into hooks or callers.
+  out of rules and validators into hooks or callers.
 
 - **`io.entkt:ent-viewer` renamed to `io.entkt:ent-viewer-core`** (`ent-viewer`)
   The viewer family now lives under one `ent-viewer/` folder as

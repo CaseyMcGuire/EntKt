@@ -414,7 +414,9 @@ internal fun buildFirstOrNull(schemaName: String, entityClass: ClassName, hasEdg
         // even when no row matched — interceptor firing must not
         // depend on what the database returned, and
         // `explainFirstOrNull` models the eager shapes
-        // unconditionally. An empty batch loads nothing.
+        // unconditionally. An empty batch loads nothing. (A matched
+        // row denied by root LOAD privacy still throws before this
+        // call — strict reads abort before edge loading.)
         builder.addStatement("val entity = row?.let { %T.fromRow(it) }", entityClass)
         builder.addStatement("if (entity != null && c.%L.hasLoadPrivacy()) c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName, repoPropName)
         builder.addStatement("return loadEdges(listOfNotNull(entity), privacy).firstOrNull()")

@@ -671,7 +671,7 @@ limits, change ordering, or swap the table. That property —
 | `*OrError` (incl. `byIdOrError`, `rawCountOrError`, etc.) | `Err(EntError.QueryRejected)` |
 | `*OrThrow` (`allOrThrow`, `firstOrThrow`, `byIdOrThrow`, …) | `EntQueryRejectedException` |
 | Non-result reads (`firstOrNull`, `visibleByIdOrNull`, `rawCount`, `visibleExists`, …) | `EntQueryRejectedException` (NOT collapsed to `null` / `false` / `0`) |
-| `explain*` methods | `EntQueryRejectedException` |
+| `explain*` methods | Rejected `QueryPlan` (`rejected = true`) — explain never throws; chain `requireNotRejected()` for exception-style handling |
 
 The exception's `queryRejected` field carries `entity`,
 `operation`, `reason`, optional `code`, and the rejecting

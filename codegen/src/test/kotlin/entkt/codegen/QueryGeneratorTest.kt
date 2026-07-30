@@ -301,8 +301,10 @@ class QueryGeneratorTest {
             "loadEdges should always be emitted — needed by M2M eager-load callers from other queries\n$output"
         }
         // No per-edge eager block since Car has only a belongsTo
-        // (currently not eager-loadable via withMethod).
-        assert(!output.contains("if (results.isEmpty()) return results\n        var entities = results\n        eager")) {
+        // (currently not eager-loadable via withMethod). The eager
+        // blocks all open with an `eagerX?.let { subQuery ->` guard,
+        // so its absence pins a no-op body.
+        assert(!output.contains("?.let { subQuery ->")) {
             "Body should not reference any eagerProp fields for a schema with no eager edges\n$output"
         }
     }
