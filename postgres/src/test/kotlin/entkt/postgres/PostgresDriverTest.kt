@@ -1296,6 +1296,58 @@ class PostgresDriverTest {
         assertEquals("Existing", all[0]["name"])
     }
 
+    @Test
+    fun `insertMany correlates explicit ids regardless of value order`() {
+        val driver = fresh()
+        // Explicit ids deliberately not in ascending order: the result
+        // pairing is by id correlation, so input order must survive no
+        // matter how the engine orders the RETURNING rows.
+        val rows = driver.insertMany("users", listOf(
+            mapOf("id" to 30L, "name" to "Carol"),
+            mapOf("id" to 10L, "name" to "Alice"),
+            mapOf("id" to 20L, "name" to "Bob"),
+        ))
+
+        assertEquals(listOf(30L, 10L, 20L), rows.map { it["id"] })
+        assertEquals(listOf("Carol", "Alice", "Bob"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `insertMany preallocates sequence ids without breaking continuity`() {
+        val driver = fresh()
+        // Multi-row auto-id batches reserve their ids from the sequence
+        // up front (to correlate RETURNING rows by id); a subsequent
+        // default-id insert must continue after them, not collide.
+        val rows = driver.insertMany("users", listOf(
+            mapOf("name" to "Alice"),
+            mapOf("name" to "Bob"),
+            mapOf("name" to "Carol"),
+        ))
+        val next = driver.insert("users", mapOf("name" to "Dave"))
+
+        assertEquals(listOf(1L, 2L, 3L), rows.map { it["id"] })
+        assertEquals(4L, next["id"])
+    }
+
+    @Test
+    fun `insertMany correlates mixed explicit-id and auto-id groups`() {
+        val driver = fresh()
+        // Explicit-id rows and auto-id rows land in different column-set
+        // groups; each group correlates independently and the combined
+        // result must still be in input order.
+        val rows = driver.insertMany("users", listOf(
+            mapOf("id" to 100L, "name" to "Explicit1"),
+            mapOf("name" to "Auto1"),
+            mapOf("id" to 50L, "name" to "Explicit2"),
+            mapOf("name" to "Auto2"),
+        ))
+
+        assertEquals(listOf("Explicit1", "Auto1", "Explicit2", "Auto2"), rows.map { it["name"] })
+        assertEquals(100L, rows[0]["id"])
+        assertEquals(50L, rows[2]["id"])
+        assertTrue((rows[1]["id"] as Long) != (rows[3]["id"] as Long))
+    }
+
     // ---------- updateMany ----------
 
     @Test

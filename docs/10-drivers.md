@@ -65,7 +65,11 @@ interface Driver {
   drivers may short-circuit `exists()` (Postgres uses `SELECT EXISTS(...)`
   / `LIMIT 1`).
 - `insertMany()` batch-inserts multiple rows, returning all persisted rows
-  with assigned IDs. PostgresDriver uses multi-row `INSERT ... VALUES`.
+  with assigned IDs **in input order**. PostgresDriver uses multi-row
+  `INSERT ... VALUES` and enforces the ordering by correlating `RETURNING`
+  rows to inputs by id — reserving ids from the sequence up front for
+  multi-row auto-id batches — rather than relying on `RETURNING` output
+  order, which PostgreSQL does not specify.
 - `updateMany()` updates all rows matching the predicates with the same
   values. Returns the count of updated rows.
 - `deleteMany()` deletes all rows matching the predicates. Returns the

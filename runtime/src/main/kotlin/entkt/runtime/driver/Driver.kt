@@ -254,6 +254,12 @@ interface Driver {
      * in the same order as [values], each with its assigned id. Drivers
      * should use an efficient batch strategy (e.g. multi-row `INSERT`).
      *
+     * The input-order guarantee is part of the contract: implementations
+     * must correlate returned rows to inputs by a key (e.g. the row id),
+     * not by relying on an engine's unspecified result ordering — SQL
+     * engines generally do not document the row order of insert-returning
+     * output.
+     *
      * This is a low-level driver method that does not fire lifecycle
      * hooks. The generated `createMany` repo method delegates to
      * `create { }.save()` per row so hooks fire for every entity.

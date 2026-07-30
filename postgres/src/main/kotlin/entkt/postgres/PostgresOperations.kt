@@ -458,22 +458,66 @@ internal class PostgresOperations(
                     continue
                 }
 
-                val singlePlaceholders = "(${cols.joinToString(", ") { "?" }})"
+                // PostgreSQL documents no ordering for RETURNING output
+                // (and RETURNING accepts no ORDER BY), so a multi-row
+                // statement must not pair returned rows with inputs
+                // positionally. Every multi-row statement instead carries
+                // an id per input row — caller-supplied, or reserved up
+                // front from the id sequence — and returned rows are
+                // matched back by id. Single-row statements return
+                // exactly one row and need no correlation.
+                val allocatedIds = if (rows.size > 1 && skipId) {
+                    preallocateSequenceIds(conn, schema, rows.size)
+                } else null
+                val insertCols = if (allocatedIds != null) listOf(schema.idColumn) + cols else cols
+                val correlationIds: List<Any?>? = when {
+                    rows.size == 1 -> null
+                    allocatedIds != null -> allocatedIds
+                    schema.idColumn in insertCols -> rows.map { it[schema.idColumn] }
+                    // No id to correlate by (no backing sequence, or a
+                    // non-auto id filled by a database default): keep the
+                    // positional pairing every shipped PostgreSQL
+                    // preserves for a serial VALUES plan.
+                    else -> null
+                }
+
+                val singlePlaceholders = "(${insertCols.joinToString(", ") { "?" }})"
                 val allPlaceholders = rows.joinToString(", ") { singlePlaceholders }
-                val colList = cols.joinToString(", ") { quote(it) }
+                val colList = insertCols.joinToString(", ") { quote(it) }
                 val sql = "INSERT INTO ${quote(table)} ($colList) VALUES $allPlaceholders RETURNING *"
 
                 conn.prepareStatement(sql).useQuietClose { stmt ->
                     var idx = 1
-                    for (row in rows) {
-                        for (col in cols) {
-                            codec.bindColumn(stmt, idx++, schema, col, row[col])
+                    rows.forEachIndexed { rowI, row ->
+                        for (col in insertCols) {
+                            val v = if (allocatedIds != null && col == schema.idColumn) {
+                                allocatedIds[rowI]
+                            } else {
+                                row[col]
+                            }
+                            codec.bindColumn(stmt, idx++, schema, col, v)
                         }
                     }
                     stmt.executeQuery().useQuietClose { rs ->
-                        for (ir in indexedRows) {
-                            check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
-                            results[ir.index] = codec.decodeRow(rs, schema.table, schema.columns)
+                        if (correlationIds == null) {
+                            for (ir in indexedRows) {
+                                check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
+                                results[ir.index] = codec.decodeRow(rs, schema.table, schema.columns)
+                            }
+                        } else {
+                            val byId = HashMap<Any?, Map<String, Any?>>(rows.size * 2)
+                            while (rs.next()) {
+                                val decoded = codec.decodeRow(rs, schema.table, schema.columns)
+                                byId[idKey(decoded[schema.idColumn])] = decoded
+                            }
+                            check(byId.size == rows.size) {
+                                "INSERT RETURNING produced ${byId.size} distinct ids for ${rows.size} rows"
+                            }
+                            indexedRows.forEachIndexed { rowI, ir ->
+                                results[ir.index] = checkNotNull(byId[idKey(correlationIds[rowI])]) {
+                                    "INSERT RETURNING is missing the row for id ${correlationIds[rowI]}"
+                                }
+                            }
                         }
                     }
                 }
@@ -482,6 +526,48 @@ internal class PostgresOperations(
 
         @Suppress("UNCHECKED_CAST")
         return results.toList() as List<Map<String, Any?>>
+    }
+
+    /**
+     * Reserve [n] ids from [schema]'s backing id sequence in one round
+     * trip, so a multi-row insert can bind explicit ids and correlate
+     * its RETURNING rows by id. Returns null when the id column has no
+     * serial/identity sequence (`nextval` over a null regclass), letting
+     * the caller fall back to positional pairing.
+     *
+     * `nextval` is non-transactional, so reserved ids are burned on
+     * rollback — exactly as serial defaults already behave for failed
+     * inserts.
+     */
+    private fun preallocateSequenceIds(conn: Connection, schema: EntitySchema, n: Int): List<Any>? {
+        val ids = ArrayList<Any>(n)
+        conn.prepareStatement(
+            "SELECT nextval(pg_get_serial_sequence(?, ?)) FROM generate_series(1, ?)",
+        ).useQuietClose { stmt ->
+            stmt.setString(1, schema.table)
+            stmt.setString(2, schema.idColumn)
+            stmt.setInt(3, n)
+            stmt.executeQuery().useQuietClose { rs ->
+                while (rs.next()) {
+                    val v = rs.getLong(1)
+                    if (rs.wasNull()) return null
+                    ids.add(if (schema.idStrategy == IdStrategy.AUTO_INT) v.toInt() else v)
+                }
+            }
+        }
+        return if (ids.size == n) ids else null
+    }
+
+    /**
+     * Normalize an id value for correlation-map lookups: integral ids
+     * widen to Long so a bound Int and a decoded Long (or vice versa)
+     * compare equal; everything else correlates by its own equals.
+     */
+    private fun idKey(v: Any?): Any? = when (v) {
+        is Long -> v
+        is Int -> v.toLong()
+        is Short -> v.toLong()
+        else -> v
     }
 
     fun updateMany(
