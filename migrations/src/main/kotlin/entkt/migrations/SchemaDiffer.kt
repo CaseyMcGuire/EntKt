@@ -23,9 +23,19 @@ class SchemaDiffer {
         // New tables
         for ((name, table) in desiredTables) {
             if (name !in currentTables) {
-                // CreateTable emits columns + PK only; indexes and FKs are separate
+                // CreateTable emits columns + PK only; indexes and FKs are separate.
+                // Indexes dedup by semantic key: a `.unique()` column plus an
+                // explicit unique index on the same column are one constraint,
+                // and creating both would seed the duplicate-index shape the
+                // shared-table diff below has to clean up. associateBy keeps
+                // the LAST declaration per key — the same representative
+                // [diffIndexes]' desired side keeps — so the index this path
+                // creates is the one every later diff expects; disagreeing
+                // (e.g. distinctBy's keep-first) would create the unnamed
+                // `.unique()` twin here and then demand its named sibling on
+                // the very next run.
                 autoOps.add(MigrationOp.CreateTable(table))
-                for (idx in table.indexes) {
+                for (idx in table.indexes.associateBy { indexKey(table, it) }.values) {
                     autoOps.add(MigrationOp.AddIndex(name, idx))
                 }
                 for (fk in table.foreignKeys) {
@@ -63,6 +73,29 @@ class SchemaDiffer {
 
         return DiffResult(ops = sorted, manual = manualOps)
     }
+
+    /**
+     * Semantic identity of an index: (columns, unique, normalized
+     * where) plus the native access method / operator class / storage
+     * params, so a btree→hnsw, opclass, or `lists` change is a
+     * detected drop+recreate. Predicates are normalized (type-aware)
+     * so PostgreSQL's deparsed form matches the user-written form; the
+     * name is a rendering detail, not identity.
+     */
+    private data class IndexKey(
+        val columns: List<String>,
+        val unique: Boolean,
+        val where: String?,
+        val using: String?,
+        val opclasses: List<String>?,
+        val with: Map<String, String>?,
+    )
+
+    private fun indexKey(idx: NormalizedIndex, columnTypes: Map<String, String>): IndexKey =
+        IndexKey(idx.columns, idx.unique, normalizeWhere(idx.where, columnTypes), idx.using, idx.opclasses, idx.with)
+
+    private fun indexKey(table: NormalizedTable, idx: NormalizedIndex): IndexKey =
+        indexKey(idx, table.columns.associate { it.name.lowercase() to it.sqlType })
 
     private fun diffTable(
         table: String,
@@ -149,20 +182,6 @@ class SchemaDiffer {
         autoOps: MutableList<MigrationOp>,
         manualOps: MutableList<MigrationOp>,
     ) {
-        // Match indexes by semantic identity: (columns, unique, where) plus the
-        // native access method / operator class / storage params, so a
-        // btree→hnsw, opclass, or `lists` change is a detected drop+recreate.
-        // Predicates are normalized so that PostgreSQL's deparsed form
-        // (with outer parens, extra whitespace) matches the user-written form.
-        data class IndexKey(
-            val columns: List<String>,
-            val unique: Boolean,
-            val where: String?,
-            val using: String?,
-            val opclasses: List<String>?,
-            val with: Map<String, String>?,
-        )
-
         // Predicate normalization is type-aware: whether a textual cast
         // is a deparser decoration or a semantic change (citext) depends
         // on the column's declared type. One shared map keeps both
@@ -174,11 +193,16 @@ class SchemaDiffer {
             for (c in desired.columns) put(c.name.lowercase(), c.sqlType)
         }
 
-        fun keyOf(it: NormalizedIndex) =
-            IndexKey(it.columns, it.unique, normalizeWhere(it.where, columnTypes), it.using, it.opclasses, it.with)
-
-        val currentByKey = current.indexes.associateBy { keyOf(it) }
-        val desiredByKey = desired.indexes.associateBy { keyOf(it) }
+        // The current side groups rather than keys uniquely: Postgres
+        // allows several identically-defined indexes under different
+        // names, and collapsing them would let one hide behind the
+        // declared index — never dropped, never flagged — or, in the
+        // other introspection order, produce a CREATE for a name that
+        // already exists. Same reasoning as [diffForeignKeys]' groupBy.
+        // The desired side dedups deliberately: two declarations of the
+        // same semantic index need one live index.
+        val currentByKey = current.indexes.groupBy { indexKey(it, columnTypes) }
+        val desiredByKey = desired.indexes.associateBy { indexKey(it, columnTypes) }
 
         // A column added to an existing table with a constant default
         // backfills every existing row to that same value. A new UNIQUE
@@ -209,26 +233,46 @@ class SchemaDiffer {
 
         // New indexes
         for ((key, idx) in desiredByKey) {
-            val currentIdx = currentByKey[key]
-            if (currentIdx == null) {
+            val group = currentByKey[key].orEmpty()
+            if (group.isEmpty()) {
                 if (isUnsafeNewUniqueIndex(idx)) {
                     manualOps.add(MigrationOp.AddIndex(table, idx))
                 } else {
                     autoOps.add(MigrationOp.AddIndex(table, idx))
                 }
-            } else if (idx.name != null && idx.name != currentIdx.name) {
-                // Desired has an explicit name that differs from current
-                // (which may be null/derived or a different explicit name)
-                // — manual drop of the old index + auto add under the new name.
-                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                continue
+            }
+            val named = if (idx.name != null) group.find { it.name == idx.name } else null
+            if (idx.name != null && named == null) {
+                // Desired has an explicit name that none of the live
+                // definitions carry — manual drop of every live twin +
+                // auto add under the declared name. Dropping the whole
+                // group is what keeps the CREATE collision-free.
+                for (currentIdx in group) {
+                    manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                }
                 autoOps.add(MigrationOp.AddIndex(table, idx))
+            } else {
+                // One live index satisfies the declaration; any twins on
+                // the same definition are undeclared duplicates. Survivor
+                // choice is by name (introspection order is unspecified):
+                // the declared name when there is one, else the first by
+                // name for determinism.
+                val keep = named ?: group.minByOrNull { it.name ?: "" }!!
+                for (currentIdx in group) {
+                    if (currentIdx !== keep) {
+                        manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                    }
+                }
             }
         }
 
         // Dropped indexes
-        for ((key, currentIdx) in currentByKey) {
+        for ((key, group) in currentByKey) {
             if (key !in desiredByKey) {
-                manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                for (currentIdx in group) {
+                    manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                }
             }
         }
     }

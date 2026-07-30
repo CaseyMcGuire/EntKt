@@ -938,6 +938,91 @@ class SchemaDifferTest {
     }
 
     @Test
+    fun `an undeclared duplicate index is dropped not masked`() {
+        // Postgres allows several identically-defined indexes under
+        // different names; all must be visible to the differ whichever
+        // order introspection returns them in.
+        val declared = idx(listOf("email"), unique = true, name = "idx_users_email")
+        val twin = idx(listOf("email"), unique = true, name = "zz_duplicate")
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("email")), indexes = listOf(declared)),
+        )
+        for (currentIndexes in listOf(listOf(declared, twin), listOf(twin, declared))) {
+            val current = schema(
+                table("users", columns = listOf(col("id", "serial", primaryKey = true), col("email")), indexes = currentIndexes),
+            )
+            val result = differ.diff(desired, current)
+
+            assertTrue(result.ops.isEmpty(), "declared index exists; nothing to add: ${result.ops}")
+            val drops = result.manual.filterIsInstance<MigrationOp.DropIndex>()
+            assertEquals(1, drops.size, "exactly the twin should drop: ${result.manual}")
+            assertEquals("zz_duplicate", drops[0].name)
+        }
+    }
+
+    @Test
+    fun `duplicate indexes with no matching name drop before the re-add`() {
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(idx(listOf("email"), unique = true, name = "idx_users_email")),
+            ),
+        )
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(
+                    idx(listOf("email"), unique = true, name = "old_a"),
+                    idx(listOf("email"), unique = true, name = "old_b"),
+                ),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        // Both twins drop, so the CREATE under the declared name can't
+        // collide with a leftover.
+        assertEquals(2, result.manual.filterIsInstance<MigrationOp.DropIndex>().size)
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+    }
+
+    @Test
+    fun `create-table path emits one index per semantic identity`() {
+        // A `.unique()` column merge plus an explicit unique index on
+        // the same column must not create live twins — and the
+        // representative the create path picks must be the SAME one the
+        // shared-table diff expects (keep-last), or an unchanged schema
+        // would demand a rename on the very next run.
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(
+                    idx(listOf("email"), unique = true),
+                    idx(listOf("email"), unique = true, name = "idx_users_email"),
+                ),
+            ),
+        )
+        val created = differ.diff(desired, schema())
+        val adds = created.ops.filterIsInstance<MigrationOp.AddIndex>()
+        assertEquals(1, adds.size)
+        assertEquals("idx_users_email", adds[0].index.name)
+
+        // Second run against the index the first run created: clean.
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(idx(listOf("email"), unique = true, name = "idx_users_email")),
+            ),
+        )
+        val second = differ.diff(desired, current)
+        assertTrue(second.ops.isEmpty(), "unchanged schema must not re-add: ${second.ops}")
+        assertTrue(second.manual.isEmpty(), "unchanged schema must not drop: ${second.manual}")
+    }
+
+    @Test
     fun `differ flags a citext predicate cast the schema does not declare`() {
         // On a citext column, c::text compares case-sensitively while a
         // bare c compares case-insensitively — the live index and the

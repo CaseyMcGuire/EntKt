@@ -109,6 +109,20 @@ class NormalizeWhereTest {
     }
 
     @Test
+    fun `quoted mixed-case cast types keep their case-sensitive identity`() {
+        // "Rate" and rate can be distinct types in PostgreSQL; folding
+        // their case would compare predicates over different types
+        // equal. Quoted-lowercase IS the unquoted type, so it folds.
+        assertNotEquals(normalizeWhere("x::\"Rate\" > 5"), normalizeWhere("x::rate > 5"))
+        assertEquals(normalizeWhere("x::\"Rate\" > 5"), normalizeWhere("((x)::\"Rate\" > 5)"))
+        assertEquals(normalizeWhere("x::\"rate\" > 5"), normalizeWhere("x::rate > 5"))
+        // The one quoted-lowercase exception: PostgreSQL's byte type
+        // "char" is distinct from the keyword char (= character).
+        assertNotEquals(normalizeWhere("t::\"char\" = 'x'"), normalizeWhere("t::char = 'x'"))
+        assertEquals(normalizeWhere("t::\"char\" = 'x'"), normalizeWhere("((t)::\"char\" = 'x')"))
+    }
+
+    @Test
     fun `truncating textual targets are never stripped`() {
         // col::char is character(1) and truncates; ::name truncates at
         // 63 bytes. Neither is deparser decoration.

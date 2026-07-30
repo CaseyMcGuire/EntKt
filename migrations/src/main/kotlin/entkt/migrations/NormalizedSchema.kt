@@ -424,24 +424,43 @@ private val NUMERIC_CAST_TYPES =
     setOf("smallint", "integer", "bigint", "numeric", "real", "double precision", "oid")
 
 /**
- * Canonical spelling for a cast type: lowercased, whitespace
- * collapsed, quotes dropped, and common aliases resolved to the name
+ * Canonical spelling for a cast type: whitespace collapsed, unquoted
+ * names lowercased, and common aliases resolved to the name
  * `pg_get_expr` deparses, so `f::int8` and the reported `(f)::bigint`
  * compare equal. A length/precision modifier is preserved (spaces
  * dropped) and re-anchored after the canonical base name, wherever it
  * appeared — `timestamp(0) with time zone` and `timestamptz(0)` both
  * canonicalize to `timestamp with time zone(0)`.
+ *
+ * Quoted identifiers are case-sensitive in PostgreSQL, so a quoted
+ * name that NEEDS its quotes — mixed case, like `"Money"` — keeps
+ * them and its exact case: `"Money"` and `money` can be distinct
+ * types with different behavior. A quoted-lowercase name is identical
+ * to its unquoted spelling and folds into it.
  */
 private fun canonicalCastType(type: String): String {
-    var t = type.trim().lowercase().replace(Regex("\\s+"), " ").removeSurrounding("\"")
+    var t = type.trim().replace(Regex("\\s+"), " ")
     var modifier: String? = null
     Regex("\\s*\\(([0-9, ]*)\\)").find(t)?.let { m ->
         modifier = m.groupValues[1].replace(" ", "")
         t = t.removeRange(m.range).trim().replace(Regex("\\s+"), " ")
     }
-    val canonical = CAST_TYPE_ALIASES[t] ?: t
+    val canonical = if (t.length >= 2 && t.startsWith("\"") && t.endsWith("\"")) {
+        val inner = t.removeSurrounding("\"")
+        // Quoted-lowercase normally IS the unquoted type — except
+        // `"char"`, PostgreSQL's 1-byte type, which is distinct from
+        // the keyword `char` (= character/bpchar).
+        if (inner.matches(UNQUOTED_SAFE_NAME) && inner != "char") CAST_TYPE_ALIASES[inner] ?: inner
+        else "\"$inner\""
+    } else {
+        val lower = t.lowercase()
+        CAST_TYPE_ALIASES[lower] ?: lower
+    }
     return if (modifier == null) canonical else "$canonical($modifier)"
 }
+
+/** A name whose quoted and unquoted spellings PostgreSQL treats identically. */
+private val UNQUOTED_SAFE_NAME = Regex("[a-z_][a-z0-9_]*")
 
 private val CAST_TYPE_ALIASES = mapOf(
     "int" to "integer",
@@ -460,7 +479,7 @@ private val CAST_TYPE_ALIASES = mapOf(
 )
 
 /**
- * Strip balanced outer parentheses from [s], repeatedly, as long as the
+ * Strip balanced outer parentheses from [input], repeatedly, as long as the
  * leading `(` matches the trailing `)` (i.e. they actually wrap the whole
  * expression, not a compound like `(a = 1) OR (b = 2)`).
  */
@@ -512,8 +531,14 @@ private fun stripBalancedOuterParens(input: String): String {
  * a quoted numeric unquotes to reconcile with the bare `5` form — safe
  * because a bare numeric token can never be an expression.
  *
- * Everything else (bare numerics, `now()`, `true`) has casts and
- * balanced outer parens stripped and whitespace collapsed. Because BOTH
+ * Bare numerics keep their constant decoration stripped
+ * (`1.5::double precision` ≡ `1.5`, `(-5)` ≡ `-5`), but a cast on an
+ * EXPRESSION changes what the default produces — `(now())::date`
+ * stores midnight where `now()` stores the current timestamp — so
+ * expression casts are kept, canonicalized to `expr::type` (parens
+ * dropped, [canonicalCastType] spelling). Postgres never decorates a
+ * bare expression default on its own — every reported decoration sits
+ * on constants — so keeping them costs no reconciliation. Because BOTH
  * sides pass through this function, the entity-derived and
  * database-reported forms converge whenever they mean the same thing.
  */
@@ -530,13 +555,37 @@ fun normalizeDefault(expr: String?): String? {
         return if (NUMERIC_LITERAL.matches(inner)) inner else "'$inner'"
     }
 
-    // Bare (unquoted) forms: strip type casts — ::text, ::bigint,
-    // ::double precision, ::character varying(255) — then balanced outer
-    // parens (e.g. Postgres wraps negative numerics as (-5)), then
-    // collapse whitespace.
-    var t = s.replace(CAST_SUFFIX, "").trim()
-    t = stripBalancedOuterParens(t)
-    return t.replace(Regex("\\s+"), " ")
+    // Bare (unquoted) forms: peel trailing casts and the balanced
+    // parens Postgres wraps around them, innermost-out — (now())::date
+    // yields base now() and cast [date], (-5) yields -5 and no cast.
+    var t = stripBalancedOuterParens(s)
+    val casts = mutableListOf<String>()
+    while (true) {
+        val m = TRAILING_DEFAULT_CAST.find(t) ?: break
+        casts.add(canonicalCastType(m.groupValues[1]))
+        t = stripBalancedOuterParens(t.removeRange(m.range).trim())
+    }
+    t = t.replace(Regex("\\s+"), " ")
+
+    // A numeric constant's modifier-less casts are decoration —
+    // `1.5::double precision` means 1.5, and `(5)::text` produces the
+    // same '5' the DSL's quoted `'5'` does — while a typmod cast
+    // ((1.55)::numeric(2,1) is 1.6) changes the value and stays. An
+    // expression's casts are always semantic and are re-attached in
+    // cast order, canonicalized.
+    if (casts.isEmpty()) return t
+    if (NUMERIC_LITERAL.matches(t) && casts.none { it.contains("(") }) return t
+    val reattached = t + casts.reversed().joinToString("") { "::$it" }
+
+    // A base that reduced to a quoted literal under one cast —
+    // `('x'::text)` — is the QUOTED_DEFAULT_LITERAL shape spelled with
+    // parens; route it through the same rule so normalization is a
+    // fixed point and both spellings share one key.
+    QUOTED_DEFAULT_LITERAL.matchEntire(reattached)?.let {
+        val inner = it.groupValues[1]
+        return if (NUMERIC_LITERAL.matches(inner)) inner else "'$inner'"
+    }
+    return reattached
 }
 
 /** [NUMERIC_LITERAL_SRC] compiled, for whole-string literal checks. */
@@ -545,6 +594,10 @@ private val NUMERIC_LITERAL = Regex(NUMERIC_LITERAL_SRC)
 /** PostgreSQL type-cast suffix, including multi-word types and length modifiers. */
 private val CAST_SUFFIX =
     Regex("::\\s*\"?[a-zA-Z_][a-zA-Z0-9_]*(\\s+[a-zA-Z_][a-zA-Z0-9_]*)*\"?(\\s*\\([0-9, ]*\\))?")
+
+/** A [CAST_SUFFIX]-shaped cast at the very end of a default expression, type captured. */
+private val TRAILING_DEFAULT_CAST =
+    Regex("::\\s*(\"?[a-zA-Z_][a-zA-Z0-9_]*(?:\\s+[a-zA-Z_][a-zA-Z0-9_]*)*\"?(?:\\s*\\([0-9, ]*\\))?)\\s*$")
 
 /** A whole-string single-quoted literal (quotes doubled for escapes), optionally cast. */
 private val QUOTED_DEFAULT_LITERAL =

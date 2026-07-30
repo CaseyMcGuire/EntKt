@@ -180,9 +180,40 @@ class NormalizedSchemaTest {
         // survive normalization.
         assertNotEquals(normalizeDefault("'now()'"), normalizeDefault("now()"))
         assertNotEquals(normalizeDefault("'now()'::text"), normalizeDefault("(now())::text"))
-        // Each side still reconciles with its own decorated form.
+        // The literal still reconciles with its own decorated form.
         assertEquals(normalizeDefault("'now()'"), normalizeDefault("'now()'::text"))
-        assertEquals(normalizeDefault("now()"), normalizeDefault("(now())::text"))
+    }
+
+    @Test
+    fun `normalizeDefault keeps casts on expression defaults`() {
+        // (now())::date stores midnight where now() stores the current
+        // timestamp — an expression cast changes what the default
+        // produces and is part of its identity.
+        assertNotEquals(normalizeDefault("now()"), normalizeDefault("(now())::date"))
+        assertNotEquals(normalizeDefault("now()"), normalizeDefault("(now())::text"))
+        // Both spellings of the same cast expression still reconcile,
+        // including chains, canonicalized innermost-first.
+        assertEquals(normalizeDefault("now()::date"), normalizeDefault("(now())::date"))
+        assertEquals("now()::date::text", normalizeDefault("((now())::date)::text"))
+        // Numeric constants keep their decoration stripped — including
+        // a textual cast, which produces the same value the DSL's
+        // quoted form does: (5)::text, '5', and 5 are one default.
+        assertEquals(normalizeDefault("1.5"), normalizeDefault("(1.5)::double precision"))
+        assertEquals(normalizeDefault("'5'"), normalizeDefault("(5)::text"))
+        // A typmod cast changes a numeric constant's value and stays.
+        assertNotEquals(normalizeDefault("1.55"), normalizeDefault("(1.55)::numeric(2,1)"))
+    }
+
+    @Test
+    fun `normalizeDefault is a fixed point across cast spellings`() {
+        // ('x'::text) is the quoted-literal shape spelled with parens;
+        // both must reach the same key, and re-normalizing must change
+        // nothing (snapshots re-feed normalized output).
+        assertEquals(normalizeDefault("'x'::text"), normalizeDefault("('x'::text)"))
+        for (input in listOf("('x'::text)", "(now())::date", "((now())::date)::text", "'5'::bigint", "(-5)")) {
+            val once = normalizeDefault(input)
+            assertEquals(once, normalizeDefault(once), "not a fixed point for $input")
+        }
     }
 
     @Test
