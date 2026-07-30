@@ -334,10 +334,42 @@ class PostgresDriver(
      * present and different → fail, saying what was wanted and what is
      * actually there. Reconciling the difference is a migration's job,
      * not auto-DDL's.
+     *
+     * A free derived name is not proof of absence either: the same
+     * constraint may live under another name — Postgres's own default
+     * (`<table>_<column>_fkey`) on a hand-written `REFERENCES`, or a
+     * DBA's choice. Creating the derived-name constraint anyway would
+     * silently double-enforce the endpoints (and the migration differ
+     * would then flag the twin it just created), so the endpoints are
+     * checked before any create: an equivalent constraint under any
+     * name satisfies the declaration; a different one fails loudly.
      */
     private fun ensureForeignKey(conn: java.sql.Connection, stmt: java.sql.Statement, fk: ForeignKeyDdl) {
         when (val existing = findConstraint(conn, fk)) {
-            null -> createForeignKey(stmt, fk)
+            null -> {
+                // Every live FK on the source column, whatever its name or
+                // target. All of them must be the declared constraint: a
+                // stale FK to a DIFFERENT target would otherwise stay
+                // invisible, the blind create would double-constrain the
+                // column (every write failing against a table the schema
+                // never declared), and an equivalent constraint must not
+                // mask a rogue twin enforcing rules nobody declared.
+                val sameColumn = findSourceColumnConstraints(conn, fk)
+                val foreign = sameColumn.filter { (_, c) -> !c.matches(fk) }
+                check(foreign.isEmpty()) {
+                    "Table '${fk.table}' already has a foreign key on (${fk.column}) under a " +
+                        "different name, and it is not the constraint this schema describes. " +
+                        "Auto-DDL will not alter or duplicate it — drop it, or move this schema " +
+                        "onto the migration path.\n" +
+                        "  schema wants: FOREIGN KEY (${fk.column}) REFERENCES " +
+                        "${fk.targetTable}(${fk.targetColumn}) ON DELETE ${fk.onDelete}\n" +
+                        foreign.joinToString("\n") { (name, c) ->
+                            "  database has: [$name] ${c.describe()}"
+                        }
+                }
+                if (sameColumn.isEmpty()) createForeignKey(stmt, fk)
+                // else: already enforced under another name — done.
+            }
             else -> check(existing.matches(fk)) {
                 "Table '${fk.table}' already has a constraint named '${fk.constraintName}', but it is not " +
                     "the one this schema describes. Auto-DDL will not alter an existing constraint — drop it, " +
@@ -402,22 +434,81 @@ class PostgresDriver(
             stmt.setString(3, fk.table)
             stmt.executeQuery().useQuietClose { rs ->
                 if (!rs.next()) return null
-                ExistingConstraint(
-                    isForeignKey = rs.getBoolean("is_foreign_key"),
-                    targetMatches = rs.getBoolean("target_matches"),
-                    deleteCode = rs.getString("delete_code")?.firstOrNull() ?: ' ',
-                    updateCode = rs.getString("update_code")?.firstOrNull() ?: ' ',
-                    matchCode = rs.getString("match_code")?.firstOrNull() ?: ' ',
-                    validated = rs.getBoolean("validated"),
-                    deferrable = rs.getBoolean("deferrable"),
-                    deferred = rs.getBoolean("deferred"),
-                    targetTable = rs.getString("target_table"),
-                    columnCount = rs.getInt("column_count"),
-                    columnName = rs.getString("column_name"),
-                    targetColumn = rs.getString("target_column"),
-                )
+                readExistingConstraint(rs)
             }
         }
+
+    /**
+     * Every live single-column FK constraint whose referencing column is
+     * [fk]'s column — regardless of name or target — paired with its
+     * constraint name. Used when the derived name is free: the
+     * declaration may already be enforced under another name (blindly
+     * creating would double-enforce it), and a stale FK to a different
+     * target must surface loudly rather than silently double-constrain
+     * the column. `matches` decides equivalence per row; the target
+     * comparison lives there, not in the query. Partition-propagated
+     * child constraints (`conparentid <> 0`) are excluded; composite
+     * FKs sharing the column are out of scope, as on the derived-name
+     * path.
+     */
+    private fun findSourceColumnConstraints(
+        conn: java.sql.Connection,
+        fk: ForeignKeyDdl,
+    ): List<Pair<String, ExistingConstraint>> =
+        conn.prepareStatement(
+            """
+            SELECT c.conname                             AS constraint_name,
+                   c.contype = 'f'                       AS is_foreign_key,
+                   c.confrelid = to_regclass(?)          AS target_matches,
+                   c.confdeltype                         AS delete_code,
+                   c.confupdtype                         AS update_code,
+                   c.confmatchtype                       AS match_code,
+                   c.convalidated                        AS validated,
+                   c.condeferrable                       AS deferrable,
+                   c.condeferred                         AS deferred,
+                   COALESCE(c.confrelid::regclass::text, '(none)') AS target_table,
+                   COALESCE(array_length(c.conkey, 1), 0)          AS column_count,
+                   COALESCE((SELECT a.attname FROM pg_attribute a
+                             WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]), '(none)') AS column_name,
+                   COALESCE((SELECT a.attname FROM pg_attribute a
+                             WHERE a.attrelid = c.confrelid AND a.attnum = c.confkey[1]), '(none)') AS target_column
+            FROM pg_constraint c
+            WHERE c.contype = 'f'
+              AND c.conrelid = to_regclass(?)
+              AND c.conparentid = 0
+              AND array_length(c.conkey, 1) = 1
+              AND (SELECT a.attname FROM pg_attribute a
+                   WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]) = ?
+            ORDER BY c.conname
+            """.trimIndent(),
+        ).useQuietClose { stmt ->
+            stmt.setString(1, fk.targetTable)
+            stmt.setString(2, fk.table)
+            stmt.setString(3, fk.column)
+            stmt.executeQuery().useQuietClose { rs ->
+                val found = mutableListOf<Pair<String, ExistingConstraint>>()
+                while (rs.next()) {
+                    found.add(rs.getString("constraint_name") to readExistingConstraint(rs))
+                }
+                found
+            }
+        }
+
+    private fun readExistingConstraint(rs: java.sql.ResultSet): ExistingConstraint =
+        ExistingConstraint(
+            isForeignKey = rs.getBoolean("is_foreign_key"),
+            targetMatches = rs.getBoolean("target_matches"),
+            deleteCode = rs.getString("delete_code")?.firstOrNull() ?: ' ',
+            updateCode = rs.getString("update_code")?.firstOrNull() ?: ' ',
+            matchCode = rs.getString("match_code")?.firstOrNull() ?: ' ',
+            validated = rs.getBoolean("validated"),
+            deferrable = rs.getBoolean("deferrable"),
+            deferred = rs.getBoolean("deferred"),
+            targetTable = rs.getString("target_table"),
+            columnCount = rs.getInt("column_count"),
+            columnName = rs.getString("column_name"),
+            targetColumn = rs.getString("target_column"),
+        )
 
     /** A constraint already present in the catalog under a derived name. */
     private data class ExistingConstraint(
@@ -833,6 +924,13 @@ class PostgresDriver(
             val txDriver = PostgresTransactionalDriver(conn, this, ops)
             try {
                 val result = block(txDriver)
+                // A block that swallowed a failed statement's error and
+                // completed anyway cannot commit: the transaction is in
+                // PostgreSQL's aborted state and pgjdbc would silently
+                // turn the COMMIT into a ROLLBACK — success reported,
+                // nothing persisted. Fail loudly instead; the catch
+                // below rolls back.
+                check(!transactionAborted(conn)) { TRANSACTION_ABORTED_MESSAGE }
                 conn.commit()
                 resolved = true
                 return result

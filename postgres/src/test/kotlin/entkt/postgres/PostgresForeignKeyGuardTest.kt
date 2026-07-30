@@ -111,6 +111,93 @@ class PostgresForeignKeyGuardTest {
         )
     }
 
+    /** Count of FK constraints on guard_posts.author_id -> guard_users.id. */
+    private fun endpointFkCount(): Int =
+        dataSource.connection.use { conn ->
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery(
+                    "SELECT count(*) FROM pg_constraint WHERE contype = 'f' " +
+                        "AND conrelid = to_regclass('guard_posts') AND confrelid = to_regclass('guard_users')",
+                ).use { rs -> rs.next(); rs.getInt(1) }
+            }
+        }
+
+    @Test
+    fun `an equivalent foreign key under another name is accepted without a duplicate`() {
+        dropAll()
+        registerAll()
+        // Re-home the constraint under Postgres's default naming — the
+        // shape a hand-written `REFERENCES` leaves behind.
+        exec(
+            "ALTER TABLE guard_posts DROP CONSTRAINT fk_guard_posts_author_id",
+            "ALTER TABLE guard_posts ADD CONSTRAINT guard_posts_author_id_fkey " +
+                "FOREIGN KEY (author_id) REFERENCES guard_users(id) ON DELETE CASCADE",
+        )
+
+        PostgresDriver(dataSource, autoDdl = true)
+            .registerAll(listOf(GUARD_POSTS, GUARD_USERS, GUARD_TENANTS))
+
+        // The declaration is already enforced; no derived-name twin.
+        assertEquals(1, endpointFkCount(), "must not double-enforce the endpoints")
+        assertEquals(null, constraintDef("guard_posts", "fk_guard_posts_author_id"))
+    }
+
+    @Test
+    fun `a different foreign key under another name fails instead of duplicating`() {
+        dropAll()
+        registerAll()
+        exec(
+            "ALTER TABLE guard_posts DROP CONSTRAINT fk_guard_posts_author_id",
+            "ALTER TABLE guard_posts ADD CONSTRAINT guard_posts_author_id_fkey " +
+                "FOREIGN KEY (author_id) REFERENCES guard_users(id) ON DELETE SET NULL",
+        )
+
+        val ex = assertFailsWith<IllegalStateException> { registerAll() }
+        assertTrue(
+            ex.message!!.contains("guard_posts_author_id_fkey"),
+            "names the foreign constraint; got: ${ex.message}",
+        )
+        assertEquals(1, endpointFkCount(), "the mismatched constraint must be left alone")
+    }
+
+    @Test
+    fun `a stale FK to a different target under another name fails instead of double-constraining`() {
+        dropAll()
+        registerAll()
+        // An edge whose target was changed, with the old constraint
+        // surviving under a hand-picked name. Creating the declared FK
+        // alongside it would constrain author_id to BOTH tables — every
+        // write would fail against a table the schema never declared.
+        exec(
+            "ALTER TABLE guard_posts DROP CONSTRAINT fk_guard_posts_author_id",
+            "ALTER TABLE guard_posts ADD CONSTRAINT stale_author_fkey " +
+                "FOREIGN KEY (author_id) REFERENCES guard_tenants(id) ON DELETE CASCADE",
+        )
+
+        val ex = assertFailsWith<IllegalStateException> { registerAll() }
+        assertTrue(ex.message!!.contains("stale_author_fkey"), "names the stale constraint; got: ${ex.message}")
+        assertTrue(ex.message!!.contains("guard_tenants"), "states what is there; got: ${ex.message}")
+    }
+
+    @Test
+    fun `an equivalent FK does not mask a rogue twin on the same column`() {
+        dropAll()
+        registerAll()
+        // The declared constraint exists (under another name) AND a twin
+        // enforcing an undeclared ON UPDATE CASCADE sits beside it. The
+        // equivalent one must not silently bless the pair.
+        exec(
+            "ALTER TABLE guard_posts DROP CONSTRAINT fk_guard_posts_author_id",
+            "ALTER TABLE guard_posts ADD CONSTRAINT good_fkey " +
+                "FOREIGN KEY (author_id) REFERENCES guard_users(id) ON DELETE CASCADE",
+            "ALTER TABLE guard_posts ADD CONSTRAINT rogue_fkey " +
+                "FOREIGN KEY (author_id) REFERENCES guard_users(id) ON DELETE CASCADE ON UPDATE CASCADE",
+        )
+
+        val ex = assertFailsWith<IllegalStateException> { registerAll() }
+        assertTrue(ex.message!!.contains("rogue_fkey"), "names the rogue twin; got: ${ex.message}")
+    }
+
     @Test
     fun `a stale foreign key pointing at the wrong table fails loudly`() {
         dropAll()
