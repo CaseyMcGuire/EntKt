@@ -64,13 +64,25 @@ enum class RelationshipLocking {
  * Canonical identity of a link-table relationship, used as the key for the
  * relationship lock ([Driver.serializeRelationship]). [fkColumns] is the
  * unordered FK pair stored in canonical (sorted) order so both orientations
- * of the same link table produce an equal key. Build via [canonical] to
- * enforce the sort.
+ * of the same link table produce an equal key. The constructor rejects an
+ * unsorted pair; build via [canonical] to sort automatically.
  */
 data class RelationshipLockKey(
     val junctionTable: String,
     val fkColumns: List<String>,
 ) {
+    init {
+        // The whole point of the type is that both orientations of a
+        // link table produce an equal key; the driver hashes fkColumns
+        // as given, so an unsorted key would silently acquire a
+        // different advisory lock (fail-open). Rejecting here also
+        // covers data-class copy(), which bypasses the companion.
+        require(fkColumns == fkColumns.sorted()) {
+            "RelationshipLockKey.fkColumns must be in canonical (sorted) order, " +
+                "got $fkColumns — build via RelationshipLockKey.canonical(...)"
+        }
+    }
+
     companion object {
         /** Build a key with [fkColumns] sorted into canonical order. */
         fun canonical(junctionTable: String, fkColumns: List<String>): RelationshipLockKey =

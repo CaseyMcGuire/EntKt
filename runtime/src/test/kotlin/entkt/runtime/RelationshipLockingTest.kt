@@ -47,17 +47,27 @@ class RelationshipLockingTest {
     }
 
     @Test
-    fun `direct construction with unsorted columns does NOT equal the canonical key`() {
-        // Foot-gun guard: the data-class primary constructor does not sort, so
-        // constructing directly with an unsorted FK pair yields a key that is
-        // NOT equal to the canonical one — which would silently lock a different
-        // advisory key and lose cross-orientation serialization. All production
-        // call sites must build keys via canonical(); this test documents why.
-        val direct = RelationshipLockKey("post_tag", listOf("tag_id", "post_id"))
+    fun `direct construction with unsorted columns is rejected`() {
+        // The constructor enforces canonical order: an unsorted FK pair
+        // would silently hash to a different advisory-lock key and lose
+        // cross-orientation serialization (fail-open), so the type
+        // rejects it instead of representing it. canonical() is the
+        // sorting builder for callers holding an unordered pair.
+        assertFailsWith<IllegalArgumentException> {
+            RelationshipLockKey("post_tag", listOf("tag_id", "post_id"))
+        }
         val canonical = RelationshipLockKey.canonical("post_tag", listOf("tag_id", "post_id"))
-        assertNotEquals(canonical, direct)
         assertEquals(listOf("post_id", "tag_id"), canonical.fkColumns)
-        assertEquals(listOf("tag_id", "post_id"), direct.fkColumns)
+    }
+
+    @Test
+    fun `copy with unsorted columns is rejected too`() {
+        // copy() calls the primary constructor, so the init guard closes
+        // that bypass as well — a companion-only factory would not.
+        val canonical = RelationshipLockKey.canonical("post_tag", listOf("post_id", "tag_id"))
+        assertFailsWith<IllegalArgumentException> {
+            canonical.copy(fkColumns = listOf("tag_id", "post_id"))
+        }
     }
 
     // ---------- RelationshipLocking enum ----------

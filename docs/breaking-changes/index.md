@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **`RelationshipLockKey` rejects unsorted FK columns** (`runtime`)
+  The public data-class constructor (and `copy()`) now `require`s
+  `fkColumns` in canonical sorted order instead of silently representing
+  a key that would hash to a different advisory lock and lose
+  cross-orientation serialization. Generated saves already pass sorted
+  columns and are unaffected.
+  _Migration:_ build keys via `RelationshipLockKey.canonical(...)` (which
+  sorts); direct construction must pass an already-sorted list.
+
 - **`EntReadClient` split into an interface plus posture-specific concrete clients** (`codegen`)
   Generated `EntReadClient` is now an interface, not a concrete class.
   Validation contexts expose the new concrete `EntValidationReadClient`
