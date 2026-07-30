@@ -91,7 +91,7 @@ val posts = client.users.query { where(User.id eq alice.id) }
 val users = client.users.query {
     withPosts { orderBy(Post.createdAt.desc()) }
 }.allOrThrow()
-users[0].edges.posts  // → List<Post>
+users[0].edges.posts.requireLoaded()  // → List<Post>
 ```
 
 ## Many-to-many

@@ -379,8 +379,11 @@ class EntityGeneratorTest {
         val schemaNames = mapOf<EntSchema, String>(user to "User", car to "Car")
         val output = generator.generate("User", user, schemaNames).toString()
 
-        assert(output.contains("val cars: List<Car>? = null")) {
-            "To-many edge should produce nullable list property\n$output"
+        assert(output.contains("val cars: EdgeState<List<Car>> = EdgeState.Unloaded")) {
+            "To-many edge should produce an EdgeState list property defaulting to Unloaded\n$output"
+        }
+        assert(output.contains("import entkt.runtime.query.EdgeState")) {
+            "Entity file should import EdgeState\n$output"
         }
     }
 

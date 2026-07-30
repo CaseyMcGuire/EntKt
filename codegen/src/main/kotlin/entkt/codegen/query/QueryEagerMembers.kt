@@ -18,6 +18,7 @@ import entkt.schema.EdgeKind
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP = ClassName("entkt.query", "Op")
+private val EDGE_STATE = ClassName("entkt.runtime.query", "EdgeState")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
 private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
@@ -183,8 +184,8 @@ private fun emitToManyEagerBlock(
     )
     emitEmptyGroupsNestedPass(body)
     body.addStatement(
-        "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
-        re.edgePropName,
+        "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(loadedGroups[entity.id] ?: emptyList()))) }",
+        re.edgePropName, EDGE_STATE,
     )
     body.endControlFlow()
 }
@@ -245,8 +246,8 @@ private fun emitHasOneEagerBlock(
     )
     emitEmptyGroupsNestedPass(body)
     body.addStatement(
-        "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id]?.firstOrNull())) }",
-        re.edgePropName,
+        "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(loadedGroups[entity.id]?.firstOrNull()))) }",
+        re.edgePropName, EDGE_STATE,
     )
     body.endControlFlow()
 }
@@ -342,15 +343,16 @@ private fun emitToOneEagerBlock(
     body.addStatement("val targetMap = loaded.associateBy { it.id }")
     if (fkRequired) {
         // Non-null FK: map lookup directly (still nullable — the target may
-        // have been filtered by eager LOAD privacy).
+        // have been filtered by eager LOAD privacy). The edge was requested,
+        // so an absent target is Loaded(null), never Unloaded.
         body.addStatement(
-            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = targetMap[entity.%L])) }",
-            re.edgePropName, fkPropName,
+            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(targetMap[entity.%L]))) }",
+            re.edgePropName, EDGE_STATE, fkPropName,
         )
     } else {
         body.addStatement(
-            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = entity.%L?.let { targetMap[it] })) }",
-            re.edgePropName, fkPropName,
+            "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(entity.%L?.let { targetMap[it] }))) }",
+            re.edgePropName, EDGE_STATE, fkPropName,
         )
     }
     // No `else` arm: an empty fetch produces an empty `targetMap`,
@@ -466,8 +468,8 @@ private fun emitM2MEagerBlock(
     )
     emitEmptyGroupsNestedPass(body)
     body.addStatement(
-        "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
-        re.edgePropName,
+        "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(loadedGroups[entity.id] ?: emptyList()))) }",
+        re.edgePropName, EDGE_STATE,
     )
     // No `else` arm: with no junction rows the grouping is empty, so
     // the `?: emptyList()` above already covers every parent.

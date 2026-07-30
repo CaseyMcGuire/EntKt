@@ -1734,7 +1734,7 @@ class EdgeCodegenTest {
     // ---------- Edges inner data class ----------
 
     @Test
-    fun `entity Edges class has nullable entity for to-one edge`() {
+    fun `entity Edges class has EdgeState nullable entity for to-one edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
@@ -1742,30 +1742,43 @@ class EdgeCodegenTest {
         assert(output.contains("data class Edges")) {
             "Should generate inner Edges class\n$output"
         }
-        assert(output.contains("val owner: Owner? = null")) {
-            "To-one edge should produce nullable entity property\n$output"
+        assert(output.contains("val owner: EdgeState<Owner?> = EdgeState.Unloaded")) {
+            "To-one edge should produce an EdgeState property over a nullable target\n$output"
         }
     }
 
     @Test
-    fun `entity Edges class has nullable list for to-many edge`() {
+    fun `entity Edges class has EdgeState list for to-many edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString()
 
-        assert(output.contains("val pets: List<Pet>? = null")) {
-            "To-many edge should produce nullable list property\n$output"
+        assert(output.contains("val pets: EdgeState<List<Pet>> = EdgeState.Unloaded")) {
+            "To-many edge should produce an EdgeState list property\n$output"
         }
     }
 
     @Test
-    fun `entity Edges class has nullable list for M2M edge`() {
+    fun `entity Edges class has EdgeState list for M2M edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString()
 
-        assert(output.contains("val members: List<Pet>? = null")) {
-            "M2M edge should produce nullable list property\n$output"
+        assert(output.contains("val members: EdgeState<List<Pet>> = EdgeState.Unloaded")) {
+            "M2M edge should produce an EdgeState list property\n$output"
+        }
+    }
+
+    @Test
+    fun `entity Edges class is EdgeState of nullable target even for a required FK belongsTo`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = EntityGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+
+        // A required FK guarantees the row names a target, not that the
+        // eager subquery returns it — the Loaded value stays nullable.
+        assert(output.contains("val owner: EdgeState<Owner?> = EdgeState.Unloaded")) {
+            "Required-FK belongsTo should still produce EdgeState<Owner?>\n$output"
         }
     }
 
@@ -1895,6 +1908,56 @@ class EdgeCodegenTest {
         // Junction-table query has no entity scope; Predicate.Leaf<Any>.
         assert(output.contains("Predicate.Leaf<Any>(\"team_id\", Op.IN, sourceIds)")) {
             "Should query junction with source FK as erased Predicate.Leaf<Any>\n$output"
+        }
+    }
+
+    @Test
+    fun `every eager assignment path wraps its result in EdgeState Loaded`() {
+        val (_, names, byName) = createAllSchemas()
+
+        // to-many (Owner.pets): empty groups collapse to
+        // Loaded(emptyList()), never Unloaded.
+        val ownerOut = QueryGenerator("com.example.ent")
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
+        assert(ownerOut.contains("EdgeState.Loaded(loadedGroups[entity.id] ?: emptyList())")) {
+            "to-many eager assignment should wrap in EdgeState.Loaded\n$ownerOut"
+        }
+
+        // belongsTo with a nullable FK (Pet.owner): safe-call lookup inside Loaded.
+        val petOut = QueryGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
+        assert(petOut.contains("EdgeState.Loaded(entity.ownerId?.let { targetMap[it] })")) {
+            "nullable-FK belongsTo eager assignment should wrap in EdgeState.Loaded\n$petOut"
+        }
+
+        // belongsTo with a required FK (RequiredPet.owner): plain lookup
+        // inside Loaded — still nullable, the target can be filtered out.
+        val reqOut = QueryGenerator("com.example.ent")
+            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString().replace("\\s+".toRegex(), " ")
+        assert(reqOut.contains("EdgeState.Loaded(targetMap[entity.ownerId])")) {
+            "required-FK belongsTo eager assignment should wrap in EdgeState.Loaded\n$reqOut"
+        }
+
+        // M2M (Team.members): same grouped shape as to-many.
+        // (The hasOne path is pinned in `hasOne eager loading queries
+        // target by FK not source FK`.)
+        val teamOut = QueryGenerator("com.example.ent")
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
+        assert(teamOut.contains("EdgeState.Loaded(loadedGroups[entity.id] ?: emptyList())")) {
+            "M2M eager assignment should wrap in EdgeState.Loaded\n$teamOut"
+        }
+    }
+
+    @Test
+    fun `with-edge builder configuration stays a private nullable query field`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
+
+        // EdgeState wraps returned entity edges only — the builder's
+        // with{Edge} bookkeeping keeps its private nullable field.
+        assert(output.contains("private var eagerPets: PetQuery? = null")) {
+            "with{Edge} config should stay a private nullable builder field\n$output"
         }
     }
 
@@ -2565,13 +2628,13 @@ class EdgeCodegenTest {
         assert(output.contains("groupBy { it[\"owner_id\"] }")) {
             "Should group loaded rows by FK column\n$output"
         }
-        assert(output.contains("loadedGroups[entity.id]?.firstOrNull()")) {
-            "Should map source.id to grouped target, collapsing to single entity\n$output"
+        assert(output.contains("EdgeState.Loaded(loadedGroups[entity.id]?.firstOrNull())")) {
+            "Should map source.id to grouped target, collapsing to a single Loaded entity\n$output"
         }
     }
 
     @Test
-    fun `hasOne Edges property is nullable entity not list`() {
+    fun `hasOne Edges property is EdgeState of nullable entity not list`() {
         val parent = HasOneEdgesParentSchema()
         val profile = ProfileSchema2()
         finalize(parent, profile)
@@ -2579,8 +2642,8 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Parent", parent, names).toString()
 
-        assert(output.contains("val profile: Profile? = null")) {
-            "HasOne edge should produce nullable entity property, not a list\n$output"
+        assert(output.contains("val profile: EdgeState<Profile?> = EdgeState.Unloaded")) {
+            "HasOne edge should produce an EdgeState property over a nullable entity, not a list\n$output"
         }
     }
 }

@@ -31,6 +31,7 @@ import entkt.schema.Field
 import entkt.schema.FieldType
 
 private val EDGE_REF = ClassName("entkt.query", "EdgeRef")
+private val EDGE_STATE = ClassName("entkt.runtime.query", "EdgeState")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val NOOP_DRIVER = ClassName("entkt.runtime.driver", "NoopDriver")
 private val ANY_NULLABLE = Any::class.asTypeName().copy(nullable = true)
@@ -406,8 +407,12 @@ internal data class EdgeDescriptor(
 )
 
 /**
- * Build the inner `Edges` data class for an entity. To-one edges become
- * a nullable target entity; to-many edges become a nullable list.
+ * Build the inner `Edges` data class for an entity. Every property is
+ * an `EdgeState` defaulting to `Unloaded`: to-one edges wrap a nullable
+ * target (`EdgeState<Target?>` — always nullable inside `Loaded`, even
+ * for a required FK, because eager predicates, interceptors, or bounds
+ * can exclude the target); to-many edges wrap a non-null list
+ * (`EdgeState<List<Target>>`).
  */
 private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
     val constructor = FunSpec.constructorBuilder()
@@ -416,13 +421,13 @@ private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
     for (edge in edges) {
         val propName = toCamelCase(edge.name)
         val propType = if (edge.toOne) {
-            edge.targetClass.copy(nullable = true)
+            EDGE_STATE.parameterizedBy(edge.targetClass.copy(nullable = true))
         } else {
-            List::class.asClassName().parameterizedBy(edge.targetClass).copy(nullable = true)
+            EDGE_STATE.parameterizedBy(List::class.asClassName().parameterizedBy(edge.targetClass))
         }
         constructor.addParameter(
             ParameterSpec.builder(propName, propType)
-                .defaultValue("null")
+                .defaultValue("%T.Unloaded", EDGE_STATE)
                 .build()
         )
         val propBuilder = PropertySpec.builder(propName, propType)

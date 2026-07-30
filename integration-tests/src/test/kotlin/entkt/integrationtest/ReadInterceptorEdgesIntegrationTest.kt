@@ -23,6 +23,7 @@ import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -262,7 +263,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
         val users = client.users.query().withArticles().allOrThrow()
         assertEquals(1, users.size)
         // Eager interceptor's predicate narrows the eager fetch.
-        assertEquals(listOf("published"), users[0].edges.articles!!.map { it.title })
+        assertEquals(listOf("published"), users[0].edges.articles.requireLoaded().map { it.title })
     }
 
     // ---------- 5c: Edge-predicate (has / hasWhere) ----------
@@ -389,7 +390,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
         assertEquals(1, client.users.query().queryArticles().allOrThrow().size)
         // Eager-load returns rows.
         val withEager = client.users.query().withArticles().allOrThrow()
-        assertEquals(1, withEager[0].edges.articles!!.size)
+        assertEquals(1, withEager[0].edges.articles.requireLoaded().size)
         // has-predicate works.
         assertEquals(
             1,

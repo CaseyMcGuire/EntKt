@@ -30,6 +30,28 @@ above it.
 
 ## Unreleased
 
+- **Generated edge properties are `EdgeState` values instead of nullables** (`codegen`, `runtime`)
+  Each property on a generated `Edges` class is now an explicit
+  `entkt.runtime.query.EdgeState` defaulting to `EdgeState.Unloaded`:
+  to-many and M2M edges are `EdgeState<List<Target>>`, and every
+  to-one edge (`hasOne` and `belongsTo`, even over a required FK) is
+  `EdgeState<Target?>`. Eager loading wraps every requested edge in
+  `EdgeState.Loaded(...)`. The three states are distinct:
+  `Unloaded` (the query never requested the edge), `Loaded(null)`
+  (a to-one edge was requested but no target was returned), and
+  `Loaded(emptyList())` (a to-many edge was requested and no rows
+  matched). Previously one `null` covered both "not loaded" and, for
+  to-one edges, "loaded with no row". See the
+  [loaded edge state note](../implemented-features/query/loaded-edge-state.md).
+  _Migration:_ replace nullable edge access with the `EdgeState`
+  helpers: `user.edges.posts!!` / `user.edges.posts.orEmpty()` →
+  `user.edges.posts.requireLoaded()` (throws `EdgeNotLoadedException`
+  if the edge wasn't requested) when the query always requests the
+  edge; `loadedOrNull()` when you must distinguish all three states;
+  `valueOrNull()` only when collapsing `Unloaded` and `Loaded(null)`
+  is intentional. `edges.posts == null` checks are never true now —
+  the compiler only warns, so audit them by hand.
+
 - **Auto-DDL fails on pre-existing tables whose body differs from the schema** (`postgres`)
   Under `autoDdl = true`, registration now introspects tables that
   already exist and compares columns, types, nullability, and primary

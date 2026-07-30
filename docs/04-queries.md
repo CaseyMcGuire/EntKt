@@ -533,10 +533,11 @@ val users = client.users.query {
 
 // Access loaded edges
 users.forEach { user ->
-    val posts: List<Post>? = user.edges.posts
-    // null  = withPosts() was not called
-    // []    = loaded, but no matching posts
-    // [...]  = loaded with data
+    val posts: EdgeState<List<Post>> = user.edges.posts
+    // EdgeState.Unloaded            = withPosts() was not called
+    // EdgeState.Loaded(emptyList()) = loaded, but no matching posts
+    // EdgeState.Loaded([...])       = loaded with data
+    val loaded: List<Post> = posts.requireLoaded()
 }
 ```
 
@@ -575,18 +576,38 @@ data class User(
     val edges: Edges = Edges(),
 ) {
     data class Edges(
-        val posts: List<Post>? = null,
+        val posts: EdgeState<List<Post>> = EdgeState.Unloaded,
     )
 }
 ```
 
 The `edges` container itself is never null — it defaults to an empty
-`Edges()`. "Not loaded" is signaled per edge, one level down:
+`Edges()`. Each edge carries an explicit `EdgeState`, so loaded vs
+unloaded is a first-class distinction:
 
-- `user.edges.posts` is `null` when `withPosts()` was not called
-- An empty list means the edge was loaded but no related entities exist
-- To-one edge properties (e.g. `article.edges.author`) are also nullable;
-  for those, `null` means either "not loaded" or "loaded, no related row"
+- `user.edges.posts` is `EdgeState.Unloaded` when `withPosts()` was not
+  called
+- `EdgeState.Loaded(emptyList())` means the edge was loaded but no
+  related entities exist
+- To-one edges (e.g. `article.edges.author`) are `EdgeState<Author?>`;
+  `Loaded(null)` means the edge was requested but no target was returned
+  — distinct from `Unloaded`. This holds even for a required foreign
+  key: eager predicates, interceptors, `limit(0)`, or an offset can all
+  exclude the target.
+
+Four helpers cover the access patterns:
+
+- `state.isLoaded` — `true` for any `Loaded`, including a loaded `null`
+  or empty list
+- `state.requireLoaded()` — the loaded value; throws
+  `EdgeNotLoadedException` (an `IllegalStateException`, not an
+  `EntError`) when the edge was not requested. Use it when the
+  surrounding query always requests the edge.
+- `state.loadedOrNull()` — the `Loaded` wrapper or `null`; preserves the
+  `Unloaded` vs `Loaded(null)` distinction
+- `state.valueOrNull()` — the value or `null`; deliberately collapses
+  `Unloaded` and `Loaded(null)` when the caller doesn't need to tell
+  them apart
 
 ## Read-Path Interceptors
 

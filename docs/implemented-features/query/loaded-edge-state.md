@@ -2,7 +2,7 @@
 
 ## Status
 
-Ready for implementation. This is not implemented.
+Implemented.
 
 ## Summary
 
@@ -112,7 +112,7 @@ For an unloaded edge:
 ```kotlin
 user.edges.posts.loadedOrNull() // null
 user.edges.posts.valueOrNull()  // null
-user.edges.posts.requireLoaded() // throws EntEdgeNotLoadedException
+user.edges.posts.requireLoaded() // throws EdgeNotLoadedException
 ```
 
 For a loaded to-many edge with no rows:
@@ -169,7 +169,7 @@ Meanings:
 `requireLoaded()` should throw a dedicated exception:
 
 ```kotlin
-class EntEdgeNotLoadedException : IllegalStateException(
+class EdgeNotLoadedException : IllegalStateException(
     "Edge was not loaded; eager-load it before calling requireLoaded()",
 )
 ```
@@ -181,6 +181,8 @@ fully represented by `Unloaded` or `Loaded(value)`.
 
 This is a programming error, not an operational query failure. It is not an
 `EntError`, is not an `EntException`, and has no `EntResult` variant.
+Its name deliberately omits the `Ent` prefix, which this project reserves for
+the structured `EntException` / `EntError` family.
 
 ## Generated and Runtime Boundaries
 
@@ -190,7 +192,7 @@ not replace the query builder's private nullable fields that record whether a
 
 The implementation has three primary code paths:
 
-1. Add `EdgeState`, its helpers, and `EntEdgeNotLoadedException` to the public
+1. Add `EdgeState`, its helpers, and `EdgeNotLoadedException` to the public
    runtime query package.
 2. Update entity generation so nested `Edges` properties default to
    `EdgeState.Unloaded`.
@@ -229,6 +231,14 @@ This is a breaking generated-API change.
    - use `loadedOrNull()` when the caller needs to distinguish all states
    - use `valueOrNull()` only when collapsing unloaded and loaded-null is
      intentional
+6. Add a newest-first entry under `## Unreleased` in
+   `docs/breaking-changes/index.md`. It must tell callers that generated edge
+   properties now use `EdgeState`, show the nullable-to-`EdgeState` migration,
+   and distinguish `Unloaded`, `Loaded(null)`, and `Loaded(emptyList())`.
+7. When the implementation lands, move this RFC from
+   `docs/possible-features/query/` to `docs/implemented-features/query/`,
+   remove it from the Possible Features index, and add it to the Implemented
+   Features index in the same change.
 
 No compatibility shim or deprecation period is required. The project is
 greenfield, and keeping nullable properties beside `EdgeState` would preserve
@@ -243,7 +253,7 @@ the ambiguity this RFC removes.
 - Make `loadedOrNull()` return `EdgeState.Loaded<T>?`.
 - Provide the deliberately lossy `valueOrNull(): T?` separately.
 - Put the state type, helpers, and exception in `entkt.runtime.query`.
-- Keep `EntEdgeNotLoadedException` outside the `EntError` / `EntException`
+- Keep `EdgeNotLoadedException` outside the `EntError` / `EntException`
   hierarchy.
 
 ## Test Requirements
@@ -256,7 +266,7 @@ the ambiguity this RFC removes.
 - `valueOrNull()` returns the value and deliberately collapses `Unloaded` and
   `Loaded(null)`.
 - `requireLoaded()` returns both non-null values and a loaded null.
-- `requireLoaded()` throws `EntEdgeNotLoadedException` only for `Unloaded`,
+- `requireLoaded()` throws `EdgeNotLoadedException` only for `Unloaded`,
   with the documented message and no `EntError` mapping.
 
 ### Code Generation

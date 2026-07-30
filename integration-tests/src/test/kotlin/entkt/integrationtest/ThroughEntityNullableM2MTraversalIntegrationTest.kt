@@ -5,6 +5,7 @@ import entkt.integrationtest.ent.Group
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.privacy.Viewer
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -332,7 +333,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
             .withUsers()
             .allOrThrow()
         assertEquals(1, loaded.size)
-        val users = loaded.first().edges.users.orEmpty()
+        val users = loaded.first().edges.users.requireLoaded()
         assertEquals(listOf(u1.id), users.map { it.id }, "u2 must not surface — null-source junction filtered out")
     }
 
@@ -353,7 +354,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
             .withUsers()
             .allOrThrow()
         assertEquals(1, loaded.size)
-        val users = loaded.first().edges.users.orEmpty()
+        val users = loaded.first().edges.users.requireLoaded()
         assertEquals(listOf(u1.id), users.map { it.id }, "null-target junction must contribute nothing — and must not crash")
     }
 
@@ -374,7 +375,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
             .withGroups()
             .allOrThrow()
         assertEquals(1, loaded.size)
-        val groups = loaded.first().edges.groups.orEmpty()
+        val groups = loaded.first().edges.groups.requireLoaded()
         assertEquals(listOf(g1.id), groups.map { it.id })
     }
 
@@ -395,7 +396,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
             .withGroups()
             .allOrThrow()
         assertEquals(1, loaded.size)
-        val groups = loaded.first().edges.groups.orEmpty()
+        val groups = loaded.first().edges.groups.requireLoaded()
         assertEquals(listOf(g1.id), groups.map { it.id }, "null-target-on-inverse must contribute nothing")
     }
 }

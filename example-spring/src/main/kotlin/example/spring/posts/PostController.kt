@@ -1,5 +1,6 @@
 package example.spring.posts
 
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.getOrThrow
 import example.ent.EntClient
 import example.ent.Post
@@ -81,7 +82,7 @@ class PostController(private val client: EntClient) {
      * fetches the matching `Post` row plus all related `Tag` rows in
      * the runtime's M2M-eager-load helper (junction-IN → target-IN);
      * the loaded list lands on the entity's generated `Edges.tags`
-     * field. Compare to the shaped traversal in
+     * field as `EdgeState.Loaded(tags)`. Compare to the shaped traversal in
      * [TagController.posts]: this path returns the tags on a single
      * known post via eager loading; that path returns the posts that
      * carry a single known tag via `queryPosts()` lowering to
@@ -93,7 +94,7 @@ class PostController(private val client: EntClient) {
             where(Post.id eq id)
             withTags()
         }.firstOrNull() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        return post.edges.tags?.map { it.toResponse() } ?: emptyList()
+        return post.edges.tags.requireLoaded().map { it.toResponse() }
     }
 
     /** Add a tag to a post. Idempotent — re-tagging is a no-op. */

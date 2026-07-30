@@ -92,12 +92,15 @@ val users = client.users.query {
     }
 }.allOrThrow()
 
-users[0].edges.posts  // → List<Post> (loaded)
-users[0].edges.posts  // → null if withPosts() wasn't called
+users[0].edges.posts                  // → EdgeState.Loaded(List<Post>)
+users[0].edges.posts.requireLoaded()  // → List<Post>; throws EdgeNotLoadedException if withPosts() wasn't called
 ```
 
-Each entity with edges gets a nested `Edges` data class with nullable
-properties — `null` means not loaded, `emptyList()` means loaded but empty.
+Each entity with edges gets a nested `Edges` data class whose properties
+are `EdgeState` values defaulting to `EdgeState.Unloaded` — to-many edges
+are `EdgeState<List<Target>>` (`Loaded(emptyList())` means loaded but
+empty), to-one edges are `EdgeState<Target?>` (`Loaded(null)` means
+loaded with no returned target).
 
 Supports all edge types (to-one, to-many, M2M via junction table) and
 nested eager loading:

@@ -33,7 +33,6 @@ Implemented RFCs have moved to the
 - [Privacy-Aware Visible Pagination](query/privacy-aware-visible-pagination.md)
 - [Query `forUpdate()` Row Locking](query/for-update-query-locking.md)
 - [Query Observability Diagnostics](query/query-observability-diagnostics.md)
-- [Loaded Edge State](query/loaded-edge-state.md)
 - [Cursor Pagination](query/cursor-pagination.md)
 - [Projection / Select API](query/projection-select-api.md)
 - [Typed SQL DSL Escape Hatch](query/typed-sql-dsl-escape-hatch.md)

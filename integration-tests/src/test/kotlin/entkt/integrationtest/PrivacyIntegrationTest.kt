@@ -11,6 +11,7 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.postgres.PostgresDriver
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntError
 import entkt.runtime.result.EntOperation
 import entkt.runtime.privacy.allowAll
@@ -618,7 +619,7 @@ class PrivacyIntegrationTest {
         }.allOrThrow()
         assertEquals(2, articles.size)
         for (article in articles) {
-            assertNotNull(article.edges.author)
+            assertNotNull(article.edges.author.requireLoaded())
         }
     }
 
@@ -637,7 +638,7 @@ class PrivacyIntegrationTest {
                 withAuthor()
             }.allOrThrow()
             assertEquals(1, articles.size)
-            assertNotNull(articles[0].edges.author)
+            assertNotNull(articles[0].edges.author.requireLoaded())
 
             // Now query ALL published articles with eager author. Bob's article is
             // published (allowed), but eager-loading Bob as the author should throw

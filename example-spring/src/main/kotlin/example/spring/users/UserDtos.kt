@@ -1,5 +1,6 @@
 package example.spring.users
 
+import entkt.runtime.query.requireLoaded
 import example.ent.User
 import example.spring.posts.PostResponse
 import example.spring.posts.toResponse
@@ -34,5 +35,5 @@ fun User.toResponse(includePosts: Boolean = false) = UserResponse(
     email = email,
     age = age,
     active = active,
-    posts = if (includePosts) edges.posts?.map { it.toResponse() } else null,
+    posts = if (includePosts) edges.posts.requireLoaded().map { it.toResponse() } else null,
 )

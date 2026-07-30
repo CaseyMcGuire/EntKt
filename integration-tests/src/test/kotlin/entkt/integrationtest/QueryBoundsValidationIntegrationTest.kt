@@ -18,6 +18,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntError
 import entkt.runtime.result.EntNotFoundException
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -210,8 +211,8 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         assertTrue(articles.isNotEmpty(), "the root rows still load")
         assertTrue(
-            articles.all { it.edges.author == null },
-            "limit(0) should leave the eager target unloaded",
+            articles.all { it.edges.author.requireLoaded() == null },
+            "limit(0) should yield a loaded edge with no target",
         )
     }
 
@@ -222,7 +223,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val articles = client.articles.query { withAuthor { offset(1) } }.allOrThrow()
 
         assertTrue(
-            articles.all { it.edges.author == null },
+            articles.all { it.edges.author.requireLoaded() == null },
             "offset(1) skips the single target the parent has",
         )
     }
@@ -237,13 +238,13 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         assertTrue(articles.isNotEmpty())
         assertTrue(
-            articles.all { it.edges.author != null },
+            articles.all { it.edges.author.requireLoaded() != null },
             "an unbounded eager load must be unaffected",
         )
         // A positive limit is already satisfied by the single target.
         assertTrue(
             client.articles.query { withAuthor { limit(1) } }.allOrThrow()
-                .all { it.edges.author != null },
+                .all { it.edges.author.requireLoaded() != null },
         )
     }
 
@@ -256,12 +257,12 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // differently for no reason the caller could see.
         val users = client.users.query { withArticles { limit(0) } }.allOrThrow()
         assertTrue(users.isNotEmpty())
-        // `== true` rather than `orEmpty()`: this must distinguish
-        // "eagerly loaded and empty" from "never loaded" (null).
-        assertTrue(users.all { it.edges.articles?.isEmpty() == true }, "to-many honors limit(0)")
+        // `requireLoaded()` throws if the edge were Unloaded, so this
+        // pins "eagerly loaded and empty", not "never loaded".
+        assertTrue(users.all { it.edges.articles.requireLoaded().isEmpty() }, "to-many honors limit(0)")
 
         val articles = client.articles.query { withAuthor { limit(0) } }.allOrThrow()
-        assertTrue(articles.all { it.edges.author == null }, "to-one now honors it too")
+        assertTrue(articles.all { it.edges.author.requireLoaded() == null }, "to-one now honors it too")
     }
 
     // ---- an empty eager window must not touch the target at all ----
@@ -301,7 +302,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val articles = client.articles.query { withAuthor { limit(0) } }.allOrThrow()
 
         assertTrue(articles.isNotEmpty())
-        assertTrue(articles.all { it.edges.author == null })
+        assertTrue(articles.all { it.edges.author.requireLoaded() == null })
     }
 
     @Test
@@ -310,7 +311,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         val articles = client.articles.query { withAuthor { offset(1) } }.allOrThrow()
 
-        assertTrue(articles.all { it.edges.author == null })
+        assertTrue(articles.all { it.edges.author.requireLoaded() == null })
     }
 
     @Test
@@ -436,7 +437,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         val posts = client.posts.query { withTags { limit(0) } }.allOrThrow()
 
-        assertTrue(posts.all { it.edges.tags?.isEmpty() == true })
+        assertTrue(posts.all { it.edges.tags.requireLoaded().isEmpty() })
         assertFalse(
             counting.queriedTables.contains("tags"),
             "no tag could survive the window; queried: ${counting.queriedTables}",
@@ -476,7 +477,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // Guard against over-correcting the skip into always-skip.
         val articles = client.articles.query { withAuthor { limit(1) } }.allOrThrow()
 
-        assertTrue(articles.all { it.edges.author != null })
+        assertTrue(articles.all { it.edges.author.requireLoaded() != null })
         assertTrue(counting.queriedTables.contains("users"), "queried: ${counting.queriedTables}")
     }
 
@@ -686,7 +687,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // Firing the interceptor is not a reason to issue a query whose
         // IN list is empty.
-        assertTrue(reminders.all { it.edges.assignee == null })
+        assertTrue(reminders.all { it.edges.assignee.requireLoaded() == null })
         assertFalse(
             counting.queriedTables.contains("users"),
             "an empty IN can't match anything; queried: ${counting.queriedTables}",

@@ -51,7 +51,7 @@ val usersWithPosts = client.users.query {
         where(Post.published eq true)  // optional: filter the loaded edge
     }
 }.allOrThrow()
-usersWithPosts[0].edges.posts          // → List<Post> (loaded, or null if withPosts wasn't called)
+usersWithPosts[0].edges.posts.requireLoaded()  // → List<Post> (throws EdgeNotLoadedException if withPosts wasn't called)
 
 // Delete
 client.users.deleteOrThrow(alice)  // or client.users.deleteByIdOrError(alice.id)

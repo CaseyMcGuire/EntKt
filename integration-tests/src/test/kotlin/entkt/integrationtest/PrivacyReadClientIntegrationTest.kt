@@ -21,6 +21,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyDeniedException
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -78,7 +79,7 @@ private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ct
     val memberships = ctx.client.memberships.query { withUser() }.allOrThrow()
     val traversedMember = ctx.client.groups.query { }.queryUsers().firstOrNull()
     val indexedMember = ctx.client.users.indexes.email("alice@test.com").orNull()
-    if (memberships.any { it.edges.user != null } && traversedMember != null && indexedMember != null) {
+    if (memberships.any { it.edges.user.requireLoaded() != null } && traversedMember != null && indexedMember != null) {
         PrivacyDecision.Allow
     } else {
         PrivacyDecision.Continue

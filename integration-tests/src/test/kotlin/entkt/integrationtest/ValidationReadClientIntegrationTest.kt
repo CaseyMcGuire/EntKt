@@ -19,6 +19,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyDeniedException
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.ValidationException
 import kotlin.test.Test
@@ -74,7 +75,7 @@ private val AuthorReachableViaEdges = ArticleCreateValidationRule { ctx ->
     }.allOrThrow()
     val traversed = ctx.client.articles.query { where(Article.authorId eq ctx.candidate.authorId) }
         .queryAuthor().allOrThrow()
-    if (prior.all { it.edges.author != null } && (prior.isEmpty() || traversed.isNotEmpty())) {
+    if (prior.all { it.edges.author.requireLoaded() != null } && (prior.isEmpty() || traversed.isNotEmpty())) {
         ValidationDecision.Valid
     } else {
         ValidationDecision.Invalid("author graph unreadable", field = "authorId")
