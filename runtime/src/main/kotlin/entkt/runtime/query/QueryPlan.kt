@@ -120,17 +120,35 @@ data class QueryPlan(
     }
 
     /**
-     * Throws [EntQueryRejectedException] if [rejected] is true;
-     * returns this plan otherwise. For callers that want
-     * exception-style explain semantics ("treat rejection as fatal,
-     * I just want the plan or the throw"). The thrown exception
-     * carries the original [EntError.QueryRejected] (including
-     * `entity` and `operation`) — the [rejection] field on this
-     * plan is the source of truth, not synthesized.
+     * Throws [EntQueryRejectedException] if this plan or any eager
+     * subplan (recursively) is rejected; returns this plan
+     * otherwise. For callers that want exception-style explain
+     * semantics ("treat rejection as fatal, I just want the plan or
+     * the throw").
+     *
+     * The walk covers the whole tree because executing the
+     * represented query runs the eager interceptor pass too — a
+     * rejection recorded under [eagerQueries] means the runtime
+     * terminal would throw, so a root-only check would declare a
+     * plan clean that cannot execute. Same tree walk as [render].
+     *
+     * The thrown exception carries the first rejection in
+     * depth-first order (this plan's own before its edges', edges
+     * in declaration order) — the rejected node's original
+     * [EntError.QueryRejected] (including `entity` and
+     * `operation`), not synthesized.
      */
     fun requireNotRejected(): QueryPlan {
-        val rej = rejection ?: return this
+        val rej = firstRejection() ?: return this
         throw EntQueryRejectedException(rej)
+    }
+
+    private fun firstRejection(): EntError.QueryRejected? {
+        rejection?.let { return it }
+        for (plan in eagerQueries.values) {
+            plan.firstRejection()?.let { return it }
+        }
+        return null
     }
 
     public companion object {

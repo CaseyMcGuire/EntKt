@@ -281,6 +281,31 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     }
 
     @Test
+    fun `requireNotRejected throws when only an eager subplan is rejected`() {
+        val driver = freshDriver()
+        // The rejector is installed on the eager TARGET entity, so it
+        // fires on the EAGER_LOAD step, not on the root users query:
+        // the plan's root stays clean while eagerQueries["articles"]
+        // records the rejection.
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                articles(
+                    QueryInterceptor { scope, _ -> scope.reject("no articles", code = "art") },
+                    name = "art-rej",
+                )
+            }
+        }
+        val plan = client.users.query().withArticles().explainAllOrThrow()
+        assertFalse(plan.rejected, "root plan must not be rejected — the rejection is edge-scoped")
+        assertTrue(plan.eagerQueries.getValue("articles").rejected)
+
+        val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
+        assertEquals("no articles", ex.queryRejected.reason)
+        assertEquals("art-rej", ex.queryRejected.interceptor)
+    }
+
+    @Test
     fun `rejected plan render includes the rejection metadata`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
