@@ -466,13 +466,13 @@ internal class PostgresOperations(
                 // front from the id sequence — and returned rows are
                 // matched back by id. Single-row statements return
                 // exactly one row and need no correlation.
-                val allocatedIds = if (rows.size > 1 && skipId) {
+                val allocated = if (rows.size > 1 && skipId) {
                     preallocateSequenceIds(conn, schema, rows.size)
                 } else null
-                val insertCols = if (allocatedIds != null) listOf(schema.idColumn) + cols else cols
+                val insertCols = if (allocated != null) listOf(schema.idColumn) + cols else cols
                 val correlationIds: List<Any?>? = when {
                     rows.size == 1 -> null
-                    allocatedIds != null -> allocatedIds
+                    allocated != null -> allocated.ids
                     schema.idColumn in insertCols -> rows.map { it[schema.idColumn] }
                     // No id to correlate by (no backing sequence, or a
                     // non-auto id filled by a database default): keep the
@@ -481,17 +481,22 @@ internal class PostgresOperations(
                     else -> null
                 }
 
+                // GENERATED ALWAYS AS IDENTITY rejects explicit id values
+                // unless the statement says OVERRIDING SYSTEM VALUE; the
+                // clause is only valid against identity columns, so it is
+                // emitted exactly when preallocation saw one.
+                val overriding = if (allocated?.overridingSystemValue == true) "OVERRIDING SYSTEM VALUE " else ""
                 val singlePlaceholders = "(${insertCols.joinToString(", ") { "?" }})"
                 val allPlaceholders = rows.joinToString(", ") { singlePlaceholders }
                 val colList = insertCols.joinToString(", ") { quote(it) }
-                val sql = "INSERT INTO ${quote(table)} ($colList) VALUES $allPlaceholders RETURNING *"
+                val sql = "INSERT INTO ${quote(table)} ($colList) ${overriding}VALUES $allPlaceholders RETURNING *"
 
                 conn.prepareStatement(sql).useQuietClose { stmt ->
                     var idx = 1
                     rows.forEachIndexed { rowI, row ->
                         for (col in insertCols) {
-                            val v = if (allocatedIds != null && col == schema.idColumn) {
-                                allocatedIds[rowI]
+                            val v = if (allocated != null && col == schema.idColumn) {
+                                allocated.ids[rowI]
                             } else {
                                 row[col]
                             }
@@ -528,6 +533,12 @@ internal class PostgresOperations(
         return results.toList() as List<Map<String, Any?>>
     }
 
+    private data class PreallocatedIds(
+        val ids: List<Any>,
+        /** True when the id column is GENERATED ALWAYS AS IDENTITY. */
+        val overridingSystemValue: Boolean,
+    )
+
     /**
      * Reserve [n] ids from [schema]'s backing id sequence in one round
      * trip, so a multi-row insert can bind explicit ids and correlate
@@ -535,16 +546,41 @@ internal class PostgresOperations(
      * serial/identity sequence (`nextval` over a null regclass), letting
      * the caller fall back to positional pairing.
      *
+     * Also reports whether the id column is `GENERATED ALWAYS AS
+     * IDENTITY` — binding explicit values into one requires
+     * `OVERRIDING SYSTEM VALUE` on the insert. The table name is passed
+     * to `pg_get_serial_sequence` / `to_regclass` in quoted form because
+     * both parse their argument under SQL identifier rules.
+     *
      * `nextval` is non-transactional, so reserved ids are burned on
      * rollback — exactly as serial defaults already behave for failed
      * inserts.
      */
-    private fun preallocateSequenceIds(conn: Connection, schema: EntitySchema, n: Int): List<Any>? {
+    private fun preallocateSequenceIds(conn: Connection, schema: EntitySchema, n: Int): PreallocatedIds? {
+        val quotedTable = "\"" + schema.table.replace("\"", "\"\"") + "\""
+        var generatedAlways = false
+        conn.prepareStatement(
+            """
+            SELECT c.identity_generation = 'ALWAYS'
+            FROM pg_class cl
+            JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+            JOIN information_schema.columns c
+              ON c.table_name = cl.relname AND c.table_schema = ns.nspname
+            WHERE cl.oid = to_regclass(?) AND c.column_name = ?
+            """.trimIndent(),
+        ).useQuietClose { stmt ->
+            stmt.setString(1, quotedTable)
+            stmt.setString(2, schema.idColumn)
+            stmt.executeQuery().useQuietClose { rs ->
+                if (rs.next()) generatedAlways = rs.getBoolean(1) && !rs.wasNull()
+            }
+        }
+
         val ids = ArrayList<Any>(n)
         conn.prepareStatement(
             "SELECT nextval(pg_get_serial_sequence(?, ?)) FROM generate_series(1, ?)",
         ).useQuietClose { stmt ->
-            stmt.setString(1, schema.table)
+            stmt.setString(1, quotedTable)
             stmt.setString(2, schema.idColumn)
             stmt.setInt(3, n)
             stmt.executeQuery().useQuietClose { rs ->
@@ -555,18 +591,19 @@ internal class PostgresOperations(
                 }
             }
         }
-        return if (ids.size == n) ids else null
+        return if (ids.size == n) PreallocatedIds(ids, generatedAlways) else null
     }
 
     /**
-     * Normalize an id value for correlation-map lookups: integral ids
-     * widen to Long so a bound Int and a decoded Long (or vice versa)
-     * compare equal; everything else correlates by its own equals.
+     * Normalize an id value for correlation-map lookups: numeric ids
+     * widen to Long — mirroring [PostgresValueCodec]'s integral bind
+     * coercion, which accepts any [Number] for INT/LONG columns — so a
+     * bound Byte/Int/BigInteger and a decoded Long compare equal.
+     * Everything else correlates by its own equals.
      */
     private fun idKey(v: Any?): Any? = when (v) {
         is Long -> v
-        is Int -> v.toLong()
-        is Short -> v.toLong()
+        is Number -> v.toLong()
         else -> v
     }
 

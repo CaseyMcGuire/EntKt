@@ -240,15 +240,19 @@ class PostgresDriver(
      * Auto-DDL guard for pre-existing tables. Applies the same policy
      * the index / FK guards use — absent → create; present and
      * equivalent → nothing; present and different → fail — to the table
-     * body: columns, types, nullability, defaults, and primary key.
+     * body: columns, types, nullability, and primary key.
      *
      * The comparison runs through the migration engine's own
      * normalizer, introspector, and differ ([NormalizedSchema] /
      * [PostgresIntrospector] / [SchemaDiffer]), so what auto-DDL calls
      * drift is exactly what a generated migration would try to change.
-     * Index and FK differences are deliberately out of scope here:
-     * [ensureIndex] / [ensureForeignKey] own those, with the same
-     * guard semantics.
+     * Two deliberate exclusions: index and FK differences belong to
+     * [ensureIndex] / [ensureForeignKey], which have the same guard
+     * semantics; and column DEFAULTs are not compared at all — the
+     * generated runtime `SCHEMA` literal intentionally carries no
+     * default expressions, so a live default has nothing to be compared
+     * against and flagging it would fail every table the migration path
+     * itself created from a schema with `.default(...)` fields.
      */
     private fun checkExistingTableBodies(schemas: Collection<EntitySchema>) {
         val introspected = PostgresIntrospector(dataSource)
@@ -262,7 +266,6 @@ class PostgresDriver(
                 is MigrationOp.AddColumn, is MigrationOp.DropColumn,
                 is MigrationOp.AlterColumnType,
                 is MigrationOp.SetColumnNotNull, is MigrationOp.DropColumnNotNull,
-                is MigrationOp.SetColumnDefault, is MigrationOp.DropColumnDefault,
                 is MigrationOp.AlterPrimaryKey,
                 -> true
                 else -> false

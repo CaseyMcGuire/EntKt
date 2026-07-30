@@ -32,11 +32,13 @@ above it.
 
 - **Auto-DDL fails on pre-existing tables whose body differs from the schema** (`postgres`)
   Under `autoDdl = true`, registration now introspects tables that
-  already exist and compares columns, types, nullability, defaults, and
-  primary key against the requested schema (via the migration engine's
-  normalizer/differ). Previously `CREATE TABLE IF NOT EXISTS` silently
-  accepted any existing table and the first query or write failed — or
-  ran under different constraints than declared. A mismatch now fails
+  already exist and compares columns, types, nullability, and primary
+  key against the requested schema (via the migration engine's
+  normalizer/differ; column `DEFAULT`s are not compared, and
+  `GENERATED AS IDENTITY` ids count as `serial`/`bigserial`).
+  Previously `CREATE TABLE IF NOT EXISTS` silently accepted any
+  existing table and the first query or write failed — or ran under
+  different constraints than declared. A mismatch now fails
   registration loudly, naming the drift, with nothing cached.
   _Migration:_ none for compatible tables (equivalent bodies register as
   before). For drifted tables, reconcile with a migration

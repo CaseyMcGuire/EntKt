@@ -68,8 +68,14 @@ interface Driver {
   with assigned IDs **in input order**. PostgresDriver uses multi-row
   `INSERT ... VALUES` and enforces the ordering by correlating `RETURNING`
   rows to inputs by id — reserving ids from the sequence up front for
-  multi-row auto-id batches — rather than relying on `RETURNING` output
-  order, which PostgreSQL does not specify.
+  multi-row auto-id batches (adding `OVERRIDING SYSTEM VALUE` for
+  `GENERATED ALWAYS AS IDENTITY` columns) — rather than relying on
+  `RETURNING` output order, which PostgreSQL does not specify. The one
+  shape with no possible correlation key — ids filled by a database
+  default the driver knows nothing about (no serial/identity sequence) —
+  falls back to positional pairing, which every shipped PostgreSQL
+  preserves for a serial `VALUES` plan. Tables whose triggers rewrite ids
+  during insert are outside the correlation contract.
 - `updateMany()` updates all rows matching the predicates with the same
   values. Returns the count of updated rows.
 - `deleteMany()` deletes all rows matching the predicates. Returns the
@@ -172,14 +178,21 @@ table, then every constraint.
 **Pre-existing tables are reconciled, not trusted.** `CREATE TABLE IF
 NOT EXISTS` is a silent no-op on an existing table whatever its shape,
 so before creating anything auto-DDL introspects the tables that
-already exist and compares their body — columns, types, nullability,
-defaults, primary key — against the requested schema, using the same
-normalizer and differ the migration engine uses. Present and
-equivalent → no-op; present and different → registration fails naming
-the drift, with nothing cached (the batch stays retryable). Auto-DDL
-never alters an existing table — reconciling drift is a migration's
-job. Indexes and foreign keys are reconciled separately with the same
-absent → create / different → fail policy.
+already exist (resolved through the connection's `search_path`, the
+same way the DDL itself resolves names) and compares their body —
+columns, types, nullability, primary key — against the requested
+schema, using the same normalizer and differ the migration engine
+uses. `GENERATED AS IDENTITY` id columns count as equivalent to the
+`serial`/`bigserial` the schema declares. Present and equivalent →
+no-op; present and different → registration fails naming the drift,
+with nothing cached (the batch stays retryable). Auto-DDL never alters
+an existing table — reconciling drift is a migration's job. Column
+`DEFAULT`s are not compared: the runtime schema carries no default
+expressions, so a live default (including one the migration path
+itself created) is not drift. Indexes and foreign keys are reconciled
+separately by their derived names, each with absent → create /
+present-and-different → fail semantics; constraints under other names
+are not examined.
 
 ### Registration
 

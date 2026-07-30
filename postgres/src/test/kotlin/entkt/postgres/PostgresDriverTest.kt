@@ -1330,6 +1330,21 @@ class PostgresDriverTest {
     }
 
     @Test
+    fun `insertMany correlates ids bound through any Number type`() {
+        // The codec's integral bind accepts any java.lang.Number for
+        // INT/LONG columns, so correlation must widen the same way — a
+        // Byte-keyed input has to match the Long the decode produces.
+        val driver = fresh()
+        val rows = driver.insertMany("users", listOf(
+            mapOf("id" to 2.toByte(), "name" to "Bob"),
+            mapOf("id" to java.math.BigInteger.ONE, "name" to "Alice"),
+        ))
+
+        assertEquals(listOf(2L, 1L), rows.map { it["id"] })
+        assertEquals(listOf("Bob", "Alice"), rows.map { it["name"] })
+    }
+
+    @Test
     fun `insertMany correlates mixed explicit-id and auto-id groups`() {
         val driver = fresh()
         // Explicit-id rows and auto-id rows land in different column-set

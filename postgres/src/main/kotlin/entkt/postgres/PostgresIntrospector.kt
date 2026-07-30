@@ -87,23 +87,32 @@ class PostgresIntrospector(
         if (managedTableNames.isEmpty()) return NormalizedSchema(emptyMap())
 
         dataSource.connection.use { conn ->
-            val existingTables = mutableSetOf<String>()
-            val placeholders = managedTableNames.joinToString(", ") { "?" }
-            conn.prepareStatement(
-                "SELECT table_name FROM information_schema.tables " +
-                    "WHERE table_schema = 'public' AND table_name IN ($placeholders)",
-            ).use { stmt ->
-                var i = 1
-                for (name in managedTableNames) stmt.setString(i++, name)
-                stmt.executeQuery().use { rs ->
-                    while (rs.next()) existingTables.add(rs.getString("table_name"))
-                }
-            }
-
             val tables = mutableMapOf<String, NormalizedTable>()
-            for (tableName in existingTables) {
-                val columns = introspectColumns(conn, tableName)
-                val primaryKeys = introspectPrimaryKeys(conn, tableName)
+            for (tableName in managedTableNames) {
+                // Resolve the table the way the driver's unqualified DDL
+                // and DML statements do — through the connection's
+                // search_path via to_regclass — rather than assuming the
+                // 'public' schema. A DataSource configured with
+                // currentSchema=app must have its app.<table> compared,
+                // not a same-named table (or nothing) in public.
+                var resolvedSchema: String? = null
+                conn.prepareStatement(
+                    """
+                    SELECT n.nspname
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.oid = to_regclass(?) AND c.relkind IN ('r', 'p')
+                    """.trimIndent(),
+                ).use { stmt ->
+                    stmt.setString(1, "\"" + tableName.replace("\"", "\"\"") + "\"")
+                    stmt.executeQuery().use { rs ->
+                        if (rs.next()) resolvedSchema = rs.getString("nspname")
+                    }
+                }
+                val schemaName = resolvedSchema ?: continue
+
+                val columns = introspectColumns(conn, tableName, schemaName)
+                val primaryKeys = introspectPrimaryKeys(conn, tableName, schemaName)
                 tables[tableName] = NormalizedTable(
                     name = tableName,
                     columns = columns.map { it.copy(primaryKey = it.name in primaryKeys) },
@@ -118,6 +127,7 @@ class PostgresIntrospector(
     private fun introspectColumns(
         conn: java.sql.Connection,
         tableName: String,
+        schemaName: String = "public",
     ): List<NormalizedColumn> {
         val columns = mutableListOf<NormalizedColumn>()
         conn.prepareStatement(
@@ -126,16 +136,17 @@ class PostgresIntrospector(
             // data_type reports only the bare "USER-DEFINED" for them.
             """
             SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable, c.column_default,
-                   format_type(a.atttypid, a.atttypmod) AS formatted_type
+                   c.is_identity, format_type(a.atttypid, a.atttypmod) AS formatted_type
             FROM information_schema.columns c
             JOIN pg_class cl ON cl.relname = c.table_name
             JOIN pg_namespace ns ON ns.oid = cl.relnamespace AND ns.nspname = c.table_schema
             JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attname = c.column_name AND NOT a.attisdropped
-            WHERE c.table_schema = 'public' AND c.table_name = ?
+            WHERE c.table_schema = ? AND c.table_name = ?
             ORDER BY c.ordinal_position
             """.trimIndent(),
         ).use { stmt ->
-            stmt.setString(1, tableName)
+            stmt.setString(1, schemaName)
+            stmt.setString(2, tableName)
             stmt.executeQuery().use { rs ->
                 while (rs.next()) {
                     val colName = rs.getString("column_name")
@@ -145,8 +156,14 @@ class PostgresIntrospector(
                     val nullable = rs.getString("is_nullable") == "YES"
                     val default = rs.getString("column_default")
 
-                    // Detect serial columns by nextval default
-                    val isSerial = default != null && default.startsWith("nextval(")
+                    // Detect serial columns by nextval default. GENERATED
+                    // AS IDENTITY columns (column_default is null, sequence
+                    // internal) normalize to the same serial types: both
+                    // are "integer id the database assigns", and treating
+                    // them as distinct would demand an ALTER between
+                    // serial and identity that no migration can express.
+                    val isSerial = (default != null && default.startsWith("nextval(")) ||
+                        rs.getString("is_identity") == "YES"
                     // Extension/user-defined types (vector, etc.) carry their full
                     // declared form (vector(3)) only in format_type. canonicalize()
                     // handles the standard SQL types unchanged.
@@ -186,6 +203,7 @@ class PostgresIntrospector(
     private fun introspectPrimaryKeys(
         conn: java.sql.Connection,
         tableName: String,
+        schemaName: String = "public",
     ): Set<String> {
         val pks = mutableSetOf<String>()
         conn.prepareStatement(
@@ -195,12 +213,13 @@ class PostgresIntrospector(
             JOIN information_schema.key_column_usage kcu
               ON tc.constraint_name = kcu.constraint_name
               AND tc.table_schema = kcu.table_schema
-            WHERE tc.table_schema = 'public'
+            WHERE tc.table_schema = ?
               AND tc.table_name = ?
               AND tc.constraint_type = 'PRIMARY KEY'
             """.trimIndent(),
         ).use { stmt ->
-            stmt.setString(1, tableName)
+            stmt.setString(1, schemaName)
+            stmt.setString(2, tableName)
             stmt.executeQuery().use { rs ->
                 while (rs.next()) pks.add(rs.getString("column_name"))
             }
