@@ -97,32 +97,37 @@ not the same:
 
 ### Query-chain traversal (single SQL statement, target as outer)
 
-`queryUsers()` lowers via `Predicate.HasM2MEdgeFrom` (see
-`postgres/src/main/kotlin/entkt/postgres/PostgresDriver.kt`'s
-`lowerInverseM2M`). The outer query is on the **target** table
-(users); the bridge predicate is an EXISTS subquery that walks
-the junction joined to the **source** table:
+`queryUsers()` lowers via `Predicate.HasM2MEdgeFromShape` (see
+`postgres/src/main/kotlin/entkt/postgres/PredicateSqlBuilder.kt`'s
+`lowerM2MEdgeFromShape`; at the time of this RFC the predicate-only
+`HasM2MEdgeFrom`, upgraded by the shape-preserving traversal RFC).
+The outer query is on the **target** table (users); the bridge
+filters candidates through a junction walk fed by a shaped source
+subquery that preserves the source query's predicates, order, and
+bounds:
 
 ```sql
-... FROM users WHERE EXISTS (
-    SELECT 1 FROM memberships AS j
-    JOIN groups AS s ON j.group_id = s.id
-    WHERE j.user_id = users.id
-        AND j.group_id = s.id
-        [AND <source-side filter on s>]
+... FROM users WHERE users.id IN (
+    SELECT j.user_id FROM memberships AS j
+    WHERE j.group_id IN (
+        SELECT s.id FROM groups AS s
+        [WHERE <source-side filter on s>]
+        [ORDER BY ... LIMIT ... OFFSET ...]
+    )
 )
 ```
 
 Two null-skip safety nets, both from standard SQL three-valued
-logic: `j.user_id = users.id` (the candidate-correlation) fails
-when `user_id IS NULL`, and the `JOIN groups AS s ON j.group_id
-= s.id` fails when `group_id IS NULL`.
+logic: `users.id IN (SELECT j.user_id ...)` (the candidate
+correlation) never matches a junction row whose `user_id IS
+NULL`, and `j.group_id IN (SELECT s.id ...)` never matches one
+whose `group_id IS NULL`.
 
 ### Predicate traversal (single SQL statement, source as outer)
 
 `Group.users.exists()` and `Group.users.has { where(...) }`
 lower via `Predicate.HasEdge` / `Predicate.HasEdgeWith` (see
-`PostgresDriver.kt`'s `lowerHasEdge`). The outer query stays on
+`PredicateSqlBuilder.kt`'s `lowerHasEdge`). The outer query stays on
 the **source** table (groups); the EXISTS subquery walks the
 junction joined to the **target**:
 

@@ -1,7 +1,7 @@
 package entkt.runtime
 import entkt.runtime.result.getOrThrow
 import entkt.runtime.query.QueryShape
-import entkt.runtime.query.QueryFlag
+import entkt.query.QueryFlag
 import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.result.EntResult
 import entkt.runtime.result.EntQueryRejectedException
@@ -9,6 +9,7 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntError
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.ReadOperation
+import entkt.runtime.query.limitOpsApply
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryContext
@@ -266,6 +267,18 @@ class InterceptorRuntimeTypesTest {
             setOf(QueryFlag.withDeleted, QueryFlag.onlyDeleted),
             QueryFlag.entries.toSet(),
         )
+    }
+
+    // Pin the full limit-operation table: interceptor limit mutators
+    // apply to ALL and — since the shaped traversal lowering — to
+    // EDGE_TRAVERSAL, and silent-no-op everywhere else. A shape
+    // silently joining or leaving this set changes what safety-limit
+    // interceptors do, so the whole table is pinned, not just one
+    // member.
+    @Test
+    fun `limit operations apply to ALL and EDGE_TRAVERSAL only`() {
+        val applies = ReadOperation.entries.filter { limitOpsApply(it) }.toSet()
+        assertEquals(setOf(ReadOperation.ALL, ReadOperation.EDGE_TRAVERSAL), applies)
     }
 
     // Sanity that OrderField is the schema-side type the interceptor scope expects.

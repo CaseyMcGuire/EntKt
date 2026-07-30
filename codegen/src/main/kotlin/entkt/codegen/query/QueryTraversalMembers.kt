@@ -11,6 +11,7 @@ import com.squareup.kotlinpoet.UNIT
 import entkt.codegen.toPascalCase
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
+private val TRAVERSAL_SOURCE_SHAPE = ClassName("entkt.query", "TraversalSourceShape")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
@@ -18,11 +19,82 @@ private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 // ------------------------------------------------------------------
 // queryX() traversal generation: the deferred-source-step bridge and
 // the two traversal method shapes (direct-edge via the inverse edge,
-// M2M via HasM2MEdgeFrom), plus the traversal-only state seeders
-// (snapshotForTraversal / setDeferredSourceStep). seedEdgeTraversal
-// stays in QueryGenerator — the eager blocks and the edge-predicate
-// walker seed traversal context through it too, not just queryX().
+// M2M via the source's forward edge), plus the traversal-only state
+// seeders (snapshotForTraversal / setDeferredSourceStep).
+// seedEdgeTraversal stays in QueryGenerator — the eager blocks and
+// the edge-predicate walker seed traversal context through it too,
+// not just queryX(). Both traversal shapes embed the source query's
+// post-interceptor shape (predicates, order, limit, offset, flags)
+// in a shaped bridge — HasEdgeFromShape / HasM2MEdgeFromShape — via
+// the single [deferredShapedSourceStep] emitter so the two lowerings
+// can't drift as the traversal shape evolves.
 // ------------------------------------------------------------------
+
+/**
+ * Emit the deferred source-step lambda both traversal shapes stash on
+ * the target query: run the source's interceptor chain (operation =
+ * EDGE_TRAVERSAL) at terminal time, then embed the post-interceptor
+ * source shape in a [bridgeType] bridge predicate. The source's
+ * `where`, `orderBy`, `limit`, and `offset` all survive into the
+ * bridge — traversal follows the source query as written.
+ *
+ * [selectedColumn] is the column on the source table the traversal
+ * joins through, known statically to codegen: the source-side join
+ * column of the edge being traversed (`id` when the target row
+ * carries the FK, the FK column when traversing child-to-parent,
+ * and the junction-referenced source column for M2M).
+ */
+private fun deferredShapedSourceStep(
+    bridgeType: String,
+    edgeName: String,
+    selectedColumn: String,
+    targetEntityClass: ClassName,
+    sourceEntityClass: ClassName,
+): CodeBlock {
+    val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
+    return CodeBlock.builder()
+        // Cross-class write goes through the @EntktInternal
+        // seeder so application code can't clear / overwrite
+        // deferredSourceStep without an explicit opt-in (it
+        // is `private` on the target class).
+        .add("target.setDeferredSourceStep {\n")
+        // The source's interceptor chain does NOT fire at queryX()
+        // time; it fires here, at the terminal's call site inside
+        // the terminal's try/catch — which is what lets
+        // `.queryX().allOrError()` catch source-step rejections as
+        // `Err(QueryRejected)`.
+        .add(
+            "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
+            READ_OPERATION, ENT_OPERATION,
+        )
+        // The embedded shape is the POST-interceptor source shape:
+        // sourceSpec's predicates / orderBy / limit / offset already
+        // reflect every source-step interceptor mutation (added
+        // predicates, set-or-clamped limits), so safety limits apply
+        // to which source rows are traversed. sourceSpec's lists are
+        // typed in the source entity scope, so the shape and bridge
+        // construction need no casts.
+        .add("  %T<%T>(\n", traversalSourceResult, targetEntityClass)
+        .add(
+            "    bridge = %T.%L<%T, %T>(\n",
+            PREDICATE, bridgeType, targetEntityClass, sourceEntityClass,
+        )
+        .add("      %S,\n", edgeName)
+        .add("      %T(\n", TRAVERSAL_SOURCE_SHAPE)
+        .add("        table = sourceSpec.table,\n")
+        .add("        selectedColumn = %S,\n", selectedColumn)
+        .add("        predicates = sourceSpec.predicates,\n")
+        .add("        orderBy = sourceSpec.orderBy,\n")
+        .add("        limit = sourceSpec.limit,\n")
+        .add("        offset = sourceSpec.offset,\n")
+        .add("        flags = sourceSpec.flags,\n")
+        .add("      ),\n")
+        .add("    ),\n")
+        .add("    annotations = sourceSpec.annotations,\n")
+        .add("  )\n")
+        .add("}\n")
+        .build()
+}
 
 /**
  * Generate `snapshotForTraversal(driver, client): ThisQuery` on the
@@ -95,9 +167,10 @@ internal fun buildSetDeferredSourceStep(entityClass: ClassName): FunSpec {
 
 /**
  * Generate a `queryX(): TargetQuery` traversal for a many-to-many
- * edge [re]. Lowered to a `Predicate.HasM2MEdgeFrom` against the
- * candidate target row, naming the *source* schema's table and the
- * forward edge — the runtime walks the junction backwards using the
+ * edge [re]. Lowered to a `Predicate.HasM2MEdgeFromShape` against
+ * the candidate target row, embedding the source query's post-
+ * interceptor shape and naming the forward edge declared on the
+ * source — the runtime walks the junction backwards using the
  * source schema's own edge metadata, with no dependency on a
  * synthesized reverse edge on the target.
  */
@@ -111,9 +184,7 @@ internal fun buildM2MTraversal(
     val targetEntityClass = re.targetClass
     val targetQueryClass = re.targetQueryClass
     val methodName = "query${toPascalCase(re.name)}"
-    val sourceTable = resolved.schema.tableName
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
-    val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
     return FunSpec.builder(methodName)
         // Defaulted receiver block matching the repository / index
@@ -159,39 +230,21 @@ internal fun buildM2MTraversal(
         // can access the private backing fields via same-class
         // private access.
         .addStatement("val sourceQ = this.snapshotForTraversal(driver, client)")
+        // M2M bridge: HasM2MEdgeFromShape<Target, Source>. The
+        // candidate is the M2M target; the shape's rows in the
+        // source table feed the junction walk. The junction
+        // references the source's id column — resolveM2MEdgeJoin
+        // pins sourceColumn = "id" — so that is the selected
+        // column even when the junction schema isn't visible to
+        // codegen (re.join == null).
         .addCode(
-            CodeBlock.builder()
-                // Cross-class write goes through the @EntktInternal
-                // seeder so application code can't clear / overwrite
-                // deferredSourceStep without an explicit opt-in (it
-                // is `private` on the target class).
-                .add("target.setDeferredSourceStep {\n")
-                .add(
-                    "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
-                    READ_OPERATION, ENT_OPERATION,
-                )
-                // sourceSpec is FrozenQuerySpec<SourceEntity>; its
-                // predicates are typed `List<Predicate<SourceEntity>>`
-                // — no cast needed.
-                .add(
-                    "  val parent: %T<%T>? = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
-                    PREDICATE, sourceEntityClass, PREDICATE,
-                )
-                // M2M bridge: HasM2MEdgeFrom<Target, Source>(...).
-                // The candidate is the M2M target; the sourceFilter
-                // constrains rows in the source table.
-                .add("  %T<%T>(\n", traversalSourceResult, targetEntityClass)
-                .add(
-                    "    bridge = %T.HasM2MEdgeFrom<%T, %T>(%S, %S, parent),\n",
-                    PREDICATE,
-                    targetEntityClass, sourceEntityClass,
-                    sourceTable,
-                    re.name,
-                )
-                .add("    annotations = sourceSpec.annotations,\n")
-                .add("  )\n")
-                .add("}\n")
-                .build()
+            deferredShapedSourceStep(
+                bridgeType = "HasM2MEdgeFromShape",
+                edgeName = re.name,
+                selectedColumn = re.join?.sourceColumn ?: "id",
+                targetEntityClass = targetEntityClass,
+                sourceEntityClass = sourceEntityClass,
+            )
         )
         .addStatement("return target.apply(block)")
         .build()
@@ -202,11 +255,12 @@ internal fun buildM2MTraversal(
  * the traversal entry point — given a query on the source schema,
  * walk across the edge and return a query on the target.
  *
- * Lowering: the parent's combined predicate becomes a HasEdgeWith
- * predicate on the target query, naming the *inverse* edge (i.e.
- * the edge on the target that points back at the source). When the
- * parent has no wheres we still emit HasEdge so optional inverse
- * edges still filter out unrelated rows.
+ * Lowering: the source query's post-interceptor shape (predicates,
+ * order, limit, offset) embeds in a HasEdgeFromShape predicate on
+ * the target query, naming the *inverse* edge (i.e. the edge on the
+ * target that points back at the source). The driver lowers the
+ * shape into a source-id subquery so traversal follows the source
+ * query as written.
  *
  * Returns null when the inverse edge can't be resolved — codegen
  * just skips emitting a traversal method in that case.
@@ -218,12 +272,15 @@ internal fun buildTraversal(
 ): FunSpec? {
     val sourceName = resolved.sourceName ?: return null
     val inverse = re.inverse ?: return null
+    // Direct-edge join resolution either succeeds or throws (see
+    // resolveEdgeJoin), so join is always present when the inverse
+    // is; the guard just mirrors the nullable type.
+    val join = re.join ?: return null
     val sourceEntityClass = ClassName(packageName, sourceName)
     val targetEntityClass = re.targetClass
     val targetQueryClass = re.targetQueryClass
     val methodName = "query${toPascalCase(re.name)}"
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
-    val traversalSourceResult = ClassName("entkt.runtime.query", "TraversalSourceResult")
 
     return FunSpec.builder(methodName)
         // Defaulted receiver block matching the repository / index
@@ -269,46 +326,21 @@ internal fun buildTraversal(
         // can access the private backing fields via same-class
         // private access.
         .addStatement("val sourceQ = this.snapshotForTraversal(driver, client)")
+        // Bridge is target-scoped: HasEdgeFromShape<Target, Source>
+        // (the embedded shape is on Source), naming the inverse edge
+        // on the target. The selected column is the source-side join
+        // column of the traversed edge: "id" when the target row
+        // carries the FK (User.queryPosts selects users.id), the FK
+        // column when traversing child-to-parent (Post.queryAuthor
+        // selects posts.author_id).
         .addCode(
-            CodeBlock.builder()
-                // Cross-class write goes through the @EntktInternal
-                // seeder so application code can't clear / overwrite
-                // deferredSourceStep without an explicit opt-in (it
-                // is `private` on the target class).
-                .add("target.setDeferredSourceStep {\n")
-                .add(
-                    "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
-                    READ_OPERATION, ENT_OPERATION,
-                )
-                // sourceSpec is FrozenQuerySpec<SourceEntity>; its
-                // predicates are typed `List<Predicate<SourceEntity>>`
-                // — no cast needed.
-                .add(
-                    "  val parent: %T<%T>? = sourceSpec.predicates.reduceOrNull { acc, p -> %T.And(acc, p) }\n",
-                    PREDICATE, sourceEntityClass, PREDICATE,
-                )
-                // Bridge is target-scoped: HasEdgeWith<Target, Source>
-                // (the inner predicate is on Source). The candidate
-                // entity is the target. The walker's edge-name witness +
-                // unchecked cast soundness applies symmetrically
-                // to the construction site here — codegen knows
-                // both Source and Target by schema.
-                .add(
-                    "  val bridge: %T<%T> = if (parent != null) %T.HasEdgeWith<%T, %T>(%S, parent) else %T.HasEdge<%T>(%S)\n",
-                    PREDICATE, targetEntityClass,
-                    PREDICATE,
-                    targetEntityClass, sourceEntityClass,
-                    inverse.name,
-                    PREDICATE,
-                    targetEntityClass,
-                    inverse.name,
-                )
-                .add(
-                    "  %T<%T>(bridge = bridge, annotations = sourceSpec.annotations)\n",
-                    traversalSourceResult, targetEntityClass,
-                )
-                .add("}\n")
-                .build()
+            deferredShapedSourceStep(
+                bridgeType = "HasEdgeFromShape",
+                edgeName = inverse.name,
+                selectedColumn = join.sourceColumn,
+                targetEntityClass = targetEntityClass,
+                sourceEntityClass = sourceEntityClass,
+            )
         )
         .addStatement("return target.apply(block)")
         .build()

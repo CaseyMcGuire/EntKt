@@ -15,10 +15,12 @@ package entkt.query
  * entity scopes fails to compile (variance is invariant on purpose).
  *
  * Constructors marked `@EntktInternal` ([HasEdge], [HasEdgeWith],
- * [HasM2MEdgeFrom]) participate in the edge-predicate walker's
- * edge-name-validated unchecked-cast soundness story. Application
- * code constructs them via the generated `EdgeRef.has { ... }` /
- * `EdgeRef.exists()` surface.
+ * [HasM2MEdgeFrom], [HasEdgeFromShape], [HasM2MEdgeFromShape])
+ * participate in the edge-predicate walker's edge-name-validated
+ * unchecked-cast soundness story. Application code constructs the
+ * edge predicates via the generated `EdgeRef.has { ... }` /
+ * `EdgeRef.exists()` surface; the shaped traversal bridges are
+ * constructed only by generated `queryX()` traversal code.
  */
 sealed class Predicate<E : Any> {
     infix fun and(other: Predicate<E>): Predicate<E> = And(this, other)
@@ -131,6 +133,59 @@ sealed class Predicate<E : Any> {
             h = 31 * h + (sourceFilter?.hashCode() ?: 0)
             return h
         }
+    }
+
+    /**
+     * "Is related across [edge] to a row in the shaped traversal
+     * source [source]." The shaped bridge generated `queryX()`
+     * traversal embeds for direct edges: [edge] names the edge on
+     * the *candidate* entity that points back at the traversal
+     * source (the inverse edge), and [source] carries the source
+     * query's post-interceptor shape — predicates, order, limit,
+     * offset — so the driver lowers traversal into a source-id
+     * subquery that follows the source query as written.
+     *
+     * [Source] is the traversal source's entity scope, carried
+     * through [TraversalSourceShape]'s typed predicate / order
+     * lists.
+     *
+     * Not a `data class` — same copy-bypass rationale as [HasEdge].
+     */
+    class HasEdgeFromShape<E : Any, Source : Any> @EntktInternal constructor(
+        val edge: String,
+        val source: TraversalSourceShape<Source>,
+    ) : Predicate<E>() {
+        override fun toString(): String = "HasEdgeFromShape(edge=$edge, source=$source)"
+        override fun equals(other: Any?): Boolean =
+            other is HasEdgeFromShape<*, *> && other.edge == edge && other.source == source
+        override fun hashCode(): Int = 31 * edge.hashCode() + source.hashCode()
+    }
+
+    /**
+     * "Is the M2M target of at least one row in the shaped traversal
+     * source [source] via the forward edge [edgeName] declared on the
+     * source." The shaped bridge generated `queryX()` traversal
+     * embeds for many-to-many edges: like [HasM2MEdgeFrom], the
+     * runtime walks the junction backwards using the source schema's
+     * forward-edge metadata, but the source row set comes from
+     * [source]'s full shape (predicates, order, limit, offset)
+     * rather than a bare predicate.
+     *
+     * [Source] is the traversal source's entity scope, carried
+     * through [TraversalSourceShape]'s typed predicate / order
+     * lists.
+     *
+     * Not a `data class` — same copy-bypass rationale as [HasEdge].
+     */
+    class HasM2MEdgeFromShape<E : Any, Source : Any> @EntktInternal constructor(
+        val edgeName: String,
+        val source: TraversalSourceShape<Source>,
+    ) : Predicate<E>() {
+        override fun toString(): String =
+            "HasM2MEdgeFromShape(edgeName=$edgeName, source=$source)"
+        override fun equals(other: Any?): Boolean =
+            other is HasM2MEdgeFromShape<*, *> && other.edgeName == edgeName && other.source == source
+        override fun hashCode(): Int = 31 * edgeName.hashCode() + source.hashCode()
     }
 }
 

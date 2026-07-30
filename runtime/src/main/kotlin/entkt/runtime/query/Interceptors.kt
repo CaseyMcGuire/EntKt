@@ -4,6 +4,7 @@ import entkt.runtime.privacy.PrivacyContext
 
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.query.QueryFlag
 import kotlin.reflect.KClass
 
 /**
@@ -253,23 +254,6 @@ enum class ReadOperation {
      * `addAnnotation`, and `reject` apply normally.
      */
     DELETE_CANDIDATES,
-}
-
-/**
- * Public flags carried on a [QueryContext]. V1 has two members,
- * both consumed exclusively by the generated soft-delete
- * interceptor. Public flags do NOT propagate across query steps —
- * each step's `query { ... }` (or eager-load configuration block)
- * sets its own flags.
- *
- * `internalSystemQuery` lives in a separate package-private slot
- * that never appears in this enum and is never visible to
- * interceptors.
- */
-@Suppress("EnumEntryName")
-enum class QueryFlag {
-    withDeleted,
-    onlyDeleted,
 }
 
 /**

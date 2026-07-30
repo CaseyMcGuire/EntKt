@@ -270,10 +270,11 @@ internal class QueryGenerator(
             .build()
 
         // Every generated query file constructs `Predicate.HasEdge` /
-        // `Predicate.HasEdgeWith` / `Predicate.HasM2MEdgeFrom` in the
-        // edge-predicate walker and traversal lambdas. Those types
-        // carry `@EntktInternal` constructors; the file-level OptIn
-        // lets the construction sites compile without per-call annotation.
+        // `Predicate.HasEdgeWith` in the edge-predicate walker and
+        // `Predicate.HasEdgeFromShape` / `Predicate.HasM2MEdgeFromShape`
+        // in the traversal lambdas. Those types carry `@EntktInternal`
+        // constructors; the file-level OptIn lets the construction
+        // sites compile without per-call annotation.
         return FileSpec.builder(packageName, className)
             .addAnnotation(
                 AnnotationSpec.builder(ClassName("kotlin", "OptIn"))

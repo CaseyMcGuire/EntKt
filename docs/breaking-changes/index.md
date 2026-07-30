@@ -30,6 +30,25 @@ above it.
 
 ## Unreleased
 
+- **`queryX()` traversal follows the source query's shape; two new sealed `Predicate` bridges** (`schema`, `codegen`, `postgres`, `runtime`)
+  Edge traversal no longer drops source `orderBy` / `limit` / `offset` at the
+  bridge: generated `queryX()` embeds the post-interceptor source shape in the
+  new sealed `Predicate` subclasses `HasEdgeFromShape` / `HasM2MEdgeFromShape`
+  (carrying `entkt.query.TraversalSourceShape`), lowered as a source-id
+  subquery, and interceptor limit operations now apply to
+  `ReadOperation.EDGE_TRAVERSAL` instead of silently no-oping (see the
+  [shape-preserving traversal note](../implemented-features/query/edge-traversal-source-shape.md)).
+  _Migration:_ traversal results can narrow — drop source bounds that the old
+  lowering silently ignored if the broad row set was actually intended; add
+  branches for the two new subclasses to any exhaustive `when` over
+  `Predicate`; custom drivers must lower the shaped bridges (silently falling
+  back to predicate-only traversal is not allowed).
+
+- **`QueryFlag` moved from `entkt.runtime.query` to `entkt.query`** (`runtime`, `schema`)
+  The enum now lives in the schema module so `TraversalSourceShape` can carry
+  the source step's flags without `:schema` depending on `:runtime`.
+  _Migration:_ update imports to `entkt.query.QueryFlag`.
+
 - **`io.entkt:ent-viewer` renamed to `io.entkt:ent-viewer-core`** (`ent-viewer`)
   The viewer family now lives under one `ent-viewer/` folder as
   `ent-viewer-core` (framework-neutral) and `ent-viewer-spring` (Spring Boot

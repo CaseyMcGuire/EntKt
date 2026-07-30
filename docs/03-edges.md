@@ -199,7 +199,7 @@ Adding a `manyToMany` on schema `X` never silently introduces methods
 on schema `Y` — see
 [Schema → M2M Bidirectional](02-schema.md#m2m-bidirectional). Forward
 query traversal of a one-sided declaration still works (it lowers to
-`Predicate.HasM2MEdgeFrom` against the source schema's own forward
+`Predicate.HasM2MEdgeFromShape` against the source schema's own forward
 edge metadata, no reverse-edge entry needed on the target).
 
 ### Link-table M2M mutators
@@ -351,7 +351,7 @@ join columns:
    bridge columns. The runtime metadata for forward traversal lives only
    on the source schema (the one declaring the `manyToMany`); no reverse
    entry is synthesized on the target. Forward query traversal lowers
-   to `Predicate.HasM2MEdgeFrom(sourceTable, edgeName, parent)` so the
+   to `Predicate.HasM2MEdgeFromShape(edgeName, sourceShape)` so the
    predicate runs against the source schema's own metadata. Bidirectional
    traversal requires both endpoints to declare their own pair-swapped
    `manyToMany`.

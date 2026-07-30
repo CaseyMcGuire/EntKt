@@ -1,6 +1,5 @@
 package entkt.postgres
 
-import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
@@ -181,36 +180,11 @@ internal class PostgresOperations(
         }
 
         if (orderBy.isNotEmpty()) {
-            sql.append(" ORDER BY ")
-            sql.append(
-                orderBy.joinToString(", ") { of ->
-                    val dir = if (of.direction == OrderDirection.ASC) "ASC" else "DESC"
-                    val distance = of.distance
-                    if (distance != null) {
-                        // pgvector distance ordering: `col <op> ?`, operand bound
-                        // as a vector parameter (never inlined). Appended after the
-                        // WHERE params (which are already in builder.params) so the
-                        // placeholder order matches the SQL text.
-                        //
-                        // Validate the operand dimension against the column's
-                        // declared dimensions here — bind() only sees FieldType,
-                        // so without this a wrong-size query vector would surface
-                        // as an opaque Postgres error instead of a field-named one.
-                        val operand = distance.operand
-                        val native = schema.nativeStorage(of.field)
-                        checkVectorDimensions(native, operand, "orderBy distance on '$table.${of.field}'")
-                        builder.params.add(Param(FieldType.PGVECTOR, operand))
-                        // NULLS LAST always: a null embedding has no distance, so it
-                        // belongs at the end for both nearest-first (asc) and
-                        // farthest-first (desc). Postgres otherwise defaults nulls
-                        // FIRST on DESC, which would surface missing embeddings ahead
-                        // of the actual farthest vectors.
-                        "$baseAlias.${quote(of.field)} ${distance.operator.sql} ? $dir NULLS LAST"
-                    } else {
-                        "$baseAlias.${quote(of.field)} $dir"
-                    }
-                },
-            )
+            // Rendering (incl. pgvector distance operands appended to
+            // builder.params after the WHERE params, so the placeholder
+            // order matches the SQL text) is shared with the shaped
+            // traversal-source subquery — see PredicateSqlBuilder.orderBySql.
+            sql.append(" ORDER BY ").append(builder.orderBySql(orderBy, schema, baseAlias))
         }
 
         if (limit != null) sql.append(" LIMIT ").append(limit)

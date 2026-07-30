@@ -21,15 +21,16 @@ import java.util.UUID
 /**
  * Exercises the bidirectional `Post.tags` / `Tag.posts` M2M traversal
  * through generated forward query traversal — the runtime path
- * introduced when `Predicate.HasM2MEdgeFrom` replaced synthesized
+ * introduced when forward-edge M2M lowering replaced synthesized
  * reverse-edge metadata.
  *
  * `PostController.tags(id)` lowers to `PostQuery.withTags { }` (M2M
  * eager-load helper); `TagController.posts(id)` lowers to
- * `TagQuery.queryPosts()` → `Predicate.HasM2MEdgeFrom("tags", "posts",
- * <tag-filter>)` → an EXISTS subquery against the junction. Both
- * declarations share canonical identity `{PostTag, post, tag}`; nothing
- * is synthesized on the opposite-side schema.
+ * `TagQuery.queryPosts()` → `Predicate.HasM2MEdgeFromShape("posts",
+ * <shaped tag source>)` → a junction walk fed by a shaped source
+ * subquery. Both declarations share canonical identity
+ * `{PostTag, post, tag}`; nothing is synthesized on the
+ * opposite-side schema.
  */
 @SpringBootTest
 @AutoConfigureMockMvc

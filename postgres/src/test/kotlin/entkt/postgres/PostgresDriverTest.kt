@@ -13,6 +13,7 @@ import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.query.TraversalSourceShape
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
@@ -1526,6 +1527,216 @@ class PostgresDriverTest {
         ) as PostgresQueryExplanation
         assertTrue(pg.sql.contains("EXISTS"))
         assertTrue(pg.sql.contains("\"posts\""))
+        assertEquals(listOf(true), pg.args)
+    }
+
+    // ---------- shaped traversal lowering ----------
+
+    @Test
+    fun `shaped direct traversal lowers to a source-id IN subquery preserving order limit offset`() {
+        val driver = fresh()
+        // posts candidate constrained by a shaped users source —
+        // the User.queryPosts() bridge: posts.author_id IN
+        // (10 users, name-desc, after the first 5, active only).
+        val pg = driver.explainQuery(
+            "posts",
+            listOf(
+                Predicate.HasEdgeFromShape<Any, Any>(
+                    "author",
+                    TraversalSourceShape(
+                        table = "users",
+                        selectedColumn = "id",
+                        predicates = listOf(Predicate.Leaf("active", Op.EQ, true)),
+                        orderBy = listOf(OrderField("name", OrderDirection.DESC)),
+                        limit = 10,
+                        offset = 5,
+                        flags = emptySet(),
+                    ),
+                ),
+            ),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"posts\" AS t0 WHERE t0.\"author_id\" IN " +
+                "(SELECT t1.\"id\" FROM \"users\" AS t1 WHERE t1.\"active\" = ? " +
+                "ORDER BY t1.\"name\" DESC LIMIT 10 OFFSET 5)",
+            pg.sql,
+        )
+        assertEquals(listOf(true), pg.args)
+    }
+
+    @Test
+    fun `shaped child-to-parent traversal selects the source FK column`() {
+        val driver = fresh()
+        // users candidate constrained by a shaped posts source —
+        // the Post.queryAuthor() bridge: users.id IN (author_id of
+        // the 10 newest published posts).
+        val pg = driver.explainQuery(
+            "users",
+            listOf(
+                Predicate.HasEdgeFromShape<Any, Any>(
+                    "posts",
+                    TraversalSourceShape(
+                        table = "posts",
+                        selectedColumn = "author_id",
+                        predicates = listOf(Predicate.Leaf("published", Op.EQ, true)),
+                        orderBy = listOf(OrderField("id", OrderDirection.DESC)),
+                        limit = 10,
+                        offset = null,
+                        flags = emptySet(),
+                    ),
+                ),
+            ),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"users\" AS t0 WHERE t0.\"id\" IN " +
+                "(SELECT t1.\"author_id\" FROM \"posts\" AS t1 WHERE t1.\"published\" = ? " +
+                "ORDER BY t1.\"id\" DESC LIMIT 10)",
+            pg.sql,
+        )
+        assertEquals(listOf(true), pg.args)
+    }
+
+    @Test
+    fun `shaped M2M traversal feeds the junction from the shaped source subquery`() {
+        val driver = freshM2M()
+        // m2m_groups candidate via the forward "groups" edge on
+        // m2m_users — the User.queryGroups() bridge.
+        val pg = driver.explainQuery(
+            "m2m_groups",
+            listOf(
+                Predicate.HasM2MEdgeFromShape<Any, Any>(
+                    "groups",
+                    TraversalSourceShape(
+                        table = "m2m_users",
+                        selectedColumn = "id",
+                        predicates = listOf(Predicate.Leaf("age", Op.GTE, 18)),
+                        orderBy = listOf(OrderField("name", OrderDirection.ASC)),
+                        limit = 3,
+                        offset = null,
+                        flags = emptySet(),
+                    ),
+                ),
+            ),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"m2m_groups\" AS t0 WHERE t0.\"id\" IN " +
+                "(SELECT t1.\"group_id\" FROM \"m2m_user_groups\" AS t1 WHERE t1.\"user_id\" IN " +
+                "(SELECT t2.\"id\" FROM \"m2m_users\" AS t2 WHERE t2.\"age\" >= ? " +
+                "ORDER BY t2.\"name\" ASC LIMIT 3))",
+            pg.sql,
+        )
+        assertEquals(listOf(18), pg.args)
+    }
+
+    @Test
+    fun `shaped traversal with offset but no limit keeps the subquery ORDER BY`() {
+        val driver = fresh()
+        // OFFSET without ORDER BY skips rows in unspecified order, so
+        // an offset-only source shape must keep its ordering to stay
+        // deterministic — only the both-null case may skip it.
+        val pg = driver.explainQuery(
+            "posts",
+            listOf(
+                Predicate.HasEdgeFromShape<Any, Any>(
+                    "author",
+                    TraversalSourceShape(
+                        table = "users",
+                        selectedColumn = "id",
+                        predicates = emptyList(),
+                        orderBy = listOf(OrderField("name", OrderDirection.ASC)),
+                        limit = null,
+                        offset = 5,
+                        flags = emptySet(),
+                    ),
+                ),
+            ),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"posts\" AS t0 WHERE t0.\"author_id\" IN " +
+                "(SELECT t1.\"id\" FROM \"users\" AS t1 ORDER BY t1.\"name\" ASC OFFSET 5)",
+            pg.sql,
+        )
+        assertTrue(pg.args.isEmpty())
+    }
+
+    @Test
+    fun `shaped M2M traversal preserves a source offset through the junction walk`() {
+        val driver = freshM2M()
+        val pg = driver.explainQuery(
+            "m2m_groups",
+            listOf(
+                Predicate.HasM2MEdgeFromShape<Any, Any>(
+                    "groups",
+                    TraversalSourceShape(
+                        table = "m2m_users",
+                        selectedColumn = "id",
+                        predicates = emptyList(),
+                        orderBy = listOf(OrderField("id", OrderDirection.ASC)),
+                        limit = 2,
+                        offset = 4,
+                        flags = emptySet(),
+                    ),
+                ),
+            ),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"m2m_groups\" AS t0 WHERE t0.\"id\" IN " +
+                "(SELECT t1.\"group_id\" FROM \"m2m_user_groups\" AS t1 WHERE t1.\"user_id\" IN " +
+                "(SELECT t2.\"id\" FROM \"m2m_users\" AS t2 ORDER BY t2.\"id\" ASC LIMIT 2 OFFSET 4))",
+            pg.sql,
+        )
+        assertTrue(pg.args.isEmpty())
+    }
+
+    @Test
+    fun `shaped traversal without bounds still renders the source ORDER BY`() {
+        val driver = fresh()
+        // Without limit/offset the ordering can't change which source
+        // rows are selected, but it renders anyway so traversal keeps
+        // exact behavior parity with the source query run standalone —
+        // a malformed hand-built order field must not silently succeed
+        // via traversal only until a limit is added.
+        val pg = driver.explainQuery(
+            "posts",
+            listOf(
+                Predicate.HasEdgeFromShape<Any, Any>(
+                    "author",
+                    TraversalSourceShape(
+                        table = "users",
+                        selectedColumn = "id",
+                        predicates = listOf(Predicate.Leaf("active", Op.EQ, true)),
+                        orderBy = listOf(OrderField("name", OrderDirection.DESC)),
+                        limit = null,
+                        offset = null,
+                        flags = emptySet(),
+                    ),
+                ),
+            ),
+            emptyList(),
+            null,
+            null,
+        ) as PostgresQueryExplanation
+        assertEquals(
+            "SELECT t0.* FROM \"posts\" AS t0 WHERE t0.\"author_id\" IN " +
+                "(SELECT t1.\"id\" FROM \"users\" AS t1 WHERE t1.\"active\" = ? " +
+                "ORDER BY t1.\"name\" DESC)",
+            pg.sql,
+        )
         assertEquals(listOf(true), pg.args)
     }
 }

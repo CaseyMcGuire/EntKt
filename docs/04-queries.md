@@ -469,26 +469,37 @@ on the query `queryPosts()` returns. Source-query state is
 snapshotted before the block runs, so nothing in the block can
 change which source rows the traversal bridges from.
 
-> **V1 traversal limitation: source `limit` / `offset` / `orderBy`
-> are dropped at the bridge.** The bridging predicate becomes
-> an `EXISTS` subquery, which has no row-count slot. So
->
-> ```kotlin
-> client.users.query {
->     orderBy(User.createdAt.desc())
->     limit(10)
-> }.queryPosts().allOrThrow()
-> ```
->
-> does **not** mean "posts of the 10 most-recently-created users."
-> It means "posts of users matching the source `where` clauses,"
-> with the `limit(10)` and `orderBy(...)` silently ignored.
-> Callers that need "posts of the first N users" must materialize
-> the source query first, then re-query: `val users = client.users
-> .query { orderBy(...); limit(10) }.allOrThrow(); client.posts
-> .query { where(Post.authorId inList users.map { it.id }) }
-> .allOrThrow()`. A future RFC may add a richer bridging lowering
-> (CTE or IN-from-subquery) that honors source limit/order/offset.
+Traversal follows the source query **as written**: source `where`,
+`orderBy`, `limit`, and `offset` select which source rows are
+traversed. The bridge lowers the source query into a source-id
+subquery (`IN`-from-subquery), so
+
+```kotlin
+client.users.query {
+    orderBy(User.createdAt.desc())
+    limit(10)
+}.queryPosts().allOrThrow()
+```
+
+means "posts whose author is one of the 10 most-recently-created
+users." Three details worth pinning:
+
+- **Source ordering selects the source rows; it does not order the
+  target rows.** Posts above come back in target order — order the
+  target query (`queryPosts { orderBy(Post.createdAt.desc()) }`) if
+  post order matters.
+- **A target `limit` is a total target-row limit**, not "N posts per
+  user." Use `withPosts { limit(n) }` for per-source eager-load
+  shaping.
+- **Target rows are never duplicated** by fan-out, even when several
+  selected source rows reach the same target (many-to-many).
+
+Traversal does not apply source LOAD privacy: source rows only
+define the target query and are not returned. Target rows keep the
+normal target read semantics (`allOrThrow()` throws on a denied
+target row, `visibleAll()` filters). Callers that need source LOAD
+privacy to decide which rows are traversed should materialize the
+source query first (`visibleAll()`), then query the target by id.
 
 ### `has` / `hasWhere` -- edge predicates
 
@@ -697,8 +708,8 @@ also applies to M2M edge predicates such as `Post.tags.has { ... }`;
 the generated edge ref uses the normal `HasEdge` / `HasEdgeWith`
 predicate shape, and SQL lowering adds the junction-table join.
 
-The internal `Predicate.HasM2MEdgeFrom` shape is traversal plumbing
-for `queryX()` and is not a public `has` / `hasWhere` bypass:
+The internal `Predicate.HasM2MEdgeFromShape` bridge is traversal
+plumbing for `queryX()` and is not a public `has` / `hasWhere` bypass:
 source interceptors fire during the traversal source step, and target
 interceptors fire at the traversal terminal.
 

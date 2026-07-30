@@ -2,7 +2,29 @@
 
 ## Status
 
-Ready for implementation. This is not implemented.
+Implemented 2026-07-29. Generated `queryX()` traversal embeds the
+post-interceptor source shape (`TraversalSourceShape` carried by
+`Predicate.HasEdgeFromShape` / `Predicate.HasM2MEdgeFromShape`,
+both in `entkt.query` alongside the relocated `QueryFlag`); the
+Postgres driver lowers the shape into a source-id `IN` subquery
+preserving source `where` / `orderBy` / `limit` / `offset`
+(`PredicateSqlBuilder`), and interceptor limit operations now apply
+to `ReadOperation.EDGE_TRAVERSAL`. Pinned by `integration-tests`'
+`EdgeTraversalSourceShapeIntegrationTest` (source shape on direct /
+child-to-parent / M2M traversal, target-shape independence, no
+fan-out duplicates, interceptor predicate + limit narrowing,
+`*OrError` rejection mapping, the source-vs-target LOAD privacy
+split, chained hops, shaped explain output), `postgres`'
+`PostgresDriverTest` (byte-exact SQL for all three lowering shapes,
+offset-only and M2M-offset bounds, and the no-bounds subquery
+rendering its `ORDER BY` for standalone-query parity) and
+`PredicateSqlBuilderTest` (shaped-subquery param order and fail-loud
+pgvector dimension validation with and without bounds), `codegen`'s
+`EdgeCodegenTest`
+(shaped bridge construction), and `runtime`'s
+`InterceptorRuntimeTypesTest` (the full `limitOpsApply` table). See
+[Queries → Edge traversal](../../04-queries.md) for the user-facing
+documentation.
 
 ## Summary
 

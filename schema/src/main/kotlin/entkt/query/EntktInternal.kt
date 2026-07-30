@@ -27,6 +27,12 @@ package entkt.query
  *   Column subclasses, and OrderField constructors stay public: their
  *   residual hole surfaces at driver-render time and does not gate
  *   walker-cast soundness.)
+ * - **Shaped traversal bridge constructors**
+ *   ([Predicate.HasEdgeFromShape], [Predicate.HasM2MEdgeFromShape]):
+ *   the edge-name/table pairing against the embedded
+ *   [TraversalSourceShape]'s entity scope is established by generated
+ *   `queryX()` traversal code from the schema; a hand-built mismatch
+ *   would lower into a subquery against the wrong table or column.
  * - **The raw interceptor registry** (`EntInterceptorsConfig` access via
  *   `entityInterceptors`, `addEntity`): registration is scope-key-keyed
  *   with an unchecked cast, so untyped access could bind a

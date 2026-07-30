@@ -3,8 +3,12 @@
 package entkt.postgres
 
 import entkt.postgres.vector.PgVector
+import entkt.postgres.vector.cosineDistance
+import entkt.query.Column
 import entkt.query.Op
+import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.query.TraversalSourceShape
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
@@ -64,6 +68,7 @@ class PredicateSqlBuilderTest {
         ),
         edges = mapOf(
             "comments" to EdgeMetadata(targetTable = "comments", sourceColumn = "id", targetColumn = "post_id"),
+            "author" to EdgeMetadata(targetTable = "users", sourceColumn = "author_id", targetColumn = "id"),
         ),
     )
 
@@ -313,5 +318,64 @@ class PredicateSqlBuilderTest {
             )
         }
         assertTrue("expects a 3-dimensional vector, got 1" in ex.message!!, ex.message ?: "")
+    }
+
+    // ---------- shaped traversal source ----------
+
+    private fun userShape(
+        orderBy: List<OrderField<Any>> = emptyList(),
+        limit: Int? = null,
+        offset: Int? = null,
+    ) = TraversalSourceShape<Any>(
+        table = "users",
+        selectedColumn = "id",
+        predicates = emptyList(),
+        orderBy = orderBy,
+        limit = limit,
+        offset = offset,
+        flags = emptySet(),
+    )
+
+    @Test
+    fun `shaped source distance ordering binds the operand after subquery WHERE params`() {
+        val shape = TraversalSourceShape<Any>(
+            table = "users",
+            selectedColumn = "id",
+            predicates = listOf(Predicate.Leaf("age", Op.GTE, 18)),
+            orderBy = listOf(
+                Column<Any, PgVector>("embedding")
+                    .cosineDistance(PgVector.of(floatArrayOf(1f, 0f, 0f))).asc(),
+            ),
+            limit = 5,
+            offset = null,
+            flags = emptySet(),
+        )
+        val (sql, params) = lower(Predicate.HasEdgeFromShape<Any, Any>("author", shape), schema = posts)
+        assertEquals(
+            """t0."author_id" IN (SELECT t1."id" FROM "users" AS t1 WHERE t1."age" >= ? """ +
+                """ORDER BY t1."embedding" <=> ? ASC NULLS LAST LIMIT 5)""",
+            sql,
+        )
+        assertEquals(FieldType.INT, params[0].type)
+        assertEquals(FieldType.PGVECTOR, params[1].type)
+    }
+
+    @Test
+    fun `shaped source without bounds still rejects a wrong-dimension distance operand`() {
+        // The subquery renders its ORDER BY (and so validates the
+        // operand) even when no limit/offset is present — the same
+        // query with limit(5) throws, and validity must not depend on
+        // whether bounds are present.
+        val shape = userShape(
+            orderBy = listOf(
+                Column<Any, PgVector>("embedding")
+                    .cosineDistance(PgVector.of(floatArrayOf(1f, 0f))).asc(),
+            ),
+        )
+        val ex = assertFailsWith<IllegalArgumentException> {
+            lower(Predicate.HasEdgeFromShape<Any, Any>("author", shape), schema = posts)
+        }
+        assertTrue("orderBy distance on 'users.embedding'" in ex.message!!, ex.message ?: "")
+        assertTrue("expects a 3-dimensional vector, got 2" in ex.message!!, ex.message ?: "")
     }
 }

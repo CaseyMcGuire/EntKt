@@ -1559,16 +1559,40 @@ class EdgeCodegenTest {
         assert(output.contains("fun queryPets(block: PetQuery.() -> Unit = {}): PetQuery")) {
             "Should generate traversal queryPets(block: PetQuery.() -> Unit = {})\n$output"
         }
-        // Walker generates typed HasEdgeWith<TargetEntity, SourceEntity>.
+        // Traversal generates a shaped bridge typed
+        // HasEdgeFromShape<TargetEntity, SourceEntity>.
         // Owner.queryPets → Pet candidates filtered by inverse "owner"
-        // edge pointing back to Owner; so HasEdgeWith<Pet, Owner>.
-        // KotlinPoet may wrap the long line between args, so match on
-        // a contiguous substring of the type+name pair.
-        assert(output.contains("Predicate.HasEdgeWith<Pet, Owner>(\"owner\",")) {
-            "Should reference the inverse edge name in HasEdgeWith<Pet, Owner>\n$output"
+        // edge pointing back to Owner; so HasEdgeFromShape<Pet, Owner>.
+        assert(output.contains("Predicate.HasEdgeFromShape<Pet, Owner>(")) {
+            "Should construct HasEdgeFromShape<Pet, Owner> naming the inverse edge\n$output"
         }
-        assert(output.contains("Predicate.HasEdge<Pet>(\"owner\")")) {
-            "Should fall back to HasEdge<Pet> when parent has no wheres\n$output"
+        // The embedded shape carries the post-interceptor source
+        // query as written: predicates, order, limit, offset, flags.
+        // Owner owns no FK, so the source subquery selects owners.id.
+        assert(output.contains("selectedColumn = \"id\"")) {
+            "Shape should select the source id column for a to-many traversal\n$output"
+        }
+        for (field in listOf(
+            "table = sourceSpec.table",
+            "predicates = sourceSpec.predicates",
+            "orderBy = sourceSpec.orderBy",
+            "limit = sourceSpec.limit",
+            "offset = sourceSpec.offset",
+            "flags = sourceSpec.flags",
+        )) {
+            assert(output.contains(field)) {
+                "TraversalSourceShape should embed the post-interceptor $field\n$output"
+            }
+        }
+        // The predicate-only fold is gone: no HasEdgeWith bridge and
+        // no HasEdge fallback in the traversal lambda. (The walker's
+        // HasEdgeWith rewrites are typed <Owner, Pet> here, so this
+        // substring is traversal-specific.)
+        assert(!output.contains("Predicate.HasEdgeWith<Pet, Owner>(")) {
+            "Traversal should no longer fold predicates into HasEdgeWith\n$output"
+        }
+        assert(!output.contains("Predicate.HasEdge<Pet>(\"owner\")")) {
+            "Traversal should no longer fall back to a bare HasEdge bridge\n$output"
         }
     }
 
@@ -1582,10 +1606,14 @@ class EdgeCodegenTest {
             "Should generate traversal queryOwner(block: OwnerQuery.() -> Unit = {})\n$output"
         }
         // Pet.queryOwner → Owner candidates filtered by inverse "pets"
-        // edge on Owner pointing to Pet; HasEdgeWith<Owner, Pet>.
-        // KotlinPoet may wrap between args.
-        assert(output.contains("Predicate.HasEdgeWith<Owner, Pet>(\"pets\",")) {
-            "Should reference Owner's 'pets' edge as the inverse in HasEdgeWith<Owner, Pet>\n$output"
+        // edge on Owner pointing to Pet; HasEdgeFromShape<Owner, Pet>.
+        assert(output.contains("Predicate.HasEdgeFromShape<Owner, Pet>(")) {
+            "Should construct HasEdgeFromShape<Owner, Pet> naming Owner's 'pets' edge\n$output"
+        }
+        // Child-to-parent traversal: Pet owns the FK, so the source
+        // subquery selects pets.owner_id.
+        assert(output.contains("selectedColumn = \"owner_id\"")) {
+            "Shape should select the source FK column for a child-to-parent traversal\n$output"
         }
     }
 
@@ -1672,12 +1700,12 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `query M2M traversal lowers to HasM2MEdgeFrom against source schema`() {
+    fun `query M2M traversal lowers to HasM2MEdgeFromShape against source schema`() {
         // queryMembers() on TeamQuery walks back through the junction
         // using the source-side forward-edge metadata, via a
-        // HasM2MEdgeFrom predicate naming the source table ("teams")
-        // and the forward edge ("members"). No reverse-edge name on
-        // Pet's SCHEMA is referenced.
+        // HasM2MEdgeFromShape predicate embedding the source shape
+        // and naming the forward edge ("members"). No reverse-edge
+        // name on Pet's SCHEMA is referenced.
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString()
@@ -1685,11 +1713,18 @@ class EdgeCodegenTest {
         assert(output.contains("fun queryMembers(block: PetQuery.() -> Unit = {}): PetQuery")) {
             "Should generate M2M traversal queryMembers(block: PetQuery.() -> Unit = {})\n$output"
         }
-        // M2M traversal: bridge is HasM2MEdgeFrom<TargetEntity, SourceEntity>.
+        // M2M traversal: bridge is HasM2MEdgeFromShape<TargetEntity, SourceEntity>.
         // Team.queryMembers → Pet candidates filtered through junction
-        // by Team's "members" forward edge: HasM2MEdgeFrom<Pet, Team>.
-        assert(output.contains("Predicate.HasM2MEdgeFrom<Pet, Team>(\"teams\", \"members\", parent)")) {
-            "Should lower to HasM2MEdgeFrom<Pet, Team> against the source schema\n$output"
+        // by Team's "members" forward edge: HasM2MEdgeFromShape<Pet, Team>.
+        assert(output.contains("Predicate.HasM2MEdgeFromShape<Pet, Team>(")) {
+            "Should lower to HasM2MEdgeFromShape<Pet, Team> against the source schema\n$output"
+        }
+        // The junction references the source's id column.
+        assert(output.contains("selectedColumn = \"id\"")) {
+            "M2M shape should select the junction-referenced source id column\n$output"
+        }
+        assert(!output.contains("Predicate.HasM2MEdgeFrom<Pet, Team>(")) {
+            "Traversal should no longer construct the predicate-only HasM2MEdgeFrom bridge\n$output"
         }
         assert(!output.contains("Predicate.HasEdgeWith<Pet, Team>(\"teams_members\"")) {
             "Should not reference the synthesized reverse-edge name\n$output"

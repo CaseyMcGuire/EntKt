@@ -56,11 +56,13 @@ class TagController(private val client: EntClient) {
      * Uses the generated forward M2M traversal `TagQuery.queryPosts()`,
      * declared by `Tag.posts = manyToMany<Post>(...).throughEntity<PostTag>(...)`
      * in [example.schema.Tag]. The traversal lowers to a
-     * `Predicate.HasM2MEdgeFrom("tags", "posts", <tag-filter>)` evaluated
-     * against each candidate `Post` row; the runtime walks the junction
-     * backwards using `Tag`'s own forward-edge metadata. No reverse-edge
-     * entry is synthesized on `Post`'s schema — this is the explicit-API
-     * contract from M2M schema modeling.
+     * `Predicate.HasM2MEdgeFromShape("posts", <shaped tag source>)`
+     * evaluated against each candidate `Post` row — the shape carries
+     * the tag query as written (predicates, order, limit, offset) —
+     * and the runtime walks the junction backwards using `Tag`'s own
+     * forward-edge metadata. No reverse-edge entry is synthesized on
+     * `Post`'s schema — this is the explicit-API contract from M2M
+     * schema modeling.
      */
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: Int): List<PostResponse> {

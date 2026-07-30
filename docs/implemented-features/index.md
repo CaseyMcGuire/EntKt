@@ -27,6 +27,7 @@ Open or speculative RFCs remain in the
 - [Aggregations](query/aggregations.md)
 - [Indexed Query Helpers](query/indexed-query-helpers.md)
 - [Edge Traversal Query Blocks](query/edge-traversal-query-blocks.md)
+- [Edge Traversal Source Shape](query/edge-traversal-source-shape.md)
 
 ## Privacy And Validation
 

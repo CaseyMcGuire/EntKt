@@ -83,9 +83,9 @@ Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
   `explainVisibleCount`/`explainRawCount`)
 - Generated edge-traversal `queryX()` methods fire source
   interceptors with `EDGE_TRAVERSAL` before materializing the
-  bridging `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge`
+  shaped bridging `HasEdgeFromShape` / `HasM2MEdgeFromShape`
   predicate; the target query carries `traversalSourceEntity` /
-  `traversalEdgeName` / `traversalPath` / `traversalStructural`
+  `traversalEdgeName` / `traversalPath` / `deferredSourceStep`
   fields so its terminal sees the correct `QueryContext`
 - Eager-load (`.with{Edge}` subqueries) fires target interceptors
   with `EAGER_LOAD` (`context.isEagerSubquery == true`); the IN
@@ -101,12 +101,15 @@ Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
 
 ### Notes
 
-- `Predicate.HasM2MEdgeFrom` is the internal bridge used by
+- `Predicate.HasM2MEdgeFromShape` is the internal bridge used by
   generated M2M traversal (`queryX()`), not the public M2M
   `has` / `hasWhere` shape. It is skipped by the edge-predicate
   walker because the source step has already run through
   `EDGE_TRAVERSAL`, and the target entity's interceptors run at
-  the traversal terminal.
+  the traversal terminal. (The predicate-only `HasM2MEdgeFrom`
+  remains in place but is no longer constructed by traversal —
+  see the [shape-preserving traversal
+  note](edge-traversal-source-shape.md).)
 - Soft-delete filtering now ships as the separate
   [Soft Delete Convention](../schema/soft-delete.md): a normal
   `DeletedAt` mixin plus an application-registered
@@ -237,19 +240,19 @@ interface InterceptScope<E : Any> {
     fun requireLimitAtMost(max: Int)
 
     /** Sets a default limit on read shapes where limit operations
-     *  apply (V1: `ALL` only — `EDGE_TRAVERSAL` is a V1 deferral,
-     *  see "Limit semantics by read shape"). No-op if a limit is
+     *  apply (`ALL` and `EDGE_TRAVERSAL` — see "Limit semantics by
+     *  read shape"). No-op if a limit is
      *  already in place, AND a silent no-op on read shapes where
      *  row limits have no meaning (`BY_ID`, `FIRST`, `RAW_COUNT`,
      *  `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`,
-     *  `EAGER_LOAD`, `EDGE_PREDICATE`, `EDGE_TRAVERSAL` in V1).
+     *  `EAGER_LOAD`, `EDGE_PREDICATE`).
      *  See "Limit semantics by read shape" for the full table.
      *  [default] must be `>= 0` (same rules as
      *  [requireLimitAtMost]). */
     fun setDefaultLimitIfAbsent(default: Int)
 
     /** Rejects the query (on read shapes where limit operations apply
-     *  — V1: `ALL` only) if the effective limit (after any
+     *  — `ALL` and `EDGE_TRAVERSAL`) if the effective limit (after any
      *  prior interceptor's [setDefaultLimitIfAbsent] /
      *  [requireLimitAtMost]) is null (unbounded) or exceeds [max].
      *  Use this for strict-reject max-limit policies instead of
@@ -777,11 +780,13 @@ pre-deferral snapshot semantics — the caller's mental model is
 "the bridge is built when I called `queryX()`, not when I call
 the terminal."
 
-**Source `orderBy` / `limit` / `offset` are dropped at the bridge
-boundary — including caller-authored ones.** The bridging
-predicate (`HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge`) takes
-only an `inner: Predicate?`; there's no slot for ordering or row
-count on an EXISTS subquery. So:
+**Source `orderBy` / `limit` / `offset` survive the bridge
+boundary** (shape-preserving traversal, RFC
+`edge-traversal-source-shape`). The bridging predicate
+(`HasEdgeFromShape` / `HasM2MEdgeFromShape`) embeds the source's
+full post-interceptor shape — predicates, order, limit, offset,
+flags — as a `TraversalSourceShape`, which the driver lowers into
+a source-id subquery (`IN`-from-subquery). So:
 
 ```kotlin
 client.users.query {
@@ -790,27 +795,18 @@ client.users.query {
 }.queryPosts().allOrThrow()
 ```
 
-does **NOT** mean "posts belonging to the first 10
-most-recently-created users." It means "posts belonging to users
-matching the source `predicates`." The source's `limit(10)` /
-`orderBy(...)` / `offset(...)` are silently ignored at the bridge
-boundary. Callers that need "posts of the first N users" must
-materialize the source query first (`val users =
-client.users.query { orderBy(...); limit(10) }.allOrThrow();
-client.posts.query { where(Post.authorId inList users.map { it.id }) }.allOrThrow()`)
-until a future RFC introduces a richer lowering (CTE or
-IN-from-subquery with limit/offset/order) that the bridge can
-honor.
+means "posts belonging to the 10 most-recently-created users" —
+the traversal follows the source query as written. Because the
+embedded shape is the *post-interceptor* shape, source-step
+interceptor mutations (added predicates, set-or-clamped limits)
+narrow which source rows are traversed exactly as they narrow a
+root read. Source ordering selects the source row set only; it
+does not order the returned target rows.
 
-Source-step interceptors can still *read* the source's
-limit/orderBy/offset via `scope.shape` (the snapshot includes
-them so interceptors can make branching decisions like "reject
-if source has no caller limit set"). The snapshot doesn't drop
-those fields because they're observable to the source's
-interceptor chain — they just don't contribute to the bridge.
-This is the same V1 lowering constraint that drives the
-EDGE_TRAVERSAL silent-no-op on interceptor limit operations
-(see "Limit semantics by read shape" below).
+Source-step interceptors read the source's limit/orderBy/offset
+via `scope.shape` as before, and their limit mutations now
+contribute to the bridge (see "Limit semantics by read shape"
+below).
 
 V1 does NOT add a separate `QueryTraverser` middleware concept
 (Entgo's name for the equivalent surface). Instead, generated
@@ -850,16 +846,6 @@ based on the operation's `ReadOperation`:
     `deleteMany(...)` into "delete the first 500 matching rows"
     without the caller knowing). Predicate / annotation / reject still
     apply.
-  - `EDGE_TRAVERSAL` — **V1 deferral.** Source-step interceptor
-    limit operations don't have a row-limit slot on the bridging
-    `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge` predicate, which
-    compiles to EXISTS. Honoring limit ops here would require
-    lowering source-with-limit into a CTE or IN-from-subquery —
-    structural work beyond V1. The framework silent-no-ops these
-    so an interceptor's `requireLimitAtMost(N)` set during
-    `queryX()` doesn't silently fail to constrain anything. A
-    future RFC introducing the CTE lowering can flip
-    `EDGE_TRAVERSAL` back into "apply normally."
   - `VISIBLE_COUNT`, `VISIBLE_EXISTS` — these materialize rows to apply
     LOAD privacy, but applying a row limit silently corrupts the answer
     (`setDefaultLimitIfAbsent(100)` on `visibleCount()` would mean
@@ -889,6 +875,14 @@ gets it.
   - `ALL` — `allOrThrow` / `allOrError` / `visibleAll` /
     `visibleAllOrError`. Max-limit guards constrain the underlying
     row scan, which is exactly the surface they're meant to protect.
+  - `EDGE_TRAVERSAL` — source steps of `queryX()` traversal. The
+    bridging `HasEdgeFromShape` / `HasM2MEdgeFromShape` predicate
+    embeds the post-interceptor source shape (lowered to a
+    source-id subquery with `ORDER BY` / `LIMIT` / `OFFSET`), so
+    an interceptor's `setDefaultLimitIfAbsent(N)` /
+    `requireLimitAtMost(N)` bounds which source rows are
+    traversed. (Formerly a V1 silent no-op when the bridge was
+    predicate-only; flipped by RFC `edge-traversal-source-shape`.)
 
     **`visibleAll` / `visibleAllOrError` — limit caps storage
     scan, not visible result count (V1).** When an effective
@@ -1551,14 +1545,15 @@ Before implementation, add tests for:
 - all three limit operations (`setDefaultLimitIfAbsent`, `requireLimitAtMost`,
   `rejectIfLimitGreaterThan`) are silent no-ops for `BY_ID`, `FIRST`,
   `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`, `EAGER_LOAD`,
-  `EDGE_PREDICATE`, and `EDGE_TRAVERSAL` operations — regardless of
+  and `EDGE_PREDICATE` operations — regardless of
   whether a prior limit is in place — per the Limit-semantics-by-read-shape
-  rules (`EDGE_TRAVERSAL` is V1-deferred until the source-with-limit
-  lowering lands; see the Limit-semantics section)
-- limit operations apply normally for `ALL` operations only in V1:
-  `setDefaultLimitIfAbsent` sets a limit when absent,
+  rules
+- limit operations apply normally for `ALL` and `EDGE_TRAVERSAL`
+  operations: `setDefaultLimitIfAbsent` sets a limit when absent,
   `requireLimitAtMost` clamps down, `rejectIfLimitGreaterThan` rejects
-  with `QueryRejected.code == "max_limit_exceeded"`
+  with `QueryRejected.code == "max_limit_exceeded"` (`EDGE_TRAVERSAL`
+  joined this bucket with the shape-preserving traversal lowering, RFC
+  `edge-traversal-source-shape`)
 - `addAnnotation` appears in explain / observability output but does not
   affect the query plan
 - LOAD privacy still runs after intercepted reads

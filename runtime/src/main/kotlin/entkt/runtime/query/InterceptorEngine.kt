@@ -4,6 +4,7 @@ import entkt.runtime.result.EntOperation
 
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.query.QueryFlag
 
 /**
  * Mutable per-terminal-call query spec the interceptor engine
@@ -156,10 +157,11 @@ public class QuerySpecBuilder<E : Any> public constructor(
  * lambda that generated `queryX()` methods stash on the target
  * query: at terminal time the target's `runReadInterceptors`
  * invokes the lambda, runs the source entity's interceptor chain
- * with operation = `EDGE_TRAVERSAL`, and folds the post-interceptor
- * source predicates into [bridge] (the `HasEdgeWith` /
- * `HasM2MEdgeFrom` / `HasEdge` predicate that constrains the
- * target). [annotations] carry forward any
+ * with operation = `EDGE_TRAVERSAL`, and embeds the post-
+ * interceptor source shape — predicates, order, limit, offset —
+ * into [bridge] (the `HasEdgeFromShape` / `HasM2MEdgeFromShape`
+ * predicate that constrains the target). [annotations] carry
+ * forward any
  * `scope.addAnnotation(...)` contributions made by source-step
  * interceptors so they surface on the final terminal's
  * `QueryPlan.annotations`.
@@ -201,10 +203,16 @@ public data class FrozenQuerySpec<E : Any> public constructor(
 
 /**
  * Whether limit operations have meaningful effect on the given
- * [ReadOperation]. V1 honors limit operations only for `ALL` —
- * every other shape silent-no-ops them.
+ * [ReadOperation]. Honored for `ALL` and `EDGE_TRAVERSAL`; every
+ * other shape silent-no-ops them.
  *
  * Rationale per shape:
+ * - `EDGE_TRAVERSAL`: the source step's post-interceptor shape —
+ *   predicates, order, limit, offset — embeds in a shaped bridge
+ *   (`HasEdgeFromShape` / `HasM2MEdgeFromShape`) that drivers lower
+ *   into a source-id subquery, so an interceptor-set or -clamped
+ *   limit narrows which source rows are traversed exactly as it
+ *   narrows an `ALL` read.
  * - `BY_ID`, `FIRST`: intrinsic single-row result shape; clamping
  *   has no observable effect (limit is hard-coded to 1 / pk-lookup).
  * - `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`:
@@ -217,14 +225,6 @@ public data class FrozenQuerySpec<E : Any> public constructor(
  *   in Kotlin.
  * - `EDGE_PREDICATE`: compiles to EXISTS; row count has no
  *   meaning inside an EXISTS subquery.
- * - `EDGE_TRAVERSAL`: the source-step predicates fold into a
- *   bridging `HasEdgeWith` / `HasM2MEdgeFrom` / `HasEdge`
- *   predicate, which itself compiles to EXISTS — there is no
- *   row-limit slot on the bridge predicate. Honoring limit
- *   operations on EDGE_TRAVERSAL would require lowering source-
- *   with-limit into a CTE or IN-from-subquery, which is a
- *   structural change beyond V1. **V1 deferral:** limit operations
- *   are silent no-op on EDGE_TRAVERSAL until that lowering lands.
  *
  * Used by [InterceptScopeImpl] / [GlobalInterceptScopeImpl] to
  * gate `requireLimitAtMost` / `setDefaultLimitIfAbsent` /
@@ -232,11 +232,12 @@ public data class FrozenQuerySpec<E : Any> public constructor(
  * doesn't corrupt `visibleCount` (which would otherwise count the
  * first 100 scanned rows rather than all visible rows), and a
  * `rejectIfLimitGreaterThan(10)` doesn't reject every `byIdOrNull` /
- * `rawCount` / `rawExists` / traversal call just because they have
- * null effective limits.
+ * `rawCount` / `rawExists` call just because they have null
+ * effective limits.
  */
 internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation) {
-    ReadOperation.ALL -> true
+    ReadOperation.ALL,
+    ReadOperation.EDGE_TRAVERSAL -> true
     ReadOperation.BY_ID,
     ReadOperation.FIRST,
     ReadOperation.RAW_COUNT,
@@ -248,7 +249,6 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
     ReadOperation.RAW_AGGREGATE,
     ReadOperation.EAGER_LOAD,
     ReadOperation.EDGE_PREDICATE,
-    ReadOperation.EDGE_TRAVERSAL,
     // DELETE_CANDIDATES: silent no-op so a MaxLimitInterceptor
     // doesn't accidentally turn deleteMany(...) into "delete the
     // first N matching rows" without the caller knowing — that's

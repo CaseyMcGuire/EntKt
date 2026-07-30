@@ -27,7 +27,7 @@ Specifically implemented:
   metadata or methods on schema Y, even by string name.
 - Forward query traversal works without synthesized reverse names. The
   generated `queryX(): TargetQuery` method lowers to a
-  `Predicate.HasM2MEdgeFrom(sourceTable, edgeName, parent)` evaluated
+  `Predicate.HasM2MEdgeFromShape(edgeName, sourceShape)` evaluated
   against each candidate target row; the runtime walks the junction
   backwards using the *source* schema's own forward-edge metadata, with
   no dependency on a reverse entry in the target's schema.
@@ -259,7 +259,7 @@ introduces metadata or methods on schema Y, even by string name.
 
 Forward query traversal still works without any reverse metadata. The
 generated `queryX(): TargetQuery` method lowers to a
-`Predicate.HasM2MEdgeFrom(sourceTable, forwardEdgeName, parent)` evaluated
+`Predicate.HasM2MEdgeFromShape(forwardEdgeName, sourceShape)` evaluated
 against each candidate target row; the runtime walks the junction backwards
 using the *source* schema's own forward-edge metadata. No reverse-edge entry
 is needed on the target schema for the predicate to resolve.
@@ -770,7 +770,7 @@ direct-driver path.
   [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
   design.
 5. Keep through-entity edges repo-only for write paths. Forward query
-   traversal lowers to `Predicate.HasM2MEdgeFrom` against the source
+   traversal lowers to `Predicate.HasM2MEdgeFromShape` against the source
    schema's forward-edge metadata, so no target-side reverse entry is
    needed at runtime.
 
@@ -832,13 +832,15 @@ Before implementation, add tests for:
   entry; that the target's `Edges` inner data class has no
   reverse-side field; and that no `EdgeRef` / `queryX()` / `withX { }`
   is emitted on the target's companion / query class
-- forward query traversal lowers to `Predicate.HasM2MEdgeFrom(sourceTable,
-  forwardEdgeName, parent)` against the candidate target row; the runtime
-  walks the junction backwards using the source schema's own
-  forward-edge metadata. Test asserts the generated `queryX()` body
-  emits `HasM2MEdgeFrom` (not `HasEdgeWith` against a synthesized
-  reverse name) and that the runtime returns the right targets when
-  the source-side filter matches a subset of source rows
+- forward query traversal lowers to `Predicate.HasM2MEdgeFromShape(
+  forwardEdgeName, sourceShape)` against the candidate target row (at the
+  time of this RFC, the predicate-only `HasM2MEdgeFrom`; upgraded by the
+  shape-preserving traversal RFC); the runtime walks the junction
+  backwards using the source schema's own forward-edge metadata. Test
+  asserts the generated `queryX()` body emits `HasM2MEdgeFromShape`
+  (not `HasEdgeWith` against a synthesized reverse name) and that the
+  runtime returns the right targets when the source-side filter matches
+  a subset of source rows
 - explicit opposite-side `throughEntity(...)` traversal declarations for the
   same junction relationship are allowed when both sides use `throughEntity(...)`.
   Each side produces its own forward traversal surface; nothing is merged
