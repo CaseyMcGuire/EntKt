@@ -408,11 +408,19 @@ internal fun buildFirstOrNull(schemaName: String, entityClass: ClassName, hasEdg
             "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull()",
             entityClass,
         )
-        .addStatement("val entity = row?.let { %T.fromRow(it) } ?: return null", entityClass)
-        .addStatement("if (c.%L.hasLoadPrivacy()) c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName, repoPropName)
     if (hasEdges) {
-        builder.addStatement("return loadEdges(listOf(entity), privacy).first()")
+        // No `?: return null` before loadEdges: the EAGER_LOAD
+        // interceptor pass fires on every configured eager subquery
+        // even when no row matched — interceptor firing must not
+        // depend on what the database returned, and
+        // `explainFirstOrNull` models the eager shapes
+        // unconditionally. An empty batch loads nothing.
+        builder.addStatement("val entity = row?.let { %T.fromRow(it) }", entityClass)
+        builder.addStatement("if (entity != null && c.%L.hasLoadPrivacy()) c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName, repoPropName)
+        builder.addStatement("return loadEdges(listOfNotNull(entity), privacy).firstOrNull()")
     } else {
+        builder.addStatement("val entity = row?.let { %T.fromRow(it) } ?: return null", entityClass)
+        builder.addStatement("if (c.%L.hasLoadPrivacy()) c.%L.evaluateLoadPrivacy(privacy, entity)", repoPropName, repoPropName)
         builder.addStatement("return entity")
     }
     return builder.build()
@@ -548,14 +556,26 @@ internal fun buildFirstVisibleOrNull(schemaName: String, entityClass: ClassName,
             // privacy rules — the branch must not be observable.
             .beginControlFlow("if (!c.%L.hasLoadPrivacy())", repoPropName)
             .addStatement("val limit = %L", SINGLE_ROW_LIMIT_EXPR)
-            .addStatement(
-                "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull() ?: return null",
-                entityClass,
-            )
-            .addStatement("val entity = %T.fromRow(row)", entityClass)
             .also {
-                if (hasEdges) it.addStatement("return loadEdges(listOf(entity), privacy).first()")
-                else it.addStatement("return entity")
+                if (hasEdges) {
+                    // No `?: return null` before loadEdges — same
+                    // contract as firstOrNull: the EAGER_LOAD
+                    // interceptor pass fires even when no row
+                    // matched. An empty batch loads nothing.
+                    it.addStatement(
+                        "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull()",
+                        entityClass,
+                    )
+                    it.addStatement("val entity = row?.let { %T.fromRow(it) }", entityClass)
+                    it.addStatement("return loadEdges(listOfNotNull(entity), privacy).firstOrNull()")
+                } else {
+                    it.addStatement(
+                        "val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull() ?: return null",
+                        entityClass,
+                    )
+                    it.addStatement("val entity = %T.fromRow(row)", entityClass)
+                    it.addStatement("return entity")
+                }
             }
             .endControlFlow()
             // With LOAD privacy: cap the scan so the in-process
@@ -591,7 +611,14 @@ internal fun buildFirstVisibleOrNull(schemaName: String, entityClass: ClassName,
                 else it.addStatement("return entity")
             }
             .endControlFlow()
-            .addStatement("return null")
+            .also {
+                // Loop exhausted without a visible root: with eager
+                // edges configured, run the EAGER_LOAD pass once on
+                // an empty batch — interceptor firing must not
+                // depend on which rows were visible.
+                if (hasEdges) it.addStatement("return loadEdges(emptyList(), privacy).firstOrNull()")
+                else it.addStatement("return null")
+            }
             .build()
     )
     return builder.build()

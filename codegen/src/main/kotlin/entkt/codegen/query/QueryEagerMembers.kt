@@ -98,7 +98,12 @@ internal fun buildEagerEdgeSpec(
 internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
     val entityClass = resolved.entityClass
     val body = CodeBlock.builder()
-    body.addStatement("if (results.isEmpty()) return results")
+    // No empty-results shortcut: the EAGER_LOAD interceptor pass
+    // fires on every configured eager subquery even when the root
+    // matched nothing — whether an interceptor runs, and whether it
+    // can `reject()`, must not depend on what the database returned.
+    // `explain()` fires the pass unconditionally too. Only the
+    // driver fetches inside the per-edge blocks are data-gated.
     body.addStatement("var entities = results")
 
     for (re in resolved.edges) {
@@ -151,12 +156,13 @@ private fun emitToManyEagerBlock(
     )
     // Bounds are resolved before the fetch so a window that admits
     // nothing skips the round trip; every row would be dropped by the
-    // `take(0)` below. The interceptor pass above still runs — it
-    // fires on every eager subquery regardless of bounds.
+    // `take(0)` below. An empty parent set skips it too — the IN
+    // could match nothing. The interceptor pass above still runs —
+    // it fires on every eager subquery regardless of bounds or data.
     body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
     body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
     body.addStatement(
-        "val targetRows = if (perGroupLimit > 0) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
+        "val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
         targetClass,
     )
     body.addStatement(
@@ -171,6 +177,7 @@ private fun emitToManyEagerBlock(
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
     )
+    emitEmptyGroupsNestedPass(body)
     body.addStatement(
         "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
         re.edgePropName,
@@ -211,7 +218,7 @@ private fun emitHasOneEagerBlock(
     body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
     body.addStatement("val targetInWindow = perGroupOffset == 0 && perGroupLimit > 0")
     body.addStatement(
-        "val targetRows = if (targetInWindow) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
+        "val targetRows = if (targetInWindow && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
         targetClass,
     )
     body.addStatement(
@@ -232,11 +239,29 @@ private fun emitHasOneEagerBlock(
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
     )
+    emitEmptyGroupsNestedPass(body)
     body.addStatement(
         "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id]?.firstOrNull())) }",
         re.edgePropName,
     )
     body.endControlFlow()
+}
+
+/**
+ * Emit the zero-group nested pass for the grouped eager paths
+ * (hasMany / hasOne / M2M): nested eager loads run once per parent
+ * group, so with no groups the nested EAGER_LOAD interceptor pass
+ * would silently not fire — making a nested interceptor's view of
+ * the query (and its ability to `reject()`) depend on what level-1
+ * data came back. One empty-batch pass keeps nested firing
+ * data-independent, matching the belongsTo path (whose single
+ * unconditional `loadEdges` call has these semantics already) and
+ * `explain()`'s unconditional recursion into nested eager shapes.
+ */
+private fun emitEmptyGroupsNestedPass(body: CodeBlock.Builder) {
+    body.addStatement(
+        "if (loadedGroups.isEmpty()) subQuery.loadEdges(emptyList(), eagerPrivacyContext)",
+    )
 }
 
 /**
@@ -343,9 +368,13 @@ private fun emitM2MEagerBlock(
     body.addStatement("val sourceIds = entities.map { it.id }")
     // Query junction table (no interceptors — the junction
     // is internal storage, not an entity with interceptors).
-    // Junction-table query has no entity scope.
+    // Junction-table query has no entity scope. Skipped when there
+    // are no parents at all — nothing could match — but issued for
+    // any non-empty parent set even under `limit(0)`: its rows
+    // produce the `targetIds` the EAGER_LOAD interceptor pass
+    // predicates on.
     body.addStatement(
-        "val junctionRows = driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), emptyList(), null, null)",
+        "val junctionRows = if (sourceIds.isNotEmpty()) driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), emptyList(), null, null) else emptyList()",
         join.junctionTable, PREDICATE, Any::class.asClassName(), join.junctionSourceColumn, OP,
     )
     body.addStatement(
@@ -431,6 +460,7 @@ private fun emitM2MEagerBlock(
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
     )
+    emitEmptyGroupsNestedPass(body)
     body.addStatement(
         "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = loadedGroups[entity.id] ?: emptyList())) }",
         re.edgePropName,

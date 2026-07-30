@@ -168,11 +168,12 @@ class QueryGeneratorTest {
             .toString().replace("\\s+".toRegex(), " ")
 
         // A window that admits nothing would discard every fetched row,
-        // so the round trip is pure waste. The interceptor pass above it
-        // still runs — it fires on every eager subquery regardless of
-        // bounds — so only the fetch is conditional.
-        assert(output.contains("val targetRows = if (perGroupLimit > 0) driver.query(")) {
-            "to-many eager fetch should be skipped when limit(0) admits nothing\n$output"
+        // so the round trip is pure waste — likewise when there are no
+        // parents at all and the IN could match nothing. The interceptor
+        // pass above it still runs — it fires on every eager subquery
+        // regardless of bounds or data — so only the fetch is conditional.
+        assert(output.contains("val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(")) {
+            "to-many eager fetch should be skipped when limit(0) or an empty parent set admits nothing\n$output"
         }
     }
 
@@ -193,8 +194,8 @@ class QueryGeneratorTest {
         assert(output.contains("val targetInWindow = perGroupOffset == 0 && perGroupLimit > 0")) {
             "hasOne should treat a positive offset as an empty window\n$output"
         }
-        assert(output.contains("val targetRows = if (targetInWindow) driver.query(")) {
-            "hasOne eager fetch should be gated on that window\n$output"
+        assert(output.contains("val targetRows = if (targetInWindow && sourceIds.isNotEmpty()) driver.query(")) {
+            "hasOne eager fetch should be gated on that window and a non-empty parent set\n$output"
         }
     }
 

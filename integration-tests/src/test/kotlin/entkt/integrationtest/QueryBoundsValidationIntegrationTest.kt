@@ -4,6 +4,7 @@ import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
@@ -515,6 +516,156 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
             "many-to-many with an empty junction should still fire target interceptors; observed: $ops",
+        )
+    }
+
+    @Test
+    fun `eager interceptors fire when the root query matches nothing`() {
+        val driver = resetAndDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+            interceptors {
+                users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
+            }
+        }
+
+        val articles = client.articles.query {
+            where(Article.title eq "no-such-title")
+            withAuthor()
+        }.allOrThrow()
+
+        // The root result decides what gets loaded, not whether the
+        // eager subquery exists. An empty root must fire the same
+        // EAGER_LOAD pass the relationship-empty and limit(0) cases
+        // fire — and the same pass `explain()` models unconditionally.
+        assertTrue(articles.isEmpty())
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "an empty root should still fire the target's EAGER_LOAD interceptors; observed: $ops",
+        )
+    }
+
+    @Test
+    fun `a rejecting eager interceptor rejects even when the root matches nothing`() {
+        val driver = resetAndDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+            interceptors {
+                users(
+                    QueryInterceptor { scope, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_LOAD) scope.reject("no eager users", code = "no_eager")
+                    },
+                    name = "user-rej",
+                )
+            }
+        }
+        val query = { client.articles.query { where(Article.title eq "no-such-title"); withAuthor() } }
+
+        val result = query().allOrError()
+
+        // Runtime agrees with explain: the plan records the eager
+        // rejection for the same query, so execution must reject too.
+        assertTrue(result is EntResult.Err)
+        val err = (result as EntResult.Err).error
+        assertTrue(err is EntError.QueryRejected, "expected QueryRejected, got $err")
+        assertEquals("no_eager", (err as EntError.QueryRejected).code)
+        assertTrue(query().explainAllOrThrow().eagerQueries.getValue("author").rejected)
+    }
+
+    @Test
+    fun `firstOrNull with no match still fires eager interceptors`() {
+        val driver = resetAndDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+            interceptors {
+                users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
+            }
+        }
+
+        assertNull(client.articles.query { where(Article.title eq "no-such-title"); withAuthor() }.firstOrNull())
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "firstOrNull with no match should still fire the eager pass; observed: $ops",
+        )
+
+        ops.clear()
+        assertNull(client.articles.query { where(Article.title eq "no-such-title"); withAuthor() }.firstVisibleOrNull())
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "firstVisibleOrNull with no match should still fire the eager pass; observed: $ops",
+        )
+    }
+
+    @Test
+    fun `an empty root fires many-to-many eager interceptors without querying the junction`() {
+        val counting = QueryCountingDriver(resetAndDriver())
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(counting) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                tags(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "tag-observer")
+            }
+        }
+
+        val posts = client.posts.query { where(Post.title eq "no-such"); withTags() }.allOrThrow()
+
+        assertTrue(posts.isEmpty())
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "an empty root should still fire M2M EAGER_LOAD interceptors; observed: $ops",
+        )
+        // With no parents there is nothing the junction IN could
+        // match — unlike the limit(0) case, where parents exist and
+        // the junction rows feed the interceptor pass's target ids.
+        assertFalse(
+            counting.queriedTables.contains("post_tags"),
+            "no parents — the junction fetch is pure waste; queried: ${counting.queriedTables}",
+        )
+        assertFalse(counting.queriedTables.contains("tags"))
+    }
+
+    @Test
+    fun `nested eager interceptors fire when the outer eager load matches nothing`() {
+        val driver = resetAndDriver()
+        val ops = mutableListOf<ReadOperation>()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies {
+                articles(AllowAllArticles)
+                users(OpenUser)
+            }
+            interceptors {
+                users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
+            }
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+        }
+        ops.clear()
+
+        // The user has no articles, so the nested withAuthor pass has
+        // zero parent groups. The only User-targeted EAGER_LOAD in
+        // this query is that nested pass — the root runs with ALL —
+        // so the assertion isolates nested firing.
+        client.users.query { withArticles { withAuthor() } }.allOrThrow()
+
+        assertTrue(
+            ops.contains(ReadOperation.EAGER_LOAD),
+            "nested EAGER_LOAD (author) should fire even with zero articles; observed: $ops",
         )
     }
 
