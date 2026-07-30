@@ -8,17 +8,19 @@ Possible future feature. This is not implemented.
 
 Replace nullable eager-edge properties with an explicit loaded-state wrapper.
 
-Today generated entities with edges use nullable containers:
+Today generated entities use a non-null `edges: Edges = Edges()` container
+with nullable per-edge properties:
 
 ```kotlin
-user.edges?.posts
+user.edges.posts
 ```
 
 The meaning is precise but awkward:
 
-- `edges == null`: no eager loading was requested
-- `edges.posts == null`: this specific edge was not eager-loaded
+- `edges.posts == null`: this edge was not eager-loaded
 - `edges.posts == emptyList()`: this edge was loaded and has no rows
+- for a to-one edge, `null` is ambiguous between "not loaded" and
+  "loaded, no related row"
 
 This RFC proposes generated edge state values that make loaded vs unloaded a
 first-class concept.
@@ -155,10 +157,9 @@ This is a programming error, not a privacy denial or driver failure.
 This is a breaking generated-API change.
 
 1. Introduce `EdgeState` runtime type and helpers.
-2. Generate `edges: Edges = Edges()` instead of nullable `edges`.
-3. Generate `EdgeState` fields instead of nullable edge fields.
-4. Update eager-loading code to write `Loaded(value)`.
-5. Update docs and examples from `edges?.posts` to
+2. Generate `EdgeState` fields instead of nullable edge fields.
+3. Update eager-loading code to write `Loaded(value)`.
+4. Update docs and examples from `edges.posts` to
    `edges.posts.loadedOrNull()` or `edges.posts.requireLoaded(...)`.
 
 ## Open Questions

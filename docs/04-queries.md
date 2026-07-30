@@ -533,7 +533,7 @@ val users = client.users.query {
 
 // Access loaded edges
 users.forEach { user ->
-    val posts: List<Post>? = user.edges?.posts
+    val posts: List<Post>? = user.edges.posts
     // null  = withPosts() was not called
     // []    = loaded, but no matching posts
     // [...]  = loaded with data
@@ -572,17 +572,21 @@ data class User(
     val id: UUID,
     val name: String,
     // ...
-    val edges: Edges?,
+    val edges: Edges = Edges(),
 ) {
     data class Edges(
-        val posts: List<Post>?,
+        val posts: List<Post>? = null,
     )
 }
 ```
 
-- `user.edges` is `null` when no eager loading was requested
-- `user.edges?.posts` is `null` for a specific edge that wasn't loaded
+The `edges` container itself is never null — it defaults to an empty
+`Edges()`. "Not loaded" is signaled per edge, one level down:
+
+- `user.edges.posts` is `null` when `withPosts()` was not called
 - An empty list means the edge was loaded but no related entities exist
+- To-one edge properties (e.g. `article.edges.author`) are also nullable;
+  for those, `null` means either "not loaded" or "loaded, no related row"
 
 ## Read-Path Interceptors
 
