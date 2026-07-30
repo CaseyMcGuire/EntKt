@@ -49,6 +49,22 @@ above it.
   the source step's flags without `:schema` depending on `:runtime`.
   _Migration:_ update imports to `entkt.query.QueryFlag`.
 
+- **Privacy-rule and validator contexts expose a read-only `EntReadClient`** (`codegen`, `runtime`)
+  `ctx.client` on the generated privacy rule contexts (LOAD / CREATE /
+  UPDATE / DELETE) and validator contexts is now the viewer-scoped,
+  read-only `EntReadClient` instead of the full `EntClient`: rule reads see
+  what the viewer being authorized can see, and writes, transactions, and
+  re-scoping no longer compile from rule code. Raw terminals (`rawCount` /
+  `rawExists` / raw aggregates, including the `*OrError` variants) throw
+  `IllegalStateException` at runtime on viewer-scoped readers. Hook
+  contexts keep the full `EntClient`. See the
+  [read-only privacy client note](../implemented-features/privacy-validation/read-only-privacy-client.md).
+  _Migration:_ retype rule helper signatures from `EntClient` to
+  `EntReadClient`; replace privacy-bypassing loads in rules with
+  LOAD-checked reads (`byIdOrNull` throws on a denied row) or the
+  `visible*` family (a denied row collapses to null/absent); move writes
+  out of rules into hooks or callers.
+
 - **`io.entkt:ent-viewer` renamed to `io.entkt:ent-viewer-core`** (`ent-viewer`)
   The viewer family now lives under one `ent-viewer/` folder as
   `ent-viewer-core` (framework-neutral) and `ent-viewer-spring` (Spring Boot
