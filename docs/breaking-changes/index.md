@@ -30,6 +30,19 @@ above it.
 
 ## Unreleased
 
+- **Auto-DDL fails on pre-existing tables whose body differs from the schema** (`postgres`)
+  Under `autoDdl = true`, registration now introspects tables that
+  already exist and compares columns, types, nullability, defaults, and
+  primary key against the requested schema (via the migration engine's
+  normalizer/differ). Previously `CREATE TABLE IF NOT EXISTS` silently
+  accepted any existing table and the first query or write failed — or
+  ran under different constraints than declared. A mismatch now fails
+  registration loudly, naming the drift, with nothing cached.
+  _Migration:_ none for compatible tables (equivalent bodies register as
+  before). For drifted tables, reconcile with a migration
+  (docs/09-migrations.md) or drop and re-register; auto-DDL never alters
+  an existing table.
+
 - **`RelationshipLockKey` rejects unsorted FK columns** (`runtime`)
   The public data-class constructor (and `copy()`) now `require`s
   `fkColumns` in canonical sorted order instead of silently representing

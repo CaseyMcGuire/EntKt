@@ -169,6 +169,18 @@ Whichever table is created first would reference one that doesn't exist
 yet. Instead, `registerAll()` runs two passes over the batch: every
 table, then every constraint.
 
+**Pre-existing tables are reconciled, not trusted.** `CREATE TABLE IF
+NOT EXISTS` is a silent no-op on an existing table whatever its shape,
+so before creating anything auto-DDL introspects the tables that
+already exist and compares their body — columns, types, nullability,
+defaults, primary key — against the requested schema, using the same
+normalizer and differ the migration engine uses. Present and
+equivalent → no-op; present and different → registration fails naming
+the drift, with nothing cached (the batch stays retryable). Auto-DDL
+never alters an existing table — reconciling drift is a migration's
+job. Indexes and foreign keys are reconciled separately with the same
+absent → create / different → fail policy.
+
 ### Registration
 
 `Driver.registerAll(schemas)` is the entry point. The generated

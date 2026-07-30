@@ -73,6 +73,48 @@ class PostgresIntrospector(
         }
     }
 
+    /**
+     * Table-body-only introspection: columns and primary keys, with
+     * indexes and foreign keys left empty. Auto-DDL's pre-existing-table
+     * guard compares only the body (its index / FK reconciliation runs
+     * separately with its own guards), and it runs on every registration
+     * of a not-yet-cached schema set, so skipping the index and FK
+     * catalog queries halves its per-table cost. Not part of the
+     * [DatabaseIntrospector] contract — migration flows need the full
+     * [introspect].
+     */
+    internal fun introspectTableBodies(managedTableNames: Set<String>): NormalizedSchema {
+        if (managedTableNames.isEmpty()) return NormalizedSchema(emptyMap())
+
+        dataSource.connection.use { conn ->
+            val existingTables = mutableSetOf<String>()
+            val placeholders = managedTableNames.joinToString(", ") { "?" }
+            conn.prepareStatement(
+                "SELECT table_name FROM information_schema.tables " +
+                    "WHERE table_schema = 'public' AND table_name IN ($placeholders)",
+            ).use { stmt ->
+                var i = 1
+                for (name in managedTableNames) stmt.setString(i++, name)
+                stmt.executeQuery().use { rs ->
+                    while (rs.next()) existingTables.add(rs.getString("table_name"))
+                }
+            }
+
+            val tables = mutableMapOf<String, NormalizedTable>()
+            for (tableName in existingTables) {
+                val columns = introspectColumns(conn, tableName)
+                val primaryKeys = introspectPrimaryKeys(conn, tableName)
+                tables[tableName] = NormalizedTable(
+                    name = tableName,
+                    columns = columns.map { it.copy(primaryKey = it.name in primaryKeys) },
+                    indexes = emptyList(),
+                    foreignKeys = emptyList(),
+                )
+            }
+            return NormalizedSchema(tables)
+        }
+    }
+
     private fun introspectColumns(
         conn: java.sql.Connection,
         tableName: String,

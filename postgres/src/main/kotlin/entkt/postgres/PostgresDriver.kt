@@ -1,5 +1,9 @@
 package entkt.postgres
 
+import entkt.migrations.MigrationOp
+import entkt.migrations.NormalizedSchema
+import entkt.migrations.SchemaDiffer
+import entkt.migrations.describeOp
 import entkt.migrations.normalizeWhere
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -197,6 +201,13 @@ class PostgresDriver(
             for (schema in fresh.values) validateSchema(schema)
 
             if (autoDdl) {
+                // (3.5) Guard pre-existing tables. `CREATE TABLE IF NOT
+                // EXISTS` is a silent no-op on an existing table
+                // whatever its shape, so body drift has to be detected
+                // explicitly — otherwise registration succeeds against
+                // an incompatible table and the first query or write
+                // fails (or silently runs under different constraints).
+                checkExistingTableBodies(fresh.values)
                 withConnection { conn ->
                     conn.createStatement().useQuietClose { stmt ->
                         // (4) Every table, before any cross-table constraint.
@@ -222,6 +233,47 @@ class PostgresDriver(
             // (6) Cache only after the DDL succeeded, so a failed batch
             // stays retryable.
             for (schema in fresh.values) this.schemas[schema.table] = schema
+        }
+    }
+
+    /**
+     * Auto-DDL guard for pre-existing tables. Applies the same policy
+     * the index / FK guards use — absent → create; present and
+     * equivalent → nothing; present and different → fail — to the table
+     * body: columns, types, nullability, defaults, and primary key.
+     *
+     * The comparison runs through the migration engine's own
+     * normalizer, introspector, and differ ([NormalizedSchema] /
+     * [PostgresIntrospector] / [SchemaDiffer]), so what auto-DDL calls
+     * drift is exactly what a generated migration would try to change.
+     * Index and FK differences are deliberately out of scope here:
+     * [ensureIndex] / [ensureForeignKey] own those, with the same
+     * guard semantics.
+     */
+    private fun checkExistingTableBodies(schemas: Collection<EntitySchema>) {
+        val introspected = PostgresIntrospector(dataSource)
+            .introspectTableBodies(schemas.map { it.table }.toSet())
+        if (introspected.tables.isEmpty()) return
+        val existing = schemas.filter { it.table in introspected.tables }
+        val desired = NormalizedSchema.fromEntitySchemas(existing, PostgresTypeMapper())
+        val diff = SchemaDiffer().diff(desired, introspected)
+        val drift = (diff.ops + diff.manual).filter { op ->
+            when (op) {
+                is MigrationOp.AddColumn, is MigrationOp.DropColumn,
+                is MigrationOp.AlterColumnType,
+                is MigrationOp.SetColumnNotNull, is MigrationOp.DropColumnNotNull,
+                is MigrationOp.SetColumnDefault, is MigrationOp.DropColumnDefault,
+                is MigrationOp.AlterPrimaryKey,
+                -> true
+                else -> false
+            }
+        }
+        check(drift.isEmpty()) {
+            "auto-DDL: existing table(s) differ from the requested schema:\n" +
+                drift.joinToString("\n") { "  - ${describeOp(it)}" } +
+                "\nAuto-DDL never alters an existing table. Reconcile with a " +
+                "migration (docs/09-migrations.md), or drop the table(s) and " +
+                "re-register."
         }
     }
 
