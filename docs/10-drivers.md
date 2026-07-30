@@ -285,7 +285,8 @@ transactional driver passed inside `withTransaction { tx -> ... }`:
   `SELECT ... FROM <table> WHERE id = ? FOR UPDATE` — a true row-level
   lock.
 - `serializeOwnerEdgeAndRead(table, id)` takes a transaction-scoped
-  `pg_advisory_xact_lock(...)` keyed by table OID + id, then performs a
+  `pg_advisory_xact_lock(...)` keyed by the table name's `hashCode` and
+  the id's `hashCode` (two `int4` args), then performs a
   current-row read.
 
 Both methods throw `IllegalStateException` (via
