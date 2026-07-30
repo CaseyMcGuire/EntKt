@@ -144,7 +144,7 @@ There is no `load` validation — validation guards writes, not reads.
 ## Operation Contexts
 
 Each operation's rules receive a typed context. Contexts include a
-read-only `EntReadClient` so validators can query the
+read-only `EntValidationReadClient` so validators can query the
 database (e.g. uniqueness checks, referential integrity) — and only
 query it. The write surface does not exist on that type, so a
 validator that tries to create, update, or delete does not compile.
@@ -153,7 +153,7 @@ validator that tries to create, update, or delete does not compile.
 
 ```kotlin
 data class PostCreateValidationContext(
-    val client: EntReadClient,
+    val client: EntValidationReadClient,
     val candidate: PostWriteCandidate,
 )
 ```
@@ -162,7 +162,7 @@ data class PostCreateValidationContext(
 
 ```kotlin
 data class PostUpdateValidationContext(
-    val client: EntReadClient,
+    val client: EntValidationReadClient,
     val before: Post,                    // current state of the entity (loaded by save())
     val requestedPatch: PostUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: PostUpdatePatch, // after framework update defaults
@@ -196,7 +196,7 @@ and `FieldPatch.Unset` as "not in this update".
 
 ```kotlin
 data class PostDeleteValidationContext(
-    val client: EntReadClient,
+    val client: EntValidationReadClient,
     val entity: Post,
     val candidate: PostWriteCandidate,
 )
@@ -207,15 +207,19 @@ enforced by the time validators run — validators are viewer-agnostic.
 If a rule cares about who is performing the operation, it belongs in
 privacy, not validation.
 
-The `client` in validation contexts is read-only and its reads bypass LOAD
-privacy, allowing invariant checks such as uniqueness and referential
-integrity to inspect all relevant rows. Read interceptors still apply, and
-validation performed inside `withTransaction` sees earlier writes from the
-same transaction.
+The `EntValidationReadClient` in validation contexts is read-only and its
+reads bypass LOAD privacy, allowing invariant checks such as uniqueness and
+referential integrity to inspect all relevant rows. Read interceptors still
+apply, and validation performed inside `withTransaction` sees earlier writes
+from the same transaction.
 
-Privacy-rule contexts also expose `EntReadClient`, but their reads use the
-caller's privacy context instead. See
-[Privacy → Operation Contexts](06-privacy.md#operation-contexts).
+Privacy-rule contexts expose `EntPrivacyReadClient` instead, whose reads use
+the caller's privacy context. Both concrete types implement the shared
+`EntReadClient` interface: helpers that work correctly under either posture
+can accept `EntReadClient` (and must then avoid raw terminals, which throw on
+privacy readers), while helpers that rely on privacy-bypassing reads should
+accept `EntValidationReadClient` so they cannot be handed a viewer-scoped
+reader. See [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
 ### WriteCandidate
 
@@ -297,7 +301,7 @@ Since validation contexts receive a System-scoped client, validators
 can query the database without being blocked by LOAD privacy.
 
 **Validators are read-only — by type, not by convention.** The context
-exposes `EntReadClient`, whose per-entity repos carry the
+exposes `EntValidationReadClient`, whose per-entity repos carry the
 byId family, the full `query { }` DSL with every terminal (`all` /
 `first` / `visible` families, counts, exists, aggregates, `explain*`),
 and the generated index helpers — and nothing else. `create`,
@@ -406,14 +410,16 @@ For each schema, entkt provides:
 | `{Entity}DeleteValidationContext` | Context for delete validators |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
 | `{Entity}ReadRepo` | Read-only repo exposed to validators (byId family, `query { }`, index helpers) |
+| `EntValidationReadClient` | Read client in validation contexts — privacy-bypassing reads (schema-set-level) |
+| `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |
 
 The `{Entity}PolicyScope` gains a `validation { }` method alongside
 the existing `privacy { }` method. The `{Entity}WriteCandidate` is
 shared between privacy and validation contexts.
 
-Validation contexts expose a read-only client. Validators can use its
-`byId` methods, `query { ... }`, and indexed query helpers, but cannot
-create, update, or delete entities.
+Validation contexts expose the read-only `EntValidationReadClient`.
+Validators can use its `byId` methods, `query { ... }`, and indexed
+query helpers, but cannot create, update, or delete entities.
 
 ## Relationship to Other Concepts
 

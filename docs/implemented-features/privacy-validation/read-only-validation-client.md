@@ -19,6 +19,16 @@ public `asValidationReadClient()` with the guarded internal
 `asReadClientForInternalUse(context)`. This document's body predates
 that rename and is kept as the original design record.
 
+Superseded again 2026-07-29: the
+[posture-specific-read-clients](posture-specific-read-clients.md) RFC
+split the one concrete `EntReadClient` into a shared `EntReadClient`
+interface plus two posture wrappers over one internal implementation —
+reviving `EntValidationReadClient` (this document's original name) as
+the distinct concrete type validation contexts expose, with
+`asValidationReadClientForInternalUse()` as its dedicated adapter. The
+`${Entity}ReadRepo` types and the `EntReadRuntime` contract this
+document introduced remain shared and unchanged.
+
 Revised 2026-07-28 for implementation-readiness: the original sketch's
 `EntReadClient(driver, privacyContext)` shape was too small for what
 generated reads actually depend on, and it left query ownership

@@ -16,19 +16,22 @@ import kotlin.test.assertTrue
  * Compile-time proof of the read-only privacy client's contract:
  * **privacy rule code cannot write, open transactions, re-scope, or
  * mutate client configuration**. Privacy contexts expose
- * `EntReadClient`, so every such member is an unresolved reference.
+ * `EntPrivacyReadClient` (implementing the shared `EntReadClient`
+ * interface), so every such member is an unresolved reference.
  *
- * Also pins the adapter's opt-in gate: kctfork compiles the snippets
+ * Also pins the adapters' opt-in gate: kctfork compiles the snippets
  * into the same module as the generated output, so `internal` is
  * satisfied either way and `@EntktInternal` is the boundary actually
- * being tested — calling `asReadClientForInternalUse` without opt-in
- * must fail on the opt-in diagnostic (not an unresolved reference),
- * and the same call under `@OptIn(EntktInternal::class)` must compile.
+ * being tested — calling `asValidationReadClientForInternalUse` or
+ * `asPrivacyReadClientForInternalUse` without opt-in must fail on the
+ * opt-in diagnostic (not an unresolved reference), and the same calls
+ * under `@OptIn(EntktInternal::class)` must compile.
  *
  * The validation-context twin lives in [ValidationReadClientCompileTest];
- * both contexts expose the same `EntReadClient`, so the exhaustive
- * member probes live here and the validation test keeps its original
- * write-surface coverage.
+ * both wrappers delegate to the same shared implementation, so the
+ * exhaustive member probes live here and the validation test keeps its
+ * original write-surface coverage. Cross-posture rejection lives in
+ * [ReadClientPostureCompileTest].
  */
 class PrivacyReadClientCompileTest {
 
@@ -52,6 +55,7 @@ class PrivacyReadClientCompileTest {
         package com.example.app
 
         import com.example.ent.$ruleType
+        import com.example.ent.EntPrivacyReadClient
         import com.example.ent.EntReadClient
         import entkt.runtime.privacy.PrivacyDecision
         import java.util.UUID
@@ -97,6 +101,7 @@ class PrivacyReadClientCompileTest {
         val result = compile(
             generatedSources() + ruleSnippet(
                 """
+                val concrete: EntPrivacyReadClient = ctx.client
                 val typed: EntReadClient = ctx.client
                 ctx.client.cars.query { }.firstOrNull()
                 ctx.client.cars.query { }.allOrThrow()
@@ -116,9 +121,12 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
-    fun `all four privacy contexts expose the read client`() {
-        // Type pins for every operation context — a regression returning
-        // EntClient to any of them breaks the corresponding assignment.
+    fun `all four privacy contexts expose the privacy-posture read client`() {
+        // Concrete type pins for every operation context — a regression
+        // returning EntClient, the shared interface, or the validation
+        // posture to any of them breaks the corresponding assignment. The
+        // load rule additionally pins assignability to the shared
+        // EntReadClient interface.
         val result = compile(
             generatedSources() + SourceFile.kotlin(
                 "AllContextsSnippet.kt",
@@ -129,23 +137,25 @@ class PrivacyReadClientCompileTest {
                 import com.example.ent.CarCreatePrivacyRule
                 import com.example.ent.CarUpdatePrivacyRule
                 import com.example.ent.CarDeletePrivacyRule
+                import com.example.ent.EntPrivacyReadClient
                 import com.example.ent.EntReadClient
                 import entkt.runtime.privacy.PrivacyDecision
 
                 val load = CarLoadPrivacyRule { ctx ->
-                    val t: EntReadClient = ctx.client
+                    val t: EntPrivacyReadClient = ctx.client
+                    val iface: EntReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 val create = CarCreatePrivacyRule { ctx ->
-                    val t: EntReadClient = ctx.client
+                    val t: EntPrivacyReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 val update = CarUpdatePrivacyRule { ctx ->
-                    val t: EntReadClient = ctx.client
+                    val t: EntPrivacyReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 val delete = CarDeletePrivacyRule { ctx ->
-                    val t: EntReadClient = ctx.client
+                    val t: EntPrivacyReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 """.trimIndent(),
@@ -154,7 +164,7 @@ class PrivacyReadClientCompileTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected all four privacy contexts to expose EntReadClient, got:\n${result.messages}",
+            "Expected all four privacy contexts to expose EntPrivacyReadClient, got:\n${result.messages}",
         )
     }
 
@@ -224,9 +234,9 @@ class PrivacyReadClientCompileTest {
         assertUnresolved("defaultRelationshipLocking", "ctx.client.defaultRelationshipLocking = null")
     }
 
-    // ---- The adapter's opt-in gate ----
+    // ---- The adapters' opt-in gate ----
 
-    private fun mintSnippet(optIn: Boolean): SourceFile {
+    private fun mintSnippet(optIn: Boolean, call: String): SourceFile {
         val header = if (optIn) "@file:OptIn(entkt.query.EntktInternal::class)\n\n" else ""
         return SourceFile.kotlin(
             "MintSnippet.kt",
@@ -239,19 +249,18 @@ class PrivacyReadClientCompileTest {
                 import entkt.runtime.privacy.Viewer
 
                 fun mint(client: EntClient) {
-                    client.asReadClientForInternalUse(PrivacyContext(Viewer.Anonymous))
+                    client.$call
                 }
                 """.trimIndent(),
         )
     }
 
-    @Test
-    fun `minting a read client without opt-in fails on the opt-in diagnostic`() {
-        val result = compile(generatedSources() + mintSnippet(optIn = false))
+    private fun assertOptInGated(adapter: String, call: String) {
+        val result = compile(generatedSources() + mintSnippet(optIn = false, call = call))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected asReadClientForInternalUse without opt-in to fail compilation but it succeeded",
+            "Expected $adapter without opt-in to fail compilation but it succeeded",
         )
         // The failure must be the opt-in requirement, not visibility or
         // resolution: the snippet compiles same-module, so `internal` is
@@ -264,15 +273,27 @@ class PrivacyReadClientCompileTest {
             result.messages.contains("nresolved reference"),
             "Expected an opt-in failure, not an unresolved reference:\n${result.messages}",
         )
+        val optedIn = compile(generatedSources() + mintSnippet(optIn = true, call = call))
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            optedIn.exitCode,
+            "Expected $adapter under @OptIn(EntktInternal::class) to compile, got:\n${optedIn.messages}",
+        )
     }
 
     @Test
-    fun `minting a read client with explicit opt-in compiles`() {
-        val result = compile(generatedSources() + mintSnippet(optIn = true))
-        assertEquals(
-            KotlinCompilation.ExitCode.OK,
-            result.exitCode,
-            "Expected asReadClientForInternalUse under @OptIn(EntktInternal::class) to compile, got:\n${result.messages}",
+    fun `minting a validation read client is gated on the opt-in marker`() {
+        assertOptInGated(
+            "asValidationReadClientForInternalUse",
+            "asValidationReadClientForInternalUse()",
+        )
+    }
+
+    @Test
+    fun `minting a privacy read client is gated on the opt-in marker`() {
+        assertOptInGated(
+            "asPrivacyReadClientForInternalUse",
+            "asPrivacyReadClientForInternalUse(PrivacyContext(Viewer.Anonymous))",
         )
     }
 }

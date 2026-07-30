@@ -53,11 +53,12 @@ class EntGeneratorTest {
 
         // Per schema: entity, mutation, create, update, query, repo, privacy, validation.
         // Plus the schema-set-level files: EntReadRuntime (the read contract
-        // + per-entity read surfaces), EntReadClient (the read-only client
-        // exposed to validators and privacy rules + per-entity read repos),
-        // and the EntClient that wires every repo together. User also gets
-        // a UserIndexes file (it declares eligible indexes); Car has none, so it
-        // gets no index-helper file.
+        // + per-entity read surfaces), EntReadClient (the shared read-only
+        // interface, the EntValidationReadClient / EntPrivacyReadClient
+        // posture wrappers, the internal impl, and the per-entity read
+        // repos), and the EntClient that wires every repo together. User
+        // also gets a UserIndexes file (it declares eligible indexes); Car
+        // has none, so it gets no index-helper file.
         assertEquals(8 * schemas.size + 3 + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(

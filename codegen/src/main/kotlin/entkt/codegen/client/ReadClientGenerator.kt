@@ -22,17 +22,22 @@ private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInter
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 
 /**
- * Emits `EntReadClient` plus one `${Entity}ReadRepo` per schema: the
- * read-only client generated validation and privacy contexts expose to
- * rule code.
+ * Emits the read-only client surface generated validation and privacy
+ * contexts expose to rule code: the `EntReadClient` interface, the
+ * posture-specific `EntValidationReadClient` and `EntPrivacyReadClient`
+ * wrappers, the shared internal `EntReadClientImpl`, and one
+ * `${Entity}ReadRepo` per schema.
  *
- * The client's privacy posture is instance state, not part of the type
- * — exactly like `EntClient` itself. The `asReadClientForInternalUse`
- * adapter fixes whatever context its call site passes:
- * `PrivacyBypass("validation read")` from validation evaluators (so
- * invariant checks are not blocked by LOAD privacy), the caller's own
- * context from privacy evaluators (so authorization reads see only
- * what the viewer sees).
+ * The privacy posture is visible in the wrapper type, not hidden
+ * instance state: validation contexts carry `EntValidationReadClient`
+ * (fixed `PrivacyBypass("validation read")` context, so invariant
+ * checks are not blocked by LOAD privacy and raw terminals work);
+ * privacy contexts carry `EntPrivacyReadClient` (the caller's own
+ * context, so authorization reads see only what the viewer sees and
+ * raw terminals throw). Both wrappers delegate `EntReadClient` to one
+ * `EntReadClientImpl`, which owns the read state and repositories —
+ * the two semantic types cannot drift, and helpers that are genuinely
+ * posture-agnostic accept the shared interface.
  *
  * Each read repo exposes the read surface only — the byId family, the
  * full `query { }` DSL (all terminals come with the query class), the
@@ -43,16 +48,20 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
  * the read-only guarantee is structural, not conventional.
  *
  * Queries and index stages constructed through these repos receive the
- * `EntReadClient` itself as their [EntReadRuntime], never an
- * `EntClient` — no rule-reachable object holds a full client, even
- * privately. LOAD-privacy behavior is delegated to the host client's
- * repos (typed as the narrow read surfaces), so `hasLoadPrivacy` /
- * `evaluateLoadPrivacy` behave identically through either client.
+ * `EntReadClientImpl` as their [EntReadRuntime], never an `EntClient`
+ * — no rule-reachable object holds a full client, even privately. The
+ * wrappers do not implement `EntReadRuntime`; that framework-internal
+ * contract stays on the delegate. LOAD-privacy behavior is delegated
+ * to the host client's repos (typed as the narrow read surfaces), so
+ * `hasLoadPrivacy` / `evaluateLoadPrivacy` behave identically through
+ * either client.
  *
  * Construction is framework-internal: the constructors here carry
- * `@EntktInternal internal`, and the only supported minting path is
- * the generated evaluators' adapter calls. That is a deliberate-use
- * gate, not a security boundary — see the marker's KDoc.
+ * `@EntktInternal internal`, and the only supported minting paths are
+ * the generated evaluators' `asValidationReadClientForInternalUse()` /
+ * `asPrivacyReadClientForInternalUse(privacy)` adapter calls. That is
+ * a deliberate-use gate, not a security boundary — see the marker's
+ * KDoc.
  */
 internal class ReadClientGenerator(
     private val packageName: String,
@@ -63,11 +72,11 @@ internal class ReadClientGenerator(
         schemaNames: Map<EntSchema, String>,
     ): FileSpec {
         // Same accessor/parameter order as EntClient's repo properties and
-        // asReadClientForInternalUse()'s positional host arguments.
+        // readClientImpl()'s positional host arguments.
         val sorted = topologicalSort(schemas)
 
         val fileBuilder = FileSpec.builder(packageName, "EntReadClient")
-            // The client implements the `@EntktInternal`-guarded
+            // The impl implements the `@EntktInternal`-guarded
             // EntReadRuntime, the repos implement the guarded read
             // surfaces, and the constructors are themselves guarded; the
             // file-level OptIn consumes the requirement here without
@@ -82,7 +91,37 @@ internal class ReadClientGenerator(
         for (input in schemas) {
             fileBuilder.addType(buildReadRepo(input, schemaNames))
         }
-        fileBuilder.addType(buildClient(sorted))
+        fileBuilder.addType(buildClientInterface(sorted))
+        fileBuilder.addType(
+            buildPostureWrapper(
+                name = "EntValidationReadClient",
+                kdoc = "Read client handed to generated validation contexts. Reads bypass\n" +
+                    "LOAD privacy (fixed `PrivacyBypass(\"validation read\")` context), so\n" +
+                    "invariant checks observe all rows and raw terminals (`rawCount`,\n" +
+                    "`rawExists`, raw aggregates) are available. Same driver instance as\n" +
+                    "the operation's client (transaction-scoped reads see prior writes),\n" +
+                    "same read interceptors. The posture is fixed for the instance's\n" +
+                    "lifetime — there is no re-scoping surface. Helpers that require\n" +
+                    "privacy-bypassing reads should accept this type; posture-agnostic\n" +
+                    "helpers accept [EntReadClient].",
+            )
+        )
+        fileBuilder.addType(
+            buildPostureWrapper(
+                name = "EntPrivacyReadClient",
+                kdoc = "Read client handed to generated privacy-rule contexts. Reads are\n" +
+                    "viewer-scoped: materialized rows are evaluated under the caller's\n" +
+                    "LOAD privacy, and raw terminals (`rawCount`, `rawExists`, raw\n" +
+                    "aggregates) throw [IllegalStateException] — a privacy-bypassing read\n" +
+                    "could leak invisible rows into an authorization decision. Same\n" +
+                    "driver instance as the operation's client (transaction-scoped reads\n" +
+                    "see prior writes), same read interceptors. The posture is fixed for\n" +
+                    "the instance's lifetime — there is no re-scoping surface. Helpers\n" +
+                    "that participate in authorization decisions should accept this\n" +
+                    "type; posture-agnostic helpers accept [EntReadClient].",
+            )
+        )
+        fileBuilder.addType(buildClientImpl(sorted))
 
         return fileBuilder.build()
     }
@@ -174,24 +213,80 @@ internal class ReadClientGenerator(
             .build()
     }
 
-    private fun buildClient(sorted: List<SchemaInput>): TypeSpec {
-        val builder = TypeSpec.classBuilder("EntReadClient")
+    private fun buildClientInterface(sorted: List<SchemaInput>): TypeSpec {
+        val builder = TypeSpec.interfaceBuilder("EntReadClient")
             .addKdoc(
-                "Read-only client exposed in generated validation and privacy contexts.\n" +
-                    "Constructed by `EntClient.asReadClientForInternalUse(context)` from the\n" +
-                    "operation's current client: same driver instance (a\n" +
-                    "transaction-scoped client yields a transaction-scoped read client),\n" +
-                    "same read interceptors, same per-repo LOAD-privacy behavior, and the\n" +
-                    "passed context fixed for this instance's lifetime — bypass-scoped for\n" +
-                    "validation reads, caller-scoped for privacy rule reads. Write-side\n" +
-                    "state (`transactionRequirement`, hooks, validation config) is\n" +
-                    "deliberately absent — its absence is part of the no-writes guarantee.",
+                "Shared read-only repository surface exposed in generated validation\n" +
+                    "and privacy contexts. Implemented by [EntValidationReadClient]\n" +
+                    "(privacy-bypassing reads, for validators) and [EntPrivacyReadClient]\n" +
+                    "(viewer-scoped reads, for privacy rules). A helper accepting this\n" +
+                    "interface promises to work correctly under either posture, so it\n" +
+                    "must not assume raw terminals are available — they throw on\n" +
+                    "viewer-scoped privacy readers. Helpers that rely on one posture\n" +
+                    "should accept the matching concrete type instead. Write-side state\n" +
+                    "(`transactionRequirement`, hooks, validation config) is deliberately\n" +
+                    "absent from the whole surface — its absence is part of the\n" +
+                    "no-writes guarantee.",
             )
+        for (input in sorted) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            builder.addProperty(
+                PropertySpec.builder(propName, ClassName(packageName, "${input.name}ReadRepo"))
+                    .addModifiers(KModifier.ABSTRACT)
+                    .build()
+            )
+        }
+        return builder.build()
+    }
+
+    /**
+     * One of the two posture wrappers. Real distinct classes, not type
+     * aliases — aliases would not reject cross-posture helper calls.
+     * Delegation to the shared [EntReadClientImpl] keeps repository
+     * construction and `EntReadRuntime` in one place; the wrapper adds
+     * nothing but the statically visible posture.
+     */
+    private fun buildPostureWrapper(name: String, kdoc: String): TypeSpec {
+        val implClass = ClassName(packageName, "EntReadClientImpl")
+        return TypeSpec.classBuilder(name)
+            .addKdoc(kdoc)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addAnnotation(ENTKT_INTERNAL)
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter("delegate", implClass)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder("delegate", implClass)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("delegate")
+                    .build()
+            )
+            .addSuperinterface(ClassName(packageName, "EntReadClient"), CodeBlock.of("delegate"))
+            .build()
+    }
+
+    private fun buildClientImpl(sorted: List<SchemaInput>): TypeSpec {
+        val builder = TypeSpec.classBuilder("EntReadClientImpl")
+            .addKdoc(
+                "Shared implementation behind [EntValidationReadClient] and\n" +
+                    "[EntPrivacyReadClient]. Constructed by the `EntClient` posture\n" +
+                    "adapters from the operation's current client: same driver instance\n" +
+                    "(a transaction-scoped client yields a transaction-scoped read\n" +
+                    "client), same read interceptors, same per-repo LOAD-privacy\n" +
+                    "behavior, and the passed context fixed for this instance's lifetime\n" +
+                    "— bypass-scoped for validation reads, caller-scoped for privacy\n" +
+                    "rule reads. Owns repository construction and the [EntReadRuntime]\n" +
+                    "contract so the two wrappers cannot drift; no public generated\n" +
+                    "signature exposes this type.",
+            )
+            .addAnnotation(ENTKT_INTERNAL)
+            .addModifiers(KModifier.INTERNAL)
+            .addSuperinterface(ClassName(packageName, "EntReadClient"))
             .addSuperinterface(ClassName(packageName, "EntReadRuntime"))
 
         val ctor = FunSpec.constructorBuilder()
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.INTERNAL)
             .addParameter("driver", DRIVER)
             .addParameter("privacyContext", PRIVACY_CONTEXT)
             .addParameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
@@ -235,8 +330,10 @@ internal class ReadClientGenerator(
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             val repoClass = ClassName(packageName, "${input.name}ReadRepo")
             builder.addProperty(
-                // Covariant override of EntReadRuntime's read-surface
-                // accessor, narrowed to the rule-facing repo.
+                // One override satisfies both supertypes: EntReadClient's
+                // `${prop}: ${Entity}ReadRepo` accessor exactly, and
+                // EntReadRuntime's `${prop}: ${Entity}ReadSurface`
+                // accessor covariantly.
                 PropertySpec.builder(propName, repoClass)
                     .addModifiers(KModifier.OVERRIDE)
                     .initializer("%T(driver, %LHost)", repoClass, propName)

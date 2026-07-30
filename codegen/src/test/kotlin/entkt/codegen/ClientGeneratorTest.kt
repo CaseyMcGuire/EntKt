@@ -86,7 +86,8 @@ class ClientGeneratorTest {
         }
         // Config copy + the clone-propagation sites thread it through.
         // (The former fixed-context clone is gone — read-side evaluators
-        // use asReadClientForInternalUse, which carries no write-side
+        // use asValidationReadClientForInternalUse /
+        // asPrivacyReadClientForInternalUse, which carry no write-side
         // defaults by design.)
         assert(output.contains("defaultRelationshipLocking = cfg.defaultRelationshipLocking")) {
             "Config copy must thread defaultRelationshipLocking\n$output"
@@ -295,20 +296,50 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient has the guarded internal read-client adapter and no fixed-context clone`() {
+    fun `EntClient has the guarded internal posture adapters and no fixed-context clone`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("internal fun asReadClientForInternalUse(context: PrivacyContext): EntReadClient")) {
-            "Should have the asReadClientForInternalUse adapter\n$output"
+        assert(output.contains("internal fun asValidationReadClientForInternalUse(): EntValidationReadClient")) {
+            "Should have the asValidationReadClientForInternalUse adapter\n$output"
+        }
+        assert(output.contains("internal fun asPrivacyReadClientForInternalUse(privacy: PrivacyContext): EntPrivacyReadClient")) {
+            "Should have the asPrivacyReadClientForInternalUse adapter\n$output"
+        }
+        // The validation adapter fixes the bypass context itself, so
+        // evaluators cannot construct a validation reader under an
+        // arbitrary context.
+        assert(
+            output.contains(
+                "EntValidationReadClient(readClientImpl(PrivacyContext(Viewer.PrivacyBypass(\"validation read\"))))"
+            )
+        ) {
+            "Validation adapter should fix the PrivacyBypass(\"validation read\") context\n$output"
+        }
+        // The privacy adapter freezes the supplied caller context.
+        assert(output.contains("EntPrivacyReadClient(readClientImpl(privacy))")) {
+            "Privacy adapter should freeze the caller's context\n$output"
+        }
+        // Both adapters share one private impl builder — the wrappers
+        // cannot drift structurally.
+        assert(output.contains("private fun readClientImpl(context: PrivacyContext): EntReadClientImpl")) {
+            "Both adapters should call one private EntReadClientImpl builder\n$output"
         }
         // The opt-in marker is the gate that keeps same-module application
         // code from minting fixed-context readers.
-        assert(output.contains("@EntktInternal\n  internal fun asReadClientForInternalUse")) {
-            "Adapter should carry the @EntktInternal guard\n$output"
+        assert(output.contains("@EntktInternal\n  internal fun asValidationReadClientForInternalUse")) {
+            "Validation adapter should carry the @EntktInternal guard\n$output"
+        }
+        assert(output.contains("@EntktInternal\n  internal fun asPrivacyReadClientForInternalUse")) {
+            "Privacy adapter should carry the @EntktInternal guard\n$output"
+        }
+        // The arbitrary-context adapter is replaced by the posture pair —
+        // removed, not kept around.
+        assert(!output.contains("asReadClientForInternalUse")) {
+            "The arbitrary-context asReadClientForInternalUse adapter should be removed\n$output"
         }
         // The full-client fixed-context clone is dead once evaluators use
-        // the adapter — removed, not kept around.
+        // the adapters — removed, not kept around.
         assert(!output.contains("withFixedPrivacyContextForInternalUse")) {
             "The fixed-context full-client clone should be removed\n$output"
         }

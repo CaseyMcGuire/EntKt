@@ -687,21 +687,24 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `evaluateCreateValidation hands rules the read-only client with the bypass context`() {
+    fun `validation evaluators hand rules the validation-posture read client`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // The evaluator fixes the PrivacyBypass("validation read") context
-        // at the adapter call site; no full-client clone is built. Matched
-        // on the call expression alone — KotlinPoet wraps the assignment
-        // across lines.
-        assert(
-            output.contains(
-                "client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass(\"validation read\")))"
-            )
-        ) {
-            "Validation evaluator should build the read-only client with the bypass context\n$output"
+        // The bypass context is fixed inside the adapter, not at the call
+        // site — evaluators cannot construct a validation reader under an
+        // arbitrary context, so no context literal appears here. All
+        // three evaluators (create/update/delete) emit the call
+        // independently, so pin the count, not mere presence.
+        val mints = Regex(
+            Regex.escape("val validationClient = client.asValidationReadClientForInternalUse()")
+        ).findAll(output).count()
+        assert(mints == 3) {
+            "All three validation evaluators should mint the validation-posture read client; found $mints\n$output"
+        }
+        assert(!output.contains("asReadClientForInternalUse")) {
+            "The arbitrary-context adapter must not be called anymore\n$output"
         }
         assert(!output.contains("withFixedPrivacyContextForInternalUse")) {
             "Evaluators must not clone a full write-capable client\n$output"
@@ -709,15 +712,23 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `privacy evaluators hand rules the read-only client with the caller context`() {
+    fun `privacy evaluators hand rules the privacy-posture read client with the caller context`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         // Privacy rule reads are viewer-scoped: the evaluator passes the
-        // caller's context, not a bypass, into the read-client adapter.
-        assert(output.contains("val privacyClient = client.asReadClientForInternalUse(privacy)")) {
-            "Privacy evaluators should build the read-only client from the caller's context\n$output"
+        // caller's context into the posture-specific adapter, which
+        // freezes it for the reader's lifetime. Each of the four
+        // evaluators (load/create/update/delete) emits the call
+        // independently — and unlike the nullary validation adapter, this
+        // one accepts any context, so a single diverging site would still
+        // compile. Pin the count, not mere presence.
+        val mints = Regex(
+            Regex.escape("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+        ).findAll(output).count()
+        assert(mints == 4) {
+            "All four privacy evaluators should freeze the caller's context; found $mints\n$output"
         }
     }
 }

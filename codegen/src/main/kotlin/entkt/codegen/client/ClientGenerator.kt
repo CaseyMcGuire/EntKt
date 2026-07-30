@@ -312,7 +312,9 @@ internal class ClientGenerator(
                     .addStatement("return privacyContextProvider()")
                     .build()
             )
-            .addFunction(buildAsReadClientForInternalUse(sorted))
+            .addFunction(buildReadClientImplBuilder(sorted))
+            .addFunction(buildAsValidationReadClientForInternalUse())
+            .addFunction(buildAsPrivacyReadClientForInternalUse())
             .addFunction(buildWithPrivacyContext(clientClass, t, sorted))
             .addFunction(buildBypassPrivacyDangerous(clientClass, t))
             .addFunction(buildWithTransaction(clientClass, configClass, t, sorted))
@@ -928,28 +930,26 @@ internal class ClientGenerator(
     }
 
     /**
-     * Generates `asReadClientForInternalUse(context)`: the read-only view
-     * of this client that generated evaluators hand to rule code. Copies
-     * only the read-relevant adapter state — the same driver instance (so
-     * a transaction-scoped client yields a transaction-scoped read
-     * client), the passed context fixed for the reader's lifetime, the
-     * shared interceptor registry, the overfetch cap, and the repos as
-     * per-entity read surfaces (LOAD-privacy behavior identical to this
-     * client's). `transactionRequirement`, hooks, and validation config
-     * are deliberately absent — they are write-side state, and their
-     * absence is part of the no-writes guarantee.
+     * Generates the private `readClientImpl(context)` builder both
+     * posture adapters call: the shared read-only view of this client
+     * that generated evaluators hand to rule code (wrapped in a posture
+     * type). Copies only the read-relevant adapter state — the same
+     * driver instance (so a transaction-scoped client yields a
+     * transaction-scoped read client), the passed context fixed for the
+     * reader's lifetime, the shared interceptor registry, the overfetch
+     * cap, and the repos as per-entity read surfaces (LOAD-privacy
+     * behavior identical to this client's). `transactionRequirement`,
+     * hooks, and validation config are deliberately absent — they are
+     * write-side state, and their absence is part of the no-writes
+     * guarantee.
      *
-     * The posture is chosen by the call site: validation evaluators pass
-     * `PrivacyBypass("validation read")`; privacy evaluators pass the
-     * caller's context. `@EntktInternal internal` because minting
-     * fixed-context readers (including bypass-scoped ones) is framework
-     * wiring — the `ForInternalUse` suffix matches the convention the
-     * old fixed-context clone used.
+     * One builder for both adapters keeps the two semantic wrappers
+     * structurally identical; only the fixed context differs.
      */
-    private fun buildAsReadClientForInternalUse(schemas: List<SchemaInput>): FunSpec {
-        val readClientClass = ClassName(packageName, "EntReadClient")
+    private fun buildReadClientImplBuilder(schemas: List<SchemaInput>): FunSpec {
+        val implClass = ClassName(packageName, "EntReadClientImpl")
         val body = CodeBlock.builder()
-        body.add("return %T(\n", readClientClass)
+        body.add("return %T(\n", implClass)
         body.add("  driver,\n")
         body.add("  context,\n")
         body.add("  entityInterceptors,\n")
@@ -959,20 +959,72 @@ internal class ClientGenerator(
             body.add("  %L,\n", propName)
         }
         body.add(")\n")
-        return FunSpec.builder("asReadClientForInternalUse")
+        return FunSpec.builder("readClientImpl")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("context", PRIVACY_CONTEXT)
+            .returns(implClass)
+            .addCode(body.build())
+            .build()
+    }
+
+    /**
+     * Generates `asValidationReadClientForInternalUse()`: the adapter
+     * generated validation evaluators call. The
+     * `PrivacyBypass("validation read")` context is fixed here rather
+     * than at call sites, so evaluators cannot construct a validation
+     * reader under an arbitrary context. `@EntktInternal internal`
+     * because minting fixed-context readers is framework wiring — the
+     * `ForInternalUse` suffix matches the convention the old
+     * fixed-context clone used.
+     */
+    private fun buildAsValidationReadClientForInternalUse(): FunSpec {
+        return FunSpec.builder("asValidationReadClientForInternalUse")
             .addKdoc(
-                "Read-only view of this client with [context] fixed for its lifetime.\n" +
-                    "Same driver (transaction scoping preserved), same read interceptors,\n" +
-                    "same per-repo LOAD-privacy behavior. No write surface compiles\n" +
-                    "against it. Framework-internal: generated validation evaluators pass\n" +
-                    "a `PrivacyBypass(\"validation read\")` context, generated privacy\n" +
-                    "evaluators pass the caller's context.",
+                "Read-only view of this client for generated validation evaluators,\n" +
+                    "with a `PrivacyBypass(\"validation read\")` context fixed for its\n" +
+                    "lifetime — invariant checks are not blocked by LOAD privacy, and raw\n" +
+                    "terminals are available. Same driver (transaction scoping\n" +
+                    "preserved), same read interceptors. No write surface compiles\n" +
+                    "against it.",
             )
             .addAnnotation(ClassName("entkt.query", "EntktInternal"))
             .addModifiers(KModifier.INTERNAL)
-            .addParameter("context", PRIVACY_CONTEXT)
-            .returns(readClientClass)
-            .addCode(body.build())
+            .returns(ClassName(packageName, "EntValidationReadClient"))
+            .addStatement(
+                "return %T(readClientImpl(%T(%T.PrivacyBypass(%S))))",
+                ClassName(packageName, "EntValidationReadClient"),
+                PRIVACY_CONTEXT,
+                VIEWER,
+                "validation read",
+            )
+            .build()
+    }
+
+    /**
+     * Generates `asPrivacyReadClientForInternalUse(privacy)`: the
+     * adapter generated privacy evaluators call, freezing the caller's
+     * context for the reader's lifetime so authorization reads see only
+     * what the viewer sees. A separate adapter (instead of one taking an
+     * arbitrary context) prevents evaluators from accidentally minting
+     * the wrong semantic wrapper.
+     */
+    private fun buildAsPrivacyReadClientForInternalUse(): FunSpec {
+        return FunSpec.builder("asPrivacyReadClientForInternalUse")
+            .addKdoc(
+                "Read-only view of this client for generated privacy evaluators, with\n" +
+                    "the caller's [privacy] context fixed for its lifetime — rule reads\n" +
+                    "are viewer-scoped, and raw terminals throw. Same driver (transaction\n" +
+                    "scoping preserved), same read interceptors. No write surface\n" +
+                    "compiles against it.",
+            )
+            .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("privacy", PRIVACY_CONTEXT)
+            .returns(ClassName(packageName, "EntPrivacyReadClient"))
+            .addStatement(
+                "return %T(readClientImpl(privacy))",
+                ClassName(packageName, "EntPrivacyReadClient"),
+            )
             .build()
     }
 }
@@ -985,8 +1037,8 @@ internal class ClientGenerator(
  * Shared by [ClientGenerator], [ReadRuntimeGenerator], and
  * [ReadClientGenerator] so the per-entity accessor order is identical
  * across `EntClient`, `EntReadRuntime`, and `EntReadClient` — and so
- * `asReadClientForInternalUse()`'s positional host arguments line up
- * with the read client's constructor parameters.
+ * `readClientImpl()`'s positional host arguments line up with
+ * `EntReadClientImpl`'s constructor parameters.
  */
 internal fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
     val bySchema = schemas.associateBy { it.schema }

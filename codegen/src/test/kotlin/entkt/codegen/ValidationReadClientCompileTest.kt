@@ -14,7 +14,8 @@ import kotlin.test.assertTrue
 /**
  * Compile-time proof of the read-only validation client's core contract:
  * **validator code cannot write**. Validation contexts expose
- * `EntReadClient`, whose repos simply have no write members — so
+ * `EntValidationReadClient` (implementing the shared `EntReadClient`
+ * interface), whose repos simply have no write members — so
  * `ctx.client.<repo>.create/update/delete*` and
  * `ctx.client.withTransaction` are unresolved references, not runtime
  * errors.
@@ -55,6 +56,7 @@ class ValidationReadClientCompileTest {
 
         import com.example.ent.CarCreateValidationRule
         import com.example.ent.EntReadClient
+        import com.example.ent.EntValidationReadClient
         import entkt.runtime.validation.ValidationDecision
         import java.util.UUID
 
@@ -100,6 +102,7 @@ class ValidationReadClientCompileTest {
         val result = compile(
             generatedSources() + validatorSnippet(
                 """
+                val concrete: EntValidationReadClient = ctx.client
                 val typed: EntReadClient = ctx.client
                 ctx.client.cars.query { }.rawCount()
                 ctx.client.cars.query { }.rawExists()

@@ -235,29 +235,38 @@ Write privacy is enforced before the database call. If denied, a
 
 ## Operation Contexts
 
-Each operation's rules receive a typed context. The `client` is a
-read-only `EntReadClient`, fixed to the **caller's** privacy context —
-rules can query the graph to decide (ownership walks,
-parent-visibility checks), and every row those reads **materialize**
-passes the viewer's LOAD privacy: a rule cannot load what its viewer
-cannot load. Writes, transactions, re-scoping (`withPrivacyContext` /
-`bypassPrivacy_DANGEROUS`), and configuration do not exist on the
-type, so a rule that tries to mutate does not compile:
+Each operation's rules receive a typed context. The `client` is an
+`EntPrivacyReadClient`: a read-only client fixed to the **caller's**
+privacy context — rules can query the graph to decide (ownership
+walks, parent-visibility checks), and every row those reads
+**materialize** passes the viewer's LOAD privacy: a rule cannot load
+what its viewer cannot load. Writes, transactions, re-scoping
+(`withPrivacyContext` / `bypassPrivacy_DANGEROUS`), and configuration
+do not exist on the type, so a rule that tries to mutate does not
+compile:
 
 Rule reads evaluate LOAD privacy like any other read: a rule loading a
 row its viewer cannot see gets the denial (`byIdOrNull` throws
 `PrivacyDeniedException`; `visibleByIdOrNull` collapses it to `null`),
 never the row. This is deliberately the opposite posture from
-validation contexts, whose reads are privacy-bypass-scoped — invariant
-checks must see all rows, authorization checks must not.
+validation contexts, whose `EntValidationReadClient` reads are
+privacy-bypass-scoped — invariant checks must see all rows,
+authorization checks must not. Both concrete types implement the
+shared `EntReadClient` interface, so a helper that works correctly
+under either posture can accept `EntReadClient`; a helper that is
+specifically part of an authorization decision should accept
+`EntPrivacyReadClient` and then cannot be handed a privacy-bypassing
+reader by mistake.
 
 The raw terminals (`rawCount` / `rawExists` and the raw aggregates)
 skip LOAD privacy by design, which would break that guarantee — so on
-viewer-scoped rule readers they throw `IllegalStateException` instead
-of silently probing rows the viewer cannot see. They remain available
+`EntPrivacyReadClient` they throw `IllegalStateException` instead of
+silently probing rows the viewer cannot see. They remain available
 everywhere else (application queries, validation rules), where their
 privacy posture is deliberate. Use a LOAD-checked terminal inside
-privacy rules.
+privacy rules; a posture-agnostic helper accepting `EntReadClient`
+must likewise avoid raw terminals, since it may run under either
+posture.
 
 LOAD privacy applies to returned entities, not related entities used only to
 filter a query. That holds for both application queries and rule reads: a rule
@@ -271,7 +280,7 @@ with `byIdOrNull` or `firstOrNull` so its LOAD policy runs. See
 ```kotlin
 data class UserLoadPrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntReadClient,
+    val client: EntPrivacyReadClient,
     val entity: User,       // the entity being loaded
 )
 ```
@@ -281,7 +290,7 @@ data class UserLoadPrivacyContext(
 ```kotlin
 data class UserCreatePrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntReadClient,
+    val client: EntPrivacyReadClient,
     val candidate: UserWriteCandidate,  // the values being written
 )
 ```
@@ -291,7 +300,7 @@ data class UserCreatePrivacyContext(
 ```kotlin
 data class UserUpdatePrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntReadClient,
+    val client: EntPrivacyReadClient,
     val before: User,                   // current state of the entity (loaded by save())
     val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
@@ -338,7 +347,7 @@ and `FieldPatch.Unset` as "not in this update".
 ```kotlin
 data class UserDeletePrivacyContext(
     val privacy: PrivacyContext,
-    val client: EntReadClient,
+    val client: EntPrivacyReadClient,
     val entity: User,                   // the entity being deleted
     val candidate: UserWriteCandidate,  // snapshot of its writable fields
 )
@@ -472,3 +481,5 @@ For each schema with a policy, entkt provides:
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |
 | `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |
+| `EntPrivacyReadClient` | Read client in privacy contexts — viewer-scoped reads (schema-set-level) |
+| `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |

@@ -30,6 +30,28 @@ above it.
 
 ## Unreleased
 
+- **`EntReadClient` split into an interface plus posture-specific concrete clients** (`codegen`)
+  Generated `EntReadClient` is now an interface, not a concrete class.
+  Validation contexts expose the new concrete `EntValidationReadClient`
+  (reads bypass LOAD privacy; raw terminals work) and privacy contexts
+  expose the new concrete `EntPrivacyReadClient` (reads are viewer-scoped;
+  raw terminals keep throwing `IllegalStateException`) — the posture that
+  was previously hidden instance state is now visible in the context
+  types. Both concrete types implement `EntReadClient`, and the
+  `ctx.client.<repo>` call shape is unchanged. The internal
+  `asReadClientForInternalUse(context)` adapter is replaced by
+  `asValidationReadClientForInternalUse()` /
+  `asPrivacyReadClientForInternalUse(privacy)`. See the
+  [posture-specific read clients note](../implemented-features/privacy-validation/posture-specific-read-clients.md).
+  _Migration:_ posture-agnostic helper parameters may remain
+  `EntReadClient` (such helpers must not use raw terminals); helpers that
+  rely on privacy-bypassing or raw reads should retype to
+  `EntValidationReadClient`, and helpers that participate in
+  authorization decisions to `EntPrivacyReadClient`; unsupported code
+  constructing the old concrete `EntReadClient` or calling
+  `asReadClientForInternalUse` must stop — the generated evaluators are
+  the only construction path.
+
 - **Eager-load interceptors fire on empty results** (`codegen`)
   The EAGER_LOAD interceptor pass now runs on every configured
   `with{Edge}()` subquery even when the root query matched nothing —

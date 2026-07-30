@@ -7,7 +7,7 @@ import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
-import entkt.integrationtest.ent.EntReadClient
+import entkt.integrationtest.ent.EntValidationReadClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserCreateValidationRule
 import entkt.integrationtest.ent.UserLoadPrivacyRule
@@ -31,12 +31,13 @@ import kotlin.test.assertTrue
 
 /**
  * The canonical read-validator: uniqueness via the query DSL. The
- * explicit `EntReadClient` type pins the context's client property —
- * this file stops compiling if contexts regress to the full
- * `EntClient`.
+ * explicit `EntValidationReadClient` type pins the context's client
+ * property — this file stops compiling if contexts regress to the full
+ * `EntClient`, the shared `EntReadClient` interface, or the privacy
+ * posture.
  */
 private val UniqueEmailViaQuery = UserCreateValidationRule { ctx ->
-    val client: EntReadClient = ctx.client
+    val client: EntValidationReadClient = ctx.client
     val taken = client.users.query { where(User.email.eq(ctx.candidate.email)) }.rawExists()
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
     else ValidationDecision.Valid
@@ -57,6 +58,26 @@ private val AuthorMustExist = ArticleCreateValidationRule { ctx ->
         ValidationDecision.Invalid("author does not exist", field = "authorId")
     } else {
         ValidationDecision.Valid
+    }
+}
+
+/**
+ * Invariant check across edges: the `withAuthor()` eager load and the
+ * `queryAuthor()` traversal both run under the validation client's
+ * fixed bypass context, so author rows LOAD privacy hides from the
+ * caller are still visible to the invariant check.
+ */
+private val AuthorReachableViaEdges = ArticleCreateValidationRule { ctx ->
+    val prior = ctx.client.articles.query {
+        where(Article.authorId eq ctx.candidate.authorId)
+        withAuthor()
+    }.allOrThrow()
+    val traversed = ctx.client.articles.query { where(Article.authorId eq ctx.candidate.authorId) }
+        .queryAuthor().allOrThrow()
+    if (prior.all { it.edges.author != null } && (prior.isEmpty() || traversed.isNotEmpty())) {
+        ValidationDecision.Valid
+    } else {
+        ValidationDecision.Invalid("author graph unreadable", field = "authorId")
     }
 }
 
@@ -100,16 +121,26 @@ private object AuthorCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicyS
     }
 }
 
+private object EdgeCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+    override fun configure(scope: ArticlePolicyScope) = scope.run {
+        privacy {
+            load(AllowAllArticleLoads)
+            create(AllowAllArticleCreates)
+        }
+        validation { create(AuthorReachableViaEdges) }
+    }
+}
+
 /**
- * End-to-end semantics of the validation-context view of the read-only
- * client (`asReadClientForInternalUse` with the fixed
- * `PrivacyBypass("validation read")` context, exposed as
- * `EntReadClient`): validator reads work across the whole read surface —
- * including raw terminals, which the bypass posture keeps equivalent to
- * visible ones — run System-scoped, use the transaction-scoped driver,
- * and still pass through read interceptors. The compile-time no-writes
- * guarantee is pinned separately in `codegen`'s
- * `ValidationReadClientCompileTest`.
+ * End-to-end semantics of the validation-context read client
+ * (`asValidationReadClientForInternalUse()`, which fixes the
+ * `PrivacyBypass("validation read")` context and is exposed as
+ * `EntValidationReadClient`): validator reads work across the whole
+ * read surface — including raw terminals, which the bypass posture
+ * keeps equivalent to visible ones — run System-scoped, use the
+ * transaction-scoped driver, and still pass through read interceptors.
+ * The compile-time no-writes guarantee is pinned separately in
+ * `codegen`'s `ValidationReadClientCompileTest`.
  */
 class ValidationReadClientIntegrationTest : PostgresTestBase() {
 
@@ -184,6 +215,32 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
             }.save()
         }
         assertEquals("authorId", ex.violations.single().field)
+    }
+
+    @Test
+    fun `validator eager loads and traversals bypass LOAD privacy`() {
+        val client = freshClient {
+            privacyContext { PrivacyContext(Viewer.Anonymous) }
+            policies {
+                users(LockedDownUserPolicy)
+                articles(EdgeCheckedArticlePolicy)
+            }
+        }
+        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val alice = sys.users.create { name = "Alice"; email = "alice@test.com" }.save()
+            sys.articles.create { title = "First"; authorId = alice.id }.save()
+            alice
+        }
+
+        // The calling viewer cannot read users at all…
+        assertFailsWith<PrivacyDeniedException> { client.users.byIdOrNull(author.id) }
+
+        // …but the validator's eager load and traversal for the second
+        // create run under the fixed bypass context: the hidden author
+        // row materializes on both edge paths and the invariant passes
+        // instead of surfacing the caller's denial.
+        val second = client.articles.create { title = "Second"; authorId = author.id }.save()
+        assertNotNull(second)
     }
 
     // ---- Transaction scoping ----

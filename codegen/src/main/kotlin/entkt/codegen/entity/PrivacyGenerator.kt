@@ -50,11 +50,14 @@ internal class PrivacyGenerator(
     ): FileSpec {
         val entityClass = ClassName(packageName, schemaName)
         // Hook contexts keep the full client (hooks may legitimately have
-        // side effects); privacy rule contexts get the read-only client —
-        // rule writes are compile errors, and rule reads run viewer-scoped
-        // under the caller's context fixed by the generated evaluators.
+        // side effects); privacy rule contexts get the privacy-posture
+        // read client — rule writes are compile errors, and rule reads
+        // run viewer-scoped under the caller's context fixed by
+        // `client.asPrivacyReadClientForInternalUse(privacy)` in the
+        // generated evaluators. The concrete type makes the viewer-scoped
+        // read posture visible in helper signatures.
         val clientClass = ClassName(packageName, "EntClient")
-        val readClientClass = ClassName(packageName, "EntReadClient")
+        val readClientClass = ClassName(packageName, "EntPrivacyReadClient")
         val configClass = ClassName(packageName, "${schemaName}PrivacyConfig")
         val privacyScopeClass = ClassName(packageName, "${schemaName}PrivacyScope")
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")

@@ -36,12 +36,14 @@ internal class ValidationGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val entityClass = ClassName(packageName, schemaName)
-        // Validation contexts expose the read-only client, not the full
-        // EntClient — validator writes are compile errors, not a
-        // documentation convention. Generated evaluators construct it via
-        // `client.asReadClientForInternalUse(...)` with a fixed
-        // PrivacyBypass("validation read") context.
-        val clientClass = ClassName(packageName, "EntReadClient")
+        // Validation contexts expose the validation-posture read client,
+        // not the full EntClient — validator writes are compile errors,
+        // not a documentation convention. Generated evaluators construct
+        // it via `client.asValidationReadClientForInternalUse()`, which
+        // fixes the PrivacyBypass("validation read") context, and the
+        // concrete type makes the privacy-bypass read posture visible in
+        // helper signatures.
+        val clientClass = ClassName(packageName, "EntValidationReadClient")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")

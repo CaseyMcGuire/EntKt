@@ -24,13 +24,14 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
  * `@EntktInternal` interceptor registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
  * `evaluateLoadPrivacy(...)`, the only repo members query terminals
- * call). Both `EntClient` and `EntReadClient` implement it, so
- * generated query and index-stage constructors can accept the contract
- * instead of the full client.
+ * call). Both `EntClient` and `EntReadClientImpl` (the shared delegate
+ * behind the posture read clients) implement it, so generated query and
+ * index-stage constructors can accept the contract instead of the full
+ * client.
  *
  * Everything here is `public` + `@EntktInternal`, not Kotlin-`internal`:
  * the public query constructors cannot expose an internal parameter
- * type, the public `EntClient` / `EntReadClient` cannot
+ * type, the public `EntClient` cannot
  * expose an internal supertype, and `internal` would be no guard anyway
  * — generated code compiles into the consuming application's module,
  * where `internal` stays visible to exactly the application code the
@@ -98,7 +99,10 @@ internal class ReadRuntimeGenerator(
             .addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
                     "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
-                    "`EntReadClient`; a query constructed with either behaves identically\n" +
+                    "by `EntReadClientImpl` (the internal delegate behind\n" +
+                    "`EntValidationReadClient` / `EntPrivacyReadClient` — the public\n" +
+                    "`EntReadClient` interface deliberately does not extend this\n" +
+                    "contract); a query constructed with either host behaves identically\n" +
                     "on the read path (privacy context, LOAD privacy, read interceptors,\n" +
                     "visible-family overfetch cap).",
             )

@@ -25,7 +25,8 @@ private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 // EntClient: every internal use (requireClient, interceptor lookup, the
 // visible-family cap, LOAD-privacy delegation, sibling-query
 // construction) stays within EntReadRuntime's surface, so the read-only
-// EntReadClient can host queries identically.
+// EntReadClientImpl behind the posture wrappers can host queries
+// identically.
 private val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
 private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")

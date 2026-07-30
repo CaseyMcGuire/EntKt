@@ -6,7 +6,7 @@ import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
-import entkt.integrationtest.ent.EntReadClient
+import entkt.integrationtest.ent.EntPrivacyReadClient
 import entkt.integrationtest.ent.Membership
 import entkt.integrationtest.ent.MembershipLoadPrivacyRule
 import entkt.integrationtest.ent.MembershipPolicyScope
@@ -39,13 +39,14 @@ private val AllowAllArticleLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allo
 
 /**
  * Graph-reading load rule on the throwing terminal. The explicit
- * `EntReadClient` type pins the context's client property — this file
- * stops compiling if privacy contexts regress to the full `EntClient`.
- * Under the caller's context a viewer who cannot read users gets the
- * inner read's PrivacyDeniedException, not the row.
+ * `EntPrivacyReadClient` type pins the context's client property — this
+ * file stops compiling if privacy contexts regress to the full
+ * `EntClient`, the shared `EntReadClient` interface, or the validation
+ * posture. Under the caller's context a viewer who cannot read users
+ * gets the inner read's PrivacyDeniedException, not the row.
  */
 private val AllowIfAuthorReadable = ArticleLoadPrivacyRule { ctx ->
-    val client: EntReadClient = ctx.client
+    val client: EntPrivacyReadClient = ctx.client
     if (client.users.byIdOrNull(ctx.entity.authorId) != null) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
@@ -60,6 +61,26 @@ private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { ctx ->
 private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
     if (ctx.client.users.byIdOrNull(ctx.candidate.authorId) != null) PrivacyDecision.Allow
     else PrivacyDecision.Deny("author row not found")
+}
+
+/**
+ * Load rule whose decision reads through edges: the `withUser()` eager
+ * load, the `queryUser()` traversal, and the staged index helper all
+ * run through the privacy client, so the hop rows they materialize
+ * pass the caller's LOAD privacy like any other rule read — a viewer
+ * who cannot read users gets the denial, not the graph. (The rule
+ * reads memberships, not articles, so the inner reads cannot re-enter
+ * this rule.)
+ */
+private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ctx ->
+    val memberships = ctx.client.memberships.query { withUser() }.allOrThrow()
+    val traversedMember = ctx.client.memberships.query { }.queryUser().firstOrNull()
+    val indexedMember = ctx.client.users.indexes.email("alice@test.com").orNull()
+    if (memberships.any { it.edges.user != null } && traversedMember != null && indexedMember != null) {
+        PrivacyDecision.Allow
+    } else {
+        PrivacyDecision.Continue
+    }
 }
 
 /**
@@ -116,6 +137,12 @@ private object AuthorCheckedCreateArticlePolicy : EntityPolicy<Article, ArticleP
     }
 }
 
+private object MemberGateArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+    override fun configure(scope: ArticlePolicyScope) = scope.run {
+        privacy { load(MembersReachableViaEdgesUnlockArticles) }
+    }
+}
+
 private object LeakyRawExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy { load(LeakyRawExistsRule) }
@@ -161,12 +188,14 @@ private object SecretMemberGateArticlePolicy : EntityPolicy<Article, ArticlePoli
 }
 
 /**
- * End-to-end semantics of the read-only privacy client: rule reads are
- * viewer-scoped (asserted on both denial surfaces — the throwing byId
- * and the null-collapsing visibleById), transaction-scoped, and still
- * pass through read interceptors under the caller's viewer. The
- * compile-time no-writes and opt-in-gate guarantees are pinned in
- * `codegen`'s `PrivacyReadClientCompileTest`.
+ * End-to-end semantics of the privacy-context read client
+ * (`asPrivacyReadClientForInternalUse(privacy)`, exposed as
+ * `EntPrivacyReadClient`): rule reads are viewer-scoped (asserted on
+ * both denial surfaces — the throwing byId and the null-collapsing
+ * visibleById), transaction-scoped, and still pass through read
+ * interceptors under the caller's viewer. The compile-time no-writes
+ * and opt-in-gate guarantees are pinned in `codegen`'s
+ * `PrivacyReadClientCompileTest`.
  */
 class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
@@ -233,6 +262,40 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // distinct outcome of the filtering surface.
         val ex = assertFailsWith<PrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
         assertEquals("Article", ex.entity)
+    }
+
+    // ---- Viewer scoping, edge reads ----
+
+    @Test
+    fun `rule eager loads, traversals, and index helpers are viewer-scoped`() {
+        val client = freshClient {
+            privacyContext { PrivacyContext(Viewer.Anonymous) }
+            policies {
+                users(AuthenticatedReadersUserPolicy)
+                memberships(OpenMembershipPolicy)
+                articles(MemberGateArticlePolicy)
+            }
+        }
+        val (author, article) = seedAuthorAndArticle(client)
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val group = sys.groups.create { name = "G" }.save()
+            sys.memberships.create { userId = author.id; groupId = group.id }.save()
+        }
+
+        // Authenticated viewer: the eager-loaded membership carries its
+        // user, the traversal reaches the member, and the index helper
+        // finds the email — the rule allows the article.
+        val asUser = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
+            c.articles.byIdOrNull(article.id)
+        }
+        assertNotNull(asUser)
+
+        // Anonymous: the same hops run viewer-scoped through the privacy
+        // client, so the users LOAD denial surfaces from inside the
+        // rule's eager load — entity "User" — instead of the hidden rows
+        // influencing the decision.
+        val ex = assertFailsWith<PrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
+        assertEquals("User", ex.entity)
     }
 
     // ---- Transaction scoping ----

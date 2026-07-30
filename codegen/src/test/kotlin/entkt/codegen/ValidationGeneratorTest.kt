@@ -54,8 +54,18 @@ class ValidationGeneratorTest {
         assert(output.contains("data class UserCreateValidationContext")) {
             "Should generate create context\n$output"
         }
-        assert(output.contains("val client: EntReadClient")) {
-            "Create context should expose the read-only client\n$output"
+        assert(output.contains("val client: EntValidationReadClient")) {
+            "Create context should expose the validation-posture read client\n$output"
+        }
+        // All three contexts (create/update/delete) live in this file and
+        // each exposes the validation-posture client — nothing here may
+        // fall back to the shared interface or the privacy posture.
+        val clientDecls = Regex("val client: EntValidationReadClient").findAll(output).count()
+        assert(clientDecls == 3) {
+            "All three validation contexts should expose EntValidationReadClient; found $clientDecls\n$output"
+        }
+        assert(!output.contains("val client: EntReadClient")) {
+            "No validation context may expose the interface-typed client\n$output"
         }
         assert(output.contains("val candidate: UserWriteCandidate")) {
             "Create context should have candidate\n$output"

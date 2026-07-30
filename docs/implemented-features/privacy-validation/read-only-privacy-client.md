@@ -17,6 +17,22 @@ viewer, and the raw-terminal gate below). See
 [Privacy → Operation Contexts](../../06-privacy.md#operation-contexts)
 for the user-facing documentation.
 
+**Superseded 2026-07-29 — the one-concrete-client decision.** The
+raw-terminal gate below meant one concrete type described instances
+with meaningfully different behavior, so the follow-up
+[posture-specific-read-clients](posture-specific-read-clients.md) RFC
+made the posture visible in types: `EntReadClient` became a shared
+interface, privacy contexts now expose the distinct concrete
+`EntPrivacyReadClient`, validation contexts `EntValidationReadClient`,
+and the arbitrary-context `asReadClientForInternalUse(context)` was
+replaced by posture-specific `asValidationReadClientForInternalUse()` /
+`asPrivacyReadClientForInternalUse(privacy)` adapters. This essentially
+adopts the fork's Option B names, but over one shared internal
+implementation and shared repos — answering the repo-drift objection
+that motivated rejecting Option B below. The runtime raw-terminal gate,
+read semantics, and everything else this document records are
+unchanged.
+
 **Post-review tightening — raw terminals are gated on viewer-scoped
 readers.** Review found that `rawCount` / `rawExists` / the raw
 aggregates, which skip LOAD privacy by design, punched a hole in this

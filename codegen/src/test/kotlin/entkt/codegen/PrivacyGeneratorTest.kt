@@ -47,11 +47,21 @@ class PrivacyGeneratorTest {
         assert(output.contains("val privacy: PrivacyContext")) {
             "Load context should have privacy\n$output"
         }
-        assert(output.contains("val client: EntReadClient")) {
-            "Load context should expose the read-only client\n$output"
+        assert(output.contains("val client: EntPrivacyReadClient")) {
+            "Load context should expose the privacy-posture read client\n$output"
         }
         assert(output.contains("val entity: User")) {
             "Load context should have entity\n$output"
+        }
+        // All four contexts (load/create/update/delete) live in this file
+        // and each exposes the privacy-posture client — nothing here may
+        // fall back to the shared interface or the validation posture.
+        val ruleClientDecls = Regex("val client: EntPrivacyReadClient").findAll(output).count()
+        assert(ruleClientDecls == 4) {
+            "All four privacy contexts should expose EntPrivacyReadClient; found $ruleClientDecls\n$output"
+        }
+        assert(!output.contains("val client: EntReadClient")) {
+            "No privacy context may expose the interface-typed client\n$output"
         }
         // Hook contexts are the deliberate exception: hooks may have side
         // effects, so they keep the full client.
