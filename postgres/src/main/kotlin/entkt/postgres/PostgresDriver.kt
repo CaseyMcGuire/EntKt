@@ -635,7 +635,7 @@ class PostgresDriver(
                 unique == idx.unique &&
                 columns == idx.columns &&
                 accessMethod == (idx.using ?: "btree") &&
-                normalizeWhere(predicate) == normalizeWhere(idx.where) &&
+                normalizeWhere(predicate, idx.columnTypes) == normalizeWhere(idx.where, idx.columnTypes) &&
                 (idx.opclasses == null || opclasses == idx.opclasses) &&
                 (idx.with == null || reloptions == idx.with)
 

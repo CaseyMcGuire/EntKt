@@ -636,10 +636,19 @@ Partial indexes are useful for enforcing uniqueness on a subset of rows or
 speeding up queries that always filter by a condition.
 
 **Predicate normalization:** PostgreSQL's catalog deparses predicates
-differently from the user-written form (adding outer parentheses, type
-casts, etc.). The migration differ normalizes both sides before comparing,
-so `active = true` and `((active)::boolean = true)` are treated as
-equivalent.
+differently from the user-written form — adding outer parentheses,
+decorating literals (`'a'::text`, `(1)::double precision`,
+`'-5'::integer`), and promoting columns (`(v)::text` on a varchar,
+`(x)::numeric` on an integer met by a decimal literal). The migration
+differ normalizes both sides before comparing, so `status = 'active'`
+and `((status)::text = 'active'::text)` are treated as equivalent.
+Casts that change which rows the predicate selects — `score::integer`
+on a float column, `c::text` on a citext column, `::char`, or any
+length-modified cast — are part of the index's identity: removing or
+adding one is real drift and surfaces as a drop + recreate. Predicates
+the normalizer can't reconcile (casts on function results, arithmetic
+grouping parens) should be declared exactly as `pg_get_expr` reports
+them.
 
 ## Native Column Types (Postgres pgvector)
 

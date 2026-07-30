@@ -58,7 +58,8 @@ class PostgresIntrospector(
                     col.copy(primaryKey = col.name in primaryKeys)
                 }
 
-                val indexes = introspectIndexes(conn, tableName, primaryKeys)
+                val columnTypes = normalizedColumns.associate { it.name.lowercase() to it.sqlType }
+                val indexes = introspectIndexes(conn, tableName, primaryKeys, columnTypes)
                 val foreignKeys = introspectForeignKeys(conn, tableName)
 
                 tables[tableName] = NormalizedTable(
@@ -231,6 +232,7 @@ class PostgresIntrospector(
         conn: java.sql.Connection,
         tableName: String,
         primaryKeys: Set<String>,
+        columnTypes: Map<String, String>,
     ): List<NormalizedIndex> {
         // Raw rows first; opclasses for non-btree indexes are fetched in a
         // second pass so the main ResultSet is closed before re-querying.
@@ -300,7 +302,7 @@ class PostgresIntrospector(
                 columns = r.columns,
                 unique = r.unique,
                 name = r.name,
-                where = normalizeWhere(r.predicate),
+                where = normalizeWhere(r.predicate, columnTypes),
                 using = if (isBtree) null else r.accessMethod,
                 opclasses = if (isBtree) null else fetchOpclasses(conn, r.name),
                 with = if (isBtree) null else r.reloptions,

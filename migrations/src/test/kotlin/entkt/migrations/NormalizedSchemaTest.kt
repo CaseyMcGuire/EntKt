@@ -163,16 +163,32 @@ class NormalizedSchemaTest {
     fun `normalizeDefault reconciles cast quoting and parens`() {
         assertEquals(normalizeDefault("'active'"), normalizeDefault("'active'::text"))
         assertEquals(normalizeDefault("5"), normalizeDefault("'5'::bigint"))
+        assertEquals(normalizeDefault("-5"), normalizeDefault("'-5'::integer"))
         assertEquals(normalizeDefault("1.5"), normalizeDefault("1.5::double precision"))
         assertEquals(normalizeDefault("-5"), normalizeDefault("(-5)"))
+        assertEquals(normalizeDefault("''"), normalizeDefault("''::text"))
         assertEquals("now()", normalizeDefault("now()"))
         assertNull(normalizeDefault(null))
     }
 
     @Test
+    fun `normalizeDefault keeps a literal distinct from an expression of the same spelling`() {
+        // A text column defaulted to the STRING 'now()' stores that
+        // string on every insert; now()::text stores the current
+        // timestamp. Postgres reports them as 'now()'::text vs
+        // (now())::text — the quoting is the distinction and must
+        // survive normalization.
+        assertNotEquals(normalizeDefault("'now()'"), normalizeDefault("now()"))
+        assertNotEquals(normalizeDefault("'now()'::text"), normalizeDefault("(now())::text"))
+        // Each side still reconciles with its own decorated form.
+        assertEquals(normalizeDefault("'now()'"), normalizeDefault("'now()'::text"))
+        assertEquals(normalizeDefault("now()"), normalizeDefault("(now())::text"))
+    }
+
+    @Test
     fun `normalizeDefault preserves colons inside string literals`() {
         // A `::` inside a string value must not be stripped as a cast.
-        assertEquals("a::b", normalizeDefault("'a::b'"))
+        assertEquals("'a::b'", normalizeDefault("'a::b'"))
         // ...and a real cast on such a literal still reconciles.
         assertEquals(normalizeDefault("'a::b'"), normalizeDefault("'a::b'::text"))
         // ...but two genuinely different values stay distinct (no masking).

@@ -131,4 +131,38 @@ class FkSemanticsDiffTest {
         assertEquals(1, drops.size)
         assertEquals(listOf("author_id", "org_id"), drops[0].columns)
     }
+
+    private fun diffAgainstTwins(vararg current: NormalizedForeignKey): DiffResult = differ.diff(
+        NormalizedSchema(mapOf("posts" to postsTable(desiredFk))),
+        NormalizedSchema(
+            mapOf("posts" to postsTable(current[0]).copy(foreignKeys = current.toList())),
+        ),
+    )
+
+    @Test
+    fun `an undeclared twin on the same endpoints is dropped not masked`() {
+        // Postgres allows several live FKs on identical endpoints; all
+        // are enforced. A matching constraint must not hide a CASCADE
+        // twin nobody declared, whichever order introspection returns.
+        val matching = introspectedFk(onDelete = FkAction.RESTRICT)
+        val cascadeTwin = introspectedFk(onDelete = FkAction.CASCADE)
+            .copy(constraintName = "zz_extra_cascade")
+
+        for (result in listOf(diffAgainstTwins(matching, cascadeTwin), diffAgainstTwins(cascadeTwin, matching))) {
+            assertTrue(result.ops.isEmpty(), "matching constraint should not be re-added; got ${result.ops}")
+            val drops = result.manual.filterIsInstance<MigrationOp.DropForeignKey>()
+            assertEquals(1, drops.size, "exactly the twin should be dropped; got ${result.manual}")
+            assertEquals("zz_extra_cascade", drops[0].constraintName)
+        }
+    }
+
+    @Test
+    fun `twin constraints with no match are all dropped before the re-add`() {
+        val cascade = introspectedFk(onDelete = FkAction.CASCADE)
+        val notValid = introspectedFk(validated = false).copy(constraintName = "zz_not_valid")
+        val result = diffAgainstTwins(cascade, notValid)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddForeignKey>().size)
+        assertEquals(2, result.manual.filterIsInstance<MigrationOp.DropForeignKey>().size)
+    }
 }

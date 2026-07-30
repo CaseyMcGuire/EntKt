@@ -163,8 +163,19 @@ class SchemaDiffer {
             val with: Map<String, String>?,
         )
 
+        // Predicate normalization is type-aware: whether a textual cast
+        // is a deparser decoration or a semantic change (citext) depends
+        // on the column's declared type. One shared map keeps both
+        // sides' keys comparable; where the sides disagree on a type,
+        // desired wins here and the disagreement itself is already
+        // flagged by diffColumns.
+        val columnTypes = buildMap {
+            for (c in current.columns) put(c.name.lowercase(), c.sqlType)
+            for (c in desired.columns) put(c.name.lowercase(), c.sqlType)
+        }
+
         fun keyOf(it: NormalizedIndex) =
-            IndexKey(it.columns, it.unique, normalizeWhere(it.where), it.using, it.opclasses, it.with)
+            IndexKey(it.columns, it.unique, normalizeWhere(it.where, columnTypes), it.using, it.opclasses, it.with)
 
         val currentByKey = current.indexes.associateBy { keyOf(it) }
         val desiredByKey = desired.indexes.associateBy { keyOf(it) }
@@ -232,26 +243,48 @@ class SchemaDiffer {
         // Match FKs by their ordinally-paired endpoints. A composite FK
         // keys on its full column lists, so it can never silently match
         // a single-column FK that shares its first column.
+        //
+        // The current side groups rather than keys uniquely: Postgres
+        // allows several live constraints on identical endpoints
+        // (differing in actions, deferrability, or NOT VALID — all
+        // simultaneously enforced), and collapsing them to one would
+        // let a correct constraint mask an undeclared twin (e.g. an
+        // extra ON DELETE CASCADE) so it never surfaced as drift.
         data class FkKey(val columns: List<String>, val targetTable: String, val targetColumns: List<String>)
 
-        val currentByKey = current.foreignKeys.associateBy { FkKey(it.columns, it.targetTable, it.targetColumns) }
+        val currentByKey = current.foreignKeys.groupBy { FkKey(it.columns, it.targetTable, it.targetColumns) }
         val desiredByKey = desired.foreignKeys.associateBy { FkKey(it.columns, it.targetTable, it.targetColumns) }
 
         for ((key, fk) in desiredByKey) {
-            val currentFk = currentByKey[key]
-            if (currentFk == null) {
+            val currentFks = currentByKey[key].orEmpty()
+            if (currentFks.isEmpty()) {
                 autoOps.add(MigrationOp.AddForeignKey(table, fk))
-            } else if (!fkSemanticsMatch(fk, currentFk)) {
-                // Constraint semantics changed — drop old constraint
-                // (manual) and add the new one (auto).
-                manualOps.add(MigrationOp.DropForeignKey(table, currentFk.columns, currentFk.constraintName))
+                continue
+            }
+            val matched = currentFks.firstOrNull { fkSemanticsMatch(fk, it) }
+            if (matched == null) {
+                // Constraint semantics changed — drop every constraint
+                // on these endpoints (manual) and add the new one (auto).
+                for (currentFk in currentFks) {
+                    manualOps.add(MigrationOp.DropForeignKey(table, currentFk.columns, currentFk.constraintName))
+                }
                 autoOps.add(MigrationOp.AddForeignKey(table, fk))
+            } else {
+                // One constraint matches the declaration; any others on
+                // the same endpoints enforce rules nobody declared.
+                for (currentFk in currentFks) {
+                    if (currentFk !== matched) {
+                        manualOps.add(MigrationOp.DropForeignKey(table, currentFk.columns, currentFk.constraintName))
+                    }
+                }
             }
         }
 
-        for ((key, fk) in currentByKey) {
+        for ((key, fks) in currentByKey) {
             if (key !in desiredByKey) {
-                manualOps.add(MigrationOp.DropForeignKey(table, fk.columns, fk.constraintName))
+                for (fk in fks) {
+                    manualOps.add(MigrationOp.DropForeignKey(table, fk.columns, fk.constraintName))
+                }
             }
         }
     }

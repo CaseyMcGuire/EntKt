@@ -66,6 +66,13 @@ internal data class IndexDdl(
     val with: Map<String, String>?,
     /** The `CREATE [UNIQUE] INDEX IF NOT EXISTS` statement. */
     val sql: String,
+    /**
+     * Lowercased column name → declared SQL type for the whole table,
+     * so predicate reconciliation can tell a deparser-added textual
+     * promotion from a semantic cast (citext) — see
+     * [entkt.migrations.normalizeWhere].
+     */
+    val columnTypes: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -180,6 +187,7 @@ internal class PostgresDdl {
      * arrangement [foreignKeysFor] has with `pg_constraint`.
      */
     fun indexesFor(schema: EntitySchema): List<IndexDdl> {
+        val columnTypes = schema.columns.associate { it.name.lowercase() to sqlTypeFor(schema, it) }
         val columnUniques = schema.columns
             .filter { it.unique && !it.primaryKey }
             .map { col ->
@@ -194,6 +202,7 @@ internal class PostgresDdl {
                     opclasses = null,
                     with = null,
                     sql = "CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)} (${quote(col.name)})",
+                    columnTypes = columnTypes,
                 )
             }
 
@@ -223,6 +232,7 @@ internal class PostgresDdl {
                 opclasses = idx.opclasses,
                 with = idx.with?.takeIf { it.isNotEmpty() },
                 sql = "$keyword IF NOT EXISTS ${quote(name)} ON ${quote(schema.table)}$usingClause ($cols)$withClause$whereSuffix",
+                columnTypes = columnTypes,
             )
         }
 

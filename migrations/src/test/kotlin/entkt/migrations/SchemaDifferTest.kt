@@ -875,20 +875,18 @@ class SchemaDifferTest {
     }
 
     @Test
-    fun `normalizeWhere strips column casts`() {
-        // pg_get_expr deparses boolean column refs as (col)::boolean
-        assertEquals("active = true", normalizeWhere("((active)::boolean = true)"))
-    }
-
-    @Test
-    fun `normalizeWhere strips literal casts`() {
-        // pg_get_expr deparses text comparisons with ::text casts
+    fun `normalizeWhere strips textual column casts but keeps value-changing ones`() {
+        // pg_get_expr promotes varchar columns to text — value-preserving.
         assertEquals("status = 'active'", normalizeWhere("((status)::text = 'active'::text)"))
+        // A non-textual column cast changes row selection; it stays,
+        // canonicalized to the bare col::type spelling.
+        assertEquals("active::boolean = true", normalizeWhere("((active)::boolean = true)"))
     }
 
     @Test
-    fun `normalizeWhere strips bare identifier casts`() {
-        assertEquals("x = 5", normalizeWhere("x::integer = 5"))
+    fun `normalizeWhere keeps bare identifier casts canonically`() {
+        assertEquals("x::integer = 5", normalizeWhere("x::integer = 5"))
+        assertEquals("x::integer = 5", normalizeWhere("((x)::integer = 5)"))
     }
 
     @Test
@@ -917,25 +915,77 @@ class SchemaDifferTest {
 
     @Test
     fun `differ matches indexes when introspected predicate has PG casts`() {
-        // Simulates pg_get_expr adding casts to a boolean predicate
+        // Simulates pg_get_expr promoting a varchar column and
+        // decorating the string literal in a deparsed predicate.
         val current = schema(
             table(
                 "users",
-                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
-                indexes = listOf(idx(listOf("email"), unique = true, where = "((active)::boolean = true)")),
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("status", "character varying")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "((status)::text = 'active'::text)")),
             ),
         )
         val desired = schema(
             table(
                 "users",
-                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("active", "boolean")),
-                indexes = listOf(idx(listOf("email"), unique = true, where = "active = true")),
+                columns = listOf(col("id", "serial", primaryKey = true), col("email"), col("status", "character varying")),
+                indexes = listOf(idx(listOf("email"), unique = true, where = "status = 'active'")),
             ),
         )
         val result = differ.diff(desired, current)
 
         assertTrue(result.ops.filterIsInstance<MigrationOp.AddIndex>().isEmpty())
         assertTrue(result.manual.filterIsInstance<MigrationOp.DropIndex>().isEmpty())
+    }
+
+    @Test
+    fun `differ flags a citext predicate cast the schema does not declare`() {
+        // On a citext column, c::text compares case-sensitively while a
+        // bare c compares case-insensitively — the live index and the
+        // declared one cover different row semantics, so this is drift,
+        // not a deparser decoration to normalize away.
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("handle", "citext")),
+                indexes = listOf(idx(listOf("id"), unique = false, where = "((handle)::text = 'a'::text)")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("handle", "citext")),
+                indexes = listOf(idx(listOf("id"), unique = false, where = "handle = 'a'")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        assertEquals(1, result.manual.filterIsInstance<MigrationOp.DropIndex>().size)
+    }
+
+    @Test
+    fun `differ flags an index whose predicate differs only by a value-changing cast`() {
+        // score::integer = 1 on a float column covers a rounding bucket
+        // that score = 1 does not — dropping the cast is real drift the
+        // differ must surface as a drop + recreate, not a silent match.
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("score", "double precision")),
+                indexes = listOf(idx(listOf("id"), unique = false, where = "((score)::integer = 1)")),
+            ),
+        )
+        val desired = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("score", "double precision")),
+                indexes = listOf(idx(listOf("id"), unique = false, where = "score = 1")),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        assertEquals(1, result.manual.filterIsInstance<MigrationOp.DropIndex>().size)
     }
 
     @Test
