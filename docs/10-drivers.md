@@ -73,9 +73,10 @@ interface Driver {
   `RETURNING` output order, which PostgreSQL does not specify. The one
   shape with no possible correlation key — ids filled by a database
   default the driver knows nothing about (no serial/identity sequence) —
-  falls back to positional pairing, which every shipped PostgreSQL
-  preserves for a serial `VALUES` plan. Tables whose triggers rewrite ids
-  during insert are outside the correlation contract.
+  falls back to per-row statements, which are inherently unambiguous
+  (one row in, one row out) at the cost of the batching. Tables whose
+  triggers rewrite ids during insert are outside the correlation
+  contract.
 - `updateMany()` updates all rows matching the predicates with the same
   values. Returns the count of updated rows.
 - `deleteMany()` deletes all rows matching the predicates. Returns the

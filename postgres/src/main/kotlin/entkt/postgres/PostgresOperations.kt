@@ -474,11 +474,23 @@ internal class PostgresOperations(
                     rows.size == 1 -> null
                     allocated != null -> allocated.ids
                     schema.idColumn in insertCols -> rows.map { it[schema.idColumn] }
-                    // No id to correlate by (no backing sequence, or a
-                    // non-auto id filled by a database default): keep the
-                    // positional pairing every shipped PostgreSQL
-                    // preserves for a serial VALUES plan.
                     else -> null
+                }
+
+                if (rows.size > 1 && correlationIds == null) {
+                    // No possible correlation key: ids come from an
+                    // opaque database default (no serial/identity
+                    // sequence to pre-allocate from). A multi-row
+                    // statement would have to trust RETURNING order, so
+                    // fall back to per-row statements — one row in, one
+                    // row out, nothing to mis-pair. This shape is rare
+                    // (multi-row batch on a hand-created default-id
+                    // table), so the lost batching is a fair price for
+                    // keeping the input-order contract unconditional.
+                    for (ir in indexedRows) {
+                        results[ir.index] = insert(conn, table, ir.row)
+                    }
+                    continue
                 }
 
                 // GENERATED ALWAYS AS IDENTITY rejects explicit id values
@@ -505,6 +517,9 @@ internal class PostgresOperations(
                     }
                     stmt.executeQuery().useQuietClose { rs ->
                         if (correlationIds == null) {
+                            // Only reachable for a single-row group (the
+                            // multi-row no-key case took the per-row
+                            // branch above): one row in, one row out.
                             for (ir in indexedRows) {
                                 check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
                                 results[ir.index] = codec.decodeRow(rs, schema.table, schema.columns)

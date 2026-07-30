@@ -172,6 +172,42 @@ class PostgresAutoDdlDriftTest {
     }
 
     @Test
+    fun `insertMany on an opaque-default id table falls back to per-row inserts`() {
+        // No serial/identity sequence backs this id, so there is no
+        // correlation key to pre-allocate — the driver must not trust
+        // RETURNING order for a multi-row statement, and pairs rows
+        // per-statement instead. Registered with autoDdl = false: the
+        // schema declares a plain UUID id, and the live DEFAULT is
+        // deliberately opaque to the driver.
+        createRaw(
+            """CREATE TABLE "$table" (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL, note text)""",
+        )
+        val schema = EntitySchema(
+            table = table,
+            idColumn = "id",
+            idStrategy = IdStrategy.EXPLICIT,
+            columns = listOf(
+                ColumnMetadata("id", FieldType.UUID, nullable = false, primaryKey = true),
+                ColumnMetadata("title", FieldType.STRING, nullable = false),
+                ColumnMetadata("note", FieldType.STRING, nullable = true),
+            ),
+            edges = emptyMap(),
+            indexes = emptyList(),
+        )
+        val driver = PostgresDriver(SharedPostgres.dataSource, autoDdl = false)
+        driver.register(schema)
+
+        val rows = driver.insertMany(table, listOf(
+            mapOf("title" to "a"),
+            mapOf("title" to "b"),
+            mapOf("title" to "c"),
+        ))
+
+        assertTrue(rows.map { it["title"] } == listOf("a", "b", "c"), "input order preserved: $rows")
+        assertTrue(rows.mapNotNull { it["id"] }.toSet().size == 3, "each row got a distinct default id")
+    }
+
+    @Test
     fun `a matching body with a missing index still registers and creates the index`() {
         // Index reconciliation belongs to ensureIndex (absent → create),
         // not the body guard — a compatible table lacking a declared

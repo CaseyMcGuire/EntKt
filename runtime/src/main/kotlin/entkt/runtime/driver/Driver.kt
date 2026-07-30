@@ -255,13 +255,11 @@ interface Driver {
      * should use an efficient batch strategy (e.g. multi-row `INSERT`).
      *
      * The input-order guarantee is part of the contract: implementations
-     * must correlate returned rows to inputs by a key (e.g. the row id)
-     * wherever one exists, not by relying on an engine's unspecified
-     * result ordering — SQL engines generally do not document the row
-     * order of insert-returning output. A positional fallback is
-     * acceptable only for shapes with no possible correlation key (e.g.
-     * ids filled by an opaque database default), and must be documented
-     * by the driver.
+     * must pair returned rows with inputs unambiguously — by a
+     * correlation key (e.g. the row id), or by statements that can only
+     * return one row each — never by relying on an engine's unspecified
+     * result ordering. SQL engines generally do not document the row
+     * order of insert-returning output.
      *
      * This is a low-level driver method that does not fire lifecycle
      * hooks. The generated `createMany` repo method delegates to
