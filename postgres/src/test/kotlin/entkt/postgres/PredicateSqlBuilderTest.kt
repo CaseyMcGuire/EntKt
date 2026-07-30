@@ -337,6 +337,22 @@ class PredicateSqlBuilderTest {
     )
 
     @Test
+    fun `shaped source limit zero renders LIMIT 0`() {
+        // limit(0) is a legal caller bound meaning "no rows": the
+        // subquery follows the source as written, matches no source
+        // rows, and the bridge admits no candidates.
+        val (sql, params) = lower(
+            Predicate.HasEdgeFromShape<Any, Any>("author", userShape(limit = 0)),
+            schema = posts,
+        )
+        assertEquals(
+            """t0."author_id" IN (SELECT t1."id" FROM "users" AS t1 LIMIT 0)""",
+            sql,
+        )
+        assertTrue(params.isEmpty())
+    }
+
+    @Test
     fun `shaped source distance ordering binds the operand after subquery WHERE params`() {
         val shape = TraversalSourceShape<Any>(
             table = "users",

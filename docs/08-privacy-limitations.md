@@ -40,8 +40,11 @@ LOAD-checked:
 
 - `Edge.has { ... }` / `Edge.exists()` can match a related row the viewer
   could not load directly.
-- `queryX()` applies the source query when selecting target rows, but it
-  does not return or LOAD-check those source entities.
+- `queryX()` applies the source query when selecting target rows —
+  including its `orderBy` / `limit` / `offset` — but it does not return
+  or LOAD-check those source entities. A source ordered by a hidden
+  attribute and bounded (`orderBy(...); limit(1)`) can therefore leak
+  *rank* information about hidden rows, not just existence.
 
 A query can therefore be *filtered* by attributes of rows the viewer
 could not load, and its LOAD-checked results reveal that match. This

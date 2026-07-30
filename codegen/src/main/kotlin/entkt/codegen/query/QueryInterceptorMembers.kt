@@ -91,7 +91,7 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
                     String::class.asClassName(),
                 )
                 // Bridging predicate from the source step
-                // (HasEdgeWith / HasM2MEdgeFrom / HasEdge) goes
+                // (HasEdgeFromShape / HasM2MEdgeFromShape) goes
                 // in as STRUCTURAL alongside caller-passed
                 // extras (byId's id leaf, eager-load's IN clause).
                 .addStatement(

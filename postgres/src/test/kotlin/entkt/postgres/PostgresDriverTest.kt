@@ -1642,7 +1642,8 @@ class PostgresDriverTest {
         val driver = fresh()
         // OFFSET without ORDER BY skips rows in unspecified order, so
         // an offset-only source shape must keep its ordering to stay
-        // deterministic — only the both-null case may skip it.
+        // deterministic. (The subquery renders ORDER BY
+        // unconditionally — even with no bounds at all.)
         val pg = driver.explainQuery(
             "posts",
             listOf(

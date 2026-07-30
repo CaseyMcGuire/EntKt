@@ -99,13 +99,13 @@ sealed class Predicate<E : Any> {
      * by [sourceFilter]) via the forward edge [edgeName] declared on
      * [sourceTable]."
      *
-     * Used by generated query traversal so the predicate can compile to
-     * an EXISTS subquery in either direction without referencing a
-     * synthesized reverse-edge name on the target's `SCHEMA.edges`.
-     * Forward query traversal (e.g. `postQuery.queryTags()`) emits this
-     * variant against the candidate Tag with `sourceTable = "posts"`,
-     * `edgeName = "tags"` — the runtime walks the junction backwards
-     * using the source schema's forward-edge metadata.
+     * The predicate compiles to an EXISTS subquery in either direction
+     * without referencing a synthesized reverse-edge name on the
+     * target's `SCHEMA.edges` — the runtime walks the junction
+     * backwards using the source schema's forward-edge metadata.
+     * Generated `queryX()` traversal emits the shape-carrying
+     * [HasM2MEdgeFromShape] instead; this predicate-only variant is
+     * retained for hand-built queries.
      *
      * `sourceFilter == null` means "any related row" (mirrors
      * [HasEdge] vs [HasEdgeWith]).

@@ -625,9 +625,11 @@ internal fun entitySchemaCodeBlock(
 
 /**
  * One forward edge entry as it appears in a generated entity's
- * `SCHEMA.edges` map. M2M traversal predicates ([Predicate.HasM2MEdgeFrom])
- * resolve the source's forward edge directly; no reverse-edge entries
- * are synthesized on the target schema.
+ * `SCHEMA.edges` map. M2M traversal predicates
+ * ([Predicate.HasM2MEdgeFromShape], and the predicate-only
+ * [Predicate.HasM2MEdgeFrom]) resolve the source's forward edge
+ * directly; no reverse-edge entries are synthesized on the target
+ * schema.
  */
 internal data class EdgeEntry(
     val name: String,
