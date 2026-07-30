@@ -6,8 +6,6 @@ privacy context can see, what one row looks like, and which edges it can
 follow. It is a debug/admin presentation layer over the normal generated read
 path — never a privileged backdoor around it.
 
-Design record: [Ent Viewer RFC](implemented-features/tooling/ent-viewer.md).
-
 ## Install
 
 Enable adapter generation and add the viewer module:
@@ -26,9 +24,9 @@ dependencies {
 }
 ```
 
-With `viewer.set(true)`, codegen emits one `<Name>ViewerEntity` adapter per
-entity plus `GeneratedEntViewerRegistry`. Default is `false`: no viewer files,
-no viewer dependency needed.
+With `viewer.set(true)`, the generated `GeneratedEntViewerRegistry` makes
+your entities available to the viewer. The default is `false`, so projects
+that do not use the viewer need no viewer dependency.
 
 ## Mount
 
@@ -121,8 +119,8 @@ is `.sensitive()` / `redaction { extra(...) }` — see below.
   `visibleByIdOrNull`). Privacy-denied rows are omitted from lists; a
   privacy-denied, missing, or unparseable id is the same 404 — no existence
   disclosure. The default context is `Viewer.Anonymous` (fail-closed).
-- **Read-only.** Non-GET requests are 405. There is no write surface, no raw
-  SQL, and no `Driver.query(...)` fallback anywhere in the viewer path.
+- **Read-only.** Non-GET requests are 405, and the viewer exposes no create,
+  update, delete, or arbitrary-query API.
 - **Sensitive fields stay sensitive.** `.sensitive()` columns are visible as
   fields but render as `***`; the generated adapters never materialize the
   value (null-ness included), and sensitive columns are not filterable or
@@ -163,5 +161,5 @@ any query executes.
 On a detail page, `belongsTo` edges link straight to the target row (via the
 FK value), and `hasOne`/`hasMany` edges link to the target list filtered by
 the target's FK column. M2M edges render as plain text in V1 — the viewer
-does not fall back to a raw driver join to make a link work. Links respect
-entity exclusions, and privacy still applies after navigation.
+does not link them yet. Links respect entity exclusions, and privacy still
+applies after navigation.

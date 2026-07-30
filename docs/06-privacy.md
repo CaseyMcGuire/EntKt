@@ -244,12 +244,6 @@ cannot load. Writes, transactions, re-scoping (`withPrivacyContext` /
 `bypassPrivacy_DANGEROUS`), and configuration do not exist on the
 type, so a rule that tries to mutate does not compile:
 
-```kotlin
-// Generated evaluator wires the viewer-scoped read-only client
-val privacyClient = client.asReadClientForInternalUse(privacy)
-val ctx = UserLoadPrivacyContext(privacy, privacyClient, entity)
-```
-
 Rule reads evaluate LOAD privacy like any other read: a rule loading a
 row its viewer cannot see gets the denial (`byIdOrNull` throws
 `PrivacyDeniedException`; `visibleByIdOrNull` collapses it to `null`),
@@ -265,18 +259,11 @@ everywhere else (application queries, validation rules), where their
 privacy posture is deliberate. Use a LOAD-checked terminal inside
 privacy rules.
 
-One caveat is inherited from the entity-level privacy model rather
-than introduced by the read client: LOAD privacy is evaluated on
-**materialized** rows only. Rows a query references purely
-structurally — matched inside an `Edge.has { ... }` predicate (an
-`EXISTS` subquery) or folded in as the source side of a `queryX()`
-traversal — are never loaded as entities and therefore never
-LOAD-checked. That holds identically for application queries and rule
-reads: a rule that keys a decision on a *related* row's attributes
-through `has { }` can be influenced by rows its viewer could not load
-directly. When that matters, materialize the related row explicitly
-(`byIdOrNull` / `firstOrNull` on the related repo) so it passes its
-own LOAD check. See
+LOAD privacy applies to returned entities, not related entities used only to
+filter a query. That holds for both application queries and rule reads: a rule
+that filters through `has { }` can be influenced by a related row its viewer
+could not load directly. When that matters, load the related row explicitly
+with `byIdOrNull` or `firstOrNull` so its LOAD policy runs. See
 [Privacy Limitations → Predicate-Based Inference](08-privacy-limitations.md#predicate-based-inference).
 
 ### LoadPrivacyContext
@@ -435,21 +422,17 @@ client.withTransaction { tx ->
 }
 ```
 
-## Internal Bypass
+## Delete Privacy Behavior
 
-Some operations need to bypass LOAD privacy internally:
+Delete operations enforce DELETE privacy independently of LOAD privacy:
 
-- `deleteById(id)` fetches the entity via the driver directly
-  (bypassing LOAD privacy) then delegates to `delete(entity)` which
-  enforces DELETE privacy.
-- `deleteMany(predicates)` queries the driver directly without LOAD
-  filtering, hydrates entities, then calls `delete(entity)` per row
-  for DELETE privacy enforcement.
+- `deleteById(id)` may delete an entity the viewer cannot load, but only
+  when its DELETE rules allow the operation.
+- `deleteMany(predicates)` evaluates DELETE privacy for every matching
+  entity and stops on the first denial.
 
-Raw entity-loading bypasses are generated inside repo internals only
-and are not exposed to application code. The one public aggregate
-escape hatch is `rawCount()`, which returns a row count without
-materializing or privacy-checking entities.
+For aggregate reads, `rawCount()` deliberately skips LOAD privacy.
+Use `visibleCount()` when the count must include only visible entities.
 
 ## Limitations
 
@@ -475,18 +458,17 @@ read model ensures that unreadable entities never silently disappear
 from results — callers must handle `PrivacyDeniedException` or ensure
 their queries only match entities the viewer is allowed to see.
 
-## What Gets Generated
+## Generated Privacy API
 
-For each schema with a policy registered, the codegen emits:
+For each schema with a policy, entkt provides:
 
-| Generated type | Purpose |
-|----------------|---------|
+| Public type | Purpose |
+|-------------|---------|
 | `{Entity}WriteCandidate` | Snapshot of writable fields for write rules |
 | `{Entity}LoadPrivacyContext` | Context for LOAD rules |
 | `{Entity}CreatePrivacyContext` | Context for CREATE rules |
 | `{Entity}UpdatePrivacyContext` | Context for UPDATE rules |
 | `{Entity}DeletePrivacyContext` | Context for DELETE rules |
-| `{Entity}PrivacyConfig` | Internal storage for rule lists |
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |
 | `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |

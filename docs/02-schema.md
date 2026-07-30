@@ -107,16 +107,13 @@ int("balance").nonNegative()
 double("temperature").negative()
 ```
 
-Validators are **application-tier**: they are enforced as inline checks in
-the generated `save()` paths (create and update), throwing
-`ValidationException` with structured, field-named violations (surfaced as
-`EntError.ValidationFailed` on the result variants). They do not appear in
-runtime `ColumnMetadata` and produce no DDL — a `maxLength(255)` string
-column is still `text`, with no `varchar(n)` or `CHECK` constraint — so
-writes that bypass the generated builders (raw `driver.insert/update`)
-bypass validators too. Pushing translatable validators down into `CHECK`
-constraints as defense in depth is a recorded design note — see
-[Validator-Derived CHECK Constraints](possible-features/schema/validator-check-constraints.md).
+The generated create and update `save()` methods enforce these validators.
+Failures throw `ValidationException` with structured, field-named violations
+and appear as `EntError.ValidationFailed` from result-returning terminals.
+These validators are not database constraints: for example,
+`maxLength(255)` still creates a `text` column rather than `varchar(255)` or
+a `CHECK` constraint. Writes made outside entkt must enforce the same
+invariants separately.
 
 ### Enums
 
@@ -144,8 +141,8 @@ With this declaration:
   passing a value from a different enum (e.g. `OtherEnum.FOO`) is rejected
   at schema construction time
 
-Values are stored as strings in the database (via `.name`) and converted
-back with `valueOf()` when reading rows. The driver layer is unchanged.
+Values are stored using the enum constant's name and returned as the declared
+enum type.
 
 > **Caveat: renaming an enum constant is a data migration, not a refactor.**
 > Because values persist as the constant's `.name` in a plain `text` column
@@ -154,8 +151,8 @@ back with `valueOf()` when reading rows. The driver layer is unchanged.
 >
 > - Existing rows keep the old string, so `valueOf("MEDIUM")` **throws** when
 >   those rows are read back.
-> - If the constant was a `.default(...)`, migration generation emits only a
->   metadata-only `ALTER COLUMN … SET DEFAULT 'NORMAL'`. It does **not**
+> - If the constant was a `.default(...)`, migration generation only updates
+>   the database default to `NORMAL`. It does **not**
 >   rewrite existing rows, and neither the database nor the diff tool flags
 >   the stale values — the migration applies cleanly and the problem only
 >   surfaces later, at read time.
@@ -298,14 +295,12 @@ class Friendship : EntSchema("friendships") {
 }
 ```
 
-A `throughLink` declaration is also rejected at codegen time if the
-junction doesn't satisfy the helper-eligibility rules: id + exactly
-the two named FK columns, both `belongsTo` edges non-null, both with
-explicit `OnDelete.CASCADE`, no write-time modifiers on the FK
-backing fields, a non-`EXPLICIT` id strategy, and a non-partial
-unique composite index on `(sourceFk, targetFk)`. Junctions that
-need anything beyond that shape — payload columns, hooks, validators
-— must use `throughEntity`.
+A `throughLink` declaration is rejected during generation unless the junction
+has an id, exactly the two named non-null `belongsTo` fields, explicit
+`OnDelete.CASCADE` on both edges, a generated id strategy, and a non-partial
+unique composite index on `(sourceFk, targetFk)`. The foreign-key fields
+cannot have write-time modifiers. Junctions that need payload columns, hooks,
+or validators must use `throughEntity`.
 
 ## Relationship Patterns
 
@@ -555,18 +550,16 @@ Result:
 
 - `User` can traverse to `groups` via its own `manyToMany<Group>("groups")` declaration
 - `Group` can traverse to `users` via its own `manyToMany<User>("users")` declaration
-- the SQL table shape is still just `users`, `groups`, and `memberships`
+- the database contains the `users`, `groups`, and `memberships` tables
 - bidirectional traversal **requires** both endpoints to declare their own
-  `manyToMany`; the codegen does not auto-synthesize a reverse traversal
-  edge on the opposite side. Declaring both is the explicit-API pattern —
+  `manyToMany`; declaring one side does not add an edge to the other.
+  Declaring both is the explicit API pattern —
   the orientation keys must pair-swap (one side passes
-  `(user, group)`, the other passes `(group, user)`) so codegen
-  recognizes them as opposite sides of the same canonical relationship
+  `(user, group)`, the other passes `(group, user)`).
 
-## How Table Schema Is Generated
+## Resulting Database Schema
 
-Each `EntSchema` becomes one SQL table plus runtime metadata describing its
-columns, foreign keys, edges, and indexes.
+Each `EntSchema` maps to one database table.
 
 Column generation rules:
 
@@ -585,16 +578,6 @@ Constraint and index rules:
 - field-level `.unique()` becomes a single-column unique constraint
 - `index("...", ...)` becomes a named secondary index
 - `index(...).where(...)` becomes a partial index when the driver supports it
-
-Runtime metadata rules:
-
-- outgoing edges are keyed by the local edge name
-- `hasMany(...)` / `hasOne(...)` are traversal-only metadata on the current
-  schema
-- `belongsTo(...)` contributes both traversal metadata and a local FK column
-- `manyToMany(...).throughEntity(...)` (or `.throughLink(...)`) resolves
-  through the junction schema at finalization time and is emitted as join
-  metadata, not as extra columns on the endpoint tables
 
 ## Indexes
 
@@ -695,11 +678,10 @@ class Article : EntSchema("articles") {
   metric.
 
 **Dimension validation.** A `PgVector` carries no fixed dimension; the column's
-declared `dimensions` is the single source of truth. A wrong-size vector is
-rejected with a field-named error at every boundary -- generated `save()`, raw
-driver writes, query predicates (`embedding eq v`), and distance ordering --
-rather than reaching Postgres. Non-finite components (`NaN`/`Infinity`) are
-rejected when the `PgVector` is constructed.
+declared `dimensions` is the source of truth. Generated saves, query predicates
+(`embedding eq v`), and distance ordering reject a wrong-size vector with a
+field-named error. `PgVector.of(...)` rejects non-finite components
+(`NaN`/`Infinity`).
 
 **Migrations / DDL.** A vector schema emits `CREATE EXTENSION IF NOT EXISTS
 "vector"` (ordered before the table), a `vector(n)` column, and
@@ -749,53 +731,36 @@ path: apply the Kotlin serialization compiler plugin
 `kotlinx-serialization-json` available, and annotate json classes
 `@Serializable`.
 
-Jackson projects can switch mappers instead of adopting kotlinx (see
-[Pluggable JSON Mappers](implemented-features/schema/pluggable-json-mappers.md)),
-opting in on both sides:
+Jackson projects can switch mappers instead of adopting kotlinx by opting in
+in both Gradle and application configuration:
 
 ```kotlin
-// build.gradle.kts — codegen stamps the mapper into the SCHEMA metadata:
+// build.gradle.kts
 entkt { jsonMapper.set("jackson") }
 
-// driver — the codec's id must match what the code was generated with
-// (from io.entkt:jackson):
+// Application setup (from io.entkt:jackson)
 PostgresDriver(dataSource, jsonCodec = JacksonJsonCodec(objectMapper))
 ```
 
-With the Jackson mapper, generated code references no kotlinx symbols (no
-compiler plugin, no `@Serializable`), and the caller's `ObjectMapper` owns
-round-trip semantics — register `jackson-module-kotlin` for Kotlin data
-classes. The tradeoff: kotlinx's compile-time failure for unsupported types
-becomes a `register()`-time preflight at best — Jackson is reflective, so
-what its preflight can't detect (e.g. a missing `jackson-module-kotlin`)
-surfaces at first encode/decode, wrapped with the table, column, and
-expected type. Regenerating with one mapper while the
-driver is configured with another fails at startup naming both ids — never
-silently. Other mappers' annotations are ignored by whichever codec is
-active.
+Use the same mapper in the Gradle configuration and `PostgresDriver`.
+A mismatch fails during application startup. With Jackson, register
+`jackson-module-kotlin` for Kotlin data classes; the configured
+`ObjectMapper` controls serialization behavior.
 
 - The generated property type is the supplied type (`metadata: PetMetadata?`,
-  `rects: List<HighlightRect>?`). With the default kotlinx mapper, generated
-  code references statically-resolved serializers (`PetMetadata.serializer()`,
-  `ListSerializer(HighlightRect.serializer())`), so a **type without kotlinx
-  serialization support fails at compile time** rather than as a late read
-  failure.
+  `rects: List<HighlightRect>?`). With the default kotlinx mapper, a type
+  without serialization support fails at compile time.
 - **Generic types** must use the reified form — a `KClass` cannot carry type
   arguments, so `json("rects", List::class)` is rejected at schema construction
   with a pointer to `json<List<HighlightRect>>("rects")`. Star projections
   (`List<*>`), `in`/`out` projections, and unresolved type parameters are also
   rejected there. Type arguments may be nullable (`List<HighlightRect?>`).
 - With the kotlinx mapper, every class in the type needs a kotlinx serializer: `@Serializable` classes
-  (including generic ones — `Box<HighlightRect>` uses
-  `Box.serializer(HighlightRect.serializer())`), primitives and `String`, and
-  `List`/`Set`/`Map`/`Pair`/`Triple` via the `kotlinx.serialization.builtins`
-  factories. An **enum used inside a json type must itself be `@Serializable`**
-  so its companion `serializer()` is generated.
-- Encoding/decoding go through the driver's `JsonColumnCodec`. Configure
-  kotlinx behavior via
+  (including generic ones), primitives and `String`, and supported collection
+  shapes. An **enum used inside a JSON type must itself be `@Serializable`**.
+- Configure kotlinx behavior with
   `PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json { ignoreUnknownKeys = true }))`
-  (default `KotlinxJsonCodec(Json.Default)`). Serializers come from the column
-  metadata, not from the codec's configuration.
+  (the default is `KotlinxJsonCodec(Json.Default)`).
 - `.nullable()` and `.comment()` apply; **defaults, `.unique()`, primary keys, and
   JSON indexes are rejected** with a clear error. Database-specific JSON indexes
   can be added via manual migrations.
@@ -803,13 +768,9 @@ active.
   only** (`Pet.metadata.isNull()` / `.isNotNull()` on nullable columns). Equality,
   membership, ordering, containment, and path predicates are out of scope in V1.
 
-**Errors.** A wrong-type write, a raw write without registered serializer
-metadata, and an encode or decode failure each throw a field-named error
-carrying the table, column, and expected type (encode/decode failures keep the
-original serialization exception as the cause). On a generic column the
-write-time type check is erased (`List::class`), so a raw driver write with
-wrong *element* types fails at encode — with the same field-named context.
-Generated repos are statically typed and can't hit either case.
+**Errors.** Encode and decode failures identify the table, column, and expected
+type and retain the original serialization exception as their cause. Generated
+repositories provide compile-time types for JSON fields.
 
 **Migrations.** A JSON column renders `jsonb`. Migrations diff only database
 facts (column existence, `jsonb` type, nullability) -- changing the Kotlin class,

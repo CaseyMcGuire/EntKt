@@ -31,7 +31,7 @@ val client = EntClient(driver) {
 | `afterCreate` | `User` | After successful insert | Logging, notifications |
 | `beforeUpdate` | `UserUpdateHookContext` | Update only, after `beforeSave` | Audit trails, normalize patch |
 | `afterUpdate` | `User` | After successful update | Cache invalidation |
-| `beforeDelete` | `User` | Before driver delete | Cleanup, cascading side effects |
+| `beforeDelete` | `User` | Before deletion | Cleanup, cascading side effects |
 | `afterDelete` | `User` | After successful delete | Logging, cascading cleanup |
 
 ## The Mutation Interface
@@ -54,19 +54,13 @@ users {
 The `beforeUpdate` hook receives a `${Entity}UpdateHookContext` with
 four fields:
 
-- **`before`** — the loaded current owner row. `update(id)` performs
-  an internal current-row load before any hook runs (bypassing LOAD
-  privacy), so `before` is always present and reflects database state
-  at the moment of the load. With the default
-  `UpdateConsistency.ReadCurrent`, the load is a plain `byId`. With
-  `update(id, consistency = UpdateConsistency.Pessimistic) { ... }`
-  inside `withTransaction`, the load is a row-locking read
-  (`SELECT ... FOR UPDATE` on Postgres) so concurrent writers block
-  until commit — see [Drivers — Transactions](10-drivers.md#transactions) for the
-  capability requirements. For schemas with helper-eligible
-  `throughLink` M2M edges, the load primitive may also switch to
-  `readRowForUpdate` (or `serializeOwnerEdgeAndRead`) when the
-  caller has staged M2M ops — see [Edges → Link-table M2M mutators](03-edges.md#link-table-m2m-mutators).
+- **`before`** — the current stored entity, loaded before any update hooks run.
+  This load is not blocked by LOAD privacy. The default
+  `UpdateConsistency.ReadCurrent` provides a current snapshot.
+  `UpdateConsistency.Pessimistic` must be used inside `withTransaction` and
+  prevents concurrent updates to the row until the transaction completes.
+  See [Drivers — Transactions](10-drivers.md#transactions) for capability
+  requirements.
 - **`patch`** — a snapshot of the requested patch as accumulated *up
   to this hook*. It's a `${Entity}UpdatePatch` whose fields are
   `FieldPatch<T>` (`Unset` or `Set(value)`). The snapshot is taken
@@ -78,12 +72,9 @@ four fields:
   for a non-nullable `T`); the bad value is observable via
   `ctx.mutation.name` — see "Repairing invalid input in hooks" below.
 - **`pendingEdges`** — a read-only `${Entity}PendingEdgeOps`
-  aggregator with one `PendingEdgeOps<TargetIdType>` field per
-  helper-eligible `throughLink` M2M edge. Captured *once* between
-  the owner-row read and the first before-hook, then shared across
-  every hook invocation in this save (hooks cannot mutate the
-  underlying op log — the mutator surface is deliberately absent
-  from `ctx.mutation`). Each per-edge `PendingEdgeOps` carries
+  value with one `PendingEdgeOps<TargetIdType>` field per
+  helper-eligible `throughLink` M2M edge. Every hook for the save sees the
+  same snapshot, and hooks cannot change it. Each per-edge value carries
   `requestedSet?`, `requestedAdds`, `requestedRemoves` — the
   caller's intent fields. `requestedAdds` and `requestedRemoves`
   are disjoint by construction (the mutator rejects same-id
@@ -99,8 +90,8 @@ four fields:
   to explicitly clear a nullable field, or `mutation.unsetFoo()` to
   remove the entry from the patch entirely. The view does not expose
   `save()`, the loaded `before` row, the owner `id`, the public
-  `tags.add(...)` / `tags.remove(...)` / `tags.set(...)` M2M mutators,
-  or other internal builder state. The view's `mutation.pendingEdges`
+  `tags.add(...)` / `tags.remove(...)` / `tags.set(...)` M2M mutators.
+  The view's `mutation.pendingEdges`
   property mirrors `ctx.pendingEdges` for convenience.
 
 ```kotlin
@@ -175,120 +166,49 @@ represent `Set(null)` by construction. The actual null is observable
 through `ctx.mutation.name`. If no hook repairs the assignment, the
 post-hook required-not-null check throws
 `IllegalStateException("name is required")` before privacy,
-validation, or the driver write runs.
+validation, or persistence.
 
 ## Execution Order
 
 For a **create** operation, the full execution order is:
 
-1. **TransactionRequirement preflight** (RFC #4) — if the client is
-   configured with `RequiredForAllWrites`, `save()` throws
-   `TransactionRequiredException` when called outside `withTransaction`
-   before any hook runs. See [Drivers — Transactions](10-drivers.md#transactions).
-2. `beforeSave` (receives `UserMutation`)
-3. `beforeCreate` (receives `UserCreate`)
-4. Field extraction + defaults
-5. Field validation (generated from schema validators)
-6. Build `WriteCandidate`
-7. Privacy create check
-8. Entity validation create (see [Validation](07-validation.md))
-9. `driver.insert(...)`
-10. `afterCreate` (receives `User`)
-11. Load privacy on returned entity
+1. Enforce the configured transaction requirement.
+2. Run `beforeSave`, then `beforeCreate`.
+3. Apply defaults and field validators.
+4. Run CREATE privacy and entity validation.
+5. Persist the entity.
+6. Run `afterCreate`.
+7. Apply LOAD privacy to the returned entity.
 
 For an **update**:
 
- 1. **Syntactically empty check.** If `update(id) { }` was called with
-    no field assignments AND no link-table M2M ops were staged,
-    `save()` throws `EntNoChangesException` *before* loading the
-    owner row — request shape, not database state, classifies the
-    no-op (avoids leaking whether the id exists). An M2M-only update
-    (`update(id) { tags.add(x) }` with no scalar fields touched)
-    proceeds past this check since the M2M ops are real changes.
- 2. **TransactionRequirement preflight** (RFC #4) — same as create. If
-    the per-save `consistency = UpdateConsistency.Pessimistic` mode was
-    requested, this also asserts the call site is inside
-    `withTransaction` *and* the driver advertises
-    `supportsReadRowForUpdate`; otherwise it throws
-    `TransactionRequiredException` /
-    `UnsupportedDriverCapabilityException`.
- 3. **M2M preflight** (RFC #5, only on schemas with helper-eligible
-    `throughLink` edges, and only when ops are staged). Asserts the
-    save is inside `withTransaction` *and* the driver advertises
-    either `supportsReadRowForUpdate` or `supportsOwnerEdgeSerialization`,
-    then runs a defense-in-depth check that rejects mixed
-    replacement+delta state. Order matters: missing transaction
-    surfaces `TransactionRequiredException` first, missing capability
-    surfaces `UnsupportedDriverCapabilityException` second, mixed-mode
-    last.
- 4. **Internal current-row load** (bypasses LOAD privacy). The
-    primitive depends on per-save mode + driver capability + whether
-    M2M ops are pending:
-    - `Pessimistic` → `driver.readRowForUpdate(id)` (true row lock)
-    - `ReadCurrent` + M2M pending + `supportsReadRowForUpdate` →
-      `driver.readRowForUpdate(id)`
-    - `ReadCurrent` + M2M pending + `supportsOwnerEdgeSerialization`
-      only → `driver.serializeOwnerEdgeAndRead(id)` (cooperative)
-    - `ReadCurrent` (no M2M pending) → `driver.byId(id)` (no lock)
+1. Reject an empty request with `EntNoChangesException`. An edge-only update
+   is not empty.
+2. Enforce transaction and consistency requirements.
+3. Load the current entity. `save()` returns `null` when it does not exist;
+   `saveOrThrow()` throws `EntNotFoundException`.
+4. Capture pending edge intent, then run `beforeSave` and `beforeUpdate`.
+   Each `beforeUpdate` hook receives a fresh `patch` snapshot and the same
+   read-only `pendingEdges` snapshot.
+5. Check required fields, apply update defaults, and run field validators.
+6. Calculate `edgeChanges`, then run UPDATE privacy and entity validation.
+7. Persist scalar and edge changes.
+8. Run `afterUpdate`.
+9. Apply LOAD privacy to the returned entity.
 
-    Missing row → `save()` returns `null` (or `saveOrThrow()` throws
-    `EntNotFoundException`)
- 5. **Pending edge ops snapshot** (RFC #5, M2M-capable schemas only) —
-    captured once between the owner-row read and the first before
-    hook, immutable for the rest of the save. Surfaced as
-    `ctx.pendingEdges` on the update hook context.
- 6. `beforeSave` (receives `UserMutation`)
- 7. `beforeUpdate` (receives `UserUpdateHookContext` — each hook gets a
-    fresh `patch` snapshot built from the current dirty state, plus
-    the shared `pendingEdges` snapshot; hooks may write through
-    `ctx.mutation` or call `unsetFoo()` to remove entries but cannot
-    mutate the M2M op log)
- 8. **Required-not-null check** on dirty fields (after hooks, so a
-    hook can repair an explicit `name = null` via `unsetName()` or by
-    reassigning a value)
- 9. Build the canonical requested patch
-10. **Compute EdgeChanges** (M2M-capable schemas only) — read current
-    junction rows for each edge with pending ops, normalize intent
-    into per-edge `added` / `removed` sets, assemble the
-    `${Entity}EdgeChangesView` sidecar
-11. **Hook-cleared empty path:** if all dirty fields were unset by
-    hooks AND no M2M ops are pending, run UPDATE privacy on the
-    unchanged candidate (with the empty `edgeChanges` sidecar), then
-    throw `EntNoChangesException` (skip update defaults, validation,
-    the driver write, `afterUpdate`, and returned LOAD privacy)
-12. Apply update defaults (e.g. `updatedAt = updateDefaultNow()`) to
-    produce the effective patch
-13. Field validators run on the effective patch's `Set` entries
-14. Build the database write set from the effective patch — only
-    `Set` entries are sent to `driver.update`; untouched columns are
-    not round-tripped
-15. Build the full after-state `WriteCandidate` by folding the
-    effective patch over `before`
-16. Privacy update check (receives `edgeChanges` sidecar)
-17. Entity validation update (receives `edgeChanges` sidecar)
-18. **Owner-row UPDATE** — `driver.update(...)`. M2M-capable schemas
-    skip this when the values map is empty (edge-only update with no
-    update defaults), in which case the loaded `before` row stands
-    in as the after-state
-19. **Junction writes** (M2M-capable schemas only) — per-edge
-    `driver.insert` for `added` ids and `driver.deleteMany` for
-    `removed` ids
-20. `afterUpdate` (receives the persisted `User`)
-21. Load privacy on returned entity
+If hooks remove every scalar change and no edge operations remain, UPDATE
+privacy still runs against the unchanged candidate, then `save()` throws
+`EntNoChangesException`. Update defaults, validation, `afterUpdate`, and
+returned-entity LOAD privacy do not run on that path.
 
 For a **delete**:
 
-1. **TransactionRequirement preflight** (RFC #4) — same as create/update.
-   `RequiredForAllWrites` is enforced here so it covers the
-   `deleteById(id)` helper path that would otherwise hit `byId` first.
-2. **Internal current-row load** via `driver.byId(id)` (delete-by-id
-   only; `delete(entity)` already has the loaded row)
-3. Build `WriteCandidate`
-4. Privacy delete check
-5. Entity validation delete
-6. `beforeDelete` (receives `User`)
-7. `driver.delete(...)`
-8. `afterDelete` (receives `User`)
+1. Enforce the configured transaction requirement.
+2. Load the entity when deleting by ID.
+3. Run DELETE privacy and entity validation.
+4. Run `beforeDelete`.
+5. Delete the entity.
+6. Run `afterDelete`.
 
 Hooks are for side effects (setting timestamps, logging, notifications),
 not for authorization or invariant enforcement. Use
@@ -330,9 +250,7 @@ users {
 ## Bulk Operations and Hooks
 
 Bulk operations (`createMany`, `deleteMany`) **fire lifecycle hooks**
-for every row. `createMany` delegates to `create { }.save()` per entry,
-and `deleteMany` queries for matching entities then calls `delete(entity)`
-for each one.
+for every row.
 
 ```kotlin
 // Hooks fire for every row

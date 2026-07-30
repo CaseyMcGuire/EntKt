@@ -113,8 +113,7 @@ parameters are non-null, so to query a `NULL` indexed value use the
 normal `query { where(col.isNull()) }`. The generator skips
 raw-SQL partial indexes, native / non-btree indexes (e.g. pgvector
 HNSW/IVFFlat), and indexes over btree-incompatible columns (JSON,
-pgvector, bytes). See the design note:
-[Indexed Query Helpers](implemented-features/query/indexed-query-helpers.md).
+pgvector, bytes).
 
 ## Predicates
 
@@ -136,7 +135,7 @@ User.name notIn listOf("Charlie")       // NOT IN
 Available on typed enum columns:
 
 ```kotlin
-Ticket.priority eq Priority.HIGH          // passes the enum's .name to the driver
+Ticket.priority eq Priority.HIGH
 Ticket.priority `in` listOf(Priority.LOW, Priority.MEDIUM)
 ```
 
@@ -229,9 +228,9 @@ client.articles.query {
 }
 ```
 
-- `cosineDistance(q)` / `l2Distance(q)` / `innerProduct(q)` lower to pgvector's
-  `<=>` / `<->` / `<#>` operators. The query vector is bound as a parameter, never
-  inlined into the SQL.
+- `cosineDistance(q)`, `l2Distance(q)`, and `innerProduct(q)` use the
+  corresponding pgvector distance calculation. The query vector is passed as a
+  value, just like other query inputs.
 - Use `.asc()` for most-similar-first -- this holds for `innerProduct` too, since
   pgvector's `<#>` is the *negative* inner product. `.desc()` is farthest-first.
 - Rows with a null embedding sort last in both directions.
@@ -341,7 +340,7 @@ existence probe or `visibleExists` for the privacy-aware variant.
 ### `*OrError` variants
 
 Each aggregate has a structured-result counterpart that maps each
-failure surface (interceptor rejection, driver failure) into an
+failure surface (such as interceptor rejection or storage failure) into an
 `EntError` variant instead of throwing:
 
 | Throwing | Result variant |
@@ -428,8 +427,8 @@ when (val r = client.orders.query().rawSumOrError(Order.quantity)) {
 ```
 
 V1 is Postgres-only and raw-only; privacy-aware (`visible…`) aggregates,
-multi-metric selection, and multi-column / expression grouping are deferred —
-see [Aggregations](implemented-features/query/aggregations.md).
+multi-metric selection, and multi-column or expression grouping are not yet
+supported.
 
 ## Edge Traversal
 
@@ -465,14 +464,13 @@ val recentPosts = client.users
 
 The block configures the *target* query only — it is exactly
 equivalent to chaining `.where(...)`, `.orderBy(...)`, `.limit(...)`
-on the query `queryPosts()` returns. Source-query state is
-snapshotted before the block runs, so nothing in the block can
-change which source rows the traversal bridges from.
+on the query `queryPosts()` returns. The source selection is captured
+before the block runs, so nothing in the block can change which source
+rows are traversed.
 
 Traversal follows the source query **as written**: source `where`,
 `orderBy`, `limit`, and `offset` select which source rows are
-traversed. The bridge lowers the source query into a source-id
-subquery (`IN`-from-subquery), so
+traversed. For example:
 
 ```kotlin
 client.users.query {
@@ -517,8 +515,7 @@ client.users.query {
 }
 ```
 
-Under the hood, edge predicates become `EXISTS (SELECT 1 FROM ...)` SQL
-subqueries. For M2M edges, the subquery includes the junction table join.
+The same `has { ... }` API works for direct and many-to-many edges.
 
 ## Eager Loading
 
@@ -591,8 +588,8 @@ data class User(
 
 An interceptor is a hook that runs on every read query for an entity (or
 across every entity for a global interceptor), with a chance to *narrow*
-the query (add predicates, clamp limits) or reject it before the driver
-call. The mechanism is generic; common uses are tenant scoping, max-limit
+the query (add predicates, clamp limits) or reject it before execution.
+The mechanism is generic; common uses are tenant scoping, max-limit
 guards, and request annotation for tracing.
 
 Interceptors are registered at client construction:
@@ -659,8 +656,7 @@ The `scope` exposes only operations that *narrow* the query:
 
 Interceptors cannot remove caller predicates, raise caller-set
 limits, change ordering, or swap the table. That property —
-"reduce or reject, never broaden" — is enforced by the scope's
-narrow surface, not by a runtime check.
+"reduce or reject, never broaden" — is part of the interceptor API.
 
 ### Rejection mapping
 
@@ -698,25 +694,13 @@ own `QueryContext`:
   `operation = ALL`, `sourceEntity = Group`, `edgeName = "posts"`,
   `path = [User→groups→Group, Group→posts→Post]`
 
-Eager-load subqueries (`with{Edge} { ... }`) fire the target's
-interceptors with `operation = EAGER_LOAD`. `has { ... }` /
-`hasWhere { ... }` edge predicates fire the target's interceptors
-with `operation = EDGE_PREDICATE`, narrowing the EXISTS subquery
-(so `User.articles.has()` after a soft-delete interceptor is
-installed on `Article` does NOT count soft-deleted articles). This
-also applies to M2M edge predicates such as `Post.tags.has { ... }`;
-the generated edge ref uses the normal `HasEdge` / `HasEdgeWith`
-predicate shape, and SQL lowering adds the junction-table join.
-
-The internal `Predicate.HasM2MEdgeFromShape` bridge is traversal
-plumbing for `queryX()` and is not a public `has` / `hasWhere` bypass:
-source interceptors fire during the traversal source step, and target
-interceptors fire at the traversal terminal.
-
-### See also
-
-- [Read-Path Interceptors RFC](implemented-features/query/read-path-interceptors.md)
-  for the full design and the limit-shape rules per operation.
+Eager loads (`with{Edge} { ... }`) fire the related entity's
+interceptors with `operation = EAGER_LOAD`. `has { ... }` edge
+predicates fire the related entity's interceptors with
+`operation = EDGE_PREDICATE`. This means an interceptor that hides
+deleted articles also prevents those articles from satisfying
+`User.articles.has()`. The same behavior applies to many-to-many
+edges.
 
 ## Transactions
 

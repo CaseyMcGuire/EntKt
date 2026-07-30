@@ -1,8 +1,8 @@
 # Edges
 
 Edges define relationships between entities. This page explains how each
-edge type maps to database tables and columns, and what code is generated
-for each.
+edge type maps to database tables and columns and which generated APIs it
+adds.
 
 For the schema DSL reference (modifiers, syntax), see [Schema](02-schema.md#edges).
 
@@ -83,38 +83,15 @@ method on the query builder:
 
 ```kotlin
 // Query traversal: "find all posts for this user"
-val posts = client.users.query { ... }.firstOrThrow().queryPosts().allOrThrow()
+val posts = client.users.query { where(User.id eq alice.id) }
+    .queryPosts()
+    .allOrThrow()
 
 // Eager loading: batch-load posts for all queried users
 val users = client.users.query {
     withPosts { orderBy(Post.createdAt.desc()) }
 }.allOrThrow()
 users[0].edges.posts  // → List<Post>
-```
-
-### Runtime metadata
-
-The generated `EntitySchema` records the join shape so the driver can
-resolve edge predicates and eager loads:
-
-```
-// On User: to-many side
-edges = mapOf(
-    "posts" to EdgeMetadata(
-        targetTable = "posts",
-        sourceColumn = "id",          // User.id
-        targetColumn = "author_id",   // FK on posts
-    ),
-)
-
-// On Post: to-one side
-edges = mapOf(
-    "author" to EdgeMetadata(
-        targetTable = "users",
-        sourceColumn = "author_id",   // FK on posts
-        targetColumn = "id",          // User.id
-    ),
-)
 ```
 
 ## Many-to-many
@@ -171,36 +148,16 @@ finalization rejects the wrong orientation.
 The junction table is a normal entity — you can add fields to it (e.g.
 `role`, `joined_at`) and query it directly if needed.
 
-### Runtime metadata
-
-The generated `EntitySchema` carries junction info for M2M edges:
-
-```
-// On User
-edges = mapOf(
-    "groups" to EdgeMetadata(
-        targetTable = "groups",
-        sourceColumn = "id",
-        targetColumn = "id",
-        junctionTable = "user_groups",
-        junctionSourceColumn = "user_id",
-        junctionTargetColumn = "group_id",
-    ),
-)
-```
-
 **No auto-synthesized reverse edge.** The target side (`Group`) does
 *not* automatically get a reverse traversal edge. Bidirectional
 traversal requires `Group` to declare its own `manyToMany<User>`
 explicitly, with the orientation key pair-swapped (one side passes
-`(user, group)`, the other passes `(group, user)`) so codegen
-recognizes them as opposite sides of the same canonical relationship.
+`(user, group)`, the other passes `(group, user)`).
 Adding a `manyToMany` on schema `X` never silently introduces methods
 on schema `Y` — see
 [Schema → M2M Bidirectional](02-schema.md#m2m-bidirectional). Forward
-query traversal of a one-sided declaration still works (it lowers to
-`Predicate.HasM2MEdgeFromShape` against the source schema's own forward
-edge metadata, no reverse-edge entry needed on the target).
+query traversal works from the side that declares the edge; traversing
+back requires an explicit declaration on the other side.
 
 ### Link-table M2M mutators
 
@@ -238,24 +195,17 @@ The full API on each helper-eligible edge:
 - Duplicate ids in `add` / `remove` / `set` dedupe internally.
 
 **Transaction and capability requirements.** A link-table M2M update
-requires a transaction-scoped client and a driver that supports
-either `readRowForUpdate` (true row lock) or
-`serializeOwnerEdgeAndRead` (cooperative serialization).
-`PostgresDriver` reports both as `true`. A missing transaction throws
-`TransactionRequiredException`; a driver without either capability
-throws `UnsupportedDriverCapabilityException`. Both preflights fire
-before any owner-row read, hook, or driver write. See
-[Drivers — Locking (RFC #4)](10-drivers.md#locking-rfc-4) for the
-capability surface.
+requires a transaction-scoped client and a driver that can safely serialize
+concurrent link changes. `PostgresDriver` supports this. A missing transaction
+throws `TransactionRequiredException`; an unsupported driver throws
+`UnsupportedDriverCapabilityException`. These checks happen before hooks or
+changes. Driver authors can see
+[Drivers — Locking](10-drivers.md#locking-rfc-4) for the capability surface.
 
 **Edge-only updates** (`update(id) { tags.add(x) }` with no scalar
 fields touched) are still owner update operations — `beforeSave`,
-`beforeUpdate`, privacy, validation, and `afterUpdate` all fire.
-If scalar / FK fields stay empty after hooks and update defaults,
-the owner-row `UPDATE` is skipped (no phantom write); only the
-junction inserts and `DELETE`s emit. If an `updateDefault` like
-`updatedAt = updateDefaultNow()` populates a scalar value, the
-owner UPDATE fires alongside the junction writes.
+`beforeUpdate`, privacy, validation, and `afterUpdate` all run. Update
+defaults such as `updatedAt = updateDefaultNow()` also apply.
 
 **Returned entity state.** `save()` returns the owner entity with
 scalar / FK fields reflecting the saved owner row. The M2M edge
@@ -329,29 +279,4 @@ nullable relationship. When no explicit `.onDelete()` is set, the default
 is inferred from nullability: `SET NULL` for nullable FKs, `RESTRICT` for
 required FKs.
 
-`PostgresDriver` enforces these actions via `REFERENCES ... ON DELETE`
-in the generated DDL.
-
-## Edge resolution internals
-
-When building the runtime `EdgeMetadata`, codegen resolves each edge's
-join columns:
-
-1. **BelongsTo** (`belongsTo(...)`) — the FK sits on this entity's
-   table. The column name is `{edge_name}_id` (or the `.field()` override).
-   Join: `sourceColumn = fk_column, targetColumn = "id"`.
-
-2. **HasMany / HasOne** (`hasMany(...)`, `hasOne(...)`) — the FK sits on the
-   target table. Codegen finds the inverse `belongsTo` edge on the target
-   via `.inverse()` and reads its FK column.
-   Join: `sourceColumn = "id", targetColumn = fk_column`.
-
-3. **ManyToMany** (`manyToMany(...).throughEntity(...)` / `.throughLink(...)`) —
-   both source and target join on `id`; the junction table provides the
-   bridge columns. The runtime metadata for forward traversal lives only
-   on the source schema (the one declaring the `manyToMany`); no reverse
-   entry is synthesized on the target. Forward query traversal lowers
-   to `Predicate.HasM2MEdgeFromShape(edgeName, sourceShape)` so the
-   predicate runs against the source schema's own metadata. Bidirectional
-   traversal requires both endpoints to declare their own pair-swapped
-   `manyToMany`.
+`PostgresDriver` enforces these actions with foreign-key constraints.

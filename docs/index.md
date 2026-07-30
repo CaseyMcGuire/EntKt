@@ -19,8 +19,12 @@ that talk to a pluggable `Driver`.
 - [Ent Viewer](11-ent-viewer.md) -- read-only browser inspection of generated ents
 - [Schema Inspection](01-getting-started.md#schema-inspection) -- validate and explain resolved schema shapes
 
-## Possible Features
+## Design Records and Change History
 
-- [Possible Features Index](possible-features/index.md) -- catalog of future feature RFCs and design notes
-- [Implemented Features Index](implemented-features/index.md) -- RFCs whose main implementation has landed
+- [Possible Features Index](possible-features/index.md) -- technical proposals and design notes for future work
+- [Implemented Features Index](implemented-features/index.md) -- historical implementation records for shipped work
 - [Breaking Changes](breaking-changes/index.md) -- running log of breaking changes to the public surface
+
+The numbered guides above are the API documentation. The feature indexes are
+design records for contributors and may discuss code generation, runtime
+plumbing, SQL lowering, and other implementation details.

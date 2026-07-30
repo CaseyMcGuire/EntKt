@@ -5,10 +5,9 @@ The following limitations are part of the current contract.
 
 ## Aggregate Reads
 
-`query.rawCount()` uses a driver aggregate fast path and does not
-evaluate LOAD privacy. This means it can reveal how many rows match a
-predicate, even if those rows would cause `query.allOrThrow()` to throw
-`PrivacyDeniedException`.
+`query.rawCount()` does not evaluate LOAD privacy. This means it can reveal
+how many rows match a predicate, even if those rows would cause
+`query.allOrThrow()` to throw `PrivacyDeniedException`.
 
 Use `query.visibleCount()` when you need a privacy-aware count. It
 materializes matching rows, evaluates LOAD privacy on each, and returns
@@ -27,45 +26,37 @@ if any eagerly loaded related entity is denied, the entire query fails.
 `query.firstOrNull()` throws `PrivacyDeniedException` if the fetched
 row is denied. It returns `null` only when no matching row exists.
 
-Because privacy is evaluated after the driver applies `limit` and
-`offset`, a query like `limit(10).allOrThrow()` evaluates privacy on at most
-ten rows. If any of those rows are denied, the query throws rather than
-returning a partial result. Callers should ensure their predicates
-narrow results to entities the viewer is allowed to see, or handle
-`PrivacyDeniedException` at the call site.
+Privacy is evaluated after `limit` and `offset` select the result window, so
+`limit(10).allOrThrow()` evaluates privacy on at most ten rows. If any of
+those rows are denied, the query throws rather than returning a partial
+result. Callers should narrow results to entities the viewer may see or handle
+`PrivacyDeniedException`.
 
 ## Predicate-Based Inference
 
-LOAD privacy is evaluated on materialized rows. Predicates that
-reference *other* rows without materializing them do not evaluate
-those rows' LOAD privacy:
+LOAD privacy is evaluated only for entities returned by a read.
+Related rows used to decide whether a result matches are not themselves
+LOAD-checked:
 
-- `Edge.has { ... }` / `Edge.exists()` compile to `EXISTS` subqueries
-  against the related table (target-entity *interceptors* apply inside
-  the subquery; LOAD privacy does not — see
-  [Read-Path Interceptors → Edge-predicate existence semantics](implemented-features/query/read-path-interceptors.md)).
-- `queryX()` traversals fold the source query's predicates into a
-  structural bridge on the target; source rows are never loaded.
+- `Edge.has { ... }` / `Edge.exists()` can match a related row the viewer
+  could not load directly.
+- `queryX()` applies the source query when selecting target rows, but it
+  does not return or LOAD-check those source entities.
 
 A query can therefore be *filtered* by attributes of rows the viewer
 could not load, and its LOAD-checked results reveal that match. This
 applies uniformly to application queries and to privacy-rule reads —
 a rule that keys a decision on a hidden related row's attributes
 through `has { }` is influenced by data its viewer cannot see. When a
-decision must not be, materialize the related row explicitly
+decision must not use hidden related data, load the related row explicitly
 (`byIdOrNull` / `firstOrNull`) so it passes its own LOAD check.
-Evaluating privacy through edge predicates is related ground to the
-[Edge-Derived LOAD Privacy](possible-features/privacy-validation/edge-derived-load-privacy.md)
-proposal.
 
 ## Bulk Operations
 
-Generated `createMany()` and `deleteMany()` are convenience methods that
-delegate through the per-entity create and delete paths so hooks and
-privacy rules run for each item.
+Generated `createMany()` and `deleteMany()` run hooks and privacy rules for
+each item.
 
 Because of that delegation, the privacy context provider may be invoked
 once per item rather than once for the whole bulk call. Providers should
 return a stable viewer for the duration of a request or logical
 operation.
-

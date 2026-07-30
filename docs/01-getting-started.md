@@ -174,20 +174,22 @@ For a full working example wired up with Postgres, Flyway-applied
 migrations, and lifecycle hooks, see [`:example-spring`](../example-spring/README.md)
 — a runnable Spring Boot REST API.
 
-## What Gets Generated
+## Generated API
 
-For each schema, the codegen emits:
+For a `User` schema, entkt generates the public types you use to read and
+write users:
 
-| File | Purpose |
-|------|---------|
-| `User.kt` | Data class with typed properties, companion column refs (`User.name`, `User.age`), `SCHEMA` constant, `fromRow()` decoder |
-| `UserMutation.kt` | Interface shared by Create and Update builders |
-| `UserCreate.kt` | Builder with `.save()` for inserts |
-| `UserUpdate.kt` | Builder with `.save()` for updates (omits immutable fields) |
-| `UserQuery.kt` | Query builder with `.where()`, `.orderBy()`, `.allOrThrow()`, edge traversal, eager loading |
-| `UserRepo.kt` | Repository with `.create {}`, `.update() {}`, `.query {}`, `.byId()`, `.deleteOrThrow()` |
-| `UserPrivacy.kt` | Privacy contexts, rules, WriteCandidate, and policy scope (see [Privacy](06-privacy.md)) |
-| `EntClient.kt` | Single entry point holding all repos, constructed with a `Driver` |
+| Surface | Purpose |
+|---------|---------|
+| `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
+| `UserCreate` / `UserUpdate` | Typed create and update builders with save terminals |
+| `UserQuery` | Filtering, ordering, pagination, traversal, eager loading, and read terminals |
+| `UserRepo` | Entry points such as `create`, `update`, `query`, `byId`, and delete methods |
+| Privacy and validation rule types | Typed contexts and scopes for application policies |
+| `EntClient` | The application entry point containing every generated repository |
+
+The generated file layout and storage adapters are implementation details;
+application code should use these public types through `EntClient`.
 
 ## Schema Inspection
 

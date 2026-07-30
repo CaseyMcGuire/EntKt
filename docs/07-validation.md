@@ -207,33 +207,15 @@ enforced by the time validators run — validators are viewer-agnostic.
 If a rule cares about who is performing the operation, it belongs in
 privacy, not validation.
 
-The `client` in validation contexts is the **read-only client with a
-fixed bypass context**: generated evaluators call the framework-internal
-`asReadClientForInternalUse(...)` adapter on the operation's current
-client, passing a `Viewer.PrivacyBypass("validation read")` context so
-validator reads bypass LOAD privacy:
+The `client` in validation contexts is read-only and its reads bypass LOAD
+privacy, allowing invariant checks such as uniqueness and referential
+integrity to inspect all relevant rows. Read interceptors still apply, and
+validation performed inside `withTransaction` sees earlier writes from the
+same transaction.
 
-```kotlin
-// Generated evaluator wires the read-only, System-scoped view
-val validationClient =
-    client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))
-val ctx = PostCreateValidationContext(validationClient, candidate)
-```
-
-The same `EntReadClient` type serves privacy rule contexts — there the
-adapter fixes the **caller's** context instead, so authorization reads
-are viewer-scoped. Posture is instance state, not part of the type;
-see [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
-
-This is important twice over: if the caller-scoped client were passed
-instead, validators that query (e.g. uniqueness checks) would be
-blocked by LOAD privacy rules — and if the full `EntClient` were
-passed, validator writes would merely be discouraged instead of
-uncompilable. Because the adapter is invoked on the operation's
-current client, it shares that client's driver: validation inside a
-transaction reads through the same transaction-scoped connection
-(read-your-writes is preserved), and read interceptors still run for
-validator queries.
+Privacy-rule contexts also expose `EntReadClient`, but their reads use the
+caller's privacy context instead. See
+[Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
 ### WriteCandidate
 
@@ -255,27 +237,7 @@ data class PostWriteCandidate(
 ## Evaluation Semantics
 
 All rules for an operation run unconditionally. Invalid results are
-collected into a list and thrown together:
-
-```kotlin
-// Generated evaluator (pseudocode)
-fun evaluateCreateValidation(client: EntClient, candidate: WriteCandidate) {
-    val rules = validationConfig.createRules
-    if (rules.isEmpty()) return
-    val validationClient =
-        client.asReadClientForInternalUse(PrivacyContext(Viewer.PrivacyBypass("validation read")))
-    val ctx = CreateValidationContext(validationClient, candidate)
-    val violations = rules.mapNotNull { rule ->
-        when (val decision = rule.validate(ctx)) {
-            is ValidationDecision.Valid -> null
-            is ValidationDecision.Invalid -> decision
-        }
-    }
-    if (violations.isNotEmpty()) {
-        throw ValidationException("Post", violations)
-    }
-}
-```
+collected into one `ValidationException`.
 
 `Viewer.PrivacyBypass` does **not** bypass validation. Validation enforces
 data model invariants that apply regardless of who is performing the
@@ -287,68 +249,40 @@ all checks.
 ### Create
 
 ```
-1.  beforeSave hooks
-2.  beforeCreate hooks
-3.  field extraction + defaults
-4.  field validation (minLength, maxLength, etc.)
-5.  build WriteCandidate
-6.  privacy create
-7.  validation create          ← NEW
-8.  driver.insert()
-9.  hydrate entity from row
-10. afterCreate hooks
-11. load privacy on returned entity
-12. return entity
+1. beforeSave and beforeCreate hooks
+2. defaults and field validation
+3. CREATE privacy
+4. CREATE entity validation
+5. persistence
+6. afterCreate hooks
+7. LOAD privacy on the returned entity
 ```
 
 ### Update
 
 ```
- 1. syntactically empty patch → throw EntNoChangesException (before
-    the owner-row load — request shape, not database state, so we
-    don't leak whether the id exists)
- 2. internal current-row load via driver.byId(id), bypassing LOAD
-    privacy; missing row → save() returns null (saveOrThrow throws
-    EntNotFoundException)
- 3. beforeSave hooks (receive UserMutation)
- 4. beforeUpdate hooks (receive UserUpdateHookContext with a fresh
-    `patch` snapshot per hook; hooks may write through ctx.mutation
-    or call ctx.mutation.unsetFoo() to remove entries)
- 5. required-not-null check on dirty fields (after hooks, so a hook
-    can repair an explicit `name = null` via unset or reassignment)
- 6. build the canonical requested patch
- 7. hook-cleared empty path: if all dirty fields were unset by hooks,
-    run UPDATE privacy on the unchanged candidate, then throw
-    EntNoChangesException (skip defaults, validation, driver write,
-    afterUpdate, returned LOAD privacy)
- 8. apply update defaults (e.g. updatedAt = updateDefaultNow()) to
-    produce the effective patch
- 9. field validation on the effective patch's Set entries (mutable
-    fields only)
-10. build the database write set from the effective patch — only Set
-    entries are sent to driver.update; untouched columns are not
-    round-tripped
-11. build the full after-state WriteCandidate by folding the effective
-    patch over `before`
-12. privacy update          ← receives (before, requestedPatch,
-    effectivePatch, candidate)
-13. validation update       ← NEW; same context shape as privacy
-14. driver.update()
-15. hydrate entity from row
-16. afterUpdate hooks
-17. load privacy on returned entity
-18. return entity
+1. empty-request check and current-entity load
+2. beforeSave and beforeUpdate hooks
+3. required-field checks, update defaults, and field validation
+4. UPDATE privacy
+5. UPDATE entity validation
+6. persistence
+7. afterUpdate hooks
+8. LOAD privacy on the returned entity
 ```
+
+An empty request throws `EntNoChangesException`. If update hooks remove every
+requested change, UPDATE privacy still runs, then the operation throws
+`EntNoChangesException` without running entity validation or `afterUpdate`.
 
 ### Delete
 
 ```
-1.  build WriteCandidate
-2.  privacy delete
-3.  validation delete          ← NEW
-4.  beforeDelete hooks
-5.  driver.delete()
-6.  afterDelete hooks
+1. DELETE privacy
+2. DELETE entity validation
+3. beforeDelete hooks
+4. deletion
+5. afterDelete hooks
 ```
 
 Field validation runs before privacy because it validates local request
@@ -458,21 +392,18 @@ item runs the full validation pipeline independently. Execution stops
 on the first validation failure. Prior items may already be written
 unless the caller wraps the operation in a transaction.
 
-## What Gets Generated
+## Generated Validation API
 
-For each schema, the codegen emits validation infrastructure in a
-separate `{Entity}Validation.kt` file alongside the existing
-`{Entity}Privacy.kt`:
+For each schema, entkt provides:
 
-| Generated type | Purpose |
-|----------------|---------|
+| Public type | Purpose |
+|-------------|---------|
 | `{Entity}CreateValidationRule` | Typealias for create validation rules |
 | `{Entity}UpdateValidationRule` | Typealias for update validation rules |
 | `{Entity}DeleteValidationRule` | Typealias for delete validation rules |
 | `{Entity}CreateValidationContext` | Context for create validators |
 | `{Entity}UpdateValidationContext` | Context for update validators |
 | `{Entity}DeleteValidationContext` | Context for delete validators |
-| `{Entity}ValidationConfig` | Internal storage for validation rule lists |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
 | `{Entity}ReadRepo` | Read-only repo exposed to validators (byId family, `query { }`, index helpers) |
 
@@ -480,15 +411,9 @@ The `{Entity}PolicyScope` gains a `validation { }` method alongside
 the existing `privacy { }` method. The `{Entity}WriteCandidate` is
 shared between privacy and validation contexts.
 
-Two schema-set-level files support the read-only contexts:
-`EntReadClient.kt` (the client validation contexts expose,
-plus the per-entity validation read repos) and `EntReadRuntime.kt`
-(the `@EntktInternal` read-runtime contract that both `EntClient` and
-`EntReadClient` implement, which is what lets generated
-queries and index helpers run identically under either). See the
-implemented RFC
-[read-only-validation-client](implemented-features/privacy-validation/read-only-validation-client.md)
-for the design.
+Validation contexts expose a read-only client. Validators can use its
+`byId` methods, `query { ... }`, and indexed query helpers, but cannot
+create, update, or delete entities.
 
 ## Relationship to Other Concepts
 
