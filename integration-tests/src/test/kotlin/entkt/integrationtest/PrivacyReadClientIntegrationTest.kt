@@ -21,6 +21,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyDeniedException
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.result.EntPrivacyDeniedException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -65,16 +66,17 @@ private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
 
 /**
  * Load rule whose decision reads through edges: the `withUser()` eager
- * load, the `queryUser()` traversal, and the staged index helper all
- * run through the privacy client, so the hop rows they materialize
+ * load, the `queryUsers()` M2M traversal, and the staged index helper
+ * all run through the privacy client, so the hop rows they materialize
  * pass the caller's LOAD privacy like any other rule read — a viewer
- * who cannot read users gets the denial, not the graph. (The rule
- * reads memberships, not articles, so the inner reads cannot re-enter
- * this rule.)
+ * who cannot load users gets the denial, not the graph. (The rule
+ * reads memberships and groups, never articles, so the inner reads
+ * cannot re-enter this rule; the traversal's group source rows are
+ * structural and never materialize.)
  */
 private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ctx ->
     val memberships = ctx.client.memberships.query { withUser() }.allOrThrow()
-    val traversedMember = ctx.client.memberships.query { }.queryUser().firstOrNull()
+    val traversedMember = ctx.client.groups.query { }.queryUsers().firstOrNull()
     val indexedMember = ctx.client.users.indexes.email("alice@test.com").orNull()
     if (memberships.any { it.edges.user != null } && traversedMember != null && indexedMember != null) {
         PrivacyDecision.Allow
@@ -279,7 +281,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         val (author, article) = seedAuthorAndArticle(client)
         client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
             val group = sys.groups.create { name = "G" }.save()
-            sys.memberships.create { userId = author.id; groupId = group.id }.save()
+            sys.memberships.create { userId = author.id; groupId = group.id; role = "member" }.save()
         }
 
         // Authenticated viewer: the eager-loaded membership carries its
@@ -293,9 +295,12 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // Anonymous: the same hops run viewer-scoped through the privacy
         // client, so the users LOAD denial surfaces from inside the
         // rule's eager load — entity "User" — instead of the hidden rows
-        // influencing the decision.
-        val ex = assertFailsWith<PrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
-        assertEquals("User", ex.entity)
+        // influencing the decision. The rule reads through `allOrThrow()`,
+        // a result-backed terminal, so the denial arrives as the
+        // result-flavored EntPrivacyDeniedException rather than the plain
+        // PrivacyDeniedException the byId family throws.
+        val ex = assertFailsWith<EntPrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
+        assertEquals("User", ex.privacyDenied.entity)
     }
 
     // ---- Transaction scoping ----
