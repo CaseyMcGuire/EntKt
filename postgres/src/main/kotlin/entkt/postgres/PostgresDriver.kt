@@ -446,18 +446,20 @@ class PostgresDriver(
          * a `DEFERRABLE` one moves enforcement to commit time, and an
          * `ON UPDATE` action fires on parent-key updates the schema never
          * asked to cascade. Accepting any of them would report success
-         * for a constraint enforcing rules nobody declared.
+         * for a constraint enforcing rules nobody declared. The one
+         * deliberate equivalence is [restrictLikeEquivalent]: immediate
+         * `RESTRICT` ≡ `NO ACTION`, matching the migration differ.
          */
         fun matches(fk: ForeignKeyDdl): Boolean =
             isForeignKey &&
                 targetMatches &&
-                deleteCode == fk.onDeleteCode &&
+                restrictLikeEquivalent(deleteCode, fk.onDeleteCode) &&
                 // Every FK this driver renders is single-column; a
                 // composite one under the same name is a mismatch.
                 columnCount == 1 &&
                 columnName == fk.column &&
                 targetColumn == fk.targetColumn &&
-                updateCode == NO_ACTION &&
+                restrictLikeEquivalent(updateCode, NO_ACTION) &&
                 validated &&
                 !deferrable &&
                 !deferred &&
@@ -505,8 +507,26 @@ class PostgresDriver(
             /** `confupdtype` / `confdeltype` code for `NO ACTION`. */
             const val NO_ACTION = 'a'
 
+            /** `confupdtype` / `confdeltype` code for `RESTRICT`. */
+            const val RESTRICT = 'r'
+
             /** `confmatchtype` code for `MATCH SIMPLE`. */
             const val MATCH_SIMPLE = 's'
+
+            /**
+             * Immediate `RESTRICT` and `NO ACTION` behave identically
+             * for the non-deferrable constraints this driver creates
+             * (deferrability is compared strictly alongside), and
+             * [entkt.migrations.SchemaDiffer] deliberately equates
+             * them — so a plain hand-written `REFERENCES` (server
+             * default `NO ACTION`) must not fail registration against
+             * the `RESTRICT` a required edge resolves to while
+             * `migrate validate` calls the same database in sync.
+             */
+            fun restrictLikeEquivalent(a: Char, b: Char): Boolean =
+                a == b || (a in RESTRICT_LIKE_CODES && b in RESTRICT_LIKE_CODES)
+
+            val RESTRICT_LIKE_CODES = setOf(NO_ACTION, RESTRICT)
         }
     }
 
@@ -531,12 +551,26 @@ class PostgresDriver(
     private fun ensureIndex(conn: java.sql.Connection, stmt: java.sql.Statement, idx: IndexDdl) {
         when (val existing = findIndex(conn, idx)) {
             null -> stmt.execute(idx.sql)
-            else -> check(existing.matches(idx)) {
-                "Table '${idx.table}' already has a relation named '${idx.name}', but it is not the " +
-                    "index this schema describes. Auto-DDL will not alter an existing index — drop it, " +
-                    "or move this schema onto the migration path.\n" +
-                    "  schema wants: ${idx.sql}\n" +
-                    "  database has: ${existing.describe()}"
+            else -> {
+                check(existing.matches(idx)) {
+                    "Table '${idx.table}' already has a relation named '${idx.name}', but it is not the " +
+                        "index this schema describes. Auto-DDL will not alter an existing index — drop it, " +
+                        "or move this schema onto the migration path.\n" +
+                        "  schema wants: ${idx.sql}\n" +
+                        "  database has: ${existing.describe()}"
+                }
+                // A definition match is not enough: an INVALID index —
+                // the wreck of a failed CREATE INDEX CONCURRENTLY — is
+                // ignored by the planner, and a unique one enforces
+                // nothing, while its name blocks any fresh CREATE.
+                // Accepting it would report success for a constraint
+                // that does not exist.
+                check(existing.valid) {
+                    "Table '${idx.table}' has an INVALID index named '${idx.name}' (a failed " +
+                        "CREATE INDEX CONCURRENTLY leaves one behind). PostgreSQL ignores it and, " +
+                        "for a unique index, does not enforce uniqueness. Drop it and re-register, " +
+                        "or REINDEX it: DROP INDEX ${idx.name}; / REINDEX INDEX ${idx.name};"
+                }
             }
         }
     }
@@ -559,10 +593,13 @@ class PostgresDriver(
                    COALESCE(ix.indrelid = to_regclass(?), false) AS table_matches,
                    COALESCE(ix.indrelid::regclass::text, '(none)') AS table_name,
                    COALESCE(ix.indisunique, false)              AS is_unique,
+                   COALESCE(ix.indisvalid, false)               AS is_valid,
+                   COALESCE(ix.indnkeyatts, 0)                  AS key_att_count,
                    am.amname                                    AS access_method,
                    (SELECT array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
                       FROM pg_attribute a
-                      WHERE a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)) AS columns,
+                      WHERE a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
+                        AND array_position(ix.indkey, a.attnum) < ix.indnkeyatts) AS columns,
                    pg_get_expr(ix.indpred, ix.indrelid)         AS predicate,
                    (SELECT array_agg(opc.opcname ORDER BY u.ord)
                       FROM unnest(string_to_array(ix.indclass::text, ' ')::oid[])
@@ -581,13 +618,22 @@ class PostgresDriver(
             stmt.setString(3, idx.table)
             stmt.executeQuery().useQuietClose { rs ->
                 if (!rs.next()) return null
+                val keyColumns =
+                    (rs.getArray("columns")?.array as? Array<*>)?.map { it.toString() } ?: emptyList()
+                val keyAttCount = rs.getInt("key_att_count")
                 ExistingIndex(
                     isIndex = rs.getBoolean("is_index"),
                     tableMatches = rs.getBoolean("table_matches"),
                     tableName = rs.getString("table_name"),
                     unique = rs.getBoolean("is_unique"),
+                    valid = rs.getBoolean("is_valid"),
                     accessMethod = rs.getString("access_method"),
-                    columns = (rs.getArray("columns")?.array as? Array<*>)?.map { it.toString() } ?: emptyList(),
+                    // Expression key slots resolve no pg_attribute row; pad
+                    // them so a mixed index like UNIQUE (a, lower(c)) can
+                    // never pass for the plain UNIQUE (a) this schema
+                    // declares — it does not enforce uniqueness on `a`.
+                    columns = keyColumns +
+                        List((keyAttCount - keyColumns.size).coerceAtLeast(0)) { "<expression>" },
                     predicate = rs.getString("predicate"),
                     opclasses = (rs.getArray("opclasses")?.array as? Array<*>)?.map { it.toString() },
                     reloptions = parseReloptions(rs.getArray("reloptions")),
@@ -611,6 +657,7 @@ class PostgresDriver(
         val tableMatches: Boolean,
         val tableName: String,
         val unique: Boolean,
+        val valid: Boolean,
         val accessMethod: String?,
         val columns: List<String>,
         val predicate: String?,
@@ -643,6 +690,7 @@ class PostgresDriver(
         fun describe(): String {
             if (!isIndex) return "a relation of this name that is not an index"
             return buildString {
+                if (!valid) append("INVALID ")
                 append(if (unique) "UNIQUE INDEX" else "INDEX")
                 append(" on $tableName USING ${accessMethod ?: "btree"} (${columns.joinToString(", ")})")
                 if (predicate != null) append(" WHERE $predicate")

@@ -132,6 +132,23 @@ data class NormalizedIndex(
     val opclasses: List<String>? = null,
     /** Index storage params rendered `WITH (k = v, …)` — part of identity. */
     val with: Map<String, String>? = null,
+    /**
+     * False for an introspected index PostgreSQL marks invalid — the
+     * wreck of a failed `CREATE INDEX CONCURRENTLY`. The planner
+     * ignores it and a unique one does not enforce uniqueness, so it
+     * must never satisfy a declaration: part of semantic identity, and
+     * every entity-derived index is valid.
+     */
+    val valid: Boolean = true,
+    /**
+     * Introspected `INCLUDE` (non-key) columns, or null. Deliberately
+     * NOT part of semantic identity: INCLUDE affects storage and
+     * covering, not which rows a key matches, and the DSL cannot
+     * declare it — an adopted covering index would otherwise be
+     * permanent drift with no remediation. Carried so a drop of a
+     * covering twin can say what would be lost.
+     */
+    val include: List<String>? = null,
 )
 
 /**

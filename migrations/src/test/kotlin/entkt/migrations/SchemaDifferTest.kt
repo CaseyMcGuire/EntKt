@@ -938,6 +938,34 @@ class SchemaDifferTest {
     }
 
     @Test
+    fun `an invalid live index never satisfies a declaration`() {
+        // A failed CREATE INDEX CONCURRENTLY leaves an index the planner
+        // ignores; for a unique index nothing is enforced. It keys apart
+        // from the declaration: drop it, create the real one.
+        val declared = idx(listOf("email"), unique = true, name = "idx_users_email")
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("email")), indexes = listOf(declared)),
+        )
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(declared.copy(valid = false)),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        val drop = result.manual.filterIsInstance<MigrationOp.DropIndex>().single()
+        // The rendered definition reads identical to the re-add; the op
+        // must say why it is being dropped anyway.
+        assertTrue(
+            drop.reason.orEmpty().contains("INVALID"),
+            "drop of an invalid index should carry a reason: ${describeOp(drop)}",
+        )
+    }
+
+    @Test
     fun `an undeclared duplicate index is dropped not masked`() {
         // Postgres allows several identically-defined indexes under
         // different names; all must be visible to the differ whichever

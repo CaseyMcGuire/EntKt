@@ -111,7 +111,8 @@ fun describeOp(op: MigrationOp): String = when (op) {
         val cols = op.columns.joinToString(", ")
         val u = if (op.unique) " unique" else ""
         val name = if (op.name != null) " [${op.name}]" else ""
-        "DropIndex: ${op.table} ($cols)$u$name"
+        val reason = if (op.reason != null) " — ${op.reason}" else ""
+        "DropIndex: ${op.table} ($cols)$u$name$reason"
     }
     is MigrationOp.DropForeignKey -> {
         val name = if (op.constraintName != null) " [${op.constraintName}]" else ""

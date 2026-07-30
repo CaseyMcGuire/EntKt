@@ -59,7 +59,7 @@ class PostgresIntrospector(
                 }
 
                 val columnTypes = normalizedColumns.associate { it.name.lowercase() to it.sqlType }
-                val indexes = introspectIndexes(conn, tableName, primaryKeys, columnTypes)
+                val indexes = introspectIndexes(conn, tableName, columnTypes)
                 val foreignKeys = introspectForeignKeys(conn, tableName)
 
                 tables[tableName] = NormalizedTable(
@@ -176,7 +176,15 @@ class PostgresIntrospector(
                             else -> typeMapper.canonicalize(rawType)
                         }
                         isUserDefined -> formatted.lowercase()
-                        else -> typeMapper.canonicalize(rawType)
+                        // Ordinary columns canonicalize format_type, not
+                        // data_type: data_type drops length/precision
+                        // modifiers, so a varchar(5) column would read as
+                        // unconstrained text and a write longer than 5
+                        // would fail at runtime under a schema the differ
+                        // called in-sync. Modifier-less spellings still
+                        // fold ("character varying" → text); a modifier
+                        // survives verbatim and surfaces as drift.
+                        else -> typeMapper.canonicalize(formatted)
                     }
 
                     columns.add(
@@ -231,7 +239,6 @@ class PostgresIntrospector(
     private fun introspectIndexes(
         conn: java.sql.Connection,
         tableName: String,
-        primaryKeys: Set<String>,
         columnTypes: Map<String, String>,
     ): List<NormalizedIndex> {
         // Raw rows first; opclasses for non-btree indexes are fetched in a
@@ -239,8 +246,10 @@ class PostgresIntrospector(
         data class RawIndex(
             val name: String,
             val unique: Boolean,
+            val valid: Boolean,
             val accessMethod: String,
             val columns: List<String>,
+            val include: List<String>?,
             val predicate: String?,
             val reloptions: Map<String, String>?,
         )
@@ -250,8 +259,13 @@ class PostgresIntrospector(
             """
             SELECT i.relname AS index_name,
                    ix.indisunique AS is_unique,
+                   ix.indisvalid AS is_valid,
+                   ix.indnkeyatts AS key_att_count,
                    am.amname AS access_method,
-                   array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) AS columns,
+                   array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
+                     FILTER (WHERE array_position(ix.indkey, a.attnum) < ix.indnkeyatts) AS columns,
+                   array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
+                     FILTER (WHERE array_position(ix.indkey, a.attnum) >= ix.indnkeyatts) AS include_columns,
                    pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
                    i.reloptions AS reloptions
             FROM pg_index ix
@@ -263,7 +277,7 @@ class PostgresIntrospector(
             WHERE n.nspname = 'public'
               AND t.relname = ?
               AND NOT ix.indisprimary
-            GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid, i.reloptions
+            GROUP BY i.relname, ix.indisunique, ix.indisvalid, ix.indnkeyatts, am.amname, ix.indpred, ix.indrelid, i.reloptions
             """.trimIndent(),
         ).use { stmt ->
             stmt.setString(1, tableName)
@@ -271,19 +285,31 @@ class PostgresIntrospector(
                 while (rs.next()) {
                     val indexName = rs.getString("index_name")
                     val isUnique = rs.getBoolean("is_unique")
+                    val isValid = rs.getBoolean("is_valid")
+                    val keyAttCount = rs.getInt("key_att_count")
                     val accessMethod = rs.getString("access_method")
-                    val columns = (rs.getArray("columns").array as Array<*>).map { it.toString() }
+                    val keyColumns =
+                        (rs.getArray("columns")?.array as? Array<*>)?.map { it.toString() } ?: emptyList()
+                    val includeColumns =
+                        (rs.getArray("include_columns")?.array as? Array<*>)?.map { it.toString() }
                     val predicate = rs.getString("predicate")
 
-                    // Skip PK indexes
-                    if (columns.size == 1 && columns[0] in primaryKeys && !isUnique) continue
+                    // Expression key slots (indkey entry 0) resolve no
+                    // pg_attribute row. Pad them so a mixed index like
+                    // UNIQUE (a, lower(c)) can never collapse onto the
+                    // plain-column subset a schema might declare — the
+                    // mixed index does NOT enforce uniqueness on `a`.
+                    val columns = keyColumns +
+                        List((keyAttCount - keyColumns.size).coerceAtLeast(0)) { "<expression>" }
 
                     raw.add(
                         RawIndex(
                             name = indexName,
                             unique = isUnique,
+                            valid = isValid,
                             accessMethod = accessMethod,
                             columns = columns,
+                            include = includeColumns,
                             predicate = predicate,
                             reloptions = parseReloptions(rs.getArray("reloptions")),
                         ),
@@ -306,6 +332,8 @@ class PostgresIntrospector(
                 using = if (isBtree) null else r.accessMethod,
                 opclasses = if (isBtree) null else fetchOpclasses(conn, r.name),
                 with = if (isBtree) null else r.reloptions,
+                valid = r.valid,
+                include = r.include,
             )
         }
     }

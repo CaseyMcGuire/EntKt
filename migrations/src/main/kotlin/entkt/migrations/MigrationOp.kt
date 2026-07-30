@@ -58,7 +58,21 @@ sealed interface MigrationOp {
 
     data class DropColumnNotNull(val table: String, val columnName: String) : MigrationOp
 
-    data class DropIndex(val table: String, val columns: List<String>, val unique: Boolean, val name: String?, val where: String? = null) : MigrationOp
+    data class DropIndex(
+        val table: String,
+        val columns: List<String>,
+        val unique: Boolean,
+        val name: String?,
+        val where: String? = null,
+        /**
+         * Why the differ wants this index gone, when the rendered
+         * definition alone would read as identical to a kept or
+         * re-added one — e.g. the index is INVALID, or carries
+         * `INCLUDE` columns the declaration doesn't. Display-only;
+         * never affects the rendered SQL.
+         */
+        val reason: String? = null,
+    ) : MigrationOp
 
     data class AlterPrimaryKey(val table: String, val columnName: String, val added: Boolean) : MigrationOp
 

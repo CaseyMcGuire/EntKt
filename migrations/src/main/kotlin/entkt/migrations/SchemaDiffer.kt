@@ -89,13 +89,38 @@ class SchemaDiffer {
         val using: String?,
         val opclasses: List<String>?,
         val with: Map<String, String>?,
+        /**
+         * An INVALID live index (failed concurrent build) keys apart
+         * from every declaration: the planner ignores it and a unique
+         * one enforces nothing, so it must surface as drift — a manual
+         * drop plus a fresh create — never as a match.
+         */
+        val valid: Boolean,
     )
 
     private fun indexKey(idx: NormalizedIndex, columnTypes: Map<String, String>): IndexKey =
-        IndexKey(idx.columns, idx.unique, normalizeWhere(idx.where, columnTypes), idx.using, idx.opclasses, idx.with)
+        IndexKey(
+            idx.columns, idx.unique, normalizeWhere(idx.where, columnTypes),
+            idx.using, idx.opclasses, idx.with, idx.valid,
+        )
 
     private fun indexKey(table: NormalizedTable, idx: NormalizedIndex): IndexKey =
         indexKey(idx, table.columns.associate { it.name.lowercase() to it.sqlType })
+
+    /**
+     * Why an index whose rendered definition looks identical to a kept
+     * or re-added one is being dropped anyway — surfaced through
+     * [MigrationOp.DropIndex.reason] so the manual-op checklist doesn't
+     * read as differ confusion.
+     */
+    private fun dropReason(idx: NormalizedIndex): String? = when {
+        !idx.valid ->
+            "index is INVALID (failed CREATE INDEX CONCURRENTLY leftover); " +
+                "the planner ignores it and a unique one enforces nothing"
+        !idx.include.isNullOrEmpty() ->
+            "carries INCLUDE (${idx.include.joinToString(", ")}) beyond the declaration"
+        else -> null
+    }
 
     private fun diffTable(
         table: String,
@@ -249,7 +274,12 @@ class SchemaDiffer {
                 // auto add under the declared name. Dropping the whole
                 // group is what keeps the CREATE collision-free.
                 for (currentIdx in group) {
-                    manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                    manualOps.add(
+                        MigrationOp.DropIndex(
+                            table, key.columns, key.unique, currentIdx.name, currentIdx.where,
+                            reason = dropReason(currentIdx),
+                        ),
+                    )
                 }
                 autoOps.add(MigrationOp.AddIndex(table, idx))
             } else {
@@ -261,7 +291,12 @@ class SchemaDiffer {
                 val keep = named ?: group.minByOrNull { it.name ?: "" }!!
                 for (currentIdx in group) {
                     if (currentIdx !== keep) {
-                        manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                        manualOps.add(
+                            MigrationOp.DropIndex(
+                                table, key.columns, key.unique, currentIdx.name, currentIdx.where,
+                                reason = dropReason(currentIdx),
+                            ),
+                        )
                     }
                 }
             }
@@ -271,7 +306,12 @@ class SchemaDiffer {
         for ((key, group) in currentByKey) {
             if (key !in desiredByKey) {
                 for (currentIdx in group) {
-                    manualOps.add(MigrationOp.DropIndex(table, key.columns, key.unique, currentIdx.name, currentIdx.where))
+                    manualOps.add(
+                        MigrationOp.DropIndex(
+                            table, key.columns, key.unique, currentIdx.name, currentIdx.where,
+                            reason = dropReason(currentIdx),
+                        ),
+                    )
                 }
             }
         }

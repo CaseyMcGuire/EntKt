@@ -77,8 +77,14 @@ class PostgresTypeMapper : TypeMapper {
         "float8", "double precision" -> "double precision"
         "bool", "boolean" -> "boolean"
         "text", "character varying", "varchar" -> "text"
-        "timestamptz", "timestamp with time zone" -> "timestamptz"
-        "timestamp", "timestamp without time zone" -> "timestamp"
+        // format_type preserves an explicitly-written default precision:
+        // "timestamp(6) with time zone" is byte-identical to timestamptz
+        // (6 IS the default microsecond precision — Hibernate and
+        // friends spell it out), so it must not read as drift. A
+        // non-default precision like timestamp(3) stays verbatim: it
+        // truncates, which is a real type difference.
+        "timestamptz", "timestamp with time zone", "timestamp(6) with time zone" -> "timestamptz"
+        "timestamp", "timestamp without time zone", "timestamp(6) without time zone" -> "timestamp"
         "uuid" -> "uuid"
         "bytea" -> "bytea"
         // entkt stores typed JSON as jsonb; treat a plain `json` column as the
