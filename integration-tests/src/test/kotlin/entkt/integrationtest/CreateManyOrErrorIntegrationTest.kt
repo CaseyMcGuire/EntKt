@@ -113,12 +113,17 @@ class CreateManyOrErrorIntegrationTest : PostgresTestBase() {
         // Seed a user so block 2 trips the unique-email constraint.
         client.users.create { name = "Existing"; email = "dup@example.com" }.saveOrThrow()
 
-        val result = client.withTransaction { tx ->
+        // The canonical all-or-nothing pattern: bind() aborts the
+        // transaction on the first per-row Err. (Returning the Err
+        // normally out of a plain withTransaction is no longer silently
+        // rolled back at commit — the driver fails loudly on the
+        // aborted transaction; see NestedTransactionIntegrationTest.)
+        val result = client.withTransactionOrError { tx ->
             tx.users.createManyOrError(
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "dup@example.com" },  // unique violation
                 { name = "C"; email = "c@example.com" },  // must NOT run
-            )
+            ).bind()
         }
 
         assertTrue(result is EntResult.Err)
@@ -129,11 +134,8 @@ class CreateManyOrErrorIntegrationTest : PostgresTestBase() {
         assertEquals("23505", error.code)
 
         // Short-circuit verified: C was never attempted, so the
-        // c@example.com row is absent. A was attempted but the 23505
-        // on B poisoned the tx, so Postgres rolls back A at commit
-        // time — only the pre-tx "Existing" row survives. The
-        // canonical "all-or-nothing on Err" pattern is
-        // withTransactionOrError + bind(), exercised below.
+        // c@example.com row is absent; A rolled back with the
+        // transaction — only the pre-tx "Existing" row survives.
         assertEquals(0L, client.users.query { where(User.email eq "c@example.com") }.rawCount())
         assertEquals(1L, client.users.query().rawCount())  // Existing only
     }

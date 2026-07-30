@@ -30,6 +30,25 @@ above it.
 
 ## Unreleased
 
+- **Nested transaction blocks are savepoint-scoped; an aborted transaction can no longer "commit"** (`postgres`)
+  A nested `withTransaction` / `withTransactionOrError` previously reused
+  the outer transaction with no rollback of its own: a nested block that
+  failed after some SQL returned `Err` while its partial writes silently
+  committed with the outer transaction, and a failed nested statement
+  left the whole transaction in PostgreSQL's aborted state — where the
+  JDBC driver silently turns `COMMIT` into `ROLLBACK` while reporting
+  success. Nested blocks now run under a savepoint (a failed block rolls
+  back exactly its own writes and the outer transaction stays usable),
+  and both commit paths fail loudly with an explanatory
+  `IllegalStateException` if the block swallowed a failed statement's
+  error and continued.
+  _Migration:_ none for code that stops at the first failure. Code that
+  intentionally handles an `Err` from a failed SQL statement inside a
+  transaction block and continues must scope that fallible step in a
+  nested `withTransactionOrError` block (which isolates it under a
+  savepoint) — previously it appeared to work while silently discarding
+  the entire transaction.
+
 - **Generated edge properties are `EdgeState` values instead of nullables** (`codegen`, `runtime`)
   Each property on a generated `Edges` class is now an explicit
   `entkt.runtime.query.EdgeState` defaulting to `EdgeState.Unloaded`:

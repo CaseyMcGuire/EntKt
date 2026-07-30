@@ -14,7 +14,9 @@ import java.sql.Connection
  * `autoCommit = false`. Every operation delegates to the shared
  * [PostgresOperations] core with the pinned connection; [register]
  * delegates to [root] so DDL never runs inside user transactions.
- * Nested [withTransaction] reuses the same transaction. The driver is
+ * Nested [withTransaction] reuses the same transaction under a
+ * savepoint, so a failed nested block rolls its own writes back
+ * without ending the enclosing transaction. The driver is
  * block-scoped — [closed] is set to true when
  * [PostgresDriver.withTransaction]'s block exits and subsequent calls throw.
  */
@@ -129,8 +131,35 @@ internal class PostgresTransactionalDriver(
 
     override fun <T> withTransaction(block: (Driver) -> T): T {
         checkOpen()
-        // Nested: reuse the same transaction.
-        return block(this)
+        // Nested: same connection, same transaction — but scoped to a
+        // savepoint. A bare `block(this)` here silently broke the
+        // all-or-nothing contract: a nested block that failed after
+        // some SQL had no rollback of its own, so the generated
+        // `withTransactionOrError` caught the abort, returned Err, and
+        // the outer transaction committed the "rolled back" writes.
+        // The savepoint also recovers PostgreSQL's aborted-transaction
+        // state after a failed nested statement (ROLLBACK TO SAVEPOINT
+        // is the one statement an aborted transaction accepts), so an
+        // Err from a nested block leaves the outer transaction usable.
+        val savepoint = conn.setSavepoint()
+        try {
+            val result = block(this)
+            // The block completed but a failed statement's error was
+            // handled inside it without ending the block — commit is
+            // impossible and every later outer statement would fail.
+            // Surface it here, where the savepoint can still recover
+            // the enclosing transaction.
+            check(!transactionAborted(conn)) { TRANSACTION_ABORTED_MESSAGE }
+            conn.releaseSavepoint(savepoint)
+            return result
+        } catch (e: Throwable) {
+            try {
+                conn.rollback(savepoint)
+            } catch (rollbackFailure: Throwable) {
+                e.addSuppressed(rollbackFailure)
+            }
+            throw e
+        }
     }
 
     // ---------- transaction locking capability surface ----------
@@ -177,3 +206,26 @@ internal class PostgresTransactionalDriver(
         operation: entkt.runtime.result.EntOperation,
     ): entkt.runtime.result.EntError? = root.classifyException(throwable, entity, operation)
 }
+
+/**
+ * Whether [conn]'s transaction is in PostgreSQL's aborted state: a
+ * statement failed and the server refuses everything until a rollback.
+ * pgjdbc silently turns `COMMIT` into `ROLLBACK` in this state, so a
+ * transaction block that swallowed a statement failure and "committed"
+ * would report success while persisting nothing — both commit paths
+ * check this first. Non-pgjdbc connections (unlikely in this module)
+ * report false and keep the legacy behavior.
+ */
+internal fun transactionAborted(conn: Connection): Boolean = try {
+    conn.unwrap(org.postgresql.jdbc.PgConnection::class.java).transactionState ==
+        org.postgresql.core.TransactionState.FAILED
+} catch (_: java.sql.SQLException) {
+    false
+}
+
+internal const val TRANSACTION_ABORTED_MESSAGE: String =
+    "A statement inside this transaction block failed and its error was handled without ending " +
+        "the block. The transaction is in PostgreSQL's aborted state: every later statement fails, " +
+        "and COMMIT would be silently turned into ROLLBACK while reporting success. Stop at the " +
+        "first failed statement (rethrow, or return its Err), or scope fallible work in a nested " +
+        "withTransaction / withTransactionOrError block, which isolates it under a savepoint."

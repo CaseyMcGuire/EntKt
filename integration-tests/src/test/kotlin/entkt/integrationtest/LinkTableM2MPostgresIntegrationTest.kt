@@ -95,8 +95,12 @@ class LinkTableM2MPostgresIntegrationTest {
         val post = client.posts.create { title = "Hello" }.save()
         val nonexistentTagId = 999_999L
 
-        val ex = client.withTransaction { tx ->
-            assertFailsWith<PSQLException> {
+        // The failed junction INSERT aborts the transaction, so the
+        // failure is asserted around the whole block — swallowing it
+        // inside and completing the block is no longer a silent
+        // rollback; the driver rejects the doomed commit loudly.
+        val ex = assertFailsWith<PSQLException> {
+            client.withTransaction { tx ->
                 tx.posts.update(post.id) {
                     tags.add(nonexistentTagId)
                 }.save()
