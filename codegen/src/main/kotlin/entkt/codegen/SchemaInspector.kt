@@ -441,13 +441,11 @@ object SchemaInspector {
                 is EdgeKind.ManyToMany -> {
                     val through = kind.through
                     val junctionTable = through.junction.tableName
-                    // symmetric link-table writes: surface the concrete write surface. A writable
-                    // throughLink side exposes add/remove/set; a `.readOnly()`
-                    // side still appears (read traversal) but exposes none; a
-                    // throughEntity edge has no link-table helpers (null).
+                    // Surface the concrete write API: every throughLink edge
+                    // exposes add/remove/set, while throughEntity edges are
+                    // mutated through their junction repositories.
                     val writeHelpers = when (through) {
-                        is ManyToManyThrough.LinkTable ->
-                            if (through.readOnly) emptyList() else listOf("add", "remove", "set")
+                        is ManyToManyThrough.LinkTable -> listOf("add", "remove", "set")
                         is ManyToManyThrough.ThroughEntity -> null
                     }
                     ExplainedEdge(
@@ -580,6 +578,9 @@ object SchemaInspector {
                         val t = edge.through
                         if (isNotEmpty()) append(", ")
                         append("through=${t.junctionTable}(${t.sourceEdge}, ${t.targetEdge})")
+                        if (t.writeHelpers != null) {
+                            append(", helpers=[${t.writeHelpers.joinToString(", ")}]")
+                        }
                     }
                 }
                 listOf(edge.name, edge.kind, edge.targetSchema, detail)
@@ -692,7 +693,12 @@ object SchemaInspector {
             if (e.fkColumn != null) sb.append(", \"fkColumn\": ${jsonString(e.fkColumn)}")
             if (e.inverse != null) sb.append(", \"inverse\": ${jsonString(e.inverse)}")
             if (e.through != null) {
-                sb.append(", \"through\": { \"junctionTable\": ${jsonString(e.through.junctionTable)}, \"sourceEdge\": ${jsonString(e.through.sourceEdge)}, \"targetEdge\": ${jsonString(e.through.targetEdge)} }")
+                sb.append(", \"through\": { \"junctionTable\": ${jsonString(e.through.junctionTable)}, \"sourceEdge\": ${jsonString(e.through.sourceEdge)}, \"targetEdge\": ${jsonString(e.through.targetEdge)}")
+                if (e.through.writeHelpers != null) {
+                    val helpers = e.through.writeHelpers.joinToString(", ") { jsonString(it) }
+                    sb.append(", \"writeHelpers\": [$helpers]")
+                }
+                sb.append(" }")
             }
             if (e.comment != null) sb.append(", \"comment\": ${jsonString(e.comment)}")
             sb.appendLine(" }$comma")

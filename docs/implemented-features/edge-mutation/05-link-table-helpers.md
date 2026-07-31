@@ -536,21 +536,16 @@ V1 should keep privacy and validation owner-centric:
 - junction entity create/delete hooks, validation, and privacy do not run unless
   the caller explicitly mutates the junction schema through its own generated
   repo
-- `throughLink(...)` write-orientation edges get direct M2M helpers only when the
+- `throughLink(...)` edges get direct M2M helpers only when the
   junction schema satisfies the helper-eligible static shape constraints from
   [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
 - V1 does not synthesize a reverse traversal edge for `throughLink(...)`
   relationships (per
   [Many-To-Many Schema Modeling — Write Orientation](03-m2m-schema-modeling.md)),
-  so there are no reverse-orientation helpers to talk about — callers
-  that need to traverse the relationship from the opposite side query
-  the junction schema directly. Explicit reverse `throughLink(...)`
-  declarations (a second declaration with the same canonical
-  relationship identity, including the swapped-orientation case) are
-  rejected at schema validation. Reverse traversal is deferred to a
-  follow-up
-  [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
-  design.
+  but callers may explicitly declare the opposite side with pair-swapped
+  junction refs. Every declared side gets traversal and direct mutation
+  helpers, as specified by
+  [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md).
 - `throughEntity(...)` edges do not get direct M2M helpers; their write rules
   live on the junction entity repo
 
@@ -615,8 +610,8 @@ explicit query with eager loading after `save()`.
 
 1. Extend write candidates or write contexts with typed edge changes.
 2. Generate many-to-many update helpers for link-table edges with
-   id-only junction-table `add`, `remove`, and `set` on the single
-   explicit `throughLink(...)` declaration only. The mutator's
+   id-only junction-table `add`, `remove`, and `set` on every explicit
+   `throughLink(...)` declaration. The mutator's
    parameter type is the target's id type (mirrors the to-one FK API
    from RFC #2). No entity-argument overloads are generated.
 3. Require the transaction and owner-edge serialization semantics from

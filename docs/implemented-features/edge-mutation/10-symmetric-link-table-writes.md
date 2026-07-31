@@ -4,6 +4,10 @@
 
 Implemented (six phases plus audit follow-ups; full suite green).
 
+The original optional `.readOnly()` modifier was subsequently removed.
+Every declared `throughLink(...)` edge now exposes the same read and write
+surface.
+
 **Relaxes** the single-write-orientation rule from
 [Many-To-Many Schema Modeling](03-m2m-schema-modeling.md)
 (RFC 03) and [Link-Table M2M Mutation Helpers](05-link-table-helpers.md)
@@ -32,8 +36,6 @@ second side through validation":
 3. **Junction-index validation is revised** so a single unique index on the
    FK pair satisfies both declaration orientations.
 
-Plus an optional `.readOnly()` per side that drops its write helpers.
-
 ## Motivation
 
 RFC 03/05 allow only one `throughLink(...)` per canonical relationship
@@ -51,9 +53,9 @@ helpers are not equally risky:
   junction rows for one anchor (`junctionSourceColumn = this.id`,
   `UpdateGenerator.kt:1015-1029`) and reconciles. Two `set`s from opposite
   anchors are the "exact-set race between opposite orientations" RFC 03 names
-  as the reason for the rule (`03-m2m-schema-modeling.md:245-246`) — which it
-  says stands "without a concrete read-only marker **or canonical
-  reverse-write lock model**." This RFC supplies the lock model.
+  as the reason for the rule (`03-m2m-schema-modeling.md:245-246`). This RFC
+  supplies the canonical relationship lock model for callers that need
+  cross-orientation serialization.
 
 ## Non-Goals
 
@@ -83,27 +85,19 @@ class Tag : EntSchema("tags") {
 ```
 
 Both `Post.tags` and `Tag.posts` get read traversal **and** the full
-`add` / `remove` / `set` write surface — that is the default.
-
-Optional `.readOnly()` makes one side read-only (a deliberate restriction,
-e.g. for encapsulation):
-
-```kotlin
-val posts = manyToMany<Post>("posts")
-    .throughLink<PostTag>(PostTag::tag, PostTag::post)
-    .readOnly()
-```
+`add` / `remove` / `set` write surface.
 
 | Declared side | read | `add` / `remove` | `set` |
 |---|:--:|:--:|:--:|
 | `throughLink(...)` | ✓ | ✓ | ✓ |
-| `throughLink(...).readOnly()` | ✓ | — | — |
 
 A **lone** declaration (only one side) is unchanged from today: that side gets
 the full surface; the other side has none.
 
-(`readOnly` is named to state the behavior and avoid overloading an existing
-term, per the project's least-surprise principle.)
+There is no traversal-only `throughLink` variant. To omit the API from one
+endpoint, do not declare that endpoint's edge. If the junction is a domain
+entity whose writes must go through its own hooks, validation, or payload
+fields, model it with `throughEntity(...)` instead.
 
 ## Idempotent `add`
 
@@ -314,42 +308,37 @@ Revised rule:
   dropped.
 - **Performance (the real reason the old rule was source-first):** generated
   helpers do source-keyed lookups via the index's *leading* column — and
-  **every declared side does them, writable or `.readOnly()`**: `set` exact-set
-  and `add`/`remove` deltas read by source, *and* read traversal / eager-load
-  (`query...`, `withX()`) read by source too. A single unique pair index serves
-  only one leading direction, so for **any** two-sided declaration **require** a
-  non-partial index whose leading column is the *other* side's source FK (it may
-  be the unique pair index in the opposite order, or a separate non-unique
-  index). This is **not** relaxed for `.readOnly()` — a read-only side still
-  traverses and eager-loads by its own source. Diagnostics name the exact
-  `index(...)` to declare.
-
-## `.readOnly()` schema model
-
-`readOnly` is a property of a link-table edge only, so it goes on the existing
-`ManyToManyThrough.LinkTable` variant (a new `readOnly: Boolean = false`
-field) — **not** on `Edge` (would touch unrelated edge kinds) and **not** a new
-sealed variant. The builder captures it; `LinkTable` carries it;
-`helperEligibleM2MEdges` and explain read it.
+  **every declared side does them**: `set` exact-set and `add`/`remove` deltas
+  read by source, and read traversal / eager-load (`query...`, `withX()`) read
+  by source too. A single unique pair index serves only one leading direction,
+  so for **any** two-sided declaration **require** a non-partial index whose
+  leading column is the other side's source FK (it may be the unique pair index
+  in the opposite order, or a separate non-unique index). Diagnostics name the
+  exact `index(...)` to declare.
 
 ## Backward Compatibility
 
-Source-compatible. Every existing schema is a lone `throughLink` declaration —
-the sole side keeps `read` / `add` / `remove` / `set`, and its junction's
-source-first unique index still satisfies the revised rule. The relaxation
-*widens* what validation accepts: pair-swapped second declarations (previously
-rejected) now pass, and — because the unique-pair rule is now order-independent
-(needed so both orientations accept the one shared index) — a **lone** declaration
-whose only pair index is *reverse-order* `(target_fk, source_fk)` now also passes,
-where the old source-first rule would have rejected it. The per-side leading-column
-requirement only applies to two-sided declarations, so such a lone reverse-order
-junction generates code that reads by its source FK without a leading index (a
-sequential-scan performance gap, not a correctness issue). Two behavior changes:
-`add` becomes idempotent (re-adding an existing link is a no-op instead of
-throwing), and every generated `update(...)` gains a defaulted
+The original symmetric-write rollout was source-compatible for the schemas
+that existed at the time. A lone `throughLink` side kept
+`read` / `add` / `remove` / `set`, and its source-first unique index still
+satisfied the revised rule. The relaxation widened what validation accepted:
+pair-swapped second declarations (previously rejected) began to pass, and —
+because the unique-pair rule became order-independent — a lone declaration
+whose only pair index is reverse-order `(target_fk, source_fk)` also began to
+pass. The per-side leading-column requirement applies only to two-sided
+declarations, so such a lone reverse-order junction can read by its source FK
+without a leading index (a sequential-scan performance gap, not a correctness
+issue). Two behavior changes accompanied that rollout: `add` became idempotent
+(re-adding an existing link is a no-op instead of throwing), and every generated
+`update(...)` gained a defaulted
 `relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking`
 parameter (mirroring the existing `consistency` parameter) — so generated
 signatures change for all schemas, not only at junction inserts.
+
+The later removal of `.readOnly()` is source-breaking for schemas that used
+that modifier. Remove the call and either keep the now-writable edge or omit
+the declaration. See the
+[breaking-changes log](../../breaking-changes/index.md).
 
 ## Implementation Touchpoints
 
@@ -365,16 +354,13 @@ signatures change for all schemas, not only at junction inserts.
   size > 1" with the pair-swapped rule above.
 - **`validateThroughLinkJunctions`** (Rule 6, `EntGenerator.kt:~498-514`):
   unordered-pair unique-index rule + a leading-column index requirement for
-  **every** two-sided declaration, including `.readOnly()` (it still reads by
-  source).
-- **`ManyToManyThrough.LinkTable`** (`Edge.kt`): add `readOnly: Boolean`; the
-  builder sets it.
+  every two-sided declaration.
 - **`helperEligibleM2MEdges`** (`HelperEligibleM2M.kt:64-93`): still filters to
-  `LinkTable`; both endpoints now pass; exclude `readOnly` sides.
+  `LinkTable`; both endpoints now pass.
 - **`UpdateGenerator`** (`:79-84`, `:237-245`, junction writes `:1500-1551`):
-  emit `add` / `remove` / `set` on every non-`readOnly` side; **all
-  `edgeChanges.added` junction inserts use `insertIgnore`**, whether produced by
-  `add(...)` or `set(...)`. The transaction requirement and owner-edge
+  emit `add` / `remove` / `set` on every `throughLink` side; **all
+  `edgeChanges.added` junction inserts use `insertIgnore`**, whether produced
+  by `add(...)` or `set(...)`. The transaction requirement and owner-edge
   serialization (`:1202-1256`) are unchanged.
 - **`relationshipLocking` option**: a `RelationshipLocking` enum on the per-
   update options surface beside `consistency` (client-wide default, but a no-op
@@ -391,8 +377,8 @@ signatures change for all schemas, not only at junction inserts.
   `resolveM2MEdgeJoin` already resolves pair-swapped declarations with no
   special-casing (`SchemaMetadata.kt:359-413`).
 - **Schema explain** (`SchemaInspector.buildEdges`): surface the concrete
-  write surface, not just a flag — e.g. `helpers=[add, remove, set]` for a
-  writable side, `helpers=[]` for a `readOnly` side — as the write-API audit.
+  write surface — `helpers=[add, remove, set]` for every `throughLink`
+  declaration — as the write-API audit.
 
 ## Test Requirements
 
@@ -412,8 +398,8 @@ signatures change for all schemas, not only at junction inserts.
   violation*, not that deadlock — removing it is what `Canonical` is for.
 - **Preflight scope:** a save with pending `add`/`set` requires
   `supportsInsertIgnore`; a remove-only save does not.
-- **`set` ownership/visibility:** `set` works from either side; a `readOnly`
-  side has no `add` / `remove` / `set`, no `pendingEdges`, no `EdgeChanges`.
+- **`set` ownership/visibility:** `set` works from either explicitly declared
+  side.
 - **`relationshipLocking = Canonical` uses the relationship lock:** assert it
   calls `serializeRelationship` on the canonical-relationship key (junction
   identity), **not** the owner-row lock — two `Canonical` opposite-side `set`s
@@ -426,10 +412,8 @@ signatures change for all schemas, not only at junction inserts.
 - **Validation — orientation:** pair-swapped two-sided declaration accepts;
   two same-orientation declarations reject; three reject; mixed reject.
 - **Validation — junction index:** a pair-swapped declaration is accepted with
-  a single `(post_id, tag_id)` unique index; **every** two-sided declaration —
-  writable *or* `.readOnly()` — requires the other-direction leading-column
-  index (a `.readOnly()` second side without it is rejected, since it still
-  reads by source).
+  a single `(post_id, tag_id)` unique index; every two-sided declaration
+  requires the other-direction leading-column index.
 - **Compatibility:** existing single-side `throughLink` fixtures generate the
   same code except (1) junction inserts (`add` *and* `set`'s additive delta)
   switch `insert` → `insertIgnore`, and (2) every `update(...)` gains the

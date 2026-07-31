@@ -1365,31 +1365,6 @@ class UpdateGeneratorTest {
         }
     }
 
-    @Test
-    fun `readOnly throughLink side generates no write surface while the writable side does`() {
-        val (doc, names) = makeReadOnlyMixedSchemas()
-        val output = generator.generate("RoDoc", doc, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // Writable side keeps its full write surface.
-        assert(output.contains("class TagsEdgeMutator")) {
-            "Writable throughLink side must still get its edge mutator\n$output"
-        }
-        assert(output.contains("edgeChanges.tags.added")) {
-            "Writable side must drive junction writes via edgeChanges\n$output"
-        }
-
-        // .readOnly() side is dropped at the helperEligibleM2MEdges chokepoint,
-        // so it has no mutator, no pending-edge plumbing, and no junction
-        // writes anywhere in the generated save surface.
-        assert(!output.contains("WatchersEdgeMutator")) {
-            ".readOnly() side must not get an edge mutator\n$output"
-        }
-        assert(!output.contains("watchers")) {
-            ".readOnly() side must not appear in the write surface (edge prop or junction)\n$output"
-        }
-    }
-
     // ---------- symmetric link-table writes canonical relationship locking ----------
 
     @Test
@@ -2126,61 +2101,6 @@ private fun makeMultiEdgeSchemas(): MultiEdgeSchemas {
             label to "M2MLabel",
             docTag to "M2MDocTag",
             docLabel to "M2MDocLabel",
-        ),
-    )
-}
-
-// ---------- symmetric link-table writes test schemas: writable + .readOnly() throughLink ----------
-
-// One writable throughLink (`tags`) and one `.readOnly()` throughLink
-// (`watchers`) on the same source. The readOnly side keeps read traversal
-// but generates no write surface, so it must be filtered out of the
-// helper-eligible set the UpdateGenerator consumes.
-private class RoDoc : EntSchema("ro_docs") {
-    override fun id() = EntId.long()
-    val tags = manyToMany<RoTag>("tags")
-        .throughLink<RoDocTag>(RoDocTag::doc, RoDocTag::tag)
-    val watchers = manyToMany<RoWatcher>("watchers")
-        .throughLink<RoDocWatcher>(RoDocWatcher::doc, RoDocWatcher::watcher)
-        .readOnly()
-}
-private class RoTag : EntSchema("ro_tags") {
-    override fun id() = EntId.long()
-}
-private class RoWatcher : EntSchema("ro_watchers") {
-    override fun id() = EntId.long()
-}
-private class RoDocTag : EntSchema("ro_doc_tags") {
-    override fun id() = EntId.long()
-    val doc = belongsTo<RoDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag = belongsTo<RoTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
-    val pair = index("idx_ro_doc_tags_pair", doc.fk, tag.fk).unique()
-}
-private class RoDocWatcher : EntSchema("ro_doc_watchers") {
-    override fun id() = EntId.long()
-    val doc = belongsTo<RoDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val watcher = belongsTo<RoWatcher>("watcher").onDelete(entkt.schema.OnDelete.CASCADE)
-    val pair = index("idx_ro_doc_watchers_pair", doc.fk, watcher.fk).unique()
-}
-private data class ReadOnlyMixedSchemas(
-    val doc: RoDoc,
-    val names: Map<EntSchema, String>,
-)
-private fun makeReadOnlyMixedSchemas(): ReadOnlyMixedSchemas {
-    val doc = RoDoc()
-    val tag = RoTag()
-    val watcher = RoWatcher()
-    val docTag = RoDocTag()
-    val docWatcher = RoDocWatcher()
-    finalize(doc, tag, watcher, docTag, docWatcher)
-    return ReadOnlyMixedSchemas(
-        doc,
-        mapOf(
-            doc to "RoDoc",
-            tag to "RoTag",
-            watcher to "RoWatcher",
-            docTag to "RoDocTag",
-            docWatcher to "RoDocWatcher",
         ),
     )
 }

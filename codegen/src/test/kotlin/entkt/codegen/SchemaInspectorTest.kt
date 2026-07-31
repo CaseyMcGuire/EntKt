@@ -69,8 +69,7 @@ private class InspArticleTag : EntSchema("article_tags") {
     val tag = belongsTo<InspTag>("tag").field(tagId)
 }
 
-// throughLink fixtures (symmetric link-table writes): a writable side (LinkPost.tags) and a
-// `.readOnly()` side (LinkTag.posts) over the same pair-swapped junction.
+// Pair-swapped throughLink fixtures: both declared sides are writable.
 private class InspLinkPost : EntSchema("link_posts") {
     override fun id() = EntId.long()
     val tags = manyToMany<InspLinkTag>("tags")
@@ -80,7 +79,6 @@ private class InspLinkTag : EntSchema("link_tags") {
     override fun id() = EntId.long()
     val posts = manyToMany<InspLinkPost>("posts")
         .throughLink<InspLinkPostTag>(InspLinkPostTag::tag, InspLinkPostTag::post)
-        .readOnly()
 }
 private class InspLinkPostTag : EntSchema("link_post_tags") {
     override fun id() = EntId.long()
@@ -433,16 +431,14 @@ class SchemaInspectorTest {
     }
 
     @Test
-    fun `explain reports an empty write surface for a readOnly throughLink side but still lists the edge`() {
+    fun `explain reports the write surface for both pair-swapped throughLink sides`() {
         val graph = SchemaInspector.explain(inputs(
             InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
         ))
         val tag = graph.schemas.first { it.schemaName == "LinkTag" }
-        // The .readOnly() side still appears (read traversal is intact)...
         val postsEdge = tag.edges.first { it.name == "posts" }
         assertEquals("manyToMany", postsEdge.kind)
-        // ...but exposes no write helpers.
-        assertEquals(emptyList<String>(), postsEdge.through!!.writeHelpers)
+        assertEquals(listOf("add", "remove", "set"), postsEdge.through!!.writeHelpers)
     }
 
     @Test
@@ -587,6 +583,17 @@ class SchemaInspectorTest {
         assertFalse(text.contains("Indexes:"))
     }
 
+    @Test
+    fun `renderText includes throughLink write helpers on both declared sides`() {
+        val graph = SchemaInspector.explain(inputs(
+            InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
+        ))
+        val text = SchemaInspector.renderText(graph)
+
+        assertContains(text, "through=link_post_tags(post, tag), helpers=[add, remove, set]")
+        assertContains(text, "through=link_post_tags(tag, post), helpers=[add, remove, set]")
+    }
+
     // ── renderJson ──────────────────────────────────────────────────
 
     @Test
@@ -630,6 +637,16 @@ class SchemaInspectorTest {
         assertContains(json, "\"junctionTable\": \"article_tags\"")
         assertContains(json, "\"sourceEdge\": \"tag\"")
         assertContains(json, "\"targetEdge\": \"article\"")
+    }
+
+    @Test
+    fun `renderJson includes throughLink write helpers`() {
+        val graph = SchemaInspector.explain(inputs(
+            InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
+        ))
+        val json = SchemaInspector.renderJson(graph)
+
+        assertContains(json, "\"writeHelpers\": [\"add\", \"remove\", \"set\"]")
     }
 
     @Test

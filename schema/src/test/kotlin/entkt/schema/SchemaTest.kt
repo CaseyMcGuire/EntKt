@@ -185,46 +185,6 @@ private class SamePropOwner : EntSchema("same_prop_owner") {
         .throughEntity<SamePropJunction>(SamePropJunction::only, SamePropJunction::only)
 }
 
-// symmetric link-table writes (Symmetric Link-Table Edges): read-only link-table fixtures.
-private class RoTag : EntSchema("ro_tags") { override fun id() = EntId.long() }
-
-private class RoPostTag : EntSchema("ro_post_tags") {
-    override fun id() = EntId.long()
-    val post = belongsTo<RoPost>("post")
-    val tag = belongsTo<RoTag>("tag")
-}
-private class RoPost : EntSchema("ro_posts") {
-    override fun id() = EntId.long()
-    val tags = manyToMany<RoTag>("tags")
-        .throughLink<RoPostTag>(RoPostTag::post, RoPostTag::tag)
-        .readOnly()
-}
-
-private class RwPostTag : EntSchema("rw_post_tags") {
-    override fun id() = EntId.long()
-    val post = belongsTo<RwPost>("post")
-    val tag = belongsTo<RoTag>("tag")
-}
-private class RwPost : EntSchema("rw_posts") {
-    override fun id() = EntId.long()
-    val tags = manyToMany<RoTag>("tags")
-        .throughLink<RwPostTag>(RwPostTag::post, RwPostTag::tag)
-}
-
-// .readOnly() combined with throughEntity → rejected at finalize.
-private class RoEntTag : EntSchema("ro_ent_tags") { override fun id() = EntId.long() }
-private class RoEntJunction : EntSchema("ro_ent_junctions") {
-    override fun id() = EntId.long()
-    val owner = belongsTo<RoEntOwner>("owner")
-    val tag = belongsTo<RoEntTag>("tag")
-}
-private class RoEntOwner : EntSchema("ro_ent_owners") {
-    override fun id() = EntId.long()
-    val tags = manyToMany<RoEntTag>("tags")
-        .throughEntity<RoEntJunction>(RoEntJunction::owner, RoEntJunction::tag)
-        .readOnly()
-}
-
 // Helper to build a finalized schema graph
 private fun buildRegistry(vararg schemas: EntSchema): Map<KClass<out EntSchema>, EntSchema> {
     val registry = schemas.associateBy { it::class }
@@ -475,31 +435,6 @@ class SchemaTest {
         assertTrue(usersEdge.target is User)
         val m2m = usersEdge.kind as EdgeKind.ManyToMany
         assertTrue(m2m.through.junction is UserGroup)
-    }
-
-    @Test
-    fun `throughLink readOnly() sets LinkTable readOnly`() {
-        val post = RoPost()
-        buildRegistry(RoTag(), RoPostTag(), post)
-        val edge = post.edges().single { it.name == "tags" }
-        val through = (edge.kind as EdgeKind.ManyToMany).through as ManyToManyThrough.LinkTable
-        assertTrue(through.readOnly)
-    }
-
-    @Test
-    fun `throughLink without readOnly() defaults to writable`() {
-        val post = RwPost()
-        buildRegistry(RoTag(), RwPostTag(), post)
-        val edge = post.edges().single { it.name == "tags" }
-        val through = (edge.kind as EdgeKind.ManyToMany).through as ManyToManyThrough.LinkTable
-        assertFalse(through.readOnly)
-    }
-
-    @Test
-    fun `readOnly() on throughEntity is rejected`() {
-        assertFailsWith<IllegalStateException> {
-            buildRegistry(RoEntTag(), RoEntJunction(), RoEntOwner())
-        }
     }
 
     @Test

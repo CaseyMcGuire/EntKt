@@ -194,6 +194,7 @@ object SchemaInspector {
     fun validate(inputs: List<SchemaInput>): ValidationResult
     fun explain(inputs: List<SchemaInput>): ExplainedSchemaGraph
     fun renderText(graph: ExplainedSchemaGraph): String
+    fun renderJson(graph: ExplainedSchemaGraph): String
 }
 ```
 
@@ -276,7 +277,7 @@ Foreign Keys:
 
 Edges:
   author  belongsTo User   fk=author_id inverse=posts
-  tags    manyToMany Tag   through=post_tags(post, tag)
+  tags    manyToMany Tag   through=post_tags(post, tag), helpers=[add, remove, set]
 
 Indexes:
   idx_posts_author              (author_id)
@@ -377,11 +378,13 @@ data class ExplainedEdge(
 
 data class ExplainedThrough(
     val junctionTable: String, val sourceEdge: String, val targetEdge: String,
+    val writeHelpers: List<String>?,
 )
 
 data class ExplainedIndex(
     val name: String, val columns: List<String>,
     val unique: Boolean, val where: String?,
+    val helpers: List<String>,
 )
 
 data class ValidationResult(val valid: Boolean, val errors: List<String>)
@@ -403,8 +406,10 @@ In particular:
   dedicated entry in Foreign Keys section)
 - `hasMany(...)` / `hasOne(...)` appear as traversal metadata only
   (no `fk=`, inverse resolved when available)
-- `manyToMany(...).throughLink(...)` / `throughEntity(...)` shows the resolved junction table and
-  the two junction edge names used for the join
+- `manyToMany(...).throughLink(...)` / `throughEntity(...)` shows the resolved
+  junction table and the two junction edge names used for the join.
+  `writeHelpers` is `["add", "remove", "set"]` for `throughLink(...)` and
+  `null` for `throughEntity(...)`
 - `.field(handle)` shows that the FK reused an existing field instead of
   synthesizing one (FK column matches the declared field name)
 

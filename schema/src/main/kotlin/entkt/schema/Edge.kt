@@ -41,13 +41,6 @@ sealed interface ManyToManyThrough {
         override val junction: EntSchema,
         override val sourceEdge: String,
         override val targetEdge: String,
-        /**
-         * When true, this declaration of the link table is read-only:
-         * the generated entity gets read traversal but no `add` / `remove`
-         * / `set` write helpers. Set via `manyToMany(...).throughLink(...)
-         * .readOnly()`. Link-table only — `ThroughEntity` has no equivalent.
-         */
-        val readOnly: Boolean = false,
     ) : ManyToManyThrough
 
     data class ThroughEntity(

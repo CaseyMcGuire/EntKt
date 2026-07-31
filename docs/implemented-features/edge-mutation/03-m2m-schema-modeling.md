@@ -13,10 +13,10 @@ Specifically implemented:
   sourceEdge not targeting the declaring schema, targetEdge not targeting the
   `manyToMany<Target>` type parameter.
 - Codegen rejects incompatible declarations with the same canonical
-  relationship identity (junction + unordered junction-edge ref pair): two
-  `throughLink` declarations, mixed `throughLink` + `throughEntity`, and
-  same-orientation `throughEntity` aliases. Pair-swapped `throughEntity`
-  declarations remain allowed and are the supported bidirectional pattern.
+  relationship identity (junction + unordered junction-edge ref pair):
+  mixed `throughLink` + `throughEntity` declarations and same-orientation
+  aliases. Exactly pair-swapped declarations are allowed for both write
+  models and are the supported bidirectional pattern.
 - **No reverse-edge metadata or user-facing API is synthesized.**
   An entity's `SCHEMA.edges` map contains only the edges its own schema
   declares; nothing is injected on the target side of a `manyToMany`.
@@ -34,8 +34,9 @@ Specifically implemented:
 - `throughLink` junction-shape helper-eligibility is enforced at codegen
   time: payload columns, nullable junction FKs, missing
   `OnDelete.CASCADE`, write-time modifiers on FK backing fields, EXPLICIT id
-  strategies, and missing / partial / wrong-order unique composite indexes
-  are all rejected with a message naming the failing rule.
+  strategies, missing or partial unique-pair indexes, and missing
+  per-direction leading indexes for two-sided declarations are all rejected
+  with a message naming the failing rule.
 
 Follow-up work was extracted into focused RFCs:
 
@@ -164,8 +165,8 @@ M2M identity in this RFC works at two levels:
    — the junction class and the two `belongsTo` property references the
    caller passes as `sourceEdge` / `targetEdge` to
    `.throughLink<Junction>(...)`. It's what the caller actually writes
-   down, and order matters: it pins the write orientation, the
-   pair-uniqueness column order, and which side owns the helpers.
+   down, and order matters: it identifies the source endpoint for that
+   declaration's traversal and mutation helpers.
 
 2. The **canonical relationship identity** is the orientation key
    normalized so the two junction edge refs are *unordered*. Two
@@ -191,19 +192,12 @@ junctions where both junction edges resolve to the same target schema:
   `{ProjectAssignment, project, reviewer}` are distinct identities,
   not just two orientations of the same relationship.
 
-For V1, a link-table M2M relationship may have only one explicit
-`throughLink(...)` declaration per **canonical relationship identity**.
-That single declaration's orientation key picks the write orientation
-and gets generated helpers.
-
-A second `throughLink(...)` whose canonical relationship identity
-matches an existing declaration — including the case where the source
-and target junction edges are swapped (same identity, opposite
-orientation) — is the "explicit opposite-side declaration" rejected
-below. So in practice the rejection rule is "two `throughLink(...)`
-declarations with the same canonical identity are rejected"; whether
-the two orientation keys match exactly or are pair-swapped doesn't
-matter for rejection.
+A link-table M2M relationship may have one explicit `throughLink(...)`
+declaration, or two declarations whose orientation keys are exactly
+pair-swapped. Every declared side gets read traversal and direct
+`add` / `remove` / `set` helpers. Two same-orientation aliases and
+three or more declarations for one canonical relationship identity
+are rejected.
 
 Two `throughEntity(...)` declarations with *distinct* canonical
 identities over the same junction — e.g.,
@@ -221,26 +215,16 @@ canonical identities over one junction must therefore declare both
 sides as `throughEntity(...)` and mutate the junction through its
 generated repo.
 
-**V1 synthesizes no reverse traversal edge for any M2M.** Codegen does not
-infer a read-only edge on the opposite-side schema, the opposite-side
+**Codegen synthesizes no reverse traversal edge for any M2M.** Codegen does not
+infer an edge on the opposite-side schema, the opposite-side
 `Edges` inner data class does not gain a synthesized field, and there is
 no eager-loading or predicate surface for the reverse direction. The rule
 applies to both `throughLink(...)` and `throughEntity(...)` (see
 "No reverse-edge synthesis" below for the `throughEntity` case and the
-forward-traversal mechanism that lets queries work without it). For
-`throughLink(...)` specifically, callers that need reverse traversal in
-V1 query the junction schema directly; an opt-in marker for read-only
-reverse traversal of link-table relationships is sketched in
+forward-traversal mechanism that lets queries work without it). Reverse
+traversal requires an explicit pair-swapped declaration. For
+`throughLink(...)`, that declared reverse edge is writable; see
 [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md).
-
-Codegen must reject an explicit opposite-side `throughLink(...)` declaration
-that resolves to the same **canonical relationship identity** in V1 —
-concretely, any second declaration whose junction class matches and whose
-junction-edge ref pair matches the first's as an unordered pair, regardless
-of which side is `sourceEdge` and which is `targetEdge`. Without a concrete
-read-only marker or canonical reverse-write lock model, explicit bidirectional
-link-table helpers would make the owner of the relationship ambiguous and
-could reintroduce exact-set races between opposite orientations.
 
 For `throughEntity(...)`, callers mutate the junction entity through its repo, so
 explicit opposite-side traversal declarations are allowed as long as both
@@ -286,7 +270,7 @@ declaration produces its own traversal surface, and Phase 3's matching
 rule below treats them as opposite sides of one canonical relationship
 (used for codegen validation, not synthesis).
 
-**Matching rule for two explicit `throughEntity(...)` declarations.**
+**Matching rule for two explicit declarations.**
 Codegen treats two explicit declarations as opposite sides of the same
 relationship when, and only when:
 
@@ -299,8 +283,9 @@ relationship when, and only when:
 If both conditions hold, the two declarations describe the same
 relationship from the two endpoints. Each side independently produces
 its own forward traversal surface; the matching rule does not synthesize
-or merge metadata, it only governs whether the pair is *accepted* (for
-`throughEntity`) or *rejected* (for `throughLink`, see below).
+or merge metadata. Pair-swapped declarations are accepted for both
+`throughEntity(...)` and `throughLink(...)`; each declared `throughLink`
+side also gets its own mutation helpers.
 
 **Scope of the matching rule.** The pair-swap check applies *only* when
 the two declarations share a canonical relationship identity — same
@@ -342,11 +327,10 @@ Concretely:
 - **Distinct canonical identities** → independent; no matching, no
   rejection, both allowed.
 
-The same matching rule applies to the `throughLink(...)` opposite-side
-rejection (already covered above):
+The same matching rule applies to `throughLink(...)`:
 
 - **Same canonical identity, orientation keys pair-swap** → second
-  declaration rejected (same relationship in opposite orientations).
+  declaration accepted; both declared sides are writable.
 - **Same canonical identity, identical orientation keys** → second
   declaration rejected as a same-orientation alias (see
   "Same-orientation aliases are rejected" below).
@@ -653,26 +637,24 @@ only when:
   ids, such as `EntId.string()`, are not safe for direct helpers unless a later
   design defines how edge mutators supply those ids
 - it declares a non-partial unique composite index or constraint on
-  **exactly the source FK column followed by the target FK column**,
-  in that order: `(source_fk, target_fk)`. The constraint must contain
-  only those two columns; an index that adds a third column (even one
-  that's deterministically set, like a `kind` discriminator) does not
-  enforce uniqueness of the pair alone and is not sufficient. The
-  constraint must also be non-partial — a `WHERE` clause filtering out
-  some rows wouldn't reject duplicate links under concurrent writers
-  in the filtered region. Normalized set semantics require the
-  database to reject duplicate links under concurrent writers and to
-  rule out preexisting duplicate link rows.
+  **exactly the source and target FK columns**, in either order:
+  `(source_fk, target_fk)` or `(target_fk, source_fk)`. The constraint
+  must contain only those two columns; an index that adds a third column
+  (even one that's deterministically set, like a `kind` discriminator)
+  does not enforce uniqueness of the pair alone and is not sufficient.
+  The constraint must also be non-partial — a `WHERE` clause filtering
+  out some rows would not reject duplicate links outside the indexed
+  region. Normalized set semantics require the database to reject
+  duplicate links under concurrent writers and to rule out preexisting
+  duplicate link rows.
 
-  **Why source-first**, not order-insensitive: generated link-table
-  helpers also need to look up "all links for a given source FK" (for
-  `set(...)` exact-set semantics, eager-loading the M2M edge by source,
-  etc.). A `(source_fk, target_fk)` index serves both the
-  pair-uniqueness constraint and that source-keyed lookup directly via
-  the index's leading column; allowing `(target_fk, source_fk)` would
-  force callers to either tolerate a sequential scan for the
-  source-keyed lookup or maintain a companion source-first index. V1
-  picks the simpler rule: one source-first index covers both needs.
+  Generated helpers and traversal also look up all links for the
+  declaration's source FK. For a relationship declared from both
+  endpoints, the junction must therefore have a non-partial index
+  leading with each side's source FK. The unique pair index can satisfy
+  one direction; the other can use the pair index in the opposite order
+  or a separate non-unique leading-column index. A lone declaration does
+  not require the companion index.
 
   **Column resolution.** The two columns named here are the **physical
   backing FK columns** after `belongsTo(...).field(handle)` resolution
@@ -682,21 +664,17 @@ only when:
   `val source = belongsTo<Post>("source").field(postId)` contributes
   `post_id` (the backing column), not `source_id`.
 
-  **Scope of "exactly".** "Exactly the source FK column followed by
-  the target FK column" describes the *qualifying index itself* — its
-  column list contains exactly those two columns in that order. It is
-  not a statement about the whole junction schema's index set: the
-  junction may declare additional indexes (e.g., a target-first
-  secondary lookup index, a partial index for an unrelated query
-  pattern, a single-column index on the source FK for join planning)
-  as long as one qualifying index exists. Duplicate-shape indexes
-  remain subject to the normal schema index-validation rules
-  (duplicate index names, duplicate column-set + uniqueness + where
-  triples).
+  **Scope of "exactly".** "Exactly the source and target FK columns"
+  describes the qualifying unique index itself. It is not a statement
+  about the whole junction schema's index set: the junction may declare
+  additional indexes as long as one qualifying unique pair index exists.
+  Duplicate-shape indexes remain subject to the normal schema
+  index-validation rules (duplicate index names, duplicate column-set +
+  uniqueness + where triples).
 
 For junction schemas whose id strategy is client-generated UUID, generated
 link-table M2M helpers must populate the junction `id` with a freshly generated
-UUID before calling `Driver.insert(...)` / `insertMany(...)`. Auto-generated
+UUID before calling `Driver.insertIgnore(...)`. Auto-generated
 database ids may be omitted when the driver/database owns id generation.
 
 If a junction schema carries payload such as `role`, `joinedAt`, or other domain
@@ -760,15 +738,14 @@ direct-driver path.
    closes, the method is deleted from `ManyToManyBuilder`.
 2. Add static codegen validation for link-table safety (junction-shape
    rules + ref-resolution rules from "Link-Table Safety").
-3. Generate direct helpers only for the single explicit `throughLink(...)`
+3. Generate direct helpers for every explicit `throughLink(...)`
    declaration for a junction relationship.
 4. V1 does not synthesize a reverse traversal edge for any M2M, regardless
    of write model (see "Write Orientation" → "No reverse-edge synthesis").
    Bidirectional traversal requires the opposite-side schema to declare
-   its own pair-swapped `throughEntity(...)`. Reverse traversal for
-  `throughLink(...)` is covered by the follow-up
-  [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
-  design.
+   its own pair-swapped M2M. Pair-swapped `throughLink(...)` declarations
+   are covered by the follow-up
+   [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md).
 5. Keep through-entity edges repo-only for write paths. Forward query
    traversal lowers to `Predicate.HasM2MEdgeFromShape` against the source
    schema's forward-edge metadata, so no target-side reverse entry is
@@ -805,13 +782,11 @@ Before implementation, add tests for:
   inserts both a fully-populated junction row and one with each FK
   set to NULL, then asserts traversal returns only the populated row
   pair
-- a second `throughLink(...)` declaration that resolves to the same
-  **canonical relationship identity** as an existing declaration — same
-  junction class, same junction-edge ref pair as an unordered pair,
-  regardless of which side is `sourceEdge` and which is `targetEdge` —
-  is rejected in V1 (covers self-referential junctions like
-  `Friendship::requester` ↔ `Friendship::recipient` and multi-FK
-  junctions where both sides resolve to the same target schema)
+- a second `throughLink(...)` declaration for the same canonical
+  relationship is accepted only when its orientation is exactly
+  pair-swapped. Each declared side gets traversal and
+  `add` / `remove` / `set`; same-orientation aliases and three or more
+  declarations are rejected
 - two `throughLink(...)` declarations with **distinct canonical
   identities** — e.g., `{ProjectAssignment, project, assignee}` and
   `{ProjectAssignment, project, reviewer}` (different junction-edge
@@ -841,9 +816,10 @@ Before implementation, add tests for:
   (not `HasEdgeWith` against a synthesized reverse name) and that the
   runtime returns the right targets when the source-side filter matches
   a subset of source rows
-- explicit opposite-side `throughEntity(...)` traversal declarations for the
-  same junction relationship are allowed when both sides use `throughEntity(...)`.
-  Each side produces its own forward traversal surface; nothing is merged
+- explicit opposite-side declarations for the same junction relationship
+  are allowed when both sides use the same write model and pair-swap their
+  orientation. Each side produces its own forward traversal surface;
+  `throughLink(...)` sides also produce mutation helpers. Nothing is merged
   or de-duplicated. Test fixtures cover both shapes the matching rule has
   to handle:
   - **cross-schema**: e.g., `Group.members` and `User.groups` over a
@@ -884,8 +860,8 @@ Before implementation, add tests for:
   same junction class with different unordered junction-edge ref
   pairs, e.g. `(project, assignee)` vs `(project, reviewer)`) are
   independent — no matching attempted, no rejection, both allowed
-- generated link-table M2M helpers are emitted only for the single explicit
-  `throughLink(...)` declaration for a junction relationship
+- generated link-table M2M helpers are emitted for every explicit
+  `throughLink(...)` declaration
 - `throughLink(...)` M2M helpers are rejected for junction schemas with payload
   columns, nullable source/target FKs, caller-provided ids, partial unique
   indexes, or missing non-partial unique source/target FK pairs
@@ -909,11 +885,9 @@ Before implementation, add tests for:
   `OnDelete.CASCADE`; `OnDelete.RESTRICT` (or unset, when the
   framework default isn't CASCADE) is rejected. Junctions that need a
   different deletion policy must be modeled with `throughEntity(...)`
-- the unique source/target FK pair check requires source-first
-  ordering: an index declared as `(source_fk, target_fk)` qualifies;
-  one declared as `(target_fk, source_fk)` is rejected (V1 picks the
-  source-first rule so a single index covers both pair-uniqueness and
-  the source-keyed lookups generated helpers need)
+- the unique source/target FK pair check accepts either column order.
+  A two-sided relationship additionally requires a non-partial index
+  leading with each declaration's source FK
 - a unique index that includes a third column alongside the source
   and target FKs does not satisfy the pair-uniqueness check, even when
   non-partial
@@ -923,7 +897,7 @@ Before implementation, add tests for:
   (`EdgeKind.BelongsTo.field`, defaulting to `${edgeName}_id`), not
   the junction edge identifiers
 - generated link-table M2M helpers populate client-generated UUID junction ids
-  before calling raw `Driver.insert(...)` / `insertMany(...)`
+  before calling `Driver.insertIgnore(...)`
 - `throughEntity(...)` M2M edges do not generate direct helpers and continue to
   be mutated through the junction repo
 - direct link-table helpers do not invoke any junction repo
@@ -946,6 +920,7 @@ RFCs:
 - [Through-Entity Nullable M2M Traversal](09-through-entity-nullable-m2m-traversal.md)
 - [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
 
-Bidirectional link-table write helpers remain intentionally out of scope. Any
-future design would need a canonical write-orientation and locking model so
-exact `set(...)` semantics cannot race with reverse-direction helpers.
+Bidirectional link-table write helpers are implemented by
+[Symmetric Link-Table Edges](10-symmetric-link-table-writes.md), including
+the opt-in canonical relationship lock for callers that need opposite-side
+`set(...)` operations to serialize.

@@ -30,6 +30,20 @@ above it.
 
 ## Unreleased
 
+- **Remove the M2M link-edge `.readOnly()` modifier** (`schema`, `codegen`)
+  Every declared `manyToMany(...).throughLink(...)` edge now exposes the
+  same read and `add` / `remove` / `set` surface. There is no
+  traversal-only link-edge variant. The public
+  `ManyToManyThrough.LinkTable` metadata also no longer has a `readOnly`
+  property, constructor / `copy` parameter, or fourth destructuring
+  component.
+  _Migration:_ remove `.readOnly()`. Keep the declaration if that endpoint
+  should remain traversable and accept its write helpers; otherwise omit the
+  declaration and query the junction explicitly when reverse traversal is
+  needed. Use `throughEntity(...)` when junction writes must go through the
+  junction repository. Code that inspects `ManyToManyThrough.LinkTable`
+  should remove `readOnly` branches and treat every instance as writable.
+
 - **Nested transaction blocks are savepoint-scoped; an aborted transaction can no longer "commit"** (`postgres`)
   A nested `withTransaction` / `withTransactionOrError` previously reused
   the outer transaction with no rollback of its own: a nested block that

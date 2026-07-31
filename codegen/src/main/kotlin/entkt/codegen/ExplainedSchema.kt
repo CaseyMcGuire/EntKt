@@ -56,10 +56,9 @@ data class ExplainedThrough(
     val sourceEdge: String,
     val targetEdge: String,
     /**
-     * The concrete link-table mutation surface this edge exposes (symmetric link-table writes):
-     * `["add", "remove", "set"]` for a writable `throughLink` side,
-     * `[]` for a `.readOnly()` side (read traversal only). `null` for a
-     * `throughEntity` M2M edge, which has no link-table write helpers.
+     * The concrete link-table mutation surface this edge exposes:
+     * `["add", "remove", "set"]` for a `throughLink` edge, or `null` for
+     * a `throughEntity` edge, which is mutated through its junction repo.
      */
     val writeHelpers: List<String>? = null,
 )

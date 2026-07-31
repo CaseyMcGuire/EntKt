@@ -557,16 +557,15 @@ private fun validateThroughLinkJunctions(
             // source FK — require a non-partial index whose LEADING column is
             // that FK. The unique pair index satisfies only the side it leads
             // with; the opposite endpoint needs its own leading-column index.
-            // (Not relaxed for `.readOnly()` — a read-only side still reads by
-            // source.) A LONE declaration is exempt — NOT because it always has
-            // a source-leading index (Rule 6 accepts the unique pair index in
-            // either column order, so a lone side's only index may lead with the
-            // target FK), but for backward compatibility: lone declarations are
-            // the pre-existing case, and tightening this would reject schemas the
-            // old source-first rule's relaxation now accepts. The cost is a
-            // possible sequential-scan source read on such a lone junction — a
-            // performance gap, not a correctness issue. See the spec's Backward
-            // Compatibility note.
+            // A LONE declaration is exempt — NOT because it always has a
+            // source-leading index (Rule 6 accepts the unique pair index in
+            // either column order, so a lone side's only index may lead with
+            // the target FK), but for backward compatibility: lone
+            // declarations are the pre-existing case, and tightening this
+            // would reject schemas the old source-first rule's relaxation now
+            // accepts. The cost is a possible sequential-scan source read on
+            // such a lone junction — a performance gap, not a correctness
+            // issue. See the spec's Backward Compatibility note.
             val isTwoSided = m2mCanonicalKey(junctionName, through.sourceEdge, through.targetEdge) in twoSidedKeys
             if (isTwoSided) {
                 val hasLeading = indexes.any { it.where == null && it.fields.firstOrNull() == sourceFkCol }

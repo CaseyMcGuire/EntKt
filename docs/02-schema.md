@@ -298,9 +298,11 @@ class Friendship : EntSchema("friendships") {
 A `throughLink` declaration is rejected during generation unless the junction
 has an id, exactly the two named non-null `belongsTo` fields, explicit
 `OnDelete.CASCADE` on both edges, a generated id strategy, and a non-partial
-unique composite index on `(sourceFk, targetFk)`. The foreign-key fields
-cannot have write-time modifiers. Junctions that need payload columns, hooks,
-or validators must use `throughEntity`.
+unique composite index on the two FK columns in either order. A relationship
+declared from both endpoints also needs a non-partial index leading with each
+endpoint's source FK. The foreign-key fields cannot have write-time modifiers.
+Junctions that need payload columns, hooks, or validators must use
+`throughEntity`.
 
 ## Relationship Patterns
 
@@ -320,8 +322,8 @@ Quick map:
 | `O2M Two Types` | `hasMany` + `belongsTo()` | FK column on the many-side table |
 | `O2M Same Type` | self `hasMany` + self `belongsTo()` | self-referencing FK column on the child rows |
 | `M2M Two Types` | `manyToMany().throughEntity<Junction>(...)` (or `.throughLink<Junction>(...)`) | explicit junction table with two FKs |
-| `M2M Same Type` | self `manyToMany().throughEntity<Junction>(...)` | explicit self-junction table with two FKs to the same table |
-| `M2M Bidirectional` | matching `manyToMany().throughEntity(...)` on both endpoint schemas with pair-swapped orientation keys | same junction table; both endpoints declare their own forward traversal |
+| `M2M Same Type` | self `manyToMany().throughEntity<Junction>(...)` (or `.throughLink<Junction>(...)`) | explicit self-junction table with two FKs to the same table |
+| `M2M Bidirectional` | matching `manyToMany().throughEntity(...)` or `.throughLink(...)` declarations with pair-swapped orientation keys | same junction table; both endpoints declare their own forward traversal |
 
 ### O2O Two Types
 

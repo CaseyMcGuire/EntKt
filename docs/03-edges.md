@@ -196,11 +196,34 @@ The full API on each helper-eligible edge:
 
 **Transaction and capability requirements.** A link-table M2M update
 requires a transaction-scoped client and a driver that can safely serialize
-concurrent link changes. `PostgresDriver` supports this. A missing transaction
-throws `TransactionRequiredException`; an unsupported driver throws
-`UnsupportedDriverCapabilityException`. These checks happen before hooks or
-changes. Driver authors can see
+changes made through the same owner edge. `PostgresDriver` supports this.
+A missing transaction throws `TransactionRequiredException`; an unsupported
+driver throws `UnsupportedDriverCapabilityException`. These checks happen
+before hooks or changes. Driver authors can see
 [Drivers — Locking](10-drivers.md#locking-rfc-4) for the capability surface.
+
+**Writes from both endpoints.** The default
+`RelationshipLocking.OwnerOnly` mode does not coordinate pair-swapped writes
+made concurrently from opposite endpoints. Those writes can deadlock. When an
+application may update the same relationship from both sides concurrently, all
+participating writers should opt into the canonical relationship lock:
+
+```kotlin
+tx.posts.update(
+    post.id,
+    relationshipLocking = RelationshipLocking.Canonical,
+) {
+    tags.add(tag.id)
+}.save()
+```
+
+`Canonical` makes both orientations contend on the same relationship lock. It
+is cooperative: a competing writer that remains `OwnerOnly` is not protected.
+It serializes opposite-side operations but does not change their meaning, so
+overlapping `set(...)` calls remain last-writer-wins. Applications can set
+`client.defaultRelationshipLocking = RelationshipLocking.Canonical` when this
+should be the default for every generated repository; the extra lock is taken
+only by updates with pending link-table M2M writes.
 
 **Edge-only updates** (`update(id) { tags.add(x) }` with no scalar
 fields touched) are still owner update operations — `beforeSave`,
