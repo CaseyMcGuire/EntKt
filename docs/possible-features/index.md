@@ -21,6 +21,7 @@ Implemented RFCs have moved to the
 - [Explicit Save Terminals](mutation/explicit-save-terminals.md)
 - [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
+- [Delete Consistency](mutation/delete-consistency.md)
 - [Update Hook Context Clarity](mutation/update-hook-context-clarity.md)
 - [Transaction Options And Savepoints](mutation/transaction-options-savepoints.md)
 - [Edge Mutation API Overview](edge-mutation/00-overview.md)
