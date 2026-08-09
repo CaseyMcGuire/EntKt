@@ -48,19 +48,35 @@ object Validators {
         spec = ValidatorSpec.Match(pattern.pattern, pattern.options),
     )
 
-    fun min(min: Number): Validator = Validator(
-        name = "min($min)",
-        message = "value must be at least $min",
-        check = { (it as? Number)?.toDouble()?.let { v -> v >= min.toDouble() } ?: false },
-        spec = ValidatorSpec.Min(min),
-    )
+    fun min(min: Number): Validator {
+        requireFiniteBound("min", min)
+        return Validator(
+            name = "min($min)",
+            message = "value must be at least $min",
+            check = { (it as? Number)?.toDouble()?.let { v -> v >= min.toDouble() } ?: false },
+            spec = ValidatorSpec.Min(min),
+        )
+    }
 
-    fun max(max: Number): Validator = Validator(
-        name = "max($max)",
-        message = "value must be at most $max",
-        check = { (it as? Number)?.toDouble()?.let { v -> v <= max.toDouble() } ?: false },
-        spec = ValidatorSpec.Max(max),
-    )
+    fun max(max: Number): Validator {
+        requireFiniteBound("max", max)
+        return Validator(
+            name = "max($max)",
+            message = "value must be at most $max",
+            check = { (it as? Number)?.toDouble()?.let { v -> v <= max.toDouble() } ?: false },
+            spec = ValidatorSpec.Max(max),
+        )
+    }
+
+    // Non-finite IEEE bounds (NaN / ±Infinity) would be emitted into
+    // generated Kotlin as bare `NaN` / `Infinity` tokens, which don't
+    // compile. Reject at the source, matching the finite-default check
+    // in FieldBuilder.build().
+    private fun requireFiniteBound(validator: String, bound: Number) {
+        if ((bound is Double && !bound.isFinite()) || (bound is Float && !bound.isFinite())) {
+            error("Validators.$validator bound must be a finite number, got $bound")
+        }
+    }
 
     fun positive(): Validator = Validator(
         name = "positive",

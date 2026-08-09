@@ -715,4 +715,17 @@ class SchemaTest {
             assertContains(err.message!!, "Kotlin reserved keyword")
         }
     }
+
+    @Test
+    fun `non-finite numeric validator bounds are rejected`() {
+        val nan = assertFailsWith<IllegalStateException> { Validators.min(Double.NaN) }
+        assertContains(nan.message!!, "finite")
+        assertFailsWith<IllegalStateException> { Validators.max(Double.POSITIVE_INFINITY) }
+        assertFailsWith<IllegalStateException> { Validators.min(Float.NEGATIVE_INFINITY) }
+        assertFailsWith<IllegalStateException> { Validators.max(Float.NaN) }
+
+        // Finite bounds are unaffected, including non-floating types.
+        assertEquals("min(1.5)", Validators.min(1.5).name)
+        assertEquals("max(10)", Validators.max(10).name)
+    }
 }
