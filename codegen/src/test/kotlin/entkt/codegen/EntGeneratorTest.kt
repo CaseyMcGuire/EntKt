@@ -36,6 +36,28 @@ private class M2mMembershipSchema : EntSchema("memberships") {
     val person = belongsTo<M2mPersonSchema>("person").field(personId)
 }
 
+// Derived-name collision test schemas: raw names stay unique, but the
+// derived artifact file / client property collides.
+private class ArtifactBaseSchema : EntSchema("artifact_bases") {
+    override fun id() = EntId.int()
+    val name = string("name")
+}
+
+private class ArtifactSuffixedSchema : EntSchema("artifact_suffixed") {
+    override fun id() = EntId.int()
+    val note = string("note")
+}
+
+private class BoxSchema : EntSchema("boxes_one") {
+    override fun id() = EntId.int()
+    val label = string("label")
+}
+
+private class BoxeSchema : EntSchema("boxes_two") {
+    override fun id() = EntId.int()
+    val label = string("label")
+}
+
 class EntGeneratorTest {
 
     private val generator = EntGenerator("com.example.ent")
@@ -72,6 +94,40 @@ class EntGeneratorTest {
             ),
             names,
         )
+    }
+
+    @Test
+    fun `schema name colliding with a derived artifact name is rejected`() {
+        val base = ArtifactBaseSchema()
+        val suffixed = ArtifactSuffixedSchema()
+        finalize(base, suffixed)
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(
+                listOf(
+                    SchemaInput("Account", base),
+                    SchemaInput("AccountCreate", suffixed),
+                ),
+            )
+        }
+        assertContains(error.message!!, "AccountCreate.kt")
+    }
+
+    @Test
+    fun `schemas deriving the same pluralized client property are rejected`() {
+        val box = BoxSchema()
+        val boxe = BoxeSchema()
+        finalize(box, boxe)
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(
+                listOf(
+                    SchemaInput("Box", box),
+                    SchemaInput("Boxe", boxe),
+                ),
+            )
+        }
+        assertContains(error.message!!, "'boxes'")
+        assertContains(error.message!!, "'Box'")
+        assertContains(error.message!!, "'Boxe'")
     }
 
     @Test

@@ -673,6 +673,23 @@ class EntGenerator(
                     rfc06Errors.joinToString("\n") { "  - $it" },
             )
         }
+
+        // Raw schema names are unique (validateUniqueNamesAndTables), but
+        // distinct raw names can still derive the same generated client
+        // property after pluralization (Box/Boxe -> boxes), which would
+        // emit conflicting declarations on every client artifact.
+        val propertyCollisions = schemas
+            .groupBy { pluralize(it.name.replaceFirstChar { c -> c.lowercase() }) }
+            .filterValues { it.size > 1 }
+        if (propertyCollisions.isNotEmpty()) {
+            error(
+                "Generated client property collisions detected:\n" +
+                    propertyCollisions.entries.joinToString("\n") { (prop, group) ->
+                        "  - schemas ${group.joinToString(", ") { "'${it.name}'" }} " +
+                            "all derive the client property '$prop'"
+                    },
+            )
+        }
         val perSchema = schemas.flatMap { (name, schema) ->
             buildList {
                 add(entityGenerator.generate(name, schema, schemaNames))
@@ -690,11 +707,32 @@ class EntGenerator(
             }
         }
         val viewerFiles = if (viewer) viewerGenerator.generate(schemas, schemaNames) else emptyList()
-        return perSchema +
+        val files = perSchema +
             readRuntimeGenerator.generate(schemas) +
             readClientGenerator.generate(schemas, schemaNames) +
             clientGenerator.generate(schemas) +
             viewerFiles
+
+        // Two same-named FileSpecs would silently overwrite each other in
+        // writeTo(): raw-name uniqueness doesn't stop a schema name from
+        // colliding with another schema's derived artifact (a schema named
+        // `UserCreate` vs schema `User`'s generated create builder). Check
+        // the actual output set so any future generator is covered too.
+        val fileCollisions = files
+            .groupBy { it.packageName to it.name }
+            .filterValues { it.size > 1 }
+        if (fileCollisions.isNotEmpty()) {
+            error(
+                "Generated file collisions detected:\n" +
+                    fileCollisions.keys.joinToString("\n") { (_, name) ->
+                        "  - more than one artifact generates '$name.kt' — a schema name " +
+                            "collides with a derived artifact name (<Schema>Mutation/Create/" +
+                            "Update/Query/Repo/Privacy/Validation/Indexes) or a reserved " +
+                            "client file (EntClient, EntReadClient, EntReadRuntime)"
+                    },
+            )
+        }
+        return files
     }
 
     fun writeTo(outputDir: Path, schemas: List<SchemaInput>) {
