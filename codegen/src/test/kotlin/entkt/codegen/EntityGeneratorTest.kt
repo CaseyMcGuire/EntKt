@@ -95,6 +95,13 @@ private class CommentAuthorSchema : EntSchema("authors") {
     val posts = hasMany<CommentPostSchema>("posts").comment("All posts authored by this user")
 }
 
+private class BlobSchema : EntSchema("blobs") {
+    override fun id() = EntId.int()
+    val payload = bytes("payload")
+    val thumb = bytes("thumb").nullable()
+    val label = string("label")
+}
+
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
     schemas.forEach { it.finalize(registry) }
@@ -614,6 +621,30 @@ class EntityGeneratorTest {
         assert(!modelMeta.contains("comment =")) {
             "ColumnMetadata should omit comment when not set\n$output"
         }
+    }
+
+    @Test
+    fun `bytes fields generate content-based equals and hashCode`() {
+        val blob = BlobSchema()
+        finalize(blob)
+        val output = generator.generate("Blob", blob).toString()
+
+        assert(output.contains("override fun equals(other: Any?)")) { "Should override equals\n$output" }
+        assert(output.contains("payload contentEquals other.payload")) { "payload should compare by content\n$output" }
+        assert(output.contains("thumb contentEquals other.thumb")) { "nullable bytes should compare by content\n$output" }
+        assert(output.contains("if (label != other.label) return false")) { "non-bytes fields should keep ==\n$output" }
+        assert(output.contains("payload.contentHashCode()")) { "payload should hash by content\n$output" }
+        assert(output.contains("thumb?.contentHashCode() ?: 0")) { "nullable bytes should hash by content\n$output" }
+    }
+
+    @Test
+    fun `entities without bytes fields keep data-class equality`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        assert(!output.contains("override fun equals")) { "Should not override equals\n$output" }
+        assert(!output.contains("override fun hashCode")) { "Should not override hashCode\n$output" }
     }
 }
 

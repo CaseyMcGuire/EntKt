@@ -105,6 +105,17 @@ internal class EntityGenerator(
                 val toStringFn = buildToString(className, schema, edgeFks, edgesClass != null)
                 if (toStringFn != null) addFunction(toStringFn)
             }
+            .apply {
+                // Kotlin's data-class equals/hashCode compare ByteArray
+                // properties by reference, so two separately loaded
+                // entities with identical bytes would compare unequal.
+                // Override with content comparison when a BYTES field
+                // exists; other schemas keep the data-class defaults.
+                if (allFields.any { it.type == FieldType.BYTES }) {
+                    addFunction(buildEquals(entityClass, allFields, edgeFks, edgesClass != null))
+                    addFunction(buildHashCode(allFields, edgeFks, edgesClass != null))
+                }
+            }
             .addType(
                 TypeSpec.companionObjectBuilder()
                     .addProperty(tableProperty)
@@ -312,6 +323,80 @@ internal class EntityGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .returns(String::class)
             .addStatement("return %P", template)
+            .build()
+    }
+
+    /**
+     * Explicit structural `equals` for entities with BYTES fields:
+     * ByteArray properties compare via `contentEquals` (nullable-safe);
+     * every other property keeps `==`, matching what the data-class
+     * default would do. Component order mirrors the constructor.
+     */
+    private fun buildEquals(
+        entityClass: ClassName,
+        fields: List<Field>,
+        edgeFks: List<EdgeFk>,
+        hasEdges: Boolean,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+            .addStatement("if (this === other) return true")
+            .addStatement("if (other !is %T) return false", entityClass)
+            .addStatement("if (id != other.id) return false")
+        for (field in fields) {
+            val prop = toCamelCase(field.name)
+            if (field.type == FieldType.BYTES) {
+                body.addStatement("if (!(%L contentEquals other.%L)) return false", prop, prop)
+            } else {
+                body.addStatement("if (%L != other.%L) return false", prop, prop)
+            }
+        }
+        for (fk in edgeFks) {
+            body.addStatement("if (%L != other.%L) return false", fk.propertyName, fk.propertyName)
+        }
+        if (hasEdges) {
+            body.addStatement("if (edges != other.edges) return false")
+        }
+        body.addStatement("return true")
+        return FunSpec.builder("equals")
+            .addModifiers(KModifier.OVERRIDE)
+            .addParameter("other", ANY_NULLABLE)
+            .returns(Boolean::class)
+            .addCode(body.build())
+            .build()
+    }
+
+    /** Companion to [buildEquals]: ByteArray properties hash via `contentHashCode`. */
+    private fun buildHashCode(
+        fields: List<Field>,
+        edgeFks: List<EdgeFk>,
+        hasEdges: Boolean,
+    ): FunSpec {
+        val body = CodeBlock.builder()
+            .addStatement("var result = id.hashCode()")
+        for (field in fields) {
+            val prop = toCamelCase(field.name)
+            val expr = when {
+                field.type == FieldType.BYTES && field.nullable -> "($prop?.contentHashCode() ?: 0)"
+                field.type == FieldType.BYTES -> "$prop.contentHashCode()"
+                field.nullable -> "($prop?.hashCode() ?: 0)"
+                else -> "$prop.hashCode()"
+            }
+            body.addStatement("result = 31 * result + %L", expr)
+        }
+        for (fk in edgeFks) {
+            val expr =
+                if (fk.required) "${fk.propertyName}.hashCode()"
+                else "(${fk.propertyName}?.hashCode() ?: 0)"
+            body.addStatement("result = 31 * result + %L", expr)
+        }
+        if (hasEdges) {
+            body.addStatement("result = 31 * result + edges.hashCode()")
+        }
+        body.addStatement("return result")
+        return FunSpec.builder("hashCode")
+            .addModifiers(KModifier.OVERRIDE)
+            .returns(Int::class)
+            .addCode(body.build())
             .build()
     }
 
