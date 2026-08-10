@@ -49,7 +49,11 @@ Implemented RFCs have moved to the
 - [Validator-Derived CHECK Constraints](schema/validator-check-constraints.md)
 - [Schema Printer](schema/schema-printer.md)
 
-## Results, Codegen, And Tooling
+## Core API And Results
+
+- [Canonical Operation Result Algebra](api/operation-result-algebra.md)
+
+## Codegen And Tooling
 
 - [Codegen Plugin Hooks](tooling/codegen-plugin-hooks.md)
 - [OpenAPI / JSON Schema Generation](tooling/openapi-json-schema-generation.md)
