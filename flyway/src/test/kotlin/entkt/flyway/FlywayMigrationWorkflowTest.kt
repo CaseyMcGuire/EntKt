@@ -592,6 +592,31 @@ class FlywayMigrationWorkflowTest {
     }
 
     @Test
+    fun `rejects baseline migrations`() {
+        // nextVersion() numbers only V*.sql, but Flyway replaces all
+        // versioned migrations at or below the latest baseline on fresh
+        // databases — a B above the latest V would make the next generated
+        // migration apply on existing databases and be skipped on fresh
+        // ones. Rejected up front like repeatables.
+        val dir = createTempDir()
+        try {
+            dir.resolve("V1__init.sql").toFile().writeText("CREATE TABLE fw_users (id serial PRIMARY KEY);")
+            dir.resolve("B2__baseline.sql").toFile().writeText("-- baseline")
+
+            val ex = assertFailsWith<IllegalArgumentException> {
+                createWorkflow().validate(
+                    schemas = listOf(usersSchema),
+                    migrationsDir = dir,
+                )
+            }
+            assertTrue(ex.message!!.contains("baseline"))
+            assertTrue(ex.message!!.contains("B2__baseline.sql"))
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `rejects SQL callbacks`() {
         val dir = createTempDir()
         try {

@@ -261,6 +261,7 @@ class FlywayMigrationWorkflow(
      * Reject Flyway features that V1 does not support before
      * starting the shadow database:
      * - Repeatable migrations (`R__*.sql`)
+     * - Baseline migrations (`B<version>__*.sql`)
      * - SQL callbacks (`beforeMigrate.sql`, `afterMigrate.sql`, etc.)
      */
     private fun rejectUnsupportedMigrations(migrationsDir: Path) {
@@ -277,6 +278,19 @@ class FlywayMigrationWorkflow(
             )
         }
 
+        // Baseline migrations replace all versioned migrations at or below
+        // their version on fresh databases, but nextVersion() numbers only
+        // V*.sql — a baseline above the latest V would make the next
+        // generated migration silently ignored on fresh databases while
+        // existing ones apply it, so old and new deployments diverge.
+        val baselines = sqlFiles.filter { BASELINE_MIGRATION_PATTERN.matches(it.name) }
+        if (baselines.isNotEmpty()) {
+            val names = baselines.map { it.relativeTo(dir).path }.sorted()
+            throw IllegalArgumentException(
+                "Flyway baseline migrations are not supported in V1: $names",
+            )
+        }
+
         val callbacks = sqlFiles.filter { f ->
             val base = f.nameWithoutExtension.lowercase()
             FLYWAY_CALLBACK_NAMES.any { base == it || base.startsWith("${it}__") }
@@ -290,6 +304,15 @@ class FlywayMigrationWorkflow(
     }
 
     companion object {
+        /**
+         * Flyway baseline-migration filenames: `B` + version (dot- or
+         * underscore-separated numeric parts) + `__` + description.
+         * Matches what flyway-core's baseline resolver picks up, so a
+         * file this pattern rejects is one Flyway would actually treat
+         * as a baseline.
+         */
+        private val BASELINE_MIGRATION_PATTERN = Regex("""B\d+([._]\d+)*__.*\.sql""")
+
         /**
          * Flyway SQL callback filenames (case-insensitive, without extension).
          * Derived from [org.flywaydb.core.api.callback.Event] enum values.
