@@ -298,4 +298,27 @@ class PostgresIntrospectionFidelityTest {
         assertEquals(null, table.columns.single { it.name == "a" }.generatedAs)
     }
 
+    // ---------- PK constraint-name isolation ----------
+
+    @Test
+    fun `a same-named constraint on another table does not contaminate primary keys`() {
+        // Constraint names are only unique per table: an FK elsewhere may
+        // share a PK's constraint name (PK/UNIQUE names are index-backed
+        // and schema-unique, FK names are not). The key_column_usage join
+        // must not pull that constraint's columns into this table's PK.
+        exec(
+            "CREATE TABLE fidelity_pk_shared_a (id integer, tenant_id integer, " +
+                "CONSTRAINT fidelity_shared_name PRIMARY KEY (id))",
+            "CREATE TABLE fidelity_pk_shared_b (id integer PRIMARY KEY, tenant_id integer, " +
+                "CONSTRAINT fidelity_shared_name FOREIGN KEY (tenant_id) " +
+                "REFERENCES fidelity_pk_shared_a (id))",
+        )
+        val table = introspect("fidelity_pk_shared_a")
+
+        assertTrue(table.columns.single { it.name == "id" }.primaryKey)
+        assertFalse(
+            table.columns.single { it.name == "tenant_id" }.primaryKey,
+            "another table's same-named FK constraint must not mark tenant_id as PK",
+        )
+    }
 }
