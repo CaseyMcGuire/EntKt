@@ -47,7 +47,8 @@ class PostgresIntrospectionFidelityTest {
     @BeforeTest
     fun dropAll() = exec(
         "DROP TABLE IF EXISTS fidelity_varchar, fidelity_include, fidelity_invalid, " +
-            "fidelity_ts, fidelity_expr, fidelity_pkidx, fidelity_fk_child, fidelity_fk_parent CASCADE",
+            "fidelity_ts, fidelity_expr, fidelity_pkidx, fidelity_fk_child, fidelity_fk_parent, " +
+            "fidelity_nnd, fidelity_generated, fidelity_pk_shared_b, fidelity_pk_shared_a CASCADE",
     )
 
     private fun introspect(table: String) =
@@ -254,4 +255,47 @@ class PostgresIntrospectionFidelityTest {
 
         PostgresDriver(dataSource, autoDdl = true).registerAll(listOf(parent, child))
     }
+
+    // ---------- UNIQUE NULLS NOT DISTINCT fidelity ----------
+
+    @Test
+    fun `NULLS NOT DISTINCT uniqueness survives introspection`() {
+        // It permits only one NULL per key where ordinary uniqueness
+        // permits any number — reading it as plain unique would validate
+        // a schema whose second NULL insert fails at runtime.
+        exec(
+            "CREATE TABLE fidelity_nnd (id serial PRIMARY KEY, code text, tag text)",
+            "CREATE UNIQUE INDEX idx_fidelity_nnd_code ON fidelity_nnd (code) NULLS NOT DISTINCT",
+            "CREATE UNIQUE INDEX idx_fidelity_nnd_tag ON fidelity_nnd (tag)",
+        )
+        val table = introspect("fidelity_nnd")
+
+        val code = table.indexes.single { it.name == "idx_fidelity_nnd_code" }
+        assertTrue(code.unique)
+        assertTrue(code.nullsNotDistinct, "NULLS NOT DISTINCT must survive introspection")
+        val tag = table.indexes.single { it.name == "idx_fidelity_nnd_tag" }
+        assertFalse(tag.nullsNotDistinct, "ordinary unique index must not read as NULLS NOT DISTINCT")
+    }
+
+    // ---------- stored generated column fidelity ----------
+
+    @Test
+    fun `stored generated columns surface their expression`() {
+        // PostgreSQL forbids supplying a value for a generated column, so
+        // it must never introspect as an ordinary writable column that
+        // could silently match a declared field.
+        exec(
+            "CREATE TABLE fidelity_generated (id serial PRIMARY KEY, a integer NOT NULL, " +
+                "doubled integer GENERATED ALWAYS AS (a * 2) STORED)",
+        )
+        val table = introspect("fidelity_generated")
+
+        val doubled = table.columns.single { it.name == "doubled" }
+        assertTrue(
+            doubled.generatedAs.orEmpty().contains("a * 2"),
+            "generated column must carry its expression, got: ${doubled.generatedAs}",
+        )
+        assertEquals(null, table.columns.single { it.name == "a" }.generatedAs)
+    }
+
 }

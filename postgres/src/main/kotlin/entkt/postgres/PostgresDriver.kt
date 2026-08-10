@@ -266,7 +266,7 @@ class PostgresDriver(
                 is MigrationOp.AddColumn, is MigrationOp.DropColumn,
                 is MigrationOp.AlterColumnType,
                 is MigrationOp.SetColumnNotNull, is MigrationOp.DropColumnNotNull,
-                is MigrationOp.AlterPrimaryKey,
+                is MigrationOp.AlterPrimaryKey, is MigrationOp.DropColumnExpression,
                 -> true
                 else -> false
             }

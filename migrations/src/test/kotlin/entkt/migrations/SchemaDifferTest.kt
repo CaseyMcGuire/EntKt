@@ -966,6 +966,57 @@ class SchemaDifferTest {
     }
 
     @Test
+    fun `a NULLS NOT DISTINCT live index never satisfies a plain unique declaration`() {
+        // UNIQUE NULLS NOT DISTINCT permits only one NULL per key where
+        // ordinary uniqueness permits any number. It keys apart from the
+        // declaration: drop it, create the real one.
+        val declared = idx(listOf("email"), unique = true, name = "idx_users_email")
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("email")), indexes = listOf(declared)),
+        )
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(col("id", "serial", primaryKey = true), col("email")),
+                indexes = listOf(declared.copy(nullsNotDistinct = true)),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertEquals(1, result.ops.filterIsInstance<MigrationOp.AddIndex>().size)
+        val drop = result.manual.filterIsInstance<MigrationOp.DropIndex>().single()
+        assertTrue(
+            drop.reason.orEmpty().contains("NULLS NOT DISTINCT"),
+            "drop of a NULLS NOT DISTINCT index should carry a reason: ${describeOp(drop)}",
+        )
+    }
+
+    @Test
+    fun `a stored generated column surfaces manual drift not a silent match`() {
+        // PostgreSQL forbids supplying a value for a GENERATED ALWAYS AS
+        // (...) STORED column, so it can never back a declared field even
+        // when name, type, and nullability all match.
+        val desired = schema(
+            table("users", columns = listOf(col("id", "serial", primaryKey = true), col("total", "integer"))),
+        )
+        val current = schema(
+            table(
+                "users",
+                columns = listOf(
+                    col("id", "serial", primaryKey = true),
+                    col("total", "integer").copy(generatedAs = "(a + b)"),
+                ),
+            ),
+        )
+        val result = differ.diff(desired, current)
+
+        assertTrue(result.ops.isEmpty(), "generated-column drift must not auto-apply: ${result.ops}")
+        val op = result.manual.filterIsInstance<MigrationOp.DropColumnExpression>().single()
+        assertEquals("total", op.columnName)
+        assertEquals("(a + b)", op.expression)
+    }
+
+    @Test
     fun `an undeclared duplicate index is dropped not masked`() {
         // Postgres allows several identically-defined indexes under
         // different names; all must be visible to the differ whichever

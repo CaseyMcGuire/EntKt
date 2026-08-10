@@ -103,6 +103,9 @@ fun describeOp(op: MigrationOp): String = when (op) {
     is MigrationOp.AlterColumnType -> "AlterColumnType: ${op.table}.${op.columnName} (${op.oldType} -> ${op.newType})"
     is MigrationOp.SetColumnNotNull -> "SetColumnNotNull: ${op.table}.${op.columnName}"
     is MigrationOp.DropColumnNotNull -> "DropColumnNotNull: ${op.table}.${op.columnName}"
+    is MigrationOp.DropColumnExpression ->
+        "DropColumnExpression: ${op.table}.${op.columnName} is GENERATED ALWAYS AS " +
+            "(${op.expression}) STORED but the declaration expects a writable column"
     is MigrationOp.AlterPrimaryKey -> {
         val action = if (op.added) "add to" else "remove from"
         "AlterPrimaryKey: $action ${op.table}.${op.columnName} (requires DROP CONSTRAINT + ADD PRIMARY KEY)"

@@ -96,12 +96,18 @@ class SchemaDiffer {
          * drop plus a fresh create — never as a match.
          */
         val valid: Boolean,
+        /**
+         * `UNIQUE NULLS NOT DISTINCT` keys apart from ordinary
+         * uniqueness: it permits only one NULL per key, so a live index
+         * carrying it must never satisfy a plain unique declaration.
+         */
+        val nullsNotDistinct: Boolean,
     )
 
     private fun indexKey(idx: NormalizedIndex, columnTypes: Map<String, String>): IndexKey =
         IndexKey(
             idx.columns, idx.unique, normalizeWhere(idx.where, columnTypes),
-            idx.using, idx.opclasses, idx.with, idx.valid,
+            idx.using, idx.opclasses, idx.with, idx.valid, idx.nullsNotDistinct,
         )
 
     private fun indexKey(table: NormalizedTable, idx: NormalizedIndex): IndexKey =
@@ -117,6 +123,9 @@ class SchemaDiffer {
         !idx.valid ->
             "index is INVALID (failed CREATE INDEX CONCURRENTLY leftover); " +
                 "the planner ignores it and a unique one enforces nothing"
+        idx.nullsNotDistinct ->
+            "enforces UNIQUE NULLS NOT DISTINCT (only one NULL per key) " +
+                "where the declaration expects ordinary uniqueness"
         !idx.include.isNullOrEmpty() ->
             "carries INCLUDE (${idx.include.joinToString(", ")}) beyond the declaration"
         else -> null
@@ -187,6 +196,17 @@ class SchemaDiffer {
 
             if (desiredCol.primaryKey != currentCol.primaryKey) {
                 manualOps.add(MigrationOp.AlterPrimaryKey(table, name, added = desiredCol.primaryKey))
+            }
+
+            // A live GENERATED ALWAYS AS (...) STORED column can never
+            // back a declared field — PostgreSQL rejects any write that
+            // supplies its value. Entity-derived columns are never
+            // generated, so the only possible mismatch is dropping the
+            // live expression.
+            if (currentCol.generatedAs != null && desiredCol.generatedAs == null) {
+                manualOps.add(
+                    MigrationOp.DropColumnExpression(table, name, currentCol.generatedAs),
+                )
             }
 
             // Column default changes are safe metadata-only ALTERs.

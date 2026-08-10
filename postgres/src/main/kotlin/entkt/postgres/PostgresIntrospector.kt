@@ -137,7 +137,8 @@ class PostgresIntrospector(
             // data_type reports only the bare "USER-DEFINED" for them.
             """
             SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable, c.column_default,
-                   c.is_identity, format_type(a.atttypid, a.atttypmod) AS formatted_type
+                   c.is_identity, c.is_generated, c.generation_expression,
+                   format_type(a.atttypid, a.atttypmod) AS formatted_type
             FROM information_schema.columns c
             JOIN pg_class cl ON cl.relname = c.table_name
             JOIN pg_namespace ns ON ns.oid = cl.relnamespace AND ns.nspname = c.table_schema
@@ -201,6 +202,14 @@ class PostgresIntrospector(
                             // extension present; surface it so a round-tripped
                             // schema records the dependency.
                             requiredExtension = if (udtName.equals("vector", ignoreCase = true)) "vector" else null,
+                            // A STORED generated column rejects supplied
+                            // values, so it must never read as an ordinary
+                            // writable column the differ could call in-sync.
+                            generatedAs = if (rs.getString("is_generated") == "ALWAYS") {
+                                rs.getString("generation_expression")
+                            } else {
+                                null
+                            },
                         ),
                     )
                 }
@@ -247,6 +256,7 @@ class PostgresIntrospector(
             val name: String,
             val unique: Boolean,
             val valid: Boolean,
+            val nullsNotDistinct: Boolean,
             val accessMethod: String,
             val columns: List<String>,
             val include: List<String>?,
@@ -254,12 +264,18 @@ class PostgresIntrospector(
             val reloptions: Map<String, String>?,
         )
 
+        // pg_index.indnullsnotdistinct exists only on PostgreSQL 15+;
+        // earlier servers can't have such an index, so read false there.
+        val nullsNotDistinctExpr =
+            if (conn.metaData.databaseMajorVersion >= 15) "ix.indnullsnotdistinct" else "false"
+
         val raw = mutableListOf<RawIndex>()
         conn.prepareStatement(
             """
             SELECT i.relname AS index_name,
                    ix.indisunique AS is_unique,
                    ix.indisvalid AS is_valid,
+                   $nullsNotDistinctExpr AS nulls_not_distinct,
                    ix.indnkeyatts AS key_att_count,
                    am.amname AS access_method,
                    array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
@@ -277,7 +293,7 @@ class PostgresIntrospector(
             WHERE n.nspname = 'public'
               AND t.relname = ?
               AND NOT ix.indisprimary
-            GROUP BY i.relname, ix.indisunique, ix.indisvalid, ix.indnkeyatts, am.amname, ix.indpred, ix.indrelid, i.reloptions
+            GROUP BY i.relname, ix.indisunique, ix.indisvalid, $nullsNotDistinctExpr, ix.indnkeyatts, am.amname, ix.indpred, ix.indrelid, i.reloptions
             """.trimIndent(),
         ).use { stmt ->
             stmt.setString(1, tableName)
@@ -286,6 +302,7 @@ class PostgresIntrospector(
                     val indexName = rs.getString("index_name")
                     val isUnique = rs.getBoolean("is_unique")
                     val isValid = rs.getBoolean("is_valid")
+                    val nullsNotDistinct = rs.getBoolean("nulls_not_distinct")
                     val keyAttCount = rs.getInt("key_att_count")
                     val accessMethod = rs.getString("access_method")
                     val keyColumns =
@@ -307,6 +324,7 @@ class PostgresIntrospector(
                             name = indexName,
                             unique = isUnique,
                             valid = isValid,
+                            nullsNotDistinct = nullsNotDistinct,
                             accessMethod = accessMethod,
                             columns = columns,
                             include = includeColumns,
@@ -333,6 +351,7 @@ class PostgresIntrospector(
                 opclasses = if (isBtree) null else fetchOpclasses(conn, r.name),
                 with = if (isBtree) null else r.reloptions,
                 valid = r.valid,
+                nullsNotDistinct = r.nullsNotDistinct,
                 include = r.include,
             )
         }

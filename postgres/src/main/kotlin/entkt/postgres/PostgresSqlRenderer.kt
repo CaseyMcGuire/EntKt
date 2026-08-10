@@ -40,6 +40,9 @@ class PostgresSqlRenderer(
         is MigrationOp.DropColumnNotNull -> listOf(
             "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP NOT NULL",
         )
+        is MigrationOp.DropColumnExpression -> listOf(
+            "ALTER TABLE ${quote(op.table)} ALTER COLUMN ${quote(op.columnName)} DROP EXPRESSION",
+        )
         // A PK change is not a single statement (it needs DROP CONSTRAINT +
         // ADD PRIMARY KEY), so there is no candidate DDL to emit. Return
         // nothing rather than a prose "hint" that would be commented as if it

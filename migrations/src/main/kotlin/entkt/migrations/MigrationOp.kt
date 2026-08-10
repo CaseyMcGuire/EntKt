@@ -58,6 +58,18 @@ sealed interface MigrationOp {
 
     data class DropColumnNotNull(val table: String, val columnName: String) : MigrationOp
 
+    /**
+     * Convert a `GENERATED ALWAYS AS (...) STORED` column into the
+     * ordinary writable column the declaration expects. Always manual:
+     * dropping the expression keeps existing values but changes who
+     * computes the column from then on.
+     */
+    data class DropColumnExpression(
+        val table: String,
+        val columnName: String,
+        val expression: String,
+    ) : MigrationOp
+
     data class DropIndex(
         val table: String,
         val columns: List<String>,

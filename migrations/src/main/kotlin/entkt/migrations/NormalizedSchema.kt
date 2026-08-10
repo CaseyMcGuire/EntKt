@@ -115,6 +115,16 @@ data class NormalizedColumn(
     val default: String? = null,
     /** Extension this column's type needs (e.g. `"vector"`), or null. */
     val requiredExtension: String? = null,
+    /**
+     * Generation expression for an introspected `GENERATED ALWAYS AS
+     * (...) STORED` column, or null for an ordinary writable column.
+     * PostgreSQL forbids supplying a value for a generated column, so
+     * one can never satisfy an entkt field declaration (which always
+     * writes): entity-derived columns are always null here, and a
+     * mismatch must surface as drift, never as a silent match that
+     * fails at the first generated INSERT.
+     */
+    val generatedAs: String? = null,
 )
 
 data class NormalizedIndex(
@@ -140,6 +150,16 @@ data class NormalizedIndex(
      * every entity-derived index is valid.
      */
     val valid: Boolean = true,
+    /**
+     * True for an introspected `UNIQUE NULLS NOT DISTINCT` index
+     * (PostgreSQL 15+). Part of semantic identity: it permits only one
+     * NULL per key where ordinary uniqueness permits any number, so it
+     * must never satisfy a plain unique declaration — the mismatch
+     * would otherwise surface as a runtime constraint failure on the
+     * second NULL. The DSL cannot declare it, so every entity-derived
+     * index is false here.
+     */
+    val nullsNotDistinct: Boolean = false,
     /**
      * Introspected `INCLUDE` (non-key) columns, or null. Deliberately
      * NOT part of semantic identity: INCLUDE affects storage and
