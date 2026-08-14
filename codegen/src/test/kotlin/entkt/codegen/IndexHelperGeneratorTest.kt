@@ -284,34 +284,41 @@ class IndexHelperGeneratorTest {
     }
 
     @Test
-    fun `unique single-column index generates unique terminals`() {
+    fun `unique single-column index generates a find terminal delegating to firstOrNull`() {
         val s = IdxEmailUser(); finalize(s)
         val out = gen.generate("User", s)!!.toString().flat()
         // Non-null param even though the helper reads by value.
         assertTrue("fun email(email: String)" in out, out)
         val email = classBody(out, "Email")
-        assertTrue("fun orNull(): User?" in email, email)
-        assertTrue("fun visibleOrNull(): User?" in email, email)
-        assertTrue("fun orError(): EntResult<User>" in email, email)
-        assertTrue("fun orThrow(): User" in email, email)
+        // The completed unique stage exposes exactly find() + query().
+        // find() seeds the bound prefix and delegates to the canonical
+        // first-row terminal, so its ReadResult carries the same
+        // privacy/interceptor behavior as any query.
+        assertTrue("fun find(): ReadResult<User?>" in email, email)
+        assertTrue("return q.firstOrNull()" in email, email)
         assertTrue("fun query(" in email, email)
+        // The orNull/visibleOrNull/orError/orThrow quartet collapsed into
+        // find(); transformations happen on the ReadResult, not through
+        // per-terminal variants.
+        for (legacy in listOf("fun orNull", "fun visibleOrNull", "fun orError", "fun orThrow")) {
+            assertTrue(legacy !in email, email)
+        }
     }
 
     @Test
-    fun `unique composite generates terminals only at the full unique stage`() {
+    fun `unique composite generates find only at the full unique stage`() {
         val s = IdxFriendship(); finalize(s)
         val out = gen.generate("Friendship", s)!!.toString().flat()
-        // Exactly one stage (the full pair) exposes the unique terminals.
-        assertEquals(1, countOccurrences(out, "fun orNull()"), out)
-        // The prefix stage exists, exposes query(), but no terminals.
+        // Exactly one stage (the full pair) exposes the unique terminal.
+        assertEquals(1, countOccurrences(out, "fun find()"), out)
+        // The prefix stage exists, exposes query(), but no terminal.
         val prefix = classBody(out, "RequesterId")
         assertTrue("fun recipientId(recipientId: Long)" in prefix, prefix)
         assertTrue("fun query(" in prefix, prefix)
-        assertTrue("orNull" !in prefix, prefix)
-        // The full stage exposes the terminals.
+        assertTrue("fun find(" !in prefix, prefix)
+        // The full stage exposes the terminal.
         val full = classBody(out, "RequesterIdRecipientId")
-        assertTrue("fun orNull(): Friendship?" in full, full)
-        assertTrue("fun orError(): EntResult<Friendship>" in full, full)
+        assertTrue("fun find(): ReadResult<Friendship?>" in full, full)
     }
 
     @Test
@@ -322,7 +329,7 @@ class IndexHelperGeneratorTest {
         val out = gen.generate("Friendship", s)!!.toString().flat()
         val rangeStage = classBody(out, "RequesterIdRecipientIdRange")
         assertTrue("fun query(" in rangeStage, rangeStage)
-        assertTrue("orNull" !in rangeStage, rangeStage)
+        assertTrue("fun find(" !in rangeStage, rangeStage)
     }
 
     @Test
@@ -379,7 +386,7 @@ class IndexHelperGeneratorTest {
         val rangeStage = classBody(out, "AuthorIdCreatedAtRange")
         assertTrue("fun query(" in rangeStage, rangeStage)
         assertTrue("fun sequence(" !in rangeStage, rangeStage)
-        assertTrue("orNull" !in rangeStage, rangeStage)
+        assertTrue("fun find(" !in rangeStage, rangeStage)
     }
 
     @Test
@@ -421,11 +428,11 @@ class IndexHelperGeneratorTest {
     }
 
     @Test
-    fun `nullable unique index does not generate unique terminals in V1`() {
+    fun `nullable unique index does not generate a find terminal in V1`() {
         val s = IdxNullableUnique(); finalize(s)
         val out = gen.generate("Nuniq", s)!!.toString().flat()
         assertTrue("fun nickname(nickname: String)" in out, out)
-        assertEquals(0, countOccurrences(out, "fun orNull()"), out)
+        assertEquals(0, countOccurrences(out, "fun find()"), out)
         assertTrue("fun query(" in out, out)
     }
 

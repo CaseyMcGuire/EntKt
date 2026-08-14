@@ -1,6 +1,5 @@
 package entkt.runtime.query
 
-import entkt.runtime.result.EntError
 import entkt.runtime.result.EntQueryRejectedException
 
 /**
@@ -15,18 +14,10 @@ import entkt.runtime.result.EntQueryRejectedException
  * rather than the multiplicity since the actual count depends on
  * data returned by the root query.
  *
- * Returned by every generated per-terminal explain method on query
- * builders and on repos (one explain per source-side variant —
- * `explainAllOrThrow`, `explainAllOrError`, `explainVisibleAll`,
- * `explainVisibleAllOrError`, `explainFirstOrThrow`,
- * `explainFirstOrNull`, `explainFirstOrError`,
- * `explainFirstVisibleOrNull`, `explainRawCount`,
- * `explainVisibleCount`, `explainRawExists`, `explainVisibleExists`,
- * plus repo-level `explainByIdOrThrow` / `explainByIdOrNull` /
- * `explainVisibleByIdOrNull` / `explainByIdOrError`). Different
- * variants of the same operation produce the same underlying
- * `QueryPlan` — the result-shape suffix in the name is for call-
- * site discovery, not plan content.
+ * Returned by every generated per-terminal explain method — one
+ * mirror per canonical terminal: `explainAll`, `explainFirstOrNull`,
+ * `explainRawCount`, and `explainRawExists` on query builders, plus
+ * the repo-level `explainFindById`.
  *
  * On interceptor rejection, the returned plan has [rejected] = true,
  * carries the rejection metadata, and has [root] = null (no driver
@@ -54,16 +45,16 @@ data class QueryPlan(
      */
     val annotations: Map<String, String> = emptyMap(),
     /**
-     * The full [EntError.QueryRejected] payload when an interceptor
-     * in the chain called `scope.reject(...)` during this explain
-     * step. Null on the happy path. Explain does NOT throw on
-     * rejection — the plan carries this payload so callers can
-     * branch without try/catch. Callers that want exception-style
-     * explain chain [requireNotRejected], which uses this payload
-     * directly so `ex.queryRejected.entity` /
-     * `ex.queryRejected.operation` are accurate (not synthetic).
+     * The typed [EntQueryRejectedException] when an interceptor in
+     * the chain called `scope.reject(...)` during this explain step.
+     * Null on the happy path. Explain does NOT throw on rejection —
+     * the plan carries this payload so callers can branch without
+     * try/catch. Callers that want exception-style explain chain
+     * [requireNotRejected], which throws this stored exception
+     * directly so its `entityType` / `interceptor` properties are
+     * accurate (not synthetic).
      */
-    val rejection: EntError.QueryRejected? = null,
+    val rejection: EntQueryRejectedException? = null,
 ) {
     /** Convenience: true iff [rejection] is non-null. */
     val rejected: Boolean get() = rejection != null
@@ -132,18 +123,17 @@ data class QueryPlan(
      * terminal would throw, so a root-only check would declare a
      * plan clean that cannot execute. Same tree walk as [render].
      *
-     * The thrown exception carries the first rejection in
-     * depth-first order (this plan's own before its edges', edges
-     * in declaration order) — the rejected node's original
-     * [EntError.QueryRejected] (including `entity` and
-     * `operation`), not synthesized.
+     * The thrown exception is the first rejection in depth-first
+     * order (this plan's own before its edges', edges in
+     * declaration order) — the rejected node's original stored
+     * [EntQueryRejectedException], not synthesized.
      */
     fun requireNotRejected(): QueryPlan {
         val rej = firstRejection() ?: return this
-        throw EntQueryRejectedException(rej)
+        throw rej
     }
 
-    private fun firstRejection(): EntError.QueryRejected? {
+    private fun firstRejection(): EntQueryRejectedException? {
         rejection?.let { return it }
         for (plan in eagerQueries.values) {
             plan.firstRejection()?.let { return it }
@@ -153,16 +143,16 @@ data class QueryPlan(
 
     public companion object {
         /**
-         * Build a rejected plan from an [EntError.QueryRejected]
+         * Build a rejected plan from an [EntQueryRejectedException]
          * caught inside an explain method. The framework conversion
          * path: `scope.reject(...)` throws `AbortQueryRejected`
          * (caught inside `runReadInterceptors`), which the helper
-         * re-throws as `EntQueryRejectedException` for terminal
-         * callers. The explain wrapper catches that exception
-         * instead and calls this factory to build the plan rather
-         * than letting the exception escape.
+         * re-throws as the public `EntQueryRejectedException` for
+         * terminal callers. The explain wrapper catches that
+         * exception instead and calls this factory to build the plan
+         * rather than letting the exception escape.
          */
-        public fun rejected(rejection: EntError.QueryRejected): QueryPlan = QueryPlan(
+        public fun rejected(rejection: EntQueryRejectedException): QueryPlan = QueryPlan(
             root = null,
             rejection = rejection,
         )

@@ -37,15 +37,17 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
 private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
-private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
+private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
+private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
+private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
+private val VISIBLE_OR_NULL = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "visibleOrNull")
 private val GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "getOrThrow")
 
 /**
  * Emits the opt-in viewer bridge (`entkt { viewer.set(true) }`): one
  * `<Name>ViewerEntity` object per entity plus `GeneratedEntViewerRegistry`.
  * Adapters go through the generated typed repos
- * (`client.<repo>.query { ... }.visibleAll()`, `visibleByIdOrNull`) so the
+ * (`client.<repo>.query { ... }.all()`, `findById(...).visibleOrNull()`) so the
  * viewer inherits read privacy, read interceptors, soft-delete filters, and
  * result decoding — never `Driver.query(...)`.
  *
@@ -232,26 +234,17 @@ internal class ViewerGenerator(private val packageName: String) {
         entityClass: ClassName,
         repoProp: String,
     ): FunSpec {
-        // Privacy-coherent pagination: entities without load privacy get an
-        // exact hasNext via a pageSize+1 probe (nothing is filtered, so the
-        // probe is sound). Entities WITH load privacy fetch exactly the raw
-        // window and report hasNext = null — deriving it from visible counts
-        // would make next-link presence an oracle over privacy-denied rows.
-        // The visible-scan cap surfaces as an explicit 400, never a silent
-        // truncation.
+        // Canonical strict pagination: the window is fetched with a
+        // pageSize+1 probe for an exact hasNext — sound because the
+        // canonical all() is all-or-nothing, so a successful page was
+        // never filtered. A LOAD-denied row anywhere in the probed
+        // window fails the whole read; the viewer reports that as an
+        // explicitly privacy-filtered empty page rather than showing a
+        // partial window. Debug listings that must see every row run
+        // the viewer with a privacy-bypass-scoped client, where every
+        // page succeeds and pagination is exact.
         val body = CodeBlock.builder()
-            .addStatement("val probe = !client.%L.hasLoadPrivacy()", repoProp)
-            // Deterministic cap boundary: visibleAllOrError treats a FULL
-            // window at the cap as conservative exhaustion, so pageSize ==
-            // cap would 400 only once the table grows past it. Pre-reject at
-            // the boundary instead of failing data-dependently.
-            .addStatement(
-                "if (!probe && request.pageSize >= client.visibleOverfetchLimit) throw %T(%P)",
-                VIEWER_BAD_REQUEST,
-                "Page size \${request.pageSize} is at or above this client's visible-scan cap " +
-                    "(\${client.visibleOverfetchLimit}); use a smaller size or raise visibleOverfetchLimit.",
-            )
-            .addStatement("val fetchLimit = if (probe) request.pageSize + 1 else request.pageSize")
+            .addStatement("val fetchLimit = request.pageSize + 1")
             .beginControlFlow("val result = client.%L.query", repoProp)
             .addStatement("for (filter in request.filters) `where`(predicateFor(filter))")
             .addStatement("val order = request.order")
@@ -272,30 +265,24 @@ internal class ViewerGenerator(private val packageName: String) {
             .addStatement("limit(fetchLimit)")
             .addStatement("offset(request.offset)")
             .endControlFlow()
-            .addStatement(".visibleAllOrError()")
+            .addStatement(".all()")
             .beginControlFlow("val rows = when (result)")
-            .addStatement("is %T.Ok -> result.value", ENT_RESULT)
-            .beginControlFlow("is %T.Err ->", ENT_RESULT)
-            .addStatement("val error = result.error")
+            .addStatement("is %T.Success -> result.value", READ_RESULT)
+            .beginControlFlow("is %T.Failed ->", READ_RESULT)
+            .addStatement("val e = result.exception")
+            .beginControlFlow("if (e is %T && e.origin is %T.Root)", ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN)
             .addStatement(
-                "if (error is %T.OverfetchCapExceeded) throw %T(%P)",
-                ENT_ERROR, VIEWER_BAD_REQUEST,
-                "Page window hits or exceeds this client's visible-scan cap (\${error.cap}); use a smaller size.",
-            )
-            .addStatement("result.%M()", GET_OR_THROW)
-            .endControlFlow()
-            .endControlFlow()
-            .beginControlFlow("return if (probe)")
-            .addStatement(
-                "%T(rows.take(request.pageSize).map { toRow(it) }, hasNext = rows.size > request.pageSize)",
-                VIEWER_LIST_RESULT,
-            )
-            .nextControlFlow("else")
-            .addStatement(
-                "%T(rows.map { toRow(it) }, hasNext = null, privacyFiltered = true)",
+                "return %T(emptyList(), hasNext = null, privacyFiltered = true)",
                 VIEWER_LIST_RESULT,
             )
             .endControlFlow()
+            .addStatement("throw e")
+            .endControlFlow()
+            .endControlFlow()
+            .addStatement(
+                "return %T(rows.take(request.pageSize).map { toRow(it) }, hasNext = rows.size > request.pageSize)",
+                VIEWER_LIST_RESULT,
+            )
             .build()
         return FunSpec.builder("list")
             .addModifiers(KModifier.OVERRIDE)
@@ -331,7 +318,10 @@ internal class ViewerGenerator(private val packageName: String) {
                     // Unparseable id, missing row, and privacy-denied row all
                     // return null — the viewer's uniform not-found.
                     .addStatement("val parsed = %L", idParse)
-                    .addStatement("val entity = client.%L.visibleByIdOrNull(parsed) ?: return null", repoProp)
+                    .addStatement(
+                        "val entity = client.%L.findById(parsed).%M().%M() ?: return null",
+                        repoProp, VISIBLE_OR_NULL, GET_OR_THROW,
+                    )
                     .addStatement("return toRow(entity)")
                     .build(),
             )

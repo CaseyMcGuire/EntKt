@@ -115,10 +115,12 @@ is `.sensitive()` / `redaction { extra(...) }` — see below.
   semantics instead, gate in front with Spring Security.
 - **Rows come from the privacy context.** Every read runs under the
   per-request `privacyContext` through the generated client's
-  `withPrivacyContext`, using the privacy-filtering terminals (`visibleAll`,
-  `visibleByIdOrNull`). Privacy-denied rows are omitted from lists; a
-  privacy-denied, missing, or unparseable id is the same 404 — no existence
-  disclosure. The default context is `Viewer.Anonymous` (fail-closed).
+  `withPrivacyContext`, using the canonical read terminals. A list window
+  containing any privacy-denied row renders as an explicitly
+  privacy-filtered empty page (see below); the detail route reads with
+  `findById(id).visibleOrNull()`, so a privacy-denied, missing, or
+  unparseable id is the same 404 — no existence disclosure. The default
+  context is `Viewer.Anonymous` (fail-closed).
 - **Read-only.** Non-GET requests are 405, and the viewer exposes no create,
   update, delete, or arbitrary-query API.
 - **Sensitive fields stay sensitive.** `.sensitive()` columns are visible as
@@ -139,15 +141,18 @@ is a 400), and `page`/`size` (default 50, max 200; page depth is capped) —
 pagination is always applied and bounded; the viewer never issues an
 unbounded scan.
 
-Pagination is privacy-coherent per entity. Entities without load privacy get
-exact next-page detection. Entities **with** row-level load privacy page
-over raw-row windows: a page may show fewer than `size` rows (denied rows
-are omitted within the window), further navigation is offered
-unconditionally with an explicit banner — deriving it from visible counts
-would let next-link presence disclose denied-row information — and a page
-size at or above the client's `visibleOverfetchLimit` is a deterministic,
-explicit 400 rather than a silent truncation. Read-interceptor rejections (tenant guards
-and similar) render as controlled 400s naming the interceptor.
+Pagination is privacy-coherent and all-or-nothing per window. A page whose
+fetched window contains no denied rows shows the full window with exact
+next-page detection (a `size + 1` probe). If **any** row in the window is
+denied by LOAD privacy, the strict read fails and the viewer renders an
+explicitly privacy-filtered *empty* page with a banner — it never shows a
+partial window, and further navigation is offered unconditionally, since
+deriving next-link presence from visible rows would let it disclose
+denied-row information; later pages may still contain visible rows. For
+full listings of a privacy-guarded entity, run the viewer under a
+bypass-scoped context (`privacyContext { PrivacyContext(Viewer.PrivacyBypass(...)) }`).
+Read-interceptor rejections (tenant guards and similar) render as
+controlled 400s naming the interceptor.
 
 Supported ops by type: comparison (`eq,neq,gt,gte,lt,lte`) for numeric,
 string, and time columns; `contains`/`prefix`/`suffix` for strings;

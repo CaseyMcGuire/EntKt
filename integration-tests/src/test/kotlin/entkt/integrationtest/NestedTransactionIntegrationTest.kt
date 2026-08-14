@@ -2,23 +2,27 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.result.EntResult
+import entkt.runtime.result.NestedTransactionUnsupportedException
+import entkt.runtime.result.TransactionFailureState
+import entkt.runtime.result.TransactionResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
 
 /**
- * Pins the all-or-nothing contract of nested transaction blocks. A
- * nested `withTransaction` / `withTransactionOrError` runs on the same
- * connection under a savepoint: a failed nested block rolls back its
- * own writes — including partial writes made before the failure — and
- * leaves the outer transaction usable, even after a failed SQL
- * statement put PostgreSQL in its aborted state. And a block that
- * swallows a failed statement's error without ending cannot "commit"
- * into a silent rollback: the driver fails loudly instead.
+ * Nested transactions are unsupported by design: calling
+ * `withTransaction` on a transaction-scoped client or driver throws
+ * [NestedTransactionUnsupportedException] BEFORE the nested block or
+ * any nested transaction I/O runs. Savepoint semantics were removed —
+ * a future transaction-client design owns any nested story. The outer
+ * transaction is unchanged and fully usable when the caller catches
+ * the rejection.
  */
 class NestedTransactionIntegrationTest : PostgresTestBase() {
 
@@ -27,81 +31,72 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
     }
 
     private fun emails(client: EntClient): List<String> =
-        client.users.query { }.allOrThrow().map { it.email }.sorted()
+        client.users.query { }.all().getOrThrow().map { it.email }.sorted()
+
+    // ---- client level ----
 
     @Test
-    fun `a failed nested block rolls back its partial writes while the outer commits`() {
+    fun `nested client withTransaction throws before the nested block runs`() {
         val client = freshClient()
+        var nestedRan = false
 
-        client.withTransaction { tx ->
-            tx.users.create { name = "outer"; email = "outer@x" }.saveOrThrow()
-            val inner = tx.withTransactionOrError { tx2 ->
-                tx2.users.create { name = "inner"; email = "inner@x" }.saveOrThrow()
-                // A non-SQL failure after the inner write: NotFound Err
-                // aborts the nested block via bind().
-                tx2.users.byIdOrError(-1L).bind()
+        val result = client.withTransaction { tx ->
+            tx.users.create { name = "outer"; email = "outer@x" }.saveAndLoad().orRollback()
+            assertFailsWith<NestedTransactionUnsupportedException> {
+                tx.withTransaction { tx2 ->
+                    nestedRan = true
+                    tx2.users.create { name = "inner"; email = "inner@x" }.save()
+                }
             }
-            assertTrue(inner is EntResult.Err, "nested block should report Err; got $inner")
-            tx.users.create { name = "after"; email = "after@x" }.saveOrThrow()
+            // The outer transaction is unchanged and usable after catching.
+            tx.users.create { name = "after"; email = "after@x" }.saveAndLoad().orRollback()
+            "done"
         }
 
+        assertIs<TransactionResult.Success<String>>(result)
+        assertFalse(nestedRan, "the nested block must never run")
         assertEquals(listOf("after@x", "outer@x"), emails(freshChecker()))
     }
 
     @Test
-    fun `a failed nested SQL statement leaves the outer transaction usable`() {
+    fun `an uncaught nested rejection fails the outer boundary with NotCommitted`() {
         val client = freshClient()
-        client.users.create { name = "taken"; email = "taken@x" }.saveOrThrow()
 
-        client.withTransaction { tx ->
-            val inner = tx.withTransactionOrError { tx2 ->
-                tx2.users.create { name = "inner"; email = "inner@x" }.saveOrThrow()
-                // Unique violation: the statement fails on the server,
-                // which aborts the real transaction — the savepoint
-                // rollback must recover it.
-                tx2.users.create { name = "dup"; email = "taken@x" }.saveOrError().bind()
-            }
-            assertTrue(inner is EntResult.Err, "nested block should report Err; got $inner")
-            tx.users.create { name = "after"; email = "after@x" }.saveOrThrow()
+        val result = client.withTransaction { tx ->
+            tx.users.create { name = "outer"; email = "outer@x" }.saveAndLoad().orRollback()
+            // Not caught: the rejection propagates as the block's
+            // exception, so the outer transaction rolls back.
+            tx.withTransaction { "never" }
         }
 
-        assertEquals(listOf("after@x", "taken@x"), emails(freshChecker()))
+        val failed = assertIs<TransactionResult.Failed>(result)
+        assertIs<NestedTransactionUnsupportedException>(failed.exception)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals(emptyList(), emails(freshChecker()))
     }
 
-    @Test
-    fun `a swallowed statement failure cannot commit as a silent rollback`() {
-        val client = freshClient()
-        client.users.create { name = "taken"; email = "taken@x" }.saveOrThrow()
-
-        val ex = assertFailsWith<IllegalStateException> {
-            client.withTransaction { tx ->
-                tx.users.create { name = "outer"; email = "outer@x" }.saveOrThrow()
-                // Swallow the constraint-violation Err and keep going —
-                // the transaction is now aborted and can never commit.
-                val err = tx.users.create { name = "dup"; email = "taken@x" }.saveOrError()
-                assertTrue(err is EntResult.Err)
-            }
-        }
-        assertTrue(
-            ex.message.orEmpty().contains("aborted"),
-            "failure should explain the aborted state; got: ${ex.message}",
-        )
-        assertEquals(listOf("taken@x"), emails(freshChecker()))
-    }
+    // ---- driver level ----
 
     @Test
-    fun `a successful nested block commits with the outer transaction`() {
-        val client = freshClient()
+    fun `nested driver withTransaction throws before any nested transaction IO`() {
+        val driver = resetAndDriver()
+        var nestedRan = false
 
-        client.withTransaction { tx ->
-            tx.users.create { name = "outer"; email = "outer@x" }.saveOrThrow()
-            val inner = tx.withTransactionOrError { tx2 ->
-                tx2.users.create { name = "inner"; email = "inner@x" }.saveOrThrow().id
+        val result = driver.withTransaction { txDriver ->
+            txDriver.insert("users", mapOf("name" to "outer", "email" to "outer@x"))
+            assertFailsWith<NestedTransactionUnsupportedException> {
+                txDriver.withTransaction {
+                    nestedRan = true
+                }
             }
-            assertTrue(inner is EntResult.Ok)
+            // Outer transaction still usable.
+            txDriver.insert("users", mapOf("name" to "after", "email" to "after@x"))
+            "ok"
         }
 
-        assertEquals(listOf("inner@x", "outer@x"), emails(freshChecker()))
+        assertEquals(DriverTransactionResult.Success("ok"), result)
+        assertFalse(nestedRan, "the nested driver block must never run")
+        assertEquals(listOf("after@x", "outer@x"), emails(freshChecker()))
     }
 
     /**

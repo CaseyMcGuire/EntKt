@@ -9,17 +9,18 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 
 | Subpackage | Holds |
 |---|---|
-| `entkt.runtime.driver` | `Driver` SPI, `NoopDriver`, `classifyDriverError`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
-| `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, `PrivacyDecision`/`PrivacyRule`, `PrivacyDeniedException`, `allowAll`, `EntityPolicy` |
-| `entkt.runtime.validation` | `ValidationDecision`, `ValidationRule`, `ValidationException` |
+| `entkt.runtime.driver` | `Driver` SPI, `NoopDriver`, `DriverTransactionResult`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
+| `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, `PrivacyDecision`/`PrivacyRule`, `allowAll`, `EntityPolicy` |
+| `entkt.runtime.validation` | `ValidationDecision`, `ValidationRule` |
 | `entkt.runtime.query` | interceptors (`QueryInterceptor`, `InterceptScope`, `InterceptorEngine`, `ReadOperation`, …), `QueryPlan`/`QueryExplanation`, aggregate types, `ExcludeDeleted` |
 | `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
-| `entkt.runtime.result` | `EntResult` (+ `map`/`flatMap`/`getOrThrow`), `EntResultScope`, `EntError`, and the `Ent*Exception` family |
+| `entkt.runtime.result` | `ReadResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |
 
 ## Driver interface
 
 ```kotlin
 interface Driver {
+    fun registerAll(schemas: List<EntitySchema>)
     fun register(schema: EntitySchema)
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
@@ -37,7 +38,7 @@ interface Driver {
     fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
     fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
     fun deleteMany(table: String, predicates: List<Predicate>): Int
-    fun <T> withTransaction(block: (Driver) -> T): T
+    fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
 }
 ```
 
@@ -55,8 +56,14 @@ Sealed `Predicate` hierarchy —
 
 ## Transactions
 
-`driver.withTransaction { txDriver -> ... }` runs a block
-inside a transaction. The block receives a transaction-scoped driver; if it
-completes normally the transaction commits, if it throws the transaction rolls
-back. Nested `withTransaction` calls reuse the existing transaction.
-
+`driver.withTransaction { txDriver -> ... }` runs a block inside a
+transaction and reports the outcome structurally as
+`DriverTransactionResult<T>`: `Success` only after a confirmed commit;
+an ordinary block failure with a confirmed rollback is
+`Failed(exception, NotCommitted)`; a failed rollback or commit is
+`Failed(exception, OutcomeUnknown)`. `CancellationException` and JVM
+`Error`s roll back and rethrow. Nested `withTransaction` calls are
+unsupported and throw `NestedTransactionUnsupportedException` before
+the nested block runs. The client-level transaction boundary
+(`runEntTransaction` + `TransactionScope.orRollback()`) builds on this
+contract; see the operation-result-algebra design note.

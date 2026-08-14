@@ -14,7 +14,6 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
-import entkt.codegen.pluralize
 import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -22,11 +21,10 @@ private val EDGE_QUERY = ClassName("entkt.query", "EdgeQuery")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 
 // Generated queries depend on the read-runtime contract, not the full
-// EntClient: every internal use (requireClient, interceptor lookup, the
-// visible-family cap, LOAD-privacy delegation, sibling-query
-// construction) stays within EntReadRuntime's surface, so the read-only
-// EntReadClientImpl behind the posture wrappers can host queries
-// identically.
+// EntClient: every internal use (requireClient, interceptor lookup,
+// LOAD-privacy delegation, sibling-query construction) stays within
+// EntReadRuntime's surface, so the read-only EntReadClientImpl behind
+// the posture wrappers can host queries identically.
 private val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
 private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
@@ -200,6 +198,25 @@ internal class QueryGenerator(
                     .initializer("emptyList()")
                     .build()
             )
+            .addProperty(
+                // The eager-only schema-edge path from THIS terminal's
+                // root selection to this query's position, set by the
+                // parent's eager block via the @EntktInternal seeder.
+                // Distinct from traversalPath: traversal (queryX) hops
+                // feed interceptor context but must not appear in an
+                // EagerEdge denial origin, which the RFC roots at the
+                // terminal's own selection. Private for the same reason
+                // the traversal-context fields are: a spoofed path
+                // would corrupt denial diagnostics.
+                PropertySpec.builder(
+                    "eagerDenialBasePath",
+                    List::class.asClassName().parameterizedBy(ClassName("entkt.runtime.query", "EdgeStep")),
+                )
+                    .addModifiers(KModifier.PRIVATE)
+                    .mutable(true)
+                    .initializer("emptyList()")
+                    .build()
+            )
             // Deferred source-step lambda, populated by generated
             // queryX() methods when this query is the *target* of a
             // traversal. The lambda is invoked at *terminal time*
@@ -228,6 +245,7 @@ internal class QueryGenerator(
                     .build()
             )
             .addProperties(eagerEdgeSpecs.map { it.property })
+            .addProperties(eagerEdgeSpecs.map { it.filterVisibleProperty })
             .addFunction(buildWhere(queryClass, predicateForEntity))
             .addFunction(buildOrderBy(queryClass, orderFieldForEntity))
             .addFunction(buildLimit(queryClass))
@@ -248,24 +266,13 @@ internal class QueryGenerator(
             .addFunction(buildRunEdgePredicateInterceptors(resolved))
             .addFunction(buildSnapshotForTraversal(queryClass, clientClass))
             .addFunction(buildSeedEdgeTraversal())
+            .addFunction(buildSeedEagerDenialBasePath())
             .addFunction(buildSetDeferredSourceStep(entityClass))
-            .addFunction(buildAllOrThrow(schemaName, entityClass, hasEdges))
-            .addFunction(buildAllOrError(schemaName, entityClass, hasEdges))
-            .addFunction(buildVisibleAll(schemaName, entityClass, hasEdges))
-            .addFunction(buildVisibleAllOrError(schemaName, entityClass, hasEdges))
+            .addFunction(buildAll(schemaName, entityClass, hasEdges))
             .addFunction(buildFirstOrNull(schemaName, entityClass, hasEdges))
-            .addFunction(buildFirstOrThrow(schemaName, entityClass))
-            .addFunction(buildFirstOrError(schemaName, entityClass))
-            .addFunction(buildFirstVisibleOrNull(schemaName, entityClass, hasEdges))
-            .addFunction(buildVisibleCount(schemaName, entityClass))
-            .addFunction(buildVisibleCountOrError(schemaName, entityClass))
             .addFunction(buildRawCount(schemaName, entityClass))
-            .addFunction(buildRawCountOrError(schemaName, entityClass))
             .addFunctions(buildAggregateTerminals(schemaName, entityClass))
-            .addFunction(buildRawExists(entityClass))
-            .addFunction(buildRawExistsOrError(schemaName, entityClass))
-            .addFunction(buildVisibleExists(schemaName, entityClass))
-            .addFunction(buildVisibleExistsOrError(schemaName, entityClass))
+            .addFunction(buildRawExists(schemaName, entityClass))
             .addFunctions(buildExplainMethods(resolved))
             .addFunctions(traversalMethods)
             .build()
@@ -297,12 +304,9 @@ internal class QueryGenerator(
      * together. Each explain method mirrors the execution shape of
      * its terminal:
      *
-     * - `explainAllOrThrow` / `explainAllOrError` → configured limit/offset + eager edges
-     * - `explainVisibleAll` / `explainVisibleAllOrError` → overfetch cap on the privacy path + eager edges
-     * - `explainFirstOrThrow` / `explainFirstOrNull` / `explainFirstOrError` → `minOf(1, spec.limit ?: 1)` + eager edges
-     * - `explainFirstVisibleOrNull` → single row or capped scan, branching on LOAD privacy
-     * - `explainVisibleCount` → configured limit/offset, no eager edges
-     * - `explainRawExists` / `explainVisibleExists` → existence probe shapes, no eager edges
+     * - `explainAll` → configured limit/offset + eager edges
+     * - `explainFirstOrNull` → `minOf(1, spec.limit ?: 1)` + eager edges
+     * - `explainRawExists` → existence probe shape, no eager edges
      * - `explainRawCount` → COUNT query, no eager edges
      */
     private fun buildExplainMethods(resolved: ResolvedQuerySchema): List<FunSpec> {
@@ -314,31 +318,15 @@ internal class QueryGenerator(
 
         val methods = mutableListOf<FunSpec>()
 
-        val repoPropName = pluralize(entityClass.simpleName.replaceFirstChar { it.lowercase() })
+        // Row-shaped reads (ALL operation, eager edges included):
+        // one explain per canonical terminal, tracking its name.
+        methods += buildRowShapedExplain(queryPlan, "explainAll", "all")
 
-        // Row-shaped reads (ALL operation, eager edges included).
-        // The non-visible variants always fetch spec.limit; the
-        // visible variants apply the overfetch cap on the
-        // privacy path. *OrThrow / *OrError pairs share the same
-        // driver-call shape — the result-wrap differs (throw vs
-        // Err) but the explain plan content is identical.
-        methods += buildRowShapedExplain(queryPlan, "explainAllOrThrow", "allOrThrow")
-        methods += buildRowShapedExplain(queryPlan, "explainAllOrError", "allOrError")
-        methods += buildVisibleRowShapedExplain(queryPlan, "explainVisibleAll", "visibleAll", repoPropName)
-        methods += buildVisibleRowShapedExplain(queryPlan, "explainVisibleAllOrError", "visibleAllOrError", repoPropName)
-
-        // First-row reads. Non-visible variants fetch with limit 1.
-        // firstVisibleOrNull on the privacy path scans up to the
-        // overfetch cap rather than 1 — so its explain branches.
-        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrThrow", "firstOrThrow")
+        // First-row read: fetches with `minOf(1, spec.limit ?: 1)`.
         methods += buildFirstShapedExplain(queryPlan, "explainFirstOrNull", "firstOrNull")
-        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrError", "firstOrError")
-        methods += buildFirstVisibleExplain(queryPlan, "explainFirstVisibleOrNull", "firstVisibleOrNull", repoPropName)
 
         // Aggregate reads.
-        methods += buildVisibleCountExplain(queryPlan, "explainVisibleCount")
         methods += buildExistsShapedExplain(queryPlan, "explainRawExists", "rawExists", "RAW_EXISTS")
-        methods += buildVisibleExistsExplain(queryPlan, "explainVisibleExists", "visibleExists", repoPropName)
         methods += buildRawCountExplain(queryPlan, entityClass)
 
         // Internal buildQueryPlan helper. Takes the post-interceptor
@@ -482,6 +470,24 @@ internal class QueryGenerator(
      * `@OptIn`. Used by the eager-load setup, the edge-predicate
      * walker, and queryX traversal methods.
      */
+    /**
+     * Generate `seedEagerDenialBasePath(path)`: the eager-only-path
+     * analog of [buildSeedEdgeTraversal], guarded the same way so
+     * application code cannot corrupt EagerEdge denial paths.
+     */
+    private fun buildSeedEagerDenialBasePath(): FunSpec {
+        return FunSpec.builder("seedEagerDenialBasePath")
+            .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter(
+                "path",
+                List::class.asClassName()
+                    .parameterizedBy(ClassName("entkt.runtime.query", "EdgeStep")),
+            )
+            .addStatement("this.eagerDenialBasePath = path")
+            .build()
+    }
+
     private fun buildSeedEdgeTraversal(): FunSpec {
         return FunSpec.builder("seedEdgeTraversal")
             .addAnnotation(ClassName("entkt.query", "EntktInternal"))

@@ -6,21 +6,20 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.query.AbortQueryRejected
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.result.EntResult
 import entkt.runtime.query.GlobalQueryInterceptor
-import entkt.runtime.query.InterceptScope
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -32,14 +31,13 @@ import kotlin.test.assertTrue
  * calling the driver. Pins:
  *
  *  - Interceptor predicates flow into the driver call (rawCount /
- *    rawExists / visibleCount / first* / all* / byId* see the
- *    narrowed result set).
+ *    rawExists / firstOrNull / all / findById see the narrowed
+ *    result set).
  *  - QueryContext carries the right operation per terminal (BY_ID
- *    vs FIRST vs ALL vs RAW_COUNT vs etc.) and the right
- *    entOperation (LOAD for byId, QUERY for everything else).
- *  - reject() short-circuits the chain and surfaces:
- *      *OrError variants → Err(QueryRejected)
- *      *OrThrow / non-result reads → EntQueryRejectedException
+ *    vs FIRST vs ALL vs RAW_COUNT vs RAW_EXISTS vs RAW_AGGREGATE).
+ *  - reject() short-circuits the chain and surfaces as
+ *    `ReadResult.Failed(EntQueryRejectedException)` on every data
+ *    terminal; `getOrThrow()` throws the stored exception instance.
  *  - Global interceptors run AFTER per-entity ones (registration-order
  *    + per-entity-first per the engine contract).
  *
@@ -50,12 +48,12 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     private fun seedPosts(client: EntClient, titles: List<String>): List<Post> =
-        titles.map { client.posts.create { title = it }.saveOrThrow() }
+        titles.map { client.posts.create { title = it }.saveAndLoad().getOrThrow() }
 
     // ---------- Interceptor wiring per terminal ----------
 
     @Test
-    fun `allOrThrow honors interceptor predicate added via scope addPredicate`() {
+    fun `all honors interceptor predicate added via scope addPredicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -70,11 +68,11 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("keep", "drop", "keep", "drop"))
 
-        assertEquals(2, client.posts.query().allOrThrow().size)
+        assertEquals(2, client.posts.query().all().getOrThrow().size)
     }
 
     @Test
-    fun `allOrError honors interceptor predicate`() {
+    fun `all Success match honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -89,9 +87,9 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("keep", "drop"))
 
-        val result = client.posts.query().allOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(1, (result as EntResult.Ok).value.size)
+        val result = client.posts.query().all()
+        val success = assertIs<ReadResult.Success<List<Post>>>(result)
+        assertEquals(1, success.value.size)
     }
 
     @Test
@@ -110,7 +108,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("nope", "match", "nope"))
 
-        val post = client.posts.query().firstOrNull()
+        val post = client.posts.query().firstOrNull().getOrThrow()
         assertNotNull(post)
         assertEquals("match", post.title)
     }
@@ -131,7 +129,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("yes", "yes", "no"))
 
-        assertEquals(2L, client.posts.query().rawCount())
+        assertEquals(2L, client.posts.query().rawCount().getOrThrow())
     }
 
     @Test
@@ -150,33 +148,14 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("haystack", "haystack"))
 
-        assertFalse(client.posts.query().rawExists())
+        assertFalse(client.posts.query().rawExists().getOrThrow())
 
         seedPosts(client, listOf("needle"))
-        assertTrue(client.posts.query().rawExists())
+        assertTrue(client.posts.query().rawExists().getOrThrow())
     }
 
     @Test
-    fun `visibleCount honors interceptor predicate`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ ->
-                        scope.addPredicate(Predicate.Leaf("title", Op.EQ, "v"))
-                    },
-                    name = "v-only",
-                )
-            }
-        }
-        seedPosts(client, listOf("v", "v", "x"))
-
-        assertEquals(2L, client.posts.query().visibleCount())
-    }
-
-    @Test
-    fun `byIdOrNull honors interceptor predicate -- denying row that does not match`() {
+    fun `findById honors interceptor predicate -- narrowed-out row reads as absence`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -189,45 +168,26 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val matching = client.posts.create { title = "match" }.saveOrThrow()
-        val nonMatching = client.posts.create { title = "mismatch" }.saveOrThrow()
+        val matching = client.posts.create { title = "match" }.saveAndLoad().getOrThrow()
+        val nonMatching = client.posts.create { title = "mismatch" }.saveAndLoad().getOrThrow()
 
-        // byId on the matching row should still find it (id + title match).
-        val foundMatching = client.posts.byIdOrNull(matching.id)
+        // findById on the matching row should still find it (id + title match).
+        val foundMatching = client.posts.findById(matching.id).getOrThrow()
         assertNotNull(foundMatching)
         assertEquals(matching.id, foundMatching.id)
 
-        // byId on the non-matching row should return null because the
-        // interceptor's `title = "match"` predicate excludes it.
-        val foundNonMatching = client.posts.byIdOrNull(nonMatching.id)
-        assertNull(foundNonMatching)
-    }
-
-    @Test
-    fun `byIdOrError returns Err(NotFound) when interceptor narrows row out`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ ->
-                        scope.addPredicate(Predicate.Leaf("title", Op.EQ, "kept"))
-                    },
-                    name = "title-filter",
-                )
-            }
-        }
-        val excluded = client.posts.create { title = "filtered out" }.saveOrThrow()
-
-        val result = client.posts.byIdOrError(excluded.id)
-        assertTrue(result is EntResult.Err, "expected Err, got $result")
-        assertTrue((result as EntResult.Err).error is EntError.NotFound)
+        // findById on the non-matching row is authoritative absence —
+        // Success(null) — because the interceptor's `title = "match"`
+        // predicate excludes it. (There is no not-found error state.)
+        val foundNonMatching = client.posts.findById(nonMatching.id)
+        val success = assertIs<ReadResult.Success<Post?>>(foundNonMatching)
+        assertNull(success.value)
     }
 
     // ---------- Rejection paths per terminal ----------
 
     @Test
-    fun `interceptor reject surfaces as EntQueryRejectedException on allOrThrow`() {
+    fun `interceptor reject surfaces as Failed(EntQueryRejectedException) on all`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -240,16 +200,17 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val ex = assertFailsWith<EntQueryRejectedException> { client.posts.query().allOrThrow() }
-        assertEquals("no broad scans", ex.queryRejected.reason)
-        assertEquals("broad_scan_denied", ex.queryRejected.code)
-        assertEquals("broad-scan-guard", ex.queryRejected.interceptor)
-        assertEquals("Post", ex.queryRejected.entity)
-        assertEquals(EntOperation.QUERY, ex.queryRejected.operation)
+        val result = client.posts.query().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("no broad scans", ex.reason)
+        assertEquals("broad_scan_denied", ex.code)
+        assertEquals("broad-scan-guard", ex.interceptor)
+        assertEquals("Post", ex.entityType)
     }
 
     @Test
-    fun `interceptor reject surfaces as Err(QueryRejected) on allOrError`() {
+    fun `getOrThrow on a rejected all throws the stored exception instance`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -262,18 +223,16 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val result = client.posts.query().allOrError()
-        assertTrue(result is EntResult.Err)
-        val err = (result as EntResult.Err).error
-        assertTrue(err is EntError.QueryRejected, "expected QueryRejected, got $err")
-        val q = err as EntError.QueryRejected
-        assertEquals("nope", q.reason)
-        assertEquals("test_code", q.code)
-        assertEquals("rejector", q.interceptor)
+        val result = client.posts.query().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val thrown = assertFailsWith<EntQueryRejectedException> { result.getOrThrow() }
+        assertSame(failed.exception, thrown)
+        assertEquals("test_code", thrown.code)
+        assertEquals("rejector", thrown.interceptor)
     }
 
     @Test
-    fun `interceptor reject surfaces as EntQueryRejectedException on firstOrNull`() {
+    fun `interceptor reject surfaces as Failed(EntQueryRejectedException) on firstOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -284,11 +243,12 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        assertFailsWith<EntQueryRejectedException> { client.posts.query().firstOrNull() }
+        val failed = assertIs<ReadResult.Failed>(client.posts.query().firstOrNull())
+        assertIs<EntQueryRejectedException>(failed.exception)
     }
 
     @Test
-    fun `interceptor reject surfaces as EntQueryRejectedException on rawCount`() {
+    fun `interceptor reject surfaces as Failed(EntQueryRejectedException) on rawCount`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -299,11 +259,12 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        assertFailsWith<EntQueryRejectedException> { client.posts.query().rawCount() }
+        val failed = assertIs<ReadResult.Failed>(client.posts.query().rawCount())
+        assertIs<EntQueryRejectedException>(failed.exception)
     }
 
     @Test
-    fun `interceptor reject surfaces as EntQueryRejectedException on byIdOrNull`() {
+    fun `interceptor reject surfaces as Failed(EntQueryRejectedException) on findById`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -314,14 +275,15 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val ex = assertFailsWith<EntQueryRejectedException> { client.posts.byIdOrNull(1L) }
-        // BY_ID maps to entOperation = LOAD per the engine contract.
-        assertEquals(EntOperation.LOAD, ex.queryRejected.operation)
-        assertEquals("byid_denied", ex.queryRejected.code)
+        val failed = assertIs<ReadResult.Failed>(client.posts.findById(1L))
+        val ex = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("byid_denied", ex.code)
+        assertEquals("byid-rejector", ex.interceptor)
+        assertEquals("Post", ex.entityType)
     }
 
     @Test
-    fun `interceptor reject surfaces as Err(QueryRejected) on byIdOrError`() {
+    fun `interceptor reject is NOT masked by visibleOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -332,27 +294,13 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val result = client.posts.byIdOrError(1L)
-        assertTrue(result is EntResult.Err)
-        assertTrue((result as EntResult.Err).error is EntError.QueryRejected)
-    }
-
-    @Test
-    fun `interceptor reject is NOT swallowed by visibleByIdOrNull`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ -> scope.reject("nope") },
-                    name = "rej",
-                )
-            }
-        }
-        // visibleByIdOrNull's catch is for PrivacyDeniedException
-        // only — rejection is a hard config-level signal that should
-        // NOT be silently converted to null.
-        assertFailsWith<EntQueryRejectedException> { client.posts.visibleByIdOrNull(1L) }
+        // visibleOrNull maps only Failed(EntPrivacyDeniedException with
+        // origin Root) to Success(null) — rejection is a hard
+        // config-level signal that must NOT be silently converted to
+        // absence.
+        val projected = client.posts.findById(1L).visibleOrNull()
+        val failed = assertIs<ReadResult.Failed>(projected)
+        assertIs<EntQueryRejectedException>(failed.exception)
     }
 
     // ---------- Context propagation per terminal ----------
@@ -372,13 +320,12 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("a"))
 
-        client.posts.query().allOrThrow()
-        client.posts.query().firstOrNull()
-        client.posts.query().rawCount()
-        client.posts.query().rawExists()
-        client.posts.query().visibleCount()
-        client.posts.query().visibleExists()
-        client.posts.byIdOrNull(1L)
+        client.posts.query().all().getOrThrow()
+        client.posts.query().firstOrNull().getOrThrow()
+        client.posts.query().rawCount().getOrThrow()
+        client.posts.query().rawExists().getOrThrow()
+        client.posts.query().rawSum(Post.id).getOrThrow()
+        client.posts.findById(1L).getOrThrow()
 
         assertEquals(
             listOf(
@@ -386,8 +333,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
                 ReadOperation.FIRST,
                 ReadOperation.RAW_COUNT,
                 ReadOperation.RAW_EXISTS,
-                ReadOperation.VISIBLE_COUNT,
-                ReadOperation.VISIBLE_EXISTS,
+                ReadOperation.RAW_AGGREGATE,
                 ReadOperation.BY_ID,
             ),
             seen,
@@ -411,7 +357,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("x"))
 
-        client.posts.query().allOrThrow()
+        client.posts.query().all().getOrThrow()
 
         assertEquals(
             listOf("per-entity-1", "per-entity-2", "global-1", "global-2"),
@@ -422,7 +368,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     // ---------- Global interceptor mutators ----------
 
     @Test
-    fun `global rejectIfLimitGreaterThan surfaces as EntQueryRejectedException with max_limit_exceeded code`() {
+    fun `global rejectIfLimitGreaterThan surfaces as Failed with max_limit_exceeded code`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -436,13 +382,14 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
             }
         }
         // No limit set → effective limit is null → exceeds 10.
-        val ex = assertFailsWith<EntQueryRejectedException> { client.posts.query().allOrThrow() }
-        assertEquals("max_limit_exceeded", ex.queryRejected.code)
-        assertEquals("max-limit", ex.queryRejected.interceptor)
+        val failed = assertIs<ReadResult.Failed>(client.posts.query().all())
+        val ex = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("max_limit_exceeded", ex.code)
+        assertEquals("max-limit", ex.interceptor)
     }
 
     @Test
-    fun `interceptor requireLimitAtMost clamps the driver fetch on allOrThrow`() {
+    fun `interceptor requireLimitAtMost clamps the driver fetch on all`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -455,7 +402,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("a", "b", "c", "d", "e"))
 
-        assertEquals(2, client.posts.query().allOrThrow().size)
+        assertEquals(2, client.posts.query().all().getOrThrow().size)
     }
 
     // ---------- Sanity: no interceptors registered → identity behavior ----------
@@ -469,9 +416,9 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         }
         seedPosts(client, listOf("a", "b", "c"))
 
-        assertEquals(3, client.posts.query().allOrThrow().size)
-        assertEquals(3L, client.posts.query().rawCount())
-        assertTrue(client.posts.query().rawExists())
-        assertNotNull(client.posts.query().firstOrNull())
+        assertEquals(3, client.posts.query().all().getOrThrow().size)
+        assertEquals(3L, client.posts.query().rawCount().getOrThrow())
+        assertTrue(client.posts.query().rawExists().getOrThrow())
+        assertNotNull(client.posts.query().firstOrNull().getOrThrow())
     }
 }

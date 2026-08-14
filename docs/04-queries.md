@@ -12,13 +12,27 @@ val users = client.users.query {
     orderBy(User.name.asc())
     limit(10)
     offset(20)
-}.allOrThrow()
+}.all().getOrThrow()
 ```
 
-`.allOrThrow()` returns a `List<User>`. Use `.firstOrNull()` for single results,
-`.visibleCount()` for a privacy-aware count, `.rawCount()` for a fast
-aggregate count, or `.rawExists()` / `.visibleExists()` to check whether
-a match exists (raw skips LOAD privacy; visible applies it).
+`.all()` returns `ReadResult<List<User>>` — the canonical exhaustive
+result of every read terminal. Use `.firstOrNull()`
+(`ReadResult<User?>`) for single results, `.rawCount()` for a fast
+aggregate count, or `.rawExists()` to check whether a match exists
+(the `raw` prefix means the terminal skips LOAD privacy).
+
+A `ReadResult` is either `Success(value)` or `Failed(exception)`.
+`Success(null)` on a singular lookup is authoritative absence;
+privacy denial and operational failure are `Failed` carrying a typed
+exception (`EntPrivacyDeniedException`, `EntQueryRejectedException`,
+or the original driver exception). Two runtime projections cover the
+common handling styles without another database call:
+
+- `.getOrThrow()` — return the successful value (absence stays
+  `null`) or throw the stored exception directly.
+- `.visibleOrNull()` — on a singular result, map *root* LOAD denial
+  to `Success(null)`; every other state is unchanged. Privacy as
+  absence, made explicit.
 
 ## Indexed Query Helpers
 
@@ -48,7 +62,8 @@ stage offers only the next indexed column, which keeps you on the index:
 client.posts.indexes
     .authorId(userId)
     .query()
-    .allOrThrow()
+    .all()
+    .getOrThrow()
 
 // equivalent to query { where(Post.authorId eq userId); where(Post.createdAt eq t) }
 client.posts.indexes
@@ -69,7 +84,7 @@ client.posts.indexes
         orderBy(Post.createdAt.desc())
         limit(20)
     }
-    .allOrError()
+    .all()
 ```
 
 ### Range blocks
@@ -85,23 +100,28 @@ client.posts.indexes
     .authorId(userId)
     .createdAt { gte(since); lt(until) }
     .query { orderBy(Post.createdAt.desc()) }
-    .allOrError()
+    .all()
 ```
 
-### Unique terminals
+### The unique terminal
 
 When a bound prefix exactly matches a non-nullable **unique** index, the
-stage exposes single-row terminals instead of (well, alongside) `query()`:
+stage exposes a single-row terminal alongside `query()`:
 
 ```kotlin
-client.users.indexes.email("a@example.com").orNull()        // User? — miss is null, denial throws
-client.users.indexes.email("a@example.com").visibleOrNull() // miss OR denial → null
-client.users.indexes.email("a@example.com").orError()       // EntResult<User> — miss is Err(NotFound, QUERY)
-client.users.indexes.email("a@example.com").orThrow()       // User, or a structured exception
+val result = client.users.indexes.email("a@example.com").find()
+// ReadResult<User?> — Success(user), Success(null) on a miss,
+// Failed(EntPrivacyDeniedException) on denial, Failed(e) otherwise
+
+client.users.indexes.email("a@example.com").find().getOrThrow()
+// User? — miss is null; denial and failure throw
+
+client.users.indexes.email("a@example.com").find().visibleOrNull().getOrThrow()
+// User? — miss OR root LOAD denial → null
 ```
 
-A composite unique index exposes the terminals only at its full stage —
-a partial prefix exposes `query()` but not `orNull()` and friends.
+A composite unique index exposes `find()` only at its full stage —
+a partial prefix exposes `query()` but not `find()`.
 
 ### What generates a helper
 
@@ -254,10 +274,9 @@ what it says — no rows — on every terminal that reads rows, including
 the single-result ones:
 
 ```kotlin
-client.users.query { limit(0) }.firstOrNull()   // → null
-client.users.query { limit(0) }.rawExists()     // → false
-client.users.query { limit(0) }.allOrThrow()    // → []
-client.users.query { limit(0) }.visibleCount()  // → 0
+client.users.query { limit(0) }.firstOrNull().getOrThrow()  // → null
+client.users.query { limit(0) }.rawExists().getOrThrow()    // → false
+client.users.query { limit(0) }.all().getOrThrow()          // → []
 ```
 
 Note that `limit(n)` above 1 doesn't change what a first-row terminal
@@ -266,105 +285,78 @@ returns — it already fetches a single row.
 The exceptions are the terminals that never materialize rows in the
 first place: `rawCount()` and the raw aggregates ignore `orderBy`,
 `limit`, and `offset` entirely, so `limit(0)` doesn't apply to them
-either. `visibleCount()` is not an exception — it materializes rows to
-evaluate privacy, so it respects the bound like any other row read.
+either.
 
 ## Count and Exists
-
-### `visibleCount()` -- privacy-aware count
-
-Materializes matching rows, evaluates LOAD privacy on each, and returns
-the count of allowed entities. Denied entities are silently excluded.
-Respects `limit` and `offset`.
-
-```kotlin
-val visibleActiveUsers = client.users.query {
-    where(User.active eq true)
-}.visibleCount()  // → Long
-```
 
 ### `rawCount()` -- fast aggregate count
 
 Uses `SELECT COUNT(*)` without materializing rows. Does **not** evaluate
 LOAD privacy, so it may count rows the viewer cannot read. Ignores
-`orderBy`, `limit`, and `offset`.
+`orderBy`, `limit`, and `offset`. Returns `ReadResult<Long>`.
 
 Because they skip LOAD privacy, `rawCount` / `rawExists` and the raw
 aggregates are unavailable inside **privacy rules**: rule reads are
 viewer-scoped, and a privacy-bypassing probe could leak invisible rows
-into an authorization decision. Calling one there throws
-`IllegalStateException` — use a LOAD-checked terminal (`firstOrNull`,
-`allOrThrow`, the `visible*` family) instead. Validation rules keep
-them: validation reads run under `PrivacyBypass`, where raw and
-visible coincide. See
+into an authorization decision. Calling one there produces
+`ReadResult.Failed(IllegalStateException)` — use a LOAD-checked
+terminal (`firstOrNull`, `all`, `findById`) instead. Validation rules
+keep them: validation reads run under `PrivacyBypass`, where raw reads
+disclose nothing extra. See
 [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
 ```kotlin
 val totalActiveUsers = client.users.query {
     where(User.active eq true)
-}.rawCount()  // → Long
+}.rawCount().getOrThrow()  // → Long
 ```
 
 ### `rawExists()` -- fast existence check, skips privacy
 
-Returns `true` iff at least one storage row matches the predicate. Skips
+`Success(true)` iff at least one storage row matches the predicate. Skips
 LOAD privacy entirely — useful for "does this row exist at all?" checks
 (uniqueness checks before insert, idempotency keys, etc.) where privacy
-of the caller is not the relevant question.
+of the caller is not the relevant question. Returns `ReadResult<Boolean>`.
 
 ```kotlin
 val emailTaken = client.users.query {
     where(User.email eq "alice@example.com")
-}.rawExists()  // → Boolean
+}.rawExists().getOrThrow()  // → Boolean
 ```
 
-### `visibleExists()` -- privacy-aware existence check
+There is deliberately no privacy-aware count or existence terminal.
+The former `visibleCount()` / `visibleExists()` (and the wider
+`visible*` scanning family) were removed with the operation-result
+algebra: they silently skipped denied rows and scanned storage under an
+overfetch cap, which made their cost and their answer unpredictable.
+Under the strict model a read either returns every selected row or
+fails with the keyed denials — a viewer-visible count is `all()` over a
+deliberately privacy-safe predicate, and a singular visibility question
+is `firstOrNull().visibleOrNull()`.
 
-Returns `true` iff at least one storage row matches the predicate **and**
-the current viewer can LOAD it. Scans storage order, bounded by
-`EntClientConfig.visibleOverfetchLimit`, and returns `true` on the first
-visible row. Cap-exhausted-with-no-visible silently returns `false`.
+### Structured failure handling
 
-```kotlin
-val hasAdmins = client.users.query {
-    where(User.role eq "admin")
-}.visibleExists()  // → Boolean
-```
-
-The legacy `exists()` that fetched one row and threw
-`PrivacyDeniedException` when it was denied has been removed — neither
-"any row exists?" nor "row I can see exists?" was the answer you got,
-which surprised callers. Pick `rawExists` for the privacy-skipping
-existence probe or `visibleExists` for the privacy-aware variant.
-
-### `*OrError` variants
-
-Each aggregate has a structured-result counterpart that maps each
-failure surface (such as interceptor rejection or storage failure) into an
-`EntError` variant instead of throwing:
-
-| Throwing | Result variant |
-|---|---|
-| `rawCount(): Long` | `rawCountOrError(): EntResult<Long>` |
-| `visibleCount(): Long` | `visibleCountOrError(): EntResult<Long>` |
-| `rawExists(): Boolean` | `rawExistsOrError(): EntResult<Boolean>` |
-| `visibleExists(): Boolean` | `visibleExistsOrError(): EntResult<Boolean>` |
+There are no `*OrError` twins — the terminal itself is the structured
+result. Match on it when you want exhaustive handling instead of
+throwing:
 
 ```kotlin
-when (val result = client.posts.query().rawCountOrError()) {
-    is EntResult.Ok -> println("count: ${result.value}")
-    is EntResult.Err -> when (val err = result.error) {
-        is EntError.QueryRejected -> println("rejected by ${err.interceptor}")
-        is EntError.DriverFailure -> println("driver failure: ${err.message}")
-        else -> {}
+when (val result = client.posts.query().rawCount()) {
+    is ReadResult.Success -> println("count: ${result.value}")
+    is ReadResult.Failed -> when (val e = result.exception) {
+        is EntQueryRejectedException -> println("rejected by ${e.interceptor}")
+        else -> println("read failed: $e")
     }
 }
 ```
 
-`visibleCountOrError` additionally surfaces eager-edge LOAD denial
-as `Err(PrivacyDenied)` (same shape as `allOrError`). The raw
-variants intentionally bypass LOAD privacy and have no PrivacyDenied
-surface.
+Typed failures are ordinary exceptions stored in `Failed`:
+`EntQueryRejectedException` for interceptor rejection (direct
+`entityType` / `reason` / `code` / `interceptor` properties),
+`EntPrivacyDeniedException` for LOAD denial (with `origin` and keyed
+`denials`), and the original driver or materialization exception for
+everything else. The raw terminals intentionally bypass LOAD privacy
+and never surface a privacy denial.
 
 ## Aggregations
 
@@ -376,32 +368,34 @@ optionally grouped by one column.
 
 ### Ungrouped — a typed scalar
 
-The return type follows the column you pass:
+The success payload follows the column you pass; each terminal returns
+`ReadResult` of that scalar:
 
 ```kotlin
 val orders = client.orders.query { where(Order.status eq Status.SHIPPED) }
 
-val latest:  Instant? = orders.rawMax(Order.placedAt)   // min/max → the column's type
-val units:   Long?    = orders.rawSum(Order.quantity)   // sum of an integer column → Long?
-val revenue: Double?  = orders.rawSum(Order.price)      // sum of a floating column → Double?
-val avgLine: Double?  = orders.rawAvg(Order.price)      // avg is always Double?
+val latest:  Instant? = orders.rawMax(Order.placedAt).getOrThrow()  // min/max → the column's type
+val units:   Long?    = orders.rawSum(Order.quantity).getOrThrow()  // sum of an integer column → Long?
+val revenue: Double?  = orders.rawSum(Order.price).getOrThrow()     // sum of a floating column → Double?
+val avgLine: Double?  = orders.rawAvg(Order.price).getOrThrow()     // avg is always Double?
 ```
 
 `min`/`max` accept any comparable column; `sum`/`avg` accept only numeric
 columns — both are enforced at compile time. An ungrouped metric over an empty
-match is `null` (only `rawCount()` returns `0`).
+match is `Success(null)` — the aggregate's documented SQL-null result, not
+entity absence (only `rawCount()` returns `Success(0)`).
 
 ### Grouped — a list of buckets
 
-`raw…By(groupColumn[, metricColumn])` returns `List<AggregateBucket<K, V>>`, one
-bucket per distinct key:
+`raw…By(groupColumn[, metricColumn])` returns
+`ReadResult<List<AggregateBucket<K, V>>>`, one bucket per distinct key:
 
 ```kotlin
 val perStatus: List<AggregateBucket<Status, Long>> =
-    client.orders.query().rawCountBy(Order.status)        // key is the decoded enum
+    client.orders.query().rawCountBy(Order.status).getOrThrow()  // key is the decoded enum
 
 val unitsByStatus: List<AggregateBucket<Status, Long?>> =
-    client.orders.query().rawSumBy(Order.status, Order.quantity)
+    client.orders.query().rawSumBy(Order.status, Order.quantity).getOrThrow()
 
 for (b in perStatus) println("${b.key}: ${b.value}")
 ```
@@ -413,21 +407,22 @@ string/text, numeric, time, bool, UUID, or enum columns; bytes, JSON, and
 pgvector columns are rejected at compile time. Bucket order is unspecified —
 sort in Kotlin if you need a stable order.
 
-### `*OrError` variants
+### Structured failure handling
 
-Every terminal has an `…OrError` twin returning `EntResult<…>`, mapping
-interceptor rejection and driver failure to `EntError` exactly like
-`rawCountOrError` (raw aggregates never surface `PrivacyDenied`):
+Aggregate terminals return `ReadResult` directly — there are no
+`…OrError` twins. Interceptor rejection and driver failure land in
+`Failed` exactly as for `rawCount()` (raw aggregates never surface a
+privacy denial):
 
 ```kotlin
-when (val r = client.orders.query().rawSumOrError(Order.quantity)) {
-    is EntResult.Ok  -> println("units: ${r.value}")
-    is EntResult.Err -> println("failed: ${r.error}")
+when (val r = client.orders.query().rawSum(Order.quantity)) {
+    is ReadResult.Success -> println("units: ${r.value}")
+    is ReadResult.Failed  -> println("failed: ${r.exception}")
 }
 ```
 
-V1 is Postgres-only and raw-only; privacy-aware (`visible…`) aggregates,
-multi-metric selection, and multi-column or expression grouping are not yet
+V1 is Postgres-only and raw-only; privacy-aware aggregates,
+multi-metric selection, and multi-column or expression grouping are not
 supported.
 
 ## Edge Traversal
@@ -444,7 +439,8 @@ users:
 val postsOfActiveUsers = client.users
     .query { where(User.active eq true) }
     .queryPosts()
-    .allOrThrow()  // List<Post>
+    .all()
+    .getOrThrow()  // List<Post>
 ```
 
 Traversal methods take the same defaulted receiver block as
@@ -459,7 +455,8 @@ val recentPosts = client.users
         orderBy(Post.id.desc())
         limit(10)
     }
-    .allOrThrow()
+    .all()
+    .getOrThrow()
 ```
 
 The block configures the *target* query only — it is exactly
@@ -476,7 +473,7 @@ traversed. For example:
 client.users.query {
     orderBy(User.createdAt.desc())
     limit(10)
-}.queryPosts().allOrThrow()
+}.queryPosts().all()
 ```
 
 means "posts whose author is one of the 10 most-recently-created
@@ -494,10 +491,12 @@ users." Three details worth pinning:
 
 Traversal does not apply source LOAD privacy: source rows only
 define the target query and are not returned. Target rows keep the
-normal target read semantics (`allOrThrow()` throws on a denied
-target row, `visibleAll()` filters). Callers that need source LOAD
-privacy to decide which rows are traversed should materialize the
-source query first (`visibleAll()`), then query the target by id.
+normal strict read semantics — `all()` returns
+`Failed(EntPrivacyDeniedException)` when any target row in the
+selected window is denied. Callers that need source LOAD privacy to
+decide which rows are traversed should materialize the source query
+first with `all()` (under the strict model a denied source row fails
+that read rather than being skipped), then query the target by id.
 
 ### `has` / `hasWhere` -- edge predicates
 
@@ -529,7 +528,7 @@ val users = client.users.query {
         where(Post.published eq true)
         orderBy(Post.createdAt.desc())
     }
-}.allOrThrow()
+}.all().getOrThrow()
 
 // Access loaded edges
 users.forEach { user ->
@@ -552,6 +551,40 @@ to-one edges, where at most one target exists per parent: a positive
 limit is already satisfied, while `limit(0)` loads no target and any
 positive offset steps past the only candidate.
 
+### Eager Privacy and `filterVisible()`
+
+Eager loading is strict by default: if LOAD privacy denies any eagerly
+loaded target, the whole read fails with
+`Failed(EntPrivacyDeniedException(EagerEdge(path), ...))` — no partial
+graph, no silently omitted target. The exception's `origin` carries the
+schema-edge path from the root to the denied target, so root denial
+(`Root`) and eager denial stay distinguishable; `visibleOrNull()` maps
+only *root* denial to absence, so adding an eager load can never make a
+visible root look absent.
+
+Each `with{Edge} { ... }` call returns an `EagerLoad` handle. Calling
+`filterVisible()` on it opts that one edge into retaining only visible
+targets:
+
+```kotlin
+val users = client.users.query {
+    where(User.active eq true)
+    withPosts {
+        orderBy(Post.createdAt.desc())
+        limit(10)
+    }.filterVisible()
+}.all().getOrThrow()
+```
+
+With `filterVisible()`, a denied to-one target loads as
+`EdgeState.Loaded(null)` and denied to-many targets are omitted from
+the loaded list — without scanning beyond the selected eager-load
+window to replace them. The setting applies only to that exact edge
+(nested eager loads must opt in independently), never changes root
+denial behavior, and does not suppress eager-query rejection or
+ordinary driver/materialization failures. Ignoring the returned handle
+keeps the strict default.
+
 ### Nested Eager Loading
 
 You can nest eager loads to load multiple levels of relationships:
@@ -561,7 +594,7 @@ val users = client.users.query {
     withPosts {
         where(Post.published eq true)
     }
-}.allOrThrow()
+}.all().getOrThrow()
 ```
 
 ### The `Edges` Data Class
@@ -600,8 +633,9 @@ Four helpers cover the access patterns:
 - `state.isLoaded` — `true` for any `Loaded`, including a loaded `null`
   or empty list
 - `state.requireLoaded()` — the loaded value; throws
-  `EdgeNotLoadedException` (an `IllegalStateException`, not an
-  `EntError`) when the edge was not requested. Use it when the
+  `EdgeNotLoadedException` (an `IllegalStateException` — a
+  programming error, not a read failure) when the edge was not
+  requested. Use it when the
   surrounding query always requests the edge.
 - `state.loadedOrNull()` — the `Loaded` wrapper or `null`; preserves the
   `Unloaded` vs `Loaded(null)` distinction
@@ -657,8 +691,8 @@ read. The `context` carries:
 
 - `context.operation: ReadOperation` — which terminal fired
   (`BY_ID`, `FIRST`, `ALL`, `RAW_COUNT`, `RAW_EXISTS`,
-  `VISIBLE_COUNT`, `VISIBLE_EXISTS`, `EDGE_TRAVERSAL`,
-  `EDGE_PREDICATE`, `EAGER_LOAD`)
+  `RAW_AGGREGATE`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`,
+  `EAGER_LOAD`, `DELETE_CANDIDATES`)
 - `context.privacy` — the active `PrivacyContext` (viewer, etc.)
 - `context.rootEntity` / `context.currentEntity` /
   `context.sourceEntity` / `context.edgeName` / `context.path` —
@@ -676,7 +710,7 @@ The `scope` exposes only operations that *narrow* the query:
 - `rejectIfLimitGreaterThan(max) { reason }` — reject with
   `code = "max_limit_exceeded"` if unbounded or above `max`
 - `addAnnotation(key, value)` — diagnostic key/value, surfaces in
-  `explain()`
+  the `explain*()` plans
 - `reject(reason, code)` — short-circuit the chain
 
 Interceptors cannot remove caller predicates, raise caller-set
@@ -689,15 +723,13 @@ limits, change ordering, or swap the table. That property —
 
 | Terminal shape | On rejection |
 |---|---|
-| `*OrError` (incl. `byIdOrError`, `rawCountOrError`, etc.) | `Err(EntError.QueryRejected)` |
-| `*OrThrow` (`allOrThrow`, `firstOrThrow`, `byIdOrThrow`, …) | `EntQueryRejectedException` |
-| Non-result reads (`firstOrNull`, `visibleByIdOrNull`, `rawCount`, `visibleExists`, …) | `EntQueryRejectedException` (NOT collapsed to `null` / `false` / `0`) |
-| `explain*` methods | Rejected `QueryPlan` (`rejected = true`) — explain never throws; chain `requireNotRejected()` for exception-style handling |
+| Result-bearing reads (`findById`, `firstOrNull`, `all`, `find`, `rawCount`, `rawExists`, raw aggregates) | `ReadResult.Failed(EntQueryRejectedException)` — never collapsed to `null` / `false` / `0`; `.getOrThrow()` throws it, `.visibleOrNull()` leaves it unchanged |
+| `explain*` methods | Rejected `QueryPlan` (`rejected = true`, the exception stored in `plan.rejection`) — explain never throws; chain `requireNotRejected()` for exception-style handling |
 
-The exception's `queryRejected` field carries `entity`,
-`operation`, `reason`, optional `code`, and the rejecting
-interceptor's `name` — so callers can branch on those fields
-without parsing the message.
+`EntQueryRejectedException` exposes direct properties — `entityType`,
+`reason`, optional `code`, and the rejecting interceptor's
+`interceptor` name — so callers can branch on those fields without
+parsing the message.
 
 ### Ordering and traversal
 
@@ -707,7 +739,7 @@ shape reflecting prior mutations (`scope.shape` re-derives on
 every access).
 
 For traversal chains like
-`client.users.query().queryGroups().queryPosts().allOrThrow()`,
+`client.users.query().queryGroups().queryPosts().all()`,
 each step fires the appropriate entity's interceptors with its
 own `QueryContext`:
 
@@ -715,7 +747,7 @@ own `QueryContext`:
   `operation = EDGE_TRAVERSAL`
 - `queryPosts()` — fires `Group.interceptors` with
   `operation = EDGE_TRAVERSAL`
-- `.allOrThrow()` — fires `Post.interceptors` with
+- `.all()` — fires `Post.interceptors` with
   `operation = ALL`, `sourceEntity = Group`, `edgeName = "posts"`,
   `path = [User→groups→Group, Group→posts→Post]`
 
@@ -730,20 +762,34 @@ edges.
 ## Transactions
 
 Queries participate in transactions automatically when using a
-transaction-scoped client:
+transaction-scoped client. `withTransaction` runs its block with a
+`TransactionScope` receiver and returns the exhaustive
+`TransactionResult<T>`:
 
 ```kotlin
-client.withTransaction { tx ->
-    val user = tx.users.create { name = "Alice"; email = "a@b.com" }.save()
-    val posts = tx.posts.query {
+val posts = client.withTransaction { tx ->
+    val user = tx.users.create { name = "Alice"; email = "a@b.com" }
+        .saveAndLoad()
+        .orRollback()
+    tx.posts.query {
         where(Post.authorId eq user.id)
-    }.allOrThrow()
+    }.all().orRollback()
     // Both operations run in the same transaction
-}
+}.getOrThrow()
 ```
 
-If the block throws, the transaction rolls back. Nested
-`withTransaction` calls reuse the existing transaction.
+`orRollback()` — available only inside the scope — returns a successful
+read or mutation value; on a `Failed` result it stops the block so the
+transaction rolls back. A mutation failure produced through the `tx`
+client marks the scope rollback-only even if its result is ignored, so
+a normally returning block still rolls back and reports the first
+recorded failure. If the block throws, the transaction rolls back.
+`TransactionResult` is `Success(value)` or
+`Failed(exception, transactionState)` with `transactionState` either
+`NotCommitted` (rollback confirmed) or `OutcomeUnknown`;
+`.getOrThrow()` throws `EntTransactionFailedException` preserving both.
+Nested `withTransaction` calls are unsupported and throw
+`NestedTransactionUnsupportedException` before the nested block runs.
 
 For write-side transaction discipline — `TransactionRequirement`
 (client-level write guardrail) and `UpdateConsistency.Pessimistic`

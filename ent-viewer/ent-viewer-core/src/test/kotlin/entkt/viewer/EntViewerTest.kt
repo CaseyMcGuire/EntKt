@@ -352,12 +352,10 @@ class EntViewerReviewContractTest {
     fun `read-interceptor rejections render as a controlled 400, not a 500`() {
         val entity = Entity("doc", "Doc")
         entity.throwOnList = entkt.runtime.result.EntQueryRejectedException(
-            entkt.runtime.result.EntError.QueryRejected(
-                entity = "Doc",
-                operation = entkt.runtime.result.EntOperation.QUERY,
-                reason = "tenant scope required",
-                interceptor = "tenantGuard",
-            ),
+            entityType = "Doc",
+            reason = "tenant scope required",
+            code = null,
+            interceptor = "tenantGuard",
         )
         val response = viewer(entity).handle(get("/_ent/entities/doc"))
         kotlin.test.assertEquals(400, response.status)

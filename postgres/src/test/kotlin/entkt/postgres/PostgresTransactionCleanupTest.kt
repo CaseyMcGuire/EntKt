@@ -1,9 +1,11 @@
 package entkt.postgres
 
 import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.result.TransactionFailureState
 import entkt.schema.FieldType
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
@@ -17,6 +19,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 private val LEDGER = EntitySchema(
@@ -100,23 +103,25 @@ class PostgresTransactionCleanupTest {
     // ---------- rollback failures ----------
 
     @Test
-    fun `a failing rollback does not replace the exception that caused it`() {
+    fun `a failing rollback yields OutcomeUnknown with the rollback failure suppressed`() {
         freshLedger()
         val (driver, _) = driverFailingOn("rollback")
 
-        val thrown = assertFailsWith<IllegalStateException> {
-            driver.withTransaction { tx ->
-                tx.insert("tx_ledger", mapOf("memo" to "doomed"))
-                error("business rule violated")
-            }
+        val result = driver.withTransaction<Unit> { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "doomed"))
+            error("business rule violated")
         }
 
         // The reason for the rollback is what the caller needs; the
-        // rollback's own failure rides along.
-        assertEquals("business rule violated", thrown.message)
+        // rollback's own failure rides along as suppressed. And with
+        // neither commit nor rollback confirmed, the outcome is unknown.
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val stored = assertIs<IllegalStateException>(failed.exception)
+        assertEquals("business rule violated", stored.message)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
         assertTrue(
-            thrown.suppressed.any { it.message?.contains("rollback") == true },
-            "rollback failure should be suppressed on the original; got ${thrown.suppressed.toList()}",
+            stored.suppressed.any { it.message?.contains("rollback") == true },
+            "rollback failure should be suppressed on the stored exception; got ${stored.suppressed.toList()}",
         )
         // The proxy throws before delegating, so the real connection still
         // has the insert open. Restoring autocommit on a connection with a
@@ -130,12 +135,11 @@ class PostgresTransactionCleanupTest {
         freshLedger()
         val (driver, recorder) = driverFailingOn("rollback")
 
-        assertFailsWith<IllegalStateException> {
-            driver.withTransaction<Unit> { tx ->
-                tx.insert("tx_ledger", mapOf("memo" to "doomed"))
-                error("business rule violated")
-            }
+        val result = driver.withTransaction<Unit> { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "doomed"))
+            error("business rule violated")
         }
+        assertIs<DriverTransactionResult.Failed>(result)
 
         // The mechanism behind the assertion above: switching to
         // autocommit commits an open transaction, so the only safe move
@@ -151,19 +155,135 @@ class PostgresTransactionCleanupTest {
     fun `autocommit is restored on the paths where the transaction did resolve`() {
         freshLedger()
         val (commitDriver, commitRecorder) = driverFailingOn()
-        commitDriver.withTransaction { tx -> tx.insert("tx_ledger", mapOf("memo" to "committed")) }
+        val committed = commitDriver.withTransaction { tx -> tx.insert("tx_ledger", mapOf("memo" to "committed")) }
+        assertIs<DriverTransactionResult.Success<*>>(committed)
         assertTrue(
             commitRecorder.calls.contains("setAutoCommit(true)"),
             "a committed transaction leaves nothing open, so the restore is safe; saw ${commitRecorder.calls}",
         )
 
         val (rollbackDriver, rollbackRecorder) = driverFailingOn()
-        assertFailsWith<IllegalStateException> {
-            rollbackDriver.withTransaction<Unit> { error("business rule violated") }
-        }
+        val rolledBack = rollbackDriver.withTransaction<Unit> { error("business rule violated") }
+        val failed = assertIs<DriverTransactionResult.Failed>(rolledBack)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
         assertTrue(
             rollbackRecorder.calls.contains("setAutoCommit(true)"),
             "a successful rollback also leaves nothing open; saw ${rollbackRecorder.calls}",
+        )
+    }
+
+    // ---------- commit failures ----------
+
+    @Test
+    fun `a failing commit reports OutcomeUnknown even though the hygiene rollback succeeds`() {
+        freshLedger()
+        val (driver, recorder) = driverFailingOn("commit")
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+            "value"
+        }
+
+        // A failed COMMIT may already have reached the server, so a later
+        // apparently-successful rollback must never downgrade the outcome
+        // to NotCommitted.
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        assertTrue(
+            failed.exception.message?.contains("commit") == true,
+            "the commit failure is what the caller must see; got: ${failed.exception.message}",
+        )
+        assertTrue(
+            recorder.calls.contains("rollback"),
+            "the connection-hygiene rollback still runs after a failed commit; saw ${recorder.calls}",
+        )
+    }
+
+    @Test
+    fun `cleanup failures after a failed commit are suppressed onto the stored exception`() {
+        freshLedger()
+        val (driver, _) = driverFailingOn("commit", "setAutoCommit(true)", "close")
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+            "value"
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        val suppressed = failed.exception.suppressed.mapNotNull { it.message }
+        assertTrue(
+            suppressed.any { "setAutoCommit(true)" in it },
+            "the autocommit-restore failure rides along as suppressed; got $suppressed",
+        )
+        assertTrue(
+            suppressed.any { "close" in it },
+            "the close failure rides along as suppressed; got $suppressed",
+        )
+    }
+
+    @Test
+    fun `a JVM Error thrown by commit is rolled back and rethrown, never stored`() {
+        freshLedger()
+        // An Error-throwing variant of the usual proxy: SQLException-based
+        // injection can't exercise the Throwable arm of the commit
+        // handler, whose contract is roll back + rethrow for JVM errors.
+        class CommitError : AssertionError("injected commit error")
+        val recorder = Recorder()
+        val failing = object : DataSource by realDataSource {
+            override fun getConnection(): Connection {
+                val delegate = realDataSource.connection
+                leaked += delegate
+                return Proxy.newProxyInstance(
+                    Connection::class.java.classLoader,
+                    arrayOf(Connection::class.java),
+                    InvocationHandler { _, method, args ->
+                        recorder.calls += method.name
+                        if (method.name == "commit") throw CommitError()
+                        try {
+                            method.invoke(delegate, *(args ?: emptyArray()))
+                        } catch (e: InvocationTargetException) {
+                            throw e.targetException
+                        }
+                    },
+                ) as Connection
+            }
+        }
+        val driver = PostgresDriver(failing, autoDdl = false).also { it.register(LEDGER) }
+
+        val thrown = assertFailsWith<CommitError> {
+            driver.withTransaction { tx ->
+                tx.insert("tx_ledger", mapOf("memo" to "doomed"))
+                "value"
+            }
+        }
+        // The commit-time Error was preceded by an explicit rollback —
+        // the same roll-back-and-rethrow contract as the block path —
+        // and nothing was persisted or stored in a result.
+        assertTrue("rollback" in recorder.calls, "commit-time Error must trigger rollback; calls=${recorder.calls}")
+        assertEquals(emptyList(), memos(), "work must not survive a commit-time Error")
+        assertTrue(thrown.suppressed.isEmpty() || thrown.suppressed.none { it is AssertionError })
+    }
+
+    @Test
+    fun `a failing commit followed by a failing rollback still reports OutcomeUnknown`() {
+        freshLedger()
+        val (driver, _) = driverFailingOn("commit", "rollback")
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+            "value"
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        assertTrue(
+            failed.exception.message?.contains("commit") == true,
+            "the commit failure stays primary; got: ${failed.exception.message}",
+        )
+        assertTrue(
+            failed.exception.suppressed.any { it.message?.contains("rollback") == true },
+            "the rollback failure is suppressed on it; got ${failed.exception.suppressed.toList()}",
         )
     }
 
@@ -276,7 +396,7 @@ class PostgresTransactionCleanupTest {
     // ---------- cleanup after a SUCCESSFUL commit ----------
 
     @Test
-    fun `a failing autoCommit restore does not fail a committed transaction`() {
+    fun `a failing autoCommit restore does not demote a committed transaction`() {
         freshLedger()
         val (driver, _) = driverFailingOn("setAutoCommit(true)")
 
@@ -287,12 +407,12 @@ class PostgresTransactionCleanupTest {
             "ok"
         }
 
-        assertEquals("ok", result)
+        assertEquals(DriverTransactionResult.Success("ok"), result)
         assertEquals(listOf("committed"), memos())
     }
 
     @Test
-    fun `a failing close does not fail a committed transaction`() {
+    fun `a failing close does not demote a committed transaction`() {
         freshLedger()
         val (driver, _) = driverFailingOn("close")
 
@@ -301,25 +421,41 @@ class PostgresTransactionCleanupTest {
             "ok"
         }
 
-        assertEquals("ok", result)
+        assertEquals(DriverTransactionResult.Success("ok"), result)
+        assertEquals(listOf("committed"), memos())
+    }
+
+    @Test
+    fun `every cleanup step failing after a confirmed commit still returns Success`() {
+        freshLedger()
+        val (driver, _) = driverFailingOn("setAutoCommit(true)", "close")
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "committed"))
+            "ok"
+        }
+
+        assertEquals(DriverTransactionResult.Success("ok"), result)
         assertEquals(listOf("committed"), memos())
     }
 
     // ---------- cleanup while an exception is already propagating ----------
 
     @Test
-    fun `a failing close does not replace a propagating exception`() {
+    fun `a failing close does not replace a stored block exception`() {
         freshLedger()
         val (driver, _) = driverFailingOn("close")
 
-        val thrown = assertFailsWith<IllegalStateException> {
-            driver.withTransaction<Unit> { error("business rule violated") }
-        }
+        val result = driver.withTransaction<Unit> { error("business rule violated") }
 
-        assertEquals("business rule violated", thrown.message)
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val stored = assertIs<IllegalStateException>(failed.exception)
+        assertEquals("business rule violated", stored.message)
+        // The rollback itself was confirmed; only the close failed.
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
         assertTrue(
-            thrown.suppressed.any { it.message?.contains("close") == true },
-            "close failure should be suppressed on the original; got ${thrown.suppressed.toList()}",
+            stored.suppressed.any { it.message?.contains("close") == true },
+            "close failure should be suppressed on the stored exception; got ${stored.suppressed.toList()}",
         )
         assertEquals(emptyList(), memos())
     }
@@ -382,7 +518,7 @@ class PostgresTransactionCleanupTest {
         // failure must not roll back a transaction whose lock was in fact
         // acquired. They're transaction-scoped, so they only do useful
         // work inside withTransaction.
-        val row = driver.withTransaction { tx ->
+        val result = driver.withTransaction { tx ->
             val inserted = tx.insert("tx_ledger", mapOf("memo" to "locked"))
             tx.serializeOwnerEdgeAndRead("tx_ledger", inserted["id"]!!)
             tx.serializeRelationship(
@@ -391,6 +527,11 @@ class PostgresTransactionCleanupTest {
             inserted
         }
 
+        val row = when (result) {
+            is DriverTransactionResult.Success -> result.value
+            is DriverTransactionResult.Failed ->
+                throw AssertionError("expected Success, got $result", result.exception)
+        }
         assertTrue(row["id"] != null)
         assertEquals(listOf("locked"), memos(), "the transaction must commit, not roll back")
     }
@@ -402,7 +543,8 @@ class PostgresTransactionCleanupTest {
         freshLedger()
         val (driver, recorder) = driverFailingOn("setAutoCommit(true)")
 
-        driver.withTransaction { tx -> tx.insert("tx_ledger", mapOf("memo" to "committed")) }
+        val result = driver.withTransaction { tx -> tx.insert("tx_ledger", mapOf("memo" to "committed")) }
+        assertIs<DriverTransactionResult.Success<*>>(result)
 
         // Sharing one finally between the restore and the close leaked
         // the connection whenever the restore threw.
@@ -413,13 +555,12 @@ class PostgresTransactionCleanupTest {
     }
 
     @Test
-    fun `the connection is released when the block throws`() {
+    fun `the connection is released when the block fails`() {
         freshLedger()
         val (driver, recorder) = driverFailingOn()
 
-        assertFailsWith<IllegalStateException> {
-            driver.withTransaction<Unit> { error("business rule violated") }
-        }
+        val result = driver.withTransaction<Unit> { error("business rule violated") }
+        assertIs<DriverTransactionResult.Failed>(result)
 
         assertTrue(recorder.calls.contains("close"), "close() must run on the failure path; saw ${recorder.calls}")
     }

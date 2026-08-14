@@ -29,9 +29,10 @@ interface EntViewerRegistry<C : Any> {
 /**
  * One entity's typed bridge from dynamic viewer requests to the generated
  * API. Generated implementations call the normal typed repos
- * (`client.users.query { ... }.visibleAll()`, `visibleByIdOrNull`), which
- * preserves read privacy, read interceptors, soft-delete filters, result
- * decoding, and generated entity construction.
+ * (`client.users.query { ... }.all()`,
+ * `findById(...).visibleOrNull().getOrThrow()`), which preserves read privacy,
+ * read interceptors, soft-delete filters, result decoding, and generated
+ * entity construction.
  */
 interface EntViewerEntity<C : Any> {
     /** Runtime schema metadata (columns, edges, indexes) for schema pages. */
@@ -51,22 +52,17 @@ interface EntViewerEntity<C : Any> {
     val edges: List<EntViewerEdge>
 
     /**
-     * List visible rows for one page window. The adapter owns the
-     * privacy-coherent pagination semantics:
+     * List rows for one bounded page window through the canonical strict read
+     * path. The adapter owns the privacy-coherent pagination semantics:
      *
-     *  - entities without load privacy fetch a `pageSize + 1` probe, return
-     *    at most [EntViewerListRequest.pageSize] rows, and report an exact
-     *    [EntViewerListResult.hasNext];
-     *  - entities WITH load privacy fetch exactly the raw window
-     *    `[offset, offset + pageSize)` through the privacy-filtering
-     *    terminal, return the visible rows inside it (possibly fewer than
-     *    the page size), and report `hasNext = null` — next-page
-     *    availability is unknowable without disclosing denied-row counts,
-     *    so the viewer renders further navigation unconditionally with an
-     *    explicit sparse-pages notice;
-     *  - a page window that exceeds the client's visible-scan cap throws
-     *    [EntViewerBadRequestException] with the cap, never silently
-     *    truncates.
+     *  - every request fetches a `pageSize + 1` probe;
+     *  - when the strict read succeeds, at most
+     *    [EntViewerListRequest.pageSize] rows are returned and
+     *    [EntViewerListResult.hasNext] is exact;
+     *  - when LOAD privacy denies any root row in that probe, no partial page
+     *    is returned: the result is an explicitly privacy-filtered empty page
+     *    with `hasNext = null`, so the viewer can offer further navigation
+     *    without deriving it from denied-row counts.
      *
      * Throws [EntViewerBadRequestException] for filters/orders the entity
      * cannot translate — before any query executes.
@@ -174,7 +170,7 @@ data class EntViewerOrder(val column: String, val descending: Boolean)
 data class EntViewerListResult(
     val rows: List<EntViewerRow>,
     val hasNext: Boolean? = null,
-    /** True when rows were privacy-filtered inside the raw window. */
+    /** True when root LOAD denial replaced the strict page with an empty result. */
     val privacyFiltered: Boolean = false,
 )
 

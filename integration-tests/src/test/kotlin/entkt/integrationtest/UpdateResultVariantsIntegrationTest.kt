@@ -3,34 +3,43 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
+import entkt.integrationtest.ent.ArticleUpdatePrivacyRule
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.EntConstraintViolationException
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntResult
+import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntMutationPrivacyDeniedException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntTargetAbsentException
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.getOrThrow
+import kotlin.Unit
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for the update-side `saveOrError()` /
- * `saveOrThrow()` driver-classification wiring landed in of
- * the result variants. The catches (NotFound, NoChanges,
- * Privacy, Validation) are exercised elsewhere; this suite focuses on
- * the new `catch (Exception)` arm that routes through
- * `classifyDriverError` to produce `Err(ConstraintViolation)` for
- * recognized constraint failures (and `Err(DriverFailure)` for
- * uncategorized ones).
+ * End-to-end coverage for the update-side canonical terminals:
+ * `save(): MutationResult<Unit>` / `saveAndLoad(): MutationResult<Entity>`.
+ *
+ * Pins the driver-classification wiring (recognized constraints →
+ * `EntConstraintViolationException` hardcoding `NotPersisted`), the
+ * target-absence contract (`EntTargetAbsentException`), and the
+ * assignment-free no-op semantics: target-existence is still checked,
+ * pre-write phases still run, persist and post-persist are skipped,
+ * and nothing is written — while explicitly assigned equal values DO
+ * write.
  */
 class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
 
@@ -57,84 +66,233 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         }
     }
 
-    @Test
-    fun `saveOrError returns Err(ConstraintViolation) for unique violation on update`() {
-        val client = freshClient()
-        client.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-        val bob = client.users.create { name = "B"; email = "b@example.com" }.saveOrThrow()
+    // ---- Constraint classification ----
 
-        // Attempting to retitle bob's email to "a@example.com" trips
-        // the unique-email constraint on the second insert path.
+    @Test
+    fun `save returns Failed(EntConstraintViolationException) for unique violation on update`() {
+        val client = freshClient()
+        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        val bob = client.users.create { name = "B"; email = "b@example.com" }
+            .saveAndLoad().getOrThrow()
+
+        // Retargeting bob's email to "a@example.com" trips the
+        // unique-email constraint.
         val result = client.users.update(bob.id) {
             email = "a@example.com"
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("User", error.entity)
-        assertEquals(EntOperation.UPDATE, error.operation)
-        assertEquals("23505", error.code)
-        assertNotNull(error.constraint)
-        assertTrue(error.constraint!!.contains("email"), "constraint should mention email: ${error.constraint}")
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("User", ex.entityType)
+        assertEquals(EntOperation.UPDATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("23505", ex.driverCode)
+        assertNotNull(ex.constraint)
+        assertTrue(ex.constraint!!.contains("email"), "constraint should mention email: ${ex.constraint}")
     }
 
     @Test
-    fun `saveOrThrow throws EntConstraintViolationException for unique violation on update`() {
+    fun `getOrThrow throws the exact stored EntConstraintViolationException on update`() {
         val client = freshClient()
-        client.users.create { name = "C"; email = "c@example.com" }.saveOrThrow()
-        val dan = client.users.create { name = "D"; email = "d@example.com" }.saveOrThrow()
+        client.users.create { name = "C"; email = "c@example.com" }.save().getOrThrow()
+        val dan = client.users.create { name = "D"; email = "d@example.com" }
+            .saveAndLoad().getOrThrow()
 
-        val ex = assertFailsWith<EntConstraintViolationException> {
-            client.users.update(dan.id) {
-                email = "c@example.com"
-            }.saveOrThrow()
+        val result = client.users.update(dan.id) { email = "c@example.com" }.saveAndLoad()
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntConstraintViolationException) {
+            assertSame(failed.exception, e)
+            assertEquals(EntOperation.UPDATE, e.operation)
+            assertEquals("23505", e.driverCode)
         }
-        assertEquals("User", ex.constraintViolation.entity)
-        assertEquals(EntOperation.UPDATE, ex.constraintViolation.operation)
-        assertEquals("23505", ex.constraintViolation.code)
     }
 
     @Test
-    fun `saveOrError returns Err(ConstraintViolation) for FK violation on update`() {
+    fun `save returns Failed(EntConstraintViolationException) for FK violation on update`() {
         val client = freshClient()
-        val author = client.users.create { name = "E"; email = "e@example.com" }.saveOrThrow()
+        val author = client.users.create { name = "E"; email = "e@example.com" }
+            .saveAndLoad().getOrThrow()
         val article = client.articles.create {
             title = "Hello"
             published = true
             authorId = author.id
-        }.saveOrThrow()
+        }.saveAndLoad().getOrThrow()
 
         // Repoint authorId to a non-existent user.
         val result = client.articles.update(article.id) {
             authorId = 999_999L
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.UPDATE, error.operation)
-        assertEquals("23503", error.code)
-        assertNotNull(error.constraint)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.UPDATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("23503", ex.driverCode)
+        assertNotNull(ex.constraint)
     }
 
     @Test
-    fun `saveOrError on unique violation leaves owner row unchanged`() {
+    fun `a unique violation leaves the owner row unchanged`() {
         val client = freshClient()
-        client.users.create { name = "F"; email = "f@example.com" }.saveOrThrow()
-        val guy = client.users.create { name = "G"; email = "g@example.com" }.saveOrThrow()
+        client.users.create { name = "F"; email = "f@example.com" }.save().getOrThrow()
+        val guy = client.users.create { name = "G"; email = "g@example.com" }
+            .saveAndLoad().getOrThrow()
 
-        val result = client.users.update(guy.id) {
-            name = "Guy"
-            email = "f@example.com"
-        }.saveOrError()
-        assertTrue(result is EntResult.Err)
+        assertIs<MutationResult.Failed>(
+            client.users.update(guy.id) {
+                name = "Guy"
+                email = "f@example.com"
+            }.save(),
+        )
 
-        // The conflicting update did not partially apply — guy's email
-        // is still its original value.
-        val reread = client.users.byIdOrNull(guy.id)!!
+        // The conflicting update did not partially apply.
+        val reread = client.users.findById(guy.id).getOrThrow()!!
         assertEquals("g@example.com", reread.email)
         assertEquals("G", reread.name)
+    }
+
+    // ---- Target absence ----
+
+    @Test
+    fun `update of a missing target is Failed(EntTargetAbsentException)`() {
+        val client = freshClient()
+
+        val result = client.users.update(999_999L) { name = "ghost" }.saveAndLoad()
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntTargetAbsentException>(failed.exception)
+        assertEquals("User", ex.entityType)
+        assertEquals("id", ex.key.field)
+        assertEquals(999_999L, ex.key.value)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+    }
+
+    @Test
+    fun `an assignment-free update of a missing target is still Failed(EntTargetAbsentException)`() {
+        val client = freshClient()
+
+        // The no-op path establishes target existence before succeeding.
+        val result = client.users.update(999_999L) { }.save()
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        assertIs<EntTargetAbsentException>(failed.exception)
+    }
+
+    // ---- Assignment-free (no-op) updates ----
+
+    @Test
+    fun `an assignment-free update succeeds without writing and skips post-persist hooks`() {
+        val recording = RecordingDriver(resetAndDriver())
+        var beforeUpdates = 0
+        var afterUpdates = 0
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies { users(OpenUser); articles(AllowAll) }
+            hooks {
+                users {
+                    beforeUpdate { beforeUpdates++ }
+                    afterUpdate { afterUpdates++ }
+                }
+            }
+        }
+        val user = client.users.create { name = "N"; email = "n@example.com" }
+            .saveAndLoad().getOrThrow()
+
+        recording.reset()
+        val result = client.users.update(user.id) { }.save()
+
+        assertEquals(MutationResult.Success(Unit), result)
+        // Pre-write phases ran; persist and post-persist were skipped.
+        assertEquals(1, beforeUpdates)
+        assertEquals(0, afterUpdates)
+        // Target-existence check reads; nothing writes — no update
+        // synthesized from defaults either.
+        assertEquals(0, recording.callCount("update:"))
+        assertTrue(recording.callCount("byId:") >= 1, "target-existence check must read the row")
+
+        val reread = client.users.findById(user.id).getOrThrow()!!
+        assertEquals("N", reread.name)
+    }
+
+    @Test
+    fun `a no-op saveAndLoad returns the current row`() {
+        val client = freshClient()
+        val user = client.users.create { name = "O"; email = "o@example.com" }
+            .saveAndLoad().getOrThrow()
+
+        val loaded = client.users.update(user.id) { }.saveAndLoad().getOrThrow()
+        assertEquals(user.id, loaded.id)
+        assertEquals("O", loaded.name)
+    }
+
+    @Test
+    fun `explicitly assigned equal values still write`() {
+        val recording = RecordingDriver(resetAndDriver())
+        var afterUpdates = 0
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies { users(OpenUser); articles(AllowAll) }
+            hooks { users { afterUpdate { afterUpdates++ } } }
+        }
+        val user = client.users.create { name = "P"; email = "p@example.com" }
+            .saveAndLoad().getOrThrow()
+
+        recording.reset()
+        // Assigning the current value is still an assignment: the write
+        // happens and post-persist hooks run.
+        val result = client.users.update(user.id) { name = "P" }.save()
+
+        assertEquals(MutationResult.Success(Unit), result)
+        assertEquals(1, recording.callCount("update:"))
+        assertEquals(1, afterUpdates)
+    }
+
+    // ---- Pre-write privacy: UPDATE operation, keyed ----
+
+    @Test
+    fun `a pre-write UPDATE privacy rejection carries operation UPDATE and NotPersisted`() {
+        val denyUpdate = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                    update(ArticleUpdatePrivacyRule { PrivacyDecision.Deny("update denied") })
+                }
+            }
+        }
+        val driver = resetAndDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies { articles(denyUpdate); users(OpenUser) }
+        }
+        val article = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            val author = sys.users.create { name = "Q"; email = "q@example.com" }
+                .saveAndLoad().getOrThrow()
+            sys.articles.create { title = "T"; published = true; authorId = author.id }
+                .saveAndLoad().getOrThrow()
+        }
+
+        val result = client.articles.update(article.id) { title = "T2" }.save()
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        // The denied *mutation* operation — distinguishable from a
+        // post-write LOAD disclosure denial (operation = LOAD), which is
+        // pinned in WriteSucceededLoadDeniedIntegrationTest.
+        assertEquals(EntOperation.UPDATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("Article", ex.entityType)
+        assertEquals("id", ex.entityKey?.field)
+        assertEquals(article.id, ex.entityKey?.value)
+        assertEquals("update denied", ex.reason)
+
+        // Nothing was written.
+        val reread = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.articles.findById(article.id).getOrThrow()!!
+        }
+        assertEquals("T", reread.title)
     }
 }

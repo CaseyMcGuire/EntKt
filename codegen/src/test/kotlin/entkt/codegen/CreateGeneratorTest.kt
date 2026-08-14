@@ -69,11 +69,24 @@ class CreateGeneratorTest {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun save(): Car")) { "Should have save method returning entity\n$output" }
-        assert(!output.contains("fun save(): Car?")) { "save() should return non-nullable Car\n$output" }
-        assert(output.contains(""""model is required"""")) { "Should validate model is required\n$output" }
-        assert(output.contains(""""year is required"""")) { "Should validate year is required\n$output" }
+        assert(output.contains("public fun save(): MutationResult<Unit>")) {
+            "save() should return MutationResult<Unit>\n$output"
+        }
+        // A missing required field short-circuits into a typed
+        // validation Failed via the shared _validationFailed helper —
+        // it does not throw.
+        assert(
+            output.contains(
+                """val model = this.model ?: return _validationFailed(listOf(ValidationViolation("model is required", field = "model")))""",
+            ),
+        ) { "Should return validation Failed when model is missing\n$output" }
+        assert(
+            output.contains(
+                """val year = this.year ?: return _validationFailed(listOf(ValidationViolation("year is required", field = "year")))""",
+            ),
+        ) { "Should return validation Failed when year is missing\n$output" }
     }
 
     @Test
@@ -199,21 +212,23 @@ class CreateGeneratorTest {
         val schema = ValidatedEntity()
         finalize(schema)
         val output = generator.generate("ValidatedEntity", schema).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("name.length < 3")) {
-            "Should emit minLength check\n$output"
-        }
         assert(output.contains("name.length > 100")) {
             "Should emit maxLength check\n$output"
         }
         assert(output.contains("name.isEmpty()")) {
             "Should emit notEmpty check\n$output"
         }
-        // Validator failures throw ValidationException carrying both
-        // the rule's message and the field name; saveOrError wraps this
-        // into EntError.ValidationFailed.
-        assert(output.contains("Invalid(\"value must be at least 3 characters\", field = \"name\")")) {
-            "Should include validator message + field in ValidationDecision.Invalid\n$output"
+        // A failed validator returns MutationResult.Failed carrying a
+        // typed EntValidationException (via _validationFailed) with the
+        // rule's message and the field name — it does not throw.
+        assert(
+            output.contains(
+                """if (name.length < 3) return _validationFailed(listOf(ValidationViolation("value must be at least 3 characters", field = "name")))""",
+            ),
+        ) {
+            "minLength failure should return validation Failed with message + field\n$output"
         }
     }
 
@@ -222,12 +237,14 @@ class CreateGeneratorTest {
         val schema = ValidatedEntity()
         finalize(schema)
         val output = generator.generate("ValidatedEntity", schema).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("age <= 0")) {
-            "Should emit positive check\n$output"
-        }
-        assert(output.contains("Invalid(\"value must be positive\", field = \"age\")")) {
-            "Should include validator message + field in ValidationDecision.Invalid\n$output"
+        assert(
+            output.contains(
+                """if (age <= 0) return _validationFailed(listOf(ValidationViolation("value must be positive", field = "age")))""",
+            ),
+        ) {
+            "positive failure should return validation Failed with message + field\n$output"
         }
     }
 
@@ -464,57 +481,95 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `generates the full save result-variant trio`() {
+    fun `save and saveAndLoad share one executeSaveForInternalUse path`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        // saveOrThrow delegates to saveOrError().getOrThrow() — the
-        // Throwing wrappers delegate to the structured-result path.
-        assert(output.contains("public fun saveOrThrow(): Car = saveOrError().getOrThrow()")) {
-            "Should generate saveOrThrow as a wrapper over saveOrError\n$output"
+        // One internal member owns the entire create pipeline; the two
+        // public terminals only differ in whether returned-entity LOAD
+        // privacy applies.
+        assert(output.contains("internal fun executeSaveForInternalUse(applyLoadPrivacy: Boolean): MutationResult<Car>")) {
+            "Should generate the internal executeSaveForInternalUse pipeline\n$output"
         }
-
-        // saveOrError returns EntResult<Car> and wraps a successful save in Ok.
-        assert(output.contains("public fun saveOrError(): EntResult<Car>")) {
-            "Should generate saveOrError returning EntResult<Car>\n$output"
+        // save(): MutationResult<Unit> — no entity disclosure, so no
+        // LOAD privacy; Success(entity) is projected to Success(Unit).
+        assert(
+            output.contains(
+                "public fun save(): MutationResult<Unit> = when (val result = " +
+                    "executeSaveForInternalUse(applyLoadPrivacy = false)) " +
+                    "{ is MutationResult.Success -> MutationResult.Success(Unit) is MutationResult.Failed -> result }",
+            ),
+        ) {
+            "save() should delegate to executeSaveForInternalUse(applyLoadPrivacy = false)\n$output"
         }
-        assert(output.contains("EntResult.Ok(save())")) {
-            "Should wrap successful save in Ok\n$output"
+        // saveAndLoad(): MutationResult<Car> — same path with LOAD
+        // privacy applied to the materialized row.
+        assert(output.contains("public fun saveAndLoad(): MutationResult<Car> = executeSaveForInternalUse(applyLoadPrivacy = true)")) {
+            "saveAndLoad() should delegate to executeSaveForInternalUse(applyLoadPrivacy = true)\n$output"
         }
-        // KotlinPoet may line-wrap inside arg lists; check call shapes
-        // without anchoring on specific whitespace.
-        assert(output.contains("catch (e: PrivacyDeniedException)")) {
-            "Should catch PrivacyDeniedException\n$output"
+        // CREATE privacy denial maps to a typed
+        // EntMutationPrivacyDeniedException Failed (pre-insert, so
+        // NotPersisted and no entity key).
+        assert(output.contains("val denialReason = client.cars.createDenialReasonOrNull(privacy, candidate)")) {
+            "Should consult the repo's createDenialReasonOrNull\n$output"
         }
-        assert(output.contains("EntError.PrivacyDenied(e.entity, EntOperation.valueOf(e.operation.name),")) {
-            "Should map PrivacyDeniedException into EntError.PrivacyDenied\n$output"
+        assert(
+            output.contains(
+                """EntMutationPrivacyDeniedException(MutationWriteState.NotPersisted, "Car", EntOperation.CREATE, null, denialReason)""",
+            ),
+        ) {
+            "CREATE denial should map to EntMutationPrivacyDeniedException(NotPersisted, CREATE)\n$output"
         }
-        assert(output.contains("catch (e: ValidationException)")) {
-            "Should catch ValidationException\n$output"
+        // Driver insert failures are classified into typed
+        // EntMutationExceptions at the insert site (CancellationException
+        // rethrown), recorded on the transaction coordinator, and
+        // returned as Failed.
+        assert(
+            output.contains(
+                "val row = try { driver.insert(Car.TABLE, values) } " +
+                    "catch (e: CancellationException) { throw e } catch (e: Exception) " +
+                    "{ val classified = _classifyDriverFailure(e, MutationWriteState.PersistenceUnknown) " +
+                    "client.recordTransactionMutationFailure(classified) " +
+                    "return MutationResult.failedForInternalUse(classified) }",
+            ),
+        ) {
+            "Insert failures should classify + record + return Failed\n$output"
         }
-        assert(output.contains("EntError.ValidationFailed(e.entity, EntOperation.CREATE, e.violations.map {")) {
-            "Should map ValidationException into ValidationFailed with CREATE operation\n$output"
+        assert(output.contains("""driver.classifyMutationException(e, "Car", EntOperation.CREATE)""")) {
+            "_classifyDriverFailure should route through driver.classifyMutationException with CREATE\n$output"
         }
-        assert(output.contains("it.toValidationViolation() }")) {
-            "Should bridge each Invalid via toValidationViolation()\n$output"
+        // The terminal boundary captures any other foreign failure as
+        // EntUnexpectedMutationException carrying the tracked writeState.
+        assert(
+            output.contains(
+                "} catch (e: CancellationException) { throw e } catch (e: Exception) " +
+                    "{ val exception = EntUnexpectedMutationException(writeState, e) " +
+                    "client.recordTransactionMutationFailure(exception) " +
+                    "return MutationResult.failedForInternalUse(exception) }",
+            ),
+        ) {
+            "Terminal boundary should capture foreign failures as EntUnexpectedMutationException\n$output"
         }
-        // Any other EntException (e.g. NoChanges from a composed save)
-        // — carry through via e.error.
-        assert(output.contains("catch (e: EntException)")) {
-            "Should catch the generic EntException base class\n$output"
+        // Validation failures share the _validationFailed helper, which
+        // records the failure and returns Failed(EntValidationException).
+        assert(
+            output.contains(
+                "private fun _validationFailed(violations: List<ValidationViolation>): MutationResult<Nothing> " +
+                    """{ val exception = EntValidationException("Car", EntOperation.CREATE, violations) """ +
+                    "client.recordTransactionMutationFailure(exception) " +
+                    "return MutationResult.failedForInternalUse(exception) }",
+            ),
+        ) {
+            "_validationFailed should build EntValidationException(CREATE) and return Failed\n$output"
         }
-        assert(output.contains("EntResult.Err(e.error)")) {
-            "Should pass EntException's error through unchanged\n$output"
-        }
-        // Exception catch-all routes through classifyDriverError so the
-        // driver-level classifier produces ConstraintViolation
-        // for SQLSTATE 23xxx or DriverFailure as the fallback.
-        assert(output.contains("catch (e: Exception)")) {
-            "Should have a catch-all for Exception\n$output"
-        }
-        assert(output.contains("classifyDriverError(driver, e, \"Car\", EntOperation.CREATE)")) {
-            "Should route uncaught Exception through classifyDriverError with CREATE operation\n$output"
+        // Removed legacy surface: no result-variant trio, no EntResult /
+        // EntError bridging.
+        for (legacy in listOf("saveOrError", "saveOrThrow", "saveOrNull", "EntResult", "EntError")) {
+            assert(!output.contains(legacy)) {
+                "Removed legacy member '$legacy' must not be emitted\n$output"
+            }
         }
     }
 

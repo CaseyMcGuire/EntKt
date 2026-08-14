@@ -1,6 +1,5 @@
 package entkt.runtime.driver
-import entkt.runtime.mutation.TransactionRequiredException
-import entkt.runtime.result.EntError
+import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.query.QueryExplanation
@@ -182,8 +181,8 @@ interface Driver {
 
     /**
      * Update a row by id. Returns the new row state on success, or
-     * `null` if no row exists with that id. Generated `save()` returns
-     * `null` to its caller in that case; `saveOrThrow()` throws.
+     * `null` if no row exists with that id. Generated update saves
+     * report that as `MutationResult.Failed(EntTargetAbsentException)`.
      */
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
 
@@ -320,19 +319,35 @@ interface Driver {
     ): QueryExplanation = UnsupportedQueryExplanation(this::class.simpleName ?: "Driver")
 
     /**
-     * Run [block] inside a transaction. The block receives a
-     * transaction-scoped [Driver] that shares a single underlying
-     * connection / snapshot. If [block] completes normally the
-     * transaction is committed; if it throws the transaction is rolled
-     * back and the exception propagates.
+     * Run [block] inside a transaction and report the outcome
+     * structurally. The block receives a transaction-scoped [Driver]
+     * that shares a single underlying connection / snapshot.
+     *
+     * Write-certainty contract:
+     * - [DriverTransactionResult.Success] is returned only after
+     *   commit is confirmed.
+     * - If the block throws an ordinary [Exception] and rollback is
+     *   confirmed, return `Failed(exception, NotCommitted)`; if the
+     *   rollback itself fails, return `Failed(exception, OutcomeUnknown)`
+     *   with the rollback failure suppressed on the exception.
+     * - If commit fails, return `Failed(commitException, OutcomeUnknown)`
+     *   even when a later rollback call appears to succeed — the
+     *   failed commit may already have reached the database.
+     * - Cleanup failures after a confirmed commit must never turn a
+     *   successful commit into a failed or unknown outcome.
+     * - `CancellationException` and JVM `Error`s are rolled back and
+     *   rethrown, never stored in `Failed`.
      *
      * Calling [withTransaction] on an already-transactional driver
-     * reuses the existing transaction (no savepoints).
+     * throws [entkt.runtime.result.NestedTransactionUnsupportedException]
+     * before entering the block or performing any transaction I/O.
+     * Savepoint and reuse options belong to a separate
+     * transaction-client design.
      *
      * The driver passed to [block] is only valid for the duration of
      * the block — using it after the block returns will throw.
      */
-    fun <T> withTransaction(block: (Driver) -> T): T
+    fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
 
     /**
      * True when this [Driver] is the transaction-scoped driver passed
@@ -557,120 +572,40 @@ interface Driver {
     }
 
     /**
-     * Map a [throwable] thrown from this driver to a structured
-     * [EntError] when the driver recognizes it. Returning `null`
-     * signals "I don't know what this is" — the caller (typically the
-     * `classifyDriverError` helper) decides the fallback based on the
-     * throwable type (see that function's KDoc for the full rules).
-     *
-     * Generated `*OrError()` wrappers call `classifyDriverError`
-     * (which delegates here) AFTER the more specific catch arms
-     * (privacy / validation / EntException) but BEFORE a generic
-     * Throwable fallback. So:
-     *  - the framework's own exceptions (TransactionRequiredException,
-     *    UnsupportedDriverCapabilityException, EntException subclasses)
-     *    are never offered to the classifier — they always propagate
-     *    as themselves, by contract Status carve-out;
-     *  - PSQLException, IllegalStateException from driver-side
-     *    validators, etc. get one shot at being classified;
-     *  - if the classifier returns `null` for an unrecognized
-     *    `IllegalStateException` or `IllegalArgumentException`,
-     *    `classifyDriverError` re-throws it as a programming bug
-     *    rather than wrapping as DriverFailure — only "genuinely
-     *    unrecognized" exceptions (SQLException, IOException, etc.)
-     *    become Err(DriverFailure);
-     *  - all other unrecognized throwables fall through to
-     *    Err(DriverFailure) with the cause attached.
+     * Classify an [exception] thrown by one of this driver's
+     * low-level *mutation* operations into a state-bearing
+     * [entkt.runtime.result.EntMutationException]. Returning `null`
+     * signals "no more precise classification" — the generated
+     * terminal then stores the original exception with its
+     * phase-derived state (using `PersistenceUnknown` for a write
+     * exception with no precise classification, never optimistically
+     * `NotPersisted`). There is no parallel state field: the returned
+     * exception's own `writeState` is the classification.
      *
      * Implementations should:
-     *  - return `EntError.ConstraintViolation` for UNIQUE/FK/CHECK
-     *    violations, populating `constraint`/`field`/`code` from
-     *    whatever metadata the underlying exception carries
-     *    (PostgreSQL's SQLSTATE, the InMemory driver's message
-     *    prefix, etc.);
-     *  - leave [EntError.Conflict] for a future optimistic-locking
-     *    surface — returning `null` for serialization failures is
-     *    fine in V1;
-     *  - return `null` for any throwable the driver doesn't
-     *    recognize. Keep in mind that returning `null` for an
-     *    `IllegalStateException` carrying real driver-failure
-     *    semantics (vs. a programming-bug invariant violation) will
-     *    surface as a thrown exception rather than `DriverFailure`
-     *    — recognize and classify those explicitly if you need the
-     *    Err shape.
+     *  - return [entkt.runtime.result.EntConstraintViolationException]
+     *    (whose type hardcodes `NotPersisted`) for a recognized
+     *    UNIQUE/FK/CHECK violation whose rollback is confirmed,
+     *    preserving the original driver exception as the cause and
+     *    populating `constraint`/`field`/`driverCode` from whatever
+     *    metadata the underlying exception carries;
+     *  - return [entkt.runtime.result.EntConflictException] for a
+     *    recognized statement-level concurrency conflict (e.g. a
+     *    serialization failure) whose effect did not persist;
+     *  - return [entkt.runtime.result.EntUnexpectedMutationException]
+     *    with the known state for an unclassified operational failure
+     *    whose persistence outcome the driver *does* know;
+     *  - return `null` for anything unrecognized.
      *
-     * The default returns `null` so existing third-party drivers
-     * inherit the documented fallback behavior without having to opt in.
+     * Read execution never calls this method — canonical reads store
+     * the original exception directly.
+     *
+     * The default returns `null` so third-party drivers inherit the
+     * documented fallback behavior without having to opt in.
      */
-    fun classifyException(
-        throwable: Throwable,
+    fun classifyMutationException(
+        exception: Exception,
         entity: String,
         operation: EntOperation,
-    ): EntError? = null
-}
-
-/**
- * Wrap an arbitrary [throwable] from a generated `*OrError()` catch
- * arm into an [EntError], using the [driver]'s own classifier first
- * and falling back to [EntError.DriverFailure] only for genuine
- * driver-level failures.
- *
- * The cause is preserved on `EntError.DriverFailure.cause` so the
- * matching [EntDriverException] forwards it to the JVM exception
- * chain — `printStackTrace()` and friends still see the original
- * driver exception.
- *
- * **Default is "fail loud on bugs".** The generated `*OrError()`
- * blocks wrap the entire operation body in `try / catch (Exception)`,
- * which includes hooks, privacy rules, validation rules, entity
- * hydration, and the return LOAD-privacy check — not just driver
- * calls. A naive catch-all would wrap any exception thrown anywhere
- * in that body as `Err(DriverFailure)`, hiding application bugs as
- * infrastructure failures.
- *
- * To prevent that, this function classifies according to the
- * following rules:
- *
- *  1. [TransactionRequiredException] / [UnsupportedDriverCapabilityException]
- *     re-throw — framework-defined configuration errors, not surfaced as
- *     `EntError`.
- *  2. The driver's own `classifyException` runs next; whatever it
- *     returns wins (typically `ConstraintViolation` for SQLSTATE
- *     23xxx on Postgres).
- *  3. If the driver returned `null` and the throwable is a
- *     [java.sql.SQLException] (or subclass — covers `PSQLException`,
- *     H2's `JdbcSQLException`, etc.), wrap as `DriverFailure`. These
- *     are bona-fide driver-level failures the framework just doesn't
- *     have a specific classification for (e.g. connection errors,
- *     timeouts, query parse failures).
- *  4. Anything else — `IllegalStateException` / `IllegalArgumentException`
- *     from hook misuse, `NullPointerException` from a hook bug,
- *     custom `RuntimeException`s from validation code, etc. —
- *     re-throws as a programming bug. This matches `EntResult`'s
- *     KDoc contract that programming errors propagate rather than
- *     collapse to `Err`.
- *
- * Callers who genuinely want the programming-error wrap-as-DriverFailure
- * behavior can implement a custom `Driver.classifyException` that
- * returns `EntError.DriverFailure` for the throwable types they want
- * to swallow; the default is conservative.
- */
-public fun classifyDriverError(
-    driver: Driver,
-    throwable: Throwable,
-    entity: String,
-    operation: EntOperation,
-): EntError {
-    if (throwable is TransactionRequiredException) throw throwable
-    if (throwable is UnsupportedDriverCapabilityException) throw throwable
-    val classified = driver.classifyException(throwable, entity, operation)
-    if (classified != null) return classified
-    // Driver didn't recognize this throwable. If it's a known
-    // JDBC/SQL driver-level exception, fall back to DriverFailure;
-    // otherwise re-throw because it's almost certainly application
-    // code (hook/rule/etc.) inside the *OrError body, not the driver.
-    if (throwable is java.sql.SQLException) {
-        return EntError.DriverFailure(entity = entity, operation = operation, cause = throwable)
-    }
-    throw throwable
+    ): EntMutationException? = null
 }

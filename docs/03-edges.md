@@ -75,7 +75,7 @@ data class Post(
 client.posts.create {
     title = "Hello"
     authorId = alice.id
-}.save()
+}.save().getOrThrow()
 ```
 
 The `hasMany(...)` side generates a query traversal method and an eager-loading
@@ -85,12 +85,13 @@ method on the query builder:
 // Query traversal: "find all posts for this user"
 val posts = client.users.query { where(User.id eq alice.id) }
     .queryPosts()
-    .allOrThrow()
+    .all()
+    .getOrThrow()
 
 // Eager loading: batch-load posts for all queried users
 val users = client.users.query {
     withPosts { orderBy(Post.createdAt.desc()) }
-}.allOrThrow()
+}.all().getOrThrow()
 users[0].edges.posts.requireLoaded()  // → List<Post>
 ```
 
@@ -170,7 +171,7 @@ client.withTransaction { tx ->
     tx.posts.update(post.id) {
         tags.add(tagA.id)        // stage a single new link
         tags.remove(oldTag.id)   // stage a delete
-    }.save()
+    }.save().orRollback()
 }
 ```
 
@@ -197,8 +198,10 @@ The full API on each helper-eligible edge:
 **Transaction and capability requirements.** A link-table M2M update
 requires a transaction-scoped client and a driver that can safely serialize
 changes made through the same owner edge. `PostgresDriver` supports this.
-A missing transaction throws `TransactionRequiredException`; an unsupported
-driver throws `UnsupportedDriverCapabilityException`. These checks happen
+A missing transaction or an unsupported driver fails the save with
+`MutationResult.Failed(EntUnexpectedMutationException)` (write state
+`NotPersisted`) whose cause is `TransactionRequiredException` /
+`UnsupportedDriverCapabilityException`. These checks run at save-start,
 before hooks or changes. Driver authors can see
 [Drivers — Locking](10-drivers.md#locking-rfc-4) for the capability surface.
 
@@ -214,7 +217,7 @@ tx.posts.update(
     relationshipLocking = RelationshipLocking.Canonical,
 ) {
     tags.add(tag.id)
-}.save()
+}.save().orRollback()
 ```
 
 `Canonical` makes both orientations contend on the same relationship lock. It
@@ -230,7 +233,8 @@ fields touched) are still owner update operations — `beforeSave`,
 `beforeUpdate`, privacy, validation, and `afterUpdate` all run. Update
 defaults such as `updatedAt = updateDefaultNow()` also apply.
 
-**Returned entity state.** `save()` returns the owner entity with
+**Returned entity state.** `save()` returns `MutationResult<Unit>` —
+an acknowledgement only. `saveAndLoad()` returns the owner entity with
 scalar / FK fields reflecting the saved owner row. The M2M edge
 itself is returned in the normal unloaded state — to inspect the
 new link set, requery with eager loading (`with{Edge}`).

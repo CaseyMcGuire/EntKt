@@ -164,8 +164,9 @@ users {
 than the null — `FieldPatch<String>` for a required field can't
 represent `Set(null)` by construction. The actual null is observable
 through `ctx.mutation.name`. If no hook repairs the assignment, the
-post-hook required-not-null check throws
-`IllegalStateException("name is required")` before privacy,
+post-hook required-not-null check fails the save with
+`MutationResult.Failed(EntValidationException)` carrying a
+field-named "name is required" violation, before privacy, entity
 validation, or persistence.
 
 ## Execution Order
@@ -178,37 +179,44 @@ For a **create** operation, the full execution order is:
 4. Run CREATE privacy and entity validation.
 5. Persist the entity.
 6. Run `afterCreate`.
-7. Apply LOAD privacy to the returned entity.
+7. For `saveAndLoad()`, apply LOAD privacy to the returned entity.
+   `save()` discloses no entity and skips this step.
 
 For an **update**:
 
-1. Reject an empty request with `EntNoChangesException`. An edge-only update
-   is not empty.
-2. Enforce transaction and consistency requirements.
-3. Load the current entity. `save()` returns `null` when it does not exist;
-   `saveOrThrow()` throws `EntNotFoundException`.
-4. Capture pending edge intent, then run `beforeSave` and `beforeUpdate`.
+1. Enforce transaction and consistency requirements.
+2. Load the current entity. An absent target is
+   `MutationResult.Failed(EntTargetAbsentException)` (write state
+   `NotPersisted`) from both `save()` and `saveAndLoad()`.
+3. Capture pending edge intent, then run `beforeSave` and `beforeUpdate`.
    Each `beforeUpdate` hook receives a fresh `patch` snapshot and the same
    read-only `pendingEdges` snapshot.
-5. Check required fields, apply update defaults, and run field validators.
-6. Calculate `edgeChanges`, then run UPDATE privacy and entity validation.
-7. Persist scalar and edge changes.
-8. Run `afterUpdate`.
-9. Apply LOAD privacy to the returned entity.
+4. Check required fields, apply update defaults, and run field validators.
+5. Calculate `edgeChanges`, then run UPDATE privacy and entity validation.
+6. Persist scalar and edge changes.
+7. Run `afterUpdate`.
+8. For `saveAndLoad()`, apply LOAD privacy to the returned entity.
 
-If hooks remove every scalar change and no edge operations remain, UPDATE
-privacy still runs against the unchanged candidate, then `save()` throws
-`EntNoChangesException`. Update defaults, validation, `afterUpdate`, and
-returned-entity LOAD privacy do not run on that path.
+An assignment-free update — an empty request, or one whose hooks removed
+every change — is not an error. It still establishes that the target
+exists and runs every pre-write phase (hooks, required-field checks,
+UPDATE privacy, entity validation), but skips persistence and
+`afterUpdate`, then completes as `Success`: `save()` returns `Unit`,
+`saveAndLoad()` returns the current entity under the ordinary LOAD
+contract.
 
-For a **delete**:
+For a **delete** (`delete(entity)` treats the supplied entity as an ID
+handle; `deleteById(id)` runs the same pipeline):
 
 1. Enforce the configured transaction requirement.
-2. Load the entity when deleting by ID.
-3. Run DELETE privacy and entity validation.
+2. Reload the current row by id. An absent row is a success —
+   `delete` returns `Success(Unit)`, `deleteById` returns
+   `Success(false)` — and none of the later steps run.
+3. Run DELETE privacy and entity validation against the reloaded row.
 4. Run `beforeDelete`.
 5. Delete the entity.
-6. Run `afterDelete`.
+6. Run `afterDelete` — only when the final delete actually removed the
+   row (a row that disappears after reload skips it).
 
 Hooks are for side effects (setting timestamps, logging, notifications),
 not for authorization or invariant enforcement. Use
@@ -230,7 +238,7 @@ val client = EntClient(driver) {
 
 client.withTransaction { tx ->
     // The beforeSave hook fires here too -- no re-registration needed
-    tx.users.create { name = "Alice"; email = "a@b.com" }.save()
+    tx.users.create { name = "Alice"; email = "a@b.com" }.save().orRollback()
 }
 ```
 
@@ -250,7 +258,10 @@ users {
 ## Bulk Operations and Hooks
 
 Bulk operations (`createMany`, `deleteMany`) **fire lifecycle hooks**
-for every row.
+for every row, and each is atomic: the whole batch shares one
+transaction (the caller's, or an EntKt-owned one when the caller has
+none), so a hook that throws aborts the operation with no committed
+subset.
 
 ```kotlin
 // Hooks fire for every row

@@ -71,23 +71,34 @@ class BuildMemberManifestTest {
         // Mutation interface — just the mutable scalar (no FK on this schema)
         assertEquals(setOf("title"), byArtifact["NotebookMutation"])
 
-        // Create builder — title + fixed members
+        // Create builder — title + fixed members. The canonical terminal
+        // pair is save/saveAndLoad (the OrError/OrThrow variants are
+        // gone), and the internal shared execution member
+        // executeSaveForInternalUse is reserved so declaration-name
+        // capture cannot collide with it.
         assertNotNull(byArtifact["NotebookCreate"])
         assertTrue("title" in byArtifact["NotebookCreate"]!!)
         assertTrue("save" in byArtifact["NotebookCreate"]!!)
-        assertTrue("saveOrError" in byArtifact["NotebookCreate"]!!)
-        assertTrue("saveOrThrow" in byArtifact["NotebookCreate"]!!)
+        assertTrue("saveAndLoad" in byArtifact["NotebookCreate"]!!)
+        assertTrue("saveOrError" !in byArtifact["NotebookCreate"]!!, "removed variant must not be reserved")
+        assertTrue("saveOrThrow" !in byArtifact["NotebookCreate"]!!, "removed variant must not be reserved")
+        assertTrue("saveOrNull" !in byArtifact["NotebookCreate"]!!, "removed variant must not be reserved")
+        assertTrue("executeSaveForInternalUse" in byArtifact["NotebookCreate"]!!)
         assertTrue("client" in byArtifact["NotebookCreate"]!!)
         assertTrue("driver" in byArtifact["NotebookCreate"]!!)
         assertTrue("beforeCreateHooks" in byArtifact["NotebookCreate"]!!)
 
         // Update builder — title setter + fixed members including id +
-        // consistency. NOT unsetTitle — that lives only on
-        // NotebookUpdateMutationView (the hook-facing interface),
-        // never on the public builder.
+        // consistency, the canonical save/saveAndLoad pair, and the
+        // private execution member executeSave. NOT unsetTitle — that
+        // lives only on NotebookUpdateMutationView (the hook-facing
+        // interface), never on the public builder.
         assertNotNull(byArtifact["NotebookUpdate"])
         assertTrue("title" in byArtifact["NotebookUpdate"]!!)
         assertTrue("id" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("save" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("saveAndLoad" in byArtifact["NotebookUpdate"]!!)
+        assertTrue("executeSave" in byArtifact["NotebookUpdate"]!!)
         assertTrue("consistency" in byArtifact["NotebookUpdate"]!!)
         assertTrue("dirtyFields" in byArtifact["NotebookUpdate"]!!)
         assertTrue(

@@ -27,7 +27,7 @@ import entkt.schema.FieldType
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
-private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
+private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val INDEX_RANGE_BUILDER = ClassName("entkt.query", "IndexRangeBuilder")
 private val LIST = ClassName("kotlin.collections", "List")
 
@@ -92,8 +92,8 @@ internal data class ResolvedIndex(
  *   range overload (a range overload terminates the chain).
  * - [isUniqueTerminal]: true when this prefix exactly equals the full
  *   column list of an eligible unique index whose columns are all
- *   non-nullable — only then are `orNull`/`orError`/`orThrow`/
- *   `visibleOrNull` exposed.
+ *   non-nullable — only then is the canonical `find()` terminal
+ *   exposed.
  */
 internal class IndexPrefixNode(
     val prefix: List<ResolvedIndexColumn>,
@@ -559,11 +559,14 @@ internal class IndexHelperGenerator(
                 .addStatement("return q.%L", call)
                 .build()
 
+        // The completed unique-index helper exposes one canonical
+        // terminal: `find(): ReadResult<Entity?>` delegating to the
+        // canonical firstOrNull(). Nullable-throwing/visible/error
+        // handling are result projections (getOrThrow, visibleOrNull),
+        // not additional database terminals; `query()` remains for
+        // further composition.
         private fun uniqueTerminals(): List<FunSpec> = listOf(
-            terminal("orNull", nullableEntity, "firstOrNull()"),
-            terminal("visibleOrNull", nullableEntity, "firstVisibleOrNull()"),
-            terminal("orError", ENT_RESULT.parameterizedBy(entityClass), "firstOrError()"),
-            terminal("orThrow", entityClass, "firstOrThrow()"),
+            terminal("find", READ_RESULT.parameterizedBy(nullableEntity), "firstOrNull()"),
         )
 
         private fun stageConstructor(): FunSpec =

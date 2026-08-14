@@ -9,6 +9,7 @@ import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -179,39 +180,52 @@ internal class ClientGenerator(
                     .build()
             )
             .addProperty(
-                // Cap on the per-call storage scan that visible-only
-                // read APIs (visibleAll / visibleAllOrError /
-                // firstVisibleOrNull) issue against the driver when
-                // no privacy pushdown is available. Default 100 rows.
-                // A bigger value lets the in-process filter find more
-                // visible rows but pulls more denied rows into memory;
-                // narrow the predicate before raising it.
-                //
-                // Validated via a custom setter: zero/negative values
-                // are nonsense for the cap-exhaustion check (`rows.size
-                // >= cap` is always true for cap <= 0, so
-                // visibleAllOrError would return Err(OverfetchCapExceeded)
-                // for every query — and visibleAll would silently
-                // truncate to zero rows). Reject at the setter.
-                //
-                // `override` (public getter) satisfies EntReadRuntime;
-                // the setter stays `internal` so the mutation surface is
-                // unchanged — only generated init/clone code writes it.
-                PropertySpec.builder("visibleOverfetchLimit", INT)
-                    .addModifiers(KModifier.OVERRIDE)
+                // The per-transaction coordinator, non-null only on the
+                // transaction-scoped clone built by withTransaction (and
+                // propagated through withPrivacyContext re-scoping inside
+                // a transaction block). Mutation terminals record every
+                // MutationResult.Failed here via
+                // recordTransactionMutationFailure so an ignored failure
+                // still marks the scope rollback-only.
+                PropertySpec.builder(
+                    "transactionCoordinator",
+                    ClassName("entkt.runtime.result", "TransactionCoordinator").copy(nullable = true),
+                )
+                    .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
-                    .initializer("100")
-                    .setter(
-                        FunSpec.setterBuilder()
-                            .addModifiers(KModifier.INTERNAL)
-                            .addParameter("value", INT)
-                            .addStatement(
-                                "require(value > 0) { %S + value }",
-                                "visibleOverfetchLimit must be positive; was ",
-                            )
-                            .addStatement("field = value")
-                            .build()
+                    .initializer("null")
+                    .build()
+            )
+            .addFunction(
+                // Called by generated mutation terminals at every
+                // MutationResult.Failed construction site. No-op outside
+                // a transaction scope.
+                FunSpec.builder("recordTransactionMutationFailure")
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter(
+                        "exception",
+                        ClassName("entkt.runtime.result", "EntMutationException"),
                     )
+                    .addStatement("transactionCoordinator?.recordFailure(exception)")
+                    .build()
+            )
+            .addFunction(
+                // Called when a bulk terminal re-reports an
+                // already-recorded row failure as a batch-level one:
+                // the coordinator must retain the batch failure the
+                // terminal actually returned, in the row failure's
+                // encounter position. No-op outside a transaction scope.
+                FunSpec.builder("replaceTransactionMutationFailure")
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter(
+                        "original",
+                        ClassName("entkt.runtime.result", "EntMutationException"),
+                    )
+                    .addParameter(
+                        "replacement",
+                        ClassName("entkt.runtime.result", "EntMutationException"),
+                    )
+                    .addStatement("transactionCoordinator?.replaceFailure(original, replacement)")
                     .build()
             )
             .addProperty(
@@ -318,7 +332,6 @@ internal class ClientGenerator(
             .addFunction(buildWithPrivacyContext(clientClass, t, sorted))
             .addFunction(buildBypassPrivacyDangerous(clientClass, t))
             .addFunction(buildWithTransaction(clientClass, configClass, t, sorted))
-            .addFunction(buildWithTransactionOrError(clientClass, t, sorted))
             .addType(buildCompanionObject(sorted))
             .build()
 
@@ -484,28 +497,6 @@ internal class ClientGenerator(
                     .initializer("%T.OwnerOnly", RELATIONSHIP_LOCKING)
                     .build()
             )
-            .addProperty(
-                // Bounds the storage scan visibleAll / visibleAllOrError
-                // / firstVisibleOrNull issue against the driver when
-                // privacy pushdown is unavailable. Default 100 rows.
-                // Validated via custom setter — see the matching
-                // property on EntClient for why zero/negative is
-                // rejected.
-                PropertySpec.builder("visibleOverfetchLimit", INT)
-                    .mutable(true)
-                    .initializer("100")
-                    .setter(
-                        FunSpec.setterBuilder()
-                            .addParameter("value", INT)
-                            .addStatement(
-                                "require(value > 0) { %S + value }",
-                                "visibleOverfetchLimit must be positive; was ",
-                            )
-                            .addStatement("field = value")
-                            .build()
-                    )
-                    .build()
-            )
             .addFunction(
                 FunSpec.builder("hooks")
                     .addParameter("block", hooksBlockLambda)
@@ -556,7 +547,6 @@ internal class ClientGenerator(
         block.addStatement("transactionRequirement = cfg.transactionRequirement")
         block.addStatement("defaultUpdateConsistency = cfg.defaultUpdateConsistency")
         block.addStatement("defaultRelationshipLocking = cfg.defaultRelationshipLocking")
-        block.addStatement("visibleOverfetchLimit = cfg.visibleOverfetchLimit")
         block.addStatement("entityInterceptors = cfg.interceptorsConfig.config")
         return block.build()
     }
@@ -567,139 +557,56 @@ internal class ClientGenerator(
         t: TypeVariableName,
         schemas: List<SchemaInput>,
     ): FunSpec {
+        val transactionScope = ClassName("entkt.runtime.result", "TransactionScope")
+        val transactionResult = ClassName("entkt.runtime.result", "TransactionResult")
+        val runEntTransaction = MemberName("entkt.runtime.result", "runEntTransaction")
         val body = CodeBlock.builder()
-        body.beginControlFlow("return driver.withTransaction { txDriver ->")
+        // The boundary loop, rollback-only bookkeeping, and failure
+        // precedence live in the runtime's runEntTransaction — this
+        // adapter only builds the transaction-scoped clone and wires
+        // the coordinator into it so mutation terminals can record
+        // failures. Calling this on a transaction-scoped client makes
+        // runEntTransaction throw NestedTransactionUnsupportedException
+        // before the block or any transaction I/O runs.
+        body.beginControlFlow("return %M(driver, { txDriver, coordinator ->", runEntTransaction)
         body.addStatement("val tx = %T(txDriver)", clientClass)
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
         body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")
-        body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
         body.addStatement("tx.entityInterceptors = this.entityInterceptors")
+        body.addStatement("tx.transactionCoordinator = coordinator")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
             body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
             body.addStatement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
         }
-        body.addStatement("block(tx)")
+        body.addStatement("tx")
         body.endControlFlow()
+        body.add(", block)\n")
 
         return FunSpec.builder("withTransaction")
+            .addKdoc(
+                "The canonical transaction entry point. The block receives a\n" +
+                    "transaction-scoped client; only operations executed through it\n" +
+                    "participate in the transaction's atomic commit or rollback.\n" +
+                    "`orRollback()` on a read or mutation result extracts success or\n" +
+                    "stops the block; a mutation failure produced through the\n" +
+                    "transaction client marks the scope rollback-only even when its\n" +
+                    "result is ignored. Returns the exhaustive [TransactionResult];\n" +
+                    "project with `getOrThrow()` for throwing behavior.",
+            )
             .addTypeVariable(t)
             .addParameter(
                 "block",
                 LambdaTypeName.get(
-                    parameters = listOf(
-                        ParameterSpec.unnamed(clientClass),
-                    ),
+                    receiver = transactionScope,
+                    parameters = listOf(ParameterSpec.unnamed(clientClass)),
                     returnType = t,
                 ),
             )
-            .returns(t)
-            .addCode(body.build())
-            .build()
-    }
-
-    /**
-     * Generates the structured-result transaction helper:
-     *
-     *   fun <T> withTransactionOrError(
-     *     block: EntResultScope.(EntClient) -> T,
-     *   ): EntResult<T>
-     *
-     * The block runs inside an `EntResultScope` so it can call
-     * `EntResult.bind()` on individual operations. `bind()` either
-     * unwraps the Ok or throws `AbortEntResultTransaction` carrying
-     * the first Err. The helper:
-     *
-     *  - catches `AbortEntResultTransaction` inside the
-     *    `driver.withTransaction` block and re-throws as a wrapper,
-     *    so the driver rolls the transaction back (driver's
-     *    withTransaction commits on normal return, rolls back on
-     *    any throw)
-     *  - converts the abort back to `EntResult.Err(error)` outside
-     *    the driver block so the caller gets a structured result
-     *    instead of an exception
-     *  - guards against the "block returns EntResult<T>" footgun:
-     *    if T happens to be EntResult<*>, the block's normal-return
-     *    `Ok(Err(...))` would silently commit earlier writes. The
-     *    runtime check throws IllegalStateException AFTER the
-     *    transaction has rolled back, so the silent-commit bad
-     *    pattern becomes a deterministic programming error caught
-     *    at the first run.
-     */
-    private fun buildWithTransactionOrError(
-        clientClass: ClassName,
-        t: TypeVariableName,
-        schemas: List<SchemaInput>,
-    ): FunSpec {
-        val entResultClass = ClassName("entkt.runtime.result", "EntResult")
-        val entResultScopeClass = ClassName("entkt.runtime.result", "EntResultScope")
-        val abortClass = ClassName("entkt.runtime.result", "AbortEntResultTransaction")
-        val resultType = entResultClass.parameterizedBy(t)
-        val body = CodeBlock.builder()
-
-        // Track the abort across the driver block. The driver's
-        // withTransaction commits on normal return — to roll back on
-        // bind() abort, we re-throw the abort so the driver sees a
-        // throw and rolls back, then we catch it outside the driver
-        // block and convert to EntResult.Err.
-        body.addStatement("var aborted: %T? = null", abortClass)
-        body.addStatement("var raw: %T? = null", t)
-        body.beginControlFlow("try")
-        body.beginControlFlow("driver.withTransaction { txDriver ->")
-        body.addStatement("val tx = %T(txDriver)", clientClass)
-        body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
-        body.addStatement("tx.transactionRequirement = this.transactionRequirement")
-        body.addStatement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
-        body.addStatement("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")
-        body.addStatement("tx.visibleOverfetchLimit = this.visibleOverfetchLimit")
-        body.addStatement("tx.entityInterceptors = this.entityInterceptors")
-        for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
-            body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
-            body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
-            body.addStatement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
-        }
-        body.addStatement("val scope = %T()", entResultScopeClass)
-        body.addStatement("val blockResult = with(scope) { block(tx) }")
-        // Runtime guard inside the driver block so the
-        // EntResult-returning bad pattern triggers a rollback. If we
-        // checked after `driver.withTransaction` returns, the commit
-        // would already have happened.
-        body.beginControlFlow("if (blockResult is %T<*>)", entResultClass)
-        body.addStatement(
-            "throw IllegalStateException(%S)",
-            "withTransactionOrError block returned EntResult<*>; use .bind() inside the block instead of returning EntResult directly",
-        )
-        body.endControlFlow()
-        body.addStatement("raw = blockResult")
-        body.endControlFlow()
-        body.nextControlFlow("catch (e: %T)", abortClass)
-        body.addStatement("aborted = e")
-        body.endControlFlow()
-
-        // After the driver block completes (committed) or was rolled
-        // back by the re-thrown abort, decide the return value.
-        body.beginControlFlow("if (aborted != null)")
-        body.addStatement("return %T.Err(aborted!!.error)", entResultClass)
-        body.endControlFlow()
-
-        @Suppress("UNCHECKED_CAST")
-        body.addStatement("return %T.Ok(raw as %T)", entResultClass, t)
-
-        // Wrap the type variable in EntResultScope's extension shape.
-        val scopedBlock = LambdaTypeName.get(
-            receiver = entResultScopeClass,
-            parameters = listOf(ParameterSpec.unnamed(clientClass)),
-            returnType = t,
-        )
-
-        return FunSpec.builder("withTransactionOrError")
-            .addTypeVariable(t)
-            .addParameter("block", scopedBlock)
-            .returns(resultType)
+            .returns(transactionResult.parameterizedBy(t))
             .addCode(body.build())
             .build()
     }
@@ -856,7 +763,9 @@ internal class ClientGenerator(
         body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
         body.addStatement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")
-        body.addStatement("scoped.visibleOverfetchLimit = this.visibleOverfetchLimit")
+        // Propagate the transaction coordinator so a privacy re-scope
+        // inside a withTransaction block keeps rollback-only marking.
+        body.addStatement("scoped.transactionCoordinator = this.transactionCoordinator")
         body.addStatement("scoped.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
@@ -936,8 +845,8 @@ internal class ClientGenerator(
      * type). Copies only the read-relevant adapter state — the same
      * driver instance (so a transaction-scoped client yields a
      * transaction-scoped read client), the passed context fixed for the
-     * reader's lifetime, the shared interceptor registry, the overfetch
-     * cap, and the repos as per-entity read surfaces (LOAD-privacy
+     * reader's lifetime, the shared interceptor registry, and the repos
+     * as per-entity read surfaces (LOAD-privacy
      * behavior identical to this client's). `transactionRequirement`,
      * hooks, and validation config are deliberately absent — they are
      * write-side state, and their absence is part of the no-writes
@@ -953,7 +862,6 @@ internal class ClientGenerator(
         body.add("  driver,\n")
         body.add("  context,\n")
         body.add("  entityInterceptors,\n")
-        body.add("  visibleOverfetchLimit,\n")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.add("  %L,\n", propName)

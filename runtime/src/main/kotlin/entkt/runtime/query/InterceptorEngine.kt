@@ -1,6 +1,5 @@
 package entkt.runtime.query
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntQueryRejectedException
 
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -166,11 +165,11 @@ public class QuerySpecBuilder<E : Any> public constructor(
  * interceptors so they surface on the final terminal's
  * `QueryPlan.annotations`.
  *
- * The deferred-invocation design is what lets `*OrError` terminals
- * catch traversal-source rejections — if the source's
+ * The deferred-invocation design is what lets canonical terminals
+ * capture traversal-source rejections — if the source's
  * `runReadInterceptors` throws `EntQueryRejectedException`, it
- * propagates out of this lambda and into the terminal's `try/catch`
- * which converts to `Err(QueryRejected)`.
+ * propagates out of this lambda and into the terminal's capture
+ * boundary, which stores it in `ReadResult.Failed`.
  */
 public data class TraversalSourceResult<E : Any> public constructor(
     val bridge: Predicate<E>,
@@ -215,11 +214,10 @@ public data class FrozenQuerySpec<E : Any> public constructor(
  *   narrows an `ALL` read.
  * - `BY_ID`, `FIRST`: intrinsic single-row result shape; clamping
  *   has no observable effect (limit is hard-coded to 1 / pk-lookup).
- * - `RAW_COUNT`, `VISIBLE_COUNT`, `RAW_EXISTS`, `VISIBLE_EXISTS`:
- *   aggregates / existence checks; the row limit either has no
- *   meaning (aggregates that don't materialize rows) or would
- *   silently corrupt the answer (counting "first N scanned rows"
- *   rather than all matching rows).
+ * - `RAW_COUNT`, `RAW_EXISTS`: aggregates / existence checks; the
+ *   row limit either has no meaning (aggregates that don't
+ *   materialize rows) or would silently corrupt the answer (counting
+ *   "first N scanned rows" rather than all matching rows).
  * - `EAGER_LOAD`: per-parent-vs-batched semantics are ambiguous;
  *   the runtime fetches with null limit and paginates per-group
  *   in Kotlin.
@@ -229,9 +227,9 @@ public data class FrozenQuerySpec<E : Any> public constructor(
  * Used by [InterceptScopeImpl] / [GlobalInterceptScopeImpl] to
  * gate `requireLimitAtMost` / `setDefaultLimitIfAbsent` /
  * `rejectIfLimitGreaterThan` — so a `global { requireLimitAtMost(100) }`
- * doesn't corrupt `visibleCount` (which would otherwise count the
- * first 100 scanned rows rather than all visible rows), and a
- * `rejectIfLimitGreaterThan(10)` doesn't reject every `byIdOrNull` /
+ * doesn't corrupt `rawCount` (which would otherwise count the
+ * first 100 scanned rows rather than all matching rows), and a
+ * `rejectIfLimitGreaterThan(10)` doesn't reject every `findById` /
  * `rawCount` / `rawExists` call just because they have null
  * effective limits.
  */
@@ -241,9 +239,7 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
     ReadOperation.BY_ID,
     ReadOperation.FIRST,
     ReadOperation.RAW_COUNT,
-    ReadOperation.VISIBLE_COUNT,
     ReadOperation.RAW_EXISTS,
-    ReadOperation.VISIBLE_EXISTS,
     // RAW_AGGREGATE: aggregates ignore limit/offset, so a MaxLimitInterceptor
     // must never silently cap them (same reasoning as RAW_COUNT above).
     ReadOperation.RAW_AGGREGATE,
@@ -276,7 +272,6 @@ internal class InterceptScopeImpl<E : Any>(
     private val builder: QuerySpecBuilder<E>,
     private val rejectingInterceptor: String,
     private val entity: String,
-    private val entOperation: EntOperation,
     private val readOperation: ReadOperation,
 ) : InterceptScope<E> {
     override val shape: QueryShape<E> get() = builder.typedShape()
@@ -312,9 +307,8 @@ internal class InterceptScopeImpl<E : Any>(
 
     override fun reject(reason: String, code: String?): Nothing {
         throw AbortQueryRejected(
-            EntError.QueryRejected(
-                entity = entity,
-                operation = entOperation,
+            EntQueryRejectedException(
+                entityType = entity,
                 reason = reason,
                 code = code,
                 interceptor = rejectingInterceptor,
@@ -336,7 +330,6 @@ internal class GlobalInterceptScopeImpl(
     private val builder: QuerySpecBuilder<*>,
     private val rejectingInterceptor: String,
     private val entity: String,
-    private val entOperation: EntOperation,
     private val readOperation: ReadOperation,
 ) : GlobalInterceptScope {
     override val shape: UntypedQueryShape get() = builder.untypedShape()
@@ -368,9 +361,8 @@ internal class GlobalInterceptScopeImpl(
 
     override fun reject(reason: String, code: String?): Nothing {
         throw AbortQueryRejected(
-            EntError.QueryRejected(
-                entity = entity,
-                operation = entOperation,
+            EntQueryRejectedException(
+                entityType = entity,
                 reason = reason,
                 code = code,
                 interceptor = rejectingInterceptor,
@@ -440,16 +432,15 @@ public object InterceptorEngine {
         builder: QuerySpecBuilder<E>,
         context: QueryContext,
         entity: String,
-        entOperation: EntOperation,
         entityInterceptors: List<RegisteredInterceptor<E>>,
         globalInterceptors: List<RegisteredGlobalInterceptor>,
     ): FrozenQuerySpec<E> {
         for (registered in entityInterceptors) {
-            val scope = InterceptScopeImpl<E>(builder, registered.name, entity, entOperation, context.operation)
+            val scope = InterceptScopeImpl<E>(builder, registered.name, entity, context.operation)
             registered.interceptor.intercept(scope, context)
         }
         for (registered in globalInterceptors) {
-            val scope = GlobalInterceptScopeImpl(builder, registered.name, entity, entOperation, context.operation)
+            val scope = GlobalInterceptScopeImpl(builder, registered.name, entity, context.operation)
             registered.interceptor.intercept(scope, context)
         }
         return builder.freeze()

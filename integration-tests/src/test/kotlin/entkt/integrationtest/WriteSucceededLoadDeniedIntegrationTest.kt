@@ -1,45 +1,48 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
+import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserPolicyScope
-import entkt.runtime.privacy.allowAll
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntResult
-import entkt.runtime.result.EntWriteSucceededLoadDeniedException
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.allowAll
+import entkt.runtime.result.EntMutationPrivacyDeniedException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.TransactionFailureState
+import entkt.runtime.result.TransactionResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for `EntError.WriteSucceededLoadDenied` — the
- * "write happened, you just can't see it" variant added so that
- * `saveOrError`'s `Err` shape cleanly distinguishes:
+ * End-to-end coverage for the "write happened, you just can't see it"
+ * contract: `saveAndLoad()`'s post-write LOAD disclosure denial is
+ * `Failed(EntMutationPrivacyDeniedException)` with `operation = LOAD`
+ * and a `writeState` that tells the truth about persistence:
  *
- *  - `Err(PrivacyDenied(CREATE/UPDATE))` — the write was rejected
- *    up-front and did NOT happen
- *  - `Err(WriteSucceededLoadDenied(CREATE/UPDATE))` — the write
- *    DID happen, but the post-write LOAD privacy check denied the
- *    viewer; the row is in the DB
+ *  - autocommit: `Committed` — the row IS in the database
+ *  - inside a caller-owned transaction: `TransactionPending`, and the
+ *    scope goes rollback-only (the boundary later reports
+ *    `NotCommitted` after confirmed rollback)
+ *  - allowed no-op update whose LOAD check denies: `NotPersisted` —
+ *    nothing was written
  *
- * Without the variant, both cases would surface as `Err(PrivacyDenied)`
- * and a caller treating `Err` as "operation didn't happen" would be
- * wrong for the second case.
- *
- * The helper does not roll back the surrounding tx (same caveat as
- * `createManyOrError` per-row Err) — composing with
- * `withTransactionOrError + bind()` is the all-or-nothing path.
+ * A pre-write denial uses the mutation's own operation
+ * (CREATE/UPDATE) with `NotPersisted`, so the two cases are cleanly
+ * distinguishable from the exception alone.
  */
 class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
@@ -73,14 +76,14 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
     private fun seedAuthor(client: EntClient): User {
         return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         }
     }
 
-    // ---- CREATE path ----
+    // ---- CREATE path (autocommit) ----
 
     @Test
-    fun `create saveOrError returns Err(WriteSucceededLoadDenied) when post-write LOAD denies`() {
+    fun `create saveAndLoad disclosure denial is Failed(Committed, LOAD, keyed)`() {
         val client = freshClient()
         val author = seedAuthor(client)
 
@@ -88,26 +91,20 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
             title = "secret"
             published = true
             authorId = author.id
-        }.saveOrError()
+        }.saveAndLoad()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(
-            error is EntError.WriteSucceededLoadDenied,
-            "expected WriteSucceededLoadDenied; got $error",
-        )
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertNotNull(error.id, "id should be the newly-written article's id")
-        assertEquals("can't read", error.reason)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.LOAD, ex.operation)
+        assertEquals(MutationWriteState.Committed, ex.writeState)
+        assertEquals("can't read", ex.reason)
+        assertNotNull(ex.entityKey, "the key of the written-but-undisclosed row must be carried")
+        assertEquals("id", ex.entityKey!!.field)
     }
 
     @Test
-    fun `create saveOrError Err(WriteSucceededLoadDenied) leaves the row in the database`() {
-        // The whole point of the distinct variant is to signal that
-        // the write actually committed even though Err was returned.
-        // Pin that by reading the row back via a System-elevated
-        // context that bypasses LOAD privacy.
+    fun `create disclosure denial leaves the row committed in the database`() {
         val client = freshClient()
         val author = seedAuthor(client)
 
@@ -115,66 +112,43 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
             title = "ghost"
             published = true
             authorId = author.id
-        }.saveOrError()
+        }.saveAndLoad()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error as EntError.WriteSucceededLoadDenied
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
 
         val stillExists = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.byIdOrNull(error.id as Long)
+            sys.articles.findById(ex.entityKey!!.value as Long).getOrThrow()
         }
-        assertNotNull(stillExists, "row should be persisted even though saveOrError returned Err")
+        assertNotNull(stillExists, "row should be persisted even though saveAndLoad returned Failed")
         assertEquals("ghost", stillExists.title)
     }
 
     @Test
-    fun `create saveOrThrow throws EntWriteSucceededLoadDeniedException when post-write LOAD denies`() {
+    fun `getOrThrow throws the exact stored exception preserving Committed`() {
         val client = freshClient()
         val author = seedAuthor(client)
 
-        val ex = assertFailsWith<EntWriteSucceededLoadDeniedException> {
-            client.articles.create {
-                title = "boom"
-                published = true
-                authorId = author.id
-            }.saveOrThrow()
+        val result = client.articles.create {
+            title = "boom"
+            published = true
+            authorId = author.id
+        }.saveAndLoad()
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntMutationPrivacyDeniedException) {
+            assertSame(failed.exception, e)
+            assertEquals(MutationWriteState.Committed, e.writeState)
+            assertEquals(EntOperation.LOAD, e.operation)
         }
-        assertEquals("Article", ex.writeSucceededLoadDenied.entity)
-        assertEquals(EntOperation.CREATE, ex.writeSucceededLoadDenied.operation)
-        assertNotNull(ex.writeSucceededLoadDenied.id)
     }
 
-    // ---- UPDATE path ----
+    // ---- UPDATE path (autocommit) ----
 
     @Test
-    fun `update saveOrError returns Err(WriteSucceededLoadDenied) when post-write LOAD denies`() {
-        val client = freshClient()
-        val author = seedAuthor(client)
-        // Seed via System so the row exists and we have an id to update.
-        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.create {
-                title = "original"
-                published = true
-                authorId = author.id
-            }.saveOrThrow().id
-        }
-
-        val result = client.articles.update(articleId) {
-            title = "renamed"
-        }.saveOrError()
-
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(
-            error is EntError.WriteSucceededLoadDenied,
-            "expected WriteSucceededLoadDenied; got $error",
-        )
-        assertEquals(EntOperation.UPDATE, error.operation)
-        assertEquals(articleId, error.id)
-    }
-
-    @Test
-    fun `update Err(WriteSucceededLoadDenied) leaves the new value in the database`() {
+    fun `update saveAndLoad disclosure denial is Failed(Committed, LOAD) and the write sticks`() {
         val client = freshClient()
         val author = seedAuthor(client)
         val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
@@ -182,34 +156,97 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
                 title = "original"
                 published = true
                 authorId = author.id
-            }.saveOrThrow().id
+            }.saveAndLoad().getOrThrow().id
         }
 
         val result = client.articles.update(articleId) {
             title = "renamed"
-        }.saveOrError()
-        assertTrue(result is EntResult.Err)
+        }.saveAndLoad()
 
-        // Verify the write actually committed despite Err.
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals(EntOperation.LOAD, ex.operation)
+        assertEquals(MutationWriteState.Committed, ex.writeState)
+        assertEquals(articleId, ex.entityKey?.value)
+
+        // The write actually committed despite Failed.
         val reread = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.byIdOrNull(articleId)
+            sys.articles.findById(articleId).getOrThrow()
         }
-        assertNotNull(reread)
-        assertEquals("renamed", reread.title)
+        assertEquals("renamed", reread?.title)
     }
 
-    // ---- Distinct from PrivacyDenied(CREATE) ----
+    // ---- No-op update disclosure denial: NotPersisted ----
 
     @Test
-    fun `pre-write CREATE denial surfaces as Err(PrivacyDenied), not Err(WriteSucceededLoadDenied)`() {
-        // CREATE privacy denies → write does NOT happen → Err(PrivacyDenied).
+    fun `a no-op update whose LOAD check denies reports NotPersisted`() {
+        val client = freshClient()
+        val author = seedAuthor(client)
+        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.articles.create {
+                title = "untouched"
+                published = true
+                authorId = author.id
+            }.saveAndLoad().getOrThrow().id
+        }
+
+        // Assignment-free update: the UPDATE rule allows, nothing is
+        // written, then the disclosure check denies. LOAD + NotPersisted
+        // is distinguishable from UPDATE + NotPersisted (pre-write
+        // rejection) and from LOAD + Committed (real write).
+        val result = client.articles.update(articleId) { }.saveAndLoad()
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals(EntOperation.LOAD, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals(articleId, ex.entityKey?.value)
+    }
+
+    // ---- Inside a caller-owned transaction ----
+
+    @Test
+    fun `inside withTransaction the disclosure denial is TransactionPending and marks rollback-only`() {
+        val client = freshClient()
+        val author = seedAuthor(client)
+
+        var inner: MutationResult<Article>? = null
+        val txResult = client.withTransaction { tx ->
+            inner = tx.articles.create {
+                title = "pending"
+                published = true
+                authorId = author.id
+            }.saveAndLoad()
+            // Ignore the failure: the fail-closed backstop still rolls back.
+            "completed"
+        }
+
+        val innerFailed = assertIs<MutationResult.Failed>(inner!!)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(innerFailed.exception)
+        assertEquals(EntOperation.LOAD, ex.operation)
+        assertEquals(MutationWriteState.TransactionPending, ex.writeState)
+
+        // Boundary reports the recorded failure after confirmed rollback.
+        val txFailed = assertIs<TransactionResult.Failed>(txResult)
+        assertSame(ex, txFailed.exception)
+        assertEquals(TransactionFailureState.NotCommitted, txFailed.transactionState)
+
+        // Nothing committed.
+        val count = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.articles.query().rawCount().getOrThrow()
+        }
+        assertEquals(0L, count)
+    }
+
+    // ---- Distinct from a pre-write denial ----
+
+    @Test
+    fun `pre-write CREATE denial carries operation CREATE and NotPersisted, and writes nothing`() {
         val denyCreate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
                     load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
-                    create(entkt.integrationtest.ent.ArticleCreatePrivacyRule {
-                        PrivacyDecision.Deny("auth required")
-                    })
+                    create(ArticleCreatePrivacyRule { PrivacyDecision.Deny("auth required") })
                 }
             }
         }
@@ -222,27 +259,25 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
             }
         }
         val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         }
 
         val result = client.articles.create {
             title = "x"
             published = true
             authorId = author.id
-        }.saveOrError()
+        }.saveAndLoad()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(
-            error is EntError.PrivacyDenied,
-            "pre-write CREATE denial should be PrivacyDenied, not WriteSucceededLoadDenied; got $error",
-        )
-        assertEquals(EntOperation.CREATE, error.operation)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
-        // No row was written (verified to distinguish from the
-        // post-write LOAD path which DOES write).
-        assertEquals(0L, client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.query().rawCount()
-        })
+        // No row was written — unlike the post-write LOAD path.
+        val count = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.articles.query().rawCount().getOrThrow()
+        }
+        assertEquals(0L, count)
+        assertTrue(ex.entityKey == null, "pre-write create denial has no usable key; got ${ex.entityKey}")
     }
 }

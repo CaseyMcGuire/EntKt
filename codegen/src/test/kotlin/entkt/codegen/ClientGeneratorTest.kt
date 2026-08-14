@@ -145,15 +145,53 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient emits withTransaction that creates a transactional client`() {
+    fun `EntClient emits withTransaction returning TransactionResult via runEntTransaction`() {
         val schemas = buildSchemas()
-        val output = generator.generate(schemas).toString()
+        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun <T> withTransaction(block: (EntClient) -> T): T")) {
-            "Should emit withTransaction method\n$output"
+        // The canonical transaction entry point is a thin adapter over the
+        // runtime's runEntTransaction: the makeTxClient lambda builds the
+        // transaction-scoped client and wires the coordinator into it.
+        assert(
+            output.contains(
+                "public fun <T> withTransaction(block: TransactionScope.(EntClient) -> T): " +
+                    "TransactionResult<T> = runEntTransaction(driver, { txDriver, coordinator ->"
+            )
+        ) {
+            "withTransaction should return TransactionResult<T> by delegating to runEntTransaction\n$output"
         }
-        assert(output.contains("driver.withTransaction")) {
-            "Should delegate to driver.withTransaction\n$output"
+        assert(output.contains("val tx = EntClient(txDriver)")) {
+            "makeTxClient should build the transactional client on the tx driver\n$output"
+        }
+        assert(output.contains("tx.transactionCoordinator = coordinator")) {
+            "makeTxClient should wire the coordinator into the tx client\n$output"
+        }
+
+        // The client owns the coordinator slot and the hook repos call at
+        // every Failed construction site; privacy-context clones propagate
+        // the coordinator so scoped mutations still mark the transaction.
+        assert(output.contains("internal var transactionCoordinator: TransactionCoordinator? = null")) {
+            "EntClient should carry an internal transactionCoordinator\n$output"
+        }
+        assert(
+            output.contains(
+                "internal fun recordTransactionMutationFailure(exception: EntMutationException) { " +
+                    "transactionCoordinator?.recordFailure(exception) }"
+            )
+        ) {
+            "EntClient should expose recordTransactionMutationFailure delegating to the coordinator\n$output"
+        }
+        assert(output.contains("scoped.transactionCoordinator = this.transactionCoordinator")) {
+            "withPrivacyContext should propagate the coordinator to the scoped clone\n$output"
+        }
+
+        // No throwing/OrError transaction variant survives, and the
+        // visible-scan overfetch cap is gone with the visible* family.
+        assert(!output.contains("withTransactionOrError")) {
+            "withTransactionOrError should be removed — getOrThrow() is the only throwing projection\n$output"
+        }
+        assert(!output.contains("visibleOverfetchLimit")) {
+            "visibleOverfetchLimit should be gone from the client and config\n$output"
         }
     }
 

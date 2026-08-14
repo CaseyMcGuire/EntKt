@@ -80,19 +80,30 @@ class ViewerCodegenTest {
     fun `reads go through the generated repo terminals`() {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue("client.viewerUsers.query" in adapter, adapter)
-        assertTrue(".visibleAllOrError()" in adapter, adapter)
-        assertTrue("visibleByIdOrNull(parsed)" in adapter, adapter)
-        // Privacy-coherent pagination: exact hasNext probe only where nothing
-        // is filtered; windowed (hasNext = null) under load privacy; the
-        // visible-scan cap is an explicit 400, not a silent truncation.
-        assertTrue("val probe = !client.viewerUsers.hasLoadPrivacy()" in adapter, adapter)
-        assertTrue("hasNext = rows.size > request.pageSize" in adapter, adapter)
-        assertTrue("hasNext = null, privacyFiltered = true" in adapter, adapter)
-        assertTrue("OverfetchCapExceeded" in adapter, adapter)
+        // list: the strict all() terminal over an overfetch-by-one page.
+        assertTrue(".all()" in adapter, adapter)
+        assertTrue("val fetchLimit = request.pageSize + 1" in adapter, adapter)
+        assertTrue("is ReadResult.Success -> result.value" in adapter, adapter)
+        // A Root LOAD denial renders as an empty privacy-filtered page
+        // (hasNext unknown); any other read failure propagates.
         assertTrue(
-            "request.pageSize >= client.visibleOverfetchLimit" in adapter,
-            "cap boundary is pre-rejected deterministically: " + adapter,
+            "if (e is EntPrivacyDeniedException && e.origin is LoadDenialOrigin.Root) " +
+                "{ return EntViewerListResult(emptyList(), hasNext = null, privacyFiltered = true) } throw e" in adapter,
+            adapter,
         )
+        assertTrue("hasNext = rows.size > request.pageSize" in adapter, adapter)
+        // get: findById + visibleOrNull — an individually denied row
+        // reads as absent (null), not as an error.
+        assertTrue(
+            "client.viewerUsers.findById(parsed).visibleOrNull().getOrThrow() ?: return null" in adapter,
+            adapter,
+        )
+        // Removed legacy surface: no visible* scanning terminals, no
+        // overfetch cap machinery.
+        assertFalse("visibleAllOrError" in adapter, adapter)
+        assertFalse("visibleByIdOrNull" in adapter, adapter)
+        assertFalse("visibleOverfetchLimit" in adapter, adapter)
+        assertFalse("OverfetchCapExceeded" in adapter, adapter)
         assertFalse("client.driver" in adapter, "must not touch the raw driver: $adapter")
         assertFalse("Driver.query" in adapter, "must not touch the raw driver: $adapter")
     }

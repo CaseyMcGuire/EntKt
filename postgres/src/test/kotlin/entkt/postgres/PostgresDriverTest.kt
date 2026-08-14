@@ -17,10 +17,13 @@ import entkt.query.TraversalSourceShape
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.ForeignKeyRef
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.IndexMetadata
 import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.result.NestedTransactionUnsupportedException
+import entkt.runtime.result.TransactionFailureState
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import org.postgresql.ds.PGSimpleDataSource
@@ -35,6 +38,8 @@ import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -139,6 +144,9 @@ private val M2M_USER_GROUP_SCHEMA = EntitySchema(
 
 private fun quoteIdent(identifier: String): String =
     "\"${identifier.replace("\"", "\"\"")}\""
+
+/** A JVM [Error] for pinning the roll-back-and-rethrow contract. */
+private class FatalTestError : Error("fatal")
 
 /**
  * Driver-contract tests for [PostgresDriver] against a real Postgres
@@ -546,28 +554,33 @@ class PostgresDriverTest {
     // ---------- Transactions ----------
 
     @Test
-    fun `withTransaction commits on success`() {
+    fun `withTransaction returns Success with the block value only after a confirmed commit`() {
         val driver = fresh()
-        driver.withTransaction { tx ->
+        val result = driver.withTransaction { tx ->
             tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
             tx.insert("users", mapOf<String, Any?>("name" to "Bob"))
+            "done"
         }
+        assertEquals(DriverTransactionResult.Success("done"), result)
         val rows = driver.query("users", emptyList(), emptyList(), null, null)
         assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
     }
 
     @Test
-    fun `withTransaction rolls back on exception`() {
+    fun `withTransaction rolls back on a block exception and stores it as Failed NotCommitted`() {
         val driver = fresh()
         driver.insert("users", mapOf<String, Any?>("name" to "Pre-existing"))
 
-        assertFailsWith<IllegalStateException> {
-            driver.withTransaction { tx ->
-                tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
-                tx.insert("users", mapOf<String, Any?>("name" to "Bob"))
-                error("boom")
-            }
+        val result = driver.withTransaction<Unit> { tx ->
+            tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
+            tx.insert("users", mapOf<String, Any?>("name" to "Bob"))
+            error("boom")
         }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val stored = assertIs<IllegalStateException>(failed.exception)
+        assertEquals("boom", stored.message)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
         val rows = driver.query("users", emptyList(), emptyList(), null, null)
         assertEquals(listOf("Pre-existing"), rows.map { it["name"] })
     }
@@ -575,26 +588,108 @@ class PostgresDriverTest {
     @Test
     fun `withTransaction supports queries inside the transaction`() {
         val driver = fresh()
-        driver.withTransaction { tx ->
+        val result = driver.withTransaction { tx ->
             tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
             // Should see the uncommitted insert within the same transaction.
             val rows = tx.query("users", emptyList(), emptyList(), null, null)
             assertEquals(1, rows.size)
             assertEquals("Alice", rows.single()["name"])
         }
+        assertIs<DriverTransactionResult.Success<*>>(result)
     }
 
     @Test
-    fun `nested withTransaction reuses the same transaction`() {
+    fun `a swallowed failed statement rolls back and reports the aborted state as Failed`() {
         val driver = fresh()
-        driver.withTransaction { outer ->
+        driver.insert("users", mapOf<String, Any?>("name" to "Pre-existing"))
+
+        // The block swallows a NOT NULL violation and completes anyway.
+        // The transaction is in PostgreSQL's aborted state; pgjdbc would
+        // silently turn the COMMIT into a ROLLBACK, so the driver must
+        // roll back and report the aborted state structurally instead of
+        // returning Success for work that never persisted.
+        val result = driver.withTransaction { tx ->
+            tx.insert("users", mapOf<String, Any?>("name" to "Alice"))
+            runCatching { tx.insert("users", mapOf<String, Any?>("name" to null)) }
+            "swallowed"
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val aborted = assertIs<IllegalStateException>(failed.exception)
+        assertEquals(TRANSACTION_ABORTED_MESSAGE, aborted.message)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(listOf("Pre-existing"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `CancellationException rolls back and rethrows instead of being stored in Failed`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Pre-existing"))
+
+        assertFailsWith<java.util.concurrent.CancellationException> {
+            driver.withTransaction<Unit> { tx ->
+                tx.insert("users", mapOf<String, Any?>("name" to "Doomed"))
+                throw java.util.concurrent.CancellationException("cancelled")
+            }
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(listOf("Pre-existing"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `JVM Errors roll back and rethrow instead of being stored in Failed`() {
+        val driver = fresh()
+        driver.insert("users", mapOf<String, Any?>("name" to "Pre-existing"))
+
+        assertFailsWith<FatalTestError> {
+            driver.withTransaction<Unit> { tx ->
+                tx.insert("users", mapOf<String, Any?>("name" to "Doomed"))
+                throw FatalTestError()
+            }
+        }
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(listOf("Pre-existing"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `nested withTransaction throws before the nested block runs and leaves the outer usable`() {
+        val driver = fresh()
+        var nestedBlockRan = false
+        val result = driver.withTransaction { outer ->
+            outer.insert("users", mapOf<String, Any?>("name" to "Alice"))
+            assertFailsWith<NestedTransactionUnsupportedException> {
+                outer.withTransaction { inner ->
+                    nestedBlockRan = true
+                    inner.insert("users", mapOf<String, Any?>("name" to "Bob"))
+                }
+            }
+            // The guard fired before the nested block, before any
+            // savepoint, and before any transaction I/O — so the outer
+            // transaction is unchanged and still usable once the block
+            // catches the exception.
+            outer.insert("users", mapOf<String, Any?>("name" to "Carol"))
+            "outer-committed"
+        }
+        assertFalse(nestedBlockRan, "the nested block must never run")
+        assertEquals(DriverTransactionResult.Success("outer-committed"), result)
+        val rows = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(setOf("Alice", "Carol"), rows.map { it["name"] }.toSet())
+    }
+
+    @Test
+    fun `an uncaught nested withTransaction fails the outer transaction with a confirmed rollback`() {
+        val driver = fresh()
+        val result = driver.withTransaction { outer ->
             outer.insert("users", mapOf<String, Any?>("name" to "Alice"))
             outer.withTransaction { inner ->
                 inner.insert("users", mapOf<String, Any?>("name" to "Bob"))
             }
         }
-        val rows = driver.query("users", emptyList(), emptyList(), null, null)
-        assertEquals(setOf("Alice", "Bob"), rows.map { it["name"] }.toSet())
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertIs<NestedTransactionUnsupportedException>(failed.exception)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals(emptyList(), driver.query("users", emptyList(), emptyList(), null, null))
     }
 
     @Test
@@ -928,12 +1023,12 @@ class PostgresDriverTest {
         val driver = PostgresDriver(dataSource, autoDdl = true)
         // register() inside withTransaction should run DDL outside
         // the transaction — the table should exist even if we roll back.
-        assertFailsWith<IllegalStateException> {
-            driver.withTransaction { tx ->
-                tx.register(USER_SCHEMA)
-                error("rollback")
-            }
+        val result = driver.withTransaction<Unit> { tx ->
+            tx.register(USER_SCHEMA)
+            error("rollback")
         }
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
         // Table should still exist despite rollback.
         driver.register(USER_SCHEMA)  // idempotent, no error
         // Verify by inserting outside the transaction.
@@ -1141,17 +1236,18 @@ class PostgresDriverTest {
         // It must block until the holder's transaction commits.
         val contender = thread(start = false, name = "relationship-lock-contender") {
             try {
-                driver.withTransaction { tx ->
+                val result = driver.withTransaction { tx ->
                     bEntered.countDown()
                     tx.serializeRelationship(key) // blocks until the holder releases
                     order.add("B-acquired")
                 }
+                if (result is DriverTransactionResult.Failed) bError.set(result.exception)
             } catch (t: Throwable) {
                 bError.set(t)
             }
         }
 
-        driver.withTransaction { tx ->
+        val holderResult = driver.withTransaction { tx ->
             tx.serializeRelationship(key) // holder takes the lock first
             order.add("A-acquired")
             contender.start()
@@ -1162,6 +1258,7 @@ class PostgresDriverTest {
             assertEquals(listOf("A-acquired"), order.toList())
             order.add("A-releasing")
         } // holder's transaction commits → advisory lock released
+        assertIs<DriverTransactionResult.Success<*>>(holderResult)
 
         contender.join(5_000)
         assertNull(bError.get(), "contender thread failed: ${bError.get()}")

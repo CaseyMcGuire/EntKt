@@ -1,6 +1,7 @@
 package example.spring.friendships
 
 import entkt.runtime.mutation.orElse
+import entkt.runtime.result.getOrThrow
 import example.ent.Friendship
 import example.ent.FriendshipCreateHookContext
 import example.ent.FriendshipHooks
@@ -31,7 +32,7 @@ class FriendshipHooksConfig {
                 ((Friendship.requesterId eq requesterId) and (Friendship.recipientId eq recipientId))
                     or ((Friendship.requesterId eq recipientId) and (Friendship.recipientId eq requesterId)),
             )
-        }.allOrThrow()
+        }.all().getOrThrow()
         require(existing.isEmpty()) { "Friend request already exists" }
     }
 

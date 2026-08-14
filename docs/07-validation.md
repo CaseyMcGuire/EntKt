@@ -85,24 +85,32 @@ fun interface ValidationRule<in C> {
 Each operation gets its own context type, so rules are type-safe for
 the operation they guard.
 
-### ValidationException
+### EntValidationException
 
-When one or more rules return `Invalid`, a `ValidationException` is
-thrown containing all violations:
+When one or more rules return `Invalid`, the save fails with
+`MutationResult.Failed(EntValidationException)` containing all
+violations:
 
 ```kotlin
-class ValidationException(
-    val entity: String,
-    val violations: List<ValidationDecision.Invalid>,
-) : RuntimeException(
-    "Validation failed on $entity: ${violations.joinToString("; ") { it.message }}"
+class EntValidationException(
+    val entityType: String,
+    val operation: EntOperation,
+    val violations: List<ValidationViolation>,  // non-empty
+) : EntMutationException(MutationWriteState.NotPersisted, ...)
+
+data class ValidationViolation(
+    val message: String,
+    val field: String? = null,
+    val code: String? = null,
 )
 ```
 
-All violations are collected before throwing, so API consumers can
-display every problem at once rather than fixing them one at a time.
-Each `Invalid` carries its `message`, optional `field`, and optional
-`code` for programmatic access.
+All violations are collected before the result is built, so API
+consumers can display every problem at once rather than fixing them one
+at a time. Each violation carries its `message`, optional `field`, and
+optional `code` for programmatic access. The exception hardcodes
+`writeState = NotPersisted` — validation always rejects before the
+write — and `.getOrThrow()` throws it directly.
 
 ## Setting Up Validation
 
@@ -187,8 +195,9 @@ that name unknown / forbidden target ids by inspecting
 the id even when the database effect is a no-op.
 
 By the time validation runs, the post-hook required-not-null check has
-already fired, so a dirty + null required field would have thrown
-`IllegalStateException` before reaching validation. Validators can treat
+already fired, so a dirty + null required field would have failed the
+save with `MutationResult.Failed(EntValidationException)` before
+reaching entity validation. Validators can treat
 `FieldPatch.Set(value)` for required fields as having a non-null value
 and `FieldPatch.Unset` as "not in this update".
 
@@ -216,8 +225,9 @@ from the same transaction.
 Privacy-rule contexts expose `EntPrivacyReadClient` instead, whose reads use
 the caller's privacy context. Both concrete types implement the shared
 `EntReadClient` interface: helpers that work correctly under either posture
-can accept `EntReadClient` (and must then avoid raw terminals, which throw on
-privacy readers), while helpers that rely on privacy-bypassing reads should
+can accept `EntReadClient` (and must then avoid raw terminals, which fail with
+`ReadResult.Failed(IllegalStateException)` on privacy readers), while helpers
+that rely on privacy-bypassing reads should
 accept `EntValidationReadClient` so they cannot be handed a viewer-scoped
 reader. See [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
@@ -241,7 +251,8 @@ data class PostWriteCandidate(
 ## Evaluation Semantics
 
 All rules for an operation run unconditionally. Invalid results are
-collected into one `ValidationException`.
+collected into one `EntValidationException` carried by
+`MutationResult.Failed`.
 
 `Viewer.PrivacyBypass` does **not** bypass validation. Validation enforces
 data model invariants that apply regardless of who is performing the
@@ -259,25 +270,27 @@ all checks.
 4. CREATE entity validation
 5. persistence
 6. afterCreate hooks
-7. LOAD privacy on the returned entity
+7. LOAD privacy on the returned entity (saveAndLoad() only)
 ```
 
 ### Update
 
 ```
-1. empty-request check and current-entity load
+1. current-entity load (absent target → Failed(EntTargetAbsentException))
 2. beforeSave and beforeUpdate hooks
 3. required-field checks, update defaults, and field validation
 4. UPDATE privacy
 5. UPDATE entity validation
 6. persistence
 7. afterUpdate hooks
-8. LOAD privacy on the returned entity
+8. LOAD privacy on the returned entity (saveAndLoad() only)
 ```
 
-An empty request throws `EntNoChangesException`. If update hooks remove every
-requested change, UPDATE privacy still runs, then the operation throws
-`EntNoChangesException` without running entity validation or `afterUpdate`.
+An assignment-free update — an empty request, or one whose hooks removed
+every requested change — is not an error: after the target is confirmed
+to exist, UPDATE privacy and entity validation still run against the
+unchanged candidate, persistence and `afterUpdate` are skipped, and the
+save completes as `Success`.
 
 ### Delete
 
@@ -301,11 +314,11 @@ Since validation contexts receive a System-scoped client, validators
 can query the database without being blocked by LOAD privacy.
 
 **Validators are read-only — by type, not by convention.** The context
-exposes `EntValidationReadClient`, whose per-entity repos carry the
-byId family, the full `query { }` DSL with every terminal (`all` /
-`first` / `visible` families, counts, exists, aggregates, `explain*`),
-and the generated index helpers — and nothing else. `create`,
-`update`, `save`, the `delete*` family, edge mutators, and
+exposes `EntValidationReadClient`, whose per-entity repos carry
+`findById`, the full `query { }` DSL with every terminal
+(`all` / `firstOrNull`, `rawCount` / `rawExists`, the raw aggregates,
+`explain*`), and the generated index helpers — and nothing else.
+`create`, `update`, `save`, the `delete*` family, edge mutators, and
 `withTransaction` do not exist on it, so a validator that tries to
 mutate fails to compile. Validators answer "is this state valid?", not
 "make it valid" — mutating inside a validator would bypass the calling
@@ -325,7 +338,7 @@ class UniqueSlug : PostCreateValidationRule {
     override fun validate(ctx: PostCreateValidationContext): ValidationDecision {
         val exists = ctx.client.posts.query {
             where(Post.slug eq ctx.candidate.slug)
-        }.rawExists()
+        }.rawExists().getOrThrow()
         return if (exists) ValidationDecision.Invalid("slug already taken")
         else ValidationDecision.Valid
     }
@@ -333,19 +346,23 @@ class UniqueSlug : PostCreateValidationRule {
 
 class AuthorExists : PostCreateValidationRule {
     override fun validate(ctx: PostCreateValidationContext): ValidationDecision {
-        val author = ctx.client.users.byIdOrNull(ctx.candidate.authorId)
+        val author = ctx.client.users.findById(ctx.candidate.authorId).getOrThrow()
         return if (author == null) ValidationDecision.Invalid("author does not exist")
         else ValidationDecision.Valid
     }
 }
 ```
 
+A read failure inside a rule is fine to surface with `.getOrThrow()`:
+the calling save's terminal captures the thrown exception as
+`Failed(EntUnexpectedMutationException)`, preserving it as the cause.
+
 Index helpers work too — they are query sugar and equally read-only:
 
 ```kotlin
 class UniqueEmail : UserCreateValidationRule {
     override fun validate(ctx: UserCreateValidationContext): ValidationDecision =
-        if (ctx.client.users.indexes.email(ctx.candidate.email).orNull() != null) {
+        if (ctx.client.users.indexes.email(ctx.candidate.email).find().getOrThrow() != null) {
             ValidationDecision.Invalid("email already taken", field = "email")
         } else {
             ValidationDecision.Valid
@@ -392,9 +409,11 @@ validation {
 ## Bulk Operations
 
 **Bulk methods (`createMany`, `deleteMany`) delegate per item.** Each
-item runs the full validation pipeline independently. Execution stops
-on the first validation failure. Prior items may already be written
-unless the caller wraps the operation in a transaction.
+item runs the full validation pipeline independently, and the whole
+operation is atomic: it shares one transaction (the caller's, or an
+EntKt-owned one when the caller has none), so the first validation
+failure aborts the batch with `Failed(EntValidationException)` and a
+confirmed rollback leaves no committed subset.
 
 ## Generated Validation API
 
@@ -409,7 +428,7 @@ For each schema, entkt provides:
 | `{Entity}UpdateValidationContext` | Context for update validators |
 | `{Entity}DeleteValidationContext` | Context for delete validators |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
-| `{Entity}ReadRepo` | Read-only repo exposed to validators (byId family, `query { }`, index helpers) |
+| `{Entity}ReadRepo` | Read-only repo exposed to validators (`findById`, `query { }`, index helpers) |
 | `EntValidationReadClient` | Read client in validation contexts — privacy-bypassing reads (schema-set-level) |
 | `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |
 
@@ -418,7 +437,7 @@ the existing `privacy { }` method. The `{Entity}WriteCandidate` is
 shared between privacy and validation contexts.
 
 Validation contexts expose the read-only `EntValidationReadClient`.
-Validators can use its `byId` methods, `query { ... }`, and indexed
+Validators can use its `findById`, `query { ... }`, and indexed
 query helpers, but cannot create, update, or delete entities.
 
 ## Relationship to Other Concepts
@@ -473,7 +492,7 @@ class CannotDeleteWithOpenInvoices : UserDeleteValidationRule {
     override fun validate(ctx: UserDeleteValidationContext): ValidationDecision {
         val openCount = ctx.client.invoices.query {
             where(Invoice.userId eq ctx.entity.id and (Invoice.status eq Status.OPEN))
-        }.rawCount()
+        }.rawCount().getOrThrow()
         return if (openCount > 0) {
             ValidationDecision.Invalid("user has $openCount open invoice(s)")
         } else {

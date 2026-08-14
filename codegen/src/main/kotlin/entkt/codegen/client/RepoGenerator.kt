@@ -19,6 +19,22 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.mutation.MUTATION_CANCELLATION_EXCEPTION
+import entkt.codegen.mutation.MUTATION_ENTITY_KEY
+import entkt.codegen.mutation.MUTATION_ENT_OPERATION
+import entkt.codegen.mutation.MUTATION_RESULT
+import entkt.codegen.mutation.MUTATION_VALIDATION_VIOLATION
+import entkt.codegen.mutation.MUTATION_WRITE_STATE
+import entkt.codegen.mutation.ENT_MUTATION_EXCEPTION
+import entkt.codegen.mutation.ENT_UNEXPECTED_MUTATION_EXCEPTION
+import entkt.codegen.mutation.ENT_VALIDATION_EXCEPTION
+import entkt.codegen.mutation.KOTLIN_EXCEPTION
+import entkt.codegen.mutation.buildClassifyDriverFailureHelper
+import entkt.codegen.mutation.driverCallFailureTail
+import entkt.codegen.mutation.indented
+import entkt.codegen.mutation.privacyDeniedFailure
+import entkt.codegen.mutation.recordAndReturnFailure
+import entkt.codegen.pluralize
 import entkt.codegen.query.indexHelperTree
 import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
@@ -32,22 +48,15 @@ private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateCons
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
-private val PRIVACY_DENIED = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
+private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
+private val ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
 private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val VALIDATION_DECISION = ClassName("entkt.runtime.validation", "ValidationDecision")
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
-private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
-private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
-private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
-private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
-private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime.query", "QuerySpecBuilder")
-private val QUERY_CONTEXT = ClassName("entkt.runtime.query", "QueryContext")
+private val TO_VALIDATION_VIOLATION = MemberName("entkt.runtime.result", "toValidationViolation")
+private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
+private val TRANSACTION_FAILURE_STATE = ClassName("entkt.runtime.result", "TransactionFailureState")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
-private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime.query", "InterceptorEngine")
-private val OP = ClassName("entkt.query", "Op")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -204,21 +213,18 @@ internal class RepoGenerator(
                     )
                     .build()
             )
-            .addFunction(buildByIdOrNull(schemaName, entityClass, idType, clientRef = "client"))
-            .addFunction(buildByIdOrThrow(entityClass, idType))
-            .addFunction(buildVisibleByIdOrNull(entityClass, idType))
-            .addFunction(buildByIdOrError(schemaName, entityClass, idType))
-            .addFunctions(buildByIdExplainMethods(schemaName, entityClass, idType, clientRef = "client"))
-            .addFunction(buildDeleteOrThrow(schemaName, entityClass))
-            .addFunction(buildDeleteOrError(schemaName, entityClass))
-            .addFunction(buildDeleteLoaded(entityClass))
-            .addFunction(buildDeleteByIdOrError(schemaName, entityClass, idType))
+            .addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
+            .addFunction(buildFindByIdExplainMethod(schemaName, entityClass, idType, clientRef = "client"))
+            .addFunction(buildDelete(schemaName, entityClass))
+            .addFunction(buildDeleteLoaded(schemaName, entityClass))
+            .addFunction(buildDeleteById(schemaName, entityClass, idType))
             .also { builder ->
                 if (idStrategyName(schema) != "EXPLICIT") {
-                    builder.addFunction(buildCreateManyOrError(schemaName, entityClass, createLambda))
+                    builder.addFunction(buildCreateMany(schemaName, entityClass, createLambda, idType))
                 }
             }
-            .addFunction(buildDeleteMany(schemaName, entityClass, candidateClass))
+            .addFunction(buildDeleteMany(schemaName, entityClass))
+            .addFunction(buildClassifyDriverFailureHelper(schemaName, "DELETE"))
             .addFunction(buildApplyHooks(entityHooksClass))
             .addFunction(buildCopyHooksFrom(repoClass))
             .addFunction(buildApplyPrivacy(privacyConfigClass))
@@ -227,10 +233,10 @@ internal class RepoGenerator(
             .addFunction(buildHasPrivacy("hasCreatePrivacy"))
             .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             .addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            .addFunction(buildEvaluateLoadPrivacy(schemaName, entityClass, loadCtxClass))
-            .addFunction(buildEvaluateCreatePrivacy(schemaName, candidateClass))
-            .addFunction(buildEvaluateUpdatePrivacy(schemaName, entityClass, candidateClass))
-            .addFunction(buildEvaluateDeletePrivacy(schemaName, entityClass, candidateClass))
+            .addFunction(buildLoadDenialOrNull(schemaName, entityClass, loadCtxClass))
+            .addFunction(buildCreateDenialReasonOrNull(schemaName, candidateClass))
+            .addFunction(buildUpdateDenialReasonOrNull(schemaName, entityClass, candidateClass))
+            .addFunction(buildDeleteDenialReasonOrNull(schemaName, entityClass, candidateClass))
             .addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
             .addFunction(buildApplyValidation(validationConfigClass))
             .addFunction(buildCopyValidationFrom(repoClass))
@@ -255,84 +261,46 @@ internal class RepoGenerator(
     }
 
     /**
-     * `deleteOrThrow(entity): Unit` — strict delete. Throws structured
-     * EntException subclasses for every failure surface; on the happy
-     * path the row is gone (or was already gone concurrently — see
-     * the note in [buildDeleteOrError] for why "already gone" is
-     * silent here).
+     * `delete(entity): MutationResult<Unit>` — idempotent entity-handle
+     * delete. `Success(Unit)` means the row is absent afterward,
+     * whether this call deleted it or it was already absent.
      */
-    private fun buildDeleteOrThrow(schemaName: String, entityClass: ClassName): FunSpec {
-        return FunSpec.builder("deleteOrThrow")
-            .addParameter("entity", entityClass)
-            .returns(UNIT)
-            .addStatement(
-                "deleteOrError(entity).%M()",
-                MemberName("entkt.runtime.result", "getOrThrow"),
-            )
-            .build()
-    }
-
-    /**
-     * `deleteOrError(entity): EntResult<Unit>` — structured-result
-     * delete. Returns `Ok(Unit)` on a successful delete OR a
-     * silent no-op (the entity already vanished concurrently); the
-     * Boolean "was-deleted?" signal is intentionally dropped here
-     * because the caller passed an entity it had in hand, so this is
-     * not exceptional.
-     *
-     * The passed entity is an **id handle only**: the current row is
-     * reloaded and DELETE privacy / validation / hooks all run
-     * against that fresh state, never the caller's copy. Generated
-     * entities are public data classes, so an entity's fields are
-     * caller-controlled — authorizing against them would let a
-     * fabricated or stale entity approve deleting a row whose actual
-     * state the viewer may not touch. The reload matches `save()`,
-     * which authorizes against its freshly loaded `row0`, and
-     * `deleteByIdOrError`, which has always loaded before deciding.
-     * The read bypasses repo-level LOAD privacy for the same reason
-     * `deleteByIdOrError`'s does — the delete-side privacy rule is
-     * the authoritative check.
-     *
-     * Failure mapping mirrors saveOrError: PrivacyDenied →
-     * Err(PrivacyDenied); delete-side ValidationException →
-     * Err(ValidationFailed); EntException carried through; any other
-     * Exception routed through [classifyDriverError] so SQLSTATE
-     * 23xxx (e.g. an FK-from-other-rows constraint blocking the
-     * delete) surfaces as Err(ConstraintViolation).
-     */
-    private fun buildDeleteOrError(schemaName: String, entityClass: ClassName): FunSpec {
-        val resultType = ENT_RESULT.parameterizedBy(UNIT)
-        return FunSpec.builder("deleteOrError")
+    private fun buildDelete(schemaName: String, entityClass: ClassName): FunSpec {
+        val resultType = MUTATION_RESULT.parameterizedBy(UNIT)
+        return FunSpec.builder("delete")
             .addParameter("entity", entityClass)
             .returns(resultType)
+            .addKdoc(
+                "Delete [entity]'s row. The passed entity is an **id handle\n" +
+                    "only**: the current row is reloaded (bypassing LOAD privacy — the\n" +
+                    "delete-side privacy rule is the authoritative check) and DELETE\n" +
+                    "privacy / validation / lifecycle hooks all run against that fresh\n" +
+                    "state, never the caller's copy. `Success(Unit)` means the row is\n" +
+                    "absent afterward — whether this call deleted it or it was already\n" +
+                    "absent (an absent row runs no callbacks; the Boolean affected-row\n" +
+                    "signal lives on [deleteById]). Absence is never\n" +
+                    "`EntTargetAbsentException`. `Failed` carries a typed\n" +
+                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
+                    "records the database effect; `Failed` does NOT imply the delete\n" +
+                    "rolled back. There is no `orNull()` projection — project with\n" +
+                    "`getOrThrow()` or match on the result.",
+            )
             .addCode(
                 CodeBlock.builder()
                     .add("return try {\n")
                     .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
-                    .add("  val row = driver.byId(%T.TABLE, entity.id)\n", entityClass)
-                    .add("  if (row != null) deleteLoaded(%T.fromRow(row))\n", entityClass)
-                    .add("  %T.Ok(Unit)\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
-                    .add(
-                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                    )
-                    .add("} catch (e: %T) {\n", VALIDATION_EXCEPTION)
-                    .add(
-                        "  %T.Err(%T.ValidationFailed(e.entity, %T.DELETE, e.violations.map { it.%M() }))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                        MemberName("entkt.runtime.result", "toValidationViolation"),
-                    )
-                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime.result", "EntException"))
-                    .add("  %T.Err(e.error)\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
-                    .add(
-                        "  %T.Err(%M(driver, e, %S, %T.DELETE))\n",
-                        ENT_RESULT,
-                        MemberName("entkt.runtime.driver", "classifyDriverError"),
-                        schemaName, ENT_OPERATION,
-                    )
-                    .add("}\n")
+                    .add("  val row = try {\n")
+                    .add("    driver.byId(%T.TABLE, entity.id)\n", entityClass)
+                    .add(driverCallFailureTail("NotPersisted").indented())
+                    .add("  if (row == null) {\n")
+                    .add("    %T.Success(Unit)\n", MUTATION_RESULT)
+                    .add("  } else {\n")
+                    .add("    when (val result = deleteLoaded(%T.fromRow(row))) {\n", entityClass)
+                    .add("      is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
+                    .add("      is %T.Failed -> result\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("  }\n")
+                    .add(terminalBoundaryTailExpression())
                     .build(),
             )
             .build()
@@ -342,87 +310,88 @@ internal class RepoGenerator(
      * Private internal-only delete pipeline that assumes the caller
      * already ran the transaction-requirement preflight AND passes an
      * entity freshly loaded from the database — every caller reloads
-     * (`deleteOrError` and `deleteByIdOrError` via `byId`, `deleteMany`
+     * ([buildDelete] and [buildDeleteById] via `byId`, deleteMany
      * via its candidate query), so privacy, validation, and hooks
      * always see current row state rather than a caller-controlled
-     * copy. Extracting this avoids the double preflight that
-     * `deleteByIdOrError -> deleteOrError` and
-     * `deleteMany -> deleteOrError` would otherwise do.
+     * copy. Extracting this avoids a double preflight and keeps ONE
+     * classified delete pipeline for all three terminals.
+     *
+     * Positional classification: a rule-RETURNED Deny / Invalid from
+     * the decision-returning evaluators becomes the typed
+     * privacy/validation exception (hardcoded NotPersisted); the
+     * `driver.delete` statement routes exceptions through
+     * `_classifyDriverFailure` with the PersistenceUnknown write
+     * fallback; every other exception (hooks, rule bodies) is foreign
+     * and reaches the terminal boundary as
+     * `EntUnexpectedMutationException` with the current write state —
+     * NotPersisted before the delete, TransactionPending / Committed
+     * for afterDelete hooks once the row was removed.
+     *
+     * `Success(true)` = this call removed the row; `Success(false)` =
+     * the row vanished between reload and delete (before-delete hooks
+     * may have run; after-delete hooks did not).
      */
     private fun buildDeleteLoaded(
+        schemaName: String,
         entityClass: ClassName,
     ): FunSpec {
         return FunSpec.builder("deleteLoaded")
             .addModifiers(KModifier.PRIVATE)
             .addParameter("entity", entityClass)
-            .returns(Boolean::class)
-            .addStatement("val privacy = client.currentPrivacyContext()")
-            .addStatement("val candidate = buildDeleteCandidate(entity)")
-            .addStatement("evaluateDeletePrivacy(privacy, entity, candidate)")
-            .addStatement("evaluateDeleteValidation(entity, candidate)")
-            .addStatement("for (hook in beforeDeleteHooks) hook(entity)")
-            .addStatement("val deleted = driver.delete(%T.TABLE, entity.id)", entityClass)
-            .addStatement("if (deleted) for (hook in afterDeleteHooks) hook(entity)")
-            .addStatement("return deleted")
-            .build()
-    }
-
-    /**
-     * `deleteByIdOrError(id): EntResult<Boolean>` — structured-result
-     * idempotent delete-by-id. Returns `Ok(true)` when a row was
-     * actually deleted, `Ok(false)` when no row existed. Missing rows
-     * are idempotent no-ops here; failure variants are the same set
-     * saveOrError /
-     * deleteOrError produce.
-     *
-     * Reads via the bare driver, bypassing repo-level LOAD privacy —
-     * the delete-side privacy rule runs inside `deleteLoaded` and is
-     * the authoritative check.
-     */
-    private fun buildDeleteByIdOrError(
-        schemaName: String,
-        entityClass: ClassName,
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        val resultType = ENT_RESULT.parameterizedBy(Boolean::class.asClassName())
-        return FunSpec.builder("deleteByIdOrError")
-            .addParameter("id", idType)
-            .returns(resultType)
+            .returns(MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName()))
             .addCode(
                 CodeBlock.builder()
-                    .add("return try {\n")
-                    .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
+                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+                    .add("try {\n")
+                    // Posture snapshot inside the terminal boundary —
+                    // see CreateGenerator.
                     .add(
-                        "  val row = driver.byId(%T.TABLE, id)\n",
-                        entityClass,
+                        "  val postWriteState = if (driver.inTransaction) %T.TransactionPending else %T.Committed\n",
+                        MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
                     )
-                    .add("  if (row == null) {\n")
-                    .add("    %T.Ok(false)\n", ENT_RESULT)
-                    .add("  } else {\n")
+                    .add("  val privacy = client.currentPrivacyContext()\n")
+                    .add("  val candidate = buildDeleteCandidate(entity)\n")
+                    .add("  val denialReason = deleteDenialReasonOrNull(privacy, entity, candidate)\n")
+                    .add("  if (denialReason != null) {\n")
                     .add(
-                        "    %T.Ok(deleteLoaded(%T.fromRow(row)))\n",
-                        ENT_RESULT, entityClass,
+                        privacyDeniedFailure(
+                            writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                            schemaName = schemaName,
+                            operationName = "DELETE",
+                            entityKeyExpr = CodeBlock.of("%T(%S, entity.id)", MUTATION_ENTITY_KEY, "id"),
+                            reasonExpr = "denialReason",
+                        ).indented(),
                     )
                     .add("  }\n")
-                    .add("} catch (e: %T) {\n", PRIVACY_DENIED)
+                    .add("  val violations = evaluateDeleteValidation(entity, candidate)\n")
+                    .add("  if (violations.isNotEmpty()) {\n")
                     .add(
-                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
+                        recordAndReturnFailure(
+                            CodeBlock.of(
+                                "%T(%S, %T.DELETE, violations)",
+                                ENT_VALIDATION_EXCEPTION, schemaName, MUTATION_ENT_OPERATION,
+                            ),
+                        ).indented(),
                     )
-                    .add("} catch (e: %T) {\n", VALIDATION_EXCEPTION)
+                    .add("  }\n")
+                    .add("  for (hook in beforeDeleteHooks) hook(entity)\n")
+                    .add("  val deleted = try {\n")
+                    .add("    driver.delete(%T.TABLE, entity.id)\n", entityClass)
+                    .add(driverCallFailureTail("PersistenceUnknown").indented())
+                    .add("  if (deleted) {\n")
                     .add(
-                        "  %T.Err(%T.ValidationFailed(e.entity, %T.DELETE, e.violations.map { it.%M() }))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                        MemberName("entkt.runtime.result", "toValidationViolation"),
+                        "    writeState = postWriteState\n",
                     )
-                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime.result", "EntException"))
-                    .add("  %T.Err(e.error)\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add("    for (hook in afterDeleteHooks) hook(entity)\n")
+                    .add("  }\n")
+                    .add("  return %T.Success(deleted)\n", MUTATION_RESULT)
+                    .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("  throw e\n")
+                    .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
                     .add(
-                        "  %T.Err(%M(driver, e, %S, %T.DELETE))\n",
-                        ENT_RESULT,
-                        MemberName("entkt.runtime.driver", "classifyDriverError"),
-                        schemaName, ENT_OPERATION,
+                        recordAndReturnFailure(
+                            CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
+                        ).indented(),
                     )
                     .add("}\n")
                     .build(),
@@ -430,20 +399,86 @@ internal class RepoGenerator(
             .build()
     }
 
+    /**
+     * `deleteById(id): MutationResult<Boolean>` — idempotent
+     * delete-by-id preserving the affected-row acknowledgement.
+     */
+    private fun buildDeleteById(
+        schemaName: String,
+        entityClass: ClassName,
+        idType: com.squareup.kotlinpoet.TypeName,
+    ): FunSpec {
+        val resultType = MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName())
+        return FunSpec.builder("deleteById")
+            .addParameter("id", idType)
+            .returns(resultType)
+            .addKdoc(
+                "Delete the row with [id] through the same reload-then-delete\n" +
+                    "pipeline as [delete], preserving the affected-row signal:\n" +
+                    "`Success(true)` only when this call deleted the row,\n" +
+                    "`Success(false)` when the row was absent at reload time or\n" +
+                    "disappeared before the final delete — never\n" +
+                    "`EntTargetAbsentException`. An absent row runs no DELETE privacy,\n" +
+                    "validation, or lifecycle callbacks. The reload bypasses LOAD\n" +
+                    "privacy — the delete-side privacy rule is the authoritative check.\n" +
+                    "`Failed` carries a typed\n" +
+                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
+                    "records the database effect; `Failed` does NOT imply the delete\n" +
+                    "rolled back. There is no `orNull()` projection — project with\n" +
+                    "`getOrThrow()` or match on the result.",
+            )
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
+                    .add("  val row = try {\n")
+                    .add("    driver.byId(%T.TABLE, id)\n", entityClass)
+                    .add(driverCallFailureTail("NotPersisted").indented())
+                    .add("  if (row == null) {\n")
+                    .add("    %T.Success(false)\n", MUTATION_RESULT)
+                    .add("  } else {\n")
+                    .add("    deleteLoaded(%T.fromRow(row))\n", entityClass)
+                    .add("  }\n")
+                    .add(terminalBoundaryTailExpression())
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `deleteMany(vararg predicates): MutationResult<Int>` — strict,
+     * ATOMIC bulk delete. Candidate selection flows through the
+     * read-interceptor chain (operation = DELETE_CANDIDATES) so
+     * predicate-shaping interceptors (tenant scoping, framework
+     * soft-delete, etc.) apply uniformly to bulk deletes — a bulk
+     * delete can NOT escape read-side scoping that would have hidden
+     * the same rows on the read path. Per-entity DELETE privacy /
+     * validation / hooks run inside `deleteLoaded` for each candidate,
+     * classified positionally like the single-row pipeline; a denied
+     * or invalid candidate is never silently skipped.
+     *
+     * Atomicity: inside a caller-owned transaction the selection and
+     * per-row deletes run in place — the first per-row `Failed` is
+     * recorded on the coordinator (rollback-only) and returned, so the
+     * rows already staged cannot commit. Outside a transaction the
+     * terminal self-delegates through the canonical
+     * `client.withTransaction` boundary so atomicity and rollback are
+     * owned by the tested runtime path, then converts the
+     * `TransactionResult` (a confirmed rollback with a recorded
+     * mutation exception is returned as-is; anything else wraps into
+     * `EntUnexpectedMutationException` with NotPersisted after a
+     * confirmed rollback or PersistenceUnknown for an unknown
+     * outcome). Interceptor rejection of the candidate query is
+     * `Failed(EntUnexpectedMutationException(NotPersisted,
+     * EntQueryRejectedException))`.
+     */
     private fun buildDeleteMany(
         schemaName: String,
         entityClass: ClassName,
-        candidateClass: ClassName,
     ): FunSpec {
         val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
-        // deleteMany candidates flow through the read-interceptor
-        // chain (operation = DELETE_CANDIDATES, entOperation = DELETE)
-        // so predicate-shaping interceptors (tenant scoping, framework
-        // soft-delete, etc.) apply uniformly to bulk deletes — a
-        // bulk delete can NOT escape read-side scoping that would
-        // have hidden the same rows on the read path. Per-entity
-        // DELETE privacy / validation / hooks still run inside
-        // deleteLoaded for each surviving candidate.
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val resultType = MUTATION_RESULT.parameterizedBy(INT)
         return FunSpec.builder("deleteMany")
             .addParameter(
                 // vararg predicates: Predicate<EntityClass> — typed in
@@ -454,60 +489,173 @@ internal class RepoGenerator(
                     .addModifiers(KModifier.VARARG)
                     .build(),
             )
-            .returns(INT)
-            // Transaction-requirement preflight (transaction locking) — fires before
-            // the candidate query so:
-            //  - an empty-result call under RequiredForAllWrites still
-            //    throws (instead of silently returning 0 because
-            //    nothing matched), and a non-empty result doesn't get
-            //    partway through the candidate query before the
-            //    per-entity delete throws;
-            //  - RequiredForMultiWrite fires too — deleteMany is a
-            //    multi-write API regardless of how many rows match,
-            //    so we classify by operation shape before the query
-            //    rather than waiting for per-entity preflights to
-            //    each report single-write. (The per-entity delete
-            //    preflight then runs single-write inside the
-            //    transaction.) This mirrors empty-patch classification:
-            //    classify request shape before normalizing it.
-            .addStatement(
-                "client.checkTransactionRequirement(%S, multiWrite = true)",
-                "$schemaName deleteMany",
+            .returns(resultType)
+            .addKdoc(
+                "Atomically delete every row matching [predicates].\n" +
+                    "`Success(n)` is the number of rows removed; the whole operation\n" +
+                    "shares one transaction (the caller's, or an EntKt-owned one), so\n" +
+                    "a privacy, validation, hook, or driver failure on any candidate\n" +
+                    "leaves no committed subset after a confirmed rollback — no\n" +
+                    "denied or invalid candidate is silently skipped. `Failed` carries\n" +
+                    "a typed [entkt.runtime.result.EntMutationException] whose\n" +
+                    "`writeState` records the database effect; inside a caller-owned\n" +
+                    "transaction `Failed` marks the scope rollback-only rather than\n" +
+                    "implying an immediate rollback. There is no `orNull()`\n" +
+                    "projection — project with `getOrThrow()` or match on the result.",
             )
-            // Route candidate selection through runReadInterceptors
-            // on a transient *Query instance seeded with the caller's
-            // predicates. Caller predicates land tagged CALLER; any
-            // interceptor predicates land tagged INTERCEPTOR. The
-            // chain's rejection throws EntQueryRejectedException
-            // (since deleteMany returns Int, not EntResult).
-            // Seed predicates through the public `where()` DSL rather
-            // than writing the backing list directly — `predicates` on
-            // the generated query class is `private`, and the public
-            // DSL is functionally equivalent (both accumulate onto the
-            // same list) and keeps generated code on the documented
-            // public surface.
-            .addStatement(
-                "val q = %T(driver, client).apply { for (p in predicates) where(p) }",
-                queryClass,
+            .addCode(
+                CodeBlock.builder()
+                    .add("return try {\n")
+                    // Transaction-requirement preflight — classifies by
+                    // operation shape (multiWrite) against the CALLER's
+                    // transaction posture before any selection work; its
+                    // throw becomes Failed(EntUnexpectedMutationException(
+                    // NotPersisted, TransactionRequiredException)).
+                    .add(
+                        "  client.checkTransactionRequirement(%S, multiWrite = true)\n",
+                        "$schemaName deleteMany",
+                    )
+                    .add("  if (driver.inTransaction) {\n")
+                    // Caller-owned transaction: run selection + per-row
+                    // deletes in place. Seed predicates through the public
+                    // `where()` DSL rather than writing the backing list
+                    // directly — `predicates` on the generated query class
+                    // is `private`, and the public DSL is functionally
+                    // equivalent. The chain's rejection throws
+                    // EntQueryRejectedException, captured by the terminal
+                    // boundary below.
+                    .add(
+                        "    val q = %T(driver, client).apply { for (p in predicates) where(p) }\n",
+                        queryClass,
+                    )
+                    .add(
+                        "    val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES)\n",
+                        READ_OPERATION,
+                    )
+                    .add(
+                        "    val rows = driver.query(%T.TABLE, spec.predicates, emptyList(), null, null)\n",
+                        entityClass,
+                    )
+                    .add("    val entities = rows.map { %T.fromRow(it) }\n", entityClass)
+                    .add("    var count = 0\n")
+                    .add("    for (entity in entities) {\n")
+                    .add("      when (val result = deleteLoaded(entity)) {\n")
+                    .add("        is %T.Success -> if (result.value) count++\n", MUTATION_RESULT)
+                    // First per-row failure: already recorded on the
+                    // coordinator inside deleteLoaded (rollback-only), so
+                    // the rows staged so far roll back at the boundary.
+                    // When earlier rows already deleted, a NotPersisted
+                    // row failure would misdescribe the BATCH — staged
+                    // effects exist in the open transaction — so the bulk
+                    // result reports TransactionPending with the row
+                    // failure as its cause.
+                    .add("        is %T.Failed -> {\n", MUTATION_RESULT)
+                    .add("          val rowException = result.exception\n")
+                    .add(
+                        "          return if (count > 0 && rowException.writeState == %T.NotPersisted) {\n",
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add(
+                        "            val staged = %T(%T.TransactionPending, rowException)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+                    )
+                    .add("            client.replaceTransactionMutationFailure(rowException, staged)\n")
+                    .add("            %T.failedForInternalUse(staged)\n", MUTATION_RESULT)
+                    .add("          } else result\n")
+                    .add("        }\n")
+                    .add("      }\n")
+                    .add("    }\n")
+                    .add("    %T.Success(count)\n", MUTATION_RESULT)
+                    .add("  } else {\n")
+                    // EntKt-owned: self-delegate through the canonical
+                    // transaction boundary so atomicity + rollback are
+                    // owned by the tested runtime path (the nested call
+                    // takes the caller-owned branch above).
+                    .add("    val txResult = client.withTransaction { tx ->\n")
+                    .add("      tx.%L.deleteMany(*predicates).orRollback()\n", repoPropName)
+                    .add("    }\n")
+                    .add("    when (txResult) {\n")
+                    .add("      is %T.Success -> %T.Success(txResult.value)\n", TRANSACTION_RESULT, MUTATION_RESULT)
+                    .add("      is %T.Failed -> {\n", TRANSACTION_RESULT)
+                    .add(txFailureConversion().indented().indented().indented())
+                    .add("      }\n")
+                    .add("    }\n")
+                    .add("  }\n")
+                    .add(terminalBoundaryTailExpression())
+                    .build(),
             )
-            .addStatement(
-                "val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES, %T.DELETE)",
-                READ_OPERATION, ENT_OPERATION,
-            )
-            .addStatement(
-                "val rows = driver.query(%T.TABLE, spec.predicates, emptyList(), null, null)",
-                entityClass,
-            )
-            .addStatement("val entities = rows.map { %T.fromRow(it) }", entityClass)
-            .addStatement("var count = 0")
-            // Per-entity deletes go through the private `deleteLoaded` so
-            // they don't re-run the multi-write preflight that already
-            // ran above. (Going through public `deleteOrError` would
-            // call `checkTransactionRequirement` once per matching row.)
-            .addStatement("for (entity in entities) { if (deleteLoaded(entity)) count++ }")
-            .addStatement("return count")
             .build()
     }
+
+    /**
+     * Shared conversion of a `TransactionResult.Failed` from an
+     * EntKt-owned self-delegated bulk transaction into a
+     * `MutationResult` failure. After a confirmed rollback
+     * (`NotCommitted`), the RFC requires the bulk result to carry
+     * `NotPersisted`: a stored `EntMutationException` that already
+     * hardcodes `NotPersisted` (validation, privacy, target-absence,
+     * recognized constraints/conflicts — the common cases) passes
+     * through unchanged so typed catches keep working, while a stored
+     * exception carrying a mid-transaction state
+     * (`TransactionPending`/`PersistenceUnknown`) is re-reported as
+     * `EntUnexpectedMutationException(NotPersisted, stored)` — the
+     * rollback made `NotPersisted` the accurate batch state, and the
+     * original typed failure stays reachable as the cause. Any other
+     * confirmed-rollback exception wraps with NotPersisted, and an
+     * unknown outcome wraps with PersistenceUnknown. The record call
+     * is a no-op here (this path only runs outside a caller-owned
+     * transaction) but keeps every Failed construction site uniform.
+     */
+    private fun txFailureConversion(): CodeBlock =
+        CodeBlock.builder()
+            .add("val stored = txResult.exception\n")
+            .add(
+                "val exception = if (txResult.transactionState == %T.OutcomeUnknown) {\n",
+                TRANSACTION_FAILURE_STATE,
+            )
+            .add("  %T(%T.PersistenceUnknown, stored)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE)
+            .add(
+                "} else if (stored is %T && stored.writeState == %T.NotPersisted) {\n",
+                ENT_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+            )
+            .add("  stored\n")
+            .add("} else {\n")
+            // Re-report as NotPersisted (rollback confirmed). When the
+            // stored exception is itself an unexpected-failure wrapper,
+            // wrap its CAUSE instead so the typed row failure stays one
+            // level away rather than two.
+            .add(
+                "  %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
+                ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+                ENT_UNEXPECTED_MUTATION_EXCEPTION, KOTLIN_EXCEPTION,
+            )
+            .add("}\n")
+            .add("client.recordTransactionMutationFailure(exception)\n")
+            .add("%T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+            .build()
+
+    /**
+     * The expression-style terminal capture boundary shared by the
+     * repo mutation terminals: rethrow cancellation, then wrap any
+     * other ordinary exception as foreign with the pre-write
+     * NotPersisted state (each repo terminal's own write phase is
+     * classified inside `deleteLoaded` / the per-row create pipeline,
+     * so only pre-write work can throw here). Closes the `return try {`
+     * opened by the caller.
+     */
+    private fun terminalBoundaryTailExpression(): CodeBlock =
+        CodeBlock.builder()
+            .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+            .add("  throw e\n")
+            .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
+            .add(
+                "  val exception = %T(%T.NotPersisted, e)\n",
+                ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+            )
+            .add("  client.recordTransactionMutationFailure(exception)\n")
+            .add("  %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+            .add("}\n")
+            .build()
 
     private fun buildApplyPrivacy(privacyConfigClass: ClassName): FunSpec =
         FunSpec.builder("applyPrivacy")
@@ -548,7 +696,7 @@ internal class RepoGenerator(
             .addStatement("return true")
             .build()
 
-    private fun buildEvaluateLoadPrivacy(
+    private fun buildLoadDenialOrNull(
         schemaName: String,
         entityClass: ClassName,
         loadCtxClass: ClassName,
@@ -556,58 +704,84 @@ internal class RepoGenerator(
         // Overrides `${Entity}ReadSurface` (public, was internal): the
         // LOAD evaluation is what validation read repos delegate to, so
         // privacy behavior through either client is this exact body.
-        return FunSpec.builder("evaluateLoadPrivacy")
+        //
+        // Decision-returning rather than throwing so read terminals can
+        // aggregate keyed denials (strict all() reports every denied
+        // root row) and so a rule-RETURNED Deny is positionally
+        // distinguishable from a rule-THROWN exception: the former
+        // becomes a typed PrivacyDenial here, the latter escapes to the
+        // terminal's capture boundary as an operational failure.
+        return FunSpec.builder("loadDenialOrNull")
             .addModifiers(KModifier.OVERRIDE)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("entity", entityClass)
+            .returns(PRIVACY_DENIAL.copy(nullable = true))
             .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
+                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.loadRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, entity)", loadCtxClass)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> throw %T(%S, %T.LOAD, decision.reason)", PRIVACY_DECISION, PRIVACY_DENIED, schemaName, PRIVACY_OPERATION)
+                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .addStatement(
+                    "is %T.Deny -> return %T(%S, %T(%S, entity.id), decision.reason)",
+                    PRIVACY_DECISION, PRIVACY_DENIAL, schemaName, ENTITY_KEY, "id",
+                )
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
-                // End-of-list for LOAD: deny
-                .addStatement("throw %T(%S, %T.LOAD, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no load rule allowed access")
+                // Fail-closed: no rule allowed → denied.
+                .addStatement(
+                    "return %T(%S, %T(%S, entity.id), %S)",
+                    PRIVACY_DENIAL, schemaName, ENTITY_KEY, "id", "no load rule allowed access",
+                )
                 .build()
             )
             .build()
     }
 
-    private fun buildEvaluateCreatePrivacy(
+    // ── Write-side privacy evaluators ─────────────────────────────
+    // DECISION-RETURNING (String? denial reason; null = allowed), so
+    // the mutation terminals can distinguish a rule-RETURNED Deny /
+    // fail-closed end-of-list (→ typed EntMutationPrivacyDeniedException
+    // constructed at the call site) from a rule-THROWN exception —
+    // there is deliberately no catch inside these helpers: a thrown
+    // exception escapes to the terminal's capture boundary as a
+    // foreign failure. Privacy stays fail-closed: with no explicit
+    // Allow, the helper returns the "no <op> rule allowed access"
+    // reason.
+
+    private fun buildCreateDenialReasonOrNull(
         schemaName: String,
         candidateClass: ClassName,
     ): FunSpec {
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
-        return FunSpec.builder("evaluateCreatePrivacy")
+        return FunSpec.builder("createDenialReasonOrNull")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("candidate", candidateClass)
+            .returns(String::class.asClassName().copy(nullable = true))
             .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
+                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.createRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> throw %T(%S, %T.CREATE, decision.reason)", PRIVACY_DECISION, PRIVACY_DENIED, schemaName, PRIVACY_OPERATION)
+                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
-                // Fail-closed: no rule allowed → deny.
-                .addStatement("throw %T(%S, %T.CREATE, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no create rule allowed access")
+                // Fail-closed: no rule allowed → denied.
+                .addStatement("return %S", "no create rule allowed access")
                 .build()
             )
             .build()
     }
 
-    private fun buildEvaluateUpdatePrivacy(
+    private fun buildUpdateDenialReasonOrNull(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
@@ -616,7 +790,7 @@ internal class RepoGenerator(
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
-        return FunSpec.builder("evaluateUpdatePrivacy")
+        return FunSpec.builder("updateDenialReasonOrNull")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("before", entityClass)
@@ -624,8 +798,9 @@ internal class RepoGenerator(
             .addParameter("effectivePatch", patchClass)
             .addParameter("candidate", candidateClass)
             .addParameter("edgeChanges", edgeChangesViewClass)
+            .returns(String::class.asClassName().copy(nullable = true))
             .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
+                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
                 .addStatement(
@@ -634,8 +809,8 @@ internal class RepoGenerator(
                 )
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> throw %T(%S, %T.UPDATE, decision.reason)", PRIVACY_DECISION, PRIVACY_DENIED, schemaName, PRIVACY_OPERATION)
+                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
@@ -643,40 +818,41 @@ internal class RepoGenerator(
                 .addStatement("val createCtx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in privacyConfig.createRules)")
                 .beginControlFlow("when (val decision = rule.run(createCtx))")
-                .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> throw %T(%S, %T.UPDATE, decision.reason)", PRIVACY_DECISION, PRIVACY_DENIED, schemaName, PRIVACY_OPERATION)
+                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
                 .endControlFlow()
-                // Fail-closed: no rule (incl. derived create rules) allowed → deny.
-                .addStatement("throw %T(%S, %T.UPDATE, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no update rule allowed access")
+                // Fail-closed: no rule (incl. derived create rules) allowed → denied.
+                .addStatement("return %S", "no update rule allowed access")
                 .build()
             )
             .build()
     }
 
-    private fun buildEvaluateDeletePrivacy(
+    private fun buildDeleteDenialReasonOrNull(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
     ): FunSpec {
         val deleteCtxClass = ClassName(packageName, "${schemaName}DeletePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
-        return FunSpec.builder("evaluateDeletePrivacy")
+        return FunSpec.builder("deleteDenialReasonOrNull")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("entity", entityClass)
             .addParameter("candidate", candidateClass)
+            .returns(String::class.asClassName().copy(nullable = true))
             .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return", VIEWER)
+                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.deleteRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
                 .addStatement("val ctx = %T(privacy, privacyClient, entity, candidate)", deleteCtxClass)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> throw %T(%S, %T.DELETE, decision.reason)", PRIVACY_DECISION, PRIVACY_DENIED, schemaName, PRIVACY_OPERATION)
+                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
@@ -684,14 +860,14 @@ internal class RepoGenerator(
                 .addStatement("val createCtx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in privacyConfig.createRules)")
                 .beginControlFlow("when (val decision = rule.run(createCtx))")
-                .addStatement("is %T.Allow -> return", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> throw %T(%S, %T.DELETE, decision.reason)", PRIVACY_DECISION, PRIVACY_DENIED, schemaName, PRIVACY_OPERATION)
+                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
                 .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
                 .endControlFlow()
                 .endControlFlow()
-                // Fail-closed: no rule (incl. derived create rules) allowed → deny.
-                .addStatement("throw %T(%S, %T.DELETE, %S)", PRIVACY_DENIED, schemaName, PRIVACY_OPERATION, "no delete rule allowed access")
+                // Fail-closed: no rule (incl. derived create rules) allowed → denied.
+                .addStatement("return %S", "no delete rule allowed access")
                 .build()
             )
             .build()
@@ -748,105 +924,219 @@ internal class RepoGenerator(
     }
 
     /**
-     * `createManyOrError(*blocks): EntResult<List<T>>` — transaction-
-     * required structured-result bulk create:
+     * `createMany(*blocks): MutationResult<List<T>>` — strict, ATOMIC
+     * bulk create sharing the per-row create pipeline
+     * (`${Schema}Create.executeSaveForInternalUse` WITHOUT the
+     * disclosure step) and running return processing — LOAD disclosure
+     * per created entity, input order, fail-fast — only after every
+     * row's writes and write-side lifecycle callbacks succeeded:
      *
-     *  - Outside any transaction → throws
-     *    `TransactionRequiredException` at preflight (before any
-     *    per-row write). The check is harder than the regular
-     *    transactionRequirement: this is the helper's own
-     *    "transaction-required" contract, fires regardless of the
-     *    client-level `TransactionRequirement` setting.
+     *  - Caller-owned transaction (`driver.inTransaction`): rows run
+     *    in place; the first write-phase `Failed` is recorded
+     *    (rollback-only) and returned, so staged rows cannot commit.
+     *    A post-write disclosure failure reports `TransactionPending`
+     *    and marks the scope rollback-only.
      *
-     *  - Inside a transaction → runs each block's `create().saveOrError()`
-     *    in order; the **first per-row `Err` short-circuits the rest** —
-     *    no subsequent blocks execute. The returned `Err` carries that
-     *    block's error.
+     *  - EntKt-owned (no surrounding transaction): the whole batch
+     *    runs inside one `client.withTransaction`. A pre-completion
+     *    failure rolls the whole batch back (no committed subset); a
+     *    disclosure failure AFTER all writes succeeded deliberately
+     *    bypasses the coordinator, COMMITS the complete batch, and
+     *    reports the failure with `Committed` — successful
+     *    persistence is not undone merely because the requested
+     *    return value cannot be disclosed.
      *
-     *  - Zero blocks → `Ok(emptyList())` without any preflight or
-     *    write, mirroring the existing classify-empty-syntactically
-     *    rule from transaction locking.
+     *  - Zero blocks → `Success(emptyList())` without transaction
+     *    work (after the transaction-requirement preflight).
      *
-     * **All-or-nothing is the caller's responsibility.** The helper
-     * short-circuits but does not own the transaction — it cannot
-     * roll back the rows already written by earlier blocks. Inside a
-     * plain `withTransaction { tx -> tx.users.createManyOrError(...) }`,
-     * if block 3 fails and the helper returns `Err`, blocks 1 and 2
-     * are still committed because the outer `withTransaction` sees a
-     * normal `Err` return (not an exception). The idiomatic
-     * all-or-nothing composition is:
-     *
-     * ```
-     * client.withTransactionOrError { tx ->
-     *   tx.users.createManyOrError(...).bind()  // bind() throws on Err
-     * }                                          // → tx rolls back
-     * ```
-     *
-     * where `.bind()` raises `AbortEntResultTransaction` on `Err`,
-     * which `withTransactionOrError` catches outside the driver block
-     * to trigger rollback.
-     *
-     * The legacy throwing `createMany(*blocks): List<T>` is REMOVED
-     * (not deprecated) per the "don't deprecate, remove" directive.
+     * The old hard `driver.inTransaction` throw is gone — atomicity is
+     * owned here. `checkTransactionRequirement(multiWrite = blocks.size > 1)`
+     * still classifies against the caller's transaction posture first.
      */
-    private fun buildCreateManyOrError(
+    private fun buildCreateMany(
         schemaName: String,
         entityClass: ClassName,
         createLambda: LambdaTypeName,
+        idType: com.squareup.kotlinpoet.TypeName,
     ): FunSpec {
-        val resultType = ENT_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
-        return FunSpec.builder("createManyOrError")
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
+        return FunSpec.builder("createMany")
             .addParameter(
                 ParameterSpec.builder("blocks", createLambda)
                     .addModifiers(KModifier.VARARG)
                     .build()
             )
             .returns(resultType)
-            .addStatement(
-                "if (blocks.isEmpty()) return %T.Ok(emptyList())",
-                ENT_RESULT,
+            .addKdoc(
+                "Atomically create one row per block. `Success` carries every\n" +
+                    "created entity in input order; the whole batch shares one\n" +
+                    "transaction (the caller's, or an EntKt-owned one), so any failure\n" +
+                    "before the batch's writes and write-side callbacks complete\n" +
+                    "leaves no committed subset after a confirmed rollback — a partial\n" +
+                    "list is never returned. Hook-required hydration is write-side\n" +
+                    "work and happens per row; return processing (LOAD disclosure\n" +
+                    "plus any additional return materialization, input order,\n" +
+                    "fail-fast) runs after all writes: a\n" +
+                    "denial there is `Failed(EntMutationPrivacyDeniedException)` with\n" +
+                    "`operation = LOAD` identifying the one denied entity, and — in an\n" +
+                    "EntKt-owned transaction — the batch still COMMITS, reported via\n" +
+                    "`writeState = Committed`. `Failed` therefore does NOT imply\n" +
+                    "rollback; inspect `exception.writeState`. There is no `orNull()`\n" +
+                    "projection — project with `getOrThrow()` or match on the result.",
             )
-            // Hard transaction requirement: createManyOrError's
-            // all-or-nothing contract only holds inside a tx. We
-            // check driver.inTransaction directly instead of going
-            // through checkTransactionRequirement — the latter
-            // honors the client-level TransactionRequirement
-            // (Optional / RequiredForMultiWrite / RequiredForAllWrites)
-            // which can be configured to *not* require a tx, and
-            // we can't allow that for this helper.
-            .beginControlFlow("if (!driver.inTransaction)")
-            .addStatement(
-                "throw %T(%S)",
-                ClassName("entkt.runtime.mutation", "TransactionRequiredException"),
-                "$schemaName createManyOrError requires a transaction-scoped client",
-            )
-            .endControlFlow()
             .addCode(
                 CodeBlock.builder()
-                    .add("return try {\n")
-                    // Short-circuit loop: stop at the first Err so we
-                    // don't run subsequent blocks. The pre-fix version
-                    // used blocks.map { ... } which ran every block
-                    // before checking for an Err — that leaks
-                    // intervening successful writes when used inside
-                    // a plain withTransaction { } (which commits on
-                    // normal Err return).
-                    .add("  val out = %T<%T>(blocks.size)\n", ArrayList::class.asClassName(), entityClass)
-                    .add("  var firstErr: %T.Err? = null\n", ENT_RESULT)
-                    .add("  for (block in blocks) {\n")
-                    .add("    val r = create(block).saveOrError()\n")
-                    .add("    if (r is %T.Err) { firstErr = r; break }\n", ENT_RESULT)
-                    .add("    out.add((r as %T.Ok).value)\n", ENT_RESULT)
-                    .add("  }\n")
-                    .add("  firstErr ?: %T.Ok(out.toList())\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", ClassName("entkt.runtime.result", "EntException"))
-                    .add("  %T.Err(e.error)\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
+                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+                    .add("try {\n")
+                    // multiWrite reflects the documented "issues more
+                    // than one driver write" contract: a zero- or
+                    // one-row batch is not a multi-write, so
+                    // RequiredForMultiWrite must not reject it.
                     .add(
-                        "  %T.Err(%M(driver, e, %S, %T.CREATE))\n",
-                        ENT_RESULT,
-                        MemberName("entkt.runtime.driver", "classifyDriverError"),
-                        schemaName, ENT_OPERATION,
+                        "  client.checkTransactionRequirement(%S, multiWrite = blocks.size > 1)\n",
+                        "$schemaName createMany",
+                    )
+                    .add("  if (blocks.isEmpty()) return %T.Success(emptyList())\n", MUTATION_RESULT)
+                    .add("  if (driver.inTransaction) {\n")
+                    // ---- Caller-owned transaction: per-row pipeline in
+                    // place (write-side only; no disclosure), then batch
+                    // return processing. Each row's Failed was already
+                    // recorded on the coordinator inside the create
+                    // pipeline. ----
+                    .add("    val out = %T<%T>(blocks.size)\n", ArrayList::class.asClassName(), entityClass)
+                    .add("    for (block in blocks) {\n")
+                    .add("      when (val result = create(block).executeSaveForInternalUse(applyLoadPrivacy = false)) {\n")
+                    .add("        is %T.Success -> out.add(result.value)\n", MUTATION_RESULT)
+                    // Same staged-batch honesty rule as deleteMany: after
+                    // any prior row wrote, a NotPersisted row failure is
+                    // re-reported as TransactionPending for the batch.
+                    .add("        is %T.Failed -> {\n", MUTATION_RESULT)
+                    .add("          val rowException = result.exception\n")
+                    .add(
+                        "          return if (out.isNotEmpty() && rowException.writeState == %T.NotPersisted) {\n",
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add(
+                        "            val staged = %T(%T.TransactionPending, rowException)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+                    )
+                    .add("            client.replaceTransactionMutationFailure(rowException, staged)\n")
+                    .add("            %T.failedForInternalUse(staged)\n", MUTATION_RESULT)
+                    .add("          } else result\n")
+                    .add("        }\n")
+                    .add("      }\n")
+                    .add("    }\n")
+                    // All writes + write-side callbacks succeeded; the
+                    // batch is staged in the caller's open transaction.
+                    // Return-processing failures from here (a thrown
+                    // privacy rule reaches the terminal boundary; a
+                    // returned denial is typed below) report
+                    // TransactionPending and mark rollback-only.
+                    .add("    writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
+                    .add("    val privacy = client.currentPrivacyContext()\n")
+                    .add("    for (entity in out) {\n")
+                    .add("      val denial = loadDenialOrNull(privacy, entity)\n")
+                    .add("      if (denial != null) {\n")
+                    .add(
+                        privacyDeniedFailure(
+                            writeStateExpr = CodeBlock.of("%T.TransactionPending", MUTATION_WRITE_STATE),
+                            schemaName = schemaName,
+                            operationName = "LOAD",
+                            entityKeyExpr = CodeBlock.of("%T(%S, entity.id)", MUTATION_ENTITY_KEY, "id"),
+                            reasonExpr = "denial.reason",
+                        ).indented().indented().indented(),
+                    )
+                    .add("      }\n")
+                    .add("    }\n")
+                    .add("    return %T.Success(out.toList())\n", MUTATION_RESULT)
+                    .add("  }\n")
+                    // ---- EntKt-owned: one transaction for the whole
+                    // batch. Write failures abort via orRollback (the
+                    // boundary rolls back — no committed subset); return-
+                    // processing failures are CAPTURED into locals instead
+                    // of thrown so the block returns normally and the
+                    // batch COMMITS. ----
+                    .add("  var disclosureDeniedId: %T = null\n", idType.copy(nullable = true))
+                    .add("  var disclosureDenialReason: String? = null\n")
+                    .add("  var disclosureFailure: %T? = null\n", KOTLIN_EXCEPTION)
+                    .add("  val txResult = client.withTransaction { tx ->\n")
+                    .add("    val batch = %T<%T>(blocks.size)\n", ArrayList::class.asClassName(), entityClass)
+                    .add("    for (block in blocks) {\n")
+                    .add(
+                        "      batch.add(tx.%L.create(block).executeSaveForInternalUse(applyLoadPrivacy = false).orRollback())\n",
+                        repoPropName,
+                    )
+                    .add("    }\n")
+                    // Disclosure runs through the tx-scoped repo so
+                    // privacy-rule reads see the staged batch. Obtaining
+                    // the privacy context is already return processing:
+                    // a provider failure is captured so the completed
+                    // batch still COMMITS and reports the disclosure
+                    // failure with `Committed`.
+                    .add("    val privacy = try {\n")
+                    .add("      tx.currentPrivacyContext()\n")
+                    .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("      throw e\n")
+                    .add("    } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add("      disclosureFailure = e\n")
+                    .add("      return@withTransaction null\n")
+                    .add("    }\n")
+                    .add("    for (entity in batch) {\n")
+                    .add("      val denial = try {\n")
+                    .add("        tx.%L.loadDenialOrNull(privacy, entity)\n", repoPropName)
+                    .add("      } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("        throw e\n")
+                    .add("      } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add("        disclosureFailure = e\n")
+                    .add("        return@withTransaction null\n")
+                    .add("      }\n")
+                    .add("      if (denial != null) {\n")
+                    .add("        disclosureDeniedId = entity.id\n")
+                    .add("        disclosureDenialReason = denial.reason\n")
+                    .add("        return@withTransaction null\n")
+                    .add("      }\n")
+                    .add("    }\n")
+                    .add("    batch.toList()\n")
+                    .add("  }\n")
+                    .add("  return when (txResult) {\n")
+                    .add("    is %T.Success -> {\n", TRANSACTION_RESULT)
+                    .add("      val entities = txResult.value\n")
+                    .add("      if (entities != null) {\n")
+                    .add("        %T.Success(entities)\n", MUTATION_RESULT)
+                    .add("      } else {\n")
+                    // Commit succeeded but the return value cannot be
+                    // disclosed / materialized: report Committed. Not
+                    // routed through the coordinator by construction
+                    // (there is no caller-owned scope on this path).
+                    .add("        val reason = disclosureDenialReason\n")
+                    .add("        val exception = if (reason != null) {\n")
+                    .add(
+                        "          %T(%T.Committed, %S, %T.LOAD, %T(%S, disclosureDeniedId!!), reason)\n",
+                        ClassName("entkt.runtime.result", "EntMutationPrivacyDeniedException"),
+                        MUTATION_WRITE_STATE, schemaName, MUTATION_ENT_OPERATION, MUTATION_ENTITY_KEY, "id",
+                    )
+                    .add("        } else {\n")
+                    .add(
+                        "          %T(%T.Committed, disclosureFailure!!)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+                    )
+                    .add("        }\n")
+                    .add("        client.recordTransactionMutationFailure(exception)\n")
+                    .add("        %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+                    .add("      }\n")
+                    .add("    }\n")
+                    .add("    is %T.Failed -> {\n", TRANSACTION_RESULT)
+                    .add(txFailureConversion().indented().indented().indented())
+                    .add("    }\n")
+                    .add("  }\n")
+                    .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("  throw e\n")
+                    .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add(
+                        recordAndReturnFailure(
+                            CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
+                        ).indented(),
                     )
                     .add("}\n")
                     .build(),
@@ -908,6 +1198,15 @@ internal class RepoGenerator(
             .addStatement("validationConfig.updateDerivesFromCreate = other.validationConfig.updateDerivesFromCreate")
             .build()
 
+    // ── Write-side validation evaluators ──────────────────────────
+    // DECISION-RETURNING (List<ValidationViolation>; empty = valid),
+    // so the mutation terminals construct the typed
+    // EntValidationException at their own classification point. A
+    // rule-RETURNED Invalid is mapped through toValidationViolation();
+    // a rule-THROWN exception escapes (no catch here) to the
+    // terminal's capture boundary as a foreign failure — even when the
+    // rule threw an EntValidationException itself.
+
     private fun buildEvaluateCreateValidation(
         schemaName: String,
         candidateClass: ClassName,
@@ -916,18 +1215,18 @@ internal class RepoGenerator(
         return FunSpec.builder("evaluateCreateValidation")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("candidate", candidateClass)
+            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.createRules")
-                .addStatement("if (rules.isEmpty()) return")
+                .addStatement("if (rules.isEmpty()) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
                 .addStatement("val ctx = %T(validationClient, candidate)", createCtxClass)
-                .addStatement("val violations = rules.mapNotNull { rule ->")
+                .addStatement("return rules.mapNotNull { rule ->")
                 .addStatement("  when (val decision = rule.validate(ctx)) {")
                 .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
-                .addStatement("    is %T.Invalid -> decision", VALIDATION_DECISION)
+                .addStatement("    is %T.Invalid -> decision.%M()", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
                 .addStatement("  }")
                 .addStatement("}")
-                .addStatement("if (violations.isNotEmpty()) throw %T(%S, violations)", VALIDATION_EXCEPTION, schemaName)
                 .build()
             )
             .build()
@@ -949,19 +1248,20 @@ internal class RepoGenerator(
             .addParameter("effectivePatch", patchClass)
             .addParameter("candidate", candidateClass)
             .addParameter("edgeChanges", edgeChangesViewClass)
+            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.updateRules")
-                .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return")
+                .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
                 .addStatement(
                     "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
                     updateCtxClass,
                 )
-                .addStatement("val violations = mutableListOf<%T.Invalid>()", VALIDATION_DECISION)
+                .addStatement("val violations = mutableListOf<%T>()", MUTATION_VALIDATION_VIOLATION)
                 .beginControlFlow("for (rule in rules)")
                 .beginControlFlow("when (val decision = rule.validate(updateCtx))")
                 .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
-                .addStatement("is %T.Invalid -> violations.add(decision)", VALIDATION_DECISION)
+                .addStatement("is %T.Invalid -> violations.add(decision.%M())", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
                 .endControlFlow()
                 .endControlFlow()
                 .beginControlFlow("if (validationConfig.updateDerivesFromCreate)")
@@ -969,11 +1269,11 @@ internal class RepoGenerator(
                 .beginControlFlow("for (rule in validationConfig.createRules)")
                 .beginControlFlow("when (val decision = rule.validate(createCtx))")
                 .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
-                .addStatement("is %T.Invalid -> violations.add(decision)", VALIDATION_DECISION)
+                .addStatement("is %T.Invalid -> violations.add(decision.%M())", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
                 .endControlFlow()
                 .endControlFlow()
                 .endControlFlow()
-                .addStatement("if (violations.isNotEmpty()) throw %T(%S, violations)", VALIDATION_EXCEPTION, schemaName)
+                .addStatement("return violations")
                 .build()
             )
             .build()
@@ -989,18 +1289,18 @@ internal class RepoGenerator(
             .addModifiers(KModifier.INTERNAL)
             .addParameter("entity", entityClass)
             .addParameter("candidate", candidateClass)
+            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
             .addCode(CodeBlock.builder()
                 .addStatement("val rules = validationConfig.deleteRules")
-                .addStatement("if (rules.isEmpty()) return")
+                .addStatement("if (rules.isEmpty()) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
                 .addStatement("val ctx = %T(validationClient, entity, candidate)", deleteCtxClass)
-                .addStatement("val violations = rules.mapNotNull { rule ->")
+                .addStatement("return rules.mapNotNull { rule ->")
                 .addStatement("  when (val decision = rule.validate(ctx)) {")
                 .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
-                .addStatement("    is %T.Invalid -> decision", VALIDATION_DECISION)
+                .addStatement("    is %T.Invalid -> decision.%M()", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
                 .addStatement("  }")
                 .addStatement("}")
-                .addStatement("if (violations.isNotEmpty()) throw %T(%S, violations)", VALIDATION_EXCEPTION, schemaName)
                 .build()
             )
             .build()

@@ -7,6 +7,7 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.getOrThrow
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,8 +31,8 @@ import kotlin.test.assertTrue
  *    `Predicate.HasEdge` / `Predicate.HasEdgeWith` EXISTS
  *    subqueries.
  *  - **Eager loading**: `withUsers { ... }` /
- *    `withGroups { ... }`. Two-step driver call (junction fetch
- *    then target fetch).
+ *    `withGroups { ... }` requested inside the `query { ... }`
+ *    block. Two-step driver call (junction fetch then target fetch).
  *
  * Coverage matrix per shape: forward direction (`Group → User`)
  * and inverse direction (`User → Group`) × null-source-skip and
@@ -58,17 +59,18 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // Setup: two groups, one user. Two memberships:
         //   m1: (g1, u1) — normal link
         //   m2: (null, u1) — null source; must NOT link u1 to any group
-        val g1 = client.groups.create { name = "G1" }.save()
-        val g2 = client.groups.create { name = "G2" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-source" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val g2 = client.groups.create { name = "G2" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-source" }.save().getOrThrow()
 
         // g1.queryUsers() — pulls u1 via m1.
         val usersInG1 = client.groups.query()
             .where(Group.id eq g1.id)
             .queryUsers()
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(u1.id), usersInG1.map { it.id })
 
         // g2.queryUsers() — m1 doesn't link to g2, m2 has null source
@@ -78,7 +80,8 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         val usersInG2 = client.groups.query()
             .where(Group.id eq g2.id)
             .queryUsers()
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(emptyList(), usersInG2)
     }
 
@@ -89,15 +92,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         //   m2: (g1, null) — null target; must NOT contribute a row
         //                    (and definitely must not crash with
         //                    NullPointerException on the target decode)
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save().getOrThrow()
 
         val usersInG1 = client.groups.query()
             .where(Group.id eq g1.id)
             .queryUsers()
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(u1.id), usersInG1.map { it.id }, "null target must be skipped")
     }
 
@@ -111,15 +115,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         //
         // This test pins null-target-on-inverse: a membership with
         // null group_id must NOT surface as a group in u1.queryGroups().
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save().getOrThrow()
 
         val groupsForU1 = client.users.query()
             .where(User.id eq u1.id)
             .queryGroups()
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(g1.id), groupsForU1.map { it.id })
     }
 
@@ -128,18 +133,19 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // Inverse direction, null-source variant: a membership with
         // `user_id IS NULL` claims no source user, so it must NOT
         // surface in any user's `queryGroups()` results.
-        val g1 = client.groups.create { name = "G1" }.save()
-        val g2 = client.groups.create { name = "G2" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = g2.id; userId = null; role = "orphan-source-on-inverse" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val g2 = client.groups.create { name = "G2" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = null; role = "orphan-source-on-inverse" }.save().getOrThrow()
 
         // u1 is only linked to g1 (via m1). m2's null source means
         // it doesn't link to any user — so g2 shouldn't show up.
         val groupsForU1 = client.users.query()
             .where(User.id eq u1.id)
             .queryGroups()
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(g1.id), groupsForU1.map { it.id })
         assertTrue(groupsForU1.none { it.id == g2.id }, "null-source membership must not link g2 to any user")
     }
@@ -173,12 +179,13 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // must fail (= NULL → UNKNOWN), so users.exists() must NOT
         // match g1. A buggy lowering that omitted the JOIN to users
         // would let g1 leak in.
-        val g1 = client.groups.create { name = "G1" }.save()
-        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save().getOrThrow()
 
         val matched = client.groups.query()
             .where(Group.users.exists())
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(emptyList(), matched, "null-target junction row must not satisfy users.exists()")
     }
 
@@ -188,17 +195,18 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // Stray (null, u1) and (null, u2) rows must NOT cause g1 to
         // appear in the result — the WHERE `j.group_id = source.id`
         // clause drops them via SQL three-valued logic.
-        val g1 = client.groups.create { name = "G1" }.save()
-        val g2 = client.groups.create { name = "G2" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.save()
-        client.memberships.create { groupId = g2.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-source-a" }.save()
-        client.memberships.create { groupId = null; userId = u2.id; role = "orphan-source-b" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val g2 = client.groups.create { name = "G2" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-source-a" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u2.id; role = "orphan-source-b" }.save().getOrThrow()
 
         val matched = client.groups.query()
             .where(Group.users.exists())
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(g2.id), matched.map { it.id })
     }
 
@@ -209,12 +217,13 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // `users.has { where(User.name eq "U1") }` adds `AND t.name = 'U1'`
         // to the join. Even before the filter applies, the JOIN's
         // `t.id = j.user_id` already drops the null-target row.
-        val g1 = client.groups.create { name = "G1" }.save()
-        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save().getOrThrow()
 
         val matched = client.groups.query()
             .where(Group.users.has { where(User.name eq "U1") })
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(emptyList(), matched)
     }
 
@@ -224,15 +233,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // with `has { where(User.name eq "U1") }` to exercise the
         // target-filtered EXISTS lowering. Only g2 (the group with a
         // real link to a user named "U1") should match.
-        val g1 = client.groups.create { name = "G1" }.save()
-        val g2 = client.groups.create { name = "G2" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g2.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-source" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val g2 = client.groups.create { name = "G2" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-source" }.save().getOrThrow()
 
         val matched = client.groups.query()
             .where(Group.users.has { where(User.name eq "U1") })
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(g2.id), matched.map { it.id })
     }
 
@@ -243,12 +253,13 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // target" on inverse means `group_id IS NULL`, which fails the
         // JOIN to `groups`. u1's only membership is (null, u1), so
         // users.groups.exists() must NOT match u1.
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save().getOrThrow()
 
         val matched = client.users.query()
             .where(User.groups.exists())
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(emptyList(), matched, "null-target-on-inverse must not satisfy groups.exists()")
     }
 
@@ -258,15 +269,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // `j.user_id = users.id` drops such rows via three-valued logic;
         // they must not cause unrelated users to falsely satisfy
         // groups.exists().
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u2.id; role = "linked" }.save()
-        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-source-on-inverse" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u2.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-source-on-inverse" }.save().getOrThrow()
 
         val matched = client.users.query()
             .where(User.groups.exists())
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(u2.id), matched.map { it.id })
     }
 
@@ -275,12 +287,13 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // Inverse `groups.has { where(Group.name eq "G1") }` against a
         // user whose only membership has `group_id IS NULL`. The JOIN
         // to `groups` drops the row; the target filter is moot.
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save().getOrThrow()
 
         val matched = client.users.query()
             .where(User.groups.has { where(Group.name eq "G1") })
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(emptyList(), matched)
     }
 
@@ -288,15 +301,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     fun `inverse has predicate with target filter ignores stray null-source junction rows`() {
         // u2 has a real (g1, u2) link; u1 has no real link.
         // (g1, null) stray must not cause u1 to be returned.
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u2.id; role = "linked" }.save()
-        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-source-on-inverse" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u2.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-source-on-inverse" }.save().getOrThrow()
 
         val matched = client.users.query()
             .where(User.groups.has { where(Group.name eq "G1") })
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf(u2.id), matched.map { it.id })
     }
 
@@ -307,6 +321,10 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     // Eager loading uses two driver calls:
     //   1. junction = SELECT … FROM memberships WHERE <sourceCol> IN (parentIds)
     //   2. target   = SELECT … FROM <target>     WHERE id           IN (targetIds)
+    //
+    // `with{Edge}` returns an `EagerLoad<ParentQuery>` handle, so the
+    // eager request is made inside the `query { ... }` block (the
+    // handle is ignored; strict eager semantics apply).
     //
     // Two SQL-NULL safety nets, distinct from the predicate path:
     //   - Step 1's `IN (sourceIds)` returns UNKNOWN when sourceCol IS NULL,
@@ -322,16 +340,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // contribute u2 to g1 (the (null, u2) junction is filtered
         // out at step 1's `group_id IN (g1.id)` IN-test because
         // group_id IS NULL).
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = null; userId = u2.id; role = "orphan-source" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u2.id; role = "orphan-source" }.save().getOrThrow()
 
-        val loaded = client.groups.query()
-            .where(Group.id eq g1.id)
-            .withUsers()
-            .allOrThrow()
+        val loaded = client.groups.query {
+            where(Group.id eq g1.id)
+            withUsers()
+        }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val users = loaded.first().edges.users.requireLoaded()
         assertEquals(listOf(u1.id), users.map { it.id }, "u2 must not surface — null-source junction filtered out")
@@ -344,15 +362,15 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // never matches users.id), and the per-target grouping looks
         // up by target.id which is non-null, so the null-user_id
         // junction row contributes nothing.
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = null; role = "orphan-target" }.save().getOrThrow()
 
-        val loaded = client.groups.query()
-            .where(Group.id eq g1.id)
-            .withUsers()
-            .allOrThrow()
+        val loaded = client.groups.query {
+            where(Group.id eq g1.id)
+            withUsers()
+        }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val users = loaded.first().edges.users.requireLoaded()
         assertEquals(listOf(u1.id), users.map { it.id }, "null-target junction must contribute nothing — and must not crash")
@@ -364,16 +382,16 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // refs, so "source col" = user_id, "target col" = group_id.
         // Stray (g2, null) junction must not surface g2 in u1's
         // groups list (step 1's `user_id IN (u1.id)` drops null).
-        val g1 = client.groups.create { name = "G1" }.save()
-        val g2 = client.groups.create { name = "G2" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = g2.id; userId = null; role = "orphan-source-on-inverse" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val g2 = client.groups.create { name = "G2" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = null; role = "orphan-source-on-inverse" }.save().getOrThrow()
 
-        val loaded = client.users.query()
-            .where(User.id eq u1.id)
-            .withGroups()
-            .allOrThrow()
+        val loaded = client.users.query {
+            where(User.id eq u1.id)
+            withGroups()
+        }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val groups = loaded.first().edges.groups.requireLoaded()
         assertEquals(listOf(g1.id), groups.map { it.id })
@@ -386,15 +404,15 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
         // is null, so step 2's `id IN (g1.id, NULL)` matches only
         // g1, and the per-target lookup keyed on target.id (non-null)
         // excludes the null-group junction.
-        val g1 = client.groups.create { name = "G1" }.save()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.save()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save()
-        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save()
+        val g1 = client.groups.create { name = "G1" }.saveAndLoad().getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "linked" }.save().getOrThrow()
+        client.memberships.create { groupId = null; userId = u1.id; role = "orphan-target-on-inverse" }.save().getOrThrow()
 
-        val loaded = client.users.query()
-            .where(User.id eq u1.id)
-            .withGroups()
-            .allOrThrow()
+        val loaded = client.users.query {
+            where(User.id eq u1.id)
+            withGroups()
+        }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val groups = loaded.first().edges.groups.requireLoaded()
         assertEquals(listOf(g1.id), groups.map { it.id }, "null-target-on-inverse must contribute nothing")

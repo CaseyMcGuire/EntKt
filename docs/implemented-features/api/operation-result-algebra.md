@@ -2,12 +2,11 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
-
-If adopted, this RFC would be a breaking successor to the current
-[EntKt Result Variants](../../implemented-features/tooling/entkt-result-variants-rfc.md)
-design. It proposes one canonical result-bearing operation instead of adding
-another family of generated terminals.
+Implemented (2026-08). This design is the breaking successor to the
+previous [EntKt Result Variants](../tooling/entkt-result-variants-rfc.md)
+design: one canonical result-bearing operation per family instead of
+generated terminal variants. The consolidated migration entry lives in
+the [breaking-changes log](../../breaking-changes/index.md).
 
 ## Summary
 
@@ -162,7 +161,7 @@ still available, but it is an explicit projection at the call site.
 - Do not move query-explanation diagnostics into `ReadResult`; `explain*()`
   retains its `QueryPlan` contract, including rejected plans.
 - Do not settle cursor and visible-page representation here; the separate
-  [Privacy-Aware Visible Pagination](../query/privacy-aware-visible-pagination.md)
+  [Privacy-Aware Visible Pagination](../../possible-features/query/privacy-aware-visible-pagination.md)
   RFC remains independent future exploration.
 
 ## Canonical Generated Surface
@@ -217,6 +216,15 @@ write-side lifecycle callbacks. Any failure before successful completion of
 that work aborts the whole operation. A confirmed rollback is
 a mutation failure carrying `NotPersisted`; no successful subset is exposed or
 left committed.
+
+Hydration that write-side work itself requires is part of that write-side
+processing, not of return processing: per the `save()` contract,
+implementations may hydrate database-generated fields internally when
+lifecycle callbacks or persistence bookkeeping need them, and a hydration
+failure there is an ordinary pre-completion failure that aborts the batch.
+Return processing defers only what the *returned* values additionally
+require — LOAD disclosure, plus any return materialization not already
+performed for write-side work.
 
 For `createMany()`, once the entire batch's writes and write-side lifecycle work
 have succeeded, failure to materialize or disclose the requested returned
@@ -1153,7 +1161,7 @@ materially different states, including a definitely unpersisted write, a
 committed write whose callback failed, and an unknown commit outcome. Clients
 must inspect the raw result or choose the explicit throwing projection.
 
-This direction supersedes [Explicit Save Terminals](../mutation/explicit-save-terminals.md)
+This direction supersedes [Explicit Save Terminals](../../possible-features/mutation/explicit-save-terminals.md)
 if adopted. That RFC improves the existing result-variant design by preferring
 `saveOrThrow()` and `saveOrError()`; this RFC instead makes plain `save()`
 exhaustive and moves those behaviors to projections.
@@ -1359,7 +1367,7 @@ retry-safe. The runtime KDoc for transaction `getOrThrow()` must carry this warn
 prominently.
 
 This must also coordinate with
-[Transactional Graph Changesets](../mutation/transactional-graph-changesets.md).
+[Transactional Graph Changesets](../../possible-features/mutation/transactional-graph-changesets.md).
 
 ## Ignored Results And Future Must-Use Enforcement
 
@@ -1477,7 +1485,7 @@ under an explicitly non-null name if real call sites justify more generated
 surface.
 
 This RFC may land before
-[Privacy-Safe Query Surfaces](../privacy-validation/privacy-safe-query-surfaces.md).
+[Privacy-Safe Query Surfaces](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md).
 During that temporary ordering, raw terminals remain nameable through a
 privacy-rule client and their existing runtime capability rejection is captured
 as `ReadResult.Failed(IllegalStateException)`. That is transitional

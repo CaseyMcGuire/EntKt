@@ -135,6 +135,7 @@ an `EntClient`:
 ```kotlin
 import com.example.ent.*
 import entkt.postgres.PostgresDriver
+import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
 
 fun main() {
@@ -146,29 +147,35 @@ fun main() {
     }
     val client = EntClient(PostgresDriver(dataSource))
 
-    // Create
+    // Create — saveAndLoad() returns MutationResult<User>
     val alice = client.users.create {
         name = "Alice"
         email = "alice@example.com"
         age = 30
         active = true
-    }.save()
+    }.saveAndLoad().getOrThrow()
 
-    // Query
+    // Query — all() returns ReadResult<List<User>>
     val adults = client.users.query {
         where(User.age gte 18)
         orderBy(User.age.desc())
-    }.allOrThrow()
+    }.all().getOrThrow()
 
-    // Update
-    val updated = client.users.update(alice.id) {
+    // Update — save() returns MutationResult<Unit>
+    client.users.update(alice.id) {
         age = 31
-    }.save()
+    }.save().getOrThrow()
 
-    // Delete
-    client.users.deleteOrThrow(alice)
+    // Delete — idempotent; MutationResult<Unit>
+    client.users.delete(alice).getOrThrow()
 }
 ```
+
+Every data operation returns an exhaustive result — `ReadResult<T>` for
+reads, `MutationResult<T>` for writes — that callers either match with
+`when` (`Success` / `Failed`) or project with `.getOrThrow()`, which
+throws the stored typed exception. See [Queries](04-queries.md) and
+[Privacy](06-privacy.md) for the full contract.
 
 For a full working example wired up with Postgres, Flyway-applied
 migrations, and lifecycle hooks, see [`:example-spring`](../example-spring/README.md)
@@ -182,9 +189,9 @@ write users:
 | Surface | Purpose |
 |---------|---------|
 | `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
-| `UserCreate` / `UserUpdate` | Typed create and update builders with save terminals |
-| `UserQuery` | Filtering, ordering, pagination, traversal, eager loading, and read terminals |
-| `UserRepo` | Entry points such as `create`, `update`, `query`, `byId`, and delete methods |
+| `UserCreate` / `UserUpdate` | Typed create and update builders with the `save()` / `saveAndLoad()` terminals |
+| `UserQuery` | Filtering, ordering, pagination, traversal, eager loading, and result-bearing read terminals |
+| `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
 | Privacy and validation rule types | Typed contexts and scopes for application policies |
 | `EntClient` | The application entry point containing every generated repository |
 

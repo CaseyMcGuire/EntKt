@@ -120,21 +120,22 @@ class MemberCollisionValidationTest {
         assertCollision(errors, "S", "edges")
     }
     // Collision case: field whose generated name matches a
-    // fixed builder member (`saveOrError`).
+    // fixed builder member (`saveAndLoad`).
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `field 'save_or_error' collides with the fixed builder saveOrError on Create and Update`() {
+    fun `field 'save_and_load' collides with the fixed builder saveAndLoad on Create and Update`() {
         class S : EntSchema("s") {
             override fun id() = EntId.long()
-            val saveOrError = bool("save_or_error")
+            val saveAndLoad = bool("save_and_load")
         }
 
         val errors = validate("S" to S())
-        // Lands on both SCreate (immutable-or-mutable-doesn't-matter,
+        // `saveAndLoad` is a shared fixed builder member, so the clash
+        // lands on both SCreate (immutable-or-mutable-doesn't-matter,
         // both have the setter) and SUpdate.
-        assertCollision(errors, "SCreate", "saveOrError")
-        assertCollision(errors, "SUpdate", "saveOrError")
+        assertCollision(errors, "SCreate", "saveAndLoad")
+        assertCollision(errors, "SUpdate", "saveAndLoad")
     }
 
     // ──────────────────────────────────────────────────────────────

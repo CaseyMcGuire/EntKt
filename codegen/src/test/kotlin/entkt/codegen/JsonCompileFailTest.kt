@@ -53,7 +53,7 @@ class JsonCompileFailTest {
         schema.finalize(registry)
         return EntGenerator("com.example.ent", jsonMapper)
             .generate(listOf(SchemaInput(name, schema)))
-            .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
+            .toCompileTestSources()
     }
 
     private fun compile(sources: List<SourceFile>): JvmCompilationResult =

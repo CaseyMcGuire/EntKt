@@ -27,36 +27,43 @@ class QueryGeneratorTest {
     private val generator = QueryGenerator("com.example.ent")
 
     @Test
-    fun `generates raw aggregate terminals`() {
+    fun `raw aggregate terminals return ReadResult and share one gated execution path`() {
         // Car has year (Int → IntegralColumn), price (Float? → FloatingColumn).
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // The shared helper routes through RAW_AGGREGATE + driver.aggregate.
+        // The shared helper routes through RAW_AGGREGATE + driver.aggregate,
+        // and hosts the privacy-bypass gate so viewer-scoped rejection
+        // happens inside every aggregate terminal's capture boundary.
         assert(output.contains("ReadOperation.RAW_AGGREGATE")) { "aggregateRows uses RAW_AGGREGATE\n$output" }
         assert(output.contains("driver.aggregate(Car.TABLE,")) { "aggregateRows calls driver.aggregate\n$output" }
+        assert(output.contains("checkPrivacyBypassingRead(\"raw aggregates\")")) {
+            "aggregateRows carries the privacy-bypass gate for all aggregate terminals\n$output"
+        }
 
-        // Ungrouped scalar terminals, typed by the column marker.
-        assert(output.contains("rawSum(column: IntegralColumn<Car, *>): Long?")) { "rawSum on integral → Long?\n$output" }
-        assert(output.contains("rawSum(column: FloatingColumn<Car, *>): Double?")) { "rawSum on floating → Double?\n$output" }
-        assert(output.contains("rawAvg(column: NumericColumn<Car, *>): Double?")) { "rawAvg → Double?\n$output" }
-        assert(output.contains("rawMin(column: ComparableColumn<Car, T>)")) { "rawMin takes ComparableColumn\n$output" }
-        assert(output.contains("rawMax(column: ComparableColumn<Car, T>)")) { "rawMax takes ComparableColumn\n$output" }
+        // Ungrouped scalar terminals, typed by the column marker, wrapped in ReadResult.
+        assert(output.contains("rawSum(column: IntegralColumn<Car, *>): ReadResult<Long?>")) { "rawSum on integral → ReadResult<Long?>\n$output" }
+        assert(output.contains("rawSum(column: FloatingColumn<Car, *>): ReadResult<Double?>")) { "rawSum on floating → ReadResult<Double?>\n$output" }
+        assert(output.contains("rawAvg(column: NumericColumn<Car, *>): ReadResult<Double?>")) { "rawAvg → ReadResult<Double?>\n$output" }
+        assert(output.contains("rawMin(column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMin takes ComparableColumn → ReadResult<T?>\n$output" }
+        assert(output.contains("rawMax(column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMax takes ComparableColumn → ReadResult<T?>\n$output" }
 
-        // Grouped terminals: non-null key → K, nullable key → K?.
-        assert(output.contains("rawCountBy(groupBy: GroupableColumn<Car, K>)")) { "rawCountBy non-null key overload\n$output" }
-        assert(output.contains("AggregateBucket<K, Long>")) { "non-null key bucket is AggregateBucket<K, Long>\n$output" }
-        assert(output.contains("rawCountBy(groupBy: NullableGroupableColumn<Car, K>)")) { "rawCountBy nullable key overload\n$output" }
-        assert(output.contains("AggregateBucket<K?, Long>")) { "nullable key bucket is AggregateBucket<K?, Long>\n$output" }
+        // Grouped terminals: non-null key → K, nullable key → K?; bucket lists in ReadResult.
+        assert(output.contains("rawCountBy(groupBy: GroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K, Long>>>")) {
+            "rawCountBy non-null key overload → ReadResult of buckets\n$output"
+        }
+        assert(output.contains("rawCountBy(groupBy: NullableGroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K?, Long>>>")) {
+            "rawCountBy nullable key overload → ReadResult of nullable-key buckets\n$output"
+        }
 
         // Group keys are decoded via the column (enum-safe), not a raw cast.
         assert(output.contains("groupBy.decodeKey(it.key)")) { "group keys decode via the column\n$output" }
 
-        // Grouped value terminals + …OrError twins exist.
+        // Grouped value terminals exist; the *OrError twins are gone —
+        // ReadResult is the single return shape, projections live on it.
         assert(output.contains("rawAvgBy")) { "rawAvgBy grouped terminal exists\n$output" }
-        assert(output.contains("rawSumOrError")) { "rawSum has an OrError twin\n$output" }
-        assert(output.contains("rawCountByOrError")) { "rawCountBy has an OrError twin\n$output" }
+        assert(!output.contains("OrError")) { "no aggregate *OrError twins survive\n$output" }
     }
 
     @Test
@@ -110,33 +117,37 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `first-row terminals bound the fetch by the caller's limit`() {
+    fun `firstOrNull returns ReadResult and bounds the fetch by the caller's limit`() {
         val car = Car()
         finalize(car, User())
         // KotlinPoet wraps long driver.query(...) calls mid-argument-list,
         // so match against a whitespace-normalized rendering.
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // `limit(0)` means "no rows" on every other terminal family
-        // (allOrThrow passes spec.limit straight through; rawExists /
-        // visibleExists use `minOf(1, spec.limit ?: 1)`). The first-row
-        // family used to send a hardwired 1 and return a row anyway.
+        assert(output.contains("public fun firstOrNull(): ReadResult<Car?> = try {")) {
+            "firstOrNull is the sole first-row terminal, returning ReadResult<Car?>\n$output"
+        }
+        // `limit(0)` means "no rows" on every terminal family (all()
+        // passes spec.limit straight through; rawExists uses
+        // `minOf(1, spec.limit ?: 1)`). The first-row terminal must not
+        // send a hardwired 1 and return a row anyway.
         //
         // Interceptor limit mutators are silent no-ops at FIRST
         // (InterceptorEngine.limitOpsApply), so spec.limit here holds
         // nothing but the caller's own bound.
         assert(!output.contains("spec.orderBy, 1, spec.offset")) {
-            "no first-row terminal should hardwire limit 1\n$output"
+            "the first-row terminal should not hardwire limit 1\n$output"
         }
-        // The exists family passes `emptyList()` for orderBy, so
-        // `spec.orderBy, limit, spec.offset` picks out exactly the two
-        // first-row driver calls: firstOrNull and firstVisibleOrNull's
-        // no-privacy branch. (firstVisibleOrNull's privacy branch already
-        // derived its scan from spec.limit, and firstOrThrow /
-        // firstOrError delegate rather than query directly.)
+        assert(output.contains("val limit = minOf(1, spec.limit ?: 1)")) {
+            "firstOrNull should clamp its window to minOf(1, spec.limit ?: 1)\n$output"
+        }
+        // The exists probe passes `emptyList()` for orderBy, so
+        // `spec.orderBy, limit, spec.offset` picks out exactly the one
+        // first-row driver call: firstOrNull. (The firstVisibleOrNull
+        // scanning twin is deleted with the visible* family.)
         val bounded = Regex(Regex.escape("spec.orderBy, limit, spec.offset")).findAll(output).count()
-        assert(bounded == 2) {
-            "expected firstOrNull and firstVisibleOrNull's no-privacy branch to clamp by spec.limit; found $bounded\n$output"
+        assert(bounded == 1) {
+            "expected exactly firstOrNull to clamp by spec.limit; found $bounded\n$output"
         }
     }
 
@@ -153,7 +164,7 @@ class QueryGeneratorTest {
             "explain should not pin a first-shaped plan at limit 1\n$output"
         }
         assert(output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1))")) {
-            "explainFirst / explainFirstVisibleOrNull should mirror the runtime clamp\n$output"
+            "explainFirstOrNull should mirror the runtime clamp\n$output"
         }
     }
 
@@ -310,16 +321,38 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `generates visibleCount terminal method`() {
+    fun `visible scanning terminals and result-variant twins are gone from the query surface`() {
+        // The visible* family (visibleCount / visibleExists / visibleAll /
+        // firstVisibleOrNull) scanned rows under LOAD privacy with an
+        // overfetch cap; the operation-result algebra deletes the whole
+        // family. Privacy-as-absence is now the `visibleOrNull()` runtime
+        // projection on a ReadResult, not a separate scanning terminal —
+        // and no terminal keeps OrError/OrThrow/OrNull variant twins.
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun visibleCount(): Long")) {
-            "Should generate visibleCount(): Long\n$output"
+        for (legacy in listOf(
+            "visibleCount",
+            "visibleExists",
+            "visibleAll",
+            "firstVisibleOrNull",
+            "visibleOverfetchLimit",
+            "evaluateLoadPrivacy",
+            "OrError",
+            "OrThrow",
+        )) {
+            assert(!output.contains(legacy)) {
+                "removed legacy surface '$legacy' must not be emitted\n$output"
+            }
         }
-        assert(output.contains("evaluateLoadPrivacy")) {
-            "visibleCount() should evaluate LOAD privacy\n$output"
+        // The privacy-bypassing raw family is what remains for
+        // count/exists/aggregates, and every raw terminal preflights
+        // through the client's capability gate.
+        val gates = Regex(Regex.escape("requireClient().checkPrivacyBypassingRead(")).findAll(output).count()
+        assert(gates == 3) {
+            "rawCount, rawExists, and the shared aggregateRows helper should each gate " +
+                "via checkPrivacyBypassingRead; found $gates\n$output"
         }
     }
 
@@ -327,88 +360,116 @@ class QueryGeneratorTest {
     fun `generates rawCount terminal method`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun rawCount(): Long")) {
-            "Should generate rawCount(): Long\n$output"
+        // The gate sits INSIDE the `= try {` capture boundary, so a
+        // viewer-scoped capability rejection is Failed, not a throw.
+        assert(
+            output.contains(
+                "public fun rawCount(): ReadResult<Long> = try { " +
+                    "requireClient().checkPrivacyBypassingRead(\"rawCount\")"
+            )
+        ) {
+            "Should generate rawCount(): ReadResult<Long> gated inside the capture boundary\n$output"
         }
-        assert(output.contains("driver.count(Car.TABLE, spec.predicates)")) {
+        assert(output.contains("runReadInterceptors(ReadOperation.RAW_COUNT)")) {
+            "rawCount runs interceptors with RAW_COUNT\n$output"
+        }
+        assert(output.contains("ReadResult.Success(driver.count(Car.TABLE, spec.predicates))")) {
             "rawCount() should delegate to driver.count with the post-interceptor spec\n$output"
         }
     }
 
     @Test
-    fun `generates rawExists and visibleExists terminal methods — legacy exists() removed`() {
+    fun `rawExists is the only existence terminal — legacy exists() and visibleExists removed`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         // The legacy `exists()` that fetched the first row and threw
-        // PrivacyDeniedException if it was denied has been removed
-        // (neither "any row exists?" nor "row I can see exists?" was
-        // the answer you got).
-        assert(!output.contains("public fun exists(): Boolean")) {
-            "Legacy exists() should be removed in favor of rawExists / visibleExists\n$output"
+        // PrivacyDeniedException if it was denied is gone, and the
+        // visible-scanning twin was deleted with the visible* family.
+        assert(!output.contains("fun exists(")) {
+            "Legacy exists() should be removed in favor of rawExists\n$output"
         }
-        assert(output.contains("public fun rawExists(): Boolean")) {
-            "Should generate rawExists(): Boolean\n$output"
+        assert(!output.contains("visibleExists")) {
+            "visibleExists is deleted with the visible* family\n$output"
         }
-        assert(output.contains("public fun visibleExists(): Boolean")) {
-            "Should generate visibleExists(): Boolean\n$output"
+        // rawExists bypasses LOAD privacy behind the capability gate,
+        // inside the capture boundary.
+        assert(
+            output.contains(
+                "public fun rawExists(): ReadResult<Boolean> = try { " +
+                    "requireClient().checkPrivacyBypassingRead(\"rawExists\")"
+            )
+        ) {
+            "Should generate rawExists(): ReadResult<Boolean> gated inside the capture boundary\n$output"
         }
-        // rawExists bypasses LOAD privacy — it just probes one
-        // storage row via driver.query and checks emptiness. Uses
-        // the post-interceptor spec so interceptor predicates
-        // (e.g. tenant_id = X) are honored on the existence probe.
-        assert(output.contains("driver.query(Car.TABLE, spec.predicates, emptyList(), limit, spec.offset)")) {
+        assert(output.contains("runReadInterceptors(ReadOperation.RAW_EXISTS)")) {
+            "rawExists runs interceptors with RAW_EXISTS\n$output"
+        }
+        // It probes one storage row via driver.query (no orderBy) and
+        // checks emptiness. Uses the post-interceptor spec so interceptor
+        // predicates (e.g. tenant_id = X) are honored on the probe, and
+        // the caller's limit(0) window is respected via the clamp.
+        assert(
+            output.contains(
+                "ReadResult.Success(driver.query(Car.TABLE, spec.predicates, emptyList(), limit, " +
+                    "spec.offset).isNotEmpty())"
+            )
+        ) {
             "rawExists should probe via driver.query with the post-interceptor spec\n$output"
-        }
-        // visibleExists still calls evaluateLoadPrivacy on the
-        // privacy path.
-        assert(output.contains("evaluateLoadPrivacy")) {
-            "visibleExists should evaluate LOAD privacy on the privacy path\n$output"
         }
     }
 
     @Test
-    fun `generates per-terminal explain mirrors`() {
+    fun `explain roster is exactly one mirror per canonical terminal`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // Every terminal gets its own explain method named after the
-        // terminal; there is no shared "explain()" entry.
+        // Every canonical terminal gets its own explain method named after
+        // the terminal; there is no shared "explain()" entry, and the
+        // mirrors of the deleted visible* / OrThrow / OrError terminals
+        // are gone with them.
         for (name in listOf(
-            "fun explainAllOrThrow(): QueryPlan",
-            "fun explainAllOrError(): QueryPlan",
-            "fun explainVisibleAll(): QueryPlan",
-            "fun explainVisibleAllOrError(): QueryPlan",
-            "fun explainFirstOrThrow(): QueryPlan",
-            "fun explainFirstOrNull(): QueryPlan",
-            "fun explainFirstOrError(): QueryPlan",
-            "fun explainFirstVisibleOrNull(): QueryPlan",
-            "fun explainRawCount(): QueryPlan",
-            "fun explainVisibleCount(): QueryPlan",
-            "fun explainRawExists(): QueryPlan",
-            "fun explainVisibleExists(): QueryPlan",
+            "public fun explainAll(): QueryPlan = try {",
+            "public fun explainFirstOrNull(): QueryPlan = try {",
+            "public fun explainRawCount(): QueryPlan = try {",
+            "public fun explainRawExists(): QueryPlan = try {",
         )) {
             assert(output.contains(name)) { "Should generate $name\n$output" }
         }
+        val explainMethods = Regex("public fun explain\\w*\\(").findAll(output).count()
+        assert(explainMethods == 4) {
+            "the explain roster should be exactly explainAll / explainFirstOrNull / " +
+                "explainRawCount / explainRawExists; found $explainMethods explain methods\n$output"
+        }
+        // Row-shaped explains delegate through buildQueryPlan to
+        // driver.explainQuery with the post-interceptor spec; the count
+        // mirror delegates to driver.explainCount.
         assert(output.contains("driver.explainQuery(Car.TABLE, spec.predicates, spec.orderBy,")) {
             "row-shaped explain should delegate to driver.explainQuery with the post-interceptor spec\n$output"
         }
-        // Rejection produces a rejected plan, not a throw.
-        assert(output.contains("QueryPlan.rejected(e.queryRejected)")) {
-            "explain methods should map EntQueryRejectedException to a rejected QueryPlan\n$output"
+        assert(output.contains("QueryPlan(driver.explainCount(Car.TABLE, spec.predicates), annotations = spec.annotations)")) {
+            "explainRawCount should delegate to driver.explainCount and carry annotations\n$output"
+        }
+        // Rejection produces a rejected plan carrying the typed
+        // exception, not a throw — explain does NOT throw.
+        val rejections = Regex(
+            Regex.escape("} catch (e: EntQueryRejectedException) { QueryPlan.rejected(e) }")
+        ).findAll(output).count()
+        assert(rejections == 4) {
+            "each explain mirror should map EntQueryRejectedException to QueryPlan.rejected(e); " +
+                "found $rejections rejection handlers\n$output"
         }
     }
 
     @Test
-    fun `exists explains drop orderBy and preserve caller offset (match runtime driver call)`() {
-        // Runtime rawExists / visibleExists no-privacy fast path
-        // calls driver.query(TABLE, spec.predicates, emptyList(),
-        // minOf(1, spec.limit ?: 1), spec.offset). The explain
-        // mirror must match exactly so the plan doesn't lie about
+    fun `exists explain drops orderBy and preserves caller offset (match runtime driver call)`() {
+        // Runtime rawExists calls driver.query(TABLE, spec.predicates,
+        // emptyList(), minOf(1, spec.limit ?: 1), spec.offset). The
+        // explain mirror must match exactly so the plan doesn't lie about
         // what the terminal would actually send. Pre-fix the
         // explain passed spec.orderBy and forced offset = null,
         // which silently disagreed with `query { orderBy(...);
@@ -421,12 +482,57 @@ class QueryGeneratorTest {
         // explainRawExists body should copy spec with orderBy =
         // emptyList() + limit clamp; offset must NOT be reset.
         assert(output.contains("spec.copy(orderBy = emptyList(), limit = minOf(1, spec.limit ?: 1))")) {
-            "explainRawExists / explainVisibleExists no-privacy path should pass spec.copy(orderBy = emptyList(), limit = ...) to buildQueryPlan without forcing offset = null\n$output"
+            "explainRawExists should pass spec.copy(orderBy = emptyList(), limit = ...) to buildQueryPlan without forcing offset = null\n$output"
         }
         // Negative guards: pre-fix shape ("offset = null") must
         // NOT appear on the exists path.
         assert(!output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null)")) {
-            "exists explains must NOT force offset = null (runtime preserves caller offset)\n$output"
+            "exists explain must NOT force offset = null (runtime preserves caller offset)\n$output"
+        }
+    }
+
+    @Test
+    fun `row terminals report root LOAD denials through the canonical capture boundary`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("public fun all(): ReadResult<List<Car>> = try {")) {
+            "all() returns ReadResult<List<Car>>\n$output"
+        }
+        // Strict all() evaluates every row in the selected window and
+        // aggregates EVERY denied root row into one typed failure...
+        assert(output.contains("val denials = results.mapNotNull { c.cars.loadDenialOrNull(privacy, it) }")) {
+            "all() should collect denials via the read surface's loadDenialOrNull\n$output"
+        }
+        assert(
+            output.contains(
+                "return ReadResult.failedForInternalUse(EntPrivacyDeniedException(LoadDenialOrigin.Root, denials))"
+            )
+        ) {
+            "all() should fail with the aggregated Root denial list\n$output"
+        }
+        // ...while firstOrNull reports exactly its one keyed denial.
+        assert(
+            output.contains(
+                "return ReadResult.failedForInternalUse(EntPrivacyDeniedException(LoadDenialOrigin.Root, listOf(denial)))"
+            )
+        ) {
+            "firstOrNull should fail with its single keyed Root denial\n$output"
+        }
+        // Every data terminal shares the canonical capture boundary:
+        // rethrow cancellation, capture Exception. Car emits 21 of them —
+        // all, firstOrNull, rawCount, rawExists, and 17 raw aggregate
+        // overloads. Explains are NOT data terminals and stay outside
+        // this count (they only convert interceptor rejection).
+        val boundaries = Regex(
+            Regex.escape(
+                "} catch (e: CancellationException) { throw e } " +
+                    "catch (e: Exception) { ReadResult.failedForInternalUse(e) }"
+            )
+        ).findAll(output).count()
+        assert(boundaries == 21) {
+            "every data terminal should end in the canonical capture boundary; found $boundaries\n$output"
         }
     }
 

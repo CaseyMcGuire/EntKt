@@ -99,7 +99,10 @@ sealed interface PrivacyDecision {
 }
 
 /**
- * Thrown when a privacy rule denies an operation.
+ * Legacy standalone representation of a denied privacy decision. Generated
+ * data terminals do not throw this type: reads return
+ * `ReadResult.Failed(EntPrivacyDeniedException)`, while mutations return
+ * `MutationResult.Failed(EntMutationPrivacyDeniedException)`.
  */
 class PrivacyDeniedException(
     val entity: String,

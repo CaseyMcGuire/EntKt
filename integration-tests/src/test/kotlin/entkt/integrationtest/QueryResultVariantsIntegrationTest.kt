@@ -8,38 +8,36 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntNotFoundException
-import entkt.runtime.result.EntOperation
-import entkt.runtime.privacy.allowAll
-import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntResult
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.PrivacyDeniedException
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.allowAll
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for the query-level read-API trio:
+ * End-to-end coverage for the canonical query terminals:
  *
- *   firstOrNull         — keep (absence → null; denial throws)
- *   firstOrThrow        — absence → EntNotFoundException;
- *                         denial → EntPrivacyDeniedException
- *   firstOrError        — Err(NotFound) / Err(PrivacyDenied) /
- *                         Err(DriverFailure)
- *   firstVisibleOrNull  — absence OR invisibility → null
- *   allOrThrow          — replace legacy `all()`; throws on any
- *                         denial
- *   allOrError          — Err(PrivacyDenied) / Err(DriverFailure)
- *   visibleAll          — drop denied rows from the result list
- *   visibleAllOrError   — same wrapped in EntResult
+ *   all(): ReadResult<List<E>>  — strict: evaluates the full selected
+ *       window; ANY denied root row fails the terminal with an
+ *       ordered, keyed denial list (no hydrated data, no partial list).
+ *   firstOrNull(): ReadResult<E?> — one-row SQL window; a denied
+ *       selected first row is Failed(Root, one denial) and no second
+ *       row is ever consulted.
+ *
+ * The former visible*-scanning family (visibleAll, firstVisibleOrNull,
+ * visibleAllOrError, the overfetch cap) is removed by design — root
+ * visibility filtering is no longer a read-terminal concern.
  */
 class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
@@ -87,505 +85,190 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         }
     }
 
-    /** Seed three articles under System and return them in insertion order. */
+    /** Seed three articles under a bypass viewer, in insertion order. */
     private fun seedThree(client: EntClient): Triple<Article, Article, Article> {
         return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-            val first = sys.articles.create { title = "First"; published = true; authorId = author.id }.saveOrThrow()
-            val second = sys.articles.create { title = "Second"; published = true; authorId = author.id }.saveOrThrow()
-            val third = sys.articles.create { title = "Third"; published = true; authorId = author.id }.saveOrThrow()
+            val author = sys.users.create { name = "A"; email = "a@example.com" }
+                .saveAndLoad().getOrThrow()
+            val first = sys.articles.create { title = "First"; published = true; authorId = author.id }
+                .saveAndLoad().getOrThrow()
+            val second = sys.articles.create { title = "Second"; published = true; authorId = author.id }
+                .saveAndLoad().getOrThrow()
+            val third = sys.articles.create { title = "Third"; published = true; authorId = author.id }
+                .saveAndLoad().getOrThrow()
             Triple(first, second, third)
         }
     }
 
-    // ---- allOrThrow ----
+    // ---- all(): Success ----
 
     @Test
-    fun `allOrThrow returns every matching row when LOAD allows`() {
+    fun `all returns every matching row when LOAD allows`() {
         val client = freshClient()
         seedThree(client)
 
-        val all = client.articles.query().allOrThrow()
-        assertEquals(3, all.size)
+        val result = client.articles.query().all()
+        val success = assertIs<ReadResult.Success<List<Article>>>(result)
+        assertEquals(3, success.value.size)
     }
 
     @Test
-    fun `allOrThrow throws EntPrivacyDeniedException when any row is denied`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("First"))
+    fun `all returns Success(emptyList()) for no rows`() {
+        val client = freshClient()
+
+        assertEquals(emptyList(), client.articles.query().all().getOrThrow())
+    }
+
+    @Test
+    fun `all with limit(0) returns Success(emptyList())`() {
+        val client = freshClient()
         seedThree(client)
 
-        // allOrThrow wraps allOrError().getOrThrow(), so the throw is
-        // the structured EntPrivacyDeniedException (not the raw
-        // PrivacyDeniedException). This is consistent with the rest
-        // of the *OrThrow family (byIdOrThrow / firstOrThrow /
-        // saveOrThrow / deleteOrThrow).
-        val ex = assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.query().allOrThrow()
+        assertEquals(emptyList(), client.articles.query { limit(0) }.all().getOrThrow())
+    }
+
+    // ---- all(): strict full-window denial aggregation ----
+
+    @Test
+    fun `all lists every denied root row in encountered order with keys but no hydrated data`() {
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
+        val (first, _, third) = seedThree(client)
+
+        val result = client.articles.query { orderBy(Article.id.asc()) }.all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.Root>(ex.origin)
+        // Both denied rows are listed, in the query's encountered order.
+        assertEquals(2, ex.denials.size)
+        assertEquals(listOf(first.id, third.id), ex.denials.map { it.entityKey.value })
+        for (denial in ex.denials) {
+            assertEquals("Article", denial.entityType)
+            assertEquals("id", denial.entityKey.field)
+            assertTrue(denial.reason.startsWith("not "), "rule-supplied reason expected; got ${denial.reason}")
         }
-        assertEquals(EntOperation.LOAD, ex.privacyDenied.operation)
-    }
-
-    // ---- allOrError ----
-
-    @Test
-    fun `allOrError returns Ok when every row is visible`() {
-        val client = freshClient()
-        seedThree(client)
-
-        val result = client.articles.query().allOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(3, result.value.size)
     }
 
     @Test
-    fun `allOrError returns Err(PrivacyDenied) on any denied row`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("First"))
-        seedThree(client)
-
-        val result = client.articles.query().allOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue(result.error is EntError.PrivacyDenied)
-        assertEquals(EntOperation.LOAD, result.error.operation)
-    }
-
-    // ---- visibleAll ----
-
-    @Test
-    fun `visibleAll returns only the rows the viewer can LOAD`() {
+    fun `all never returns a partial list after denial`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
         seedThree(client)
 
-        val visible = client.articles.query().visibleAll()
-        assertEquals(1, visible.size)
-        assertEquals("Second", visible[0].title)
+        // Strictness: the one visible row is NOT returned — the terminal
+        // is Failed, not a filtered Success.
+        assertIs<ReadResult.Failed>(client.articles.query().all())
     }
 
     @Test
-    fun `visibleAll returns empty list when nothing is visible`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
+    fun `all evaluates only the selected window`() {
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("First"))
         seedThree(client)
 
-        val visible = client.articles.query().visibleAll()
-        assertTrue(visible.isEmpty())
+        // Window = first row only (by id); the denied Second/Third rows
+        // are outside the window, so the read succeeds.
+        val result = client.articles.query { orderBy(Article.id.asc()); limit(1) }.all()
+        val success = assertIs<ReadResult.Success<List<Article>>>(result)
+        assertEquals(listOf("First"), success.value.map { it.title })
     }
 
     @Test
-    fun `visibleAll skips privacy evaluation when the repo has no LOAD rules`() {
-        // System viewer's privacy is bypassed but we still want to
-        // confirm the fast path through `!hasLoadPrivacy()` returns
-        // every row instead of evaluating per-row.
-        val client = freshClient()
-        seedThree(client)
-
-        val visible = client.articles.query().visibleAll()
-        assertEquals(3, visible.size)
-    }
-
-    // ---- visibleAllOrError ----
-
-    @Test
-    fun `visibleAllOrError returns Ok with visible rows even when others are denied`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Third"))
-        seedThree(client)
-
-        val result = client.articles.query().visibleAllOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(1, result.value.size)
-        assertEquals("Third", result.value[0].title)
-    }
-
-    @Test
-    fun `visibleAllOrError eager-edge denial wins over cap exhaustion`() {
-        // Setup: many articles (10), small cap (3), eager-loaded
-        // user is denied. Before the fix, cap exhaustion fired BEFORE
-        // loadEdges was called, so Err(OverfetchCapExceeded) shadowed
-        // the eager-edge PrivacyDenied — caller couldn't tell that
-        // their query was reading rows whose targets they can't see.
-        // After the fix, loadEdges runs first; its PrivacyDenied
-        // wins the Err.
-        val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
-            override fun configure(scope: UserPolicyScope) = scope.run {
-                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
-            }
-        }
-        val driver = resetAndDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
-            policies {
-                articles(AllowAllArticles)
-                users(denyAllUsers)
-            }
-            visibleOverfetchLimit = 3
-        }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-            repeat(10) { i ->
-                sys.articles.create {
-                    title = "A-$i"
-                    published = true
-                    authorId = author.id
-                }.saveOrThrow()
-            }
-        }
-
-        val result = client.articles.query { withAuthor() }.visibleAllOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue(
-            result.error is EntError.PrivacyDenied,
-            "Eager-edge PrivacyDenied should win over OverfetchCapExceeded; got ${result.error}",
-        )
-    }
-
-    @Test
-    fun `visibleAllOrError maps eager-edge LOAD denial to Err(PrivacyDenied), not DriverFailure`() {
-        // Article LOAD allows all; the *eager-loaded* User edge denies.
-        // The visible-filter on Article doesn't drop the row (Article
-        // is allowed), but loadEdges then raises PrivacyDeniedException
-        // when LOAD-checking the eager User target. Before the catch
-        // arm was added, this misclassified as Err(DriverFailure).
-        val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
-            override fun configure(scope: UserPolicyScope) = scope.run {
-                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
-            }
-        }
-        val driver = resetAndDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
-            policies {
-                articles(AllowAllArticles)
-                users(denyAllUsers)
-            }
-        }
-        // Seed via System (privacy bypass) so we have a User row to
-        // eager-load.
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-            sys.articles.create { title = "X"; published = true; authorId = author.id }.saveOrThrow()
-        }
-
-        val result = client.articles.query { withAuthor() }.visibleAllOrError()
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(
-            error is EntError.PrivacyDenied,
-            "expected PrivacyDenied for eager-edge denial; got $error",
-        )
-        assertEquals(EntOperation.LOAD, error.operation)
-        assertEquals("user hidden", error.reason)
-    }
-
-    @Test
-    fun `visibleAll throws raw PrivacyDeniedException on eager-edge denial (visible filtering is root-only)`() {
-        // Visible-only reads filter the root entity only:
-        // visibleAll's filter applies only to the root entity. Eager-
-        // loaded edge targets via withAuthor() / withTags() / etc.
-        // still enforce target LOAD privacy strictly — a denied
-        // target throws PrivacyDeniedException rather than silently
-        // dropping the root row. This pins the documented carve-out.
-        val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
-            override fun configure(scope: UserPolicyScope) = scope.run {
-                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user hidden") }) }
-            }
-        }
-        val driver = resetAndDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
-            policies {
-                articles(AllowAllArticles)
-                users(denyAllUsers)
-            }
-        }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-            sys.articles.create { title = "X"; published = true; authorId = author.id }.saveOrThrow()
-        }
-
-        kotlin.test.assertFailsWith<PrivacyDeniedException> {
-            client.articles.query { withAuthor() }.visibleAll()
-        }
-    }
-
-    // ---- firstOrNull (unchanged contract — null only for empty match) ----
-
-    @Test
-    fun `firstOrNull returns null only for empty matches`() {
-        val client = freshClient()
-        seedThree(client)
-
-        val none = client.articles.query { where(Article.title eq "Missing") }.firstOrNull()
-        assertNull(none)
-
-        val first = client.articles.query().firstOrNull()
-        assertNotNull(first)
-    }
-
-    @Test
-    fun `firstOrNull throws on privacy denial`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
-        seedThree(client)
-
-        assertFailsWith<PrivacyDeniedException> {
-            client.articles.query().firstOrNull()
-        }
-    }
-
-    // ---- firstOrThrow ----
-
-    @Test
-    fun `firstOrThrow returns the first matching row`() {
-        val client = freshClient()
-        val (first, _, _) = seedThree(client)
-
-        // Explicit orderBy so the test pins "first by id" rather
-        // than relying on Postgres's unspecified default row order.
-        val loaded = client.articles.query { orderBy(Article.id.asc()) }.firstOrThrow()
-        assertEquals(first.id, loaded.id)
-    }
-
-    @Test
-    fun `firstOrThrow throws EntNotFoundException on empty match`() {
-        val client = freshClient()
-
-        val ex = assertFailsWith<EntNotFoundException> {
-            client.articles.query().firstOrThrow()
-        }
-        assertEquals("Article", ex.notFound.entity)
-        assertEquals(EntOperation.QUERY, ex.notFound.operation)
-        // first/empty has no specific id to attribute the miss to.
-        assertNull(ex.notFound.id)
-    }
-
-    @Test
-    fun `firstOrThrow throws structured EntPrivacyDeniedException on denial`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
-        seedThree(client)
-
-        val ex = assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.query().firstOrThrow()
-        }
-        assertEquals("Article", ex.privacyDenied.entity)
-    }
-
-    // ---- firstOrError ----
-
-    @Test
-    fun `firstOrError returns Ok with the first matching row`() {
-        val client = freshClient()
-        val (first, _, _) = seedThree(client)
-
-        // Explicit orderBy so the test pins "first by id" rather
-        // than relying on Postgres's unspecified default row order.
-        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(first.id, result.value.id)
-    }
-
-    @Test
-    fun `firstOrError returns Err(NotFound) on empty match`() {
-        val client = freshClient()
-
-        val result = client.articles.query().firstOrError()
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.NotFound)
-        assertEquals(EntOperation.QUERY, error.operation)
-    }
-
-    @Test
-    fun `firstOrError returns Err(PrivacyDenied) on denied first row`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
-        seedThree(client)
-
-        val result = client.articles.query().firstOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue(result.error is EntError.PrivacyDenied)
-    }
-
-    // ---- firstVisibleOrNull ----
-
-    @Test
-    fun `firstVisibleOrNull returns first visible row, skipping denied ones`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
-        seedThree(client)
-
-        val loaded = client.articles.query().firstVisibleOrNull()
-        assertNotNull(loaded)
-        assertEquals("Second", loaded.title)
-    }
-
-    @Test
-    fun `firstVisibleOrNull returns null when nothing is visible`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
-        seedThree(client)
-
-        assertNull(client.articles.query().firstVisibleOrNull())
-    }
-
-    @Test
-    fun `firstVisibleOrNull returns null on empty match`() {
-        val client = freshClient()
-
-        assertNull(client.articles.query { where(Article.title eq "X") }.firstVisibleOrNull())
-    }
-
-    // ---- visibleOverfetchLimit / cap ----
-
-    /** Build a client whose cap is intentionally small so cap-exhaustion is easy to trigger. */
-    private fun freshClientWithCap(
-        cap: Int,
-        viewer: Viewer,
-        articlePolicy: EntityPolicy<Article, ArticlePolicyScope>,
-    ): EntClient {
-        val driver = resetAndDriver()
-        return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
-            policies {
-                articles(articlePolicy)
-                users(OpenUser)
-            }
-            visibleOverfetchLimit = cap
-        }
-    }
-
-    private fun seedNArticles(client: EntClient, n: Int) {
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-            repeat(n) { i ->
-                sys.articles.create {
-                    title = "Article-$i"
-                    published = true
-                    authorId = author.id
-                }.saveOrThrow()
-            }
-        }
-    }
-
-    @Test
-    fun `visibleAll caps the storage scan at visibleOverfetchLimit`() {
-        val client = freshClientWithCap(
-            cap = 3,
-            viewer = Viewer.User(1L),
-            articlePolicy = AllowAllArticles,
-        )
-        seedNArticles(client, n = 10)
-
-        // 10 rows exist but the cap pulls only 3.
-        val visible = client.articles.query().visibleAll()
-        assertEquals(3, visible.size)
-    }
-
-    @Test
-    fun `visibleAllOrError returns Err(OverfetchCapExceeded) when cap is hit`() {
-        val client = freshClientWithCap(
-            cap = 3,
-            viewer = Viewer.User(1L),
-            articlePolicy = AllowAllArticles,
-        )
-        seedNArticles(client, n = 10)
-
-        val result = client.articles.query().visibleAllOrError()
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.OverfetchCapExceeded)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.QUERY, error.operation)
-        assertEquals(3, error.cap)
-    }
-
-    @Test
-    fun `visibleAllOrError returns Ok when query naturally fits inside the cap`() {
-        val client = freshClientWithCap(
-            cap = 100,
-            viewer = Viewer.User(1L),
-            articlePolicy = AllowAllArticles,
-        )
-        seedNArticles(client, n = 3)
-
-        val result = client.articles.query().visibleAllOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(3, result.value.size)
-    }
-
-    @Test
-    fun `visibleAllOrError respects user queryLimit when smaller than cap`() {
-        val client = freshClientWithCap(
-            cap = 100,
-            viewer = Viewer.User(1L),
-            articlePolicy = AllowAllArticles,
-        )
-        seedNArticles(client, n = 10)
-
-        // queryLimit 2 < cap 100 → no cap exhaustion, return at most 2.
-        val result = client.articles.query { limit(2) }.visibleAllOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(2, result.value.size)
-    }
-
-    @Test
-    fun `firstVisibleOrNull cap-exhaustion is silent (returns null)`() {
-        // All articles deny, cap = 3 — firstVisibleOrNull scans 3
-        // rows, finds none visible, returns null. No Err surface
-        // here by the optimistic-read shape.
-        val client = freshClientWithCap(
-            cap = 3,
-            viewer = Viewer.User(1L),
-            articlePolicy = denyAllArticles,
-        )
-        seedNArticles(client, n = 10)
-
-        assertNull(client.articles.query().firstVisibleOrNull())
-    }
-
-    // ---- No LOAD rules → deny all reads (fail-closed; no fast path) ----
-
-    /**
-     * A fresh client whose Article policy declares NO load rules. Under
-     * fail-closed privacy every read is denied, so the visible-* variants
-     * filter everything out — there is no "no-privacy fast path" anymore.
-     */
-    private fun freshClientNoLoadRules(): EntClient {
-        val noLoadPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
+    fun `an ordinary rule exception beats an incomplete denial aggregate`() {
+        val boom = IllegalStateException("rule blew up")
+        val explodingPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
-                // No `load(...)` rules — every load is denied (fail-closed).
+                privacy {
+                    load(ArticleLoadPrivacyRule { ctx ->
+                        when (ctx.entity.title) {
+                            "Second" -> throw boom
+                            else -> PrivacyDecision.Deny("hidden")
+                        }
+                    })
+                }
             }
         }
-        val driver = resetAndDriver()
-        return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
-            policies {
-                articles(noLoadPolicy)
-                users(OpenUser)
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = explodingPolicy)
+        seedThree(client)
+
+        // First is denied, Second's rule throws: the ordinary exception is
+        // the stored failure — never a partial EntPrivacyDeniedException.
+        val failed = assertIs<ReadResult.Failed>(
+            client.articles.query { orderBy(Article.id.asc()) }.all(),
+        )
+        assertSame(boom, failed.exception)
+    }
+
+    // ---- firstOrNull ----
+
+    @Test
+    fun `firstOrNull returns Success(null) only for empty matches`() {
+        val client = freshClient()
+        seedThree(client)
+
+        assertNull(
+            client.articles.query { where(Article.title eq "Missing") }.firstOrNull().getOrThrow(),
+        )
+        assertNotNull(client.articles.query().firstOrNull().getOrThrow())
+    }
+
+    @Test
+    fun `firstOrNull returns the first row of the ordered window`() {
+        val client = freshClient()
+        val (first, _, _) = seedThree(client)
+
+        // Explicit orderBy so the test pins "first by id" rather than
+        // relying on Postgres's unspecified default row order.
+        val loaded = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull().getOrThrow()
+        assertEquals(first.id, loaded?.id)
+    }
+
+    @Test
+    fun `firstOrNull with limit(0) returns Success(null)`() {
+        val client = freshClient()
+        seedThree(client)
+
+        val result = client.articles.query { limit(0) }.firstOrNull()
+        val success = assertIs<ReadResult.Success<Article?>>(result)
+        assertNull(success.value)
+    }
+
+    @Test
+    fun `firstOrNull denied first row is Failed with one keyed denial and never scans row two`() {
+        val evaluated = mutableListOf<Long>()
+        val recordingDenyPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    load(ArticleLoadPrivacyRule { ctx ->
+                        evaluated.add(ctx.entity.id)
+                        PrivacyDecision.Deny("hidden")
+                    })
+                }
             }
-            visibleOverfetchLimit = 100
         }
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = recordingDenyPolicy)
+        val (first, _, _) = seedThree(client)
+
+        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.Root>(ex.origin)
+        assertEquals(1, ex.denials.size)
+        assertEquals(first.id, ex.denials.single().entityKey.value)
+        // Strict posture: the SQL window is one row; privacy ran exactly
+        // once, on that row. No replacement scanning happened.
+        assertEquals(listOf(first.id), evaluated)
     }
 
     @Test
-    fun `visibleAll returns empty when the repo has no LOAD rules (fail-closed denies all)`() {
-        val client = freshClientNoLoadRules()
-        seedNArticles(client, n = 5)
+    fun `firstOrNull denial getOrThrow throws the stored exception instance`() {
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
+        seedThree(client)
 
-        // No load rule → every row is denied → nothing is visible.
-        assertTrue(client.articles.query().visibleAll().isEmpty())
-    }
-
-    @Test
-    fun `visibleAllOrError returns Ok(empty) when the repo has no LOAD rules`() {
-        val client = freshClientNoLoadRules()
-        seedNArticles(client, n = 5)
-
-        // Cap (100) is never hit, so this is a clean Ok with no visible rows
-        // rather than Err(OverfetchCapExceeded).
-        val result = client.articles.query().visibleAllOrError()
-        assertTrue(result is EntResult.Ok)
-        assertTrue(result.value.isEmpty())
-    }
-
-    @Test
-    fun `firstVisibleOrNull returns null when the repo has no LOAD rules`() {
-        val client = freshClientNoLoadRules()
-        seedNArticles(client, n = 5)
-
-        assertNull(client.articles.query { orderBy(Article.id.asc()) }.firstVisibleOrNull())
+        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull()
+        val failed = assertIs<ReadResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntPrivacyDeniedException) {
+            assertSame(failed.exception, e)
+        }
     }
 }

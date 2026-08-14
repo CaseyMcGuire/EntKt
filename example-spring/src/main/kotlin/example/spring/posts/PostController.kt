@@ -28,13 +28,13 @@ class PostController(private val client: EntClient) {
         val posts = client.posts.query {
             if (published != null) where(Post.published eq published)
             orderBy(Post.createdAt.desc())
-        }.allOrThrow()
+        }.all().getOrThrow()
         return posts.map { it.toResponse() }
     }
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: Long): PostResponse {
-        val post = client.posts.byIdOrNull(id)
+        val post = client.posts.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return post.toResponse()
     }
@@ -42,7 +42,7 @@ class PostController(private val client: EntClient) {
     @PostMapping
     fun create(@RequestBody req: CreatePostRequest): PostResponse {
         // Verify author exists
-        val author = client.users.byIdOrNull(req.authorId)
+        val author = client.users.findById(req.authorId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Author not found")
 
         val post = client.posts.create {
@@ -50,25 +50,25 @@ class PostController(private val client: EntClient) {
             body = req.body
             published = req.published
             this.authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
         return post.toResponse()
     }
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: Long, @RequestBody req: UpdatePostRequest): PostResponse {
         // No pre-load: `update(id)` does its own internal byId.
-        // Missing-row → save() returns null → 404.
+        // Missing-row → Failed(EntTargetAbsentException) → 404 via ErrorHandler.
         val updated = client.posts.update(id) {
             req.title?.let { title = it }
             req.body?.let { body = it }
             req.published?.let { published = it }
-        }.save() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        }.saveAndLoad().getOrThrow()
         return updated.toResponse()
     }
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Long) {
-        if (!client.posts.deleteByIdOrError(id).getOrThrow()) {
+        if (!client.posts.deleteById(id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }
@@ -93,25 +93,25 @@ class PostController(private val client: EntClient) {
         val post = client.posts.query {
             where(Post.id eq id)
             withTags()
-        }.firstOrNull() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        }.firstOrNull().getOrThrow() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return post.edges.tags.requireLoaded().map { it.toResponse() }
     }
 
     /** Add a tag to a post. Idempotent — re-tagging is a no-op. */
     @PostMapping("/{id}/tags")
     fun addTag(@PathVariable id: Long, @RequestBody req: AddTagRequest): TagResponse {
-        val post = client.posts.byIdOrNull(id)
+        val post = client.posts.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val tag = client.tags.byIdOrNull(req.tagId)
+        val tag = client.tags.findById(req.tagId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Tag not found")
         val alreadyLinked = client.postTags.query {
             where((PostTag.postId eq id) and (PostTag.tagId eq req.tagId))
-        }.rawExists()
+        }.rawExists().getOrThrow()
         if (!alreadyLinked) {
             client.postTags.create {
                 this.postId = post.id
                 this.tagId = tag.id
-            }.save()
+            }.save().getOrThrow()
         }
         return tag.toResponse()
     }
@@ -119,11 +119,11 @@ class PostController(private val client: EntClient) {
     /** Remove a tag from a post. */
     @DeleteMapping("/{postId}/tags/{tagId}")
     fun removeTag(@PathVariable postId: Long, @PathVariable tagId: Int) {
-        client.posts.byIdOrNull(postId)
+        client.posts.findById(postId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val deleted = client.postTags.deleteMany(
             (PostTag.postId eq postId) and (PostTag.tagId eq tagId),
-        )
+        ).getOrThrow()
         if (deleted == 0) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }

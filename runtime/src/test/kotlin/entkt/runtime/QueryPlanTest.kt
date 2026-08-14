@@ -1,8 +1,6 @@
 package entkt.runtime
 
 import entkt.runtime.query.QueryPlan
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntQueryRejectedException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -19,10 +17,10 @@ import kotlin.test.assertSame
  */
 class QueryPlanTest {
 
-    private fun rejection(reason: String, interceptor: String = "rej") = EntError.QueryRejected(
-        entity = "Post",
-        operation = EntOperation.QUERY,
+    private fun rejection(reason: String, interceptor: String = "rej") = EntQueryRejectedException(
+        entityType = "Post",
         reason = reason,
+        code = null,
         interceptor = interceptor,
     )
 
@@ -42,7 +40,7 @@ class QueryPlanTest {
             eagerQueries = mapOf("author" to QueryPlan.rejected(rejection("no authors"))),
         )
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("no authors", ex.queryRejected.reason)
+        assertEquals("no authors", ex.reason)
     }
 
     @Test
@@ -57,7 +55,7 @@ class QueryPlanTest {
             ),
         )
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("nested", ex.queryRejected.reason)
+        assertEquals("nested", ex.reason)
     }
 
     @Test
@@ -68,7 +66,7 @@ class QueryPlanTest {
             rejection = rejection("root"),
         )
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("root", ex.queryRejected.reason)
+        assertEquals("root", ex.reason)
     }
 
     @Test
@@ -81,6 +79,6 @@ class QueryPlanTest {
             ),
         )
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("first", ex.queryRejected.reason)
+        assertEquals("first", ex.reason)
     }
 }

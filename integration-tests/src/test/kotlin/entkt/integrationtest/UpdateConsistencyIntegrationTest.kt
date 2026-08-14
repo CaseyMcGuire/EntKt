@@ -1,29 +1,43 @@
 package entkt.integrationtest
 
-import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
+import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.mutation.UpdateConsistency
+import entkt.runtime.result.EntTargetAbsentException
+import entkt.runtime.result.EntUnexpectedMutationException
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.TransactionResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertNotNull
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for [UpdateConsistency.Pessimistic] (transaction locking
- *). The two preflights — transaction required, driver
- * capability required — fire before the owner-row load, hooks,
- * privacy, validation, or driver writes; the actual lock-and-read
- * lands the owner row through `Driver.readRowForUpdate(...)` rather
- * than the `ReadCurrent` `byId(...)` path.
+ * End-to-end coverage for [UpdateConsistency.Pessimistic]. The two
+ * preflights — transaction required, driver capability required — fire
+ * before the owner-row load, hooks, privacy, validation, or driver
+ * writes; the actual lock-and-read lands the owner row through
+ * `Driver.readRowForUpdate(...)` rather than the `ReadCurrent`
+ * `byId(...)` path.
+ *
+ * An unsatisfied preflight no longer throws out of the terminal: it is
+ * `Failed(EntUnexpectedMutationException(NotPersisted, cause =
+ * TransactionRequiredException / UnsupportedDriverCapabilityException))`
+ * (deliberate reversal of the old propagate contract).
  *
  * [PostgresDriver] reports `supportsReadRowForUpdate = true` natively
  * (SELECT ... FOR UPDATE under a transaction), so both the happy-path
  * Pessimistic-inside-tx branches and the negative-capability branch
- * (via the [NoLockSupportDriver] wrapper) can be exercised against
- * the production driver.
+ * (via the [NoLockSupportDriver] wrapper) run against the production
+ * driver.
  */
 class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 
@@ -34,7 +48,15 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
      * Same as [freshDriver] — kept as a named alias so test bodies
      * make their intent ("this branch needs row-lock support") clear.
      */
-    private fun lockingDriver(): entkt.runtime.driver.Driver = resetAndDriver()
+    private fun lockingDriver(): Driver = resetAndDriver()
+
+    /** Assert the captured-preflight failure shape and return the cause. */
+    private inline fun <reified C : Exception> assertPreflightFailure(result: MutationResult<*>): C {
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        return assertIs<C>(ex.cause)
+    }
 
     @Test
     fun `default consistency is ReadCurrent and update succeeds outside a transaction`() {
@@ -43,31 +65,30 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
         val updated = client.users.update(user.id) {
             name = "Renamed"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        assertNotNull(updated)
         assertEquals("Renamed", updated.name)
     }
 
     @Test
-    fun `Pessimistic update outside a transaction throws TransactionRequiredException`() {
+    fun `Pessimistic update outside a transaction fails with TransactionRequiredException as cause`() {
         val driver = freshDriver()
         val client = sysClient(driver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val ex = assertFailsWith<TransactionRequiredException> {
+        val cause = assertPreflightFailure<TransactionRequiredException>(
             client.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed"
-            }.save()
-        }
-        assertEquals(true, ex.message!!.contains("Pessimistic"))
+            }.save(),
+        )
+        assertTrue(cause.message!!.contains("Pessimistic"))
     }
 
     @Test
@@ -79,19 +100,19 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val updated = client.withTransaction { tx ->
+        val result = client.withTransaction { tx ->
             tx.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed Pessimistic"
-            }.save()
+            }.saveAndLoad().orRollback()
         }
-        assertNotNull(updated)
-        assertEquals("Renamed Pessimistic", updated.name)
+        val success = assertIs<TransactionResult.Success<User>>(result)
+        assertEquals("Renamed Pessimistic", success.value.name)
     }
 
     @Test
-    fun `Pessimistic update returns null when the owner row is missing`() {
+    fun `Pessimistic update of a missing owner row is Failed(EntTargetAbsentException)`() {
         val client = sysClient(lockingDriver())
 
         val result = client.withTransaction { tx ->
@@ -99,16 +120,21 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
                 name = "Ghost"
             }.save()
         }
-        // `readRowForUpdate(...)` on a missing id returns null → save returns null (NotFound).
-        assertEquals(null, result)
+        // `readRowForUpdate(...)` on a missing id returns null →
+        // Failed(EntTargetAbsentException) recorded through the tx
+        // client → the scope goes rollback-only and the boundary reports
+        // the recorded failure.
+        val failed = assertIs<TransactionResult.Failed>(result)
+        val absent = assertIs<EntTargetAbsentException>(failed.exception)
+        assertEquals("User", absent.entityType)
+        assertEquals(9999L, absent.key.value)
     }
 
     @Test
     fun `Pessimistic preflight fires before before-hooks`() {
         // The transaction-required check runs before any observable
         // work, so a Pessimistic save outside a transaction never
-        // reaches the hook stage. Guard with a hook that would crash
-        // if reached, then assert it doesn't fire.
+        // reaches the hook stage.
         val driver = freshDriver()
         var hookFired = false
         val client = sysClient(driver) {
@@ -121,45 +147,43 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        assertFailsWith<TransactionRequiredException> {
+        assertPreflightFailure<TransactionRequiredException>(
             client.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed"
-            }.save()
-        }
-        assertEquals(false, hookFired, "before-hooks must not fire when the Pessimistic preflight rejects the save")
+            }.save(),
+        )
+        assertFalse(hookFired, "before-hooks must not fire when the Pessimistic preflight rejects the save")
     }
 
     @Test
     fun `defaultUpdateConsistency on the client is honored when no per-save override is passed`() {
-        // PostgresDriver's native lock support lets the inside-tx
-        // case actually run the SELECT ... FOR UPDATE.
         val client = sysClient(lockingDriver()) {
             defaultUpdateConsistency = UpdateConsistency.Pessimistic
         }
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        // Outside a transaction → defaultUpdateConsistency = Pessimistic
-        // means the no-arg `update(id) { ... }` call inherits Pessimistic
-        // and rejects with TransactionRequiredException.
-        assertFailsWith<TransactionRequiredException> {
-            client.users.update(user.id) { name = "Renamed" }.save()
-        }
+        // Outside a transaction → the no-arg `update(id) { ... }` call
+        // inherits Pessimistic and fails the requirement preflight.
+        assertPreflightFailure<TransactionRequiredException>(
+            client.users.update(user.id) { name = "Renamed" }.save(),
+        )
 
         // Inside a transaction → the inherited default works.
-        val updated = client.withTransaction { tx ->
-            tx.users.update(user.id) { name = "Renamed Pessimistic Default" }.save()
+        val result = client.withTransaction { tx ->
+            tx.users.update(user.id) { name = "Renamed Pessimistic Default" }
+                .saveAndLoad().orRollback()
         }
-        assertNotNull(updated)
-        assertEquals("Renamed Pessimistic Default", updated.name)
+        val success = assertIs<TransactionResult.Success<User>>(result)
+        assertEquals("Renamed Pessimistic Default", success.value.name)
     }
 
     @Test
-    fun `Pessimistic update on a driver without supportsReadRowForUpdate throws UnsupportedDriverCapabilityException`() {
+    fun `Pessimistic update on a driver without supportsReadRowForUpdate fails with UnsupportedDriverCapabilityException as cause`() {
         // Wrap a real PostgresDriver with a thin proxy that reports
         // `supportsReadRowForUpdate = false` so the capability preflight
         // fires. Other driver methods delegate to the wrapped instance.
@@ -169,84 +193,41 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val ex = client.withTransaction { tx ->
-            assertFailsWith<UnsupportedDriverCapabilityException> {
-                tx.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
-                    name = "Renamed"
-                }.save()
-            }
+        val txResult = client.withTransaction { tx ->
+            tx.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
+                name = "Renamed"
+            }.save()
         }
-        assertEquals(true, ex.message!!.contains("supportsReadRowForUpdate"))
+        // The mutation failure was recorded through the tx client →
+        // rollback-only → the boundary reports it.
+        val failed = assertIs<TransactionResult.Failed>(txResult)
+        val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
+        val cause = assertIs<UnsupportedDriverCapabilityException>(ex.cause)
+        assertTrue(cause.message!!.contains("supportsReadRowForUpdate"))
     }
 }
 
 /**
- * A thin wrapper that delegates everything to a real [entkt.runtime.driver.Driver]
- * but advertises `supportsReadRowForUpdate = false`. Lets the
+ * A thin wrapper that delegates everything to a real [Driver] but
+ * advertises `supportsReadRowForUpdate = false`. Lets the
  * capability-rejection branch of the Pessimistic preflight be
  * exercised without needing a second real driver implementation.
+ * `registerAll` is forwarded (not re-derived) so the batch DDL
+ * guarantee of the wrapped driver is preserved.
  */
-private class NoLockSupportDriver(private val real: entkt.runtime.driver.Driver) : entkt.runtime.driver.Driver {
-    override fun register(schema: entkt.runtime.driver.EntitySchema) = real.register(schema)
+private class NoLockSupportDriver(private val real: Driver) : Driver by real {
+    override val supportsReadRowForUpdate: Boolean get() = false
 
-    // Forwarded, not re-derived: turning the batch back into a loop
-    // would drop the create-all-tables-before-any-constraint guarantee
-    // the wrapped driver relies on.
-    override fun registerAll(schemas: List<entkt.runtime.driver.EntitySchema>) = real.registerAll(schemas)
-    override fun insert(table: String, values: Map<String, Any?>) = real.insert(table, values)
-    override fun update(table: String, id: Any, values: Map<String, Any?>) = real.update(table, id, values)
-    override fun byId(table: String, id: Any) = real.byId(table, id)
-    override fun query(
-        table: String,
-        predicates: List<entkt.query.Predicate<*>>,
-        orderBy: List<entkt.query.OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ) = real.query(table, predicates, orderBy, limit, offset)
-    override fun count(table: String, predicates: List<entkt.query.Predicate<*>>) = real.count(table, predicates)
-    override fun exists(table: String, predicates: List<entkt.query.Predicate<*>>) = real.exists(table, predicates)
-    override fun delete(table: String, id: Any) = real.delete(table, id)
-    override fun insertMany(table: String, values: List<Map<String, Any?>>) = real.insertMany(table, values)
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate<*>>) =
-        real.updateMany(table, values, predicates)
-    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>) = real.deleteMany(table, predicates)
-    override fun <T> withTransaction(block: (entkt.runtime.driver.Driver) -> T): T =
+    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
         real.withTransaction { txReal ->
             // Wrap the tx driver too, so the in-tx Pessimistic preflight
             // sees the same false capability flag.
             block(NoLockSupportTxDriver(txReal))
         }
-
-    override val supportsReadRowForUpdate: Boolean get() = false
-    override val supportsOwnerEdgeSerialization: Boolean get() = real.supportsOwnerEdgeSerialization
 }
 
-private class NoLockSupportTxDriver(private val txReal: entkt.runtime.driver.Driver) : entkt.runtime.driver.Driver {
-    override fun register(schema: entkt.runtime.driver.EntitySchema) = txReal.register(schema)
-
-    override fun registerAll(schemas: List<entkt.runtime.driver.EntitySchema>) = txReal.registerAll(schemas)
-    override fun insert(table: String, values: Map<String, Any?>) = txReal.insert(table, values)
-    override fun update(table: String, id: Any, values: Map<String, Any?>) = txReal.update(table, id, values)
-    override fun byId(table: String, id: Any) = txReal.byId(table, id)
-    override fun query(
-        table: String,
-        predicates: List<entkt.query.Predicate<*>>,
-        orderBy: List<entkt.query.OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ) = txReal.query(table, predicates, orderBy, limit, offset)
-    override fun count(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.count(table, predicates)
-    override fun exists(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.exists(table, predicates)
-    override fun delete(table: String, id: Any) = txReal.delete(table, id)
-    override fun insertMany(table: String, values: List<Map<String, Any?>>) = txReal.insertMany(table, values)
-    override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<entkt.query.Predicate<*>>) =
-        txReal.updateMany(table, values, predicates)
-    override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>) = txReal.deleteMany(table, predicates)
-    override fun <T> withTransaction(block: (entkt.runtime.driver.Driver) -> T): T = block(this)
-
-    override val inTransaction: Boolean get() = true
+private class NoLockSupportTxDriver(txReal: Driver) : Driver by txReal {
     override val supportsReadRowForUpdate: Boolean get() = false
-    override val supportsOwnerEdgeSerialization: Boolean get() = txReal.supportsOwnerEdgeSerialization
 }

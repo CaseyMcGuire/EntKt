@@ -8,37 +8,49 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.postgres.PostgresDriver
-import entkt.runtime.result.EntConstraintViolationException
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntResult
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
+import org.postgresql.util.PSQLException
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import javax.sql.DataSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * end-to-end coverage that PostgresDriver's
- * `classifyException` (SQLSTATE 23xxx → ConstraintViolation)
- * actually triggers in real generated *OrError paths against real
- * Postgres. The `PostgresDriverClassifyTest` unit test in :postgres
- * synthesizes PSQLException values; this suite confirms the same
- * mapping fires when Postgres itself raises the violation.
+ * End-to-end coverage that PostgresDriver's `classifyException`
+ * (SQLSTATE 23xxx → EntConstraintViolationException) actually fires in
+ * real generated mutation terminals against real Postgres. The
+ * `PostgresDriverClassifyTest` unit test in :postgres synthesizes
+ * PSQLException values; this suite confirms the same mapping when
+ * Postgres itself raises the violation.
  *
- * Pins the SQLSTATE-to-error mapping for unique/FK/check violations:
- * each test asserts the EntError.ConstraintViolation
- * carries `code` == the SQLSTATE and (where Postgres surfaces it)
- * `constraint` populated from ServerErrorMessage.
+ * Pins the structured surface: `driverCode` == the SQLSTATE,
+ * `constraint` populated from ServerErrorMessage where Postgres
+ * surfaces it, the original PSQLException preserved as `cause`, and
+ * `writeState` hardcoding NotPersisted for the recognized statement-
+ * level rejection.
+ *
+ * A 40001/40P01 serialization-conflict test (EntConflictException) is
+ * deliberately absent: reproducing a genuine serialization failure
+ * requires racing concurrent SERIALIZABLE transactions and is not
+ * cheaply deterministic here; the mapping is unit-pinned in
+ * `PostgresDriverClassifyTest`.
  */
 @Testcontainers
 class SqlstateConstraintMappingPostgresIntegrationTest {
@@ -97,107 +109,113 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
     // ---- SQLSTATE 23505: unique violation ----
 
     @Test
-    fun `unique constraint violation surfaces as Err(ConstraintViolation) with code 23505`() {
+    fun `unique violation is Failed(EntConstraintViolationException) with driverCode 23505 and PSQLException cause`() {
         val client = freshClient()
 
         // User.email is unique on the schema. Insert two rows with
-        // the same email — second one trips the unique index.
-        client.users.create { name = "A"; email = "dup@example.com" }.saveOrThrow()
+        // the same email — the second trips the unique index.
+        client.users.create { name = "A"; email = "dup@example.com" }.save().getOrThrow()
 
         val result = client.users.create {
             name = "B"
             email = "dup@example.com"
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("User", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals("23505", error.code)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("User", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("23505", ex.driverCode)
         // PSQLException carries the unique-index name on
-        // ServerErrorMessage.constraint — verify the classifier
-        // surfaces it on the EntError.
-        assertNotNull(error.constraint)
-        assertTrue(error.constraint!!.contains("email"), "constraint should mention email: ${error.constraint}")
+        // ServerErrorMessage.constraint.
+        assertNotNull(ex.constraint)
+        assertTrue(ex.constraint!!.contains("email"), "constraint should mention email: ${ex.constraint}")
+        // The original driver exception is preserved as the cause.
+        val cause = assertIs<PSQLException>(ex.cause)
+        assertEquals("23505", cause.sqlState)
+        // `field` mirrors ServerErrorMessage.column — Postgres does not
+        // populate it for unique violations, so no value is pinned here.
     }
 
     @Test
-    fun `unique constraint violation on saveOrThrow surfaces as EntConstraintViolationException`() {
+    fun `getOrThrow throws the exact stored constraint exception`() {
         val client = freshClient()
-        client.users.create { name = "A"; email = "dup2@example.com" }.saveOrThrow()
+        client.users.create { name = "A"; email = "dup2@example.com" }.save().getOrThrow()
 
-        val ex = assertFailsWith<EntConstraintViolationException> {
-            client.users.create { name = "B"; email = "dup2@example.com" }.saveOrThrow()
+        val result = client.users.create { name = "B"; email = "dup2@example.com" }.saveAndLoad()
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntConstraintViolationException) {
+            assertSame(failed.exception, e)
+            assertEquals("23505", e.driverCode)
+            assertIs<PSQLException>(e.cause)
         }
-        assertEquals("User", ex.constraintViolation.entity)
-        assertEquals("23505", ex.constraintViolation.code)
-        // The underlying PSQLException isn't preserved on the structured
-        // ConstraintViolation by design — only on DriverFailure. The
-        // structured constraint/field/code metadata is the intended
-        // public surface here.
     }
 
     // ---- SQLSTATE 23503: foreign key violation ----
 
     @Test
-    fun `foreign key violation surfaces as Err(ConstraintViolation) with code 23503`() {
+    fun `foreign key violation is Failed(EntConstraintViolationException) with driverCode 23503`() {
         val client = freshClient()
 
-        // Article.authorId references User.id. Insert an article
-        // with a non-existent author id — trips the FK constraint
-        // declared by the belongsTo edge.
+        // Article.authorId references User.id. Insert an article with a
+        // non-existent author id — trips the FK constraint declared by
+        // the belongsTo edge.
         val result = client.articles.create {
             title = "Orphan"
             published = true
             authorId = 999_999L
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals("23503", error.code)
-        assertNotNull(error.constraint)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("23503", ex.driverCode)
+        assertNotNull(ex.constraint)
+        assertIs<PSQLException>(ex.cause)
     }
 
     @Test
-    fun `foreign key violation on update surfaces as Err(ConstraintViolation) with code 23503`() {
+    fun `foreign key violation on update carries operation UPDATE and driverCode 23503`() {
         val client = freshClient()
-        val author = client.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+        val author = client.users.create { name = "A"; email = "a@example.com" }
+            .saveAndLoad().getOrThrow()
         val article = client.articles.create {
             title = "Hello"
             published = true
             authorId = author.id
-        }.saveOrThrow()
+        }.saveAndLoad().getOrThrow()
 
-        // Repoint authorId to a non-existent user — trips the FK
-        // on the UPDATE path.
+        // Repoint authorId to a non-existent user — trips the FK on the
+        // UPDATE path.
         val result = client.articles.update(article.id) {
             authorId = 999_999L
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.UPDATE, error.operation)
-        assertEquals("23503", error.code)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.UPDATE, ex.operation)
+        assertEquals("23503", ex.driverCode)
+        assertIs<PSQLException>(ex.cause)
     }
 
-    // ---- byIdOrError driver-side classification ----
+    // ---- Read-path sanity ----
 
     @Test
-    fun `byIdOrError returns Err(NotFound) — no constraint violation possible on read`() {
-        // Sanity check: read operations don't typically trip 23xxx
-        // (SELECT against an absent id returns no rows, not a
-        // constraint failure). Verifies the read path still works on
-        // real Postgres without false-positive classifications.
+    fun `findById of an absent row is Success(null) — no false constraint classification on reads`() {
+        // Read operations don't trip 23xxx (SELECT against an absent id
+        // returns no rows). Verifies the read path works on real
+        // Postgres without false-positive classifications.
         val client = freshClient()
 
-        val result = client.users.byIdOrError(999_999L)
-        assertTrue(result is EntResult.Err)
-        assertTrue(result.error is EntError.NotFound)
+        val result = client.users.findById(999_999L)
+        val success = assertIs<ReadResult.Success<User?>>(result)
+        assertNull(success.value)
     }
 }

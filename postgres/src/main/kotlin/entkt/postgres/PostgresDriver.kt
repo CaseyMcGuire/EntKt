@@ -10,10 +10,12 @@ import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.JsonColumnCodec
 import entkt.runtime.driver.KotlinxJsonCodec
+import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.query.QueryExplanation
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
@@ -882,39 +884,44 @@ class PostgresDriver(
 
     /**
      * Run [block] against a connection-pinned driver inside one
-     * transaction, committing on normal return and rolling back on any
-     * throw.
+     * transaction, reporting the outcome structurally per the
+     * [Driver.withTransaction] write-certainty contract: `Success`
+     * only after a confirmed commit; an ordinary block failure with a
+     * confirmed rollback is `Failed(exception, NotCommitted)`; a
+     * failed rollback or a failed commit is
+     * `Failed(exception, OutcomeUnknown)` — a failed COMMIT may
+     * already have reached the server, so a later apparently
+     * successful rollback never downgrades it to `NotCommitted`.
+     * `CancellationException` and JVM `Error`s roll back and rethrow;
+     * they are never stored in a result.
      *
      * **Cleanup never changes the observed outcome.** Three separate
      * failures can happen while unwinding — `rollback()`, restoring
      * `autoCommit`, and `close()` — and none of them may replace the
      * result the caller would otherwise see:
      *
-     *  - A `rollback()` failure is attached to the original exception
-     *    via `addSuppressed` rather than thrown in its place. The
-     *    reason the transaction is being rolled back is strictly more
-     *    useful than the fact that the rollback also failed (and a
-     *    broken connection makes both happen together).
+     *  - A `rollback()` failure is attached to the outcome's stored
+     *    (or propagating) exception via `addSuppressed` rather than
+     *    reported in its place — and flips the failure state to
+     *    `OutcomeUnknown`, the one sanctioned way cleanup affects the
+     *    outcome.
      *  - Connection-release failures after a **successful commit** are
-     *    swallowed. Letting them propagate would report failure for
-     *    durably committed work, and any retry-on-exception wrapper
-     *    would then re-apply an already-applied transaction. Losing a
-     *    cleanup error is strictly safer than manufacturing a false
-     *    negative on a commit.
-     *  - Connection-release failures while an exception is already
-     *    propagating are attached to it as suppressed.
+     *    swallowed. Surfacing them would report failure for durably
+     *    committed work, and any retry wrapper would then re-apply an
+     *    already-applied transaction.
+     *  - Connection-release failures on a failure path are attached to
+     *    the stored (or propagating) exception as suppressed.
      *
      * `close()` runs even when restoring `autoCommit` throws — the two
      * are released independently so a failed restore can't leak the
      * pooled connection.
      */
-    override fun <T> withTransaction(block: (Driver) -> T): T {
+    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
         val conn = dataSource.connection
-        // The exception on its way out, if any — the release path
-        // attaches its own failures to this rather than supplanting it.
-        // A `finally` block can't see the in-flight exception, so the
-        // outer catch records it before `finally` runs.
-        var propagating: Throwable? = null
+        // The exception the caller will observe — thrown (cancellation
+        // / JVM errors / setup failures) or stored in Failed. Cleanup
+        // failures attach here rather than supplanting the outcome.
+        var attachTo: Throwable? = null
         // Whether the transaction reached a decided end (committed or
         // rolled back). Gates the autocommit restore — see
         // [releaseConnection].
@@ -922,29 +929,73 @@ class PostgresDriver(
         try {
             conn.autoCommit = false
             val txDriver = PostgresTransactionalDriver(conn, this, ops)
-            try {
-                val result = block(txDriver)
-                // A block that swallowed a failed statement's error and
-                // completed anyway cannot commit: the transaction is in
-                // PostgreSQL's aborted state and pgjdbc would silently
-                // turn the COMMIT into a ROLLBACK — success reported,
-                // nothing persisted. Fail loudly instead; the catch
-                // below rolls back.
-                check(!transactionAborted(conn)) { TRANSACTION_ABORTED_MESSAGE }
-                conn.commit()
-                resolved = true
-                return result
+            val result: T = try {
+                block(txDriver)
             } catch (e: Throwable) {
-                resolved = rollbackAttributingFailure(conn, e)
-                throw e
+                attachTo = e
+                val rolledBack = rollbackAttributingFailure(conn, e)
+                resolved = rolledBack
+                if (e is java.util.concurrent.CancellationException || e !is Exception) {
+                    // Cancellation and JVM errors propagate; the
+                    // rollback above already ran.
+                    throw e
+                }
+                return DriverTransactionResult.Failed(
+                    e,
+                    if (rolledBack) TransactionFailureState.NotCommitted
+                    else TransactionFailureState.OutcomeUnknown,
+                )
             } finally {
                 txDriver.closed = true
             }
+            // A block that swallowed a failed statement's error and
+            // completed anyway cannot commit: the transaction is in
+            // PostgreSQL's aborted state and pgjdbc would silently
+            // turn the COMMIT into a ROLLBACK — success reported,
+            // nothing persisted. Roll back and report the aborted
+            // state as a failure instead.
+            if (transactionAborted(conn)) {
+                val aborted = IllegalStateException(TRANSACTION_ABORTED_MESSAGE)
+                attachTo = aborted
+                val rolledBack = rollbackAttributingFailure(conn, aborted)
+                resolved = rolledBack
+                return DriverTransactionResult.Failed(
+                    aborted,
+                    if (rolledBack) TransactionFailureState.NotCommitted
+                    else TransactionFailureState.OutcomeUnknown,
+                )
+            }
+            return try {
+                conn.commit()
+                resolved = true
+                DriverTransactionResult.Success(result)
+            } catch (commitFailure: Throwable) {
+                attachTo = commitFailure
+                // The failed COMMIT may already have reached the
+                // server. Roll back for connection hygiene, but the
+                // outcome stays OutcomeUnknown regardless of whether
+                // that rollback appears to succeed.
+                resolved = rollbackAttributingFailure(conn, commitFailure)
+                if (commitFailure is java.util.concurrent.CancellationException ||
+                    commitFailure !is Exception
+                ) {
+                    // Cancellation and JVM errors are rolled back and
+                    // rethrown, never stored — same contract as the
+                    // block-failure path above.
+                    throw commitFailure
+                }
+                DriverTransactionResult.Failed(
+                    commitFailure,
+                    TransactionFailureState.OutcomeUnknown,
+                )
+            }
         } catch (e: Throwable) {
-            propagating = e
+            // Setup failures (autoCommit=false) and rethrown
+            // cancellation / JVM errors pass through here.
+            if (attachTo == null) attachTo = e
             throw e
         } finally {
-            releaseConnection(conn, propagating, resolved)
+            releaseConnection(conn, attachTo, resolved)
         }
     }
 
@@ -1040,47 +1091,65 @@ class PostgresDriver(
         )
     }
 
-    // ---------- Driver exception classification (result variants) ----------
+    // ---------- Driver exception classification (write certainty) ----------
 
     /**
-     * Map a [PSQLException] thrown by this driver to a structured
-     * [EntError]. SQLSTATE classes covered in V1:
+     * Classify a [PSQLException] thrown by one of this driver's
+     * mutation statement executions into a state-bearing typed
+     * exception. SQLSTATE classes covered:
      *
      *  - `23xxx` (integrity constraint violation): UNIQUE (`23505`),
      *    FOREIGN KEY (`23503`), CHECK (`23514`), NOT NULL (`23502`),
-     *    EXCLUSION (`23P01`) — all map to
-     *    [EntError.ConstraintViolation] with the SQLSTATE preserved
-     *    as `code`. When the server attached `ServerErrorMessage`
-     *    metadata (typical for constraint errors), `constraint` and
-     *    `field` are populated from it; otherwise they're `null`.
+     *    EXCLUSION (`23P01`) — a typed
+     *    [entkt.runtime.result.EntConstraintViolationException]
+     *    (which hardcodes `NotPersisted`; the failed statement's
+     *    effect did not persist) with the SQLSTATE preserved as
+     *    `driverCode` and the original exception as the cause. When
+     *    the server attached `ServerErrorMessage` metadata (typical
+     *    for constraint errors), `constraint` and `field` are
+     *    populated from it; otherwise they're `null`.
+     *  - `40001` (serialization failure) / `40P01` (deadlock
+     *    detected): a typed
+     *    [entkt.runtime.result.EntConflictException] (also
+     *    `NotPersisted`). Statement-level only: these classifications
+     *    describe a failed *statement*, whose effect did not persist.
+     *    Commit-path failures never reach classification — the
+     *    transaction boundary reports those as `OutcomeUnknown`
+     *    itself.
      *
-     * Serialization-failure SQLSTATEs (`40001`, `40P01`) deliberately
-     * return `null` in V1 — they're the natural fit for
-     * [EntError.Conflict] but that variant has no generated path
-     * surfacing it yet (the optimistic-locking support will land that).
-     * Returning null falls through to `EntError.DriverFailure`, which
-     * is the right shape until Conflict has a real consumer.
-     *
-     * Returns `null` for anything that isn't a PSQLException —
-     * `classifyDriverError` will wrap those as `DriverFailure`.
+     * Anything unrecognized returns `null`; the generated terminal
+     * then stores the original exception with its phase-derived
+     * state. Read execution never calls this method.
      */
-    override fun classifyException(
-        throwable: Throwable,
+    override fun classifyMutationException(
+        exception: Exception,
         entity: String,
         operation: entkt.runtime.result.EntOperation,
-    ): entkt.runtime.result.EntError? {
-        if (throwable !is org.postgresql.util.PSQLException) return null
-        val state = throwable.sqlState ?: return null
-        if (!state.startsWith("23")) return null
-        val server = throwable.serverErrorMessage
-        return entkt.runtime.result.EntError.ConstraintViolation(
-            entity = entity,
-            operation = operation,
-            constraint = server?.constraint,
-            field = server?.column,
-            code = state,
-            message = throwable.message ?: "constraint violation",
-        )
+    ): entkt.runtime.result.EntMutationException? {
+        if (exception !is org.postgresql.util.PSQLException) return null
+        val state = exception.sqlState ?: return null
+        if (state.startsWith("23")) {
+            val server = exception.serverErrorMessage
+            return entkt.runtime.result.EntConstraintViolationException(
+                entityType = entity,
+                operation = operation,
+                constraint = server?.constraint,
+                field = server?.column,
+                driverCode = state,
+                message = exception.message ?: "constraint violation",
+                cause = exception,
+            )
+        }
+        if (state == "40001" || state == "40P01") {
+            return entkt.runtime.result.EntConflictException(
+                entityType = entity,
+                operation = operation,
+                code = state,
+                message = exception.message ?: "serialization conflict",
+                cause = exception,
+            )
+        }
+        return null
     }
 
     private companion object {

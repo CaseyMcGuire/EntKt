@@ -202,18 +202,30 @@ load(
 > application call sites prefer the generated `bypassPrivacy_DANGEROUS(reason)`
 > client helper (below), whose loud name makes bypasses obvious in review.
 
-LOAD privacy is enforced on:
+LOAD privacy is enforced on every read terminal that materializes
+entities. Denial is never thrown from the terminal — it is the read's
+result:
 
-- `repo.byId(id)` -- throws `PrivacyDeniedException`
-- `query.allOrThrow()` -- throws `PrivacyDeniedException` if any entity is denied
-- `query.firstOrNull()` -- throws `PrivacyDeniedException` if the entity is denied; returns `null` only when no matching row exists
-- Eager-loaded edges (`withPosts()`, etc.) -- throws `PrivacyDeniedException` if any eagerly loaded entity is denied
+- `repo.findById(id)` -- `Failed(EntPrivacyDeniedException(Root, ...))`
+  when the row exists but is denied; `Success(null)` only for
+  authoritative absence
+- `query.all()` -- `Failed(EntPrivacyDeniedException(Root, ...))` if any
+  entity in the selected window is denied, with one keyed
+  `PrivacyDenial` per denied row; never a partial list
+- `query.firstOrNull()` -- `Failed(EntPrivacyDeniedException(Root, ...))`
+  if the fetched row is denied; `Success(null)` only when no matching
+  row exists
+- Eager-loaded edges (`withPosts()`, etc.) --
+  `Failed(EntPrivacyDeniedException(EagerEdge(path), ...))` if any
+  eagerly loaded entity is denied, unless that edge opts into
+  `filterVisible()` (see
+  [Queries → Eager Privacy](04-queries.md#eager-privacy-and-filtervisible))
 
-`exists()` fetches one row and evaluates LOAD privacy on it, throwing
-if denied. `visibleCount()` materializes matching rows, evaluates LOAD
-privacy on each, and returns the count of allowed entities (denied
-entities are silently excluded). `rawCount()` is a raw aggregate that
-does not materialize entities and is **not** subject to LOAD privacy.
+`.getOrThrow()` throws the stored exception; `.visibleOrNull()` maps a
+singular *root* denial to `Success(null)` for explicit
+privacy-as-absence handling. `rawCount()` / `rawExists()` and the raw
+aggregates do not materialize entities and are **not** subject to LOAD
+privacy.
 
 ### Write operations (CREATE, UPDATE, DELETE)
 
@@ -230,8 +242,9 @@ create(
 )
 ```
 
-Write privacy is enforced before the database call. If denied, a
-`PrivacyDeniedException` is thrown and no mutation occurs.
+Write privacy is enforced before the database call. If denied, the save
+returns `MutationResult.Failed(EntMutationPrivacyDeniedException)` with
+`writeState = NotPersisted` — no mutation occurs.
 
 ## Operation Contexts
 
@@ -246,8 +259,9 @@ do not exist on the type, so a rule that tries to mutate does not
 compile:
 
 Rule reads evaluate LOAD privacy like any other read: a rule loading a
-row its viewer cannot see gets the denial (`byIdOrNull` throws
-`PrivacyDeniedException`; `visibleByIdOrNull` collapses it to `null`),
+row its viewer cannot see gets the denial
+(`findById` returns `Failed(EntPrivacyDeniedException)`; chaining
+`.visibleOrNull()` collapses that root denial to `Success(null)`),
 never the row. This is deliberately the opposite posture from
 validation contexts, whose `EntValidationReadClient` reads are
 privacy-bypass-scoped — invariant checks must see all rows,
@@ -260,19 +274,19 @@ reader by mistake.
 
 The raw terminals (`rawCount` / `rawExists` and the raw aggregates)
 skip LOAD privacy by design, which would break that guarantee — so on
-`EntPrivacyReadClient` they throw `IllegalStateException` instead of
-silently probing rows the viewer cannot see. They remain available
-everywhere else (application queries, validation rules), where their
-privacy posture is deliberate. Use a LOAD-checked terminal inside
-privacy rules; a posture-agnostic helper accepting `EntReadClient`
-must likewise avoid raw terminals, since it may run under either
-posture.
+`EntPrivacyReadClient` they return
+`ReadResult.Failed(IllegalStateException)` instead of silently probing
+rows the viewer cannot see. They remain available everywhere else
+(application queries, validation rules), where their privacy posture
+is deliberate. Use a LOAD-checked terminal inside privacy rules; a
+posture-agnostic helper accepting `EntReadClient` must likewise avoid
+raw terminals, since it may run under either posture.
 
 LOAD privacy applies to returned entities, not related entities used only to
 filter a query. That holds for both application queries and rule reads: a rule
 that filters through `has { }` can be influenced by a related row its viewer
 could not load directly. When that matters, load the related row explicitly
-with `byIdOrNull` or `firstOrNull` so its LOAD policy runs. See
+with `findById` or `firstOrNull` so its LOAD policy runs. See
 [Privacy Limitations → Predicate-Based Inference](08-privacy-limitations.md#predicate-based-inference).
 
 ### LoadPrivacyContext
@@ -337,10 +351,10 @@ for `ctx.pendingEdges` (the before-hook intent surface that the
 `edgeChanges` delta is computed from).
 
 By the time rules see the patches, the post-hook required-not-null check
-has already run, so a dirty + null required field would have thrown
-`IllegalStateException` before privacy fires. Rules can treat
-`FieldPatch.Set(value)` for required fields as having a non-null value
-and `FieldPatch.Unset` as "not in this update".
+has already run, so a dirty + null required field would have failed the
+save with `MutationResult.Failed(EntValidationException)` before privacy
+fires. Rules can treat `FieldPatch.Set(value)` for required fields as
+having a non-null value and `FieldPatch.Unset` as "not in this update".
 
 ### DeletePrivacyContext
 
@@ -398,7 +412,7 @@ escape-hatch call sites obvious and easy to grep for:
 
 ```kotlin
 client.bypassPrivacy_DANGEROUS(reason = "migration backfill") { bypassed ->
-    bypassed.users.create { email = "admin@example.com" }.saveOrThrow()
+    bypassed.users.create { email = "admin@example.com" }.save().getOrThrow()
 }
 ```
 
@@ -412,7 +426,7 @@ changes (e.g. acting as `Viewer.User(id)`), not for bypassing privacy:
 
 ```kotlin
 client.withPrivacyContext(PrivacyContext(Viewer.User(42L))) { scoped ->
-    scoped.users.query().allOrThrow()
+    scoped.users.query().all().getOrThrow()
 }
 ```
 
@@ -427,7 +441,7 @@ clients:
 ```kotlin
 client.withTransaction { tx ->
     // tx has the same privacy context provider and rules as client
-    tx.users.create { name = "Alice"; email = "a@b.com" }.save()
+    tx.users.create { name = "Alice"; email = "a@b.com" }.save().orRollback()
 }
 ```
 
@@ -438,10 +452,14 @@ Delete operations enforce DELETE privacy independently of LOAD privacy:
 - `deleteById(id)` may delete an entity the viewer cannot load, but only
   when its DELETE rules allow the operation.
 - `deleteMany(predicates)` evaluates DELETE privacy for every matching
-  entity and stops on the first denial.
+  entity. The operation is atomic: a denial anywhere fails the whole
+  call with `Failed(EntMutationPrivacyDeniedException)` and — because
+  the batch runs in one transaction — leaves no committed subset. No
+  denied candidate is silently skipped.
 
 For aggregate reads, `rawCount()` deliberately skips LOAD privacy.
-Use `visibleCount()` when the count must include only visible entities.
+There is no privacy-filtered count terminal — a viewer-scoped count is
+a strict `all()` over predicates that only match visible rows.
 
 ## Limitations
 
@@ -451,21 +469,46 @@ filtering, pagination, and bulk operation limitations.
 
 ## Error Handling
 
-When privacy is denied, a `PrivacyDeniedException` is thrown:
+Denial is a typed exception carried by the operation's result, not a
+throw from the terminal. A denied **read** is
+`ReadResult.Failed(EntPrivacyDeniedException)`:
 
 ```kotlin
-class PrivacyDeniedException(
-    val entity: String,        // e.g. "User"
-    val operation: PrivacyOperation,  // LOAD, CREATE, UPDATE, DELETE
-    val reason: String,
-) : RuntimeException("$operation denied on $entity: $reason")
+class EntPrivacyDeniedException(
+    val origin: LoadDenialOrigin,       // Root, or EagerEdge(path) for a denied eager target
+    val denials: List<PrivacyDenial>,   // non-empty; one entry per denied row, in query order
+) : EntException(...)
+
+data class PrivacyDenial(
+    val entityType: String,   // e.g. "User"
+    val entityKey: EntityKey, // the row's id field + value — no hydrated fields
+    val reason: String,       // the rule-supplied reason
+)
 ```
 
-All read operations (`all()`, `firstOrNull()`, `byId()`) and all write
-operations (`create`, `update`, `delete`) throw on denial. This strict
-read model ensures that unreadable entities never silently disappear
-from results — callers must handle `PrivacyDeniedException` or ensure
-their queries only match entities the viewer is allowed to see.
+A denied **write** — whether the mutation itself is rejected pre-write
+or `saveAndLoad()` cannot disclose the returned entity — is
+`MutationResult.Failed(EntMutationPrivacyDeniedException)`. Its
+`operation` names the privacy decision that denied (`CREATE`, `UPDATE`,
+`DELETE`, or `LOAD` for returned-entity disclosure) and its
+`writeState` independently records the database effect: pre-write
+rejection is always `NotPersisted`, while a disclosure denial after a
+successful write reports the real state (possibly `Committed` — the
+write is not rolled back because its result could not be shown).
+
+All read operations (`all()`, `firstOrNull()`, `findById()`) and all
+write operations (`create`, `update`, `delete`) surface denial this
+way. The strict read model ensures unreadable entities never silently
+disappear from results — callers handle the `Failed` state explicitly
+(exhaustive `when`, or `.getOrThrow()` to rethrow), opt into
+privacy-as-absence for singular reads with `.visibleOrNull()`, or
+ensure their queries only match entities the viewer is allowed to see.
+
+The denial payloads — entity keys and rule-supplied reasons — are
+trusted diagnostic data. A `Failed` denial proves more than
+`Success(null)` (some selected row existed), so application boundaries
+must not pass that distinction, the keys, or the reasons to untrusted
+clients without an explicit mapping.
 
 ## Generated Privacy API
 

@@ -33,7 +33,7 @@ class BytesEqualityCompileTest {
         schema.finalize(mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema))
         val sources = EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput("Attachment", schema)))
-            .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
+            .toCompileTestSources()
         return KotlinCompilation().apply {
             this.sources = sources
             inheritClassPath = true

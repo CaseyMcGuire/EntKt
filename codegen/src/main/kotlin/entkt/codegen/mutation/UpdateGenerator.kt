@@ -13,6 +13,7 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.metadata.EdgeFk
@@ -31,12 +32,7 @@ import entkt.schema.Field
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
-private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
-private val VALIDATION_INVALID = ClassName("entkt.runtime.validation", "ValidationDecision", "Invalid")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
@@ -275,10 +271,11 @@ internal class UpdateGenerator(
                     builder.addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
                 }
             }
-            .addFunction(buildSaveFunction(schemaName, allFields, edgeFks, allEdgeFks, helperEligibleEdges))
-            .addFunction(buildSaveOrNullFunction(schemaName))
-            .addFunction(buildSaveOrThrowFunction(schemaName))
-            .addFunction(buildSaveOrErrorFunction(schemaName))
+            .addFunction(buildExecuteSaveFunction(schemaName, allFields, edgeFks, allEdgeFks, helperEligibleEdges))
+            .addFunction(buildSaveWrapperFunction())
+            .addFunction(buildSaveAndLoadWrapperFunction(schemaName))
+            .addFunction(buildValidationFailedHelper(schemaName, "UPDATE"))
+            .addFunction(buildClassifyDriverFailureHelper(schemaName, "UPDATE"))
             // Nested mutator class declarations. Nested
             // inside the Update builder so two entities with the same
             // edge name don't collide on the mutator class symbol.
@@ -289,7 +286,12 @@ internal class UpdateGenerator(
             }
             .build()
 
+        // The generated builder constructs `MutationResult.Failed`
+        // through the `@EntktInternal`-guarded `failedForInternalUse`
+        // factory; the file-level OptIn consumes the requirement at the
+        // construction sites without propagating it to application code.
         return FileSpec.builder(packageName, className)
+            .addAnnotation(entktInternalFileOptIn())
             .addType(typeSpec)
             .build()
     }
@@ -644,35 +646,34 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Generate a private `_checkRequiredNotNull()` member that throws
-     * `IllegalStateException` for any required field or required edge FK
-     * that has been assigned `null` and not repaired. Called from
-     * `save()` after all `beforeUpdate` hooks complete, before the
-     * canonical requested patch is built. A hook can clear the bad
-     * assignment via `mutation.unsetFoo()` (removes the entry from
-     * `dirtyFields`) or by reassigning a non-null value.
+     * Generate a private `_checkRequiredNotNull()` member that returns
+     * the violation for any required field or required edge FK
+     * that has been assigned `null` and not repaired (empty list =
+     * all required shapes hold). Called from the save pipeline after
+     * all `beforeUpdate` hooks complete, before the canonical
+     * requested patch is built; a non-empty result becomes a typed
+     * `EntValidationException` via the builder's `_validationFailed`
+     * helper. A hook can clear the bad assignment via
+     * `mutation.unsetFoo()` (removes the entry from `dirtyFields`) or
+     * by reassigning a non-null value. Short-circuits on the first
+     * failure (matches the existing single-violation shape;
+     * collect-all is left as a future improvement).
      */
     private fun buildCheckRequiredNotNullFunction(
         schemaName: String,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
-        // Failed required-shape checks throw `ValidationException` so
-        // `saveOrError()` wraps them into `EntError.ValidationFailed`
-        // rather than letting an `IllegalStateException` escape.
-        // Short-circuits on the first failure (matches the existing
-        // single-throw shape; collect-and-throw is left as a future
-        // improvement).
         val builder = FunSpec.builder("_checkRequiredNotNull")
             .addModifiers(KModifier.PRIVATE)
+            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
         for (field in mutableFields) {
             if (field.nullable) continue
             val prop = toCamelCase(field.name)
             builder.addStatement(
-                "if (%S in dirtyFields && this.%L == null) throw %T(%S, listOf(%T(%S, field = %S)))",
+                "if (%S in dirtyFields && this.%L == null) return·listOf(%T(%S, field = %S))",
                 prop, prop,
-                VALIDATION_EXCEPTION, schemaName,
-                VALIDATION_INVALID, "${field.name} is required", field.name,
+                MUTATION_VALIDATION_VIOLATION, "${field.name} is required", field.name,
             )
         }
         for (fk in edgeFks) {
@@ -682,12 +683,12 @@ internal class UpdateGenerator(
             // throw-on-untouched getter (which would mask the diagnostic).
             val stagingName = stagingFieldName(fk.propertyName)
             builder.addStatement(
-                "if (%S in dirtyFields && this.%L == null) throw %T(%S, listOf(%T(%S, field = %S)))",
+                "if (%S in dirtyFields && this.%L == null) return·listOf(%T(%S, field = %S))",
                 fk.propertyName, stagingName,
-                VALIDATION_EXCEPTION, schemaName,
-                VALIDATION_INVALID, "${fk.edgeName} is required", fk.columnName,
+                MUTATION_VALIDATION_VIOLATION, "${fk.edgeName} is required", fk.columnName,
             )
         }
+        builder.addStatement("return emptyList()")
         return builder.build()
     }
 
@@ -1095,26 +1096,21 @@ internal class UpdateGenerator(
     }
 
     /**
-     * `save()` writes the builder's changes to the driver and returns
-     * the refreshed entity — or `null` when the row has been deleted
-     * out from under us. `saveOrNull()` is an explicit alias;
-     * `saveOrThrow()` lifts the missing-row case into
-     * `EntNotFoundException`; `saveOrError()` returns
-     * `EntResult<Entity>` for callers that want a structured outcome.
+     * The single update execution pipeline (private
+     * `executeSave(applyLoadPrivacy)`) both public terminals project.
+     * The pipeline (emitted by [UpdateSaveEmitter], whose phase order
+     * IS the generated semantics):
      *
-     * **Empty patches throw NoChanges.** A syntactically empty
-     * `update(id) { }` throws `EntNoChangesException` *before* the
-     * owner-row load — request shape, not database state, classifies
-     * the no-op (avoids leaking whether the id exists). A hook-cleared
-     * empty patch (where hooks called `unsetX()` for every dirty
-     * entry) runs UPDATE privacy on the unchanged candidate and then
-     * throws `EntNoChangesException`; update defaults, validation,
-     * the driver write, `afterUpdate`, and returned LOAD privacy are
-     * all skipped because no state transition is persisted.
+     * **Preflights.** Transaction requirement, Pessimistic / M2M
+     * capability checks, mixed-mode defense-in-depth, canonical
+     * relationship locks. Their throws are captured by the terminal
+     * boundary as `EntUnexpectedMutationException(NotPersisted)`.
      *
-     * **Internal current-row load.** Otherwise `save()` loads the
-     * current owner row before any hook runs. The path branches on
-     * the per-save `consistency` parameter (transaction locking):
+     * **Internal current-row load.** Every save — including an
+     * assignment-free one — loads the current owner row before any
+     * hook runs, so target absence is an authoritative
+     * `Failed(EntTargetAbsentException)`. The path branches on the
+     * per-save `consistency` parameter (transaction locking):
      *
      * - `UpdateConsistency.ReadCurrent` (the default) reads the row
      *   via `driver.byId(id)` — no lock; another transaction may
@@ -1123,16 +1119,10 @@ internal class UpdateGenerator(
      *   `driver.readRowForUpdate(id)` — held under a true row lock
      *   until the surrounding transaction commits or rolls back,
      *   so the checked owner state stays stable through the write.
-     *   Two preflights run before this load: a missing transaction
-     *   throws `TransactionRequiredException` and a driver without
-     *   `supportsReadRowForUpdate` throws
-     *   `UnsupportedDriverCapabilityException`.
      *
-     * Either path bypasses LOAD privacy. If the row no longer exists,
-     * `save()` returns `null` before hooks, privacy, validation, or
-     * the driver write. The loaded row is the privacy/validation
-     * `before` and the fallback for untouched fields in the
-     * after-state candidate.
+     * Either path bypasses LOAD privacy. The loaded row is the
+     * privacy/validation `before` and the fallback for untouched
+     * fields in the after-state candidate.
      *
      * **Patch lowering.** The builder's `dirtyFields` are lowered into
      * a `${schemaName}UpdatePatch` (the requested patch). The same
@@ -1142,20 +1132,28 @@ internal class UpdateGenerator(
      * after the hook loop so a hook can repair an explicit
      * `name = null` via `unsetName()` or by reassigning a value.
      *
-     * **Defaults and write set.** Update defaults (e.g.
-     * `updatedAt = updateDefaultNow()`) are applied to the canonical
-     * requested patch to produce the effective patch — but only on
-     * non-empty saves; the hook-cleared empty path skips defaults so
-     * a default-only "real" update isn't synthesized. Only the
-     * effective patch's `Set` entries are sent to `driver.update(...)`;
-     * untouched columns are not round-tripped.
+     * **No-op updates.** An update whose patch has no assignments
+     * after hooks (syntactically empty or hook-cleared) still runs
+     * UPDATE privacy and validation against the unchanged candidate,
+     * then completes as `Success` WITHOUT persisting: update defaults,
+     * the driver write, and post-persist callbacks are skipped so a
+     * default-only "real" write is never synthesized. There is no
+     * NoChanges outcome.
+     *
+     * **Defaults and write set.** On the non-empty path, update
+     * defaults (e.g. `updatedAt = updateDefaultNow()`) are applied to
+     * the canonical requested patch to produce the effective patch.
+     * Only the effective patch's `Set` entries are sent to
+     * `driver.update(...)`; untouched columns are not round-tripped,
+     * but explicitly assigned values are written even when equal to
+     * the current row.
      *
      * **Rule visibility.** Privacy and validation rules see the loaded
      * `before`, the requested patch, the effective patch, and a full
      * after-state write candidate built by folding the effective
      * patch onto `before`.
      */
-    private fun buildSaveFunction(
+    private fun buildExecuteSaveFunction(
         schemaName: String,
         allFields: List<Field>,
         // Mutable-only — the update builder's writable surface. Used
@@ -1165,133 +1163,76 @@ internal class UpdateGenerator(
         // immutable FK values come from `entity.before` unchanged.
         allEdgeFks: List<EdgeFk>,
         // Helper-eligible link-table M2M edges. When
-        // non-empty, save() emits an M2M preflight block (tx +
+        // non-empty, the pipeline emits an M2M preflight block (tx +
         // capability + defense-in-depth mixed-mode) before the
-        // owner-row read.
+        // owner-row read, plus the junction write phase.
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec = UpdateSaveEmitter(packageName, schemaName, allFields, edgeFks, allEdgeFks, helperEligibleEdges).build()
 
-
     /**
-     * Explicit `OrNull` alias for the canonical [save] entry point. Per
-     * the result variants, `saveOrNull()` returns `null` for
-     * expected absence (missing owner row) and throws for everything
-     * else — including [EntNoChangesException] for syntactically empty
-     * updates, which is classified by request shape rather than
-     * database state.
+     * `save(): MutationResult<Unit>` — acknowledgement-only projection
+     * of the shared update pipeline. No parallel implementation: the
+     * projection maps `executeSave`'s result and performs no I/O of
+     * its own.
      */
-    private fun buildSaveOrNullFunction(schemaName: String): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        return FunSpec.builder("saveOrNull")
-            .returns(entityClass.copy(nullable = true))
-            .addStatement("return save()")
-            .build()
-    }
-
-    /**
-     * Throwing variant: delegates to [saveOrError] and unwraps via
-     * [EntResult.getOrThrow] so callers get a structured
-     * [EntException] subclass for every recognized failure surface,
-     * including driver-classified constraint failures.
-     *
-     * Implemented as a wrapper over `saveOrError()` to keep the
-     * NotFound, NoChanges, privacy, validation, and driver-classifier
-     * mapping in one place rather than duplicating between the trio's
-     * throwing and result variants.
-     */
-    private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        return FunSpec.builder("saveOrThrow")
-            .returns(entityClass)
-            .addStatement(
-                "return saveOrError().%M()",
-                MemberName("entkt.runtime.result", "getOrThrow"),
+    private fun buildSaveWrapperFunction(): FunSpec {
+        return FunSpec.builder("save")
+            .addKdoc(
+                "Persist this builder's changes. `Success(Unit)` means the update\n" +
+                    "completed — staged when executed through a transaction-scoped\n" +
+                    "client, committed otherwise; an assignment-free update that finds\n" +
+                    "its target succeeds without writing. `Failed` carries a typed\n" +
+                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
+                    "records what EntKt knows about the database effect; `Failed` does\n" +
+                    "NOT imply the write rolled back. A missing or vanished target is\n" +
+                    "`Failed(EntTargetAbsentException)`. `save()` does not apply\n" +
+                    "returned-entity LOAD privacy because it discloses no entity — use\n" +
+                    "[saveAndLoad] for the refreshed row. There is deliberately no\n" +
+                    "`orNull()` projection (null cannot distinguish absence, rejection,\n" +
+                    "committed failure, and unknown write state); project with\n" +
+                    "`getOrThrow()` or match on the result.",
             )
-            .build()
-    }
-
-    /**
-     * Structured-result variant: returns [EntResult.Ok] on success or
-     * [EntResult.Err] for any recognized failure thrown by the save
-     * path. Wraps the OrNull `save()` returning `null` for the
-     * vanished-owner-row case into `Err(NotFound)`, `NoChanges`
-     * (carried by [EntException]) and the existing
-     * [PrivacyDeniedException] and [ValidationException] into their
-     * matching [EntError] variants.
-     *
-     * The trailing `catch (e: Exception)` arm routes uncaught
-     * exceptions through [classifyDriverError] so the driver-level
-     * classifier emits `Err(ConstraintViolation)` for
-     * SQLSTATE 23xxx (Postgres), falling back to `Err(DriverFailure)`
-     * with the raw cause attached.
-     *
-     * [Exception] (not [Throwable]) is the floor: [Error] subclasses
-     * (OOME, StackOverflowError) propagate untouched.
-     * `TransactionRequiredException` / `UnsupportedDriverCapabilityException`
-     * are deterministic programming/configuration errors and re-thrown
-     * by [classifyDriverError] rather than wrapped — they escape
-     * `saveOrError` as themselves, the same way they escape
-     * `saveOrThrow`. Genuine programming bugs from hooks/rules (e.g.
-     * `IllegalStateException`, `IllegalArgumentException`, vanilla
-     * `RuntimeException`) also re-throw: the classifier only wraps
-     * `SQLException` (and subclasses like `PSQLException`) as
-     * `DriverFailure`. See `classifyDriverError`'s KDoc for the
-     * complete fallback ruleset.
-     */
-    private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        val resultClass = ClassName("entkt.runtime.result", "EntResult")
-        val entExceptionClass = ClassName("entkt.runtime.result", "EntException")
-        val privacyDeniedClass = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
-        val validationClass = ClassName("entkt.runtime.validation", "ValidationException")
-        val resultType = resultClass.parameterizedBy(entityClass)
-        return FunSpec.builder("saveOrError")
-            .returns(resultType)
+            .returns(MUTATION_RESULT.parameterizedBy(UNIT))
             .addCode(
                 CodeBlock.builder()
-                    .add("return try {\n")
-                    .add(
-                        "  save()?.let { %T.Ok(it) } ?: %T.Err(%T.NotFound(%S, %T.UPDATE, id))\n",
-                        resultClass,
-                        resultClass,
-                        ENT_ERROR,
-                        schemaName,
-                        ENT_OPERATION,
-                    )
-                    .add("} catch (e: %T) {\n", entExceptionClass)
-                    .add("  %T.Err(e.error)\n", resultClass)
-                    .add("} catch (e: %T) {\n", privacyDeniedClass)
-                    .add(
-                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
-                        resultClass,
-                        ENT_ERROR,
-                        ENT_OPERATION,
-                    )
-                    .add("} catch (e: %T) {\n", validationClass)
-                    .add(
-                        // Map the legacy ValidationDecision.Invalid (the
-                        // validation-rule DSL's native shape) into the
-                        // canonical EntError.ValidationFailed wire-level
-                        // ValidationViolation type — the two carry the
-                        // same three fields, and toValidationViolation
-                        // is a stable mapper exposed from the runtime.
-                        "  %T.Err(%T.ValidationFailed(e.entity, %T.UPDATE, e.violations.map { it.%M() }))\n",
-                        resultClass,
-                        ENT_ERROR,
-                        ENT_OPERATION,
-                        MemberName("entkt.runtime.result", "toValidationViolation"),
-                    )
-                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
-                    .add(
-                        "  %T.Err(%M(driver, e, %S, %T.UPDATE))\n",
-                        resultClass,
-                        MemberName("entkt.runtime.driver", "classifyDriverError"),
-                        schemaName,
-                        ENT_OPERATION,
-                    )
+                    .add("return when (val result = executeSave(applyLoadPrivacy = false)) {\n")
+                    .add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
+                    .add("  is %T.Failed -> result\n", MUTATION_RESULT)
                     .add("}\n")
                     .build(),
             )
+            .build()
+    }
+
+    /**
+     * `saveAndLoad(): MutationResult<Entity>` — same single pipeline
+     * as [buildSaveWrapperFunction]'s `save()`, additionally
+     * materializing the refreshed entity and applying the ordinary
+     * post-write LOAD disclosure check.
+     */
+    private fun buildSaveAndLoadWrapperFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        return FunSpec.builder("saveAndLoad")
+            .addKdoc(
+                "Persist this builder's changes and return the refreshed entity\n" +
+                    "under the ordinary LOAD contract (for an assignment-free no-op\n" +
+                    "update, the current row). `Success` always carries a non-null\n" +
+                    "entity; a missing or vanished target is\n" +
+                    "`Failed(EntTargetAbsentException)`. A LOAD denial of the returned\n" +
+                    "entity is `Failed(EntMutationPrivacyDeniedException)` with\n" +
+                    "`operation = LOAD` and the current `writeState` (`NotPersisted`\n" +
+                    "only for the no-op case, where nothing was written). The denial\n" +
+                    "itself does not undo the write: outside a transaction it is\n" +
+                    "already committed (`Committed`); inside a caller-owned\n" +
+                    "transaction the failure is `TransactionPending` and marks the\n" +
+                    "scope rollback-only, so the enclosing transaction normally rolls\n" +
+                    "the write back at its boundary. As with\n" +
+                    "[save], `Failed` does not imply rollback (inspect\n" +
+                    "`exception.writeState`), and there is no `orNull()` projection;\n" +
+                    "project with `getOrThrow()` or match on the result.",
+            )
+            .returns(MUTATION_RESULT.parameterizedBy(entityClass))
+            .addStatement("return executeSave(applyLoadPrivacy = true)")
             .build()
     }
 }

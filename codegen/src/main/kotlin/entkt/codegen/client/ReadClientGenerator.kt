@@ -17,6 +17,7 @@ import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
@@ -189,11 +190,12 @@ internal class ReadClientGenerator(
                     .build()
             )
             .addFunction(
-                FunSpec.builder("evaluateLoadPrivacy")
+                FunSpec.builder("loadDenialOrNull")
                     .addModifiers(KModifier.OVERRIDE)
                     .addParameter("privacy", PRIVACY_CONTEXT)
                     .addParameter("entity", entityClass)
-                    .addStatement("host.evaluateLoadPrivacy(privacy, entity)")
+                    .returns(PRIVACY_DENIAL.copy(nullable = true))
+                    .addStatement("return host.loadDenialOrNull(privacy, entity)")
                     .build()
             )
             .addFunction(buildQueryEntry(queryClass, clientRef = "runtime"))
@@ -205,11 +207,8 @@ internal class ReadClientGenerator(
                     builder.addProperty(buildIndexesProperty(indexesClass, clientRef = "runtime"))
                 }
             }
-            .addFunction(buildByIdOrNull(schemaName, entityClass, idType, clientRef = "runtime"))
-            .addFunction(buildByIdOrThrow(entityClass, idType))
-            .addFunction(buildVisibleByIdOrNull(entityClass, idType))
-            .addFunction(buildByIdOrError(schemaName, entityClass, idType))
-            .addFunctions(buildByIdExplainMethods(schemaName, entityClass, idType, clientRef = "runtime"))
+            .addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "runtime"))
+            .addFunction(buildFindByIdExplainMethod(schemaName, entityClass, idType, clientRef = "runtime"))
             .build()
     }
 
@@ -290,7 +289,6 @@ internal class ReadClientGenerator(
             .addParameter("driver", DRIVER)
             .addParameter("privacyContext", PRIVACY_CONTEXT)
             .addParameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
-            .addParameter("visibleOverfetchLimit", INT)
         for (input in sorted) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             ctor.addParameter("${propName}Host", ClassName(packageName, "${input.name}ReadSurface"))
@@ -319,13 +317,6 @@ internal class ReadClientGenerator(
                 .initializer("entityInterceptors")
                 .build()
         )
-        builder.addProperty(
-            PropertySpec.builder("visibleOverfetchLimit", INT)
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("visibleOverfetchLimit")
-                .build()
-        )
-
         for (input in sorted) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             val repoClass = ClassName(packageName, "${input.name}ReadRepo")
@@ -370,8 +361,8 @@ internal class ReadClientGenerator(
                         .addStatement(
                             "terminal + %S",
                             " bypasses LOAD privacy and is unavailable on viewer-scoped privacy-rule " +
-                                "readers; use a LOAD-checked terminal (firstOrNull / allOrThrow / the " +
-                                "visible* family) instead",
+                                "readers; use a LOAD-checked terminal (findById / firstOrNull / all) " +
+                                "instead",
                         )
                         .endControlFlow()
                         .build()

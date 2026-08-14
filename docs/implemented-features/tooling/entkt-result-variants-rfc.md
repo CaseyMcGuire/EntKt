@@ -1,5 +1,15 @@
 # RFC: Result Variants and Structured Operation Errors
 
+> **Superseded.** The generated surface this note describes (`*OrThrow` /
+> `*OrNull` / `*OrError` / `visible*` terminals, `EntResult`, `EntError`,
+> `EntException.error`) has been replaced by the canonical
+> [operation result algebra](../api/operation-result-algebra.md)
+> (`ReadResult` / `MutationResult` / `TransactionResult` plus runtime
+> projections). See the consolidated entry in the
+> [breaking-changes log](../../breaking-changes/index.md#unreleased) for the
+> exact old→new mapping. This note is retained as a point-in-time design
+> record.
+
 ## Status
 
 **Implemented.** The core `EntResult` / `EntError` types and the

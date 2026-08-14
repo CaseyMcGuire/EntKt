@@ -46,7 +46,7 @@ class PrivacyReadClientCompileTest {
         user.finalize(registry)
         return EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput("Car", car), SchemaInput("User", user)))
-            .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
+            .toCompileTestSources()
     }
 
     private fun ruleSnippet(body: String, ruleType: String = "CarLoadPrivacyRule"): SourceFile = SourceFile.kotlin(
@@ -58,6 +58,8 @@ class PrivacyReadClientCompileTest {
         import com.example.ent.EntPrivacyReadClient
         import com.example.ent.EntReadClient
         import entkt.runtime.privacy.PrivacyDecision
+        import entkt.runtime.result.getOrThrow
+        import entkt.runtime.result.visibleOrNull
         import java.util.UUID
 
         val rule = $ruleType { ctx ->
@@ -104,12 +106,12 @@ class PrivacyReadClientCompileTest {
                 val concrete: EntPrivacyReadClient = ctx.client
                 val typed: EntReadClient = ctx.client
                 ctx.client.cars.query { }.firstOrNull()
-                ctx.client.cars.query { }.allOrThrow()
-                ctx.client.cars.query { }.visibleExists()
-                ctx.client.users.byIdOrNull(UUID.randomUUID())
-                ctx.client.users.visibleByIdOrNull(UUID.randomUUID())
-                ctx.client.users.indexes.email("a@b.c").orNull()
-                ctx.client.cars.explainByIdOrNull(1)
+                ctx.client.cars.query { }.all().getOrThrow()
+                ctx.client.cars.query { }.rawExists()
+                ctx.client.users.findById(UUID.randomUUID()).getOrThrow()
+                ctx.client.users.findById(UUID.randomUUID()).visibleOrNull()
+                ctx.client.users.indexes.email("a@b.c").find()
+                ctx.client.cars.explainFindById(1)
                 """.trimIndent(),
             ),
         )
@@ -180,7 +182,7 @@ class PrivacyReadClientCompileTest {
 
     @Test
     fun `delete rule cannot delete`() {
-        assertUnresolved("deleteByIdOrError", "ctx.client.cars.deleteByIdOrError(1)", ruleType = "CarDeletePrivacyRule")
+        assertUnresolved("deleteById", "ctx.client.cars.deleteById(1)", ruleType = "CarDeletePrivacyRule")
     }
 
     @Test
@@ -195,7 +197,7 @@ class PrivacyReadClientCompileTest {
 
     @Test
     fun `privacy rule cannot delete`() {
-        assertUnresolved("deleteByIdOrError", "ctx.client.cars.deleteByIdOrError(1)")
+        assertUnresolved("deleteById", "ctx.client.cars.deleteById(1)")
     }
 
     @Test
@@ -204,13 +206,13 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
-    fun `privacy rule cannot open a transaction`() {
-        assertUnresolved("withTransaction", "ctx.client.withTransaction { }")
+    fun `privacy rule cannot bulk create`() {
+        assertUnresolved("createMany", "ctx.client.cars.createMany({ })")
     }
 
     @Test
-    fun `privacy rule cannot open a structured-result transaction`() {
-        assertUnresolved("withTransactionOrError", "ctx.client.withTransactionOrError { }")
+    fun `privacy rule cannot open a transaction`() {
+        assertUnresolved("withTransaction", "ctx.client.withTransaction { }")
     }
 
     @Test

@@ -9,36 +9,36 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntResult
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntMutationPrivacyDeniedException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.getOrThrow
+import kotlin.Unit
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for the delete family.
+ * End-to-end coverage for the canonical delete family:
  *
- *   deleteOrThrow(entity): Unit         throws on real failures;
- *                                       silent on missing-row
- *   deleteOrError(entity): EntResult<Unit>
- *                                       Ok(Unit) on success/no-op;
- *                                       Err for real failures
- *   deleteByIdOrError(id): EntResult<Boolean>
- *                                       Ok(true) = deleted,
- *                                       Ok(false) = no-op,
- *                                       Err for real failures
- *
- * The legacy `delete(entity): Boolean` and `deleteById(id): Boolean`
- * are removed (not deprecated) so callers reach for the explicit
- * structured variants.
+ *   delete(entity): MutationResult<Unit>   — the entity is an id
+ *       handle; Success(Unit) whether this call deleted the freshly
+ *       reloaded row or found it already absent (absence runs no
+ *       callbacks and is never EntTargetAbsentException).
+ *   deleteById(id): MutationResult<Boolean> — Success(true) only when
+ *       this call's final delete removed the row; Success(false) when
+ *       absent before or during the operation.
+ *   deleteMany(predicates): MutationResult<Int> — one transaction
+ *       across candidate selection and every row's callbacks/deletes;
+ *       one failing row leaves no committed subset.
  */
 class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
@@ -66,6 +66,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     private fun freshClient(
         viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
+        config: entkt.integrationtest.ent.EntClientConfig.() -> Unit = {},
     ): EntClient {
         val driver = resetAndDriver()
         return EntClient(driver) {
@@ -74,117 +75,206 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
                 articles(articlePolicy)
                 users(OpenUser)
             }
+            config()
         }
     }
 
-    private fun seedArticle(client: EntClient): Article {
+    private fun seedArticle(client: EntClient, title: String = "Hello"): Article {
         return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
+            val author = sys.users.query().firstOrNull().getOrThrow()
+                ?: sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
             sys.articles.create {
-                title = "Hello"
+                this.title = title
                 published = true
                 authorId = author.id
-            }.saveOrThrow()
+            }.saveAndLoad().getOrThrow()
         }
     }
 
-    // ---- deleteOrThrow ----
+    // ---- delete(entity) ----
 
     @Test
-    fun `deleteOrThrow removes the row when DELETE allows`() {
+    fun `delete removes the row and returns Success(Unit)`() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        client.articles.deleteOrThrow(article)
+        val result = client.articles.delete(article)
 
-        assertEquals(0L, client.articles.query().rawCount())
+        assertEquals(MutationResult.Success(Unit), result)
+        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
     }
 
     @Test
-    fun `deleteOrThrow throws structured EntPrivacyDeniedException when DELETE denies`() {
+    fun `delete of an already-absent row is Success(Unit) and runs no callbacks`() {
+        var beforeDeletes = 0
+        var afterDeletes = 0
+        val driver = resetAndDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            policies { articles(AllowAllArticles); users(OpenUser) }
+            hooks {
+                articles {
+                    beforeDelete { beforeDeletes++ }
+                    afterDelete { afterDeletes++ }
+                }
+            }
+        }
+        val article = seedArticle(client)
+
+        assertEquals(MutationResult.Success(Unit), client.articles.delete(article))
+        assertEquals(1, beforeDeletes)
+        assertEquals(1, afterDeletes)
+
+        // Second delete: the row is absent at reload — Success(Unit),
+        // and neither before- nor after-delete callbacks run.
+        assertEquals(MutationResult.Success(Unit), client.articles.delete(article))
+        assertEquals(1, beforeDeletes)
+        assertEquals(1, afterDeletes)
+    }
+
+    @Test
+    fun `delete returns Failed(EntMutationPrivacyDeniedException) when DELETE denies`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val ex = assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.deleteOrThrow(article)
-        }
-        assertEquals("Article", ex.privacyDenied.entity)
-        assertEquals(EntOperation.DELETE, ex.privacyDenied.operation)
-        assertEquals("delete denied", ex.privacyDenied.reason)
+        val result = client.articles.delete(article)
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.DELETE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("delete denied", ex.reason)
+        assertEquals("id", ex.entityKey?.field)
+        assertEquals(article.id, ex.entityKey?.value)
 
         // Row still present.
-        assertEquals(1L, client.articles.query().rawCount())
-    }
-
-    // ---- deleteOrError ----
-
-    @Test
-    fun `deleteOrError returns Ok(Unit) on success`() {
-        val client = freshClient()
-        val article = seedArticle(client)
-
-        val result = client.articles.deleteOrError(article)
-        assertTrue(result is EntResult.Ok)
-        assertEquals(Unit, result.value)
+        assertEquals(1L, client.articles.query().rawCount().getOrThrow())
     }
 
     @Test
-    fun `deleteOrError returns Err(PrivacyDenied) when DELETE denies`() {
+    fun `getOrThrow throws the exact stored exception on delete denial`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.deleteOrError(article)
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.PrivacyDenied)
-        assertEquals(EntOperation.DELETE, error.operation)
-        assertEquals("delete denied", error.reason)
+        val result = client.articles.delete(article)
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntMutationPrivacyDeniedException) {
+            assertSame(failed.exception, e)
+        }
     }
 
+    // ---- deleteById ----
+
     @Test
-    fun `deleteOrError treats missing row as Ok(Unit) silently`() {
+    fun `deleteById returns Success(true) when a row was deleted`() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        // First delete succeeds; second sees no row but doesn't surface that as Err.
-        client.articles.deleteOrThrow(article)
-        val result = client.articles.deleteOrError(article)
-        assertTrue(result is EntResult.Ok)
-    }
-
-    // ---- deleteByIdOrError ----
-
-    @Test
-    fun `deleteByIdOrError returns Ok(true) when a row was deleted`() {
-        val client = freshClient()
-        val article = seedArticle(client)
-
-        val result = client.articles.deleteByIdOrError(article.id)
-        assertTrue(result is EntResult.Ok)
-        assertTrue(result.value)
-        assertEquals(0L, client.articles.query().rawCount())
+        val result = client.articles.deleteById(article.id)
+        val success = assertIs<MutationResult.Success<Boolean>>(result)
+        assertTrue(success.value)
+        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
     }
 
     @Test
-    fun `deleteByIdOrError returns Ok(false) when no row existed (idempotent no-op)`() {
+    fun `deleteById returns Success(false) when no row existed`() {
         val client = freshClient()
 
-        val result = client.articles.deleteByIdOrError(999_999L)
-        assertTrue(result is EntResult.Ok)
-        assertFalse(result.value)
+        val result = client.articles.deleteById(999_999L)
+        val success = assertIs<MutationResult.Success<Boolean>>(result)
+        assertFalse(success.value)
     }
 
     @Test
-    fun `deleteByIdOrError returns Err(PrivacyDenied) when DELETE denies`() {
+    fun `deleteById returns Failed when DELETE denies and leaves the row`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.deleteByIdOrError(article.id)
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.PrivacyDenied)
-        assertEquals(EntOperation.DELETE, error.operation)
+        val result = client.articles.deleteById(article.id)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals(EntOperation.DELETE, ex.operation)
         // Row still there.
-        assertEquals(1L, client.articles.query().rawCount())
+        assertEquals(1L, client.articles.query().rawCount().getOrThrow())
+    }
+
+    // ---- deleteMany atomicity ----
+
+    @Test
+    fun `deleteMany removes every matching row atomically`() {
+        val client = freshClient()
+        seedArticle(client, "One")
+        seedArticle(client, "Two")
+        seedArticle(client, "Keep")
+
+        val result = client.articles.deleteMany(Article.published.eq(true))
+        // All three match published = true.
+        assertEquals(MutationResult.Success(3), result)
+        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
+    }
+
+    @Test
+    fun `deleteMany whose first candidate fails keeps the typed exception and deletes nothing`() {
+        // Every candidate is denied, so the FIRST candidate fails before
+        // any delete staged — the typed failure passes through unchanged
+        // and NotPersisted is the honest state after confirmed rollback.
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
+        seedArticle(client, "One")
+        seedArticle(client, "Two")
+        seedArticle(client, "Three")
+
+        val result = client.articles.deleteMany(Article.published.eq(true))
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals(EntOperation.DELETE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("delete denied", ex.reason)
+
+        // No committed subset, no silent skipping.
+        assertEquals(3L, client.articles.query().rawCount().getOrThrow())
+    }
+
+    @Test
+    fun `deleteMany failing after a staged delete reports the typed failure as cause and deletes nothing`() {
+        // A stateful rule lets the FIRST candidate (whatever the driver's
+        // candidate order) delete, then denies the second — guaranteeing
+        // a staged write precedes the failure without depending on row
+        // order. The staged-then-failed batch is re-reported at the
+        // conversion boundary as NotPersisted (rollback confirmed) with
+        // the typed row failure as the direct cause.
+        var deleteCalls = 0
+        val denySecond = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                    delete(ArticleDeletePrivacyRule {
+                        if (deleteCalls++ == 0) PrivacyDecision.Allow
+                        else PrivacyDecision.Deny("second candidate blocked")
+                    })
+                }
+            }
+        }
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denySecond)
+        seedArticle(client, "One")
+        seedArticle(client, "Two")
+        seedArticle(client, "Three")
+
+        val result = client.articles.deleteMany(Article.published.eq(true))
+
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<entkt.runtime.result.EntUnexpectedMutationException>(failed.exception)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        val cause = assertIs<EntMutationPrivacyDeniedException>(ex.cause)
+        assertEquals(EntOperation.DELETE, cause.operation)
+        assertEquals("second candidate blocked", cause.reason)
+
+        // Rollback confirmed: the first candidate's staged delete is
+        // undone — no committed subset.
+        assertEquals(3L, client.articles.query().rawCount().getOrThrow())
     }
 }

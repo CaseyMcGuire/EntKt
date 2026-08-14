@@ -9,7 +9,6 @@ import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.QueryShape
 import entkt.runtime.query.RegisteredInterceptor
-import entkt.runtime.result.EntOperation
 import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.query.QueryInterceptor
 
@@ -81,7 +80,6 @@ class InterceptorEngineTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
             globalInterceptors = emptyList(),
         )
@@ -102,7 +100,6 @@ class InterceptorEngineTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
             globalInterceptors = emptyList(),
         )
@@ -126,7 +123,6 @@ class InterceptorEngineTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(
                 RegisteredInterceptor("a", a),
                 RegisteredInterceptor("b", b),
@@ -163,7 +159,6 @@ class InterceptorEngineTest {
             ),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(
                 RegisteredInterceptor("a", a),
                 RegisteredInterceptor("b", b),
@@ -188,7 +183,6 @@ class InterceptorEngineTest {
             ),
             context = rootContext(operation = ReadOperation.BY_ID),
             entity = "Post",
-            entOperation = EntOperation.LOAD,
             entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
             globalInterceptors = emptyList(),
         )
@@ -216,7 +210,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = 50),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(
                 RegisteredInterceptor("d", defaulter),
                 RegisteredInterceptor("i", inspector),
@@ -233,7 +226,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = null),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(
                 RegisteredInterceptor("d", defaulter),
                 RegisteredInterceptor("i", inspector),
@@ -255,7 +247,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = 50),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("cap", cap), RegisteredInterceptor("t", tail)),
             globalInterceptors = emptyList(),
         )
@@ -271,7 +262,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = 10),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("r", raiser), RegisteredInterceptor("t", tail)),
             globalInterceptors = emptyList(),
         )
@@ -287,7 +277,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = 25),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("d", def), RegisteredInterceptor("t", tail)),
             globalInterceptors = emptyList(),
         )
@@ -305,7 +294,6 @@ class InterceptorEngineTest {
                     builder = builder(),
                     context = rootContext(),
                     entity = "Post",
-                    entOperation = EntOperation.QUERY,
                     entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
                     globalInterceptors = emptyList(),
                 )
@@ -324,7 +312,6 @@ class InterceptorEngineTest {
                 builder = builder(callerLimit = null),
                 context = rootContext(),
                 entity = "Post",
-                entOperation = EntOperation.QUERY,
                 entityInterceptors = listOf(RegisteredInterceptor("rej", rejecter)),
                 globalInterceptors = emptyList(),
             )
@@ -338,7 +325,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = 25),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("rej", rejecter)),
             globalInterceptors = emptyList(),
         )
@@ -348,7 +334,6 @@ class InterceptorEngineTest {
             builder = builder(callerLimit = 50),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("rej", rejecter)),
             globalInterceptors = emptyList(),
         )
@@ -371,7 +356,6 @@ class InterceptorEngineTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("a", a), RegisteredInterceptor("b", b)),
             globalInterceptors = emptyList(),
         )
@@ -391,7 +375,6 @@ class InterceptorEngineTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("a", a), RegisteredInterceptor("b", b)),
             globalInterceptors = emptyList(),
         )
@@ -410,14 +393,12 @@ class InterceptorEngineTest {
                 builder = builder(),
                 context = rootContext(),
                 entity = "Post",
-                entOperation = EntOperation.QUERY,
                 entityInterceptors = listOf(RegisteredInterceptor("guard", rejecter)),
                 globalInterceptors = emptyList(),
             )
         }
         val r = ex.rejected
-        assertEquals("Post", r.entity)
-        assertEquals(EntOperation.QUERY, r.operation)
+        assertEquals("Post", r.entityType)
         assertEquals("nope", r.reason)
         assertEquals("broad_aggregate", r.code)
         assertEquals("guard", r.interceptor)
@@ -435,7 +416,6 @@ class InterceptorEngineTest {
                 builder = builder(),
                 context = rootContext(),
                 entity = "Post",
-                entOperation = EntOperation.QUERY,
                 entityInterceptors = listOf(
                     RegisteredInterceptor("rej", rejecter),
                     RegisteredInterceptor("b", b),
@@ -466,7 +446,6 @@ class InterceptorEngineTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("e", entityI)),
             globalInterceptors = listOf(
                 RegisteredGlobalInterceptor("g1", g1),
@@ -496,7 +475,6 @@ class InterceptorEngineTest {
             builder = b,
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("t", interceptor)),
             globalInterceptors = emptyList(),
         )
@@ -514,7 +492,6 @@ class InterceptorEngineTest {
                 builder = builder(),
                 context = rootContext(),
                 entity = "Post",
-                entOperation = EntOperation.QUERY,
                 entityInterceptors = listOf(RegisteredInterceptor("bug", bug)),
                 globalInterceptors = emptyList(),
             )

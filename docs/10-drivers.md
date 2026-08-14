@@ -42,8 +42,14 @@ interface Driver {
     ): QueryExplanation
     fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation
 
-    fun <T> withTransaction(block: (Driver) -> T): T
+    fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
     val inTransaction: Boolean
+
+    fun classifyMutationException(
+        exception: Exception,
+        entity: String,
+        operation: EntOperation,
+    ): EntMutationException?
 
     // Owner-row locking capabilities (RFC #4).
     val supportsReadRowForUpdate: Boolean
@@ -88,11 +94,33 @@ fire lifecycle hooks. The generated repo methods (`createMany`,
 - `explainQuery()` / `explainCount()` return a `QueryExplanation` for the
   SELECT / COUNT the driver *would* run, without executing it. Defaults
   to `UnsupportedQueryExplanation`; PostgresDriver returns SQL + bind
-  args. Used by the generated query builder's `explainRaw()` /
-  `explainRawCount()` and per-terminal `explain*()` methods.
-- `withTransaction()` runs a block in a transaction. The block receives a
-  transaction-scoped driver. If it completes normally, the transaction
-  commits. If it throws, the transaction rolls back.
+  args. Used by the generated per-terminal `explain*()` methods
+  (`explainAll`, `explainFirstOrNull`, `explainFindById`,
+  `explainRawCount`, `explainRawExists`).
+- `withTransaction()` runs a block in a transaction and reports the
+  outcome structurally as `DriverTransactionResult<T>`. The block
+  receives a transaction-scoped driver. `Success(value)` is returned
+  only after commit is confirmed. If the block throws an ordinary
+  exception and rollback is confirmed, the driver returns
+  `Failed(exception, NotCommitted)`; a failed rollback returns
+  `OutcomeUnknown`, and a failed commit returns `OutcomeUnknown` even
+  if a later rollback appears to succeed (the commit may already have
+  reached the database). `CancellationException` and JVM `Error`s are
+  rolled back and rethrown, never stored. Calling `withTransaction()`
+  on an already-transactional driver throws
+  `NestedTransactionUnsupportedException` before entering the block.
+- `classifyMutationException()` maps a low-level exception from a **mutation**
+  into a state-bearing `EntMutationException?` — the returned
+  exception's own `writeState` is the classification, with no parallel
+  state field. E.g. a
+  recognized constraint violation becomes
+  `EntConstraintViolationException` with `NotPersisted`. Returning
+  `null` means "no more precise classification"; generated mutation
+  code then falls back to its phase-derived write state (using
+  `PersistenceUnknown` for an unclassified write exception, never
+  optimistically `NotPersisted`). Read execution never consults it —
+  canonical reads store the original exception directly in
+  `ReadResult.Failed`.
 - `inTransaction` is `false` on the root client driver and `true` on the
   driver passed inside `withTransaction { tx -> ... }`. Generated
   `save()` paths use this to enforce
@@ -294,14 +322,21 @@ stores.
 
 ```kotlin
 client.withTransaction { tx ->
-    tx.users.create { name = "Alice"; email = "a@b.com" }.save()
-    tx.posts.create { title = "Hello"; authorId = alice.id }.save()
-    // Commits if block completes; rolls back on exception
+    val alice = tx.users.create { name = "Alice"; email = "a@b.com" }
+        .saveAndLoad()
+        .orRollback()
+    tx.posts.create { title = "Hello"; authorId = alice.id }.save().orRollback()
+    // Commits if the block completes without a recorded mutation failure;
+    // rolls back on orRollback() or an exception
 }
 ```
 
-Nested `withTransaction` calls reuse the existing transaction (no
-savepoints).
+The client-level `withTransaction` returns `TransactionResult<T>`
+(project with `.getOrThrow()`); a mutation failure produced through
+`tx` marks the scope rollback-only even if its result is ignored.
+Nested `withTransaction` calls — on the generated client or the driver
+— are unsupported and throw `NestedTransactionUnsupportedException`
+before the nested block runs.
 
 ### Locking (RFC #4)
 
@@ -378,8 +413,16 @@ contract:
    one-at-a-time calls and silently drop the ordering guarantee.
 2. `insert()` must return the full row including server-assigned values
 3. `query()` must evaluate all `Predicate` types (including edge predicates)
-4. `withTransaction()` must roll back on exception, and the inner
-   driver must report `inTransaction = true`
+4. `withTransaction()` must honor the write-certainty contract:
+   `DriverTransactionResult.Success` only after confirmed commit;
+   `Failed(exception, NotCommitted)` only after confirmed rollback;
+   `OutcomeUnknown` for rollback or commit failures (a failed commit
+   stays `OutcomeUnknown` even if a later rollback appears to
+   succeed); cleanup failures after a confirmed commit must not turn
+   success into failure. Cancellation and JVM errors are rolled back
+   and rethrown. The inner driver must report `inTransaction = true`,
+   and a nested call must throw
+   `NestedTransactionUnsupportedException` before running the block.
 5. Optional: implement the RFC #4 lock capabilities. If the backend
    supports a true row lock that survives until transaction commit
    (e.g. `SELECT ... FOR UPDATE` in SQL or an equivalent), set

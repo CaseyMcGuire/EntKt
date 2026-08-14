@@ -19,12 +19,13 @@ import entkt.runtime.privacy.allowAll
 import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.result.EntError
 import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntResult
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -35,7 +36,10 @@ import kotlin.test.assertTrue
  * select which source rows are traversed (lowered as a source-id
  * subquery); the target block still owns the target shape; target
  * rows stay duplicate-free; and interceptor limit operations apply
- * to `EDGE_TRAVERSAL` instead of silently no-oping.
+ * to `EDGE_TRAVERSAL` instead of silently no-oping. Data terminals
+ * return `ReadResult`: interceptor rejection is
+ * `Failed(EntQueryRejectedException)`, LOAD denial is
+ * `Failed(EntPrivacyDeniedException)`.
  *
  * Privacy split pinned here too: traversal does NOT apply source
  * LOAD privacy (source rows are not returned), while target rows
@@ -50,14 +54,14 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
     /** Three users, two articles each; returns users oldest-first. */
     private fun seedUsersWithArticles(client: EntClient): List<User> {
         val users = listOf("alice", "bob", "carol").map { name ->
-            client.users.create { this.name = name; email = "$name@x" }.saveOrThrow()
+            client.users.create { this.name = name; email = "$name@x" }.saveAndLoad().getOrThrow()
         }
         for (user in users) {
             for (n in 1..2) {
                 client.articles.create {
                     title = "${user.name}-$n"
                     authorId = user.id
-                }.saveOrThrow()
+                }.save().getOrThrow()
             }
         }
         return users
@@ -79,7 +83,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
             where(User.name neq "carol")
             orderBy(User.id.desc())
             limit(1)
-        }.queryArticles().allOrThrow().map { it.title }.sorted()
+        }.queryArticles().all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("bob-1", "bob-2"), titles)
     }
@@ -92,7 +96,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         val titles = client.users.query {
             orderBy(User.id.desc())
             limit(1)
-        }.queryArticles().allOrThrow().map { it.title }.sorted()
+        }.queryArticles().all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("carol-1", "carol-2"), titles)
     }
@@ -108,7 +112,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
             orderBy(User.id.asc())
             limit(1)
             offset(1)
-        }.queryArticles().allOrThrow().map { it.title }.sorted()
+        }.queryArticles().all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("bob-1", "bob-2"), titles)
     }
@@ -125,7 +129,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         val titles = client.users.query {
             orderBy(User.id.asc())
             offset(1)
-        }.queryArticles().allOrThrow().map { it.title }.sorted()
+        }.queryArticles().all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("bob-1", "bob-2", "carol-1", "carol-2"), titles)
     }
@@ -139,7 +143,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         val authors = client.articles.query {
             orderBy(Article.id.desc())
             limit(1)
-        }.queryAuthor().allOrThrow()
+        }.queryAuthor().all().getOrThrow()
 
         assertEquals(listOf("carol"), authors.map { it.name })
     }
@@ -147,18 +151,18 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
     @Test
     fun `source shape constrains many-to-many traversal`() {
         val client = bypassClient(resetAndDriver())
-        val postA = client.posts.create { title = "a" }.saveOrThrow()
-        val postB = client.posts.create { title = "b" }.saveOrThrow()
-        val tagA = client.tags.create { name = "only-a" }.saveOrThrow()
-        val tagB = client.tags.create { name = "only-b" }.saveOrThrow()
-        client.postTags.create { postId = postA.id; tagId = tagA.id }.saveOrThrow()
-        client.postTags.create { postId = postB.id; tagId = tagB.id }.saveOrThrow()
+        val postA = client.posts.create { title = "a" }.saveAndLoad().getOrThrow()
+        val postB = client.posts.create { title = "b" }.saveAndLoad().getOrThrow()
+        val tagA = client.tags.create { name = "only-a" }.saveAndLoad().getOrThrow()
+        val tagB = client.tags.create { name = "only-b" }.saveAndLoad().getOrThrow()
+        client.postTags.create { postId = postA.id; tagId = tagA.id }.save().getOrThrow()
+        client.postTags.create { postId = postB.id; tagId = tagB.id }.save().getOrThrow()
 
         // Only the newest post (b) feeds the junction walk.
         val tags = client.posts.query {
             orderBy(Post.id.desc())
             limit(1)
-        }.queryTags().allOrThrow()
+        }.queryTags().all().getOrThrow()
 
         assertEquals(listOf("only-b"), tags.map { it.name })
     }
@@ -177,7 +181,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
             where(Article.title neq "alice-1")
             orderBy(Article.title.desc())
             limit(2)
-        }.allOrThrow().map { it.title }
+        }.all().getOrThrow().map { it.title }
 
         assertEquals(listOf("bob-2", "bob-1"), titles)
     }
@@ -193,7 +197,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         }.queryArticles {
             orderBy(Article.id.asc())
             limit(3)
-        }.allOrThrow()
+        }.all().getOrThrow()
 
         assertEquals(3, articles.size, "target limit(3) must cap total rows, not rows per source user")
     }
@@ -201,15 +205,15 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
     @Test
     fun `many-to-many fan-out does not duplicate target rows`() {
         val client = bypassClient(resetAndDriver())
-        val postA = client.posts.create { title = "a" }.saveOrThrow()
-        val postB = client.posts.create { title = "b" }.saveOrThrow()
-        val shared = client.tags.create { name = "shared" }.saveOrThrow()
-        client.postTags.create { postId = postA.id; tagId = shared.id }.saveOrThrow()
-        client.postTags.create { postId = postB.id; tagId = shared.id }.saveOrThrow()
+        val postA = client.posts.create { title = "a" }.saveAndLoad().getOrThrow()
+        val postB = client.posts.create { title = "b" }.saveAndLoad().getOrThrow()
+        val shared = client.tags.create { name = "shared" }.saveAndLoad().getOrThrow()
+        client.postTags.create { postId = postA.id; tagId = shared.id }.save().getOrThrow()
+        client.postTags.create { postId = postB.id; tagId = shared.id }.save().getOrThrow()
 
         // Both posts are selected and both reach the same tag — the
         // tag must come back once.
-        val tags = client.posts.query { orderBy(Post.id.asc()) }.queryTags().allOrThrow()
+        val tags = client.posts.query { orderBy(Post.id.asc()) }.queryTags().all().getOrThrow()
 
         assertEquals(listOf("shared"), tags.map { it.name })
     }
@@ -234,7 +238,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         }
         seedUsersWithArticles(client)
 
-        val titles = client.users.query().queryArticles().allOrThrow().map { it.title }.sorted()
+        val titles = client.users.query().queryArticles().all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("alice-1", "alice-2"), titles)
     }
@@ -262,7 +266,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
             // out of the way so only the source-side effect is
             // observed (1 source user → 2 articles).
             limit(50)
-        }.allOrThrow().map { it.title }.sorted()
+        }.all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("alice-1", "alice-2"), titles)
     }
@@ -289,13 +293,13 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         val titles = client.users.query {
             orderBy(User.id.asc())
             limit(3)
-        }.queryArticles { limit(50) }.allOrThrow().map { it.title }.sorted()
+        }.queryArticles { limit(50) }.all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("alice-1", "alice-2"), titles, "requireLimitAtMost(1) must clamp the traversal source to one user")
     }
 
     @Test
-    fun `allOrError maps source rejection to Err QueryRejected`() {
+    fun `all maps source rejection to Failed(EntQueryRejectedException)`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -311,10 +315,11 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.query().queryArticles().allOrError()
+        val result = client.users.query().queryArticles().all()
 
-        val err = assertIs<EntResult.Err>(result)
-        val rejected = assertIs<EntError.QueryRejected>(err.error)
+        val failed = assertIs<ReadResult.Failed>(result)
+        val rejected = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("no traversal", rejected.reason)
         assertEquals("no_trav", rejected.code)
         assertEquals("traversal-rejector", rejected.interceptor)
     }
@@ -335,9 +340,9 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         }
 
         // Sanity: the viewer cannot LOAD users directly...
-        assertFailsWith<EntPrivacyDeniedException> {
-            client.users.query { limit(1) }.allOrThrow()
-        }
+        val direct = client.users.query { limit(1) }.all()
+        val failed = assertIs<ReadResult.Failed>(direct)
+        assertIs<EntPrivacyDeniedException>(failed.exception)
 
         // ...but traversal only uses users to define the article
         // query — no User entity is returned, so no User LOAD
@@ -345,7 +350,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         val titles = client.users.query {
             orderBy(User.id.desc())
             limit(1)
-        }.queryArticles().allOrThrow().map { it.title }.sorted()
+        }.queryArticles().all().getOrThrow().map { it.title }.sorted()
 
         assertEquals(listOf("carol-1", "carol-2"), titles)
     }
@@ -359,20 +364,20 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
                 articles(PublishedOnlyArticleLoads)
             }
         }
-        val published = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@x" }.saveOrThrow()
-            val pub = sys.articles.create { title = "pub"; published = true; authorId = author.id }.saveOrThrow()
-            sys.articles.create { title = "draft"; published = false; authorId = author.id }.saveOrThrow()
-            pub
+        val draft = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val author = sys.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+            sys.articles.create { title = "pub"; published = true; authorId = author.id }.save().getOrThrow()
+            sys.articles.create { title = "draft"; published = false; authorId = author.id }.saveAndLoad().getOrThrow()
         }
 
-        // Strict terminal throws on the denied draft…
-        assertFailsWith<EntPrivacyDeniedException> {
-            client.users.query().queryArticles().allOrThrow()
-        }
-        // …visible terminal filters it.
-        val visible = client.users.query().queryArticles().visibleAll()
-        assertEquals(listOf(published.id), visible.map { it.id })
+        // The strict terminal evaluates the full selected window and
+        // fails on the denied draft, keying exactly that row — the
+        // published article alone would have been visible.
+        val result = client.users.query().queryArticles().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.Root>(denied.origin)
+        assertEquals(listOf(draft.id), denied.denials.map { it.entityKey.value })
     }
 
     // ---- Chains and explain ----
@@ -394,7 +399,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         }.queryArticles {
             orderBy(Article.id.asc())
             limit(1)
-        }.queryAuthor().allOrThrow()
+        }.queryAuthor().all().getOrThrow()
 
         assertEquals(listOf("bob"), authors.map { it.name })
     }
@@ -408,7 +413,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
             orderBy(User.id.desc())
             limit(10)
             offset(5)
-        }.queryArticles().explainAllOrThrow()
+        }.queryArticles().explainAll()
 
         val sql = assertNotNull(plan.root).describe()
         assertTrue("IN (SELECT" in sql, "traversal should lower to a source-id subquery; was: $sql")

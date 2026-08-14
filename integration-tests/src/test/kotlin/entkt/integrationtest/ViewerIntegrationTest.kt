@@ -5,6 +5,7 @@ import entkt.integrationtest.ent.GeneratedEntViewerRegistry
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.getOrThrow
 import entkt.viewer.EntViewer
 import entkt.viewer.EntViewerRequest
 import kotlin.test.Test
@@ -39,9 +40,9 @@ class ViewerIntegrationTest : PostgresTestBase() {
         viewer.handle(EntViewerRequest(path = path, query = params.groupBy({ it.first }, { it.second })))
 
     private fun seed(sys: EntClient) {
-        val author = sys.users.create { name = "Casey"; email = "casey@example.com" }.save()
-        sys.articles.create { title = "First"; authorId = author.id }.save()
-        sys.articles.create { title = "Second"; authorId = author.id }.save()
+        val author = sys.users.create { name = "Casey"; email = "casey@example.com" }.saveAndLoad().getOrThrow()
+        sys.articles.create { title = "First"; authorId = author.id }.save().getOrThrow()
+        sys.articles.create { title = "Second"; authorId = author.id }.save().getOrThrow()
     }
 
     @Test
@@ -89,7 +90,7 @@ class ViewerIntegrationTest : PostgresTestBase() {
     fun `detail renders fields and edge links, and is a 404 under a denying context`() {
         val (sys, plain) = fresh()
         seed(sys)
-        val article = sys.articles.query { }.allOrThrow().first { it.title == "First" }
+        val article = sys.articles.query { }.all().getOrThrow().first { it.title == "First" }
 
         val visible = viewer(plain, bypass())
         val detail = get(visible, "/_ent/entities/article/${article.id}")
@@ -118,29 +119,38 @@ class ViewerIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `pagination windows over raw rows for load-privacy entities`() {
+    fun `pagination pages over strict all() windows with exact next`() {
         val (sys, plain) = fresh()
-        val author = sys.users.create { name = "A"; email = "p@example.com" }.save()
-        repeat(5) { i -> sys.articles.create { title = "t$i"; authorId = author.id }.save() }
+        val author = sys.users.create { name = "A"; email = "p@example.com" }.saveAndLoad().getOrThrow()
+        repeat(5) { i -> sys.articles.create { title = "t$i"; authorId = author.id }.save().getOrThrow() }
 
         val viewer = viewer(plain, bypass())
         val page1 = get(viewer, "/_ent/entities/article", "size" to "2")
         assertEquals(200, page1.status)
-        // Every integration entity has load privacy (fail-closed model), so
-        // pages are raw windows: pagination stays bounded, and next is
-        // offered unconditionally with the windowed banner — never derived
-        // from visible counts, which would leak denied-row information.
-        assertTrue("Row-level privacy applies" in page1.body)
+        // The list endpoint is a strict all() over an exact SQL window:
+        // when every windowed row is visible there is no privacy banner,
+        // and next-page existence is exact (limit = size + 1 probe).
+        assertFalse("Row-level privacy applies" in page1.body, "no banner when nothing was denied")
         assertTrue("Next" in page1.body)
         val page2 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "2")
         assertTrue("t2" in page2.body && "t3" in page2.body, "windows are disjoint and in order")
         assertFalse("t1<" in page2.body.substringAfter("tbody"), "no duplicated rows across pages")
 
-        // Exactly at the visible-scan cap (default 100): deterministic 400,
-        // regardless of how many rows exist.
-        val atCap = get(viewer, "/_ent/entities/article", "size" to "100")
-        assertEquals(400, atCap.status)
-        assertTrue("visible-scan cap (100)" in atCap.body, atCap.body)
+        // Last page: exactly one row left, so Next is NOT offered.
+        val page3 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "3")
+        assertTrue("t4" in page3.body)
+        assertFalse("Next &gt;" in page3.body, "exact hasNext hides the link on the last page")
+
+        // The old visible-scan cap is gone with the visible* family:
+        // a large size is simply coerced into the page-size bounds.
+        val bigPage = get(viewer, "/_ent/entities/article", "size" to "100")
+        assertEquals(200, bigPage.status)
+        assertTrue("t0" in bigPage.body && "t4" in bigPage.body)
+
+        // Depth stays bounded: a crafted deep page is a deterministic 400.
+        val tooDeep = get(viewer, "/_ent/entities/article", "size" to "200", "page" to "999999")
+        assertEquals(400, tooDeep.status)
+        assertTrue("depth limit" in tooDeep.body, tooDeep.body)
     }
 
     @Test
@@ -148,7 +158,7 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val (sys, plain) = fresh()
         val author = sys.users.create {
             name = "Casey"; email = "s@example.com"; apiToken = "super-secret-token"
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
         val viewer = viewer(plain, bypass())
         val detail = get(viewer, "/_ent/entities/user/${author.id}")
@@ -165,7 +175,7 @@ class ViewerIntegrationTest : PostgresTestBase() {
     @Test
     fun `extra redaction masks generated-adapter values at runtime`() {
         val (sys, plain) = fresh()
-        sys.users.create { name = "Casey"; email = "redact-me@example.com" }.save()
+        sys.users.create { name = "Casey"; email = "redact-me@example.com" }.save().getOrThrow()
         val viewer = EntViewer(plain, GeneratedEntViewerRegistry) {
             authorize { true }
             privacyContext { bypass() }
@@ -177,15 +187,34 @@ class ViewerIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `privacy-windowed lists banner instead of turning next into an oracle, and M2M edges render disabled`() {
+    fun `denied pages banner without an exact next oracle, and M2M edges render disabled`() {
         val (sys, plain) = fresh()
-        val user = sys.users.create { name = "Casey"; email = "m2m@example.com" }.save()
+        val user = sys.users.create { name = "Casey"; email = "m2m@example.com" }.saveAndLoad().getOrThrow()
 
-        val viewer = viewer(plain, bypass())
-        val list = get(viewer, "/_ent/entities/user")
-        assertTrue("Row-level privacy applies" in list.body, "load-privacy entities are labeled as windowed")
+        // A denying (fail-closed Anonymous) viewer: the strict all() fails
+        // with a Root denial, which renders as a privacy-filtered empty
+        // page WITH the banner — and next stays offered rather than
+        // becoming a visible-count oracle.
+        val anonymous = viewer(plain, PrivacyContext(Viewer.Anonymous))
+        val denied = get(anonymous, "/_ent/entities/user")
+        assertEquals(200, denied.status)
+        assertTrue("Row-level privacy applies" in denied.body, "denied pages carry the privacy banner")
+        assertFalse("m2m@example.com" in denied.body, "denied rows never render")
+        assertTrue("Next" in denied.body, "next is offered, not derived from visible counts")
 
-        val detail = get(viewer, "/_ent/entities/user/${user.id}")
+        // An empty table under the same denying viewer is a plain empty
+        // page: nothing was denied, so no banner.
+        val emptyList = get(anonymous, "/_ent/entities/article")
+        assertEquals(200, emptyList.status)
+        assertFalse("Row-level privacy applies" in emptyList.body, "no banner when nothing was denied")
+        assertTrue("No visible rows" in emptyList.body)
+
+        // A visible viewer sees the row and no banner.
+        val visible = viewer(plain, bypass())
+        val list = get(visible, "/_ent/entities/user")
+        assertFalse("Row-level privacy applies" in list.body)
+
+        val detail = get(visible, "/_ent/entities/user/${user.id}")
         assertTrue("no generated traversal link in V1" in detail.body, "M2M edges render disabled through generated adapters")
     }
 }

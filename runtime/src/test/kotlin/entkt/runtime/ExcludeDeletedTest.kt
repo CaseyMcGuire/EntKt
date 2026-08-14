@@ -1,6 +1,5 @@
 package entkt.runtime
 import entkt.runtime.query.RegisteredInterceptor
-import entkt.runtime.result.EntOperation
 import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.query.FrozenQuerySpec
 import entkt.runtime.query.ExcludeDeleted
@@ -54,7 +53,6 @@ class ExcludeDeletedTest {
             builder = builder(),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("soft-delete", interceptor)),
             globalInterceptors = emptyList(),
         )
@@ -103,7 +101,6 @@ class ExcludeDeletedTest {
             ),
             context = rootContext(),
             entity = "Post",
-            entOperation = EntOperation.QUERY,
             entityInterceptors = listOf(RegisteredInterceptor("soft-delete", ExcludeDeleted())),
             globalInterceptors = emptyList(),
         )

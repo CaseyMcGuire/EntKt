@@ -1,9 +1,12 @@
 package entkt.codegen.mutation
 
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.metadata.EdgeFk
@@ -16,11 +19,6 @@ import entkt.schema.UpdateDefault
 
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val FIELD_PATCH_OR_ELSE = MemberName("entkt.runtime.mutation", "orElse")
-private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
-private val ENT_NO_CHANGES_EXCEPTION = ClassName("entkt.runtime.result", "EntNoChangesException")
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
-private val VALIDATION_INVALID = ClassName("entkt.runtime.validation", "ValidationDecision", "Invalid")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "RelationshipLockKey")
@@ -31,14 +29,26 @@ private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 
 /**
- * Emits the generated `save()` member. One emitter per generate()
+ * Emits the generated private `executeSave(applyLoadPrivacy)` member —
+ * the single update execution pipeline both public terminals
+ * (`save()` / `saveAndLoad()`) project. One emitter per generate()
  * call: the constructor captures the naming and field context every
  * phase needs, and [build] runs the phase emitters in save order.
  * Each phase appends to the shared [builder]; the phase sequence in
  * [build] IS the save pipeline, so reordering calls changes the
- * generated semantics. The `_capturedPendingEdges` try/finally
- * bracket is emitted by [build] itself, so every phase emitter is
- * locally balanced KotlinPoet control flow.
+ * generated semantics — including which [entkt.runtime.result.MutationWriteState]
+ * a failure at each position reports. The `_capturedPendingEdges`
+ * try/finally bracket and the whole-terminal capture boundary are
+ * emitted by [build] itself, so every phase emitter is locally
+ * balanced KotlinPoet control flow.
+ *
+ * Failure classification is positional (see the RFC's capture
+ * boundary): decision-returning privacy/validation evaluators produce
+ * the typed exceptions; driver-call exceptions route through
+ * `_classifyDriverFailure` with a phase-derived fallback; every other
+ * exception — hooks, rule bodies, materialization, preflight throws —
+ * is foreign and becomes `EntUnexpectedMutationException` with the
+ * current `writeState` at the terminal boundary.
  */
 internal class UpdateSaveEmitter(
     private val packageName: String,
@@ -55,10 +65,26 @@ internal class UpdateSaveEmitter(
     private val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
     private val mutableFields = allFields.filter { !it.immutable }
 
-    private val builder = FunSpec.builder("save")
-        .returns(entityClass.copy(nullable = true))
+    private val builder = FunSpec.builder("executeSave")
+        .addModifiers(KModifier.PRIVATE)
+        .addParameter("applyLoadPrivacy", BOOLEAN)
+        .returns(MUTATION_RESULT.parameterizedBy(entityClass))
 
     fun build(): FunSpec {
+        // ---- Write-state phase local + whole-terminal boundary. The
+        // var starts NotPersisted, flips only after the save's SQL has
+        // executed, and is what the final catch reports for foreign
+        // exceptions — so a hook thrown before the write reports
+        // NotPersisted while an afterUpdate hook thrown after an
+        // autocommit write reports Committed. ----
+        builder.addStatement("var writeState = %T.NotPersisted", MUTATION_WRITE_STATE)
+        builder.beginControlFlow("try")
+        // Posture snapshot BEFORE persistence but INSIDE the terminal
+        // boundary — see CreateGenerator.
+        builder.addStatement(
+            "val postWriteState = if (driver.inTransaction) %T.TransactionPending else %T.Committed",
+            MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
+        )
         emitPreflight()
         emitOwnerRowLoad()
         // ---- Pending edge ops snapshot. Captured once
@@ -72,16 +98,16 @@ internal class UpdateSaveEmitter(
         // identity equal, not just structurally equal. ----
         builder.addStatement("val pendingEdges = _buildPendingEdgeOps()")
         // Wrap the post-assignment region
-        // in try/finally so every save exit path (return null on
-        // missing rows, throw EntNoChangesException, return
-        // updatedEntity, or any exception out of hooks/privacy/
-        // validation/driver writes) clears _capturedPendingEdges. A
-        // hook that stashes ctx.mutation can then no longer read
-        // pendingEdges after save returns — the adapter's getter
-        // throws the "accessed outside a save()" error consistently
-        // with its documented contract. The bracket is emitted here,
-        // not split across phase emitters, so every emitter below is
-        // locally balanced and can be read — or modified — on its own.
+        // in try/finally so every save exit path (typed Failed returns,
+        // the no-op Success return, the final Success return, or any
+        // exception out of hooks/privacy/validation/driver writes)
+        // clears _capturedPendingEdges. A hook that stashes
+        // ctx.mutation can then no longer read pendingEdges after the
+        // save returns — the adapter's getter throws the "accessed
+        // outside a save()" error consistently with its documented
+        // contract. The bracket is emitted here, not split across
+        // phase emitters, so every emitter below is locally balanced
+        // and can be read — or modified — on its own.
         builder.beginControlFlow("try")
         builder.addStatement("_capturedPendingEdges = pendingEdges")
         emitHooks()
@@ -93,51 +119,42 @@ internal class UpdateSaveEmitter(
         builder.nextControlFlow("finally")
         builder.addStatement("_capturedPendingEdges = null")
         builder.endControlFlow()
+        // ---- Whole-terminal capture boundary: rethrow cancellation,
+        // wrap every other ordinary exception as foreign with the
+        // current phase state, record on the coordinator, and never
+        // catch Throwable (JVM Errors propagate). ----
+        builder.nextControlFlow("catch (e: %T)", MUTATION_CANCELLATION_EXCEPTION)
+        builder.addStatement("throw e")
+        builder.nextControlFlow("catch (e: %T)", KOTLIN_EXCEPTION)
+        builder.addCode(
+            recordAndReturnFailure(
+                CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
+            ),
+        )
+        builder.endControlFlow()
         return builder.build()
     }
 
     /**
-     * Preflights, in pipeline order: syntactically-empty NoChanges, the
-     * transaction requirement, Pessimistic capability checks, the M2M
-     * capability + mixed-mode checks, and Canonical relationship lock
-     * acquisition. Everything here fires before the owner-row read.
+     * Preflights, in pipeline order: the transaction requirement,
+     * Pessimistic capability checks, the M2M capability + mixed-mode
+     * checks, and Canonical relationship lock acquisition. Everything
+     * here fires before the owner-row read. Every preflight throw
+     * (TransactionRequiredException, UnsupportedDriverCapabilityException,
+     * the mixed-mode IllegalStateException) is captured by the
+     * terminal boundary as EntUnexpectedMutationException(NotPersisted)
+     * — deliberately reversing the old propagate contract.
+     *
+     * There is no syntactically-empty NoChanges preflight anymore: an
+     * assignment-free update proceeds to the owner load so it can
+     * report target absence, runs the pre-write phases, and completes
+     * as Success without persisting (see emitPatchConstruction's empty
+     * branch).
      */
     private fun emitPreflight() {
-        // ---- Syntactically empty patch: NoChanges before owner-row load. ----
-        // Reporting NoChanges before the load avoids existence-leaking
-        // `update(missingId) {}` calls. saveOrNull throws here too —
-        // NoChanges is not "expected absence" per the result variants.
-        // This also fires before the transaction-requirement preflight
-        // below, matching the pipeline ("syntactically empty
-        // update classification — report NoChanges before any other
-        // observable work, including transaction requirement checks").
-        //
-        // An M2M-only update (caller invoked
-        // `tags.add(...)` etc. but assigned no scalar/FK fields) has
-        // `dirtyFields.isEmpty()` since `dirtyFields` tracks scalar
-        // assignments only. Gate this top-of-save NoChanges throw on
-        // `!_hasPendingLinkTableM2MOps()` so M2M-only updates proceed
-        // to the preflights below. The hook-cleared-empty
-        // branch downstream uses the same gate.
-        val topEmptyCondition = if (helperEligibleEdges.isNotEmpty()) {
-            "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps())"
-        } else {
-            "if (dirtyFields.isEmpty())"
-        }
-        builder.beginControlFlow(topEmptyCondition)
-        builder.addStatement(
-            "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
-            ENT_NO_CHANGES_EXCEPTION,
-            ENT_ERROR,
-            schemaName,
-            ENT_OPERATION,
-        )
-        builder.endControlFlow()
-
-        // ---- Transaction-requirement preflight. Throws
-        // TransactionRequiredException before the owner-row load,
-        // hooks, defaults, validation, driver writes when the
-        // configured TransactionRequirement isn't satisfied. ----
+        // ---- Transaction-requirement preflight. Fires before the
+        // owner-row load, hooks, defaults, validation, driver writes
+        // when the configured TransactionRequirement isn't satisfied. ----
         builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName update")
 
         // ---- Pessimistic preflight: require a transaction
@@ -253,51 +270,45 @@ internal class UpdateSaveEmitter(
         // reaching the else-else branch is safe even without an
         // explicit OES check (we just call serializeOwnerEdgeAndRead).
         //
-        // All four paths bypass LOAD privacy; missing rows short-circuit
-        // before hooks/privacy/validation run. ----
+        // All four paths bypass LOAD privacy. The read is wrapped in
+        // the driver-call classification catch with the pre-write
+        // NotPersisted fallback; a missing row is
+        // Failed(EntTargetAbsentException) — the empty update must
+        // still establish whether its target exists — and
+        // short-circuits before hooks/privacy/validation run. ----
+        val head = CodeBlock.builder()
+            .add("val row0 = try {\n")
         if (helperEligibleEdges.isNotEmpty()) {
-            builder.beginControlFlow(
-                "val row0 = if (consistency == %T.Pessimistic)",
-                UPDATE_CONSISTENCY,
-            )
-            builder.addStatement(
-                "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
-                entityClass,
-            )
-            builder.nextControlFlow("else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")
-            builder.addStatement(
-                "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
-                entityClass,
-            )
-            builder.nextControlFlow("else if (_hasPendingLinkTableM2MOps())")
-            builder.addStatement(
-                "driver.serializeOwnerEdgeAndRead(%T.TABLE, id) ?: return null",
-                entityClass,
-            )
-            builder.nextControlFlow("else")
-            builder.addStatement(
-                "driver.byId(%T.TABLE, id) ?: return null",
-                entityClass,
-            )
-            builder.endControlFlow()
+            head.add("  if (consistency == %T.Pessimistic) {\n", UPDATE_CONSISTENCY)
+                .add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
+                .add("  } else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate) {\n")
+                .add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
+                .add("  } else if (_hasPendingLinkTableM2MOps()) {\n")
+                .add("    driver.serializeOwnerEdgeAndRead(%T.TABLE, id)\n", entityClass)
+                .add("  } else {\n")
+                .add("    driver.byId(%T.TABLE, id)\n", entityClass)
+                .add("  }\n")
         } else {
             // No helper-eligible M2M edges → keep the existing two-way
             // branch unchanged so non-M2M schemas pay no new branches.
-            builder.beginControlFlow(
-                "val row0 = if (consistency == %T.Pessimistic)",
-                UPDATE_CONSISTENCY,
-            )
-            builder.addStatement(
-                "driver.readRowForUpdate(%T.TABLE, id) ?: return null",
-                entityClass,
-            )
-            builder.nextControlFlow("else")
-            builder.addStatement(
-                "driver.byId(%T.TABLE, id) ?: return null",
-                entityClass,
-            )
-            builder.endControlFlow()
+            head.add("  if (consistency == %T.Pessimistic) {\n", UPDATE_CONSISTENCY)
+                .add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
+                .add("  } else {\n")
+                .add("    driver.byId(%T.TABLE, id)\n", entityClass)
+                .add("  }\n")
         }
+        head.add(driverCallFailureTail("NotPersisted"))
+        builder.addCode(head.build())
+        builder.beginControlFlow("if (row0 == null)")
+        builder.addCode(
+            recordAndReturnFailure(
+                CodeBlock.of(
+                    "%T(%S, %T(%S, id))",
+                    ENT_TARGET_ABSENT_EXCEPTION, schemaName, MUTATION_ENTITY_KEY, "id",
+                ),
+            ),
+        )
+        builder.endControlFlow()
         builder.addStatement("entity = %T.fromRow(row0)", entityClass)
     }
 
@@ -317,7 +328,9 @@ internal class UpdateSaveEmitter(
         // were contracted for. beforeUpdate hooks continue to receive
         // `_mutationView` via the hook context, which is the
         // expected surface for patch-clearing and pending-edges
-        // inspection.
+        // inspection. Hook-thrown exceptions are FOREIGN — the
+        // terminal boundary wraps them with the current (pre-write)
+        // state regardless of the thrown runtime type.
         builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
 
         // ---- beforeUpdate hooks (receive a per-hook context with snapshot). ----
@@ -338,7 +351,7 @@ internal class UpdateSaveEmitter(
     /**
      * From dirty state to database write set: required-null check, the
      * canonical requested patch, the EdgeChanges sidecar, the
-     * hook-cleared-empty early exit, update defaults (effective patch),
+     * assignment-free no-op branch, update defaults (effective patch),
      * field-level validation of Set entries, and the `values` map.
      */
     private fun emitPatchConstruction() {
@@ -347,8 +360,10 @@ internal class UpdateSaveEmitter(
         // checks run after beforeUpdate hooks. A hook can repair an
         // explicit `name = null` assignment via `mutation.unsetName()`
         // (removes from dirtyFields) or by reassigning a value;
-        // unrepaired assignments throw here.
-        builder.addStatement("_checkRequiredNotNull()")
+        // unrepaired assignments become a typed EntValidationException
+        // here.
+        builder.addStatement("val requiredViolations = _checkRequiredNotNull()")
+        builder.addStatement("if (requiredViolations.isNotEmpty()) return·_validationFailed(requiredViolations)")
 
         // ---- Build the canonical requested patch after all before hooks. ----
         builder.addStatement("val requestedPatch = _buildRequestedPatch()")
@@ -357,27 +372,47 @@ internal class UpdateSaveEmitter(
         // per-edge EdgeChanges sidecar. The helper short-circuits to an
         // empty aggregator when no mutator has pending ops, so the
         // junction database round-trips only happen when there's work.
-        // Built before the hook-cleared empty branch so privacy/validation
-        // rules in both branches see the same EdgeChanges view. ----
-        builder.addStatement("val edgeChanges = _buildEdgeChanges(pendingEdges)")
+        // Built before the no-op branch so privacy/validation rules in
+        // both branches see the same EdgeChanges view. The junction
+        // read is a pre-write driver call → classification with the
+        // NotPersisted fallback. ----
+        if (helperEligibleEdges.isNotEmpty()) {
+            builder.addCode(
+                CodeBlock.builder()
+                    .add("val edgeChanges = try {\n")
+                    .add("  _buildEdgeChanges(pendingEdges)\n")
+                    .add(driverCallFailureTail("NotPersisted"))
+                    .build(),
+            )
+        } else {
+            builder.addStatement("val edgeChanges = _buildEdgeChanges(pendingEdges)")
+        }
 
-        // ---- Hook-cleared empty path (must run BEFORE update defaults). ----
-        // Hook-cleared empty updates skip update defaults.
-        // dirtyFields.isEmpty() here ⇔ requested patch is all Unset.
-        // Build an unchanged effective patch (= requested, all Unset),
-        // run UPDATE privacy on the unchanged after-state candidate
-        // (a real authorization decision against the loaded `before`),
-        // then throw NoChanges. Validation, driver write, after-hooks,
-        // and returned LOAD privacy are skipped.
+        // ---- Assignment-free no-op branch (must run BEFORE update defaults). ----
+        // Covers both the syntactically-empty `update(id) { }` and the
+        // hook-cleared-empty patch: the target's existence has already
+        // been established by the owner load (absence was a typed
+        // Failed), pre-write privacy AND validation still run against
+        // the unchanged after-state candidate (a real authorization /
+        // invariant decision against the loaded `before`), and the
+        // persist phase plus post-persist callbacks are skipped —
+        // completing as Success per the RFC's No-Op Updates rule.
+        // Update defaults are deliberately NOT folded here so a
+        // default-only "real" write is never synthesized by an
+        // assignment-free update.
         //
-        // An M2M-only update (caller cleared all dirty
-        // scalar fields via hooks but staged link-table M2M ops) is
-        // NOT a no-op — it still emits junction writes. Gate this
-        // empty-scalar NoChanges branch on `!_hasPendingLinkTableM2MOps()`
-        // so M2M-only updates fall through to the non-empty path,
-        // where update defaults can synthesize a scalar UPDATE (e.g.
-        // `updatedAt = updateDefaultNow()`) if any apply, and junction
-        // writes fire below.
+        // For saveAndLoad, the returned entity is the loaded current
+        // row after the ordinary LOAD disclosure check; a denial there
+        // uses writeState = NotPersisted because no write occurred.
+        //
+        // An M2M-only update (caller staged link-table M2M ops but no
+        // scalar/FK assignment survived the hooks) is NOT a no-op — it
+        // still emits junction writes. Gate this branch on
+        // `!_hasPendingLinkTableM2MOps()` so M2M-only updates fall
+        // through to the non-empty path, where update defaults can
+        // synthesize a scalar UPDATE (e.g. `updatedAt =
+        // updateDefaultNow()`) if any apply, and junction writes fire
+        // below.
         val emptyBranchCondition = if (helperEligibleEdges.isNotEmpty()) {
             "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps())"
         } else {
@@ -393,16 +428,40 @@ internal class UpdateSaveEmitter(
             edgeFks = allEdgeFks,
         )
         builder.addStatement(
-            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "val denialReason = client.%L.updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
-        builder.addStatement(
-            "throw %T(%T.NoChanges(%S, %T.UPDATE, id))",
-            ENT_NO_CHANGES_EXCEPTION,
-            ENT_ERROR,
-            schemaName,
-            ENT_OPERATION,
+        builder.beginControlFlow("if (denialReason != null)")
+        builder.addCode(
+            privacyDeniedFailure(
+                writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                schemaName = schemaName,
+                operationName = "UPDATE",
+                entityKeyExpr = CodeBlock.of("%T(%S, id)", MUTATION_ENTITY_KEY, "id"),
+                reasonExpr = "denialReason",
+            ),
         )
+        builder.endControlFlow()
+        builder.addStatement(
+            "val violations = client.%L.evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            repoPropName,
+        )
+        builder.addStatement("if (violations.isNotEmpty()) return·_validationFailed(violations)")
+        builder.beginControlFlow("if (applyLoadPrivacy)")
+        builder.addStatement("val denial = client.%L.loadDenialOrNull(privacy, entity)", repoPropName)
+        builder.beginControlFlow("if (denial != null)")
+        builder.addCode(
+            privacyDeniedFailure(
+                writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                schemaName = schemaName,
+                operationName = "LOAD",
+                entityKeyExpr = CodeBlock.of("%T(%S, entity.id)", MUTATION_ENTITY_KEY, "id"),
+                reasonExpr = "denial.reason",
+            ),
+        )
+        builder.endControlFlow()
+        builder.endControlFlow()
+        builder.addStatement("return %T.Success(entity)", MUTATION_RESULT)
         builder.endControlFlow()
 
         // ---- Apply update defaults to compute the effective patch. ----
@@ -468,9 +527,13 @@ internal class UpdateSaveEmitter(
 
     private fun emitPrivacyAndValidation() {
         // ---- Privacy + validation. ----
-        // The hook-cleared empty branch above already handled the
+        // The no-op branch above already handled the
         // requested-empty-after-hooks case, so reaching here means the
-        // requested patch had at least one Set entry.
+        // save will persist something (a scalar write set and/or
+        // junction writes). Both evaluators are decision-returning: a
+        // returned Deny / non-empty violation list becomes the typed
+        // exception here, while a rule-THROWN exception escapes to the
+        // terminal boundary as a foreign failure.
         builder.addStatement("val privacy = client.currentPrivacyContext()")
         emitCandidateConstruction(
             builder,
@@ -479,19 +542,40 @@ internal class UpdateSaveEmitter(
             edgeFks = allEdgeFks,
         )
         builder.addStatement(
-            "client.%L.evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "val denialReason = client.%L.updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
+        builder.beginControlFlow("if (denialReason != null)")
+        builder.addCode(
+            privacyDeniedFailure(
+                writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                schemaName = schemaName,
+                operationName = "UPDATE",
+                entityKeyExpr = CodeBlock.of("%T(%S, id)", MUTATION_ENTITY_KEY, "id"),
+                reasonExpr = "denialReason",
+            ),
+        )
+        builder.endControlFlow()
         builder.addStatement(
-            "client.%L.evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "val violations = client.%L.evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
+        builder.addStatement("if (violations.isNotEmpty()) return·_validationFailed(violations)")
     }
 
     private fun emitOwnerWrite() {
         // ---- Owner-row driver write. After-hooks, the post-write
-        // LOAD privacy wrap, and the return live in
-        // emitReturnAndCleanup, after the junction writes. ----
+        // LOAD disclosure, and the return live in
+        // emitAfterHooksAndReturn, after the junction writes. The
+        // write statement routes exceptions through
+        // `_classifyDriverFailure` with the PersistenceUnknown
+        // write-phase fallback (never optimistic NotPersisted); a null
+        // return means the row vanished between load and write →
+        // Failed(EntTargetAbsentException) (hardcoded NotPersisted).
+        // After a successful owner write the state flips to
+        // TransactionPending / Committed so later foreign failures
+        // (afterUpdate hooks, materialization) report the post-write
+        // state. ----
         // For M2M-capable schemas, the owner UPDATE is
         // conditional. An edge-only update (caller staged M2M ops,
         // hooks cleared every scalar field, no update defaults apply)
@@ -502,9 +586,25 @@ internal class UpdateSaveEmitter(
         // / FK changes were committed.
         if (helperEligibleEdges.isNotEmpty()) {
             builder.beginControlFlow("val updatedEntity = if (values.isNotEmpty())")
+            builder.addCode(
+                CodeBlock.builder()
+                    .add("val row = try {\n")
+                    .add("  driver.update(%T.TABLE, id, values)\n", entityClass)
+                    .add(driverCallFailureTail("PersistenceUnknown"))
+                    .build(),
+            )
+            builder.beginControlFlow("if (row == null)")
+            builder.addCode(
+                recordAndReturnFailure(
+                    CodeBlock.of(
+                        "%T(%S, %T(%S, id))",
+                        ENT_TARGET_ABSENT_EXCEPTION, schemaName, MUTATION_ENTITY_KEY, "id",
+                    ),
+                ),
+            )
+            builder.endControlFlow()
             builder.addStatement(
-                "val row = driver.update(%T.TABLE, id, values) ?: return null",
-                entityClass,
+                "writeState = postWriteState",
             )
             builder.addStatement("%T.fromRow(row)", entityClass)
             builder.nextControlFlow("else")
@@ -514,9 +614,25 @@ internal class UpdateSaveEmitter(
             builder.addStatement("entity")
             builder.endControlFlow()
         } else {
+            builder.addCode(
+                CodeBlock.builder()
+                    .add("val row = try {\n")
+                    .add("  driver.update(%T.TABLE, id, values)\n", entityClass)
+                    .add(driverCallFailureTail("PersistenceUnknown"))
+                    .build(),
+            )
+            builder.beginControlFlow("if (row == null)")
+            builder.addCode(
+                recordAndReturnFailure(
+                    CodeBlock.of(
+                        "%T(%S, %T(%S, id))",
+                        ENT_TARGET_ABSENT_EXCEPTION, schemaName, MUTATION_ENTITY_KEY, "id",
+                    ),
+                ),
+            )
+            builder.endControlFlow()
             builder.addStatement(
-                "val row = driver.update(%T.TABLE, id, values) ?: return null",
-                entityClass,
+                "writeState = postWriteState",
             )
             builder.addStatement("val updatedEntity = %T.fromRow(row)", entityClass)
         }
@@ -530,8 +646,25 @@ internal class UpdateSaveEmitter(
         // deletes go in one `deleteMany` per edge for efficiency.
         // Junction-shape rule 5 (validateThroughLinkJunctions) rejects
         // EXPLICIT junction id strategies, so we only need AUTO_INT /
-        // AUTO_LONG (driver mints) and CLIENT_UUID (mint here). ----
+        // AUTO_LONG (driver mints) and CLIENT_UUID (mint here).
+        //
+        // The whole junction region shares one classification catch
+        // whose fallback is TransactionPending: M2M saves are
+        // preflight-guaranteed to run inside a caller-owned
+        // transaction, so a mid-junction failure's effect is staged in
+        // the still-open transaction (rollback-only marking makes the
+        // boundary roll it back) rather than an unknown-commit
+        // outcome. After ALL SQL for the save has completed — owner
+        // update plus junction writes — the state flips (again, for
+        // the edge-only path that skipped the owner write). ----
         if (helperEligibleEdges.isNotEmpty()) {
+            // Tracks whether any junction statement actually changed a
+            // row: insertIgnore returning null (duplicate pair) and a
+            // zero-row delete are not writes. Drives both the staged-
+            // failure promotion in the catch below and the post-region
+            // state flip — a no-op edge update must stay NotPersisted.
+            builder.addStatement("var junctionWrites = false")
+            builder.beginControlFlow("try")
             for (edge in helperEligibleEdges) {
                 val prop = edge.mutatorPropertyName
                 // INSERT each added id. Mint UUID client-side for
@@ -544,13 +677,13 @@ internal class UpdateSaveEmitter(
                 // unique-constraint error. The conflict target is the FK pair.
                 when (edge.junctionIdStrategy) {
                     "CLIENT_UUID" -> builder.addStatement(
-                        "driver.insertIgnore(%S, mapOf(%S to %T.randomUUID(), %S to id, %S to _targetId), conflictColumns = listOf(%S, %S))",
+                        "if (driver.insertIgnore(%S, mapOf(%S to %T.randomUUID(), %S to id, %S to _targetId), conflictColumns = listOf(%S, %S)) != null) junctionWrites = true",
                         edge.junctionTable, "id", UUID_CLASS,
                         edge.junctionSourceColumn, edge.junctionTargetColumn,
                         edge.junctionSourceColumn, edge.junctionTargetColumn,
                     )
                     "AUTO_INT", "AUTO_LONG" -> builder.addStatement(
-                        "driver.insertIgnore(%S, mapOf(%S to id, %S to _targetId), conflictColumns = listOf(%S, %S))",
+                        "if (driver.insertIgnore(%S, mapOf(%S to id, %S to _targetId), conflictColumns = listOf(%S, %S)) != null) junctionWrites = true",
                         edge.junctionTable,
                         edge.junctionSourceColumn, edge.junctionTargetColumn,
                         edge.junctionSourceColumn, edge.junctionTargetColumn,
@@ -572,52 +705,90 @@ internal class UpdateSaveEmitter(
                 // renders the same structural data and erases at the
                 // driver boundary.
                 builder.addStatement(
-                    "driver.deleteMany(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id), %T.Leaf<%T>(%S, %T.IN, edgeChanges.%L.removed.toList())))",
+                    "if (driver.deleteMany(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id), %T.Leaf<%T>(%S, %T.IN, edgeChanges.%L.removed.toList()))) > 0) junctionWrites = true",
                     edge.junctionTable,
                     PREDICATE, Any::class.asClassName(), edge.junctionSourceColumn, OP_CLASS,
                     PREDICATE, Any::class.asClassName(), edge.junctionTargetColumn, OP_CLASS, prop,
                 )
                 builder.endControlFlow()
             }
+            builder.nextControlFlow("catch (e: %T)", MUTATION_CANCELLATION_EXCEPTION)
+            builder.addStatement("throw e")
+            builder.nextControlFlow("catch (e: %T)", KOTLIN_EXCEPTION)
+            builder.addStatement(
+                "val classified = _classifyDriverFailure(e, %T.TransactionPending)",
+                MUTATION_WRITE_STATE,
+            )
+            // A recognized statement-level failure hardcodes
+            // NotPersisted — accurate for the failed statement, but
+            // when THIS save already staged the owner update or an
+            // earlier junction row, the save's effect is pending in
+            // the open transaction, so the result promotes to
+            // TransactionPending with the typed failure as cause.
+            builder.addCode(
+                CodeBlock.builder()
+                    .add(
+                        "val reported = if ((writeState != %T.NotPersisted || junctionWrites) && classified.writeState == %T.NotPersisted) {\n",
+                        MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
+                    )
+                    .add("  %T(%T.TransactionPending, classified)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE)
+                    .add("} else {\n")
+                    .add("  classified\n")
+                    .add("}\n")
+                    .build(),
+            )
+            builder.addStatement("client.recordTransactionMutationFailure(reported)")
+            builder.addStatement("return %T.failedForInternalUse(reported)", MUTATION_RESULT)
+            builder.endControlFlow()
+            // Flip only when this save actually wrote something: the
+            // owner-write path already flipped; a real junction change
+            // flips the edge-only path; a no-op edge update (empty
+            // values, no junction rows changed) stays NotPersisted.
+            builder.addStatement(
+                "if (junctionWrites) writeState = postWriteState",
+            )
         }
     }
 
     /**
-     * After-hooks, the post-write LOAD privacy wrap, and the return.
-     * The enclosing `_capturedPendingEdges` finally is emitted by
-     * [build], which owns that bracket.
+     * After-hooks, the post-write LOAD disclosure, and the return.
+     * The enclosing `_capturedPendingEdges` finally and the terminal
+     * capture boundary are emitted by [build], which owns those
+     * brackets.
      */
     private fun emitAfterHooksAndReturn() {
+        // afterUpdate hook exceptions are foreign and reach the
+        // terminal boundary with the flipped post-write state
+        // (TransactionPending in a caller-owned transaction, Committed
+        // after autocommit SQL).
         builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
-        // Post-write LOAD privacy check — wrap a denial into the
-        // structured EntWriteSucceededLoadDeniedException so
-        // saveOrError can distinguish "write happened but you can't
-        // see it" (Err(WriteSucceededLoadDenied)) from "write
-        // rejected up-front" (Err(PrivacyDenied(UPDATE))). Without
-        // the wrap, both would collapse to PrivacyDenied and
-        // callers couldn't tell whether the write actually
-        // happened.
-        builder.beginControlFlow("try")
-        builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, updatedEntity)", repoPropName)
-        builder.nextControlFlow(
-            "catch (e: %T)",
-            ClassName("entkt.runtime.privacy", "PrivacyDeniedException"),
-        )
-        builder.addStatement(
-            "throw %T(%T.WriteSucceededLoadDenied(e.entity, %T.UPDATE, updatedEntity.id, e.reason))",
-            ClassName("entkt.runtime.result", "EntWriteSucceededLoadDeniedException"),
-            ENT_ERROR,
-            ENT_OPERATION,
+        // Post-write LOAD disclosure (saveAndLoad only). The write has
+        // already succeeded and is NOT undone by a denial: the typed
+        // failure carries the current post-write state with
+        // operation = LOAD, so "write happened but you can't see it"
+        // is distinguishable from a pre-write UPDATE rejection.
+        builder.beginControlFlow("if (applyLoadPrivacy)")
+        builder.addStatement("val denial = client.%L.loadDenialOrNull(privacy, updatedEntity)", repoPropName)
+        builder.beginControlFlow("if (denial != null)")
+        builder.addCode(
+            privacyDeniedFailure(
+                writeStateExpr = CodeBlock.of("writeState"),
+                schemaName = schemaName,
+                operationName = "LOAD",
+                entityKeyExpr = CodeBlock.of("%T(%S, updatedEntity.id)", MUTATION_ENTITY_KEY, "id"),
+                reasonExpr = "denial.reason",
+            ),
         )
         builder.endControlFlow()
-        builder.addStatement("return updatedEntity")
+        builder.endControlFlow()
+        builder.addStatement("return %T.Success(updatedEntity)", MUTATION_RESULT)
     }
 }
 
 /**
- * Emit the canonical relationship-lock acquisition into save().
- * For each distinct link-table relationship (junction + unordered FK pair)
- * touched by a helper-eligible edge, emit a guarded
+ * Emit the canonical relationship-lock acquisition into the save
+ * pipeline. For each distinct link-table relationship (junction +
+ * unordered FK pair) touched by a helper-eligible edge, emit a guarded
  * `driver.serializeRelationship(...)` call that fires only when
  * `relationshipLocking == Canonical` and that relationship has pending ops.
  *
@@ -670,7 +841,9 @@ private fun emitCanonicalRelationshipLocks(
 /**
  * Apply framework update defaults to produce `effectivePatch`. Fields
  * with `updateDefault` whose requested entry is `Unset` get the
- * default applied; explicit caller/hook writes always win.
+ * default applied; explicit caller/hook writes always win. Emitted
+ * only on the non-empty path — the assignment-free no-op branch skips
+ * derivation so a default-only "real" write is never synthesized.
  */
 private fun emitEffectivePatchConstruction(
     builder: FunSpec.Builder,

@@ -12,14 +12,18 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.postgres.PostgresDriver
-import entkt.runtime.result.EntValidationException
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.PrivacyDeniedException
-import entkt.runtime.validation.ValidationDecision
-import entkt.runtime.validation.ValidationException
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntMutationPrivacyDeniedException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntValidationException
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.TransactionResult
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.validation.ValidationDecision
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -27,8 +31,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 import javax.sql.DataSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 // ---- Validation rules ----
@@ -158,6 +161,17 @@ object OpenUserPolicy : EntityPolicy<User, UserPolicyScope> {
 
 // ---- Tests ----
 
+/**
+ * End-to-end validation enforcement through the canonical result
+ * algebra: a validation failure never throws from a mutation terminal —
+ * it is `MutationResult.Failed(EntValidationException(entityType,
+ * operation, violations))` with `writeState = NotPersisted` (validation
+ * runs before persistence), where each violation is a
+ * `ValidationViolation(message, field, code)`. Privacy runs before
+ * validation, `Viewer.PrivacyBypass` bypasses privacy but never
+ * validation, and scoped / transaction clients preserve validation
+ * config.
+ */
 @Testcontainers
 class ValidationIntegrationTest {
 
@@ -206,25 +220,27 @@ class ValidationIntegrationTest {
 
     private fun seedAuthor(client: EntClient): User {
         return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "Alice"; email = "alice@test.com" }.save()
+            sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad().getOrThrow()
         }
     }
 
     // ---- CREATE validation ----
 
     @Test
-    fun `create throws ValidationException when rule fails`() {
+    fun `create fails with EntValidationException when rule fails`() {
         val client = freshClient()
         val author = seedAuthor(client)
 
-        val ex = assertFailsWith<ValidationException> {
+        val failed = assertIs<MutationResult.Failed>(
             client.articles.create {
                 title = "DRAFT: My Post"
                 published = true
                 authorId = author.id
-            }.save()
-        }
-        assertEquals("Article", ex.entity)
+            }.save(),
+        )
+        val ex = assertIs<EntValidationException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
         assertEquals(1, ex.violations.size)
         assertEquals("title", ex.violations[0].field)
         assertTrue(ex.violations[0].message.contains("DRAFT:"))
@@ -235,13 +251,14 @@ class ValidationIntegrationTest {
         val client = freshClient(articlePolicy = MultiRuleArticlePolicy)
         val author = seedAuthor(client)
 
-        val ex = assertFailsWith<ValidationException> {
+        val failed = assertIs<MutationResult.Failed>(
             client.articles.create {
                 title = "AB" // too short (fails RequireMinTitleLength)
                 published = false // not published (fails RejectUnpublishedCreate)
                 authorId = author.id
-            }.save()
-        }
+            }.save(),
+        )
+        val ex = assertIs<EntValidationException>(failed.exception)
         // Both rules fire independently — a fail-fast implementation would only report one.
         assertEquals(2, ex.violations.size)
         assertTrue(ex.violations.any { it.message.contains("at least 3") })
@@ -257,7 +274,7 @@ class ValidationIntegrationTest {
             title = "Valid Title"
             published = true
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
         assertEquals("Valid Title", article.title)
     }
 
@@ -266,22 +283,24 @@ class ValidationIntegrationTest {
         val client = freshClient()
         val author = seedAuthor(client)
 
-        assertFailsWith<ValidationException> {
+        val failed = assertIs<MutationResult.Failed>(
             client.articles.create {
                 title = "AB"
                 published = false
                 authorId = author.id
-            }.save()
-        }
+            }.save(),
+        )
+        val ex = assertIs<EntValidationException>(failed.exception)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
-        val count = client.articles.query().rawCount()
+        val count = client.articles.query().rawCount().getOrThrow()
         assertEquals(0L, count)
     }
 
     // ---- UPDATE validation ----
 
     @Test
-    fun `update throws ValidationException when rule fails`() {
+    fun `update fails with EntValidationException when rule fails`() {
         val client = freshClient(articlePolicy = FullyValidatedArticlePolicy)
         val author = seedAuthor(client)
 
@@ -289,12 +308,14 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val ex = assertFailsWith<ValidationException> {
-            client.articles.update(article.id) { published = false }.save()
-        }
-        assertTrue(ex.message!!.contains("cannot unpublish"))
+        val failed = assertIs<MutationResult.Failed>(
+            client.articles.update(article.id) { published = false }.save(),
+        )
+        val ex = assertIs<EntValidationException>(failed.exception)
+        assertEquals(EntOperation.UPDATE, ex.operation)
+        assertTrue(ex.violations.any { it.message.contains("cannot unpublish") })
     }
 
     @Test
@@ -306,16 +327,16 @@ class ValidationIntegrationTest {
             title = "Draft"
             published = false
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val updated = client.articles.update(article.id) { published = true }.save()!!
+        val updated = client.articles.update(article.id) { published = true }.saveAndLoad().getOrThrow()
         assertTrue(updated.published)
     }
 
     // ---- DELETE validation ----
 
     @Test
-    fun `delete throws ValidationException when rule fails`() {
+    fun `delete fails with EntValidationException when rule fails`() {
         val client = freshClient(articlePolicy = FullyValidatedArticlePolicy)
         val author = seedAuthor(client)
 
@@ -323,12 +344,12 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val ex = assertFailsWith<EntValidationException> {
-            client.articles.deleteOrThrow(article)
-        }
-        assertTrue(ex.validationFailed.violations.any { it.message.contains("cannot delete a published") })
+        val failed = assertIs<MutationResult.Failed>(client.articles.delete(article))
+        val ex = assertIs<EntValidationException>(failed.exception)
+        assertEquals(EntOperation.DELETE, ex.operation)
+        assertTrue(ex.violations.any { it.message.contains("cannot delete a published") })
     }
 
     @Test
@@ -340,9 +361,9 @@ class ValidationIntegrationTest {
             title = "Draft"
             published = false
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        client.articles.deleteOrThrow(article)
+        client.articles.delete(article).getOrThrow()
     }
 
     // ---- Privacy runs before validation ----
@@ -354,18 +375,20 @@ class ValidationIntegrationTest {
             articlePolicy = PrivacyBeforeValidationPolicy,
         )
         val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "U"; email = "u@test.com" }.save()
+            sys.users.create { name = "U"; email = "u@test.com" }.saveAndLoad().getOrThrow()
         }
 
-        // Title "AB" would fail validation (too short), but privacy should deny first.
-        // If validation ran first, we'd get ValidationException instead.
-        val ex = assertFailsWith<PrivacyDeniedException> {
+        // Title "AB" would fail validation (too short), but privacy denies first.
+        // If validation ran first, the Failed would carry EntValidationException instead.
+        val failed = assertIs<MutationResult.Failed>(
             client.articles.create {
                 title = "AB"
                 published = false
                 authorId = author.id
-            }.save()
-        }
+            }.save(),
+        )
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals(EntOperation.CREATE, ex.operation)
         assertEquals("authentication required", ex.reason)
     }
 
@@ -376,13 +399,14 @@ class ValidationIntegrationTest {
         val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
-        assertFailsWith<ValidationException> {
+        val failed = assertIs<MutationResult.Failed>(
             client.articles.create {
                 title = "AB" // too short
                 published = false
                 authorId = author.id
-            }.save()
-        }
+            }.save(),
+        )
+        assertIs<EntValidationException>(failed.exception)
     }
 
     @Test
@@ -397,11 +421,12 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        assertFailsWith<ValidationException> {
-            client.articles.update(article.id) { published = false }.save()
-        }
+        val failed = assertIs<MutationResult.Failed>(
+            client.articles.update(article.id) { published = false }.save(),
+        )
+        assertIs<EntValidationException>(failed.exception)
     }
 
     @Test
@@ -416,11 +441,10 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        assertFailsWith<EntValidationException> {
-            client.articles.deleteOrThrow(article)
-        }
+        val failed = assertIs<MutationResult.Failed>(client.articles.delete(article))
+        assertIs<EntValidationException>(failed.exception)
     }
 
     // ---- Derived create rules run on update ----
@@ -434,15 +458,16 @@ class ValidationIntegrationTest {
             title = "Good Title"
             published = false
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
         // Update title to something that fails create validation (DRAFT: prefix + published)
-        val ex = assertFailsWith<ValidationException> {
+        val failed = assertIs<MutationResult.Failed>(
             client.articles.update(article.id) {
                 title = "DRAFT: Now Published"
                 published = true
-            }.save()
-        }
+            }.save(),
+        )
+        val ex = assertIs<EntValidationException>(failed.exception)
         assertTrue(ex.violations.any { it.message.contains("DRAFT:") })
     }
 
@@ -455,11 +480,12 @@ class ValidationIntegrationTest {
             title = "Good Title"
             published = false
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
 
-        val ex = assertFailsWith<ValidationException> {
-            client.articles.update(article.id) { title = "AB" }.save()
-        }
+        val failed = assertIs<MutationResult.Failed>(
+            client.articles.update(article.id) { title = "AB" }.save(),
+        )
+        val ex = assertIs<EntValidationException>(failed.exception)
         assertTrue(ex.violations.any { it.message.contains("at least 3") })
     }
 
@@ -470,15 +496,16 @@ class ValidationIntegrationTest {
         val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
-        // Validation should still be enforced inside a scoped client
+        // Validation is still enforced inside a scoped client
         client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { scoped ->
-            assertFailsWith<ValidationException> {
+            val failed = assertIs<MutationResult.Failed>(
                 scoped.articles.create {
                     title = "AB"
                     published = false
                     authorId = author.id
-                }.save()
-            }
+                }.save(),
+            )
+            assertIs<EntValidationException>(failed.exception)
         }
     }
 
@@ -487,15 +514,17 @@ class ValidationIntegrationTest {
         val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
-        assertFailsWith<ValidationException> {
-            client.withTransaction { tx ->
-                tx.articles.create {
-                    title = "AB"
-                    published = false
-                    authorId = author.id
-                }.save()
-            }
+        // The validation failure recorded through the transaction client
+        // becomes the boundary's stored failure with rollback confirmed.
+        val result = client.withTransaction { tx ->
+            tx.articles.create {
+                title = "AB"
+                published = false
+                authorId = author.id
+            }.save().orRollback()
         }
+        val failed = assertIs<TransactionResult.Failed>(result)
+        assertIs<EntValidationException>(failed.exception)
     }
 
     // ---- No validation policy = no enforcement ----
@@ -514,13 +543,13 @@ class ValidationIntegrationTest {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
 
-        val user = client.users.create { name = "U"; email = "u@test.com" }.save()
+        val user = client.users.create { name = "U"; email = "u@test.com" }.saveAndLoad().getOrThrow()
         // Title "AB" would fail validation if rules were registered, but none are
         val article = client.articles.create {
             title = "AB"
             published = false
             authorId = user.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
         assertEquals("AB", article.title)
     }
 }

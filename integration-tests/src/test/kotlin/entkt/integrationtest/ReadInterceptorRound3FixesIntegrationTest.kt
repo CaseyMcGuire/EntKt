@@ -8,56 +8,71 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Post
-import entkt.integrationtest.ent.Tag
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
+import entkt.query.OrderDirection
+import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.result.EntResult
 import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.EntUnexpectedMutationException
+import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * Regression coverage for the post-review round-3 fixes.
+ * Regression coverage for the post-review round-3 fixes, expressed
+ * against the canonical operation-result algebra.
  *
  *  - Traversal-source interceptor invocation deferred to terminal
- *    time, so `.queryX().allOrError()` catches source-step rejection
- *    as `Err(QueryRejected)` instead of having queryX() throw.
+ *    time, so `.queryX().all()` captures source-step rejection as
+ *    `ReadResult.Failed(EntQueryRejectedException)` instead of
+ *    having queryX() throw.
  *  - Traversal-source annotations carry forward into the terminal
  *    QueryPlan.
  *  - Identity-based skipWalk: a caller-authored predicate that's
  *    structurally equal to a framework structural is still walked
  *    through the edge-predicate processor.
  *  - Recursion guard on the edge-predicate walker: a cyclic
- *    interceptor configuration trips the guard with a clear error.
- *  - Visible-explain matches runtime overfetch-cap shape (+ the
- *    limit(0) edge case for exists explains).
- *  - requireNotRejected preserves the original
- *    EntError.QueryRejected (entity, operation) rather than
- *    synthesizing "<explain>" / QUERY.
+ *    interceptor configuration trips the guard with a clear error,
+ *    captured as `Failed(IllegalStateException)` by the terminal.
+ *  - Raw-exists explain matches the runtime driver call shape
+ *    (+ the limit(0) edge case).
+ *  - requireNotRejected throws the original stored
+ *    EntQueryRejectedException (entityType preserved) rather than
+ *    synthesizing "<explain>" metadata.
+ *  - deleteMany candidate selection routes through
+ *    DELETE_CANDIDATES interceptors; its rejection surfaces as
+ *    `MutationResult.Failed(EntUnexpectedMutationException(NotPersisted,
+ *    cause = EntQueryRejectedException))`.
  */
 class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
-    // ---------- traversal-source rejection caught by *OrError ----------
+    // ---------- traversal-source rejection captured by the terminal ----------
 
     @Test
-    fun `traversal-source rejection surfaces as Err(QueryRejected) on chained allOrError`() {
+    fun `traversal-source rejection surfaces as Failed(EntQueryRejectedException) on chained all`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -69,19 +84,18 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             }
         }
         // queryArticles() must NOT throw; the rejection materializes
-        // when allOrError() runs its source-step inside its try/catch.
+        // when all() runs its source-step inside the capture boundary.
         val target = client.users.query().queryArticles()
-        val result = target.allOrError()
-        assertTrue(result is EntResult.Err, "expected Err, got $result")
-        val err = (result as EntResult.Err).error
-        assertTrue(err is EntError.QueryRejected)
-        assertEquals("src_rej", (err as EntError.QueryRejected).code)
-        assertEquals("user-rejector", err.interceptor)
-        assertEquals("User", err.entity)
+        val result = target.all()
+        val failed = assertIs<ReadResult.Failed>(result, "expected Failed, got $result")
+        val ex = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("src_rej", ex.code)
+        assertEquals("user-rejector", ex.interceptor)
+        assertEquals("User", ex.entityType)
     }
 
     @Test
-    fun `traversal-source rejection surfaces as Err(QueryRejected) on chained firstOrError and rawCountOrError`() {
+    fun `traversal-source rejection surfaces as Failed on chained firstOrNull and rawCount`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -89,12 +103,14 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 users(QueryInterceptor { scope, _ -> scope.reject("nope") }, name = "rej")
             }
         }
-        assertTrue(client.users.query().queryArticles().firstOrError() is EntResult.Err)
-        assertTrue(client.users.query().queryArticles().rawCountOrError() is EntResult.Err)
+        val first = assertIs<ReadResult.Failed>(client.users.query().queryArticles().firstOrNull())
+        assertIs<EntQueryRejectedException>(first.exception)
+        val count = assertIs<ReadResult.Failed>(client.users.query().queryArticles().rawCount())
+        assertIs<EntQueryRejectedException>(count.exception)
     }
 
     @Test
-    fun `traversal-source rejection still throws on chained allOrThrow path`() {
+    fun `traversal-source rejection throws the stored exception through getOrThrow`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -102,10 +118,11 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 users(QueryInterceptor { scope, _ -> scope.reject("nope", code = "src") }, name = "rej")
             }
         }
-        val ex = assertFailsWith<EntQueryRejectedException> {
-            client.users.query().queryArticles().allOrThrow()
-        }
-        assertEquals("src", ex.queryRejected.code)
+        val result = client.users.query().queryArticles().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val thrown = assertFailsWith<EntQueryRejectedException> { result.getOrThrow() }
+        assertSame(failed.exception, thrown)
+        assertEquals("src", thrown.code)
     }
 
     @Test
@@ -117,15 +134,14 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 users(QueryInterceptor { scope, _ -> scope.reject("src nope", code = "src") }, name = "rej")
             }
         }
-        val plan = client.users.query().queryArticles().explainAllOrThrow()
+        val plan = client.users.query().queryArticles().explainAll()
         assertTrue(plan.rejected)
         assertEquals("src", plan.rejectedCode)
         assertEquals("rej", plan.rejectedInterceptor)
-        // requireNotRejected preserves the original rejection metadata
-        // (entity = User, operation = QUERY for EDGE_TRAVERSAL).
+        // requireNotRejected throws the original stored exception —
+        // entityType is the source entity (User), not synthetic.
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("User", ex.queryRejected.entity)
-        assertEquals(EntOperation.QUERY, ex.queryRejected.operation)
+        assertEquals("User", ex.entityType)
     }
 
     // ---------- traversal-source annotations carry forward ----------
@@ -146,7 +162,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.users.query().queryArticles().explainAllOrThrow()
+        val plan = client.users.query().queryArticles().explainAll()
         // Both source-step ("tenant=acme" from User) and terminal-step
         // ("step=article-terminal" from Article) annotations are
         // present.
@@ -170,7 +186,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.users.query().queryArticles().explainAllOrThrow()
+        val plan = client.users.query().queryArticles().explainAll()
         assertEquals("from-article", plan.annotations["step"])
     }
 
@@ -192,11 +208,11 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        // User.articles.has() — HasEdge("articles") added by caller.
+        // User.articles.exists() — HasEdge("articles") added by caller.
         // No traversal context, no extraStructural, so skipWalk is
         // empty — the walker must process it and fire Article.interceptors.
-        client.users.query { where(User.articles.exists()) }.allOrThrow()
-        assertTrue(fired, "Article EDGE_PREDICATE interceptor should fire for the caller's User.articles.has()")
+        client.users.query { where(User.articles.exists()) }.all().getOrThrow()
+        assertTrue(fired, "Article EDGE_PREDICATE interceptor should fire for the caller's User.articles.exists()")
     }
 
     // ---------- recursion guard ----------
@@ -229,11 +245,12 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        // Should throw a clear IllegalStateException rather than
-        // a StackOverflowError.
-        val ex = assertFailsWith<IllegalStateException> {
-            client.users.query().allOrThrow()
-        }
+        // The guard's clear IllegalStateException (rather than a
+        // StackOverflowError) is a terminal-level failure — captured
+        // in the result, not thrown.
+        val result = client.users.query().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<IllegalStateException>(failed.exception)
         assertTrue(
             ex.message!!.contains("edge-predicate interceptor recursion exceeded depth"),
             "expected clear recursion-guard message, got: ${ex.message}",
@@ -242,31 +259,15 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         assertEquals(32, InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH)
     }
 
-    // ---------- visible-explain matches runtime ----------
-
-    @Test
-    fun `explainVisibleExists with limit(0) shows limit 0, matching runtime`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
-
-        // No interceptors so spec.limit = caller's limit(0) = 0.
-        // Runtime: `minOf(1, 0 ?: 1) = 0` → driver.query with limit 0.
-        // Explain must show the same.
-        val plan = client.posts.query { limit(0) }.explainVisibleExists()
-        assertNotNull(plan.root)
-        // The plan's root description encodes the limit; we just
-        // assert it doesn't have a non-zero LIMIT.
-        val desc = plan.root.toString()
-        assertTrue(
-            desc.contains("LIMIT 0") || desc.contains("limit=0") || desc.contains("limit: 0"),
-            "explainVisibleExists with limit(0) should show limit 0; was: $desc",
-        )
-    }
+    // ---------- raw-exists explain matches runtime ----------
 
     @Test
     fun `explainRawExists with limit(0) shows limit 0, matching runtime`() {
         val driver = freshDriver()
         val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
+        // No interceptors so spec.limit = caller's limit(0) = 0.
+        // Runtime: `minOf(1, 0 ?: 1) = 0` → driver.query with limit 0.
+        // Explain must show the same.
         val plan = client.posts.query { limit(0) }.explainRawExists()
         assertNotNull(plan.root)
         val desc = plan.root.toString()
@@ -285,7 +286,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // mirror exactly. Pre-fix: explain kept spec.orderBy and
         // forced offset = null.
         val plan = client.posts.query {
-            orderBy(entkt.query.OrderField("title", entkt.query.OrderDirection.ASC))
+            orderBy(OrderField("title", OrderDirection.ASC))
             offset(5)
         }.explainRawExists()
         assertNotNull(plan.root)
@@ -304,29 +305,6 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         )
     }
 
-    @Test
-    fun `explainVisibleExists keeps orderBy under fail-closed (no no-privacy fast path)`() {
-        val driver = freshDriver()
-        // Fail-closed: every entity is privacy-enforced (hasLoadPrivacy is
-        // always true), so visibleExists no longer collapses to the rawExists
-        // fast path — explain keeps the caller's orderBy for the privacy-aware
-        // materialization. (The genuine drop-orderBy path is rawExists, covered
-        // by `explainRawExists drops orderBy ...`.)
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
-        val plan = client.posts.query {
-            orderBy(entkt.query.OrderField("title", entkt.query.OrderDirection.ASC))
-            offset(3)
-        }.explainVisibleExists()
-        assertNotNull(plan.root)
-        val desc = plan.root.toString()
-        assertTrue(
-            desc.contains("ORDER BY") || desc.contains("orderBy=[OrderField"),
-            "fail-closed: explainVisibleExists keeps orderBy; was: $desc",
-        )
-    }
-
-    // ---------- requireNotRejected preserves rejection ----------
-
     // ---------- Deferred traversal snapshots source at queryX() ----------
 
     @Test
@@ -336,26 +314,26 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
         // Two users, one article each. The post-queryX where on
-        // the source MUST NOT affect what posts queryArticles
+        // the source MUST NOT affect what rows queryArticles
         // sees at terminal time — pre-snapshot the deferred
         // lambda would re-read `users.predicates` at terminal
         // time and include the late `name = "alice"` filter.
-        val alice = client.users.create { name = "alice"; email = "alice@x" }.saveOrThrow()
-        val bob = client.users.create { name = "bob"; email = "bob@x" }.saveOrThrow()
-        client.articles.create { title = "alice-article"; authorId = alice.id }.saveOrThrow()
-        client.articles.create { title = "bob-article"; authorId = bob.id }.saveOrThrow()
+        val alice = client.users.create { name = "alice"; email = "alice@x" }.saveAndLoad().getOrThrow()
+        val bob = client.users.create { name = "bob"; email = "bob@x" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "alice-article"; authorId = alice.id }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "bob-article"; authorId = bob.id }.saveAndLoad().getOrThrow()
 
         val users = client.users.query()
         val articles = users.queryArticles()
 
         // Mutate the source AFTER queryX. If the lambda captures
         // `this` live, this where leaks into the bridge and
-        // articles.allOrThrow() returns only "alice-article".
+        // articles.all() returns only "alice-article".
         // If the lambda captures a snapshot, this where is
         // invisible to the bridge.
-        users.where(entkt.query.Predicate.Leaf("name", Op.EQ, "alice"))
+        users.where(Predicate.Leaf("name", Op.EQ, "alice"))
 
-        val result = articles.allOrThrow()
+        val result = articles.all().getOrThrow()
         assertEquals(
             setOf("alice-article", "bob-article"),
             result.map { it.title }.toSet(),
@@ -376,21 +354,21 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // (id = keeper.id has title = "keeper", not "intruder")
         // and return []. So [keeperTag] vs [] cleanly
         // distinguishes the two implementations.
-        val keeper = client.posts.create { title = "keeper" }.saveOrThrow()
-        val intruder = client.posts.create { title = "intruder" }.saveOrThrow()
-        val keeperTag = client.tags.create { name = "keeper-tag" }.saveOrThrow()
-        val intruderTag = client.tags.create { name = "intruder-tag" }.saveOrThrow()
-        client.postTags.create { postId = keeper.id; tagId = keeperTag.id }.saveOrThrow()
-        client.postTags.create { postId = intruder.id; tagId = intruderTag.id }.saveOrThrow()
+        val keeper = client.posts.create { title = "keeper" }.saveAndLoad().getOrThrow()
+        val intruder = client.posts.create { title = "intruder" }.saveAndLoad().getOrThrow()
+        val keeperTag = client.tags.create { name = "keeper-tag" }.saveAndLoad().getOrThrow()
+        val intruderTag = client.tags.create { name = "intruder-tag" }.saveAndLoad().getOrThrow()
+        client.postTags.create { postId = keeper.id; tagId = keeperTag.id }.saveAndLoad().getOrThrow()
+        client.postTags.create { postId = intruder.id; tagId = intruderTag.id }.saveAndLoad().getOrThrow()
 
         val posts = client.posts.query { where(Post.id eq keeper.id) }
         val tags = posts.queryTags()
 
         // Mutate AFTER queryX. Pre-snapshot fix this leaked into
         // the bridge predicate; with the snapshot it does not.
-        posts.where(entkt.query.Predicate.Leaf("title", Op.EQ, "intruder"))
+        posts.where(Predicate.Leaf("title", Op.EQ, "intruder"))
 
-        val result = tags.allOrThrow()
+        val result = tags.all().getOrThrow()
         assertEquals(
             listOf("keeper-tag"),
             result.map { it.name },
@@ -398,18 +376,19 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         )
     }
 
-    // ---------- firstVisibleOrNull eager-target denial propagates ----------
+    // ---------- eager-target denial vs root denial on firstOrNull ----------
 
     @Test
-    fun `firstVisibleOrNull throws on eager-target privacy denial (does not swallow as root invisibility)`() {
+    fun `firstOrNull fails on eager-target privacy denial and visibleOrNull does not mask it`() {
         val driver = freshDriver()
-        // Article repo allows everything; Author repo denies the
-        // specific viewer. firstVisibleOrNull on Article with an
-        // eager `.withAuthor()` should THROW PrivacyDeniedException
-        // when the article's author is denied — NOT silently skip
-        // to the next article (the contract is visible filtering is
-        // root-only, eager target denials are strict).
-        val viewer = entkt.runtime.privacy.Viewer.User("denied-user")
+        // Article repo allows everything; User repo denies the
+        // specific viewer. firstOrNull on Article with an eager
+        // `withAuthor()` fails with EntPrivacyDeniedException whose
+        // origin is EagerEdge when the article's author is denied.
+        // visibleOrNull maps only ROOT denials to absence, so the
+        // eager denial must stay Failed — an eager load can never
+        // turn a visible root into apparent absence.
+        val viewer = Viewer.User("denied-user")
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(viewer) }
             policies {
@@ -425,29 +404,35 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        // Seed via system viewer (bypasses policies).
-        client.withPrivacyContext(PrivacyContext(entkt.runtime.privacy.Viewer.PrivacyBypass("test"))) { sys ->
-            val u = sys.users.create { name = "denied-user"; email = "d@x" }.saveOrThrow()
-            sys.articles.create { title = "with-denied-author"; authorId = u.id }.saveOrThrow()
+        // Seed via bypass viewer (bypasses policies).
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            val u = sys.users.create { name = "denied-user"; email = "d@x" }.saveAndLoad().getOrThrow()
+            sys.articles.create { title = "with-denied-author"; authorId = u.id }.saveAndLoad().getOrThrow()
         }
 
-        assertFailsWith<entkt.runtime.privacy.PrivacyDeniedException> {
-            client.articles.query().withAuthor().firstVisibleOrNull()
-        }
+        val result = client.articles.query { withAuthor() }.firstOrNull()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        // Eager denial is NOT root invisibility — visibleOrNull leaves
+        // the failure untouched.
+        assertIs<ReadResult.Failed>(result.visibleOrNull())
     }
 
     @Test
-    fun `firstVisibleOrNull still skips root-invisible rows silently`() {
+    fun `firstOrNull fails with a Root denial on a denied first row and visibleOrNull maps it to absence`() {
         val driver = freshDriver()
-        // Setup: two articles, one published, one draft. Article
-        // privacy: deny the draft. firstVisibleOrNull should skip
-        // the draft and return the published one — NOT throw and
-        // NOT return null when a visible row exists past the
-        // denied ones. Use a non-System viewer because System
-        // bypasses privacy entirely (in which case the draft
-        // would be returned and the test would defeat itself).
+        // Two articles, one published, one draft. Article privacy
+        // denies the draft. The canonical firstOrNull evaluates ONLY
+        // the selected first row — it never scans past a denied row —
+        // so with the draft ordered first the result is
+        // Failed(EntPrivacyDeniedException(Root, one denial)), and
+        // visibleOrNull() projects that to authoritative absence.
+        // Use a non-bypass viewer because PrivacyBypass skips privacy
+        // entirely (in which case the draft would be returned and the
+        // test would defeat itself).
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(entkt.runtime.privacy.Viewer.User("u1")) }
+            privacyContext { PrivacyContext(Viewer.User("u1")) }
             policies {
                 articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
@@ -466,17 +451,26 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        // Seed via System viewer (bypasses privacy) so the create
-        // path's post-write LOAD check on "draft" doesn't trip.
-        client.withPrivacyContext(PrivacyContext(entkt.runtime.privacy.Viewer.PrivacyBypass("test"))) { sys ->
-            val u = sys.users.create { name = "u"; email = "u@x" }.saveOrThrow()
-            sys.articles.create { title = "draft"; published = false; authorId = u.id }.saveOrThrow()
-            sys.articles.create { title = "published"; published = true; authorId = u.id }.saveOrThrow()
+        // Seed via bypass viewer so the create path's post-write LOAD
+        // check on "draft" doesn't trip.
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            val u = sys.users.create { name = "u"; email = "u@x" }.saveAndLoad().getOrThrow()
+            sys.articles.create { title = "draft"; published = false; authorId = u.id }.saveAndLoad().getOrThrow()
+            sys.articles.create { title = "published"; published = true; authorId = u.id }.saveAndLoad().getOrThrow()
         }
 
-        val result = client.articles.query().firstVisibleOrNull()
-        assertNotNull(result)
-        assertEquals("published", result.title)
+        // Order by title so "draft" is deterministically the selected
+        // first row.
+        val result = client.articles.query {
+            orderBy(OrderField("title", OrderDirection.ASC))
+        }.firstOrNull()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.Root>(ex.origin)
+        assertEquals(1, ex.denials.size)
+        assertEquals("Article", ex.denials.single().entityType)
+        // Root denial → visibleOrNull projects to Success(null).
+        assertNull(result.visibleOrNull().getOrThrow())
     }
 
     // ---------- deleteMany routes through DELETE_CANDIDATES interceptors ----------
@@ -494,11 +488,9 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveOrThrow()
-        client.posts.create { title = "y" }.saveOrThrow()
-        client.withTransaction { tx ->
-            tx.posts.deleteMany()
-        }
+        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        client.posts.create { title = "y" }.saveAndLoad().getOrThrow()
+        client.posts.deleteMany().getOrThrow()
         assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), ops)
     }
 
@@ -519,14 +511,14 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "scope-A" }.saveOrThrow()
-        client.posts.create { title = "scope-B" }.saveOrThrow()
+        client.posts.create { title = "scope-A" }.saveAndLoad().getOrThrow()
+        client.posts.create { title = "scope-B" }.saveAndLoad().getOrThrow()
 
-        val deleted: Int = client.withTransaction { tx -> tx.posts.deleteMany() }
+        val deleted: Int = client.posts.deleteMany().getOrThrow()
         assertEquals(1, deleted)
         // Verify scope-B survived by inspecting the raw table
-        // (byIdOrNull would also hit the interceptor's
-        // `title = scope-A` filter and return null for the
+        // (findById would also hit the interceptor's
+        // `title = scope-A` filter and report absence for the
         // survivor — that's correct uniform interceptor
         // behavior, but doesn't help us verify physical survival).
         val remainingRows = driver.query("posts", emptyList(), emptyList(), null, null)
@@ -535,7 +527,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `deleteMany interceptor rejection throws EntQueryRejectedException`() {
+    fun `deleteMany interceptor rejection surfaces as Failed(EntUnexpectedMutationException) with rejection cause`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -546,13 +538,21 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveOrThrow()
-        val ex = assertFailsWith<EntQueryRejectedException> {
-            client.withTransaction { tx -> tx.posts.deleteMany() }
-        }
-        assertEquals("broad_delete_denied", ex.queryRejected.code)
-        assertEquals(EntOperation.DELETE, ex.queryRejected.operation)
-        assertEquals("Post", ex.queryRejected.entity)
+        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        val result = client.posts.deleteMany()
+        val failed = assertIs<MutationResult.Failed>(result)
+        // Candidate-selection rejection is not a classified mutation
+        // failure kind — it surfaces as the unexpected wrapper with
+        // NotPersisted (nothing was written) and the typed rejection
+        // as cause.
+        val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        val rejection = assertIs<EntQueryRejectedException>(ex.cause)
+        assertEquals("broad_delete_denied", rejection.code)
+        assertEquals("broad-delete-guard", rejection.interceptor)
+        assertEquals("Post", rejection.entityType)
+        // Nothing was deleted.
+        assertEquals(1, driver.query("posts", emptyList(), emptyList(), null, null).size)
     }
 
     @Test
@@ -572,9 +572,9 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        repeat(5) { i -> client.posts.create { title = "p$i" }.saveOrThrow() }
+        repeat(5) { i -> client.posts.create { title = "p$i" }.saveAndLoad().getOrThrow() }
 
-        val deleted: Int = client.withTransaction { tx -> tx.posts.deleteMany() }
+        val deleted: Int = client.posts.deleteMany().getOrThrow()
         assertEquals(5, deleted, "limit clamp must be silent no-op on DELETE_CANDIDATES; all 5 rows should be deleted")
     }
 
@@ -601,7 +601,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         }
         val plan = client.users.query {
             where(User.articles.has { where(Article.published eq true) })
-        }.explainAllOrThrow()
+        }.explainAll()
         assertEquals("true", plan.annotations["article-scoped"])
         assertEquals("via-has", plan.annotations["audit"])
     }
@@ -624,7 +624,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         }
         val plan = client.users.query {
             where(User.articles.has { where(Article.published eq true) })
-        }.explainAllOrThrow()
+        }.explainAll()
         // Outer step (User) wins on key conflicts — matches the
         // traversal-source-vs-terminal direction (closer-to-caller
         // wins).
@@ -632,7 +632,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `requireNotRejected throws with the original entity and operation, not synthetic values`() {
+    fun `requireNotRejected throws with the original entityType, not synthetic values`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -643,13 +643,12 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.posts.query().explainAllOrThrow()
+        val plan = client.posts.query().explainAll()
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        // Pre-fix: ex.queryRejected.entity was synthesized as "<explain>".
-        assertEquals("Post", ex.queryRejected.entity)
-        assertEquals(EntOperation.QUERY, ex.queryRejected.operation)
-        assertEquals("nope", ex.queryRejected.reason)
-        assertEquals("x", ex.queryRejected.code)
-        assertEquals("post-rejector", ex.queryRejected.interceptor)
+        // Pre-fix: the entity was synthesized as "<explain>".
+        assertEquals("Post", ex.entityType)
+        assertEquals("nope", ex.reason)
+        assertEquals("x", ex.code)
+        assertEquals("post-rejector", ex.interceptor)
     }
 }

@@ -10,7 +10,6 @@ import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.pluralize
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
-private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
 private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
 private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
@@ -38,7 +37,9 @@ private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime.query", "InterceptorEn
  * Returns the [FrozenQuerySpec] terminals should hand to the
  * driver. Translates the internal [AbortQueryRejected] marker into
  * the user-facing [EntQueryRejectedException] at the boundary so
- * downstream terminal code only ever sees the public type.
+ * downstream terminal code only ever sees the public type — data
+ * terminals store it in `ReadResult.Failed` via their capture
+ * boundary; explain wrappers catch it and build a rejected plan.
  */
 internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName): FunSpec {
     val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -54,7 +55,6 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
     return FunSpec.builder("runReadInterceptors")
         .addModifiers(KModifier.INTERNAL)
         .addParameter("operation", readOp)
-        .addParameter("entOperation", ENT_OPERATION)
         .addParameter(
             ParameterSpec.builder("extraStructural", structuralListType)
                 .defaultValue("emptyList()")
@@ -73,12 +73,10 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
                 // terminal time. The lambda runs the source
                 // entity's interceptor chain — a source-step
                 // rejection throws EntQueryRejectedException
-                // here, which the terminal's own try/catch
-                // (allOrError / firstOrError / byIdOrError /
-                // *OrError aggregate variants) converts to
-                // `Err(QueryRejected)`. Eager invocation at
-                // queryX() time would have raised the throw
-                // before the *OrError terminal could catch it.
+                // here, which the canonical terminal's capture
+                // boundary stores as ReadResult.Failed. Eager
+                // invocation at queryX() time would have raised
+                // the throw before the terminal could capture it.
                 .addStatement("val sourceResult = deferredSourceStep?.invoke()")
                 // Source annotations seed the builder so they
                 // surface on the final terminal's
@@ -134,12 +132,11 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
                 .add("    builder = builder,\n")
                 .add("    context = context,\n")
                 .add("    entity = %S,\n", schemaName)
-                .add("    entOperation = entOperation,\n")
                 .add("    entityInterceptors = c.entityInterceptors.entityInterceptorsFor(%S),\n", repoPropName)
                 .add("    globalInterceptors = c.entityInterceptors.globals(),\n")
                 .add("  )\n")
                 .add("} catch (e: %T) {\n", ABORT_QUERY_REJECTED)
-                .add("  throw %T(e.rejected)\n", ENT_QUERY_REJECTED_EXCEPTION)
+                .add("  throw e.rejected\n")
                 .add("}\n")
                 // Walk the post-interceptor predicate tree and
                 // run EDGE_PREDICATE interceptors on any
@@ -295,8 +292,8 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
             entityClass, edgeStepClass, entityClass, targetClass,
         )
         body.add(
-            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
-            READ_OPERATION, ENT_OPERATION,
+            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE)\n",
+            READ_OPERATION,
         )
         // Bubble up target-step annotations into the outer
         // accumulator so observability sees them on the outer
@@ -338,8 +335,8 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
             entityClass, edgeStepClass, entityClass, targetClass,
         )
         body.add(
-            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, %T.QUERY)\n",
-            READ_OPERATION, ENT_OPERATION,
+            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE)\n",
+            READ_OPERATION,
         )
         // Bubble up target-step annotations even when the
         // walker upgrades HasEdge → HasEdgeWith (or keeps as

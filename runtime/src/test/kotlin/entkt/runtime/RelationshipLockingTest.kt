@@ -153,6 +153,7 @@ class RelationshipLockingTest {
         override fun explainCount(table: String, predicates: List<entkt.query.Predicate<*>>): QueryExplanation =
             throw UnsupportedOperationException()
         override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>): Int = 0
-        override fun <T> withTransaction(block: (Driver) -> T): T = block(this)
+        override fun <T> withTransaction(block: (Driver) -> T): entkt.runtime.driver.DriverTransactionResult<T> =
+            entkt.runtime.driver.DriverTransactionResult.Success(block(this))
     }
 }

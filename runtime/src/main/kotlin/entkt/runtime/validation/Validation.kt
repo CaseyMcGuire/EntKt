@@ -7,8 +7,9 @@ package entkt.runtime.validation
  * - [Invalid] — the rule fails with a message and optional field/code.
  *
  * Unlike privacy rules, there is no `Continue` — every rule runs
- * regardless of prior results. All [Invalid] results are collected
- * and thrown together as a [ValidationException].
+ * regardless of prior results. Generated mutation pipelines collect all
+ * [Invalid] results into an `EntValidationException` carried by
+ * `MutationResult.Failed`.
  */
 sealed interface ValidationDecision {
     data object Valid : ValidationDecision
@@ -29,8 +30,10 @@ fun interface ValidationRule<in C> {
 }
 
 /**
- * Thrown when one or more validation rules return [ValidationDecision.Invalid].
- * Contains all violations so consumers can display every problem at once.
+ * Legacy standalone representation of one or more invalid validation
+ * decisions. Generated mutation terminals do not throw this type; they return
+ * `MutationResult.Failed(EntValidationException)` with the canonical
+ * validation payload.
  */
 class ValidationException(
     val entity: String,

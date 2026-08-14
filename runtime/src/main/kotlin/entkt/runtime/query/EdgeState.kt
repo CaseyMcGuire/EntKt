@@ -72,7 +72,7 @@ fun <T> EdgeState<T>.requireLoaded(): T = when (this) {
  * Thrown by [requireLoaded] when the edge was not eager-loaded. A
  * caller reaching this forgot the `with{Edge}` clause on the query —
  * a programming error, so this deliberately propagates as an exception
- * and has no `EntError` / `EntResult` representation. It sits outside
+ * and has no result-algebra representation. It sits outside
  * the `EntException` hierarchy, whose `Ent` prefix this project
  * reserves for the structured error family.
  */

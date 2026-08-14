@@ -3,10 +3,8 @@ import entkt.runtime.result.getOrThrow
 import entkt.runtime.query.QueryShape
 import entkt.query.QueryFlag
 import entkt.runtime.query.AbortQueryRejected
-import entkt.runtime.result.EntResult
+import entkt.runtime.result.ReadResult
 import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntError
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.limitOpsApply
@@ -30,7 +28,7 @@ import kotlin.test.assertTrue
  * read-path interceptors. Wiring into generated reads lands in
  * later phases; this suite pins the data-class invariants
  * (attribution identity, derived properties) and the
- * Err(QueryRejected) ↔ EntQueryRejectedException round-trip so
+ * Failed(EntQueryRejectedException) direct-throw contract so
  * nothing downstream can drift from the documented contract.
  */
 class InterceptorRuntimeTypesTest {
@@ -181,57 +179,46 @@ class InterceptorRuntimeTypesTest {
         assertEquals(B::class, ctx.currentEntity)
     }
 
-    // ---- EntError.QueryRejected ↔ EntQueryRejectedException ----
+    // ---- EntQueryRejectedException direct-property shape ----
 
     @Test
-    fun `EntError QueryRejected toException produces EntQueryRejectedException carrying the rejection`() {
-        val rejected = EntError.QueryRejected(
-            entity = "Post",
-            operation = EntOperation.QUERY,
+    fun `EntQueryRejectedException exposes direct structured properties and uses reason as message`() {
+        val rejected = EntQueryRejectedException(
+            entityType = "Post",
             reason = "missing tenant scope",
             code = "missing_tenant_scope",
             interceptor = "tenant-scope",
         )
-        val ex = rejected.toException()
-        assertTrue(ex is EntQueryRejectedException)
-        assertSame(rejected, (ex as EntQueryRejectedException).queryRejected)
-        assertEquals("missing tenant scope", ex.message)
+        assertEquals("Post", rejected.entityType)
+        assertEquals("missing_tenant_scope", rejected.code)
+        assertEquals("tenant-scope", rejected.interceptor)
+        assertEquals("missing tenant scope", rejected.message)
     }
 
     @Test
-    fun `EntError QueryRejected message defaults to reason`() {
-        val rejected = EntError.QueryRejected(
-            entity = "Post",
-            operation = EntOperation.QUERY,
-            reason = "broad rawCount not allowed",
-            interceptor = "broad-aggregate-guard",
-        )
-        assertEquals("broad rawCount not allowed", rejected.message)
-    }
-
-    @Test
-    fun `EntResult getOrThrow on Err(QueryRejected) throws EntQueryRejectedException`() {
-        val rejected = EntError.QueryRejected(
-            entity = "Post",
-            operation = EntOperation.QUERY,
+    fun `ReadResult getOrThrow on Failed(EntQueryRejectedException) throws the stored exception directly`() {
+        val rejected = EntQueryRejectedException(
+            entityType = "Post",
             reason = "max limit",
             code = "max_limit_exceeded",
             interceptor = "global-max-limit",
         )
-        val result: EntResult<List<String>> = EntResult.Err(rejected)
+        @OptIn(entkt.query.EntktInternal::class)
+        val result: ReadResult<List<String>> = ReadResult.failedForInternalUse(rejected)
         val ex = assertFailsWith<EntQueryRejectedException> { result.getOrThrow() }
-        assertEquals("max_limit_exceeded", ex.queryRejected.code)
-        assertEquals("global-max-limit", ex.queryRejected.interceptor)
+        assertSame(rejected, ex)
+        assertEquals("max_limit_exceeded", ex.code)
+        assertEquals("global-max-limit", ex.interceptor)
     }
 
     // ---- AbortQueryRejected marker ----
 
     @Test
-    fun `AbortQueryRejected wraps the QueryRejected payload and uses a descriptive message`() {
-        val rejected = EntError.QueryRejected(
-            entity = "Post",
-            operation = EntOperation.QUERY,
+    fun `AbortQueryRejected wraps the typed rejection and uses a descriptive message`() {
+        val rejected = EntQueryRejectedException(
+            entityType = "Post",
             reason = "nope",
+            code = null,
             interceptor = "test",
         )
         val abort = AbortQueryRejected(rejected)
@@ -249,9 +236,7 @@ class InterceptorRuntimeTypesTest {
             ReadOperation.FIRST,
             ReadOperation.ALL,
             ReadOperation.RAW_COUNT,
-            ReadOperation.VISIBLE_COUNT,
             ReadOperation.RAW_EXISTS,
-            ReadOperation.VISIBLE_EXISTS,
             ReadOperation.RAW_AGGREGATE,
             ReadOperation.EDGE_TRAVERSAL,
             ReadOperation.EDGE_PREDICATE,

@@ -29,6 +29,15 @@ internal fun rollbackAttributingFailure(conn: Connection, cause: Throwable): Boo
         conn.rollback()
         true
     } catch (rollbackFailure: Throwable) {
+        if (rollbackFailure is java.util.concurrent.CancellationException ||
+            rollbackFailure !is Exception
+        ) {
+            // The algebra's propagation guarantee outranks attribution:
+            // cancellation and JVM errors escape, carrying the business
+            // failure as suppressed context instead of the reverse.
+            rollbackFailure.addSuppressed(cause)
+            throw rollbackFailure
+        }
         cause.addSuppressed(rollbackFailure)
         false
     }
@@ -61,6 +70,12 @@ internal fun restoreAutoCommit(conn: Connection, propagating: Throwable?, transa
     try {
         conn.autoCommit = true
     } catch (restoreFailure: Throwable) {
+        if (restoreFailure is java.util.concurrent.CancellationException ||
+            restoreFailure !is Exception
+        ) {
+            propagating?.let(restoreFailure::addSuppressed)
+            throw restoreFailure
+        }
         propagating?.addSuppressed(restoreFailure)
     }
 }
@@ -85,6 +100,12 @@ internal fun closeAttributingFailure(conn: Connection, propagating: Throwable?) 
     try {
         conn.close()
     } catch (closeFailure: Throwable) {
+        if (closeFailure is java.util.concurrent.CancellationException ||
+            closeFailure !is Exception
+        ) {
+            propagating?.let(closeFailure::addSuppressed)
+            throw closeFailure
+        }
         propagating?.addSuppressed(closeFailure)
     }
 }
@@ -113,6 +134,12 @@ internal inline fun <T : AutoCloseable?, R> T.useQuietClose(block: (T) -> R): R 
         try {
             this?.close()
         } catch (closeFailure: Throwable) {
+            if (closeFailure is java.util.concurrent.CancellationException ||
+                closeFailure !is Exception
+            ) {
+                propagating?.let(closeFailure::addSuppressed)
+                throw closeFailure
+            }
             propagating?.addSuppressed(closeFailure)
         }
     }

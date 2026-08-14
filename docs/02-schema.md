@@ -107,9 +107,10 @@ int("balance").nonNegative()
 double("temperature").negative()
 ```
 
-The generated create and update `save()` methods enforce these validators.
-Failures throw `ValidationException` with structured, field-named violations
-and appear as `EntError.ValidationFailed` from result-returning terminals.
+The generated create and update save terminals enforce these validators.
+A failure is `MutationResult.Failed(EntValidationException)` whose
+`violations` carry structured, field-named `ValidationViolation` entries;
+`.getOrThrow()` throws that stored exception.
 These validators are not database constraints: for example,
 `maxLength(255)` still creates a `text` column rather than `varchar(255)` or
 a `CHECK` constraint. Writes made outside entkt must enforce the same
@@ -615,7 +616,7 @@ field directly. The index name is the first argument and is required.
 
 Declared indexes also generate type-safe, index-friendly read helpers under
 the repo's `indexes` namespace
-(`client.users.indexes.email(...).orNull()`) -- see
+(`client.users.indexes.email(...).find()`) -- see
 [Queries -> Indexed Query Helpers](04-queries.md#indexed-query-helpers).
 
 ### Partial indexes

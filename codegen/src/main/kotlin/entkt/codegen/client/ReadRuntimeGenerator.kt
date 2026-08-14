@@ -4,7 +4,6 @@ import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
-import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
@@ -12,6 +11,7 @@ import entkt.codegen.SchemaInput
 import entkt.codegen.pluralize
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 
@@ -20,7 +20,7 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
  * `${Entity}ReadSurface` interface per schema.
  *
  * `EntReadRuntime` names exactly what generated queries need from their
- * host — `currentPrivacyContext()`, `visibleOverfetchLimit`, the
+ * host — `currentPrivacyContext()`, the
  * `@EntktInternal` interceptor registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
  * `evaluateLoadPrivacy(...)`, the only repo members query terminals
@@ -74,7 +74,10 @@ internal class ReadRuntimeGenerator(
                 "Narrow per-entity read surface of `%LRepo`: the only repo members\n" +
                     "generated query terminals call. `%LReadRepo` implements it by\n" +
                     "delegating to the host repo, so LOAD-privacy behavior is identical\n" +
-                    "through either client.",
+                    "through either client. `loadDenialOrNull` returns the keyed denial\n" +
+                    "for a rule-returned Deny (or the fail-closed default) and null when\n" +
+                    "the entity is visible; a rule-thrown exception escapes so the\n" +
+                    "terminal's capture boundary stores it as an operational failure.",
                 input.name, input.name,
             )
             .addFunction(
@@ -84,10 +87,11 @@ internal class ReadRuntimeGenerator(
                     .build()
             )
             .addFunction(
-                FunSpec.builder("evaluateLoadPrivacy")
+                FunSpec.builder("loadDenialOrNull")
                     .addModifiers(KModifier.ABSTRACT)
                     .addParameter("privacy", PRIVACY_CONTEXT)
                     .addParameter("entity", entityClass)
+                    .returns(PRIVACY_DENIAL.copy(nullable = true))
                     .build()
             )
             .build()
@@ -103,8 +107,8 @@ internal class ReadRuntimeGenerator(
                     "`EntValidationReadClient` / `EntPrivacyReadClient` — the public\n" +
                     "`EntReadClient` interface deliberately does not extend this\n" +
                     "contract); a query constructed with either host behaves identically\n" +
-                    "on the read path (privacy context, LOAD privacy, read interceptors,\n" +
-                    "visible-family overfetch cap).",
+                    "on the read path (privacy context, LOAD privacy, read\n" +
+                    "interceptors).",
             )
             .addFunction(
                 FunSpec.builder("currentPrivacyContext")
@@ -127,15 +131,12 @@ internal class ReadRuntimeGenerator(
                     .addKdoc(
                         "Preflight for raw terminals, which skip LOAD privacy. No-op on the\n" +
                             "full client and on bypass-scoped read clients (validation reads);\n" +
-                            "throws [IllegalStateException] on viewer-scoped privacy-rule readers,\n" +
+                            "rejects viewer-scoped privacy-rule readers with an [IllegalStateException]\n" +
+                            "that the canonical terminal's capture boundary returns as\n" +
+                            "`ReadResult.Failed`,\n" +
                             "where a privacy-bypassing read could leak invisible rows into an\n" +
                             "authorization decision. Use LOAD-checked terminals there instead.",
                     )
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("visibleOverfetchLimit", INT)
-                    .addModifiers(KModifier.ABSTRACT)
                     .build()
             )
             .addProperty(

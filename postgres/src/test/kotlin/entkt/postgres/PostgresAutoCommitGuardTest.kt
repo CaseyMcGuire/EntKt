@@ -1,6 +1,7 @@
 package entkt.postgres
 
 import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
 import entkt.schema.FieldType
@@ -9,6 +10,7 @@ import javax.sql.DataSource
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
@@ -85,7 +87,8 @@ class PostgresAutoCommitGuardTest {
 
         val broken = PostgresDriver(NoAutoCommitDataSource(SharedPostgres.dataSource))
         broken.register(items)
-        broken.withTransaction { tx -> tx.insert(items.table, mapOf("name" to "committed")) }
+        val result = broken.withTransaction { tx -> tx.insert(items.table, mapOf("name" to "committed")) }
+        assertIs<DriverTransactionResult.Success<*>>(result)
 
         val rows = good.query(items.table, emptyList(), emptyList(), null, null)
         assertTrue(rows.any { it["name"] == "committed" }, "transactional write must be durable; rows: $rows")

@@ -1,5 +1,6 @@
 package example.spring.friendships
 
+import entkt.runtime.result.getOrThrow
 import example.ent.EntClient
 import example.ent.Friendship
 import example.schema.FriendshipStatus
@@ -19,32 +20,32 @@ class FriendshipController(private val client: EntClient) {
 
     @PostMapping("/users/{id}/friends")
     fun sendRequest(@PathVariable id: UUID, @RequestBody req: FriendRequestBody): FriendshipResponse {
-        val requester = client.users.byIdOrNull(id)
+        val requester = client.users.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
-        val recipient = client.users.byIdOrNull(req.recipientId)
+        val recipient = client.users.findById(req.recipientId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Recipient not found")
 
         val friendship = client.friendships.create {
             this.requesterId = requester.id
             this.recipientId = recipient.id
             status = FriendshipStatus.PENDING
-        }.save()
+        }.saveAndLoad().getOrThrow()
         return friendship.toResponse()
     }
 
     @PostMapping("/friendships/{id}/accept")
     fun accept(@PathVariable id: Int): FriendshipResponse {
         // No pre-load: `update(id)` does its own internal byId.
-        // Missing-row → save() returns null → 404.
+        // Missing-row → Failed(EntTargetAbsentException) → 404 via ErrorHandler.
         val updated = client.friendships.update(id) {
             status = FriendshipStatus.ACCEPTED
-        }.save() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        }.saveAndLoad().getOrThrow()
         return updated.toResponse()
     }
 
     @GetMapping("/users/{id}/friends")
     fun listFriends(@PathVariable id: UUID): List<UserResponse> {
-        client.users.byIdOrNull(id)
+        client.users.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
         val accepted = client.friendships.query {
@@ -52,23 +53,23 @@ class FriendshipController(private val client: EntClient) {
                 (Friendship.requesterId eq id) or (Friendship.recipientId eq id),
             )
             where(Friendship.status eq FriendshipStatus.ACCEPTED)
-        }.allOrThrow()
+        }.all().getOrThrow()
 
         val friendIds = accepted.map { f ->
             if (f.requesterId == id) f.recipientId else f.requesterId
         }
 
-        return friendIds.mapNotNull { client.users.byIdOrNull(it) }.map { it.toResponse() }
+        return friendIds.mapNotNull { client.users.findById(it).getOrThrow() }.map { it.toResponse() }
     }
 
     @GetMapping("/users/{id}/friend-requests")
     fun listPendingRequests(@PathVariable id: UUID): List<FriendshipResponse> {
-        client.users.byIdOrNull(id)
+        client.users.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
         return client.friendships.query {
             where(Friendship.recipientId eq id)
             where(Friendship.status eq FriendshipStatus.PENDING)
-        }.allOrThrow().map { it.toResponse() }
+        }.all().getOrThrow().map { it.toResponse() }
     }
 }

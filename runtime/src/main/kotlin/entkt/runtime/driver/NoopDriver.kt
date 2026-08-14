@@ -96,6 +96,6 @@ object NoopDriver : Driver {
     override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
         error("NoopDriver cannot deleteMany — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun <T> withTransaction(block: (Driver) -> T): T =
+    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
         error("NoopDriver cannot start a transaction — was withTransaction called inside EdgeRef.has { }?")
 }

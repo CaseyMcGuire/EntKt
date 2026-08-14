@@ -8,19 +8,19 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntResult
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.PrivacyDeniedException
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -28,8 +28,12 @@ import kotlin.test.assertTrue
 /**
  * End-to-end coverage for indexed query helpers. Proves the generated
  * `client.<repo>.indexes` staged builders delegate to the normal query
- * builder so privacy, read interceptors, predicate seeding, ordering, and
- * the unique terminals all behave like a hand-written query.
+ * builder so privacy, read interceptors, predicate seeding, and ordering
+ * all behave like a hand-written query. A unique index stage exposes a
+ * single `find(): ReadResult<Entity?>` terminal (delegating to
+ * `firstOrNull()`), where `Success(null)` is authoritative absence and
+ * LOAD denial is `Failed(EntPrivacyDeniedException)` — plus `query()`
+ * for the full query surface.
  *
  * Backing indexes: `Article.byAuthorTitle (author_id, title)` and the
  * synthesized unique index from `User.email.unique()`.
@@ -80,12 +84,12 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
     /** Author A: Alpha (pub), Mango (unpub), Zebra (pub). Author B: Other (pub). */
     private fun seed(client: EntClient): Seed =
         client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val a = sys.users.create { name = "A"; email = "a@example.com" }.saveOrThrow()
-            val b = sys.users.create { name = "B"; email = "b@example.com" }.saveOrThrow()
-            sys.articles.create { title = "Alpha"; published = true; authorId = a.id }.saveOrThrow()
-            sys.articles.create { title = "Mango"; published = false; authorId = a.id }.saveOrThrow()
-            sys.articles.create { title = "Zebra"; published = true; authorId = a.id }.saveOrThrow()
-            sys.articles.create { title = "Other"; published = true; authorId = b.id }.saveOrThrow()
+            val a = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+            val b = sys.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().getOrThrow()
+            sys.articles.create { title = "Alpha"; published = true; authorId = a.id }.save().getOrThrow()
+            sys.articles.create { title = "Mango"; published = false; authorId = a.id }.save().getOrThrow()
+            sys.articles.create { title = "Zebra"; published = true; authorId = a.id }.save().getOrThrow()
+            sys.articles.create { title = "Other"; published = true; authorId = b.id }.save().getOrThrow()
             Seed(a.id, b.id)
         }
 
@@ -94,7 +98,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val s = seed(client)
 
-        val rows = client.articles.indexes.authorId(s.authorA).query().allOrThrow()
+        val rows = client.articles.indexes.authorId(s.authorA).query().all().getOrThrow()
         assertEquals(3, rows.size)
         assertTrue(rows.all { it.authorId == s.authorA })
     }
@@ -107,7 +111,8 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val rows = client.articles.indexes
             .authorId(s.authorA)
             .query { where(Article.published eq true) }
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(setOf("Alpha", "Zebra"), rows.map { it.title }.toSet())
     }
 
@@ -119,7 +124,8 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val rows = client.articles.indexes
             .authorId(s.authorA)
             .query { orderBy(Article.title.asc()); limit(2) }
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         assertEquals(listOf("Alpha", "Mango"), rows.map { it.title })
     }
 
@@ -132,7 +138,8 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
             .authorId(s.authorA)
             .title { gte("M") }
             .query()
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         // Author A's titles >= "M": Mango, Zebra (Alpha < "M"); Author B's
         // "Other" excluded by the seeded author_id prefix.
         assertEquals(setOf("Mango", "Zebra"), rows.map { it.title }.toSet())
@@ -147,38 +154,38 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
             .authorId(s.authorA)
             .title { gte("A") }
             .query { orderBy(Article.title.desc()) }
-            .allOrThrow()
+            .all()
+            .getOrThrow()
         // All of Author A's titles are >= "A"; ordered descending by title.
         assertEquals(listOf("Zebra", "Mango", "Alpha"), rows.map { it.title })
     }
 
     @Test
-    fun `unique single-column orNull returns the row or null`() {
+    fun `unique find returns the row or null via getOrThrow`() {
         val client = freshClient()
         seed(client)
 
-        val found = client.users.indexes.email("a@example.com").orNull()
+        val found = client.users.indexes.email("a@example.com").find().getOrThrow()
         assertNotNull(found)
         assertEquals("A", found.name)
 
-        assertNull(client.users.indexes.email("missing@example.com").orNull())
+        assertNull(client.users.indexes.email("missing@example.com").find().getOrThrow())
     }
 
     @Test
-    fun `unique orError returns Ok or NotFound with QUERY semantics`() {
+    fun `unique find reports absence as authoritative Success(null)`() {
         val client = freshClient()
         seed(client)
 
-        val ok = client.users.indexes.email("b@example.com").orError()
-        assertTrue(ok is EntResult.Ok)
-        assertEquals("B", ok.value.name)
+        val hit = client.users.indexes.email("b@example.com").find()
+        val ok = assertIs<ReadResult.Success<User?>>(hit)
+        assertEquals("B", assertNotNull(ok.value).name)
 
-        val miss = client.users.indexes.email("nobody@example.com").orError()
-        assertTrue(miss is EntResult.Err)
-        val error = miss.error
-        assertTrue(error is EntError.NotFound)
-        assertEquals(EntOperation.QUERY, error.operation)
-        assertNull(error.id)
+        // No not-found failure exists on this surface: a missing row is
+        // an authoritative Success(null), not a Failed.
+        val miss = client.users.indexes.email("nobody@example.com").find()
+        val absent = assertIs<ReadResult.Success<User?>>(miss)
+        assertNull(absent.value)
     }
 
     @Test
@@ -186,20 +193,22 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
         val s = seed(client)
 
-        val result = client.articles.indexes.authorId(s.authorA).query().allOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue(result.error is EntError.PrivacyDenied)
-        assertEquals(EntOperation.LOAD, result.error.operation)
+        val result = client.articles.indexes.authorId(s.authorA).query().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.Root>(denied.origin)
     }
 
     @Test
-    fun `LOAD privacy denial throws through a unique orNull terminal`() {
+    fun `LOAD privacy denial surfaces as Failed through the unique find terminal`() {
         val client = freshClient(viewer = Viewer.User(1L), userPolicy = denyAllUsers)
         seed(client)
 
-        assertFailsWith<PrivacyDeniedException> {
-            client.users.indexes.email("a@example.com").orNull()
-        }
+        val result = client.users.indexes.email("a@example.com").find()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.Root>(denied.origin)
+        assertEquals(1, denied.denials.size)
     }
 
     @Test
@@ -222,7 +231,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
 
         // The interceptor's published = true predicate composes with the
         // seeded author_id prefix: Author A's published rows are Alpha, Zebra.
-        val rows = client.articles.indexes.authorId(s.authorA).query().allOrThrow()
+        val rows = client.articles.indexes.authorId(s.authorA).query().all().getOrThrow()
         assertEquals(setOf("Alpha", "Zebra"), rows.map { it.title }.toSet())
     }
 }

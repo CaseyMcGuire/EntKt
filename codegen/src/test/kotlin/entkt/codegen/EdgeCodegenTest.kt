@@ -1050,16 +1050,18 @@ class EdgeCodegenTest {
             .generate("ValidatedFkChild", child, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The `.positive()` check (`if (prop <= 0) throw ...`) should
-        // appear in the save body keyed off the FK property name.2
-        // routes the failure through ValidationException so saveOrError
-        // returns EntError.ValidationFailed; the backing column name lands
-        // in the ValidationDecision.Invalid `field` slot.
-        assert(output.contains("if (ownerId <= 0) throw ValidationException(\"ValidatedFkChild\",")) {
-            "Create should emit a ValidationException for the .positive() FK validator\n$output"
-        }
-        assert(output.contains("Invalid(\"value must be positive\", field = \"owner_id\")")) {
-            "Validator failure should carry the backing column name in the Invalid field slot\n$output"
+        // The `.positive()` check should appear in the save body keyed
+        // off the FK property name. The failure returns
+        // MutationResult.Failed(EntValidationException) through the
+        // builder's `_validationFailed` helper — it does not throw; the
+        // backing column name lands in the ValidationViolation `field`
+        // slot.
+        assert(
+            output.contains(
+                "if (ownerId <= 0) return _validationFailed(listOf(ValidationViolation(\"value must be positive\", field = \"owner_id\")))",
+            ),
+        ) {
+            "Create should return a validation Failed for the .positive() FK validator\n$output"
         }
     }
 
@@ -1073,16 +1075,18 @@ class EdgeCodegenTest {
             .generate("ValidatedFkChild", child, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The validator must run inside an `if (effectivePatch.ownerId is FieldPatch.Set)`
+        // The validator must run inside an `if (ownerId_eff is FieldPatch.Set)`
         // block so Unset entries are not validated.
         assert(output.contains("ownerId_eff = effectivePatch.ownerId")) {
             "Update should bind the FK's effectivePatch entry to a local for validation\n$output"
         }
-        assert(output.contains("if (ownerId_v <= 0) throw ValidationException(\"ValidatedFkChild\",")) {
-            "Update should emit a ValidationException for the .positive() FK validator\n$output"
-        }
-        assert(output.contains("Invalid(\"value must be positive\", field = \"owner_id\")")) {
-            "Validator failure should carry the backing column name in the Invalid field slot\n$output"
+        assert(
+            output.contains(
+                "if (ownerId_eff is FieldPatch.Set) { val ownerId_v = ownerId_eff.value " +
+                    "if (ownerId_v <= 0) return _validationFailed(listOf(ValidationViolation(\"value must be positive\", field = \"owner_id\"))) }",
+            ),
+        ) {
+            "Update should return a validation Failed for Set entries failing the .positive() FK validator\n$output"
         }
     }
 
@@ -1305,7 +1309,7 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create save throws ValidationException for missing required FK`() {
+    fun `create save returns validation Failed for missing required FK`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
@@ -1314,14 +1318,15 @@ class EdgeCodegenTest {
         // RequiredPet has `val owner = belongsTo<Owner>("owner")` (no
         // .field(...), no default). The save body must read the
         // staging field directly so the missing-input failure is a
-        // ValidationException (saveOrError → EntError.ValidationFailed),
-        // not the property getter's IllegalStateException.
+        // typed MutationResult.Failed(EntValidationException) via the
+        // `_validationFailed` helper, not the property getter's
+        // IllegalStateException.
         assert(
             output.contains(
-                "val ownerId = this._ownerIdStaging ?: throw ValidationException(\"RequiredPet\", listOf(ValidationDecision.Invalid(\"owner is required\", field = \"owner_id\")))",
+                "val ownerId = this._ownerIdStaging ?: return _validationFailed(listOf(ValidationViolation(\"owner is required\", field = \"owner_id\")))",
             ),
         ) {
-            "Required FK without default should throw ValidationException from save body\n$output"
+            "Required FK without default should return a validation Failed from save body\n$output"
         }
         // The property getter still throws ISE for hook/property reads
         // (early-read is a usage error, not a save-prep validation).
@@ -1741,19 +1746,30 @@ class EdgeCodegenTest {
     // ---------- Eager loading: with{Edge} methods ----------
 
     @Test
-    fun `query generates withPets for to-many edge`() {
+    fun `query generates withPets returning the EagerLoad handle for to-many edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun withPets(")) {
-            "Should generate withPets method\n$output"
-        }
-        assert(output.contains("PetQuery.() -> Unit")) {
-            "withPets should accept a PetQuery DSL block\n$output"
-        }
-        assert(output.contains(": OwnerQuery")) {
-            "withPets should return OwnerQuery for chaining\n$output"
+        // with{Edge} returns an EagerLoad<ParentQuery> handle whose
+        // filterVisible() flips the per-edge filter flag and hands the
+        // parent query back for chaining. The handle is bound to the
+        // configuration that produced it: a retained stale handle must
+        // fail loudly rather than silently weaken a newer strict
+        // configuration.
+        assert(
+            output.contains(
+                "public fun withPets(block: PetQuery.() -> Unit = {}): EagerLoad<OwnerQuery> " +
+                    "{ val configured = PetQuery(driver, client).apply(block) eagerPets = configured " +
+                    "eagerPetsFilterVisible = false " +
+                    "return object : EagerLoad<OwnerQuery> { override fun filterVisible(): OwnerQuery " +
+                    "{ check(eagerPets === configured) { " +
+                    "\"stale EagerLoad handle: with-edge was reconfigured after this handle was created; " +
+                    "call filterVisible() on the handle returned by the latest configuration\" } " +
+                    "eagerPetsFilterVisible = true return this@OwnerQuery } } }",
+            ),
+        ) {
+            "withPets should return an EagerLoad<OwnerQuery> handle with filterVisible()\n$output"
         }
     }
 
@@ -1761,13 +1777,10 @@ class EdgeCodegenTest {
     fun `query generates withOwner for to-one edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun withOwner(")) {
-            "Should generate withOwner method\n$output"
-        }
-        assert(output.contains("OwnerQuery.() -> Unit")) {
-            "withOwner should accept an OwnerQuery DSL block\n$output"
+        assert(output.contains("fun withOwner(block: OwnerQuery.() -> Unit = {}): EagerLoad<PetQuery>")) {
+            "withOwner should accept an OwnerQuery DSL block and return EagerLoad<PetQuery>\n$output"
         }
     }
 
@@ -1798,10 +1811,10 @@ class EdgeCodegenTest {
     fun `query generates withMembers for M2M edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString()
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun withMembers(")) {
-            "Should generate withMembers method\n$output"
+        assert(output.contains("fun withMembers(block: PetQuery.() -> Unit = {}): EagerLoad<TeamQuery>")) {
+            "withMembers should return the EagerLoad<TeamQuery> handle\n$output"
         }
     }
 
@@ -1914,6 +1927,44 @@ class EdgeCodegenTest {
         // with{Edge} bookkeeping keeps its private nullable field.
         assert(output.contains("private var eagerPets: PetQuery? = null")) {
             "with{Edge} config should stay a private nullable builder field\n$output"
+        }
+        // The EagerLoad handle's filterVisible() state is a private
+        // per-edge flag alongside it.
+        assert(output.contains("private var eagerPetsFilterVisible: Boolean = false")) {
+            "with{Edge} filterVisible state should be a private per-edge flag\n$output"
+        }
+    }
+
+    @Test
+    fun `eager privacy filters or throws per the EagerLoad filterVisible flag`() {
+        val (_, names, byName) = createAllSchemas()
+        val output = QueryGenerator("com.example.ent")
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
+
+        // filterVisible(): each in-window target's rules run exactly
+        // once, in target-result order; groups are then filtered by
+        // the computed visible set (shared M2M targets stay
+        // consistent across parents).
+        assert(
+            output.contains(
+                "if (eagerPetsFilterVisible) { val inWindow = loadedGroups.values.flatMapTo(mutableSetOf()) { it } " +
+                    "val visibleTargets = mutableSetOf<Any?>() for ((_, entity) in decodedTargets) { " +
+                    "if (entity !in inWindow || entity in visibleTargets) continue " +
+                    "if (eagerClient.pets.loadDenialOrNull(eagerPrivacyContext, entity) == null) visibleTargets.add(entity) } " +
+                    "loadedGroups = loadedGroups.mapValues { (_, list) -> list.filter { it in visibleTargets } } }",
+            ),
+        ) {
+            "filterVisible eager load should drop denied targets per group\n$output"
+        }
+        // Strict (default): a denied eager target throws
+        // EntPrivacyDeniedException carrying the EagerEdge origin path.
+        assert(
+            output.contains(
+                "throw EntPrivacyDeniedException(LoadDenialOrigin.EagerEdge(eagerDenialPath.map { " +
+                    "EagerEdgeStep(it.source.simpleName!!, it.edgeName, it.target.simpleName!!) }), listOf(denial))",
+            ),
+        ) {
+            "Strict eager denial should throw EntPrivacyDeniedException with EagerEdge origin\n$output"
         }
     }
 
@@ -2554,8 +2605,8 @@ class EdgeCodegenTest {
         assert(output.contains("Predicate.Leaf<Profile>(\"owner_id\", Op.IN, sourceIds)")) {
             "Should query target by FK column (target-scoped Predicate.Leaf<Profile>), not source FK\n$output"
         }
-        assert(output.contains("groupBy { it[\"owner_id\"] }")) {
-            "Should group loaded rows by FK column\n$output"
+        assert(output.contains("groupBy { (row, _) -> row[\"owner_id\"] }")) {
+            "Should group row-order-decoded targets by FK column\n$output"
         }
         assert(output.contains("EdgeState.Loaded(loadedGroups[entity.id]?.firstOrNull())")) {
             "Should map source.id to grouped target, collapsing to a single Loaded entity\n$output"

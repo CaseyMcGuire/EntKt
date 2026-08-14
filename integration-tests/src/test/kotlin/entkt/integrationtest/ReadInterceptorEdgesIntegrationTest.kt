@@ -17,17 +17,18 @@ import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.query.EdgeStep
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -36,10 +37,12 @@ import kotlin.test.assertTrue
  * eager-load subqueries, and `has` / `hasWhere` edge predicates per
  * the read-path interceptors. Pins:
  *
- *  - 5a edge traversal: `queryX()` fires source interceptors with
- *    `EDGE_TRAVERSAL`; target terminal sees `sourceEntity`,
- *    `edgeName`, `path` set by multi-step chain rules
- *  - 5b eager-load: `.with{Edge}` fires target interceptors with
+ *  - 5a edge traversal: a terminal on a `queryX()` chain fires source
+ *    interceptors with `EDGE_TRAVERSAL`; target terminal sees
+ *    `sourceEntity`, `edgeName`, `path` set by multi-step chain rules;
+ *    source rejection is captured as
+ *    `ReadResult.Failed(EntQueryRejectedException)`
+ *  - 5b eager-load: `with{Edge}` fires target interceptors with
  *    `EAGER_LOAD` (`context.isEagerSubquery == true`); interceptor
  *    predicates flow into the eager subquery
  *  - 5c edge-predicate: `has` / `hasWhere` (Predicate.HasEdgeWith)
@@ -65,13 +68,14 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
+        client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
 
-        // queryArticles fires User.interceptors with EDGE_TRAVERSAL
-        // before materializing the bridging predicate. The terminal
-        // then fires Article.interceptors with ALL (Article has no
+        // The queryArticles chain fires User.interceptors with
+        // EDGE_TRAVERSAL (deferred to terminal time) before
+        // materializing the bridging predicate. The terminal then
+        // fires Article.interceptors with ALL (Article has no
         // interceptors here so the count is just 1).
-        client.users.query().queryArticles().allOrThrow()
+        client.users.query().queryArticles().all().getOrThrow()
         assertEquals(listOf(ReadOperation.EDGE_TRAVERSAL), seen)
     }
 
@@ -88,9 +92,9 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
+        client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
 
-        client.users.query().queryArticles().allOrThrow()
+        client.users.query().queryArticles().all().getOrThrow()
 
         val ctx = assertNotNull(captured)
         assertEquals(User::class, ctx.sourceEntity)
@@ -120,24 +124,24 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val alice = client.users.create { name = "alice"; email = "alice@x" }.saveOrThrow()
-        val bob = client.users.create { name = "bob"; email = "bob@x" }.saveOrThrow()
+        val alice = client.users.create { name = "alice"; email = "alice@x" }.saveAndLoad().getOrThrow()
+        val bob = client.users.create { name = "bob"; email = "bob@x" }.saveAndLoad().getOrThrow()
         client.articles.create {
             title = "alice's article"
             authorId = alice.id
-        }.saveOrThrow()
+        }.saveAndLoad().getOrThrow()
         client.articles.create {
             title = "bob's article"
             authorId = bob.id
-        }.saveOrThrow()
+        }.saveAndLoad().getOrThrow()
 
-        val result = client.users.query().queryArticles().allOrThrow()
+        val result = client.users.query().queryArticles().all().getOrThrow()
         assertEquals(1, result.size)
         assertEquals("alice's article", result[0].title)
     }
 
     @Test
-    fun `rejection on the source step surfaces as EntQueryRejectedException`() {
+    fun `rejection on the source step surfaces as Failed(EntQueryRejectedException)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -148,13 +152,13 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val ex = assertFailsWith<EntQueryRejectedException> {
-            client.users.query().queryArticles().allOrThrow()
-        }
+        val result = client.users.query().queryArticles().all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntQueryRejectedException>(failed.exception)
         // Rejection comes from the source step (User EDGE_TRAVERSAL).
-        assertEquals("src_rej", ex.queryRejected.code)
-        assertEquals("source-rejector", ex.queryRejected.interceptor)
-        assertEquals("User", ex.queryRejected.entity)
+        assertEquals("src_rej", ex.code)
+        assertEquals("source-rejector", ex.interceptor)
+        assertEquals("User", ex.entityType)
     }
 
     @Test
@@ -173,12 +177,12 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "p1" }.saveOrThrow()
+        client.posts.create { title = "p1" }.saveAndLoad().getOrThrow()
 
         // Post → tags (M2M traversal). The terminal on TagQuery
         // fires Tag.interceptors with operation ALL, but
         // sourceEntity / edgeName / path reflect the traversal.
-        client.posts.query().queryTags().allOrThrow()
+        client.posts.query().queryTags().all().getOrThrow()
 
         val ctx = assertNotNull(captured)
         assertEquals(Post::class, ctx.sourceEntity)
@@ -204,13 +208,13 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val u = client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
-        client.articles.create { title = "X"; authorId = u.id }.saveOrThrow()
+        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "X"; authorId = u.id }.saveAndLoad().getOrThrow()
 
-        client.users.query().withArticles().allOrThrow()
+        client.users.query { withArticles() }.all().getOrThrow()
 
         // Article interceptors fire once for the eager subquery.
-        // (The root User.query() doesn't fire Article interceptors —
+        // (The root users query doesn't fire Article interceptors —
         // those only fire on the eager step.)
         assertEquals(listOf(ReadOperation.EAGER_LOAD), ops)
     }
@@ -228,10 +232,10 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val u = client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
-        client.articles.create { title = "X"; authorId = u.id }.saveOrThrow()
+        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "X"; authorId = u.id }.saveAndLoad().getOrThrow()
 
-        client.users.query().withArticles().allOrThrow()
+        client.users.query { withArticles() }.all().getOrThrow()
 
         val ctx = assertNotNull(captured)
         assertTrue(ctx.isEagerSubquery)
@@ -256,11 +260,11 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val u = client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
-        client.articles.create { title = "draft"; published = false; authorId = u.id }.saveOrThrow()
-        client.articles.create { title = "published"; published = true; authorId = u.id }.saveOrThrow()
+        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "draft"; published = false; authorId = u.id }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "published"; published = true; authorId = u.id }.saveAndLoad().getOrThrow()
 
-        val users = client.users.query().withArticles().allOrThrow()
+        val users = client.users.query { withArticles() }.all().getOrThrow()
         assertEquals(1, users.size)
         // Eager interceptor's predicate narrows the eager fetch.
         assertEquals(listOf("published"), users[0].edges.articles.requireLoaded().map { it.title })
@@ -281,12 +285,12 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
+        client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
 
-        // Trigger an edge-predicate read on User via Article.author.has.
+        // Trigger an edge-predicate read on User via User.articles.has.
         client.users.query {
             where(User.articles.has { where(Article.published eq true) })
-        }.allOrThrow()
+        }.all().getOrThrow()
 
         // EDGE_PREDICATE was fired on Article (the inner predicate's
         // target entity).
@@ -309,18 +313,18 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val alice = client.users.create { name = "alice"; email = "a@x" }.saveOrThrow()
-        val bob = client.users.create { name = "bob"; email = "b@x" }.saveOrThrow()
+        val alice = client.users.create { name = "alice"; email = "a@x" }.saveAndLoad().getOrThrow()
+        val bob = client.users.create { name = "bob"; email = "b@x" }.saveAndLoad().getOrThrow()
         // Alice has only a draft article: with the interceptor active
         // she should NOT match "users with any article" (no published
         // articles → no matching row).
-        client.articles.create { title = "alice draft"; published = false; authorId = alice.id }.saveOrThrow()
+        client.articles.create { title = "alice draft"; published = false; authorId = alice.id }.saveAndLoad().getOrThrow()
         // Bob has a published article: should match.
-        client.articles.create { title = "bob published"; published = true; authorId = bob.id }.saveOrThrow()
+        client.articles.create { title = "bob published"; published = true; authorId = bob.id }.saveAndLoad().getOrThrow()
 
         val users = client.users.query {
             where(User.articles.has { /* no inner — matches "any" */ })
-        }.allOrThrow()
+        }.all().getOrThrow()
 
         assertEquals(listOf("bob"), users.map { it.name })
     }
@@ -338,11 +342,11 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
+        client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
 
         client.users.query {
             where(User.articles.has { where(Article.published eq true) })
-        }.allOrThrow()
+        }.all().getOrThrow()
 
         val ctx = assertNotNull(captured)
         assertEquals(User::class, ctx.sourceEntity)
@@ -352,7 +356,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `rejection from edge-predicate target interceptor surfaces as EntQueryRejectedException`() {
+    fun `rejection from edge-predicate target interceptor surfaces as Failed(EntQueryRejectedException)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -363,16 +367,16 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
+        client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
 
-        val ex = assertFailsWith<EntQueryRejectedException> {
-            client.users.query {
-                where(User.articles.has { where(Article.published eq true) })
-            }.allOrThrow()
-        }
-        assertEquals("edge_pred_rej", ex.queryRejected.code)
-        assertEquals("article-rejector", ex.queryRejected.interceptor)
-        assertEquals("Article", ex.queryRejected.entity)
+        val result = client.users.query {
+            where(User.articles.has { where(Article.published eq true) })
+        }.all()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("edge_pred_rej", ex.code)
+        assertEquals("article-rejector", ex.interceptor)
+        assertEquals("Article", ex.entityType)
     }
 
     // ---------- Sanity: no interceptors registered → identity ----------
@@ -383,20 +387,20 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
-        val u = client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
-        client.articles.create { title = "x"; published = true; authorId = u.id }.saveOrThrow()
+        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "x"; published = true; authorId = u.id }.saveAndLoad().getOrThrow()
 
         // Edge traversal returns rows.
-        assertEquals(1, client.users.query().queryArticles().allOrThrow().size)
+        assertEquals(1, client.users.query().queryArticles().all().getOrThrow().size)
         // Eager-load returns rows.
-        val withEager = client.users.query().withArticles().allOrThrow()
+        val withEager = client.users.query { withArticles() }.all().getOrThrow()
         assertEquals(1, withEager[0].edges.articles.requireLoaded().size)
         // has-predicate works.
         assertEquals(
             1,
             client.users.query {
                 where(User.articles.has { where(Article.published eq true) })
-            }.allOrThrow().size,
+            }.all().getOrThrow().size,
         )
     }
 }

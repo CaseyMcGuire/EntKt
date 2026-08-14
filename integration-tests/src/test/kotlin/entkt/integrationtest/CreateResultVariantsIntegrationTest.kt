@@ -10,31 +10,37 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.EntConstraintViolationException
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntResult
-import entkt.runtime.result.EntValidationException
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntMutationPrivacyDeniedException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.result.EntValidationException
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.validation.ValidationDecision
+import kotlin.Unit
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * End-to-end coverage for create-side `saveOrError()` / `saveOrThrow()`
- * (result variants). Exercises the full failure surface
- * — validation, privacy, unique constraint, FK constraint — against
- * `PostgresDriver`. Constraint-classification (SQLSTATE 23xxx) is also
- * covered driver-side in `SqlstateConstraintMappingPostgresIntegrationTest`;
- * this suite pins the structured-result *contract* (Ok/Err shape per
- * variant) end-to-end through the generated code.
+ * End-to-end coverage for the create-side canonical terminals:
+ * `save(): MutationResult<Unit>` and
+ * `saveAndLoad(): MutationResult<Entity>`. Exercises the full failure
+ * surface — validation, privacy, unique constraint, FK constraint —
+ * against `PostgresDriver`, pinning that pre-write failures hardcode
+ * `MutationWriteState.NotPersisted` and that `getOrThrow()` throws the
+ * exact stored exception instance. Constraint classification
+ * (SQLSTATE 23xxx) is also covered driver-side in
+ * `SqlstateConstraintMappingPostgresIntegrationTest`.
  */
 class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
@@ -68,59 +74,78 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     // ---- Success path ----
 
     @Test
-    fun `saveOrError returns Ok on success`() {
+    fun `save returns Success(Unit) on success`() {
         val client = freshClient()
 
         val result = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Ok)
-        val user = result.value
-        assertNotNull(user.id)
-        assertEquals("Alice", user.name)
+        assertEquals(MutationResult.Success(Unit), result)
     }
 
     @Test
-    fun `saveOrThrow returns the entity on success`() {
+    fun `saveAndLoad returns Success with a non-null entity`() {
         val client = freshClient()
 
-        val user = client.users.create {
+        val result = client.users.create {
             name = "Bob"
             email = "bob@example.com"
-        }.saveOrThrow()
+        }.saveAndLoad()
 
-        assertNotNull(user.id)
-        assertEquals("Bob", user.name)
+        val success = assertIs<MutationResult.Success<User>>(result)
+        assertNotNull(success.value.id)
+        assertEquals("Bob", success.value.name)
+    }
+
+    @Test
+    fun `save does not apply returned-entity LOAD privacy`() {
+        // A viewer that can create but never load: save() discloses no
+        // entity, so it succeeds where saveAndLoad() would fail.
+        val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("no disclosure") })
+                    create(ArticleCreatePrivacyRule { PrivacyDecision.Allow })
+                }
+            }
+        }
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = policy)
+        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        }
+
+        val result = client.articles.create {
+            title = "Sealed"
+            published = true
+            authorId = author.id
+        }.save()
+
+        assertEquals(MutationResult.Success(Unit), result)
     }
 
     // ---- Validation ----
 
     @Test
-    fun `saveOrError returns Err(ValidationFailed) when a required field is missing`() {
+    fun `save returns Failed(EntValidationException) when a required field is missing`() {
         val client = freshClient()
 
-        // `email` is required on the User schema. Omitting it lands
-        // ValidationException inside save(), which saveOrError lifts
-        // into Err(ValidationFailed) with the rule-DSL's
-        // ValidationDecision.Invalid bridged into ValidationViolation.
-        val result = client.users.create {
-            name = "Carol"
-        }.saveOrError()
+        // `email` is required on the User schema.
+        val result = client.users.create { name = "Carol" }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ValidationFailed)
-        assertEquals("User", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals(1, error.violations.size)
-        assertEquals("email", error.violations[0].field)
-        assertTrue(error.violations[0].message.contains("email is required"))
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntValidationException>(failed.exception)
+        assertEquals("User", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals(1, ex.violations.size)
+        assertEquals("email", ex.violations[0].field)
+        assertTrue(ex.violations[0].message.contains("email is required"))
     }
 
     @Test
-    fun `saveOrError returns Err(ValidationFailed) when a rule rejects the candidate`() {
+    fun `saveAndLoad returns Failed(EntValidationException) when a rule rejects the candidate`() {
         val rejectUnpublished = ArticleCreateValidationRule { ctx ->
             if (!ctx.candidate.published) {
                 ValidationDecision.Invalid("must be published", field = "published")
@@ -135,41 +160,43 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
             }
         }
         val client = freshClient(articlePolicy = policy)
-        val author = client.users.create { name = "Alice"; email = "a@example.com" }.saveOrThrow()
+        val author = client.users.create { name = "Alice"; email = "a@example.com" }
+            .saveAndLoad().getOrThrow()
 
         val result = client.articles.create {
             title = "Draft"
             published = false
             authorId = author.id
-        }.saveOrError()
+        }.saveAndLoad()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ValidationFailed)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals(1, error.violations.size)
-        assertEquals("published", error.violations[0].field)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntValidationException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals(1, ex.violations.size)
+        assertEquals("published", ex.violations[0].field)
     }
 
     @Test
-    fun `saveOrThrow throws EntValidationException carrying the EntError`() {
+    fun `getOrThrow throws the exact stored EntValidationException`() {
         val client = freshClient()
 
-        val ex = assertFailsWith<EntValidationException> {
-            client.users.create { name = "Dan" }.saveOrThrow()
+        val result = client.users.create { name = "Dan" }.saveAndLoad()
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntValidationException) {
+            assertSame(failed.exception, e)
+            assertEquals(MutationWriteState.NotPersisted, e.writeState)
         }
-        val validationFailed = ex.validationFailed
-        assertEquals("User", validationFailed.entity)
-        assertEquals(EntOperation.CREATE, validationFailed.operation)
-        assertEquals(1, validationFailed.violations.size)
-        assertEquals("email", validationFailed.violations[0].field)
     }
 
     // ---- Privacy ----
 
     @Test
-    fun `saveOrError returns Err(PrivacyDenied) when CREATE privacy denies`() {
+    fun `save returns Failed(EntMutationPrivacyDeniedException) when CREATE privacy denies`() {
         val requireAuth = ArticleCreatePrivacyRule { ctx ->
             if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
             else PrivacyDecision.Allow
@@ -186,25 +213,27 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         // Seed an author with a system context — the test's privacy
         // boundary is on Article, not User.
         val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "Eve"; email = "eve@example.com" }.saveOrThrow()
+            sys.users.create { name = "Eve"; email = "eve@example.com" }.saveAndLoad().getOrThrow()
         }
 
         val result = client.articles.create {
             title = "Hidden"
             published = true
             authorId = author.id
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.PrivacyDenied)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals("authentication required", error.reason)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("authentication required", ex.reason)
+        // A create denial happens before any row exists — no usable key.
+        assertNull(ex.entityKey)
     }
 
     @Test
-    fun `saveOrThrow throws EntPrivacyDeniedException`() {
+    fun `getOrThrow throws the exact stored EntMutationPrivacyDeniedException`() {
         val deny = ArticleCreatePrivacyRule { PrivacyDecision.Deny("nope") }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -218,59 +247,69 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         // authenticated viewer so the deny rule actually fires.
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = policy)
         val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "F"; email = "f@example.com" }.saveOrThrow()
+            sys.users.create { name = "F"; email = "f@example.com" }.saveAndLoad().getOrThrow()
         }
 
-        val ex = assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.create {
-                title = "x"
-                published = true
-                authorId = author.id
-            }.saveOrThrow()
+        val result = client.articles.create {
+            title = "x"
+            published = true
+            authorId = author.id
+        }.saveAndLoad()
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntMutationPrivacyDeniedException) {
+            assertSame(failed.exception, e)
+            assertEquals("nope", e.reason)
         }
-        assertEquals("Article", ex.privacyDenied.entity)
-        assertEquals("nope", ex.privacyDenied.reason)
     }
 
     // ---- Constraint violations ----
 
     @Test
-    fun `saveOrError returns Err(ConstraintViolation) for unique violation`() {
+    fun `save returns Failed(EntConstraintViolationException) for unique violation`() {
         val client = freshClient()
-        client.users.create { name = "G"; email = "dup@example.com" }.saveOrThrow()
+        client.users.create { name = "G"; email = "dup@example.com" }.save().getOrThrow()
 
         val result = client.users.create {
             name = "H"
             email = "dup@example.com"
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("User", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals("23505", error.code)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("User", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("23505", ex.driverCode)
         // PSQLException carries the unique-index name on
-        // ServerErrorMessage.constraint — the classifier surfaces it
-        // on the EntError.
-        assertNotNull(error.constraint)
-        assertTrue(error.constraint!!.contains("email"), "constraint should mention email: ${error.constraint}")
+        // ServerErrorMessage.constraint — the classifier surfaces it as a
+        // direct property, and the original driver exception is the cause.
+        assertNotNull(ex.constraint)
+        assertTrue(ex.constraint!!.contains("email"), "constraint should mention email: ${ex.constraint}")
+        assertIs<org.postgresql.util.PSQLException>(ex.cause)
     }
 
     @Test
-    fun `saveOrThrow throws EntConstraintViolationException for unique violation`() {
+    fun `getOrThrow throws the exact stored EntConstraintViolationException`() {
         val client = freshClient()
-        client.users.create { name = "I"; email = "dup2@example.com" }.saveOrThrow()
+        client.users.create { name = "I"; email = "dup2@example.com" }.save().getOrThrow()
 
-        val ex = assertFailsWith<EntConstraintViolationException> {
-            client.users.create { name = "J"; email = "dup2@example.com" }.saveOrThrow()
+        val result = client.users.create { name = "J"; email = "dup2@example.com" }.saveAndLoad()
+        val failed = assertIs<MutationResult.Failed>(result)
+        try {
+            result.getOrThrow()
+            throw AssertionError("expected getOrThrow to throw")
+        } catch (e: EntConstraintViolationException) {
+            assertSame(failed.exception, e)
+            assertEquals("23505", e.driverCode)
+            assertEquals(MutationWriteState.NotPersisted, e.writeState)
         }
-        assertEquals("User", ex.constraintViolation.entity)
-        assertEquals("23505", ex.constraintViolation.code)
     }
 
     @Test
-    fun `saveOrError returns Err(ConstraintViolation) for FK violation`() {
+    fun `save returns Failed(EntConstraintViolationException) for FK violation`() {
         val client = freshClient()
 
         // Article.authorId references a User row that doesn't exist.
@@ -278,40 +317,40 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
             title = "Orphan"
             published = true
             authorId = 999_999L
-        }.saveOrError()
+        }.save()
 
-        assertTrue(result is EntResult.Err)
-        val error = result.error
-        assertTrue(error is EntError.ConstraintViolation)
-        assertEquals("Article", error.entity)
-        assertEquals(EntOperation.CREATE, error.operation)
-        assertEquals("23503", error.code)
-        assertNotNull(error.constraint)
+        val failed = assertIs<MutationResult.Failed>(result)
+        val ex = assertIs<EntConstraintViolationException>(failed.exception)
+        assertEquals("Article", ex.entityType)
+        assertEquals(EntOperation.CREATE, ex.operation)
+        assertEquals(MutationWriteState.NotPersisted, ex.writeState)
+        assertEquals("23503", ex.driverCode)
+        assertNotNull(ex.constraint)
     }
 
-    // ---- saveOrError doesn't persist on Err ----
+    // ---- Failed does not persist on the pre-write / constraint paths ----
 
     @Test
-    fun `saveOrError on validation failure does not persist a row`() {
+    fun `a validation failure does not persist a row`() {
         val client = freshClient()
 
-        val result = client.users.create { name = "K" }.saveOrError()
-        assertTrue(result is EntResult.Err)
+        assertIs<MutationResult.Failed>(client.users.create { name = "K" }.save())
 
         // Driver count must be zero — nothing reached insert().
-        assertEquals(0L, client.users.query().rawCount())
+        assertEquals(0L, client.users.query().rawCount().getOrThrow())
     }
 
     @Test
-    fun `saveOrError on unique conflict does not persist the second row`() {
+    fun `a unique conflict does not persist the second row`() {
         val client = freshClient()
-        client.users.create { name = "L"; email = "once@example.com" }.saveOrThrow()
+        client.users.create { name = "L"; email = "once@example.com" }.save().getOrThrow()
 
-        val result = client.users.create { name = "M"; email = "once@example.com" }.saveOrError()
-        assertTrue(result is EntResult.Err)
+        assertIs<MutationResult.Failed>(
+            client.users.create { name = "M"; email = "once@example.com" }.save(),
+        )
 
         // Still one row — the conflicting insert rolled back at the
         // driver's row-level uniqueness check.
-        assertEquals(1L, client.users.query().rawCount())
+        assertEquals(1L, client.users.query().rawCount().getOrThrow())
     }
 }

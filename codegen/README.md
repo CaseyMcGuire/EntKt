@@ -14,19 +14,25 @@ For each schema the generator emits:
 - **`{Entity}Mutation` interface** — shared interface implemented by both
   Create and Update builders, with `var` properties for all mutable fields.
   Enables shared validators via `onBeforeSave`.
-- **`{Entity}Create` builder** — DSL setters + `.save()`.
+- **`{Entity}Create` builder** — DSL setters + `.save(): MutationResult<Unit>`
+  and `.saveAndLoad(): MutationResult<Entity>`.
   Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
 - **`{Entity}Update` builder** — DSL setters (immutable fields are elided) plus
-  `.save()` / `.saveOrNull()` / `.saveOrThrow()` / `.saveOrError()`. Implements
-  `{Entity}Mutation`. The current owner row is loaded internally at the start
-  of `save()` (bypassing LOAD privacy); hooks receive a `{Entity}UpdateHookContext`
-  with `before`, `patch`, and a restricted `mutation` view.
+  `.save(): MutationResult<Unit>` / `.saveAndLoad(): MutationResult<Entity>`.
+  Implements `{Entity}Mutation`. The current owner row is loaded internally at
+  the start of the save pipeline (bypassing LOAD privacy); hooks receive a
+  `{Entity}UpdateHookContext` with `before`, `patch`, and a restricted
+  `mutation` view.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
-  `.offset(...)`, `.allOrThrow()`, `.firstOrNull()`, edge traversal methods
-  (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`).
+  `.offset(...)`, `.all(): ReadResult<List<E>>`,
+  `.firstOrNull(): ReadResult<E?>`, edge traversal methods
+  (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`,
+  returning an `EagerLoad` handle whose `filterVisible()` opts that edge out
+  of strict eager privacy).
 - **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
-  `.byId(id)`, `.deleteOrThrow(entity)`, `.deleteByIdOrError(id)`,
-  `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)`.
+  `.findById(id): ReadResult<Entity?>`, `.delete(entity)`, `.deleteById(id)`,
+  `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)` — the four
+  mutation terminals return `MutationResult`.
   Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
   with a `Driver` and an optional configuration lambda for lifecycle hooks.
@@ -73,9 +79,10 @@ val client = EntClient(driver) {
 hook works for both creates and updates. Hooks are declared once and
 automatically apply within transactions — no re-registration needed.
 
-**Bulk operations run hooks.** `createMany` delegates to `create { }.save()`
-per entry, and `deleteMany` queries then deletes through `deleteOrThrow(entity)` —
-all lifecycle hooks fire for every row.
+**Bulk operations run hooks and are atomic.** `createMany` drives the same
+per-row create pipeline, and `deleteMany` queries then deletes through the
+shared per-row delete pipeline — all lifecycle hooks fire for every row, and
+the whole batch shares one transaction (the caller's, or an EntKt-owned one).
 
 ## Eager loading
 
@@ -90,7 +97,7 @@ val users = client.users.query {
         where(Post.published eq true)    // optional: filter/order the edge
         orderBy(Post.createdAt.desc())
     }
-}.allOrThrow()
+}.all().getOrThrow()
 
 users[0].edges.posts                  // → EdgeState.Loaded(List<Post>)
 users[0].edges.posts.requireLoaded()  // → List<Post>; throws EdgeNotLoadedException if withPosts() wasn't called
@@ -110,5 +117,5 @@ val owners = client.owners.query {
     withPets {
         withOwner()  // nested: also load each pet's owner
     }
-}.allOrThrow()
+}.all().getOrThrow()
 ```

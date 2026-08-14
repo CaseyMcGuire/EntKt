@@ -9,22 +9,17 @@
 
 package entkt.integrationtest
 
-import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.ent.Post
-import entkt.integrationtest.ent.Tag
-import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.query.EdgeStep
-import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -37,9 +32,9 @@ import kotlin.test.assertTrue
  * - **P1** limit interceptor methods are no-ops on read shapes where
  *   row limits have no meaning (BY_ID / FIRST / aggregates / EAGER /
  *   EDGE_PREDICATE) — so `global { rejectIfLimitGreaterThan(10) }`
- *   no longer rejects `byIdOrNull` / `rawCount` / `rawExists`, and
- *   `setDefaultLimitIfAbsent(100)` no longer silently truncates
- *   `visibleCount`.
+ *   no longer rejects `findById` / `rawCount` / `rawExists`, and
+ *   `setDefaultLimitIfAbsent` / `requireLimitAtMost` never silently
+ *   clamp the no-limit shapes.
  *
  * - **P2a** eager-load `explain()` plans fire target interceptors
  *   with `EAGER_LOAD` (not `ALL`) and reflect post-interceptor
@@ -74,14 +69,14 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveOrThrow()
+        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
         // rawCount has no row limit semantics; the gate should
         // NOT trigger even though effective limit is null.
-        assertEquals(1L, client.posts.query().rawCount())
+        assertEquals(1L, client.posts.query().rawCount().getOrThrow())
     }
 
     @Test
-    fun `rejectIfLimitGreaterThan is a silent no-op for byIdOrNull`() {
+    fun `rejectIfLimitGreaterThan is a silent no-op for findById`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -94,42 +89,43 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val p = client.posts.create { title = "x" }.saveOrThrow()
-        // byId is intrinsic single-row; the gate should not fire.
-        assertNotNull(client.posts.byIdOrNull(p.id))
+        val p = client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        // by-id is intrinsic single-row; the gate should not fire.
+        assertNotNull(client.posts.findById(p.id).getOrThrow())
     }
 
     @Test
-    fun `setDefaultLimitIfAbsent is a silent no-op for visibleCount`() {
+    fun `setDefaultLimitIfAbsent(0) is a silent no-op for firstOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
-                // Without the P1 fix this would set spec.limit = 2,
-                // and visibleCount would return "count of first 2
-                // scanned rows" instead of "count of all rows".
+                // Without the P1 fix this would set spec.limit = 0
+                // and firstOrNull's driver fetch would be
+                // `minOf(1, 0) = 0` rows — a caller who set no bound
+                // would silently never see a row.
                 global(
                     GlobalQueryInterceptor { scope, _ ->
-                        scope.setDefaultLimitIfAbsent(2)
+                        scope.setDefaultLimitIfAbsent(0)
                     },
-                    name = "default-limit-2",
+                    name = "default-limit-0",
                 )
             }
         }
-        repeat(5) { i -> client.posts.create { title = "p$i" }.saveOrThrow() }
-        // visibleCount must materialize all matching rows to evaluate
-        // privacy correctly. A 2-row clamp would corrupt the count.
-        assertEquals(5L, client.posts.query().visibleCount())
+        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        // FIRST is a no-limit-ops shape: only the caller's own bound
+        // may shrink the single-row fetch.
+        assertNotNull(client.posts.query().firstOrNull().getOrThrow())
     }
 
     @Test
-    fun `requireLimitAtMost(0) is a silent no-op for visibleExists`() {
+    fun `requireLimitAtMost(0) is a silent no-op for rawExists`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 // Without the P1 fix this would clamp spec.limit to 0,
-                // and visibleExists' driver call would fetch 0 rows
+                // and rawExists' driver call would fetch 0 rows
                 // and always return false.
                 global(
                     GlobalQueryInterceptor { scope, _ -> scope.requireLimitAtMost(0) },
@@ -137,12 +133,12 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveOrThrow()
-        assertTrue(client.posts.query().visibleExists())
+        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        assertTrue(client.posts.query().rawExists().getOrThrow())
     }
 
     @Test
-    fun `requireLimitAtMost applies normally for allOrThrow`() {
+    fun `requireLimitAtMost applies normally for all`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -153,10 +149,10 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        repeat(5) { i -> client.posts.create { title = "p$i" }.saveOrThrow() }
+        repeat(5) { i -> client.posts.create { title = "p$i" }.saveAndLoad().getOrThrow() }
         // ALL is the operation where limit ops apply normally —
         // here the clamp DOES take effect.
-        assertEquals(2, client.posts.query().allOrThrow().size)
+        assertEquals(2, client.posts.query().all().getOrThrow().size)
     }
 
     // ---------- P2a: eager-load explain fires EAGER_LOAD ----------
@@ -175,7 +171,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
             }
         }
 
-        client.users.query().withArticles().explainAllOrThrow()
+        client.users.query { withArticles() }.explainAll()
 
         // The eager subquery for "articles" should have fired
         // Article's interceptors with EAGER_LOAD (not ALL).
@@ -203,7 +199,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.users.query().withArticles().explainAllOrThrow()
+        val plan = client.users.query { withArticles() }.explainAll()
 
         val articlesEdge = plan.eagerQueries["articles"]
         assertNotNull(articlesEdge, "explain plan should include an 'articles' edge subplan")
@@ -216,10 +212,10 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         )
     }
 
-    // ---------- P2b: byId edge-predicate walk ----------
+    // ---------- P2b: by-id edge-predicate walk ----------
 
     @Test
-    fun `byIdOrNull walks HasEdgeWith predicates added by a by-id interceptor`() {
+    fun `findById walks HasEdgeWith predicates added by a by-id interceptor`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
@@ -245,14 +241,16 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val u = client.users.create { name = "A"; email = "a@x" }.saveOrThrow()
-        client.users.byIdOrNull(u.id)
+        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+        // The user has no published article, so the narrowed by-id read
+        // returns Success(null); the walker still ran.
+        assertNull(client.users.findById(u.id).getOrThrow())
 
         // Article observer must have fired with EDGE_PREDICATE
         // (the walker ran on the by-id User's inner predicate).
         assertTrue(
             ops.contains(ReadOperation.EDGE_PREDICATE),
-            "byIdOrNull should run the edge-predicate walker; expected EDGE_PREDICATE in $ops",
+            "findById should run the edge-predicate walker; expected EDGE_PREDICATE in $ops",
         )
     }
 
@@ -273,7 +271,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.posts.query().explainAllOrThrow()
+        val plan = client.posts.query().explainAll()
         assertEquals("acme", plan.annotations["tenant"])
         assertEquals("abc-123", plan.annotations["audit-id"])
 

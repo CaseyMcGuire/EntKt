@@ -21,8 +21,11 @@ private val OP = ClassName("entkt.query", "Op")
 private val EDGE_STATE = ClassName("entkt.runtime.query", "EdgeState")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
-private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
 private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
+private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
+private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
+private val EAGER_EDGE_STEP = ClassName("entkt.runtime.result", "EagerEdgeStep")
+private val EAGER_LOAD_HANDLE = ClassName("entkt.runtime.query", "EagerLoad")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 
 // ------------------------------------------------------------------
@@ -42,6 +45,7 @@ private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 internal data class EagerEdgeSpec(
     val edgeName: String,
     val property: PropertySpec,
+    val filterVisibleProperty: PropertySpec,
     val withMethod: FunSpec,
 )
 
@@ -73,6 +77,19 @@ internal fun buildEagerEdgeSpec(
         .initializer("null")
         .build()
 
+    // Per-edge filterVisible opt-in, set only through the EagerLoad
+    // handle returned by the with-method. Reset on every
+    // reconfiguration of the edge so a stale opt-in can't leak into a
+    // later strict configuration.
+    val filterVisibleProperty = PropertySpec.builder(
+        "${eagerPropName}FilterVisible",
+        Boolean::class,
+    )
+        .addModifiers(KModifier.PRIVATE)
+        .mutable(true)
+        .initializer("false")
+        .build()
+
     val blockLambda = LambdaTypeName.get(
         receiver = targetQueryClass,
         returnType = UNIT,
@@ -83,12 +100,34 @@ internal fun buildEagerEdgeSpec(
                 .defaultValue("{}")
                 .build()
         )
-        .returns(queryClass)
-        .addStatement("%L = %T(driver, client).apply(block)", eagerPropName, targetQueryClass)
-        .addStatement("return this")
+        .returns(EAGER_LOAD_HANDLE.parameterizedBy(queryClass))
+        .addStatement("val configured = %T(driver, client).apply(block)", targetQueryClass)
+        .addStatement("%L = configured", eagerPropName)
+        .addStatement("%LFilterVisible = false", eagerPropName)
+        .addCode(
+            CodeBlock.builder()
+                .add("return object : %T<%T> {\n", EAGER_LOAD_HANDLE, queryClass)
+                .add("  override fun filterVisible(): %T {\n", queryClass)
+                // The handle governs only the configuration that
+                // produced it: reconfiguring the edge resets the flag,
+                // and a retained stale handle must not silently weaken
+                // the newer (strict-by-default) configuration.
+                .add("    check(%L === configured) {\n", eagerPropName)
+                .add(
+                    "      %S\n",
+                    "stale EagerLoad handle: with-edge was reconfigured after this handle was created; " +
+                        "call filterVisible() on the handle returned by the latest configuration",
+                )
+                .add("    }\n")
+                .add("    %LFilterVisible = true\n", eagerPropName)
+                .add("    return this@%L\n", queryClass.simpleName)
+                .add("  }\n")
+                .add("}\n")
+                .build(),
+        )
         .build()
 
-    return EagerEdgeSpec(re.name, property, withMethod)
+    return EagerEdgeSpec(re.name, property, filterVisibleProperty, withMethod)
 }
 
 /**
@@ -156,8 +195,8 @@ private fun emitToManyEagerBlock(
     // not CALLER. Fetch all matching rows — limit/offset are
     // applied per group below.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
-        READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+        READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Bounds are resolved before the fetch so a window that admits
     // nothing skips the round trip; every row would be dropped by the
@@ -170,15 +209,25 @@ private fun emitToManyEagerBlock(
         "val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
         targetClass,
     )
+    // Decode once, in the target query's result order, so the strict
+    // privacy pass can evaluate targets in that order (the grouped map
+    // iterates in first-occurrence order, which is NOT result order
+    // when denied targets belong to different parents).
     body.addStatement(
-        "val grouped = targetRows.groupBy { it[%S] }",
+        "val decodedTargets = targetRows.map { it to %T.fromRow(it) }",
+        targetClass,
+    )
+    body.addStatement(
+        "val grouped = decodedTargets.groupBy { (row, _) -> row[%S] }",
         join.targetColumn,
     )
     body.addStatement(
-        "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
-        targetClass,
+        "var loadedGroups = grouped.mapValues { (_, pairs) -> pairs.drop(perGroupOffset).take(perGroupLimit).map { it.second } }",
     )
-    emitEagerPrivacyCheck(body, re.targetName, "loadedGroups", grouped = true)
+    emitEagerPrivacyCheck(
+        body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
+        orderedIteration = "for ((_, entity) in decodedTargets)",
+    )
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
     )
@@ -206,8 +255,8 @@ private fun emitHasOneEagerBlock(
     body.addStatement("val sourceIds = entities.map { it.id }")
     emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
-        READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+        READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Bounds are resolved before the fetch so a window that admits
     // nothing skips the round trip; every row would be dropped by the
@@ -227,7 +276,11 @@ private fun emitHasOneEagerBlock(
         targetClass,
     )
     body.addStatement(
-        "val grouped = targetRows.groupBy { it[%S] }",
+        "val decodedTargets = targetRows.map { it to %T.fromRow(it) }",
+        targetClass,
+    )
+    body.addStatement(
+        "val grouped = decodedTargets.groupBy { (row, _) -> row[%S] }",
         join.targetColumn,
     )
     // Bounds apply per parent, exactly as they do for the to-many
@@ -237,10 +290,12 @@ private fun emitHasOneEagerBlock(
     // candidate. Ignoring them because "a to-one can't have many"
     // answers a different question than the caller asked.
     body.addStatement(
-        "var loadedGroups = grouped.mapValues { (_, rows) -> rows.drop(perGroupOffset).take(perGroupLimit).map { %T.fromRow(it) } }",
-        targetClass,
+        "var loadedGroups = grouped.mapValues { (_, pairs) -> pairs.drop(perGroupOffset).take(perGroupLimit).map { it.second } }",
     )
-    emitEagerPrivacyCheck(body, re.targetName, "loadedGroups", grouped = true)
+    emitEagerPrivacyCheck(
+        body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
+        orderedIteration = "for ((_, entity) in decodedTargets)",
+    )
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
     )
@@ -321,8 +376,8 @@ private fun emitToOneEagerBlock(
     // `explain()` fires it unconditionally too. An empty `fkValues`
     // just means the structural IN predicate is empty.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
-        READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
+        READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Only the fetch is conditional. Skipped when nothing could
     // match — an empty IN, or a window that admits no row — because
@@ -338,7 +393,7 @@ private fun emitToOneEagerBlock(
         "var loaded = targetRows.map { %T.fromRow(it) }",
         targetClass,
     )
-    emitEagerPrivacyCheck(body, re.targetName, "loaded", grouped = false)
+    emitEagerPrivacyCheck(body, re.targetName, "loaded", grouped = false, eagerPropName = re.eagerPropName)
     body.addStatement("loaded = subQuery.loadEdges(loaded, eagerPrivacyContext)")
     body.addStatement("val targetMap = loaded.associateBy { it.id }")
     if (fkRequired) {
@@ -397,8 +452,8 @@ private fun emitM2MEagerBlock(
     // unconditionally too. No junction rows just means the structural
     // IN predicate is empty.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
-        READ_OPERATION, ENT_OPERATION, PREDICATE, targetClass, "id", OP,
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
+        READ_OPERATION, PREDICATE, targetClass, "id", OP,
     )
     // Bounds resolved before the fetch, as on the direct-edge paths:
     // with `limit(0)` every row would be dropped by the `take(0)`
@@ -449,9 +504,14 @@ private fun emitM2MEagerBlock(
     )
     body.endControlFlow()
     body.addStatement("val grouped = mutableMapOf<Any?, MutableList<%T>>()", targetClass)
+    // Row-ordered membership-bearing targets: the strict privacy pass
+    // iterates this list so evaluation follows the target query's
+    // result order rather than per-group map order.
+    body.addStatement("val orderedTargets = mutableListOf<%T>()", targetClass)
     body.beginControlFlow("for (row in targetRows)")
     body.addStatement("val target = %T.fromRow(row)", targetClass)
     body.addStatement("val sources = sourcesByTargetId[target.id] ?: continue")
+    body.addStatement("orderedTargets.add(target)")
     body.beginControlFlow("for (src in sources)")
     body.addStatement(
         "grouped.getOrPut(src) { mutableListOf() }.add(target)",
@@ -462,7 +522,10 @@ private fun emitM2MEagerBlock(
     body.addStatement(
         "var loadedGroups = grouped.mapValues { (_, list) -> list.drop(perGroupOffset).take(perGroupLimit) }",
     )
-    emitEagerPrivacyCheck(body, re.targetName, "loadedGroups", grouped = true)
+    emitEagerPrivacyCheck(
+        body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
+        orderedIteration = "for (entity in orderedTargets)",
+    )
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
     )
@@ -491,39 +554,126 @@ private fun emitEagerSubquerySetup(
     targetClass: ClassName,
 ) {
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
+    // Interceptor context path: includes any traversal (queryX) hops
+    // that led to this terminal, because EAGER_LOAD interceptors see
+    // the full chain.
+    body.addStatement(
+        "val eagerPath = this.traversalPath + %T(%T::class, %S, %T::class)",
+        edgeStepClass, sourceClass, edgeName, targetClass,
+    )
+    // Denial path: eager hops only, rooted at THIS terminal's own
+    // selection — the RFC's EagerEdge origin describes the eager
+    // schema-edge path from the terminal root, so traversal hops must
+    // not appear in it.
+    body.addStatement(
+        "val eagerDenialPath = this.eagerDenialBasePath + %T(%T::class, %S, %T::class)",
+        edgeStepClass, sourceClass, edgeName, targetClass,
+    )
     // Cross-class write through the @EntktInternal seeder
     // (traversal context fields are `private` on the target
     // query class).
     body.addStatement(
-        "subQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-        sourceClass, edgeName, edgeStepClass, sourceClass, edgeName, targetClass,
+        "subQuery.seedEdgeTraversal(%T::class, %S, eagerPath)",
+        sourceClass, edgeName,
     )
+    body.addStatement("subQuery.seedEagerDenialBasePath(eagerDenialPath)")
 }
 
 /**
- * Emit a privacy check block that applies LOAD privacy to eagerly
- * loaded target entities. [loadedVar] is the name of the mutable
- * local holding the loaded entities (or grouped map). When [grouped]
- * is true, the variable is a `Map<Any?, List<T>>` and each group's
- * list is checked individually. Throws [PrivacyDeniedException] on
- * any denied entity (strict read model).
+ * Emit the eager LOAD privacy block for one edge. [loadedVar] is the
+ * name of the mutable local holding the loaded entities (or grouped
+ * map; when [grouped] is true the variable is a `Map<Any?, List<T>>`).
+ *
+ * Strict default: the first denied target throws
+ * `EntPrivacyDeniedException(EagerEdge(eagerPath), listOf(denial))` —
+ * exactly one keyed denial, fail-fast, no later eager work run solely
+ * for diagnostics. The root terminal's capture boundary stores it in
+ * `ReadResult.Failed`. Targets are evaluated in target-query result
+ * order (the grouped maps preserve target-row encounter order).
+ *
+ * With the edge's `filterVisible()` opt-in ([eagerPropName]'s flag),
+ * a returned LOAD-deny decision instead omits the target: a denied
+ * to-one target becomes `EdgeState.Loaded(null)` (the filtered map
+ * lookup misses), denied to-many targets are omitted from the loaded
+ * list, and no replacement scanning occurs. Only a returned deny
+ * decision is suppressed — an exception thrown by a privacy rule
+ * escapes either way and remains a terminal failure.
  */
 private fun emitEagerPrivacyCheck(
     body: CodeBlock.Builder,
     targetName: String,
     loadedVar: String,
     grouped: Boolean,
+    eagerPropName: String,
+    orderedIteration: String? = null,
 ) {
     val targetRepoProp = pluralize(targetName.replaceFirstChar { it.lowercase() })
     body.addStatement("val eagerClient = client")
     body.beginControlFlow("if (eagerClient != null && eagerPrivacyContext != null && eagerClient.%L.hasLoadPrivacy())", targetRepoProp)
+    body.beginControlFlow("if (%LFilterVisible)", eagerPropName)
     if (grouped) {
-        body.beginControlFlow("%L.values.forEach { list ->", loadedVar)
-        body.addStatement("for (entity in list) eagerClient.%L.evaluateLoadPrivacy(eagerPrivacyContext, entity)", targetRepoProp)
+        // Filtered mode mirrors the strict pass's evaluation contract:
+        // each in-window target's rules run exactly ONCE, in the
+        // target query's result order — never once per parent group,
+        // which would re-run rules for shared M2M targets and let
+        // group iteration order decide which thrown rule exception
+        // wins or (for a stateful rule) produce inconsistent
+        // visibility across parents.
+        body.addStatement(
+            "val inWindow = %L.values.flatMapTo(mutableSetOf()) { it }",
+            loadedVar,
+        )
+        body.addStatement("val visibleTargets = mutableSetOf<Any?>()")
+        body.beginControlFlow(checkNotNull(orderedIteration) { "grouped filter pass needs orderedIteration" })
+        body.addStatement("if (entity !in inWindow || entity in visibleTargets) continue")
+        body.addStatement(
+            "if (eagerClient.%L.loadDenialOrNull(eagerPrivacyContext, entity) == null) visibleTargets.add(entity)",
+            targetRepoProp,
+        )
+        body.endControlFlow()
+        body.addStatement(
+            "%L = %L.mapValues { (_, list) -> list.filter { it in visibleTargets } }",
+            loadedVar, loadedVar,
+        )
+    } else {
+        body.addStatement(
+            "%L = %L.filter { eagerClient.%L.loadDenialOrNull(eagerPrivacyContext, it) == null }",
+            loadedVar, loadedVar, targetRepoProp,
+        )
+    }
+    body.nextControlFlow("else")
+    if (grouped) {
+        // Strict evaluation follows the target query's RESULT order,
+        // not per-group map order: iterate the row-ordered decoded
+        // list and skip targets sliced out of every parent's window.
+        body.addStatement(
+            "val inWindow = %L.values.flatMapTo(mutableSetOf()) { it }",
+            loadedVar,
+        )
+        body.beginControlFlow(checkNotNull(orderedIteration) { "grouped strict pass needs orderedIteration" })
+        body.addStatement("if (entity !in inWindow) continue")
+        emitEagerDenialThrow(body, targetRepoProp)
         body.endControlFlow()
     } else {
-        body.addStatement("for (entity in %L) eagerClient.%L.evaluateLoadPrivacy(eagerPrivacyContext, entity)", loadedVar, targetRepoProp)
+        body.beginControlFlow("for (entity in %L)", loadedVar)
+        emitEagerDenialThrow(body, targetRepoProp)
+        body.endControlFlow()
     }
+    body.endControlFlow()
+    body.endControlFlow()
+}
+
+/** The strict fail-fast denial throw shared by both eager shapes. */
+private fun emitEagerDenialThrow(body: CodeBlock.Builder, targetRepoProp: String) {
+    body.addStatement(
+        "val denial = eagerClient.%L.loadDenialOrNull(eagerPrivacyContext, entity)",
+        targetRepoProp,
+    )
+    body.beginControlFlow("if (denial != null)")
+    body.addStatement(
+        "throw %T(%T.EagerEdge(eagerDenialPath.map { %T(it.source.simpleName!!, it.edgeName, it.target.simpleName!!) }), listOf(denial))",
+        ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN, EAGER_EDGE_STEP,
+    )
     body.endControlFlow()
 }
 
@@ -590,8 +740,8 @@ internal fun buildEagerExplainBlock(
         )
         body.add("edges[%S] = try {\n", info.name)
         body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
-            READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
+            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+            READ_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
         )
         // Strip limit/offset before handing to buildQueryPlan:
         // the runtime eager fetch uses null/null limit/offset
@@ -605,7 +755,7 @@ internal fun buildEagerExplainBlock(
             "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, junctionExplain = junctionExplain)\n",
         )
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-        body.add("  %T.rejected(e.queryRejected)\n", queryPlanLocal)
+        body.add("  %T.rejected(e)\n", queryPlanLocal)
         body.add("}\n")
     } else {
         // Direct edge: single query with IN on the join column.
@@ -613,8 +763,8 @@ internal fun buildEagerExplainBlock(
         // belongsTo: IN on targetColumn ("id" on target side).
         body.add("edges[%S] = try {\n", info.name)
         body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, %T.QUERY, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
-            READ_OPERATION, ENT_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,
+            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+            READ_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,
         )
         // See M2M branch above for why limit/offset are
         // stripped here.
@@ -622,7 +772,7 @@ internal fun buildEagerExplainBlock(
             "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true)\n",
         )
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-        body.add("  %T.rejected(e.queryRejected)\n", queryPlanLocal)
+        body.add("  %T.rejected(e)\n", queryPlanLocal)
         body.add("}\n")
     }
 

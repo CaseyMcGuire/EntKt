@@ -5,34 +5,29 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.result.EntError
-import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntResult
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntQueryRejectedException
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.assertIs
 
 /**
- * coverage: structured-result aggregate terminals
- * `rawCountOrError`, `visibleCountOrError`, `rawExistsOrError`,
- * `visibleExistsOrError`. Pins each variant's failure-mode mapping:
+ * coverage: canonical-result aggregate terminals `rawCount()` and
+ * `rawExists()`, which return `ReadResult<Long>` / `ReadResult<Boolean>`
+ * directly. Pins each terminal's mapping:
  *
- *  - happy path → `Ok(value)`
- *  - interceptor rejection → `Err(QueryRejected)`
- *  - driver failure → `Err(DriverFailure)` (covered by the
- *    classifier — exercised end-to-end in other suites)
+ *  - happy path → `Success(value)`
+ *  - interceptor predicates compose before the aggregate runs
+ *  - interceptor rejection → `Failed(EntQueryRejectedException)` with
+ *    direct `reason` / `code` / `interceptor` properties
  *
- * Visible-* variants additionally cover the eager-edge
- * `Err(PrivacyDenied)` path (no eager edges here on the count/exists
- * shape, so the regression is already covered by [allOrError]).
- *
- * Driver-failure tests are intentionally omitted on this surface;
- * the classifier path is identical to the *OrError variants on read
- * terminals which are already exercised end-to-end in
- * [QueryResultVariantsIntegrationTest].
+ * Driver-failure tests are intentionally omitted on this surface; the
+ * `Failed(exception)` capture path is identical to the read terminals
+ * already exercised end-to-end in [QueryResultVariantsIntegrationTest].
  */
 class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
 
@@ -41,21 +36,21 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     private fun freshClient(driver: PostgresDriver = freshDriver()): EntClient =
         EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
 
-    // ---------- rawCountOrError ----------
+    // ---------- rawCount ----------
 
     @Test
-    fun `rawCountOrError happy path returns Ok with the count`() {
+    fun `rawCount happy path returns Success with the count`() {
         val client = freshClient()
-        client.posts.create { title = "a" }.saveOrThrow()
-        client.posts.create { title = "b" }.saveOrThrow()
+        client.posts.create { title = "a" }.save().getOrThrow()
+        client.posts.create { title = "b" }.save().getOrThrow()
 
-        val result = client.posts.query().rawCountOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(2L, (result as EntResult.Ok).value)
+        val result = client.posts.query().rawCount()
+        val ok = assertIs<ReadResult.Success<Long>>(result)
+        assertEquals(2L, ok.value)
     }
 
     @Test
-    fun `rawCountOrError honors interceptor predicate`() {
+    fun `rawCount honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -68,17 +63,17 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "yes" }.saveOrThrow()
-        client.posts.create { title = "no" }.saveOrThrow()
-        client.posts.create { title = "yes" }.saveOrThrow()
+        client.posts.create { title = "yes" }.save().getOrThrow()
+        client.posts.create { title = "no" }.save().getOrThrow()
+        client.posts.create { title = "yes" }.save().getOrThrow()
 
-        val result = client.posts.query().rawCountOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(2L, (result as EntResult.Ok).value)
+        val result = client.posts.query().rawCount()
+        val ok = assertIs<ReadResult.Success<Long>>(result)
+        assertEquals(2L, ok.value)
     }
 
     @Test
-    fun `rawCountOrError surfaces interceptor rejection as Err(QueryRejected)`() {
+    fun `rawCount surfaces interceptor rejection as Failed(EntQueryRejectedException)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -89,63 +84,33 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val result = client.posts.query().rawCountOrError()
-        assertTrue(result is EntResult.Err)
-        val err = (result as EntResult.Err).error
-        assertTrue(err is EntError.QueryRejected, "expected QueryRejected, got $err")
-        assertEquals("rc_rej", (err as EntError.QueryRejected).code)
-        assertEquals(EntOperation.QUERY, err.operation)
+        val result = client.posts.query().rawCount()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val rejected = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("nope", rejected.reason)
+        assertEquals("rc_rej", rejected.code)
+        assertEquals("rc-rejector", rejected.interceptor)
     }
 
-    // ---------- visibleCountOrError ----------
+    // ---------- rawExists ----------
 
     @Test
-    fun `visibleCountOrError happy path returns Ok with the count`() {
-        val client = freshClient()
-        client.posts.create { title = "a" }.saveOrThrow()
-        client.posts.create { title = "b" }.saveOrThrow()
-
-        val result = client.posts.query().visibleCountOrError()
-        assertTrue(result is EntResult.Ok)
-        assertEquals(2L, (result as EntResult.Ok).value)
-    }
-
-    @Test
-    fun `visibleCountOrError surfaces interceptor rejection as Err(QueryRejected)`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ -> scope.reject("nope") },
-                    name = "vc-rejector",
-                )
-            }
-        }
-        val result = client.posts.query().visibleCountOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue((result as EntResult.Err).error is EntError.QueryRejected)
-    }
-
-    // ---------- rawExistsOrError ----------
-
-    @Test
-    fun `rawExistsOrError happy paths`() {
+    fun `rawExists happy paths`() {
         val client = freshClient()
 
-        val emptyResult = client.posts.query().rawExistsOrError()
-        assertTrue(emptyResult is EntResult.Ok)
-        assertEquals(false, (emptyResult as EntResult.Ok).value)
+        val emptyResult = client.posts.query().rawExists()
+        val emptyOk = assertIs<ReadResult.Success<Boolean>>(emptyResult)
+        assertEquals(false, emptyOk.value)
 
-        client.posts.create { title = "x" }.saveOrThrow()
+        client.posts.create { title = "x" }.save().getOrThrow()
 
-        val populatedResult = client.posts.query().rawExistsOrError()
-        assertTrue(populatedResult is EntResult.Ok)
-        assertEquals(true, (populatedResult as EntResult.Ok).value)
+        val populatedResult = client.posts.query().rawExists()
+        val populatedOk = assertIs<ReadResult.Success<Boolean>>(populatedResult)
+        assertEquals(true, populatedOk.value)
     }
 
     @Test
-    fun `rawExistsOrError honors interceptor predicate`() {
+    fun `rawExists honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -158,20 +123,16 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "haystack" }.saveOrThrow()
+        client.posts.create { title = "haystack" }.save().getOrThrow()
 
-        val miss = client.posts.query().rawExistsOrError()
-        assertTrue(miss is EntResult.Ok)
-        assertEquals(false, (miss as EntResult.Ok).value)
+        assertEquals(false, client.posts.query().rawExists().getOrThrow())
 
-        client.posts.create { title = "needle" }.saveOrThrow()
-        val hit = client.posts.query().rawExistsOrError()
-        assertTrue(hit is EntResult.Ok)
-        assertEquals(true, (hit as EntResult.Ok).value)
+        client.posts.create { title = "needle" }.save().getOrThrow()
+        assertEquals(true, client.posts.query().rawExists().getOrThrow())
     }
 
     @Test
-    fun `rawExistsOrError surfaces interceptor rejection as Err(QueryRejected)`() {
+    fun `rawExists surfaces interceptor rejection as Failed(EntQueryRejectedException)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
@@ -182,41 +143,10 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val result = client.posts.query().rawExistsOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue((result as EntResult.Err).error is EntError.QueryRejected)
-    }
-
-    // ---------- visibleExistsOrError ----------
-
-    @Test
-    fun `visibleExistsOrError happy paths`() {
-        val client = freshClient()
-
-        val emptyResult = client.posts.query().visibleExistsOrError()
-        assertTrue(emptyResult is EntResult.Ok)
-        assertEquals(false, (emptyResult as EntResult.Ok).value)
-
-        client.posts.create { title = "x" }.saveOrThrow()
-        val populatedResult = client.posts.query().visibleExistsOrError()
-        assertTrue(populatedResult is EntResult.Ok)
-        assertEquals(true, (populatedResult as EntResult.Ok).value)
-    }
-
-    @Test
-    fun `visibleExistsOrError surfaces interceptor rejection as Err(QueryRejected)`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ -> scope.reject("nope") },
-                    name = "ve-rejector",
-                )
-            }
-        }
-        val result = client.posts.query().visibleExistsOrError()
-        assertTrue(result is EntResult.Err)
-        assertTrue((result as EntResult.Err).error is EntError.QueryRejected)
+        val result = client.posts.query().rawExists()
+        val failed = assertIs<ReadResult.Failed>(result)
+        val rejected = assertIs<EntQueryRejectedException>(failed.exception)
+        assertEquals("nope", rejected.reason)
+        assertEquals("re-rejector", rejected.interceptor)
     }
 }

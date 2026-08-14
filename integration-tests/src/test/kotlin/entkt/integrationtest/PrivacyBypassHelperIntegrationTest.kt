@@ -3,20 +3,27 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.result.EntMutationPrivacyDeniedException
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.MutationResult
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 
 /**
  * End-to-end coverage of the generated `bypassPrivacy_DANGEROUS(reason) { ... }`
  * helper. Reuses [ArticlePolicy] (drafts are LOAD-denied to non-authors; CREATE
  * requires auth) so the bypass has something real to skip. The viewer is
  * [Viewer.Anonymous] throughout, so privacy denies these operations unless the
- * block elevates.
+ * block elevates: a denied create is
+ * `MutationResult.Failed(EntMutationPrivacyDeniedException)` and a denied load
+ * is `ReadResult.Failed(EntPrivacyDeniedException)` — never a throw.
  */
 class PrivacyBypassHelperIntegrationTest : PostgresTestBase() {
 
@@ -33,20 +40,25 @@ class PrivacyBypassHelperIntegrationTest : PostgresTestBase() {
         // Seed a user + an unpublished article via the bypass — as Anonymous,
         // CREATE is fail-closed denied for both, so the block is the only way in.
         val (userId, articleId) = client.bypassPrivacy_DANGEROUS("seed draft") { b ->
-            val uid = b.users.create { name = "u"; email = "u@x.com" }.saveOrThrow().id
-            val aid = b.articles.create { title = "draft"; published = false; authorId = uid }.saveOrThrow().id
+            val uid = b.users.create { name = "u"; email = "u@x.com" }.saveAndLoad().getOrThrow().id
+            val aid = b.articles.create { title = "draft"; published = false; authorId = uid }
+                .saveAndLoad().getOrThrow().id
             uid to aid
         }
 
         // Outside the block, Anonymous CREATE of an article is denied...
-        assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.create { title = "x"; published = false; authorId = userId }.saveOrThrow()
-        }
+        val createFailed = assertIs<MutationResult.Failed>(
+            client.articles.create { title = "x"; published = false; authorId = userId }.save(),
+        )
+        assertIs<EntMutationPrivacyDeniedException>(createFailed.exception)
         // ...and Anonymous LOAD of the unpublished article is denied...
-        assertFailsWith<EntPrivacyDeniedException> { client.articles.byIdOrThrow(articleId) }
+        val loadFailed = assertIs<ReadResult.Failed>(client.articles.findById(articleId))
+        assertIs<EntPrivacyDeniedException>(loadFailed.exception)
         // ...but LOAD succeeds inside a bypass block.
-        val loaded = client.bypassPrivacy_DANGEROUS("read draft") { it.articles.byIdOrThrow(articleId) }
-        assertEquals("draft", loaded.title)
+        val loaded = client.bypassPrivacy_DANGEROUS("read draft") {
+            it.articles.findById(articleId).getOrThrow()
+        }
+        assertEquals("draft", loaded?.title)
     }
 
     @Test
@@ -70,8 +82,8 @@ class PrivacyBypassHelperIntegrationTest : PostgresTestBase() {
         // The bypass scopes a derived client; its copied config (here, the
         // afterCreate hook) must still fire — bypass skips privacy, not hooks.
         client.bypassPrivacy_DANGEROUS("seed") { b ->
-            val uid = b.users.create { name = "u"; email = "u@x.com" }.saveOrThrow().id
-            b.articles.create { title = "hooked"; published = false; authorId = uid }.saveOrThrow()
+            val uid = b.users.create { name = "u"; email = "u@x.com" }.saveAndLoad().getOrThrow().id
+            b.articles.create { title = "hooked"; published = false; authorId = uid }.save().getOrThrow()
         }
         assertEquals(listOf("hooked"), created)
     }

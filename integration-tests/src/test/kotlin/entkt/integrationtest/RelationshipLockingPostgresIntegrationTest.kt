@@ -3,9 +3,14 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.postgres.PostgresDriver
 import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.runtime.result.EntUnexpectedMutationException
+import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.TransactionResult
+import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -16,7 +21,7 @@ import javax.sql.DataSource
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -31,6 +36,14 @@ import kotlin.test.assertTrue
  *    recording driver;
  *  - concurrent opposite-orientation writes converge without deadlocking,
  *    because the canonical lock serializes the junction read-diff-write.
+ *
+ * Under the canonical result algebra, capability preflight failures
+ * (`UnsupportedDriverCapabilityException`) no longer propagate out of the
+ * mutation terminal: they surface as
+ * `MutationResult.Failed(EntUnexpectedMutationException(NotPersisted, cause))`,
+ * and — because a failed transaction-client mutation marks the scope
+ * rollback-only — the `withTransaction` boundary reports
+ * `TransactionResult.Failed` carrying that same exception.
  */
 @Testcontainers
 class RelationshipLockingPostgresIntegrationTest {
@@ -63,7 +76,7 @@ class RelationshipLockingPostgresIntegrationTest {
             inner.serializeRelationship(key)
         }
 
-        override fun <T> withTransaction(block: (Driver) -> T): T =
+        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
             inner.withTransaction { tx -> block(RecordingDriver(tx, keys)) }
     }
 
@@ -83,7 +96,7 @@ class RelationshipLockingPostgresIntegrationTest {
         override val supportsRelationshipSerialization: Boolean
             get() = relationshipSerialization ?: inner.supportsRelationshipSerialization
 
-        override fun <T> withTransaction(block: (Driver) -> T): T =
+        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
             inner.withTransaction { tx -> block(CapabilityOverrideDriver(tx, insertIgnore, relationshipSerialization)) }
     }
 
@@ -108,6 +121,19 @@ class RelationshipLockingPostgresIntegrationTest {
             }
         }
 
+    /**
+     * Assert the boundary reports the canonical capability-preflight
+     * failure shape: `TransactionResult.Failed` carrying
+     * `EntUnexpectedMutationException(NotPersisted)` whose cause is
+     * [UnsupportedDriverCapabilityException].
+     */
+    private fun assertCapabilityRejected(result: TransactionResult<*>) {
+        val failed = assertIs<TransactionResult.Failed>(result)
+        val wrapped = assertIs<EntUnexpectedMutationException>(failed.exception)
+        assertEquals(MutationWriteState.NotPersisted, wrapped.writeState, "preflight rejects before any write")
+        assertIs<UnsupportedDriverCapabilityException>(wrapped.cause)
+    }
+
     @Test
     fun `Canonical save takes the canonical relationship lock — identical key from both orientations`() {
         setupDb()
@@ -115,13 +141,17 @@ class RelationshipLockingPostgresIntegrationTest {
         val client = sysClient(RecordingDriver(PostgresDriver(dataSource), keys)) {
             defaultRelationshipLocking = RelationshipLocking.Canonical
         }
-        val post = client.posts.create { title = "p" }.save()
-        val post2 = client.posts.create { title = "p2" }.save()
-        val tag = client.tags.create { name = "a" }.save()
+        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
+        val post2 = client.posts.create { title = "p2" }.saveAndLoad().getOrThrow()
+        val tag = client.tags.create { name = "a" }.saveAndLoad().getOrThrow()
 
         // Post-side Canonical add, then Tag-side Canonical add.
-        client.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }
-        client.withTransaction { tx -> tx.tags.update(tag.id) { posts.add(post2.id) }.save() }
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+        }.getOrThrow()
+        client.withTransaction { tx ->
+            tx.tags.update(tag.id) { posts.add(post2.id) }.save().orRollback()
+        }.getOrThrow()
 
         val expected = RelationshipLockKey.canonical("post_tags", listOf("post_id", "tag_id"))
         assertEquals(2, keys.size, "both Canonical saves take the relationship lock once")
@@ -137,10 +167,12 @@ class RelationshipLockingPostgresIntegrationTest {
         val keys = Collections.synchronizedList(mutableListOf<RelationshipLockKey>())
         // No config override → defaultRelationshipLocking = OwnerOnly.
         val client = sysClient(RecordingDriver(PostgresDriver(dataSource), keys))
-        val post = client.posts.create { title = "p" }.save()
-        val tag = client.tags.create { name = "a" }.save()
+        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
+        val tag = client.tags.create { name = "a" }.saveAndLoad().getOrThrow()
 
-        client.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+        }.getOrThrow()
 
         assertTrue(keys.isEmpty(), "OwnerOnly must not call serializeRelationship; got $keys")
     }
@@ -151,8 +183,8 @@ class RelationshipLockingPostgresIntegrationTest {
         val client = sysClient(PostgresDriver(dataSource)) {
             defaultRelationshipLocking = RelationshipLocking.Canonical
         }
-        val post = client.posts.create { title = "p" }.save()
-        val tag = client.tags.create { name = "a" }.save()
+        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
+        val tag = client.tags.create { name = "a" }.saveAndLoad().getOrThrow()
 
         val rounds = 20
         val errorA = AtomicReference<Throwable?>(null)
@@ -162,12 +194,18 @@ class RelationshipLockingPostgresIntegrationTest {
         // opposite orientations — maximal contention on the post_tags
         // relationship. Without the canonical lock these interleave at the
         // junction-row level and deadlock (SQLSTATE 40P01); with it they
-        // serialize and every transaction commits.
+        // serialize and every transaction commits. getOrThrow() on each
+        // boundary makes any Failed transaction (e.g. a deadlock reported
+        // structurally) throw into the thread's error ref.
         val a = thread(start = false, name = "post-side") {
             try {
                 repeat(rounds) {
-                    client.withTransaction { tx -> tx.posts.update(post.id) { tags.set(listOf(tag.id)) }.save() }
-                    client.withTransaction { tx -> tx.posts.update(post.id) { tags.set(emptyList()) }.save() }
+                    client.withTransaction { tx ->
+                        tx.posts.update(post.id) { tags.set(listOf(tag.id)) }.save().orRollback()
+                    }.getOrThrow()
+                    client.withTransaction { tx ->
+                        tx.posts.update(post.id) { tags.set(emptyList()) }.save().orRollback()
+                    }.getOrThrow()
                 }
             } catch (t: Throwable) {
                 errorA.set(t)
@@ -176,8 +214,12 @@ class RelationshipLockingPostgresIntegrationTest {
         val b = thread(start = false, name = "tag-side") {
             try {
                 repeat(rounds) {
-                    client.withTransaction { tx -> tx.tags.update(tag.id) { posts.set(listOf(post.id)) }.save() }
-                    client.withTransaction { tx -> tx.tags.update(tag.id) { posts.set(emptyList()) }.save() }
+                    client.withTransaction { tx ->
+                        tx.tags.update(tag.id) { posts.set(listOf(post.id)) }.save().orRollback()
+                    }.getOrThrow()
+                    client.withTransaction { tx ->
+                        tx.tags.update(tag.id) { posts.set(emptyList()) }.save().orRollback()
+                    }.getOrThrow()
                 }
             } catch (t: Throwable) {
                 errorB.set(t)
@@ -202,27 +244,38 @@ class RelationshipLockingPostgresIntegrationTest {
     fun `add or set is rejected on a driver lacking insertIgnore, but remove-only commits`() {
         setupDb()
         val base = sysClient(PostgresDriver(dataSource))
-        val post = base.posts.create { title = "p" }.save()
-        val tagA = base.tags.create { name = "a" }.save()
-        val tagB = base.tags.create { name = "b" }.save()
+        val post = base.posts.create { title = "p" }.saveAndLoad().getOrThrow()
+        val tagA = base.tags.create { name = "a" }.saveAndLoad().getOrThrow()
+        val tagB = base.tags.create { name = "b" }.saveAndLoad().getOrThrow()
         // Seed a link to remove later.
-        base.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tagA.id) }.save() }
+        base.withTransaction { tx ->
+            tx.posts.update(post.id) { tags.add(tagA.id) }.save().orRollback()
+        }.getOrThrow()
         assertEquals(1L, junctionRowCount())
 
         val capped = sysClient(CapabilityOverrideDriver(PostgresDriver(dataSource), insertIgnore = false))
 
         // add / set stage an insert → require supportsInsertIgnore → rejected
-        // before any write.
-        assertFailsWith<UnsupportedDriverCapabilityException> {
-            capped.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tagB.id) }.save() }
-        }
-        assertFailsWith<UnsupportedDriverCapabilityException> {
-            capped.withTransaction { tx -> tx.posts.update(post.id) { tags.set(listOf(tagB.id)) }.save() }
-        }
+        // before any write. The preflight failure no longer propagates as a
+        // thrown exception: it is Failed(EntUnexpectedMutationException(
+        // NotPersisted, cause = UnsupportedDriverCapabilityException)), and
+        // the boundary reports the recorded failure.
+        assertCapabilityRejected(
+            capped.withTransaction { tx ->
+                tx.posts.update(post.id) { tags.add(tagB.id) }.save().orRollback()
+            },
+        )
+        assertCapabilityRejected(
+            capped.withTransaction { tx ->
+                tx.posts.update(post.id) { tags.set(listOf(tagB.id)) }.save().orRollback()
+            },
+        )
         assertEquals(1L, junctionRowCount(), "rejected saves must not have written")
 
         // remove-only stages no insert → exempt from the preflight → commits.
-        capped.withTransaction { tx -> tx.posts.update(post.id) { tags.remove(tagA.id) }.save() }
+        capped.withTransaction { tx ->
+            tx.posts.update(post.id) { tags.remove(tagA.id) }.save().orRollback()
+        }.getOrThrow()
         assertEquals(0L, junctionRowCount(), "remove-only save commits on a driver without insertIgnore")
     }
 
@@ -230,16 +283,20 @@ class RelationshipLockingPostgresIntegrationTest {
     fun `Canonical save is rejected on a driver lacking relationship serialization while OwnerOnly commits`() {
         setupDb()
         val base = sysClient(PostgresDriver(dataSource))
-        val post = base.posts.create { title = "p" }.save()
-        val tag = base.tags.create { name = "a" }.save()
+        val post = base.posts.create { title = "p" }.saveAndLoad().getOrThrow()
+        val tag = base.tags.create { name = "a" }.saveAndLoad().getOrThrow()
 
-        // Canonical needs supportsRelationshipSerialization → rejected.
+        // Canonical needs supportsRelationshipSerialization → rejected as
+        // Failed(EntUnexpectedMutationException(NotPersisted, cause =
+        // UnsupportedDriverCapabilityException)).
         val canonicalClient = sysClient(
             CapabilityOverrideDriver(PostgresDriver(dataSource), relationshipSerialization = false),
         ) { defaultRelationshipLocking = RelationshipLocking.Canonical }
-        assertFailsWith<UnsupportedDriverCapabilityException> {
-            canonicalClient.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }
-        }
+        assertCapabilityRejected(
+            canonicalClient.withTransaction { tx ->
+                tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+            },
+        )
         assertEquals(0L, junctionRowCount(), "rejected Canonical save must not have written")
 
         // The same capability-lacking driver under the default OwnerOnly needs
@@ -247,7 +304,9 @@ class RelationshipLockingPostgresIntegrationTest {
         val ownerOnlyClient = sysClient(
             CapabilityOverrideDriver(PostgresDriver(dataSource), relationshipSerialization = false),
         )
-        ownerOnlyClient.withTransaction { tx -> tx.posts.update(post.id) { tags.add(tag.id) }.save() }
+        ownerOnlyClient.withTransaction { tx ->
+            tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+        }.getOrThrow()
         assertEquals(1L, junctionRowCount())
     }
 }

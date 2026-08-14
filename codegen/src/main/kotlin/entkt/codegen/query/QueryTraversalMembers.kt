@@ -61,11 +61,11 @@ private fun deferredShapedSourceStep(
         // The source's interceptor chain does NOT fire at queryX()
         // time; it fires here, at the terminal's call site inside
         // the terminal's try/catch — which is what lets
-        // `.queryX().allOrError()` catch source-step rejections as
+        // `.queryX().all()` capture source-step rejections as
         // `Err(QueryRejected)`.
         .add(
-            "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, %T.QUERY)\n",
-            READ_OPERATION, ENT_OPERATION,
+            "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL)\n",
+            READ_OPERATION,
         )
         // The embedded shape is the POST-interceptor source shape:
         // sourceSpec's predicates / orderBy / limit / offset already
@@ -206,9 +206,9 @@ internal fun buildM2MTraversal(
         // does NOT fire here; it fires at the terminal's call
         // site inside the terminal's try/catch (see KDoc on
         // `deferredSourceStep`). This is what lets
-        // `.queryX().allOrError()` catch source-step rejections
+        // `.queryX().all()` capture source-step rejections
         // as `Err(QueryRejected)` instead of having queryX()
-        // throw before allOrError() can run.
+        // throw before all() could capture it.
         .addStatement("val target = %T(driver, client)", targetQueryClass)
         // Cross-class write through the @EntktInternal seeder.
         .addStatement(
@@ -219,7 +219,7 @@ internal fun buildM2MTraversal(
         // source-Query instance so the deferred lambda is
         // immune to later mutations on `this`. Without the
         // snapshot, `users.queryPosts(); users.where(...);
-        // posts.allOrThrow()` would let the post-queryX where
+        // posts.all()` would let the post-queryX where
         // leak into posts' bridge predicate, which contradicts
         // the pre-deferral snapshot-at-construction semantics.
         // List / nullable fields are immutable values, so copying
@@ -302,9 +302,9 @@ internal fun buildTraversal(
         // does NOT fire here; it fires at the terminal's call
         // site inside the terminal's try/catch (see KDoc on
         // `deferredSourceStep`). This lets
-        // `.queryX().allOrError()` catch source-step rejections
+        // `.queryX().all()` capture source-step rejections
         // as `Err(QueryRejected)` instead of having queryX()
-        // throw before allOrError() can run.
+        // throw before all() could capture it.
         .addStatement("val target = %T(driver, client)", targetQueryClass)
         // Cross-class write through the @EntktInternal seeder.
         .addStatement(
@@ -315,7 +315,7 @@ internal fun buildTraversal(
         // source-Query instance so the deferred lambda is
         // immune to later mutations on `this`. Without the
         // snapshot, `users.queryPosts(); users.where(...);
-        // posts.allOrThrow()` would let the post-queryX where
+        // posts.all()` would let the post-queryX where
         // leak into posts' bridge predicate, which contradicts
         // the pre-deferral snapshot-at-construction semantics.
         // List / nullable fields are immutable values, so copying

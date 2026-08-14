@@ -43,7 +43,7 @@ class ReadClientPostureCompileTest {
         user.finalize(registry)
         return EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput("Car", car), SchemaInput("User", user)))
-            .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
+            .toCompileTestSources()
     }
 
     private fun compile(sources: List<SourceFile>): JvmCompilationResult =
@@ -140,10 +140,11 @@ class ReadClientPostureCompileTest {
                 import com.example.ent.CarLoadPrivacyRule
                 import com.example.ent.EntReadClient
                 import entkt.runtime.privacy.PrivacyDecision
+                import entkt.runtime.result.getOrThrow
                 import entkt.runtime.validation.ValidationDecision
 
                 fun anyCarExists(client: EntReadClient): Boolean =
-                    client.cars.query { }.visibleExists()
+                    client.cars.query { }.rawExists().getOrThrow()
 
                 val validation = CarCreateValidationRule { ctx ->
                     anyCarExists(ctx.client)

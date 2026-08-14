@@ -6,8 +6,8 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.result.EntNoChangesException
 import entkt.runtime.mutation.FieldPatch
+import entkt.runtime.result.getOrThrow
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,7 +27,12 @@ import kotlin.test.assertFailsWith
  * called out (nullable FK isn't currently in the test schemas).
  *
  * Runs against Postgres so the generated `_mutationView` adapter is
- * exercised end-to-end through the production driver.
+ * exercised end-to-end through the production driver. Mutation
+ * terminals follow the canonical algebra: `save(): MutationResult<Unit>`
+ * / `saveAndLoad(): MutationResult<Article>`, projected with
+ * `getOrThrow()`. A hook that empties the write set no longer fails
+ * the save — the update degenerates to the assignment-free shape and
+ * succeeds without writing.
  */
 class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
@@ -54,12 +59,12 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         val author = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.saveAndLoad().getOrThrow()
         val article = client.articles.create {
             title = "Original"
             published = false
             authorId = author.id
-        }.save()
+        }.saveAndLoad().getOrThrow()
         return author to article
     }
 
@@ -72,7 +77,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         client.articles.update(article.id) {
             title = "Updated"
             notes = "a draft note"
-        }.save()
+        }.save().getOrThrow()
 
         val ctx = captured ?: error("hook did not run")
         assertEquals(FieldPatch.Set("Updated"), ctx.patch.title)
@@ -92,11 +97,11 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         // Seed with a non-null notes value so the clear is observable.
         val seeded = client.articles.update(article.id) {
             notes = "initial"
-        }.save()!!
+        }.saveAndLoad().getOrThrow()
 
         client.articles.update(seeded.id) {
             notes = null
-        }.save()
+        }.save().getOrThrow()
 
         val ctx = captured ?: error("hook did not run")
         // FieldPatch<String?> for the nullable scalar carries Set(null)
@@ -114,7 +119,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
         val updated = client.articles.update(article.id) {
             title = "Hook touched too"
-        }.save()!!
+        }.saveAndLoad().getOrThrow()
 
         assertEquals("Hook touched too", updated.title)
         assertEquals(true, updated.published)  // hook's contribution
@@ -131,7 +136,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         val updated = client.articles.update(article.id) {
             title = "Title sticks"
             published = true   // unset by the hook
-        }.save()!!
+        }.saveAndLoad().getOrThrow()
 
         assertEquals("Title sticks", updated.title)
         // Hook unset overrode the caller's published assignment.
@@ -139,17 +144,24 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `hook unsetting all dirty fields produces NoChanges`() {
+    fun `hook unsetting all dirty fields succeeds without writing`() {
         val client = newClient(beforeUpdate = { ctx ->
             ctx.mutation.unsetTitle()
         })
         val (_, article) = seedArticle(client)
 
-        assertFailsWith<EntNoChangesException> {
-            client.articles.update(article.id) {
-                title = "About to be unset"
-            }.save()
-        }
+        // The hook empties the write set, so the update degenerates to
+        // the assignment-free shape: target-existence check + pre-write
+        // phases, then Success WITHOUT persist — `saveAndLoad` returns
+        // the current row. (This replaces the removed
+        // EntNoChangesException failure.)
+        val current = client.articles.update(article.id) {
+            title = "About to be unset"
+        }.saveAndLoad().getOrThrow()
+
+        assertEquals("Original", current.title, "no write happened; the current row is returned")
+        // The database row is untouched.
+        assertEquals("Original", client.articles.findById(article.id).getOrThrow()!!.title)
     }
 
     @Test
@@ -158,21 +170,24 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
             // Required field set to null is observable via the
             // mutation getter (the throw-on-untouched gate is on
             // dirtyFields, not on the value). The hook clears the
-            // bad assignment so _checkRequiredNotNull doesn't fire.
+            // bad assignment so the required-not-null check doesn't
+            // reject the save.
             if (ctx.mutation.title == null) {
                 ctx.mutation.unsetTitle()
             }
         })
         val (_, article) = seedArticle(client)
 
-        // Without the repair this would throw IllegalStateException;
-        // with the repair, the only dirty field is gone → NoChanges.
-        assertFailsWith<EntNoChangesException> {
-            @Suppress("CAST_NEVER_SUCCEEDS")
-            client.articles.update(article.id) {
-                title = null as String?  // explicitly assign null to a required field
-            }.save()
-        }
+        // Without the repair this would be Failed(EntValidationException)
+        // from the required-not-null check; with the repair, the only
+        // dirty field is gone → assignment-free update → Success without
+        // a write.
+        @Suppress("CAST_NEVER_SUCCEEDS")
+        val current = client.articles.update(article.id) {
+            title = null as String?  // explicitly assign null to a required field
+        }.saveAndLoad().getOrThrow()
+
+        assertEquals("Original", current.title, "the bad assignment was repaired away; the row is unchanged")
     }
 
     @Test
@@ -183,7 +198,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
         client.articles.update(article.id) {
             title = "set by caller"
-        }.save()
+        }.save().getOrThrow()
 
         val ctx = captured ?: error("hook did not run")
         // title was assigned → mutation getter returns the staged value.
@@ -194,4 +209,3 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         assertFailsWith<IllegalStateException> { ctx.mutation.published }
     }
 }
-

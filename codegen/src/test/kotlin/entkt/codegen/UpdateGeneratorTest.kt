@@ -102,8 +102,10 @@ class UpdateGeneratorTest {
         // through `ctx.mutation.name` (the throw-on-untouched getter
         // gates on `!in dirtyFields`, not on the value), so a hook can
         // detect and repair via `unsetName()` or `mutation.name = "x"`.
-        // If unrepaired, `_checkRequiredNotNull()` throws after the
-        // hook loop and before the canonical patch / privacy / write.
+        // If unrepaired, `_checkRequiredNotNull()` returns violations
+        // after the hook loop and executeSave maps them to
+        // Failed(EntValidationException) via _validationFailed before
+        // the canonical patch / privacy / write.
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -128,22 +130,29 @@ class UpdateGeneratorTest {
             "Throw-on-untouched getter must gate on dirtyFields, not on value, so dirty+null reads as null\n$output"
         }
 
-        // (3) Safety net: _checkRequiredNotNull throws for unrepaired
-        //     dirty+null required fields after the hook loop.
+        // (3) Safety net: _checkRequiredNotNull returns the violations
+        //     for unrepaired dirty+null required fields after the hook
+        //     loop; executeSave maps a non-empty list into
+        //     Failed(EntValidationException) via _validationFailed —
+        //     validation failures are result values, not throws.
         val checkFnIdx = output.indexOf("private fun _checkRequiredNotNull()")
-        val checkFnEnd = output.indexOf("public fun save", checkFnIdx)
-        assert(checkFnIdx != -1 && checkFnEnd != -1) {
-            "Expected generated _checkRequiredNotNull\n$output"
-        }
+        assert(checkFnIdx != -1) { "Expected generated _checkRequiredNotNull\n$output" }
+        val checkFnEnd = output.indexOf("private fun ", checkFnIdx + 1)
+        assert(checkFnEnd != -1) { "Couldn't find end of _checkRequiredNotNull body\n$output" }
         val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
-        // Throws ValidationException so saveOrError wraps it into
-        // EntError.ValidationFailed.
         assert(
             checkFnBody.contains(
-                "if (\"name\" in dirtyFields && this.name == null) throw ValidationException(\"User\", listOf(ValidationDecision.Invalid(\"name is required\", field = \"name\")))",
+                "if (\"name\" in dirtyFields && this.name == null) return listOf(ValidationViolation(\"name is required\", field = \"name\"))",
             ),
         ) {
-            "_checkRequiredNotNull must throw ValidationException for dirty+null required field as the safety net\n$checkFnBody"
+            "_checkRequiredNotNull must return the violation for a dirty+null required field as the safety net\n$checkFnBody"
+        }
+        assert(
+            output.contains(
+                "val requiredViolations = _checkRequiredNotNull() if (requiredViolations.isNotEmpty()) return _validationFailed(requiredViolations)",
+            ),
+        ) {
+            "Non-empty required-null violations must return Failed via _validationFailed, not throw\n$output"
         }
     }
 
@@ -158,9 +167,13 @@ class UpdateGeneratorTest {
         // so a hook that calls mutation.unsetName() or mutation.name = "x"
         // can repair an explicit `name = null` builder assignment. Anchor
         // the check on the call site (preceded by the hook loop's closing
-        // brace) rather than the function declaration.
+        // brace) rather than the function declaration. A non-empty result
+        // becomes Failed(EntValidationException) via _validationFailed.
         val hookLoop = output.indexOf("for (hook in beforeUpdateHooks)")
-        val checkCallSite = output.indexOf("hook(ctx) } _checkRequiredNotNull()")
+        val checkCallSite = output.indexOf(
+            "hook(ctx) } val requiredViolations = _checkRequiredNotNull() " +
+                "if (requiredViolations.isNotEmpty()) return _validationFailed(requiredViolations)",
+        )
         val canonicalPatchPos = output.indexOf("val requestedPatch = _buildRequestedPatch()")
         assert(hookLoop != -1 && checkCallSite != -1 && canonicalPatchPos != -1) {
             "Expected hook loop, required-null check call site, and canonical patch construction\n$output"
@@ -186,23 +199,25 @@ class UpdateGeneratorTest {
             "_buildRequestedPatch() should be lenient (no throw on dirty+null required fields)\n$patchFnBody"
         }
 
-        // The dedicated check must throw when an unrepaired null persists
+        // The dedicated check must report an unrepaired null persisting
         // post-hooks. Required-field order in the function body depends on
         // schema declaration order, so just check the body contains the
-        // expected per-field throws.
+        // expected per-field violation returns. The violations flow into
+        // _validationFailed -> Failed(EntValidationException) — no throw.
         val checkFnIdx = output.indexOf("private fun _checkRequiredNotNull()")
         assert(checkFnIdx != -1) { "Expected generated _checkRequiredNotNull\n$output" }
-        val checkFnEnd = output.indexOf("public fun save", checkFnIdx)
+        val checkFnEnd = output.indexOf("private fun ", checkFnIdx + 1)
         assert(checkFnEnd != -1) { "Couldn't find end of _checkRequiredNotNull body\n$output" }
         val checkFnBody = output.substring(checkFnIdx, checkFnEnd)
-        // Throws ValidationException so saveOrError wraps it into
-        // EntError.ValidationFailed.
         assert(
             checkFnBody.contains(
-                "if (\"name\" in dirtyFields && this.name == null) throw ValidationException(\"User\", listOf(ValidationDecision.Invalid(\"name is required\", field = \"name\")))",
+                "if (\"name\" in dirtyFields && this.name == null) return listOf(ValidationViolation(\"name is required\", field = \"name\"))",
             ),
         ) {
-            "_checkRequiredNotNull() should throw ValidationException for unrepaired null `name`\n$checkFnBody"
+            "_checkRequiredNotNull() should return the violation for unrepaired null `name`\n$checkFnBody"
+        }
+        assert(!checkFnBody.contains("throw ")) {
+            "_checkRequiredNotNull() must report via violations, not throw\n$checkFnBody"
         }
     }
 
@@ -270,8 +285,9 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        // The internal current-row load short-circuits with null for missing rows
-        // before any hook, privacy, or validation runs.
+        // The internal current-row load short-circuits with
+        // Failed(EntTargetAbsentException) for missing rows before any
+        // hook, privacy, or validation runs.
         val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
         val hookPos = output.indexOf("for (hook in beforeSaveHooks)")
         assert(loadPos != -1) { "save() should load the current row via driver.byId(...)\n$output" }
@@ -281,21 +297,39 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `syntactically empty update throws NoChanges before owner-row load`() {
+    fun `assignment-free update is a target-existence check — owner-row load first, absent target is Failed`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The dirtyFields-empty check must run before the byId load to
-        // avoid leaking owner-row existence on `update(missingId) {}`.
-        val emptyCheckPos = output.indexOf("if (dirtyFields.isEmpty())")
-        val throwPos = output.indexOf("throw EntNoChangesException(EntError.NoChanges(\"User\", EntOperation.UPDATE, id))")
+        // EntNoChangesException is gone: a syntactically empty update no
+        // longer short-circuits before the owner-row load. It runs the
+        // target-existence check (the owner-row read) plus the pre-write
+        // phases like any other update; an absent target is
+        // Failed(EntTargetAbsentException("User", EntityKey("id", id))).
+        assert(!output.contains("EntNoChangesException")) {
+            "EntNoChangesException must be gone from the generated update\n$output"
+        }
         val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
-        assert(emptyCheckPos != -1) { "save() should check dirtyFields.isEmpty() at the top\n$output" }
-        assert(throwPos != -1) { "save() should throw EntNoChangesException for syntactically empty patches\n$output" }
-        assert(emptyCheckPos < loadPos) {
-            "Empty-patch check must run before driver.byId to avoid existence leaks\n$output"
+        assert(loadPos != -1) { "executeSave should load the current row via driver.byId(...)\n$output" }
+        assert(
+            output.contains(
+                "if (row0 == null) { val exception = EntTargetAbsentException(\"User\", EntityKey(\"id\", id)) " +
+                    "client.recordTransactionMutationFailure(exception) " +
+                    "return MutationResult.failedForInternalUse(exception) }",
+            ),
+        ) {
+            "Absent update target must be Failed(EntTargetAbsentException) recorded with the tx coordinator\n$output"
+        }
+        // The single dirtyFields-empty branch sits after the hooks —
+        // there is no pre-load syntactic empty check anymore.
+        val emptyCount = Regex(Regex.escape("if (dirtyFields.isEmpty()")).findAll(output).count()
+        assert(emptyCount == 1) {
+            "Expected exactly one dirtyFields-empty branch (post-hooks), got $emptyCount\n$output"
+        }
+        assert(loadPos < output.indexOf("if (dirtyFields.isEmpty())")) {
+            "The empty branch must come after the owner-row load (target-existence check first)\n$output"
         }
     }
 
@@ -375,7 +409,7 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `hook-cleared empty patch runs UPDATE privacy then throws NoChanges`() {
+    fun `hook-cleared empty patch runs UPDATE privacy and validation then succeeds without persisting`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -384,10 +418,10 @@ class UpdateGeneratorTest {
         // After hooks, if the requested patch is empty (dirtyFields was
         // cleared), generated code builds the unchanged candidate, runs
         // UPDATE privacy on it (real authorization decision against
-        // `before`), then throws NoChanges. Validation/driver/after-hooks/
-        // load-privacy are skipped.
-        // edgeChanges sidecar is computed between the
-        // canonical patch build and the empty-branch check.
+        // `before`), runs validation, then returns Success(entity) —
+        // skipping persist and post-persist (driver write, writeState
+        // transition, afterUpdate hooks). The edgeChanges sidecar is
+        // computed between the canonical patch build and the empty check.
         val emptyCheck = output.indexOf(
             "val edgeChanges = _buildEdgeChanges(pendingEdges) if (dirtyFields.isEmpty())",
         )
@@ -395,19 +429,37 @@ class UpdateGeneratorTest {
             "Hook-cleared check must run after _buildRequestedPatch+_buildEdgeChanges and before update defaults\n$output"
         }
 
-        // The privacy call inside the empty branch uses the unchanged
-        // candidate (built from `before`) with empty patches.
-        val emptyBlock = output.substring(emptyCheck, (emptyCheck + 800).coerceAtMost(output.length))
+        val successPos = output.indexOf("return MutationResult.Success(entity) }")
+        assert(successPos != -1 && emptyCheck < successPos) {
+            "Hook-cleared branch must end in Success(entity) without persisting\n$output"
+        }
+        val emptyBlock = output.substring(emptyCheck, successPos)
         assert(emptyBlock.contains("val effectivePatch = requestedPatch")) {
             "Hook-cleared branch must use requested as effective (skip update defaults)\n$output"
         }
+        // The privacy call inside the empty branch uses the unchanged
+        // candidate (built from `before`) with empty patches; a denial
+        // carries writeState = NotPersisted since nothing was written.
         assert(emptyBlock.contains(
-            "evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
         )) {
             "Hook-cleared branch should run UPDATE privacy on the unchanged candidate with edgeChanges sidecar\n$output"
         }
-        assert(emptyBlock.contains("throw EntNoChangesException")) {
-            "Hook-cleared branch should throw EntNoChangesException after UPDATE privacy\n$output"
+        assert(emptyBlock.contains(
+            "EntMutationPrivacyDeniedException(MutationWriteState.NotPersisted, \"User\", EntOperation.UPDATE, EntityKey(\"id\", id), denialReason)",
+        )) {
+            "No-op branch denial must be Failed(EntMutationPrivacyDeniedException) with NotPersisted\n$output"
+        }
+        assert(emptyBlock.contains(
+            "evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+        )) {
+            "Hook-cleared branch should run validation before succeeding\n$output"
+        }
+        assert(!emptyBlock.contains("driver.update(")) {
+            "Hook-cleared branch must not reach the driver write\n$output"
+        }
+        assert(!emptyBlock.contains("afterUpdateHooks")) {
+            "Hook-cleared branch must skip afterUpdate hooks (post-persist phase)\n$output"
         }
     }
 
@@ -416,7 +468,9 @@ class UpdateGeneratorTest {
         // Regression for the bug where updatedAt = updateDefaultNow() turned
         // every hook-cleared update into a real write: the post-defaults
         // values map was non-empty (it carried the synthetic updatedAt),
-        // bypassing the NoChanges branch and writing to the database.
+        // bypassing the no-op empty branch and writing to the database.
+        // (Decision: update-default derivation fires ONLY when a real
+        // assignment already exists.)
         val schema = UpdateDefaultEntity()
         finalize(schema)
         val output = generator.generate("UpdateDefaultEntity", schema).toString()
@@ -451,92 +505,100 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `generates the full save result-variant trio`() {
+    fun `save and saveAndLoad share one private executeSave path`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // saveOrNull is an explicit alias for save() — the canonical name
-        // per the result variants's *OrNull convention.
-        assert(output.contains("public fun saveOrNull(): User? = save()")) {
-            "Should generate saveOrNull() as an explicit alias for save()\n$output"
+        // One private execution member parameterized on returned-entity
+        // LOAD privacy; the two public terminals are thin projections
+        // over it, so pipeline behavior cannot diverge between them.
+        assert(output.contains("private fun executeSave(applyLoadPrivacy: Boolean): MutationResult<User>")) {
+            "Should generate private executeSave(applyLoadPrivacy) returning MutationResult<User>\n$output"
         }
-        // saveOrError wraps EntException (NotFound, NoChanges) into a
-        // structured EntResult; other exceptions still propagate per
-        // the result variants's deferred surface.
-        assert(output.contains("public fun saveOrError(): EntResult<User>")) {
-            "Should generate saveOrError(): EntResult<User>\n$output"
-        }
-        // saveOrError is the canonical entry point — saveOrThrow
-        // wraps it. The Ok arm wraps save()'s non-null return; null
-        // from save() (missing owner row) becomes Err(NotFound)
-        // inline rather than throwing.
         assert(
             output.contains(
-                "save()?.let { EntResult.Ok(it) } ?: EntResult.Err(EntError.NotFound(\"User\", EntOperation.UPDATE, id))",
+                "public fun save(): MutationResult<Unit> = when (val result = executeSave(applyLoadPrivacy = false)) " +
+                    "{ is MutationResult.Success -> MutationResult.Success(Unit) is MutationResult.Failed -> result }",
             ),
         ) {
-            "saveOrError should map save() non-null to Ok and null to Err(NotFound) inline\n$output"
+            "save() must project executeSave(applyLoadPrivacy = false) into MutationResult<Unit>\n$output"
         }
-        assert(output.contains("catch (e: EntException) { EntResult.Err(e.error) }")) {
-            "saveOrError should catch EntException and unwrap to Err(EntError)\n$output"
-        }
-        // PrivacyDeniedException → EntError.PrivacyDenied (operation
-        // converted from PrivacyOperation by name, since EntOperation
-        // mirrors it 1:1).
         assert(
             output.contains(
-                "catch (e: PrivacyDeniedException) { EntResult.Err(EntError.PrivacyDenied(e.entity, EntOperation.valueOf(e.operation.name), e.reason)) }",
+                "public fun saveAndLoad(): MutationResult<User> = executeSave(applyLoadPrivacy = true)",
             ),
         ) {
-            "saveOrError should wrap PrivacyDeniedException into EntError.PrivacyDenied\n$output"
+            "saveAndLoad() must delegate to executeSave(applyLoadPrivacy = true)\n$output"
         }
-        // ValidationException → EntError.ValidationFailed (operation
-        // is hardcoded UPDATE since ValidationException doesn't carry
-        // its own operation field and this is the update generator).
-        // result variants pivots the wire-level
-        // violation type from ValidationDecision.Invalid (rule-DSL
-        // shape) to ValidationViolation (consumer shape), so the
-        // catch arm maps via the runtime toValidationViolation()
-        // extension.
+        // Failure mapping now lives in the shared helpers: validation
+        // failures become Failed(EntValidationException(UPDATE)) via
+        // _validationFailed, and driver failures route through
+        // _classifyDriverFailure -> driver.classifyMutationException with the
+        // UPDATE operation. Every Failed construction site records the
+        // failure with the transaction coordinator hook.
         assert(
             output.contains(
-                "catch (e: ValidationException) { EntResult.Err(EntError.ValidationFailed(e.entity, EntOperation.UPDATE, e.violations.map { it.toValidationViolation() })) }",
+                "private fun _validationFailed(violations: List<ValidationViolation>): MutationResult<Nothing> " +
+                    "{ val exception = EntValidationException(\"User\", EntOperation.UPDATE, violations) " +
+                    "client.recordTransactionMutationFailure(exception) " +
+                    "return MutationResult.failedForInternalUse(exception) }",
             ),
         ) {
-            "saveOrError should wrap ValidationException into EntError.ValidationFailed, mapping each Invalid via toValidationViolation()\n$output"
+            "_validationFailed must build Failed(EntValidationException(UPDATE)) and record it\n$output"
         }
-        // trailing Exception catch routes anything not
-        // matched above through classifier — emitting
-        // ConstraintViolation for SQLSTATE 23xxx (Postgres) and
-        // DriverFailure with the raw cause otherwise.
         assert(
             output.contains(
-                "catch (e: Exception) { EntResult.Err(classifyDriverError(driver, e, \"User\", EntOperation.UPDATE)) }",
+                "private fun _classifyDriverFailure(e: Exception, fallback: MutationWriteState): EntMutationException " +
+                    "= driver.classifyMutationException(e, \"User\", EntOperation.UPDATE) " +
+                    "?: EntUnexpectedMutationException(fallback, e)",
             ),
         ) {
-            "saveOrError should route uncaught Exception through classifyDriverError with UPDATE operation\n$output"
+            "_classifyDriverFailure must delegate to driver.classifyMutationException(UPDATE) with the fallback state\n$output"
+        }
+        val failedCount = Regex(Regex.escape("MutationResult.failedForInternalUse(")).findAll(output).count()
+        val recordCount = Regex(Regex.escape("client.recordTransactionMutationFailure(")).findAll(output).count()
+        assert(failedCount > 0 && failedCount == recordCount) {
+            "Every Failed construction site must record the failure with the tx coordinator " +
+                "(failed=$failedCount, recorded=$recordCount)\n$output"
+        }
+        // The outer capture boundary: CancellationException is rethrown;
+        // any other escaping Exception is wrapped with the tracked
+        // writeState so callers learn what EntKt knows about the write.
+        assert(output.contains("var writeState = MutationWriteState.NotPersisted")) {
+            "executeSave must track writeState from NotPersisted\n$output"
+        }
+        assert(
+            output.contains(
+                "} catch (e: CancellationException) { throw e } catch (e: Exception) { " +
+                    "val exception = EntUnexpectedMutationException(writeState, e) " +
+                    "client.recordTransactionMutationFailure(exception) " +
+                    "return MutationResult.failedForInternalUse(exception) } }",
+            ),
+        ) {
+            "executeSave's outer boundary must rethrow cancellation and wrap unexpected exceptions with the tracked writeState\n$output"
         }
     }
 
     @Test
-    fun `saveOrThrow wraps saveOrError and throws via getOrThrow`() {
+    fun `removed legacy save surface — no saveOrNull saveOrError saveOrThrow or NoChanges`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // saveOrThrow no longer inlines the NotFound throw —
-        // it delegates to saveOrError().getOrThrow(), which throws
-        // EntNotFoundException via EntError.NotFound.toException().
-        // This keeps the mapping table (NotFound, NoChanges, Privacy,
-        // Validation, Constraint, Driver) in one place.
-        assert(
-            output.contains("public fun saveOrThrow(): User = saveOrError().getOrThrow()"),
-        ) {
-            "saveOrThrow should delegate to saveOrError().getOrThrow()\n$output"
-        }
+        // The result-variant family is gone. The sole throwing
+        // projection anywhere is the runtime getOrThrow() extension on
+        // the result types, so the builder emits no throwing or
+        // nullable terminals of its own.
+        assert(!output.contains("fun saveOrNull")) { "saveOrNull must be gone\n$output" }
+        assert(!output.contains("fun saveOrError")) { "saveOrError must be gone\n$output" }
+        assert(!output.contains("fun saveOrThrow")) { "saveOrThrow must be gone\n$output" }
+        assert(!output.contains("EntResult")) { "EntResult must be gone\n$output" }
+        assert(!output.contains("EntError")) { "EntError must be gone\n$output" }
+        assert(!output.contains("EntNoChangesException")) { "EntNoChangesException must be gone\n$output" }
+        assert(!output.contains("classifyDriverError")) { "Old classifyDriverError free function must be gone\n$output" }
     }
 
     @Test
@@ -1268,23 +1330,23 @@ class UpdateGeneratorTest {
     @Test
     fun `save clears _capturedPendingEdges in a finally that wraps every exit path`() {
         // The try/finally must wrap the entire post-assignment region
-        // so all exits clear the field — including the `return null`
-        // on driver.update failure, `throw EntNoChangesException`
-        // (top-of-save and hook-cleared branches), `return
-        // updatedEntity`, and any exception escaping hooks /
-        // privacy / validation / driver writes. Without the finally,
-        // a hook stashing ctx.mutation could read pendingEdges
-        // post-save — contradicting the getter's own contract.
+        // so all exits clear the field — including every
+        // `return MutationResult.failedForInternalUse(...)` (privacy
+        // denial, validation, vanished target, driver failure), the
+        // no-op `return MutationResult.Success(entity)`, the final
+        // `return MutationResult.Success(updatedEntity)`, and any
+        // exception escaping hooks toward the outer capture boundary.
+        // Without the finally, a hook stashing ctx.mutation could read
+        // pendingEdges post-save — contradicting the getter's contract.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The finally appears once, after `return updatedEntity`
-        // (the success exit). Kotlin's try/finally semantics cover
-        // all other in-block exits (return null, throw, propagating
-        // exceptions) without needing extra structure.
-        assert(output.contains("return updatedEntity } finally { _capturedPendingEdges = null }")) {
-            "Save must clear _capturedPendingEdges in a finally that follows the success return\n$output"
+        // The finally appears once, after the success return. Kotlin's
+        // try/finally semantics cover all other in-block exits (Failed
+        // returns, propagating exceptions) without extra structure.
+        assert(output.contains("return MutationResult.Success(updatedEntity) } finally { _capturedPendingEdges = null }")) {
+            "executeSave must clear _capturedPendingEdges in a finally that follows the success return\n$output"
         }
         // Symmetry guard: also fires for non-M2M schemas, since the
         // _capturedPendingEdges field exists uniformly across all
@@ -1293,7 +1355,7 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val userOutput = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(userOutput.contains("return updatedEntity } finally { _capturedPendingEdges = null }")) {
+        assert(userOutput.contains("return MutationResult.Success(updatedEntity) } finally { _capturedPendingEdges = null }")) {
             "Non-M2M schemas must also clear _capturedPendingEdges in finally\n$userOutput"
         }
     }
@@ -1413,7 +1475,7 @@ class UpdateGeneratorTest {
         // the relationship lock first is what makes the two deadlock-free.
         val preflightIdx = output.indexOf("if (relationshipLocking == RelationshipLocking.Canonical && !driver.supportsRelationshipSerialization)")
         val lockIdx = output.indexOf("driver.serializeRelationship(RelationshipLockKey.canonical(\"m2m_post_tags\"")
-        val ownerReadIdx = output.indexOf("val row0 = if (consistency == UpdateConsistency.Pessimistic)")
+        val ownerReadIdx = output.indexOf("val row0 = try { if (consistency == UpdateConsistency.Pessimistic)")
         assert(preflightIdx != -1 && lockIdx != -1 && ownerReadIdx != -1) {
             "Missing one of the ordering anchors\n$output"
         }
@@ -1498,7 +1560,7 @@ class UpdateGeneratorTest {
         // ordering by string indices.
         val pessIdx = output.indexOf("if (consistency == UpdateConsistency.Pessimistic)")
         val m2mIdx = output.indexOf("if (_hasPendingLinkTableM2MOps())")
-        val readIdx = output.indexOf("val row0 = if (consistency == UpdateConsistency.Pessimistic)")
+        val readIdx = output.indexOf("val row0 = try { if (consistency == UpdateConsistency.Pessimistic)")
         assert(pessIdx != -1 && m2mIdx != -1 && readIdx != -1) {
             "Missing one of the preflight anchors\n$output"
         }
@@ -1653,25 +1715,39 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Four-arm read:
+        // Four-arm read, inside the canonical capture boundary:
         //   Pessimistic                            → readRowForUpdate
         //   M2M pending + supportsReadRowForUpdate → readRowForUpdate
         //   M2M pending + !supportsReadRowForUpdate→ serializeOwnerEdgeAndRead
         //   ReadCurrent (no M2M pending)           → byId
-        assert(output.contains("val row0 = if (consistency == UpdateConsistency.Pessimistic)")) {
-            "Pessimistic branch should fire first\n$output"
+        assert(output.contains("val row0 = try { if (consistency == UpdateConsistency.Pessimistic)")) {
+            "Pessimistic branch should fire first, inside the capture boundary\n$output"
         }
         assert(output.contains("else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")) {
             "M2M+RRFU branch should reuse readRowForUpdate\n$output"
         }
-        assert(output.contains("else if (_hasPendingLinkTableM2MOps())")) {
+        assert(output.contains("else if (_hasPendingLinkTableM2MOps()) { driver.serializeOwnerEdgeAndRead(M2MPost.TABLE, id) }")) {
             "M2M+!RRFU branch should fall through to serializeOwnerEdgeAndRead\n$output"
         }
-        assert(output.contains("driver.serializeOwnerEdgeAndRead(M2MPost.TABLE, id) ?: return null")) {
-            "Cooperative serialization primitive should be called for the !RRFU+M2M path\n$output"
-        }
-        assert(output.contains("driver.byId(M2MPost.TABLE, id) ?: return null")) {
+        assert(output.contains("else { driver.byId(M2MPost.TABLE, id) }")) {
             "byId fallback path should remain for ReadCurrent without M2M pending\n$output"
+        }
+        // No null-return exits: a failing read maps through the
+        // classifier with NotPersisted, and an absent owner row is
+        // Failed(EntTargetAbsentException).
+        assert(!output.contains("?: return null")) {
+            "Null-return owner-read exits must be gone — failures are MutationResult.Failed\n$output"
+        }
+        assert(
+            output.contains(
+                "} catch (e: CancellationException) { throw e } catch (e: Exception) { " +
+                    "val classified = _classifyDriverFailure(e, MutationWriteState.NotPersisted) " +
+                    "client.recordTransactionMutationFailure(classified) " +
+                    "return MutationResult.failedForInternalUse(classified) } " +
+                    "if (row0 == null) { val exception = EntTargetAbsentException(\"M2MPost\", EntityKey(\"id\", id))",
+            ),
+        ) {
+            "Owner-read failure must classify with NotPersisted; absent row0 must be Failed(EntTargetAbsentException)\n$output"
         }
     }
 
@@ -1759,14 +1835,20 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         val patchIdx = output.indexOf("val requestedPatch = _buildRequestedPatch()")
-        val edgeChangesIdx = output.indexOf("val edgeChanges = _buildEdgeChanges(pendingEdges)")
+        // The junction read inside _buildEdgeChanges is a driver
+        // round-trip, so the M2M-capable build sits inside its own
+        // capture boundary classifying failures as NotPersisted.
+        val edgeChangesIdx = output.indexOf(
+            "val edgeChanges = try { _buildEdgeChanges(pendingEdges) } catch (e: CancellationException) { throw e } " +
+                "catch (e: Exception) { val classified = _classifyDriverFailure(e, MutationWriteState.NotPersisted)",
+        )
         // gates the empty-branch condition on M2M-pending so
         // M2M-only updates proceed past it.
         val emptyIdx = output.indexOf(
             "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch",
         )
         assert(patchIdx != -1 && edgeChangesIdx != -1 && emptyIdx != -1) {
-            "Missing one of: requestedPatch / edgeChanges / empty branch\n$output"
+            "Missing one of: requestedPatch / captured edgeChanges build / empty branch\n$output"
         }
         assert(patchIdx < edgeChangesIdx) {
             "edgeChanges must be computed after the canonical requested patch\n$output"
@@ -1782,43 +1864,61 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // threads edgeChanges into both the empty-branch
-        // privacy evaluation AND the non-empty branch's privacy +
-        // validation evaluations. Two occurrences of evaluateUpdatePrivacy,
-        // one of evaluateUpdateValidation, all with the sidecar.
-        val privacyCall = "evaluateUpdatePrivacy(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)"
+        // threads edgeChanges into both the empty-branch AND the
+        // non-empty branch's privacy + validation evaluations. The
+        // privacy evaluator is the decision-returning
+        // updateDenialReasonOrNull (String? reason; null = allowed) —
+        // replacing the old throw-style evaluateUpdatePrivacy. Both
+        // branches evaluate privacy then validation, all with the
+        // sidecar: two occurrences of each.
+        val privacyCall = "updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)"
         val privacyOccurrences = output.split(privacyCall).size - 1
         assert(privacyOccurrences == 2) {
-            "Expected exactly 2 evaluateUpdatePrivacy calls with edgeChanges (empty + non-empty branches), got $privacyOccurrences\n$output"
+            "Expected exactly 2 updateDenialReasonOrNull calls with edgeChanges (empty + non-empty branches), got $privacyOccurrences\n$output"
         }
-        assert(output.contains(
-            "evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
-        )) {
-            "Validation evaluator should receive edgeChanges sidecar\n$output"
+        val validationCall = "evaluateUpdateValidation(entity, requestedPatch, effectivePatch, candidate, edgeChanges)"
+        val validationOccurrences = output.split(validationCall).size - 1
+        assert(validationOccurrences == 2) {
+            "Expected exactly 2 evaluateUpdateValidation calls with edgeChanges (empty + non-empty branches), got $validationOccurrences\n$output"
+        }
+        // The old throw-style evaluator is gone.
+        assert(!output.contains("evaluateUpdatePrivacy")) {
+            "Throw-style evaluateUpdatePrivacy must be replaced by updateDenialReasonOrNull\n$output"
         }
     }
 
     // ---------- link-table M2M helpers junction writes + edge-only owner-UPDATE suppression ----------
 
     @Test
-    fun `M2M-only update no longer throws NoChanges — both empty checks gate on M2M pending`() {
+    fun `M2M-only update proceeds to the junction writes — the sole empty branch gates on M2M pending`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // had two empty checks in save():
-        //   - top of save(): syntactic check before any preflight runs
-        //   - after the canonical patch build: hook-cleared branch
-        // gated the hook-cleared branch. also gates the
-        // top-of-save syntactic check, since M2M-only updates have
-        // dirtyFields.isEmpty() (the mutators don't touch dirtyFields).
-        val topGate = "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { throw EntNoChangesException"
-        val hookClearedGate = "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch"
-        assert(output.contains(topGate)) {
-            "Top-of-save syntactic empty check must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
+        // EntNoChangesException is gone entirely, and with it the
+        // top-of-save syntactic empty check. The single remaining
+        // dirtyFields-empty branch (post-hooks, no-op Success) gates on
+        // `!_hasPendingLinkTableM2MOps()` so an M2M-only update
+        // (dirtyFields empty, edge ops staged — the mutators don't
+        // touch dirtyFields) falls through to the write section: the
+        // owner UPDATE is skipped via the values.isNotEmpty() guard and
+        // the junction writes run.
+        assert(!output.contains("EntNoChangesException")) {
+            "EntNoChangesException must be gone from M2M-capable updates\n$output"
         }
-        assert(output.contains(hookClearedGate)) {
-            "Hook-cleared empty branch must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
+        val gatedEmpty = output.indexOf(
+            "if (dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch",
+        )
+        assert(gatedEmpty != -1) {
+            "The no-op empty branch must be gated on `!_hasPendingLinkTableM2MOps()`\n$output"
+        }
+        val emptyCount = Regex(Regex.escape("if (dirtyFields.isEmpty()")).findAll(output).count()
+        assert(emptyCount == 1) {
+            "M2M-capable save must have exactly one (gated) dirtyFields-empty branch, got $emptyCount\n$output"
+        }
+        val junctionWrites = output.indexOf("if (edgeChanges.tags.added.isNotEmpty())")
+        assert(junctionWrites != -1 && gatedEmpty < junctionWrites) {
+            "M2M-only updates must fall through the gated empty branch into the junction writes\n$output"
         }
         // Schemas WITHOUT helper-eligible M2M keep the unguarded form
         // so non-M2M flow is untouched.
@@ -1826,8 +1926,11 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val userOutput = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
+        assert(userOutput.contains("if (dirtyFields.isEmpty()) {")) {
+            "Non-M2M schemas should keep the ungated `if (dirtyFields.isEmpty())` form\n$userOutput"
+        }
         assert(!userOutput.contains("_hasPendingLinkTableM2MOps")) {
-            "Non-M2M schemas should still use the original `if (dirtyFields.isEmpty())` form\n$userOutput"
+            "Non-M2M schemas should not reference the M2M pending gate\n$userOutput"
         }
     }
 
@@ -1840,9 +1943,19 @@ class UpdateGeneratorTest {
         // The owner UPDATE only fires when `values` has at least one
         // Set entry. An edge-only save (caller staged M2M ops, no
         // update defaults populated `values`) skips the driver write
-        // and reuses `entity` as the after-state.
+        // and reuses `entity` as the after-state. The write sits inside
+        // the canonical capture boundary; a vanished target is
+        // Failed(EntTargetAbsentException), and a successful write
+        // advances writeState before materializing.
         assert(output.contains(
-            "val updatedEntity = if (values.isNotEmpty()) { val row = driver.update(M2MPost.TABLE, id, values) ?: return null M2MPost.fromRow(row) } else { entity }",
+            "val updatedEntity = if (values.isNotEmpty()) { val row = try { driver.update(M2MPost.TABLE, id, values) } " +
+                "catch (e: CancellationException) { throw e } " +
+                "catch (e: Exception) { val classified = _classifyDriverFailure(e, MutationWriteState.PersistenceUnknown) " +
+                "client.recordTransactionMutationFailure(classified) return MutationResult.failedForInternalUse(classified) } " +
+                "if (row == null) { val exception = EntTargetAbsentException(\"M2MPost\", EntityKey(\"id\", id)) " +
+                "client.recordTransactionMutationFailure(exception) return MutationResult.failedForInternalUse(exception) } " +
+                "writeState = postWriteState " +
+                "M2MPost.fromRow(row) } else { entity }",
         )) {
             "Owner UPDATE should be guarded on values.isNotEmpty(); edge-only path reuses `entity`\n$output"
         }
@@ -1856,12 +1969,27 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // No helper-eligible M2M edges → no `if (values.isNotEmpty())`
-        // guard, just the original direct driver.update call.
+        // guard, just the direct driver.update call inside the
+        // canonical capture boundary, with the vanished-target check
+        // and unconditional materialization from the returned row.
         assert(!output.contains("val updatedEntity = if (values.isNotEmpty())")) {
             "Non-M2M schemas should NOT gate the owner UPDATE\n$output"
         }
-        assert(output.contains("val row = driver.update(User.TABLE, id, values) ?: return null val updatedEntity = User.fromRow(row)")) {
-            "Non-M2M schemas should keep the unconditional UPDATE shape\n$output"
+        assert(output.contains(
+            "val row = try { driver.update(User.TABLE, id, values) } catch (e: CancellationException) { throw e } " +
+                "catch (e: Exception) { val classified = _classifyDriverFailure(e, MutationWriteState.PersistenceUnknown) " +
+                "client.recordTransactionMutationFailure(classified) return MutationResult.failedForInternalUse(classified) }",
+        )) {
+            "Non-M2M schemas keep the unconditional owner UPDATE inside the canonical capture boundary\n$output"
+        }
+        assert(output.contains(
+            "if (row == null) { val exception = EntTargetAbsentException(\"User\", EntityKey(\"id\", id)) " +
+                "client.recordTransactionMutationFailure(exception) return MutationResult.failedForInternalUse(exception) }",
+        )) {
+            "A target that vanishes at write time must be Failed(EntTargetAbsentException)\n$output"
+        }
+        assert(output.contains("val updatedEntity = User.fromRow(row)")) {
+            "Non-M2M schemas materialize updatedEntity unconditionally from the UPDATE row\n$output"
         }
     }
 
@@ -1875,7 +2003,7 @@ class UpdateGeneratorTest {
         // so the driver mints the junction id and the values map only
         // carries the two FK columns.
         assert(output.contains(
-            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { driver.insertIgnore(\"m2m_post_tags\", mapOf(\"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) } }",
+            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { if (driver.insertIgnore(\"m2m_post_tags\", mapOf(\"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) != null) junctionWrites = true } }",
         )) {
             "AUTO_LONG junction inserts should use insertIgnore, omit the id key (driver mints), and iterate added\n$output"
         }
@@ -1890,7 +2018,7 @@ class UpdateGeneratorTest {
         // One round-trip per edge: deleteMany(table, [sourceCol=ownerId, targetCol IN removed]).
         // Junction-table deletes have no entity scope; Predicate.Leaf<Any>.
         assert(output.contains(
-            "if (edgeChanges.tags.removed.isNotEmpty()) { driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, id), Predicate.Leaf<Any>(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) }",
+            "if (edgeChanges.tags.removed.isNotEmpty()) { if (driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, id), Predicate.Leaf<Any>(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) > 0) junctionWrites = true }",
         )) {
             "Deletes should use one deleteMany per edge with AND-paired source EQ + target IN predicates (erased Predicate.Leaf<Any>)\n$output"
         }
@@ -1905,7 +2033,7 @@ class UpdateGeneratorTest {
         // CLIENT_UUID junction → values map carries an "id" key with
         // UUID.randomUUID() in addition to the two FK columns.
         assert(output.contains(
-            "driver.insertIgnore(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\"))",
+            "if (driver.insertIgnore(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) != null) junctionWrites = true",
         )) {
             "CLIENT_UUID junction inserts should mint id via UUID.randomUUID() in the values map and use insertIgnore\n$output"
         }
@@ -1919,10 +2047,10 @@ class UpdateGeneratorTest {
 
         // Each helper-eligible edge gets its own insert + deleteMany
         // pair, scoped by the per-edge junction table and FK columns.
-        assert(output.contains("driver.insertIgnore(\"m2m_doc_tags\", mapOf(\"doc_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"tag_id\"))")) {
+        assert(output.contains("if (driver.insertIgnore(\"m2m_doc_tags\", mapOf(\"doc_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"tag_id\")) != null) junctionWrites = true")) {
             "Expected per-edge insertIgnore for the tags edge\n$output"
         }
-        assert(output.contains("driver.insertIgnore(\"m2m_doc_labels\", mapOf(\"doc_id\" to id, \"label_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"label_id\"))")) {
+        assert(output.contains("if (driver.insertIgnore(\"m2m_doc_labels\", mapOf(\"doc_id\" to id, \"label_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"label_id\")) != null) junctionWrites = true")) {
             "Expected per-edge insertIgnore for the labels edge\n$output"
         }
         assert(output.contains("driver.deleteMany(\"m2m_doc_tags\"")) {

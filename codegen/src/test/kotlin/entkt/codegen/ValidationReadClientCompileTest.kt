@@ -46,7 +46,7 @@ class ValidationReadClientCompileTest {
         user.finalize(registry)
         return EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput("Car", car), SchemaInput("User", user)))
-            .map { SourceFile.kotlin("${it.name}.kt", it.toString()) }
+            .toCompileTestSources()
     }
 
     private fun validatorSnippet(body: String): SourceFile = SourceFile.kotlin(
@@ -57,6 +57,8 @@ class ValidationReadClientCompileTest {
         import com.example.ent.CarCreateValidationRule
         import com.example.ent.EntReadClient
         import com.example.ent.EntValidationReadClient
+        import entkt.runtime.result.getOrThrow
+        import entkt.runtime.result.visibleOrNull
         import entkt.runtime.validation.ValidationDecision
         import java.util.UUID
 
@@ -104,14 +106,15 @@ class ValidationReadClientCompileTest {
                 """
                 val concrete: EntValidationReadClient = ctx.client
                 val typed: EntReadClient = ctx.client
-                ctx.client.cars.query { }.rawCount()
+                ctx.client.cars.query { }.rawCount().getOrThrow()
                 ctx.client.cars.query { }.rawExists()
-                ctx.client.users.byIdOrNull(UUID.randomUUID())
-                ctx.client.users.visibleByIdOrNull(UUID.randomUUID())
-                ctx.client.users.byIdOrError(UUID.randomUUID())
-                ctx.client.users.indexes.email("a@b.c").orNull()
-                ctx.client.users.indexes.name("n").email("a@b.c").orThrow()
-                ctx.client.cars.explainByIdOrNull(1)
+                ctx.client.cars.query { }.all()
+                ctx.client.cars.query { }.firstOrNull()
+                ctx.client.users.findById(UUID.randomUUID()).getOrThrow()
+                ctx.client.users.findById(UUID.randomUUID()).visibleOrNull()
+                ctx.client.users.indexes.email("a@b.c").find()
+                ctx.client.users.indexes.name("n").email("a@b.c").find().getOrThrow()
+                ctx.client.cars.explainFindById(1)
                 """.trimIndent(),
             ),
         )
@@ -134,12 +137,17 @@ class ValidationReadClientCompileTest {
 
     @Test
     fun `validator cannot delete`() {
-        assertUnresolved("deleteByIdOrError", "ctx.client.cars.deleteByIdOrError(1)")
+        assertUnresolved("deleteById", "ctx.client.cars.deleteById(1)")
     }
 
     @Test
     fun `validator cannot bulk delete`() {
         assertUnresolved("deleteMany", "ctx.client.cars.deleteMany()")
+    }
+
+    @Test
+    fun `validator cannot bulk create`() {
+        assertUnresolved("createMany", "ctx.client.cars.createMany({ })")
     }
 
     @Test

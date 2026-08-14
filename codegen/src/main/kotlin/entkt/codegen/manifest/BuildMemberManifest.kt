@@ -445,11 +445,13 @@ private fun addFixedBuilderMembers(
     artifact: String,
     includeUpdateOnly: Boolean,
 ) {
-    // Shared between Create and Update builders.
+    // Shared between Create and Update builders. The internal /
+    // private execution members are registered for the same reason as
+    // the `_`-prefixed adapters below: declaration-name capture can
+    // produce a user field whose generated property would collide.
     val shared = listOf(
         "save" to GeneratedMemberKind.FUNCTION,
-        "saveOrError" to GeneratedMemberKind.FUNCTION,
-        "saveOrThrow" to GeneratedMemberKind.FUNCTION,
+        "saveAndLoad" to GeneratedMemberKind.FUNCTION,
         "client" to GeneratedMemberKind.PROPERTY,
         "driver" to GeneratedMemberKind.PROPERTY,
         "entity" to GeneratedMemberKind.PROPERTY,
@@ -480,6 +482,7 @@ private fun addFixedBuilderMembers(
             "_mutationView" to GeneratedMemberKind.PROPERTY,
             "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
             "_capturedPendingEdges" to GeneratedMemberKind.PROPERTY,
+            "executeSave" to GeneratedMemberKind.FUNCTION,
         )
         for ((n, kind) in updateOnly) {
             manifest.add(artifact, n, kind, "fixed update-builder member '$n'")
@@ -496,6 +499,7 @@ private fun addFixedBuilderMembers(
             // collide with these.
             "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
             "_createMutationView" to GeneratedMemberKind.PROPERTY,
+            "executeSaveForInternalUse" to GeneratedMemberKind.FUNCTION,
         )
         for ((n, kind) in createOnly) {
             manifest.add(artifact, n, kind, "fixed create-builder member '$n'")

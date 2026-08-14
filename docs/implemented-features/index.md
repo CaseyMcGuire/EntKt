@@ -20,6 +20,10 @@ Open or speculative RFCs remain in the
 - [Through-Entity Nullable M2M Traversal](edge-mutation/09-through-entity-nullable-m2m-traversal.md)
 - [Symmetric Link-Table Edges](edge-mutation/10-symmetric-link-table-writes.md)
 
+## API
+
+- [Canonical Operation Result Algebra](api/operation-result-algebra.md)
+
 ## Query APIs
 
 - [Read-Path Interceptors](query/read-path-interceptors.md)

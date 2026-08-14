@@ -34,24 +34,24 @@ class UserController(private val client: EntClient) {
             if (includePosts) {
                 withPosts { orderBy(Post.createdAt.desc()) }
             }
-        }.allOrThrow()
+        }.all().getOrThrow()
         return users.map { it.toResponse(includePosts) }
     }
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: UUID): UserResponse {
-        val user = client.users.byIdOrNull(id)
+        val user = client.users.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return user.toResponse()
     }
 
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: UUID): List<PostResponse> {
-        client.users.byIdOrNull(id) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        client.users.findById(id).getOrThrow() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.posts.query {
             where(Post.authorId eq id)
             orderBy(Post.createdAt.desc())
-        }.allOrThrow()
+        }.all().getOrThrow()
         return posts.map { it.toResponse() }
     }
 
@@ -62,27 +62,27 @@ class UserController(private val client: EntClient) {
             email = req.email
             age = req.age
             active = req.active
-        }.save()
+        }.saveAndLoad().getOrThrow()
         return user.toResponse()
     }
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: UUID, @RequestBody req: UpdateUserRequest): UserResponse {
         // No pre-load: `update(id)` does its own internal byId before
-        // hooks/privacy/validation. A missing row makes save() return
-        // null, which we map to 404 here.
+        // hooks/privacy/validation. A missing row surfaces as
+        // Failed(EntTargetAbsentException), mapped to 404 by ErrorHandler.
         val updated = client.users.update(id) {
             req.name?.let { name = it }
             req.email?.let { email = it }
             req.age?.let { age = it }
             req.active?.let { active = it }
-        }.save() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        }.saveAndLoad().getOrThrow()
         return updated.toResponse()
     }
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: UUID) {
-        if (!client.users.deleteByIdOrError(id).getOrThrow()) {
+        if (!client.users.deleteById(id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }

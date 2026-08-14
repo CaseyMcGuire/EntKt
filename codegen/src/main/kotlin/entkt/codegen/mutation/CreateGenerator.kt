@@ -1,13 +1,14 @@
 package entkt.codegen.mutation
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
-import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.NOTHING
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
@@ -34,13 +35,184 @@ private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val ENT_ERROR = ClassName("entkt.runtime.result", "EntError")
-private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
-private val ENT_RESULT = ClassName("entkt.runtime.result", "EntResult")
-private val ENT_EXCEPTION = ClassName("entkt.runtime.result", "EntException")
-private val PRIVACY_DENIED_EXCEPTION = ClassName("entkt.runtime.privacy", "PrivacyDeniedException")
-private val VALIDATION_EXCEPTION_CLASS = ClassName("entkt.runtime.validation", "ValidationException")
+
+// ── Shared canonical-mutation emission support ───────────────────────
+// One home for the runtime type references and emission fragments every
+// mutation-side emitter (CreateGenerator, UpdateGenerator /
+// UpdateSaveEmitter, RepoGenerator) splices into generated terminals,
+// so the MutationResult algebra — typed exception construction, the
+// coordinator record on every Failed, driver-exception classification,
+// and the CancellationException-rethrowing capture boundary — cannot
+// drift between the create, update, and delete pipelines.
+
+internal val MUTATION_RESULT = ClassName("entkt.runtime.result", "MutationResult")
+internal val MUTATION_WRITE_STATE = ClassName("entkt.runtime.result", "MutationWriteState")
+internal val ENT_MUTATION_EXCEPTION = ClassName("entkt.runtime.result", "EntMutationException")
+internal val ENT_TARGET_ABSENT_EXCEPTION = ClassName("entkt.runtime.result", "EntTargetAbsentException")
+internal val ENT_MUTATION_PRIVACY_DENIED_EXCEPTION =
+    ClassName("entkt.runtime.result", "EntMutationPrivacyDeniedException")
+internal val ENT_VALIDATION_EXCEPTION = ClassName("entkt.runtime.result", "EntValidationException")
+internal val ENT_UNEXPECTED_MUTATION_EXCEPTION =
+    ClassName("entkt.runtime.result", "EntUnexpectedMutationException")
+internal val MUTATION_ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
+internal val MUTATION_VALIDATION_VIOLATION = ClassName("entkt.runtime.result", "ValidationViolation")
+internal val MUTATION_ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
+internal val MUTATION_CANCELLATION_EXCEPTION = ClassName("java.util.concurrent", "CancellationException")
+internal val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+
+// The read-side emitters reference `kotlin.Exception` (see
+// canonicalReadBody); the mutation side must use the SAME ClassName so
+// a generated file containing both surfaces (the repo) doesn't force
+// KotlinPoet into `java.lang.Exception as LangException` import
+// aliasing.
+internal val KOTLIN_EXCEPTION = ClassName("kotlin", "Exception")
+
+/**
+ * Re-emit [this] one indentation level deeper. Purely cosmetic for the
+ * generated output: hand-assembled `add("... {\n")` fragments carry
+ * their own literal indentation, so a shared fragment spliced inside a
+ * nested block needs re-indenting to line up with its surroundings.
+ */
+internal fun CodeBlock.indented(): CodeBlock =
+    CodeBlock.builder()
+        .indent()
+        .add(this)
+        .unindent()
+        .build()
+
+/**
+ * The `@file:OptIn(EntktInternal::class)` annotation every generated
+ * mutation-side file carries so `MutationResult.failedForInternalUse`
+ * (guarded by the error-level [EntktInternal] marker) is callable from
+ * generated code compiled in the application module.
+ */
+internal fun entktInternalFileOptIn(): AnnotationSpec =
+    AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+        .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+        .addMember("%T::class", ENTKT_INTERNAL)
+        .build()
+
+/**
+ * Emission fragment: construct a typed [exceptionExpr] as `exception`,
+ * record it on the transaction coordinator (no-op outside a
+ * transaction scope), and return `MutationResult.failedForInternalUse`.
+ * Every emitted `Failed` construction site goes through this shape so
+ * an ignored failure still marks a caller-owned transaction
+ * rollback-only. Must be spliced inside its own block scope (the
+ * `exception` local is re-declared per site).
+ */
+internal fun recordAndReturnFailure(exceptionExpr: CodeBlock): CodeBlock =
+    CodeBlock.builder()
+        .add("val exception = ")
+        .add(exceptionExpr)
+        .add("\n")
+        .add("client.recordTransactionMutationFailure(exception)\n")
+        .add("return %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+        .build()
+
+/**
+ * Emission fragment: a mutation-privacy denial produced from a
+ * DECISION-RETURNING evaluator (never from a caught exception — rule
+ * exceptions escape the evaluators and are classified as foreign at
+ * the terminal boundary). [writeStateExpr] is the state at this
+ * classification point (`MutationWriteState.NotPersisted` literal for
+ * pre-write denials, the `writeState` phase local for post-write LOAD
+ * disclosure). [entityKeyExpr] is `null` for pre-insert create denials
+ * and an `EntityKey("id", ...)` expression when the key is known.
+ */
+internal fun privacyDeniedFailure(
+    writeStateExpr: CodeBlock,
+    schemaName: String,
+    operationName: String,
+    entityKeyExpr: CodeBlock,
+    reasonExpr: String,
+): CodeBlock =
+    CodeBlock.builder()
+        .add(
+            recordAndReturnFailure(
+                CodeBlock.builder()
+                    .add("%T(", ENT_MUTATION_PRIVACY_DENIED_EXCEPTION)
+                    .add(writeStateExpr)
+                    .add(", %S, %T.%L, ", schemaName, MUTATION_ENT_OPERATION, operationName)
+                    .add(entityKeyExpr)
+                    .add(", %L)", reasonExpr)
+                    .build(),
+            ),
+        )
+        .build()
+
+/**
+ * Emission fragment: the catch tail for a single driver call inside a
+ * mutation pipeline. Opens with `} catch` so the caller supplies the
+ * `... = try {` head and the driver-call statement. Rethrows
+ * `CancellationException`, then routes the exception through the
+ * generated `_classifyDriverFailure` member with [fallbackStateName]
+ * as the phase-derived fallback: `NotPersisted` for pre-write reads
+ * (owner load, delete reload), `PersistenceUnknown` for owner write
+ * statements whose effect is unknown (never optimistic NotPersisted),
+ * and `TransactionPending` for junction writes, which are
+ * preflight-guaranteed to run inside a caller-owned transaction.
+ */
+internal fun driverCallFailureTail(fallbackStateName: String): CodeBlock =
+    CodeBlock.builder()
+        .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+        .add("  throw e\n")
+        .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
+        .add("  val classified = _classifyDriverFailure(e, %T.%L)\n", MUTATION_WRITE_STATE, fallbackStateName)
+        .add("  client.recordTransactionMutationFailure(classified)\n")
+        .add("  return %T.failedForInternalUse(classified)\n", MUTATION_RESULT)
+        .add("}\n")
+        .build()
+
+/**
+ * Build the private `_classifyDriverFailure(e, fallback)` member: the
+ * driver-exception classification point for one entity + operation.
+ * Consults [entkt.runtime.driver.Driver.classifyMutationException]; a
+ * classification carrying a sealed [ENT_MUTATION_EXCEPTION] (a
+ * recognized constraint violation or expected conflict, both hardcoded
+ * NotPersisted) is used directly, any other classified exception is
+ * null classification falls back to the caller's phase-derived
+ * [MUTATION_WRITE_STATE] wrapped as an unexpected mutation failure —
+ * the returned exception's own writeState IS the classification (no
+ * parallel state field).
+ */
+internal fun buildClassifyDriverFailureHelper(schemaName: String, operationName: String): FunSpec =
+    FunSpec.builder("_classifyDriverFailure")
+        .addModifiers(KModifier.PRIVATE)
+        .addParameter("e", KOTLIN_EXCEPTION)
+        .addParameter("fallback", MUTATION_WRITE_STATE)
+        .returns(ENT_MUTATION_EXCEPTION)
+        .addCode(
+            CodeBlock.builder()
+                .add(
+                    "return driver.classifyMutationException(e, %S, %T.%L)\n",
+                    schemaName, MUTATION_ENT_OPERATION, operationName,
+                )
+                .add("  ?: %T(fallback, e)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION)
+                .build(),
+        )
+        .build()
+
+/**
+ * Build the private `_validationFailed(violations)` member shared by
+ * the inline normalize-phase checks (required fields, field
+ * validators) and the rule-evaluator call sites. Constructs the typed
+ * [ENT_VALIDATION_EXCEPTION] (hardcoded NotPersisted), records it on
+ * the coordinator, and returns the Failed result. `MutationResult<Nothing>`
+ * so a `return _validationFailed(...)` type-checks in any terminal.
+ */
+internal fun buildValidationFailedHelper(schemaName: String, operationName: String): FunSpec =
+    FunSpec.builder("_validationFailed")
+        .addModifiers(KModifier.PRIVATE)
+        .addParameter("violations", List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION))
+        .returns(MUTATION_RESULT.parameterizedBy(NOTHING))
+        .addStatement(
+            "val exception = %T(%S, %T.%L, violations)",
+            ENT_VALIDATION_EXCEPTION, schemaName, MUTATION_ENT_OPERATION, operationName,
+        )
+        .addStatement("client.recordTransactionMutationFailure(exception)")
+        .addStatement("return %T.failedForInternalUse(exception)", MUTATION_RESULT)
+        .build()
 
 internal class CreateGenerator(
     private val packageName: String,
@@ -183,12 +355,19 @@ internal class CreateGenerator(
                     edgeFks,
                 ),
             )
-            .addFunction(buildSaveFunction(schemaName, schema, allFields, edgeFks))
-            .addFunction(buildSaveOrErrorFunction(schemaName))
-            .addFunction(buildSaveOrThrowFunction(schemaName))
+            .addFunction(buildExecuteSaveFunction(schemaName, schema, allFields, edgeFks))
+            .addFunction(buildSaveFunction(schemaName))
+            .addFunction(buildSaveAndLoadFunction(schemaName))
+            .addFunction(buildValidationFailedHelper(schemaName, "CREATE"))
+            .addFunction(buildClassifyDriverFailureHelper(schemaName, "CREATE"))
             .build()
 
+        // The generated builder constructs `MutationResult.Failed`
+        // through the `@EntktInternal`-guarded `failedForInternalUse`
+        // factory; the file-level OptIn consumes the requirement at the
+        // construction sites without propagating it to application code.
         return FileSpec.builder(packageName, className)
+            .addAnnotation(entktInternalFileOptIn())
             .addType(typeSpec)
             .build()
     }
@@ -403,49 +582,205 @@ internal class CreateGenerator(
     }
 
     /**
-     * `save()` lowers the builder's accumulated state into a row map and
-     * hands it to the driver. The driver minting strategy decides how
-     * the id is produced:
+     * The single create execution pipeline both public terminals
+     * project. Runs the full save order — transaction-requirement
+     * preflight, beforeSave/beforeCreate hooks, normalization
+     * (defaults + required checks + inline field validators), CREATE
+     * privacy, CREATE validation, `driver.insert`, `fromRow`
+     * materialization, afterCreate hooks — and classifies every
+     * failure positionally into a typed [ENT_MUTATION_EXCEPTION]
+     * carrying the phase-accurate [MUTATION_WRITE_STATE]:
+     *
+     *  - preflight / hook / rule-thrown / materialization exceptions →
+     *    `EntUnexpectedMutationException` with the current phase state
+     *    (the terminal boundary rethrows `CancellationException` and
+     *    never catches `Throwable`);
+     *  - a rule-RETURNED privacy Deny (or the fail-closed end of the
+     *    rule list) → `EntMutationPrivacyDeniedException(NotPersisted,
+     *    CREATE, entityKey = null)` — pre-insert there is no key to
+     *    report, and emitters must not reorder id minting to fabricate
+     *    one;
+     *  - required-field / validator / rule-returned Invalids →
+     *    `EntValidationException` (hardcoded NotPersisted);
+     *  - `driver.insert` exceptions → `_classifyDriverFailure` with
+     *    the write-phase `PersistenceUnknown` fallback;
+     *  - after successful insert the state flips to
+     *    `TransactionPending` (transaction-scoped driver) or
+     *    `Committed` (autocommit).
+     *
+     * When [applyLoadPrivacy] is set (the `saveAndLoad()` projection)
+     * the returned entity additionally passes the LOAD disclosure
+     * check; a denial is `EntMutationPrivacyDeniedException` with
+     * `operation = LOAD` and the current post-write state. `save()`
+     * skips the check because it discloses no entity.
+     *
+     * Internal (not private) so the repo's `createMany` can drive the
+     * identical per-row pipeline without the disclosure step.
+     *
+     * The driver minting strategy decides how the id is produced:
      * - `CLIENT_UUID`: we mint a `UUID` here so the caller can see it
      *   before the round trip.
      * - `AUTO_INT` / `AUTO_LONG`: we omit `id` and let the driver pick.
-     * - `EXPLICIT`: the caller must set `id` on the builder before
-     *   calling `save()`; an error is thrown if it's missing.
+     * - `EXPLICIT`: the caller passed `id` to `create(id) { ... }`.
      *
-     * After insert, the driver returns the persisted row (including the
-     * assigned id), which we feed into `fromRow` to hydrate a typed
-     * entity. That avoids any inconsistency between the row we sent and
-     * the row the driver actually stored.
+     * After insert, the driver returns the persisted row (including
+     * the assigned id), which we feed into `fromRow` to hydrate a
+     * typed entity — no inconsistency between the row we sent and the
+     * row the driver actually stored.
      */
-    private fun buildSaveFunction(
+    private fun buildExecuteSaveFunction(
         schemaName: String,
         schema: EntSchema,
         allFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
-        val builder = FunSpec.builder("save")
-            .returns(entityClass)
+        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val builder = FunSpec.builder("executeSaveForInternalUse")
+            .addModifiers(KModifier.INTERNAL)
+            // `internal` alone is no guard: generated and application
+            // sources share the app module, so without the error-level
+            // opt-in a caller could take the entity without
+            // saveAndLoad()'s LOAD disclosure check.
+            .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+            .addParameter("applyLoadPrivacy", BOOLEAN)
+            .returns(MUTATION_RESULT.parameterizedBy(entityClass))
+
+        builder.addStatement("var writeState = %T.NotPersisted", MUTATION_WRITE_STATE)
+        builder.beginControlFlow("try")
+        // Posture snapshot BEFORE persistence but INSIDE the terminal
+        // boundary: a posture read that failed after a successful
+        // write would otherwise let the boundary misreport a committed
+        // write as NotPersisted — and a posture read that fails here,
+        // before any work, is captured as Failed(NotPersisted) rather
+        // than escaping the algebra.
+        builder.addStatement(
+            "val postWriteState = if (driver.inTransaction) %T.TransactionPending else %T.Committed",
+            MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
+        )
 
         emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
         emitCreatePrivacy(builder, schemaName, allFields, edgeFks)
         emitCreateValidation(builder, schemaName)
+
+        // ---- Persist. The insert is the only write statement on the
+        // create path; an exception here routes through driver
+        // classification with the PersistenceUnknown write-phase
+        // fallback (never optimistic NotPersisted). ----
+        builder.addCode(
+            CodeBlock.builder()
+                .add("val row = try {\n")
+                .add("  driver.insert(%T.TABLE, values)\n", entityClass)
+                .add(driverCallFailureTail("PersistenceUnknown"))
+                .build(),
+        )
         builder.addStatement(
-            "val row = driver.insert(%T.TABLE, values)",
-            entityClass,
+            "writeState = postWriteState",
         )
         builder.addStatement("val entity = %T.fromRow(row)", entityClass)
         builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
-        emitLoadPrivacyOnReturn(builder, schemaName, "entity")
-        builder.addStatement("return entity")
+
+        // ---- Returned-entity LOAD disclosure (saveAndLoad only). The
+        // write has already succeeded; a denial reports the post-write
+        // state with operation = LOAD so callers can tell "write
+        // happened but you can't see it" from a pre-write rejection. ----
+        builder.beginControlFlow("if (applyLoadPrivacy)")
+        builder.addStatement("val denial = client.%L.loadDenialOrNull(privacy, entity)", repoPropName)
+        builder.beginControlFlow("if (denial != null)")
+        builder.addCode(
+            privacyDeniedFailure(
+                writeStateExpr = CodeBlock.of("writeState"),
+                schemaName = schemaName,
+                operationName = "LOAD",
+                entityKeyExpr = CodeBlock.of("%T(%S, entity.id)", MUTATION_ENTITY_KEY, "id"),
+                reasonExpr = "denial.reason",
+            ),
+        )
+        builder.endControlFlow()
+        builder.endControlFlow()
+
+        builder.addStatement("return %T.Success(entity)", MUTATION_RESULT)
+
+        // ---- Whole-terminal capture boundary. ----
+        builder.nextControlFlow("catch (e: %T)", MUTATION_CANCELLATION_EXCEPTION)
+        builder.addStatement("throw e")
+        builder.nextControlFlow("catch (e: %T)", KOTLIN_EXCEPTION)
+        builder.addCode(
+            recordAndReturnFailure(
+                CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
+            ),
+        )
+        builder.endControlFlow()
 
         return builder.build()
     }
 
     /**
-     * Emit the common body shared by save: lifecycle hooks, field
-     * extraction with defaults and validation, FK validation, and the
-     * `values` map. After this method, the caller appends the driver call.
+     * `save(): MutationResult<Unit>` — acknowledgement-only projection
+     * of the shared create pipeline. No parallel implementation: the
+     * projection maps [executeSaveForInternalUse]'s result and
+     * performs no I/O of its own.
+     */
+    private fun buildSaveFunction(schemaName: String): FunSpec {
+        return FunSpec.builder("save")
+            .addKdoc(
+                "Persist this builder's state. `Success(Unit)` means the insert\n" +
+                    "completed — staged when executed through a transaction-scoped\n" +
+                    "client, committed otherwise. `Failed` carries a typed\n" +
+                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
+                    "records what EntKt knows about the database effect; `Failed` does\n" +
+                    "NOT imply the write rolled back. `save()` does not apply\n" +
+                    "returned-entity LOAD privacy because it discloses no entity — use\n" +
+                    "[saveAndLoad] to materialize the created row. There is deliberately\n" +
+                    "no `orNull()` projection (null cannot distinguish rejection,\n" +
+                    "committed failure, and unknown write state); project with\n" +
+                    "`getOrThrow()` or match on the result.",
+            )
+            .returns(MUTATION_RESULT.parameterizedBy(UNIT))
+            .addCode(
+                CodeBlock.builder()
+                    .add("return when (val result = executeSaveForInternalUse(applyLoadPrivacy = false)) {\n")
+                    .add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
+                    .add("  is %T.Failed -> result\n", MUTATION_RESULT)
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `saveAndLoad(): MutationResult<Entity>` — same single pipeline
+     * as [save], additionally materializing the created entity and
+     * applying the ordinary post-write LOAD disclosure check.
+     */
+    private fun buildSaveAndLoadFunction(schemaName: String): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        return FunSpec.builder("saveAndLoad")
+            .addKdoc(
+                "Persist this builder's state and return the materialized entity\n" +
+                    "under the ordinary LOAD contract. `Success` always carries a\n" +
+                    "non-null entity. A LOAD denial of the returned entity is\n" +
+                    "`Failed(EntMutationPrivacyDeniedException)` with\n" +
+                    "`operation = LOAD` and the current post-write `writeState`. The\n" +
+                    "denial itself does not undo the insert: outside a transaction the\n" +
+                    "row is already committed (`Committed`); inside a caller-owned\n" +
+                    "transaction the failure is `TransactionPending` and marks the\n" +
+                    "scope rollback-only, so the enclosing transaction normally rolls\n" +
+                    "the write back at its boundary.\n" +
+                    "As with [save], `Failed` does not imply rollback (inspect\n" +
+                    "`exception.writeState`), and there is no `orNull()` projection;\n" +
+                    "project with `getOrThrow()` or match on the result.",
+            )
+            .returns(MUTATION_RESULT.parameterizedBy(entityClass))
+            .addStatement("return executeSaveForInternalUse(applyLoadPrivacy = true)")
+            .build()
+    }
+
+    /**
+     * Emit the common body shared by the create pipeline: lifecycle
+     * hooks, field extraction with defaults and validation, FK
+     * validation, and the `values` map. After this method, the caller
+     * appends privacy, validation, and the driver call.
      */
     private fun emitCreateBody(
         builder: FunSpec.Builder,
@@ -456,10 +791,12 @@ internal class CreateGenerator(
     ) {
         val idStrategy = idStrategyName(schema)
 
-        // ---- Transaction-requirement preflight (transaction locking). Throws
-        // TransactionRequiredException before any observable work
+        // ---- Transaction-requirement preflight (transaction locking).
+        // Throws TransactionRequiredException before any observable work
         // (hooks, defaults, validation, driver writes) when the
-        // configured TransactionRequirement isn't satisfied. ----
+        // configured TransactionRequirement isn't satisfied; the throw
+        // is captured by the terminal boundary as
+        // EntUnexpectedMutationException(NotPersisted). ----
         builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName create")
 
         // ---- Lifecycle hooks (before validation so hooks can set fields). ----
@@ -467,7 +804,10 @@ internal class CreateGenerator(
         // `_createMutationView` adapters so a misbehaving hook
         // that tries to cast back to `${Schema}Create` (or to a
         // wider sibling view) fails at runtime — matching the
-        // runtime-enforced contract the update path uses.
+        // runtime-enforced contract the update path uses. A
+        // hook-thrown exception is FOREIGN and becomes the cause of
+        // EntUnexpectedMutationException(NotPersisted) at the boundary
+        // — even when the hook constructed an EntKt exception type.
         builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         builder.addStatement(
@@ -477,23 +817,21 @@ internal class CreateGenerator(
         builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")
 
         // ---- Validate and bind each property to a local. ----
-        // Required fields throw `ValidationException` on missing input.
-        // The generated `saveOrError()` catches it and wraps into
-        // `EntError.ValidationFailed`; `save()` callers see the raw
-        // exception. Short-circuits on the first missing required
-        // field — collecting all violations across required +
-        // validator rules is left as a future improvement.
+        // Required fields produce a typed EntValidationException
+        // (via the `_validationFailed` helper, which records the
+        // failure on the transaction coordinator). Short-circuits on
+        // the first missing required field — collecting all violations
+        // across required + validator rules is left as a future
+        // improvement.
         for (field in allFields) {
             val prop = toCamelCase(field.name)
             val required = !field.nullable && field.default == null
             when {
                 required -> builder.addStatement(
-                    "val %L = this.%L ?: throw %T(%S, listOf(%T(%S, field = %S)))",
+                    "val %L = this.%L ?: return·_validationFailed(listOf(%T(%S, field = %S)))",
                     prop,
                     prop,
-                    VALIDATION_EXCEPTION,
-                    schemaName,
-                    VALIDATION_INVALID,
+                    MUTATION_VALIDATION_VIOLATION,
                     "${field.name} is required",
                     field.name,
                 )
@@ -537,21 +875,16 @@ internal class CreateGenerator(
                     fkDefaultCodeBlock(fk),
                 )
                 // Required + no default: read staging directly so the
-                // missing-input throw is a ValidationException rather
-                // than the property getter's IllegalStateException.
-                // The property getter stays as ISE for hook/property
-                // reads, where an early read is a usage error.
-                // (The generated `saveOrError()` catches the
-                // ValidationException and wraps into
-                // `EntError.ValidationFailed`; `save()` callers see
-                // the raw exception.)
+                // missing-input failure is a typed EntValidationException
+                // rather than the property getter's
+                // IllegalStateException. The property getter stays as
+                // ISE for hook/property reads, where an early read is a
+                // usage error.
                 fk.required -> builder.addStatement(
-                    "val %L = this.%L ?: throw %T(%S, listOf(%T(%S, field = %S)))",
+                    "val %L = this.%L ?: return·_validationFailed(listOf(%T(%S, field = %S)))",
                     fk.propertyName,
                     stagingFieldName(fk.propertyName),
-                    VALIDATION_EXCEPTION,
-                    schemaName,
-                    VALIDATION_INVALID,
+                    MUTATION_VALIDATION_VIOLATION,
                     "${fk.edgeName} is required",
                     fk.columnName,
                 )
@@ -670,59 +1003,32 @@ internal class CreateGenerator(
     }
 
     /**
-     * Emit LOAD privacy enforcement on the just-written entity. The
-     * write has already succeeded; if LOAD denies, the caller can't
-     * read what they wrote.
-     *
-     * Wraps the raw `PrivacyDeniedException` (which carries
-     * `operation = LOAD`) into the structured
-     * [EntWriteSucceededLoadDeniedException] carrying the new entity
-     * id. This makes the "write happened but you can't see it" case
-     * distinguishable from "write rejected up-front" — the former
-     * surfaces as `Err(WriteSucceededLoadDenied)` through
-     * `saveOrError`, the latter as `Err(PrivacyDenied(CREATE))`.
-     * Without the wrap, both would collapse to `PrivacyDenied` and
-     * callers couldn't tell whether the write actually happened.
-     *
-     * The wrap throws a [EntException] subclass, which the existing
-     * `saveOrError` `catch (EntException) { Err(e.error) }` arm
-     * picks up unchanged — no per-generator wiring needed at the
-     * catch site.
-     */
-    private fun emitLoadPrivacyOnReturn(
-        builder: FunSpec.Builder,
-        schemaName: String,
-        entityVar: String,
-    ) {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        builder.beginControlFlow("try")
-        builder.addStatement("client.%L.evaluateLoadPrivacy(privacy, %L)", repoPropName, entityVar)
-        builder.nextControlFlow("catch (e: %T)", PRIVACY_DENIED_EXCEPTION)
-        builder.addStatement(
-            "throw %T(%T.WriteSucceededLoadDenied(e.entity, %T.CREATE, %L.id, e.reason))",
-            ClassName("entkt.runtime.result", "EntWriteSucceededLoadDeniedException"),
-            ENT_ERROR,
-            ENT_OPERATION,
-            entityVar,
-        )
-        builder.endControlFlow()
-    }
-
-    /**
      * Emit CREATE validation enforcement: call the repo's
-     * evaluateCreateValidation with the already-built candidate.
+     * decision-returning evaluateCreateValidation with the
+     * already-built candidate; a non-empty violation list becomes a
+     * typed EntValidationException via `_validationFailed`. A
+     * rule-THROWN exception escapes the evaluator and is classified as
+     * foreign at the terminal boundary — never as a typed validation
+     * failure.
      */
     private fun emitCreateValidation(
         builder: FunSpec.Builder,
         schemaName: String,
     ) {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        builder.addStatement("client.%L.evaluateCreateValidation(candidate)", repoPropName)
+        builder.addStatement("val violations = client.%L.evaluateCreateValidation(candidate)", repoPropName)
+        builder.addStatement("if (violations.isNotEmpty()) return·_validationFailed(violations)")
     }
 
     /**
      * Emit CREATE privacy enforcement: build a WriteCandidate from the
-     * resolved field locals and call the repo's evaluateCreatePrivacy.
+     * resolved field locals and call the repo's decision-returning
+     * createDenialReasonOrNull. A returned denial reason (a rule's
+     * Deny or the fail-closed end of the rule list) becomes
+     * EntMutationPrivacyDeniedException(NotPersisted, CREATE) with a
+     * null entity key — pre-insert there is no persisted key to
+     * report. A rule-THROWN exception escapes to the terminal boundary
+     * as a foreign failure.
      */
     private fun emitCreatePrivacy(
         builder: FunSpec.Builder,
@@ -738,89 +1044,21 @@ internal class CreateGenerator(
             "val candidate = %T(${candidateArgs.joinToString(", ")})",
             candidateClass,
         )
-        builder.addStatement("client.%L.evaluateCreatePrivacy(privacy, candidate)", repoPropName)
-    }
-
-    /**
-     * Result-variant entry point for the create path. Wraps `save()` in
-     * a single try/catch that maps each recognized failure surface into
-     * the matching [EntError] variant:
-     *
-     *  - [PrivacyDeniedException] → `Err(PrivacyDenied)`
-     *  - [ValidationException] → `Err(ValidationFailed)` (rule-DSL
-     *    `ValidationDecision.Invalid` violations bridged through
-     *    `toValidationViolation()`)
-     *  - any other [EntException] (e.g. NoChanges from a transitively-
-     *    composed save) → carried through via `e.error`
-     *  - any remaining [Exception] → routed through
-     *    [classifyDriverError] so the driver can emit
-     *    `ConstraintViolation` for SQLSTATE 23xxx, falling back to
-     *    `DriverFailure` with the raw cause attached.
-     *
-     * [Exception] (not [Throwable]) is the floor: [Error] subclasses
-     * (OOME, StackOverflowError) propagate untouched. Programming
-     * bugs from hooks/rules (`IllegalStateException`,
-     * `IllegalArgumentException`, vanilla `RuntimeException`,
-     * `NullPointerException`, etc.) re-throw via
-     * [classifyDriverError] rather than being wrapped — only
-     * `SQLException` (and subclasses like `PSQLException`) fall back
-     * to `DriverFailure`. The driver classifier is the integration
-     * point for SQLSTATE/message-prefix mapping, so adding
-     * new constraint codes to a driver does not require regenerating
-     * consumer code.
-     */
-    private fun buildSaveOrErrorFunction(schemaName: String): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        val resultType = ENT_RESULT.parameterizedBy(entityClass)
-        return FunSpec.builder("saveOrError")
-            .returns(resultType)
-            .addCode(
-                CodeBlock.builder()
-                    .add("return try {\n")
-                    .add("  %T.Ok(save())\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", PRIVACY_DENIED_EXCEPTION)
-                    .add(
-                        "  %T.Err(%T.PrivacyDenied(e.entity, %T.valueOf(e.operation.name), e.reason))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                    )
-                    .add("} catch (e: %T) {\n", VALIDATION_EXCEPTION_CLASS)
-                    .add(
-                        "  %T.Err(%T.ValidationFailed(e.entity, %T.CREATE, e.violations.map { it.%M() }))\n",
-                        ENT_RESULT, ENT_ERROR, ENT_OPERATION,
-                        MemberName("entkt.runtime.result", "toValidationViolation"),
-                    )
-                    .add("} catch (e: %T) {\n", ENT_EXCEPTION)
-                    .add("  %T.Err(e.error)\n", ENT_RESULT)
-                    .add("} catch (e: %T) {\n", Exception::class.asClassName())
-                    .add(
-                        "  %T.Err(%M(driver, e, %S, %T.CREATE))\n",
-                        ENT_RESULT,
-                        MemberName("entkt.runtime.driver", "classifyDriverError"),
-                        schemaName,
-                        ENT_OPERATION,
-                    )
-                    .add("}\n")
-                    .build(),
-            )
-            .build()
-    }
-
-    /**
-     * Throwing variant: delegates to [saveOrError] and unwraps via
-     * [EntResult.getOrThrow] so callers get a structured
-     * [EntException] subclass for every recognized failure surface.
-     * Implemented as a wrapper over `saveOrError()` to keep the
-     * classification/mapping logic in one place.
-     */
-    private fun buildSaveOrThrowFunction(schemaName: String): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        return FunSpec.builder("saveOrThrow")
-            .returns(entityClass)
-            .addStatement(
-                "return saveOrError().%M()",
-                MemberName("entkt.runtime.result", "getOrThrow"),
-            )
-            .build()
+        builder.addStatement(
+            "val denialReason = client.%L.createDenialReasonOrNull(privacy, candidate)",
+            repoPropName,
+        )
+        builder.beginControlFlow("if (denialReason != null)")
+        builder.addCode(
+            privacyDeniedFailure(
+                writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                schemaName = schemaName,
+                operationName = "CREATE",
+                entityKeyExpr = CodeBlock.of("null"),
+                reasonExpr = "denialReason",
+            ),
+        )
+        builder.endControlFlow()
     }
 }
 
@@ -829,16 +1067,15 @@ internal fun hookListType(paramType: ClassName) =
         LambdaTypeName.get(parameters = arrayOf(paramType), returnType = UNIT),
     )
 
-private val VALIDATION_EXCEPTION = ClassName("entkt.runtime.validation", "ValidationException")
-private val VALIDATION_INVALID = ClassName("entkt.runtime.validation", "ValidationDecision", "Invalid")
-
 /**
  * Emit inline validation checks for a single field's validators.
  * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
- * Each failed validator throws [ValidationException] with a single-element
- * violations list. On both the create and update paths, the generated
- * `saveOrError()` catches it and wraps into `EntError.ValidationFailed`;
- * callers using the lower-level `save()` see the raw exception.
+ * Each failed validator returns a typed EntValidationException-bearing
+ * `MutationResult.Failed` through the generated `_validationFailed`
+ * helper (which also records the failure on the transaction
+ * coordinator). Used by both the create normalize phase and the update
+ * patch-entry validation phase, so both builders must declare
+ * `_validationFailed` (see [buildValidationFailedHelper]).
  */
 internal fun emitFieldValidation(
     builder: FunSpec.Builder,
@@ -869,74 +1106,64 @@ private fun emitValidatorCheck(
     message: String,
     spec: ValidatorSpec,
 ) {
-    val throwExpr =
-        "throw %T(%S, listOf(%T(%S, field = %S)))"
+    val failExpr =
+        "return·_validationFailed(listOf(%T(%S, field = %S)))"
     when (spec) {
         is ValidatorSpec.MinLength -> builder.addStatement(
-            "if (%L.length < %L) $throwExpr",
+            "if (%L.length < %L) $failExpr",
             prop, spec.min,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.MaxLength -> builder.addStatement(
-            "if (%L.length > %L) $throwExpr",
+            "if (%L.length > %L) $failExpr",
             prop, spec.max,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.NotEmpty -> builder.addStatement(
-            "if (%L.isEmpty()) $throwExpr",
+            "if (%L.isEmpty()) $failExpr",
             prop,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.Match -> {
             if (spec.options.isEmpty()) {
                 builder.addStatement(
-                    "if (!Regex(%S).matches(%L)) $throwExpr",
+                    "if (!Regex(%S).matches(%L)) $failExpr",
                     spec.pattern, prop,
-                    VALIDATION_EXCEPTION, schemaName,
-                    VALIDATION_INVALID, message, fieldName,
+                    MUTATION_VALIDATION_VIOLATION, message, fieldName,
                 )
             } else {
                 val optionsLiteral = spec.options.joinToString(", ") { "RegexOption.${it.name}" }
                 builder.addStatement(
-                    "if (!Regex(%S, setOf($optionsLiteral)).matches(%L)) $throwExpr",
+                    "if (!Regex(%S, setOf($optionsLiteral)).matches(%L)) $failExpr",
                     spec.pattern, prop,
-                    VALIDATION_EXCEPTION, schemaName,
-                    VALIDATION_INVALID, message, fieldName,
+                    MUTATION_VALIDATION_VIOLATION, message, fieldName,
                 )
             }
         }
         is ValidatorSpec.Min -> builder.addStatement(
-            "if (%L < %L) $throwExpr",
+            "if (%L < %L) $failExpr",
             prop, spec.min,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.Max -> builder.addStatement(
-            "if (%L > %L) $throwExpr",
+            "if (%L > %L) $failExpr",
             prop, spec.max,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.Positive -> builder.addStatement(
-            "if (%L <= 0) $throwExpr",
+            "if (%L <= 0) $failExpr",
             prop,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.Negative -> builder.addStatement(
-            "if (%L >= 0) $throwExpr",
+            "if (%L >= 0) $failExpr",
             prop,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.NonNegative -> builder.addStatement(
-            "if (%L < 0) $throwExpr",
+            "if (%L < 0) $failExpr",
             prop,
-            VALIDATION_EXCEPTION, schemaName,
-            VALIDATION_INVALID, message, fieldName,
+            MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
     }
 }

@@ -1,5 +1,5 @@
 package entkt.runtime.query
-import entkt.runtime.result.EntError
+import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.privacy.PrivacyContext
 
 import entkt.query.OrderField
@@ -84,7 +84,7 @@ interface InterceptScope<E : Any> {
      * Rejects the query (on shapes where limit operations apply)
      * if the effective limit is null (unbounded) or exceeds [max].
      * Silent no-op on shapes where row limits have no meaning.
-     * Framework sets `QueryRejected.code = "max_limit_exceeded"`
+     * Framework sets `EntQueryRejectedException.code = "max_limit_exceeded"`
      * on rejections triggered here.
      */
     fun rejectIfLimitGreaterThan(max: Int, reason: () -> String)
@@ -228,15 +228,12 @@ data class EdgeStep(
 )
 
 /**
- * Which generated read terminal is firing the interceptor. The
- * framework maps these into [EntOperation] for error reporting via
- * the rejection table: BY_ID → LOAD;
- * everything else → QUERY.
+ * Which generated read terminal is firing the interceptor.
  */
 enum class ReadOperation {
     BY_ID, FIRST, ALL,
-    RAW_COUNT, VISIBLE_COUNT,
-    RAW_EXISTS, VISIBLE_EXISTS,
+    RAW_COUNT,
+    RAW_EXISTS,
     RAW_AGGREGATE,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
 
@@ -245,10 +242,8 @@ enum class ReadOperation {
      * its row-selection query through the interceptor chain with
      * this operation so predicate-shaping interceptors (tenant
      * scoping, framework `soft-delete` filtering, etc.) apply
-     * uniformly to bulk deletes. The mapping to [EntOperation] is
-     * `DELETE` (not QUERY), since the surrounding API surface is
-     * a delete operation. Limit operations are silent no-ops on
-     * this shape by contract — a `MaxLimitInterceptor(maxLimit = 500)`
+     * uniformly to bulk deletes. Limit operations are silent no-ops
+     * on this shape by contract — a `MaxLimitInterceptor(maxLimit = 500)`
      * should not turn `deleteMany(...)` into "delete the first 500
      * matching rows" without the caller knowing. `addPredicate`,
      * `addAnnotation`, and `reject` apply normally.
@@ -268,16 +263,16 @@ public class InterceptorConfig internal constructor()
  * Internal marker thrown by [InterceptScope.reject] /
  * [GlobalInterceptScope.reject] to short-circuit the interceptor
  * chain. The framework catches this at the wrapper boundary and
- * converts it to the per-API outcome (`Err(QueryRejected)` for
- * *OrError, `EntQueryRejectedException` for *OrThrow / non-result
- * visible*).
+ * converts it to the per-API outcome: canonical data terminals store
+ * [rejected] in `ReadResult.Failed`, while `explain*` terminals
+ * record it on their diagnostic `QueryPlan`.
  *
  * Public so generated wrapper code in a different module can catch
  * it; application code should never throw or catch this directly
  * (use `scope.reject(...)` to produce one).
  */
 public class AbortQueryRejected public constructor(
-    public val rejected: EntError.QueryRejected,
+    public val rejected: EntQueryRejectedException,
 ) : RuntimeException("query rejected by interceptor '${rejected.interceptor}': ${rejected.reason}")
 
 /**

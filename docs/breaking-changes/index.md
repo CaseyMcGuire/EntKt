@@ -30,6 +30,119 @@ above it.
 
 ## Unreleased
 
+- **Canonical operation-result algebra: every generated data operation returns an exhaustive result** (`runtime`, `codegen`, `postgres`)
+  The result-variants API (`*OrThrow` / `*OrNull` / `*OrError` / `visible*`
+  generated terminal families, `EntResult`, the universal `EntError`
+  hierarchy, and `EntException.error`) is replaced by one canonical
+  result-bearing terminal per operation family plus runtime projections.
+  See the [operation-result-algebra design](../implemented-features/api/operation-result-algebra.md)
+  for the full contract. In caller terms:
+  - *Reads.* `byIdOrNull` / `byIdOrThrow` / `byIdOrError` /
+    `visibleByIdOrNull` collapse to `findById(id): ReadResult<Entity?>`;
+    `allOrThrow` / `allOrError` to `all(): ReadResult<List<Entity>>`;
+    `firstOrNull` / `firstOrThrow` / `firstOrError` to
+    `firstOrNull(): ReadResult<Entity?>`; `rawCount` / `rawExists` and the
+    raw aggregates return `ReadResult<...>` and lose their `*OrError`
+    twins. `Success(null)` is authoritative absence; LOAD denial is
+    `Failed(EntPrivacyDeniedException(origin, denials))` with keyed,
+    ordered denials (strict `all()` reports every denied root row in the
+    selected window). Project with `.getOrThrow()` for throwing behavior
+    and `.visibleOrNull()` for privacy-as-absence
+    (`visibleByIdOrNull(id)` → `findById(id).visibleOrNull().getOrThrow()`).
+  - *Privacy-scanning terminals removed.* `visibleAll`,
+    `visibleAllOrError`, `firstVisibleOrNull`, `visibleCount`,
+    `visibleExists`, the index-helper `visibleOrNull`, the
+    `visibleOverfetchLimit` config knob, `EntError.OverfetchCapExceeded`,
+    and `ReadOperation.VISIBLE_COUNT` / `VISIBLE_EXISTS` are gone with no
+    canonical equivalent (privacy-skipping scans are an explicit
+    non-goal). Interceptors branching on those enum entries must drop the
+    branches. The debug viewer's list endpoint now reports an explicitly
+    privacy-filtered empty page when any row in the window is denied; run
+    it with a bypass-scoped client for full listings.
+  - *Unique-index helpers.* The four stage terminals (`orNull` /
+    `visibleOrNull` / `orError` / `orThrow`) collapse to
+    `find(): ReadResult<Entity?>`; `query()` remains.
+  - *Mutations.* Builder saves become `save(): MutationResult<Unit>` and
+    `saveAndLoad(): MutationResult<Entity>` (replacing `save` /
+    `saveOrNull` / `saveOrThrow` / `saveOrError`); deletes become
+    `delete(entity): MutationResult<Unit>` (idempotent; success means the
+    row is absent afterward) and `deleteById(id): MutationResult<Boolean>`
+    (`Success(true)` only when this call deleted the row);
+    `deleteMany(...): MutationResult<Int>` and
+    `createMany(...): MutationResult<List<Entity>>` are atomic — EntKt
+    owns one transaction when the caller does not, and `createMany` no
+    longer requires a caller transaction. Every mutation failure is a
+    typed `EntMutationException` carrying `MutationWriteState`
+    (`NotPersisted` / `TransactionPending` / `Committed` /
+    `PersistenceUnknown`); `.getOrThrow()` throws that stored exception
+    directly — `getOrThrow()` is the sole throwing projection on all
+    three result types, with no `orThrow()` alias. Pre-write failures (target absent, validation, mutation
+    privacy, recognized constraints, conflicts) hardcode `NotPersisted`;
+    a returned-entity disclosure denial from `saveAndLoad()` uses
+    `EntMutationPrivacyDeniedException` with `operation = LOAD` and the
+    real write state (possibly `Committed`).
+  - *Assignment-free updates succeed.* `update(id) {}` no longer throws
+    `NoChanges`: it verifies the target exists (absent →
+    `Failed(EntTargetAbsentException)` — note this now discloses
+    existence where the old order did not), runs pre-write phases, skips
+    persist and post-persist callbacks, and returns `Success`.
+  - *Exception capture boundary.* Ordinary exceptions raised inside a
+    result-bearing terminal — including hook/rule bugs,
+    `TransactionRequiredException`, and
+    `UnsupportedDriverCapabilityException`, which previously propagated
+    by contract — are captured as `Failed(EntUnexpectedMutationException)`
+    (or stored directly for reads). `CancellationException` and JVM
+    `Error`s still propagate. Builder/DSL argument validation still
+    throws.
+  - *Transactions.* `withTransaction` becomes
+    `fun <T> withTransaction(block: TransactionScope.(EntClient) -> T): TransactionResult<T>`;
+    `withTransactionOrError` and `bind()` are removed — use
+    `orRollback()` on read/mutation results inside the block, and
+    `.getOrThrow()` on the returned `TransactionResult`
+    (`EntTransactionFailedException` preserves `transactionState`:
+    `NotCommitted` or `OutcomeUnknown`). A mutation failure produced
+    through the transaction client marks the scope rollback-only even if
+    its result is ignored — a normally returning block then rolls back
+    and reports the first recorded failure with later ones suppressed.
+    Nested `withTransaction` calls are unsupported and throw
+    `NestedTransactionUnsupportedException` before the nested block runs
+    (the previous savepoint semantics are removed; a future
+    transaction-client design may reintroduce scoped isolation).
+  - *Driver SPI.* `Driver.withTransaction` returns
+    `DriverTransactionResult<T>` with `TransactionFailureState`
+    (`Success` only after confirmed commit; commit failure is
+    `OutcomeUnknown` even if a later rollback appears to succeed), and
+    `Driver.classifyException` is replaced by the mutation-only
+    `Driver.classifyMutationException(exception, entity, operation):
+    EntMutationException?` — the returned exception's own `writeState`
+    is the classification, with no parallel state field. Postgres maps
+    SQLSTATE 23xxx to `EntConstraintViolationException` and
+    40001/40P01 to `EntConflictException`. The top-level
+    `classifyDriverError` helper is removed.
+  - *Interceptor rejection payload.* `EntQueryRejectedException` exposes
+    direct properties (`entityType`, `reason`, `code`, `interceptor` — no
+    `operation` field, no `EntError` payload); `QueryPlan.rejection`
+    stores that exception, and `requireNotRejected()` throws it.
+    `explain*()` terminals keep their `QueryPlan` contract but are
+    renamed to track the canonical terminals (`explainAll`,
+    `explainFirstOrNull`, `explainFindById`, `explainRawCount`,
+    `explainRawExists`).
+  Generated output now uses Kotlin 2.3 expression-body syntax
+  (`= try { ... return ... }`), so projects compiling generated code
+  need a correspondingly recent Kotlin compiler.
+  _Migration:_ replace each removed terminal with its canonical
+  replacement plus a projection: `byIdOrThrow(id)` →
+  `findById(id).getOrThrow()!!` (or handle `Success(null)` explicitly);
+  `allOrThrow()` → `query { ... }.all().getOrThrow()`;
+  `create { }.saveOrThrow()` → `create { }.saveAndLoad().getOrThrow()`;
+  `deleteByIdOrError(id).getOrThrow()` → `deleteById(id).getOrThrow()`;
+  `withTransactionOrError { bind() }` → `withTransaction { orRollback() }.getOrThrow()`.
+  Structured handling moves from `EntError` pattern-matching to exhaustive
+  `when` over `ReadResult` / `MutationResult` variants and typed-exception
+  properties. Catch sites of `TransactionRequiredException` /
+  `UnsupportedDriverCapabilityException` around saves must inspect the
+  returned `Failed(EntUnexpectedMutationException)` instead.
+
 - **Remove the M2M link-edge `.readOnly()` modifier** (`schema`, `codegen`)
   Every declared `manyToMany(...).throughLink(...)` edge now exposes the
   same read and `add` / `remove` / `set` surface. There is no

@@ -18,14 +18,17 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.PrivacyDeniedException
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.ReadResult
+import entkt.runtime.result.getOrThrow
+import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -40,28 +43,33 @@ private val AllowAllUserCreates = UserCreatePrivacyRule { PrivacyDecision.Allow 
 private val AllowAllArticleLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allow }
 
 /**
- * Graph-reading load rule on the throwing terminal. The explicit
+ * Graph-reading load rule on the throwing projection. The explicit
  * `EntPrivacyReadClient` type pins the context's client property — this
  * file stops compiling if privacy contexts regress to the full
  * `EntClient`, the shared `EntReadClient` interface, or the validation
  * posture. Under the caller's context a viewer who cannot read users
- * gets the inner read's PrivacyDeniedException, not the row.
+ * gets the inner read's EntPrivacyDeniedException (rethrown by
+ * `getOrThrow`), which the outer root terminal then captures as its
+ * own `ReadResult.Failed` — not the row.
  */
 private val AllowIfAuthorReadable = ArticleLoadPrivacyRule { ctx ->
     val client: EntPrivacyReadClient = ctx.client
-    if (client.users.byIdOrNull(ctx.entity.authorId) != null) PrivacyDecision.Allow
+    if (client.users.findById(ctx.entity.authorId).getOrThrow() != null) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
 
-/** Same invariant on the filtering terminal: denial collapses to null. */
+/** Same invariant on the filtering projection: root denial collapses to null. */
 private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { ctx ->
-    if (ctx.client.users.visibleByIdOrNull(ctx.entity.authorId) != null) PrivacyDecision.Allow
-    else PrivacyDecision.Continue
+    if (ctx.client.users.findById(ctx.entity.authorId).visibleOrNull().getOrThrow() != null) {
+        PrivacyDecision.Allow
+    } else {
+        PrivacyDecision.Continue
+    }
 }
 
 /** Create rule that reads the graph — the transaction-scoping probe. */
 private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
-    if (ctx.client.users.byIdOrNull(ctx.candidate.authorId) != null) PrivacyDecision.Allow
+    if (ctx.client.users.findById(ctx.candidate.authorId).getOrThrow() != null) PrivacyDecision.Allow
     else PrivacyDecision.Deny("author row not found")
 }
 
@@ -76,9 +84,9 @@ private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
  * structural and never materialize.)
  */
 private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ctx ->
-    val memberships = ctx.client.memberships.query { withUser() }.allOrThrow()
-    val traversedMember = ctx.client.groups.query { }.queryUsers().firstOrNull()
-    val indexedMember = ctx.client.users.indexes.email("alice@test.com").orNull()
+    val memberships = ctx.client.memberships.query { withUser() }.all().getOrThrow()
+    val traversedMember = ctx.client.groups.query { }.queryUsers().firstOrNull().getOrThrow()
+    val indexedMember = ctx.client.users.indexes.email("alice@test.com").find().getOrThrow()
     if (memberships.any { it.edges.user.requireLoaded() != null } && traversedMember != null && indexedMember != null) {
         PrivacyDecision.Allow
     } else {
@@ -89,23 +97,13 @@ private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ct
 /**
  * A rule that misuses a raw terminal. rawExists skips LOAD privacy, so
  * inside a viewer-scoped rule it could leak invisible rows into the
- * authorization decision — the runtime gate must reject it loudly.
+ * authorization decision — the runtime gate rejects it as
+ * `Failed(IllegalStateException)`, which this rule's `getOrThrow`
+ * rethrows so the failure surfaces loudly at the root terminal.
  */
 private val LeakyRawExistsRule = ArticleLoadPrivacyRule { ctx ->
-    if (ctx.client.users.query { }.rawExists()) PrivacyDecision.Allow
+    if (ctx.client.users.query { }.rawExists().getOrThrow()) PrivacyDecision.Allow
     else PrivacyDecision.Continue
-}
-
-/**
- * Same misuse through an aggregate `*OrError` terminal. These wrap
- * their bodies in a catch-all that converts exceptions to `Err`, so
- * the gate must fire BEFORE the try — if it folded into
- * Err(DriverFailure), this rule would proceed to Allow on a fabricated
- * "no data" answer instead of failing loudly.
- */
-private val LeakyAggregateOrErrorRule = ArticleLoadPrivacyRule { ctx ->
-    ctx.client.users.query { }.rawMinOrError(User.email)
-    PrivacyDecision.Allow
 }
 
 // ---- Policies ----
@@ -152,12 +150,6 @@ private object LeakyRawExistsArticlePolicy : EntityPolicy<Article, ArticlePolicy
     }
 }
 
-private object LeakyAggregateOrErrorArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
-    override fun configure(scope: ArticlePolicyScope) = scope.run {
-        privacy { load(LeakyAggregateOrErrorRule) }
-    }
-}
-
 // ---- Predicate-inference limitation pin ----
 
 private val AllowAllMembershipLoads = MembershipLoadPrivacyRule { PrivacyDecision.Allow }
@@ -174,7 +166,7 @@ private val AllowAllMembershipLoads = MembershipLoadPrivacyRule { PrivacyDecisio
 private val SecretMemberEmailUnlocksArticles = ArticleLoadPrivacyRule { ctx ->
     val secretMembership = ctx.client.memberships.query {
         where(Membership.user.has { where(User.email.eq("alice@test.com")) })
-    }.firstOrNull()
+    }.firstOrNull().getOrThrow()
     if (secretMembership != null) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
@@ -194,11 +186,14 @@ private object SecretMemberGateArticlePolicy : EntityPolicy<Article, ArticlePoli
  * End-to-end semantics of the privacy-context read client
  * (`asPrivacyReadClientForInternalUse(privacy)`, exposed as
  * `EntPrivacyReadClient`): rule reads are viewer-scoped (asserted on
- * both denial surfaces — the throwing byId and the null-collapsing
- * visibleById), transaction-scoped, and still pass through read
- * interceptors under the caller's viewer. The compile-time no-writes
- * and opt-in-gate guarantees are pinned in `codegen`'s
- * `PrivacyReadClientCompileTest`.
+ * both denial projections — the rethrowing `getOrThrow` and the
+ * null-collapsing `visibleOrNull`), transaction-scoped, and still pass
+ * through read interceptors under the caller's viewer. Raw terminals
+ * (`rawCount` / `rawExists` / raw aggregates) are gated on this
+ * posture: the gate now sits inside the capture boundary, so the
+ * misuse surfaces as `ReadResult.Failed(IllegalStateException)` rather
+ * than a thrown exception. The compile-time no-writes and opt-in-gate
+ * guarantees are pinned in `codegen`'s `PrivacyReadClientCompileTest`.
  */
 class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
@@ -207,15 +202,15 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
     private fun seedAuthorAndArticle(client: EntClient): Pair<User, Article> =
         client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val author = sys.users.create { name = "Alice"; email = "alice@test.com" }.save()
-            val article = sys.articles.create { title = "T"; authorId = author.id }.save()
+            val author = sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad().getOrThrow()
+            val article = sys.articles.create { title = "T"; authorId = author.id }.saveAndLoad().getOrThrow()
             author to article
         }
 
-    // ---- Viewer scoping, throwing surface ----
+    // ---- Viewer scoping, rethrowing projection ----
 
     @Test
-    fun `rule reads are viewer-scoped - byIdOrNull surfaces the inner denial`() {
+    fun `rule reads are viewer-scoped - getOrThrow surfaces the inner denial`() {
         val client = freshClient {
             privacyContext { PrivacyContext(Viewer.Anonymous) }
             policies {
@@ -228,23 +223,25 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // Authenticated viewer: the rule's user read succeeds
         // viewer-scoped, so the article is visible.
         val asUser = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-            c.articles.byIdOrNull(article.id)
+            c.articles.findById(article.id).getOrThrow()
         }
         assertNotNull(asUser)
 
-        // Anonymous: the rule's byIdOrNull runs as Anonymous and the
-        // users LOAD denial propagates out — entity "User", not
+        // Anonymous: the rule's findById runs as Anonymous, its
+        // getOrThrow rethrows the users LOAD denial, and the article's
+        // root terminal captures it — the Failed names "User", not
         // "Article", proving the inner read was viewer-scoped. A
         // bypass-scoped read (the validation client's posture) would
         // have returned the row and allowed the article.
-        val ex = assertFailsWith<PrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
-        assertEquals("User", ex.entity)
+        val failed = assertIs<ReadResult.Failed>(client.articles.findById(article.id))
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertEquals("User", ex.denials.single().entityType)
     }
 
-    // ---- Viewer scoping, filtering surface ----
+    // ---- Viewer scoping, filtering projection ----
 
     @Test
-    fun `rule reads are viewer-scoped - visibleByIdOrNull collapses the denial to null`() {
+    fun `rule reads are viewer-scoped - visibleOrNull collapses the denial to null`() {
         val client = freshClient {
             privacyContext { PrivacyContext(Viewer.Anonymous) }
             policies {
@@ -255,16 +252,17 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         val (author, article) = seedAuthorAndArticle(client)
 
         val asUser = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-            c.articles.byIdOrNull(article.id)
+            c.articles.findById(article.id).getOrThrow()
         }
         assertNotNull(asUser)
 
-        // Anonymous: visibleByIdOrNull collapses the users denial to
-        // null, the rule falls through to Continue, and the fail-closed
-        // list denies the ARTICLE — the denial names "Article", the
-        // distinct outcome of the filtering surface.
-        val ex = assertFailsWith<PrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
-        assertEquals("Article", ex.entity)
+        // Anonymous: visibleOrNull collapses the users denial to
+        // Success(null), the rule falls through to Continue, and the
+        // fail-closed list denies the ARTICLE — the denial names
+        // "Article", the distinct outcome of the filtering projection.
+        val failed = assertIs<ReadResult.Failed>(client.articles.findById(article.id))
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertEquals("Article", ex.denials.single().entityType)
     }
 
     // ---- Viewer scoping, edge reads ----
@@ -281,27 +279,29 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         }
         val (author, article) = seedAuthorAndArticle(client)
         client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val group = sys.groups.create { name = "G" }.save()
-            sys.memberships.create { userId = author.id; groupId = group.id; role = "member" }.save()
+            val group = sys.groups.create { name = "G" }.saveAndLoad().getOrThrow()
+            sys.memberships.create { userId = author.id; groupId = group.id; role = "member" }.save().getOrThrow()
         }
 
         // Authenticated viewer: the eager-loaded membership carries its
         // user, the traversal reaches the member, and the index helper
         // finds the email — the rule allows the article.
         val asUser = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-            c.articles.byIdOrNull(article.id)
+            c.articles.findById(article.id).getOrThrow()
         }
         assertNotNull(asUser)
 
         // Anonymous: the same hops run viewer-scoped through the privacy
         // client, so the users LOAD denial surfaces from inside the
-        // rule's eager load — entity "User" — instead of the hidden rows
-        // influencing the decision. The rule reads through `allOrThrow()`,
-        // a result-backed terminal, so the denial arrives as the
-        // result-flavored EntPrivacyDeniedException rather than the plain
-        // PrivacyDeniedException the byId family throws.
-        val ex = assertFailsWith<EntPrivacyDeniedException> { client.articles.byIdOrNull(article.id) }
-        assertEquals("User", ex.privacyDenied.entity)
+        // rule's eager load — an EagerEdge-origin EntPrivacyDeniedException
+        // naming "User" — instead of the hidden rows influencing the
+        // decision. The rule reads through `all().getOrThrow()`, so the
+        // rethrown denial is captured by the article's root terminal as
+        // its own Failed.
+        val failed = assertIs<ReadResult.Failed>(client.articles.findById(article.id))
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertEquals("User", ex.denials.single().entityType)
+        assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
     }
 
     // ---- Transaction scoping ----
@@ -321,16 +321,16 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // an outer-connection read would return null and the rule would
         // Deny("author row not found").
         val article = client.withTransaction { tx ->
-            val author = tx.users.create { name = "Bob"; email = "bob@test.com" }.save()
-            tx.articles.create { title = "In tx"; authorId = author.id }.save()
-        }
+            val author = tx.users.create { name = "Bob"; email = "bob@test.com" }.saveAndLoad().orRollback()
+            tx.articles.create { title = "In tx"; authorId = author.id }.saveAndLoad().orRollback()
+        }.getOrThrow()
         assertNotNull(article)
     }
 
     // ---- Raw terminals are gated on viewer-scoped readers ----
 
     @Test
-    fun `raw terminals throw inside privacy rules instead of bypassing LOAD privacy`() {
+    fun `raw terminals fail inside privacy rules instead of bypassing LOAD privacy`() {
         val client = freshClient {
             privacyContext { PrivacyContext(Viewer.Anonymous) }
             policies {
@@ -340,16 +340,20 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         }
         val (author, article) = seedAuthorAndArticle(client)
 
-        // The rule's rawExists hits the privacy-bypassing-read gate — a
-        // loud IllegalStateException, not a silent existence probe over
-        // rows the viewer cannot see. (Validation rules keep raw
-        // terminals: their reader's bypass context makes raw ≡ visible —
-        // pinned by ValidationReadClientIntegrationTest's rawExists rule.)
-        val ex = assertFailsWith<IllegalStateException> {
-            client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-                c.articles.byIdOrNull(article.id)
-            }
+        // The rule's rawExists hits the privacy-bypassing-read gate. The
+        // gate sits inside the capture boundary, so the rejection is
+        // Failed(IllegalStateException); the rule's getOrThrow rethrows
+        // it and the article's root terminal reports it as the read's
+        // Failed exception — a loud failure, never a silent existence
+        // probe over rows the viewer cannot see. (Validation rules keep
+        // raw terminals: their reader's bypass context makes raw ≡
+        // visible — pinned by ValidationReadClientIntegrationTest's
+        // rawExists rule.)
+        val result = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
+            c.articles.findById(article.id)
         }
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<IllegalStateException>(failed.exception)
         assertTrue(
             "rawExists" in (ex.message ?: "") && "privacy-rule" in (ex.message ?: ""),
             "Expected the raw-terminal gate message naming rawExists; got: ${ex.message}",
@@ -357,28 +361,44 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `aggregate OrError terminals throw at the gate instead of folding into Err`() {
+    fun `raw aggregate gate is captured as Failed inside the rule, not thrown`() {
+        // The gate moved inside the capture boundary: a rule that ignores
+        // the aggregate's result no longer aborts the outer read — but it
+        // also never sees data, only Failed(IllegalStateException). The
+        // capture list lets the test assert that shape directly.
+        val captured = mutableListOf<ReadResult<String?>>()
+        val leakyAggregateRule = ArticleLoadPrivacyRule { ctx ->
+            captured.add(ctx.client.users.query { }.rawMin(User.email))
+            PrivacyDecision.Allow
+        }
+        val leakyAggregatePolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy { load(leakyAggregateRule) }
+            }
+        }
         val client = freshClient {
             privacyContext { PrivacyContext(Viewer.Anonymous) }
             policies {
                 users(AuthenticatedReadersUserPolicy)
-                articles(LeakyAggregateOrErrorArticlePolicy)
+                articles(leakyAggregatePolicy)
             }
         }
         val (author, article) = seedAuthorAndArticle(client)
 
-        // If the gate ran inside the OrError catch-all, rawMinOrError
-        // would return Err(DriverFailure), the rule would Allow, and this
-        // read would SUCCEED — the assertion below is what distinguishes
-        // throw-at-gate from fold-into-Err.
-        val ex = assertFailsWith<IllegalStateException> {
-            client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-                c.articles.byIdOrNull(article.id)
-            }
+        // The read SUCCEEDS: the gate rejection was captured inside the
+        // raw terminal rather than thrown through the rule, so the (badly
+        // written) rule proceeded to Allow — without any leaked aggregate
+        // data ever reaching it.
+        val loaded = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
+            c.articles.findById(article.id).getOrThrow()
         }
+        assertNotNull(loaded)
+
+        val failed = assertIs<ReadResult.Failed>(captured.single())
+        val gate = assertIs<IllegalStateException>(failed.exception)
         assertTrue(
-            "rawMinOrError" in (ex.message ?: ""),
-            "Expected the gate message naming rawMinOrError; got: ${ex.message}",
+            "raw aggregates" in (gate.message ?: "") && "privacy-rule" in (gate.message ?: ""),
+            "Expected the raw-terminal gate message naming raw aggregates; got: ${gate.message}",
         )
     }
 
@@ -395,15 +415,16 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
             }
         }
         val (alice, article) = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val alice = sys.users.create { name = "Alice"; email = "alice@test.com" }.save()
-            val group = sys.groups.create { name = "G" }.save()
-            sys.memberships.create { groupId = group.id; userId = alice.id; role = "member" }.save()
-            val article = sys.articles.create { title = "T"; authorId = alice.id }.save()
+            val alice = sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad().getOrThrow()
+            val group = sys.groups.create { name = "G" }.saveAndLoad().getOrThrow()
+            sys.memberships.create { groupId = group.id; userId = alice.id; role = "member" }.save().getOrThrow()
+            val article = sys.articles.create { title = "T"; authorId = alice.id }.saveAndLoad().getOrThrow()
             alice to article
         }
 
         // The caller cannot load the user directly…
-        assertFailsWith<PrivacyDeniedException> { client.users.byIdOrNull(alice.id) }
+        val userRead = assertIs<ReadResult.Failed>(client.users.findById(alice.id))
+        assertIs<EntPrivacyDeniedException>(userRead.exception)
 
         // …yet the rule's has{} predicate matches her email inside the
         // EXISTS subquery, the (LOAD-checked, allowed) membership row
@@ -413,7 +434,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // starts failing because the related row is now LOAD-checked,
         // that is edge-derived-LOAD-privacy-shaped work landing; update
         // the docs with it.
-        assertNotNull(client.articles.byIdOrNull(article.id))
+        assertNotNull(client.articles.findById(article.id).getOrThrow())
     }
 
     // ---- Interceptor semantics ----
@@ -434,7 +455,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         val (author, article) = seedAuthorAndArticle(client)
 
         client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-            c.articles.byIdOrNull(article.id)
+            c.articles.findById(article.id).getOrThrow()
         }
 
         // The rule's user read passed through the interceptor chain with

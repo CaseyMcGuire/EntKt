@@ -23,13 +23,13 @@ class TagController(private val client: EntClient) {
     fun list(): List<TagResponse> {
         val tags = client.tags.query {
             orderBy(Tag.name.asc())
-        }.allOrThrow()
+        }.all().getOrThrow()
         return tags.map { it.toResponse() }
     }
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: Int): TagResponse {
-        val tag = client.tags.byIdOrNull(id)
+        val tag = client.tags.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return tag.toResponse()
     }
@@ -39,13 +39,13 @@ class TagController(private val client: EntClient) {
         val tag = client.tags.create {
             name = req.name
             category = req.category
-        }.save()
+        }.saveAndLoad().getOrThrow()
         return tag.toResponse()
     }
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Int) {
-        if (!client.tags.deleteByIdOrError(id).getOrThrow()) {
+        if (!client.tags.deleteById(id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }
@@ -66,11 +66,11 @@ class TagController(private val client: EntClient) {
      */
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: Int): List<PostResponse> {
-        client.tags.byIdOrNull(id)
+        client.tags.findById(id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.tags.query { where(Tag.id eq id) }
             .queryPosts()
-            .allOrThrow()
+            .all().getOrThrow()
         return posts.map { it.toResponse() }
     }
 }

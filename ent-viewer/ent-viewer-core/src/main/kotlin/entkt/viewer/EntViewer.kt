@@ -93,7 +93,7 @@ class EntViewer<C : Any>(
             // A read interceptor (tenant guard, limit rule, ...) rejected the
             // query. That's a policy outcome, not a viewer bug — render it as
             // a controlled error instead of leaking a 500 to the host.
-            html.error(400, "Query rejected by read interceptor '${e.queryRejected.interceptor}': ${e.queryRejected.reason}")
+            html.error(400, "Query rejected by read interceptor '${e.interceptor}': ${e.reason}")
         }
     }
 

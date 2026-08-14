@@ -22,17 +22,14 @@ import kotlin.test.assertTrue
  * Coverage for the explain API per the read-path interceptors.
  * Pins:
  *
- *  - Every per-terminal explain method (`explainAllOrThrow`,
- *    `explainAllOrError`, `explainVisibleAll`, `explainVisibleAllOrError`,
- *    `explainFirstOrThrow`, `explainFirstOrNull`, `explainFirstOrError`,
- *    `explainFirstVisibleOrNull`, `explainRawCount`, `explainVisibleCount`,
- *    `explainRawExists`, `explainVisibleExists`, plus repo-level
- *    `explainByIdOrThrow` / `explainByIdOrNull` /
- *    `explainVisibleByIdOrNull` / `explainByIdOrError`) runs interceptors
- *    with the right ReadOperation.
+ *  - Every per-terminal explain method (`explainAll`,
+ *    `explainFirstOrNull`, `explainRawCount`, `explainRawExists`,
+ *    plus repo-level `explainFindById`) runs interceptors with the
+ *    right ReadOperation.
  *  - Rejection produces a `QueryPlan` with `rejected = true` and the
  *    rejection metadata — NOT a thrown exception. Callers that want
- *    exception-style explain chain `requireNotRejected()`.
+ *    exception-style explain chain `requireNotRejected()`, which
+ *    throws the stored typed EntQueryRejectedException.
  *  - Post-interceptor predicates / annotations / limits surface in the
  *    plan.
  */
@@ -43,7 +40,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     // ---------- Operation routing per explain method ----------
 
     @Test
-    fun `explainAllOrThrow runs interceptors with operation = ALL`() {
+    fun `explainAll runs interceptors with operation = ALL`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
@@ -52,12 +49,12 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
-        client.posts.query().explainAllOrThrow()
+        client.posts.query().explainAll()
         assertEquals(listOf(ReadOperation.ALL), ops)
     }
 
     @Test
-    fun `every All-shaped explain method routes ALL`() {
+    fun `explainFirstOrNull runs interceptors with operation = FIRST`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
@@ -66,28 +63,8 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
-        client.posts.query().explainAllOrThrow()
-        client.posts.query().explainAllOrError()
-        client.posts.query().explainVisibleAll()
-        client.posts.query().explainVisibleAllOrError()
-        assertEquals(List(4) { ReadOperation.ALL }, ops)
-    }
-
-    @Test
-    fun `every First-shaped explain method routes FIRST`() {
-        val driver = freshDriver()
-        val ops = mutableListOf<ReadOperation>()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
-            }
-        }
-        client.posts.query().explainFirstOrThrow()
         client.posts.query().explainFirstOrNull()
-        client.posts.query().explainFirstOrError()
-        client.posts.query().explainFirstVisibleOrNull()
-        assertEquals(List(4) { ReadOperation.FIRST }, ops)
+        assertEquals(listOf(ReadOperation.FIRST), ops)
     }
 
     @Test
@@ -101,22 +78,18 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
             }
         }
         client.posts.query().explainRawCount()
-        client.posts.query().explainVisibleCount()
         client.posts.query().explainRawExists()
-        client.posts.query().explainVisibleExists()
         assertEquals(
             listOf(
                 ReadOperation.RAW_COUNT,
-                ReadOperation.VISIBLE_COUNT,
                 ReadOperation.RAW_EXISTS,
-                ReadOperation.VISIBLE_EXISTS,
             ),
             ops,
         )
     }
 
     @Test
-    fun `every explainByIdX variant runs interceptors with BY_ID`() {
+    fun `explainFindById runs interceptors with BY_ID`() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
@@ -125,11 +98,8 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 posts(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "obs")
             }
         }
-        client.posts.explainByIdOrThrow(1L)
-        client.posts.explainByIdOrNull(1L)
-        client.posts.explainVisibleByIdOrNull(1L)
-        client.posts.explainByIdOrError(1L)
-        assertEquals(List(4) { ReadOperation.BY_ID }, ops)
+        client.posts.explainFindById(1L)
+        assertEquals(listOf(ReadOperation.BY_ID), ops)
     }
 
     // ---------- Predicate & annotation surfacing ----------
@@ -148,7 +118,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.posts.query().explainAllOrThrow()
+        val plan = client.posts.query().explainAll()
         assertFalse(plan.rejected)
         assertNotNull(plan.root)
         assertTrue(
@@ -193,7 +163,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.posts.query().explainAllOrThrow()
+        val plan = client.posts.query().explainAll()
         assertEquals("acme", plan.annotations["tenant"])
     }
 
@@ -211,7 +181,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.posts.query().explainAllOrThrow()
+        val plan = client.posts.query().explainAll()
         assertTrue(plan.rejected)
         assertEquals("nope", plan.rejectedReason)
         assertEquals("ex_rej", plan.rejectedCode)
@@ -234,22 +204,11 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
         }
         // Verify NO throw on any explain variant.
         listOf(
-            client.posts.query().explainAllOrThrow(),
-            client.posts.query().explainAllOrError(),
-            client.posts.query().explainVisibleAll(),
-            client.posts.query().explainVisibleAllOrError(),
-            client.posts.query().explainFirstOrThrow(),
+            client.posts.query().explainAll(),
             client.posts.query().explainFirstOrNull(),
-            client.posts.query().explainFirstOrError(),
-            client.posts.query().explainFirstVisibleOrNull(),
             client.posts.query().explainRawCount(),
-            client.posts.query().explainVisibleCount(),
             client.posts.query().explainRawExists(),
-            client.posts.query().explainVisibleExists(),
-            client.posts.explainByIdOrThrow(1L),
-            client.posts.explainByIdOrNull(1L),
-            client.posts.explainVisibleByIdOrNull(1L),
-            client.posts.explainByIdOrError(1L),
+            client.posts.explainFindById(1L),
         ).forEach { plan ->
             assertTrue(plan.rejected, "expected rejected plan, got root=${plan.root}")
             assertEquals("rejector", plan.rejectedInterceptor)
@@ -260,22 +219,22 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     fun `requireNotRejected throws on rejected plan and returns same plan otherwise`() {
         val driver = freshDriver()
 
-        // Rejected case: throws.
+        // Rejected case: throws the stored typed exception.
         val rejectingClient = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
             interceptors {
                 posts(QueryInterceptor { scope, _ -> scope.reject("nope") }, name = "rej")
             }
         }
-        val rejected = rejectingClient.posts.query().explainAllOrThrow()
+        val rejected = rejectingClient.posts.query().explainAll()
         val ex = assertFailsWith<EntQueryRejectedException> { rejected.requireNotRejected() }
-        assertEquals("nope", ex.queryRejected.reason)
-        assertEquals("rej", ex.queryRejected.interceptor)
+        assertEquals("nope", ex.reason)
+        assertEquals("rej", ex.interceptor)
 
         // Happy case: identity.
         val driver2 = freshDriver()
         val happyClient = EntClient(driver2) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
-        val plan = happyClient.posts.query().explainAllOrThrow()
+        val plan = happyClient.posts.query().explainAll()
         assertFalse(plan.rejected)
         assertTrue(plan === plan.requireNotRejected())
     }
@@ -296,13 +255,13 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.users.query().withArticles().explainAllOrThrow()
+        val plan = client.users.query { withArticles() }.explainAll()
         assertFalse(plan.rejected, "root plan must not be rejected — the rejection is edge-scoped")
         assertTrue(plan.eagerQueries.getValue("articles").rejected)
 
         val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("no articles", ex.queryRejected.reason)
-        assertEquals("art-rej", ex.queryRejected.interceptor)
+        assertEquals("no articles", ex.reason)
+        assertEquals("art-rej", ex.interceptor)
     }
 
     @Test
@@ -317,7 +276,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val rendered = client.posts.query().explainAllOrThrow().render()
+        val rendered = client.posts.query().explainAll().render()
         assertTrue(rendered.contains("REJECTED by 'scan-guard'"), "render() should describe the rejector; was:\n$rendered")
         assertTrue(rendered.contains("code=broad"), "render() should include the code; was:\n$rendered")
         assertTrue(rendered.contains("no broad scans"), "render() should include the reason; was:\n$rendered")
@@ -326,10 +285,10 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
     // ---------- Sanity ----------
 
     @Test
-    fun `with no interceptors explainAllOrThrow produces a plan with no synthetic predicates`() {
+    fun `with no interceptors explainAll produces a plan with no synthetic predicates`() {
         val driver = freshDriver()
         val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
-        val plan = client.posts.query().explainAllOrThrow()
+        val plan = client.posts.query().explainAll()
         assertFalse(plan.rejected)
         assertNotNull(plan.root)
         assertTrue(
