@@ -385,6 +385,8 @@ abstract class EntException(
     cause: Throwable? = null,
 ) : RuntimeException(message, cause)
 
+sealed interface EntPrivacyFailure
+
 enum class MutationWriteState {
     NotPersisted,
     TransactionPending,
@@ -415,7 +417,7 @@ class EntMutationPrivacyDeniedException(
 ) : EntMutationException(
     writeState,
     "$operation denied on $entityType: $reason",
-)
+), EntPrivacyFailure
 
 data class ValidationViolation(
     val message: String,
@@ -473,7 +475,8 @@ class EntQueryRejectedException(
 class EntPrivacyDeniedException(
     val origin: LoadDenialOrigin,
     val denials: List<PrivacyDenial>,
-) : EntException("LOAD denied for ${denials.size} ${denials.singleOrNull()?.entityType ?: "entities"}") {
+) : EntException("LOAD denied for ${denials.size} ${denials.singleOrNull()?.entityType ?: "entities"}"),
+    EntPrivacyFailure {
     init {
         require(denials.isNotEmpty())
     }
@@ -491,6 +494,14 @@ exception. Target absence, validation, recognized constraint violations, and
 expected conflicts hardcode `NotPersisted`; only mutation privacy and
 unexpected mutation exceptions accept a state because those failures can be
 reached at more than one mutation phase.
+
+`EntPrivacyFailure` is a classification marker shared by the read and mutation
+denial exceptions. It means a privacy rule returned a denial decision; an
+exception thrown by privacy-rule application code remains an unexpected
+operational failure and does not implement the marker. The distinct concrete
+exceptions remain necessary because only mutation failures carry write state,
+while read denial carries root/eager origin and potentially multiple keyed
+denials.
 
 `EntMutationException` is sealed because every direct failure kind is owned by
 the runtime module. Application callbacks and third-party drivers preserve
@@ -1327,26 +1338,34 @@ there is no current transaction it could roll back.
 fun <T> TransactionResult<T>.getOrThrow(): T
 ```
 
-`TransactionResult.getOrThrow()` performs no I/O. It returns `Success.value` or
-throws an `EntTransactionFailedException` that retains `transactionState` and
-exposes the stored exception through its non-null `exception` property while
-also using it as the standard exception cause. The wrapper is required because
-rethrowing the stored exception alone would discard whether rollback was
-confirmed or the transaction outcome is unknown.
-
-The projection asymmetry is intentional: mutation failures already store a
-state-bearing framework exception, while transaction failures may store an
-arbitrary block exception and therefore require a uniform wrapper to preserve
-the final transaction state. When the cause is a mutation exception, its
-`TransactionPending` state describes the earlier mutation result; the wrapper's
-`NotCommitted` or `OutcomeUnknown` describes the completed transaction.
+`TransactionResult.getOrThrow()` performs no I/O. It returns `Success.value`.
+For `Failed(NotCommitted)`, it rethrows the exact stored exception so ordinary
+typed catches work at application boundaries. For `Failed(OutcomeUnknown)`, it
+throws the dedicated `EntTransactionOutcomeUnknownException`; this prevents a
+possibly committed transaction from being mistaken for an ordinary validation,
+privacy, or not-found failure. The throwing shape therefore carries the state:
+a direct exception means the managed transaction definitely did not commit,
+while the dedicated exception means its outcome is unknown.
 
 ```kotlin
-class EntTransactionFailedException(
-    val transactionState: TransactionFailureState,
+class EntTransactionOutcomeUnknownException internal constructor(
     val exception: Exception,
-) : EntException("Transaction failed with state $transactionState", exception)
+) : EntException("Transaction outcome is unknown", exception)
 ```
+
+The constructor is internal: applications catch and inspect this framework
+assessment but cannot construct their own transaction-outcome claim.
+
+An inner `EntMutationException.writeState` remains the operation-time assessment
+from when that mutation result was produced. It can therefore remain
+`TransactionPending` or `PersistenceUnknown` even when the later transaction
+projection directly rethrows it after confirmed rollback. These statements are
+not contradictory: the mutation state describes the earlier inner operation;
+the direct throwing shape establishes the later final outcome of the managed
+transaction. EntKt does not mutate or replace the stored exception after
+transaction completion. A mutation exception thrown into the block from an
+unrelated client likewise keeps its own write state, because `NotCommitted`
+only describes the managed transaction.
 
 Transaction `getOrThrow()` is also a propagation convenience, not a retry policy:
 
@@ -1365,6 +1384,39 @@ another client that the transaction could not roll back. Callers may retry only
 when the block and every side effect are deliberately idempotent or otherwise
 retry-safe. The runtime KDoc for transaction `getOrThrow()` must carry this warning
 prominently.
+
+### Application boundary mapping
+
+The dedicated uncertainty exception lets HTTP and GraphQL boundaries preserve
+ordinary typed handling without manually unwrapping every transaction failure:
+
+```kotlin
+try {
+    CreateNoteSuccess(noteService.createNote(input))
+} catch (e: EntTransactionOutcomeUnknownException) {
+    log.error("Transaction outcome is unknown", e)
+    UnexpectedError("An unexpected error occurred")
+} catch (e: NotFoundException) {
+    NotFoundError(e.message ?: "Not found")
+} catch (e: EntValidationException) {
+    ValidationError(e.violations.first().message)
+} catch (e: EntException) {
+    if (e is EntPrivacyFailure) {
+        NotFoundError("Not found")
+    } else {
+        log.error("Unexpected EntKt failure", e)
+        UnexpectedError("An unexpected error occurred")
+    }
+} catch (e: Exception) {
+    log.error("Unexpected application failure", e)
+    UnexpectedError("An unexpected error occurred")
+}
+```
+
+`EntTransactionOutcomeUnknownException.exception` and `cause` are the exact
+stored exception, including its stack trace and suppressed cleanup failures.
+Boundaries needing explicit state without throwing should inspect
+`TransactionResult.Failed` directly.
 
 This must also coordinate with
 [Transactional Graph Changesets](../../possible-features/mutation/transactional-graph-changesets.md).
@@ -1771,9 +1823,8 @@ Before implementation, add or update tests for:
 - `withTransaction()` is the sole canonical transaction entry point and
   returns `TransactionResult`; `.getOrThrow()` performs no additional transaction
   or driver work
-- `DriverTransactionResult.Failed`, `TransactionResult.Failed`, and
-  `EntTransactionFailedException` use only `TransactionFailureState` for
-  transaction-state metadata;
+- `DriverTransactionResult.Failed` and `TransactionResult.Failed` use only
+  `TransactionFailureState` for transaction-state metadata;
   `TransactionPending` and `Committed` are not representable transaction
   failure states
 - `TransactionResult.Failed` does not expose the block value
@@ -1801,9 +1852,18 @@ Before implementation, add or update tests for:
   transactions do not compile; calling `withTransaction()` on a
   transaction-scoped driver throws `NestedTransactionUnsupportedException`
   before the nested block or any nested transaction I/O runs
-- `TransactionResult.getOrThrow()` preserves `transactionState` in its wrapper
-  exception, exposes the stored failure as the same non-null `exception` used
-  as its cause, and performs no additional transaction or driver work
+- `TransactionResult.getOrThrow()` rethrows the exact stored exception for
+  `NotCommitted`; for `OutcomeUnknown` it throws
+  `EntTransactionOutcomeUnknownException`, exposing the stored failure as the
+  same non-null `exception` used as its cause, and performs no additional
+  transaction or driver work
+- read and mutation privacy denial exceptions implement the shared sealed
+  `EntPrivacyFailure` marker, while exceptions thrown by privacy-rule code do
+  not
+- confirmed rollback may directly rethrow an `EntMutationException` whose
+  `writeState` remains the earlier `TransactionPending` or
+  `PersistenceUnknown` snapshot; the throwing shape is authoritative for the
+  later managed-transaction outcome
 - transaction `getOrThrow()` runtime KDoc warns against blanket retry;
   `NotCommitted` covers only the managed transaction, while `OutcomeUnknown`
   may include a committed database transaction

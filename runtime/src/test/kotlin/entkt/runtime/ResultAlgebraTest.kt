@@ -12,7 +12,7 @@ import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntTransactionFailedException
+import entkt.runtime.result.EntTransactionOutcomeUnknownException
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
@@ -37,7 +37,7 @@ import kotlin.test.assertTrue
 
 /**
  * Pins the canonical result algebra's projections and the runtime
- * transaction boundary: getOrThrow direct-throw and wrapper semantics,
+ * transaction boundary: getOrThrow direct-throw and uncertainty semantics,
  * visibleOrNull's root-only mapping table, coordinator rollback-only
  * bookkeeping with suppressed-failure ordering, and runEntTransaction
  * outcome conversion — all without any database.
@@ -113,15 +113,44 @@ class ResultAlgebraTest {
     // ---- TransactionResult projection ----
 
     @Test
-    fun `transaction getOrThrow wraps and preserves transactionState with the stored exception exposed and as cause`() {
+    fun `transaction getOrThrow rethrows the exact stored exception after confirmed rollback`() {
         val cause = IllegalStateException("boom")
         val failed: TransactionResult<Int> =
+            TransactionResult.failedForInternalUse(cause, TransactionFailureState.NotCommitted)
+
+        val thrown = assertFailsWith<IllegalStateException> { failed.getOrThrow() }
+        assertSame(cause, thrown)
+    }
+
+    @Test
+    fun `transaction getOrThrow uses the dedicated exception only for an unknown outcome`() {
+        val cause = rootDenial()
+        val cleanup = IllegalStateException("cleanup failed")
+        cause.addSuppressed(cleanup)
+        val failed: TransactionResult<Int> =
             TransactionResult.failedForInternalUse(cause, TransactionFailureState.OutcomeUnknown)
-        val thrown = assertFailsWith<EntTransactionFailedException> { failed.getOrThrow() }
-        assertEquals(TransactionFailureState.OutcomeUnknown, thrown.transactionState)
+
+        val thrown = assertFailsWith<EntTransactionOutcomeUnknownException> { failed.getOrThrow() }
         assertSame(cause, thrown.exception)
         assertSame(cause, thrown.cause)
+        assertSame(cleanup, thrown.exception.suppressed.single())
         assertEquals(7, (TransactionResult.Success(7) as TransactionResult<Int>).getOrThrow())
+    }
+
+    @Test
+    fun `confirmed rollback is authoritative while mutation state remains the operation-time snapshot`() {
+        for (state in listOf(MutationWriteState.TransactionPending, MutationWriteState.PersistenceUnknown)) {
+            val mutation = EntUnexpectedMutationException(
+                state,
+                IllegalStateException("mutation failed at $state"),
+            )
+            val failed: TransactionResult<Unit> =
+                TransactionResult.failedForInternalUse(mutation, TransactionFailureState.NotCommitted)
+
+            val thrown = assertFailsWith<EntUnexpectedMutationException> { failed.getOrThrow() }
+            assertSame(mutation, thrown)
+            assertEquals(state, thrown.writeState)
+        }
     }
 
     // ---- TransactionCoordinator ----

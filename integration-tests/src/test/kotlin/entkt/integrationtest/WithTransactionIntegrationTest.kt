@@ -14,7 +14,6 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntTransactionFailedException
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
@@ -23,6 +22,7 @@ import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
@@ -38,8 +38,8 @@ import kotlin.test.assertTrue
  * recorded failure primary and later ones suppressed; a block-thrown
  * application exception is primary with recorded failures suppressed;
  * read failures mark rollback-only only via `orRollback()`; and
- * `getOrThrow()` throws `EntTransactionFailedException` preserving
- * `transactionState` with the stored failure as `exception` and cause.
+ * `getOrThrow()` directly rethrows a confirmed-rollback failure; an
+ * unknown transaction outcome has its own dedicated exception.
  */
 class WithTransactionIntegrationTest : PostgresTestBase() {
 
@@ -222,6 +222,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
             failed.exception.suppressed.any { it === recordedEx },
             "recorded mutation failure should be suppressed on the block exception",
         )
+        assertSame(appBug, assertFailsWith<IllegalStateException> { result.getOrThrow() })
     }
 
     // ---- Read failures ----
@@ -269,8 +270,9 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         }
 
         val failed = assertIs<TransactionResult.Failed>(result)
-        assertIs<EntPrivacyDeniedException>(failed.exception)
+        val denial = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertSame(denial, assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() })
         assertEquals(1L, userCount(client))
     }
 
@@ -315,7 +317,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `getOrThrow wraps failure in EntTransactionFailedException preserving state and cause`() {
+    fun `getOrThrow rethrows the exact typed failure after confirmed rollback`() {
         val client = freshClient()
 
         val result = client.withTransaction { tx ->
@@ -323,14 +325,8 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         }
 
         val failed = assertIs<TransactionResult.Failed>(result)
-        try {
-            result.getOrThrow()
-            throw AssertionError("expected getOrThrow to throw")
-        } catch (e: EntTransactionFailedException) {
-            assertEquals(TransactionFailureState.NotCommitted, e.transactionState)
-            assertSame(failed.exception, e.exception)
-            assertSame(failed.exception, e.cause)
-        }
+        val thrown = assertFailsWith<EntValidationException> { result.getOrThrow() }
+        assertSame(failed.exception, thrown)
     }
 
     // ---- Failed does not expose the block value ----

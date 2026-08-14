@@ -787,7 +787,12 @@ recorded failure. If the block throws, the transaction rolls back.
 `TransactionResult` is `Success(value)` or
 `Failed(exception, transactionState)` with `transactionState` either
 `NotCommitted` (rollback confirmed) or `OutcomeUnknown`;
-`.getOrThrow()` throws `EntTransactionFailedException` preserving both.
+`.getOrThrow()` rethrows the exact stored exception when rollback was
+confirmed, so ordinary typed catches work. When commit or rollback
+could not be confirmed, it instead throws
+`EntTransactionOutcomeUnknownException` with the stored exception as
+its cause. Callers needing the complete state without throwing can
+inspect `TransactionResult.Failed` directly.
 `EntTransactionClient` exposes repositories and privacy re-scoping but
 has no `withTransaction` member, so nested client transactions do not
 compile. At the lower-level driver API, an already-transactional driver

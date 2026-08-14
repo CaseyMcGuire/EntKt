@@ -3,10 +3,12 @@ package entkt.runtime
 import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntPrivacyFailure
 import entkt.runtime.result.EntTargetAbsentException
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntValidationException
@@ -20,6 +22,8 @@ import entkt.runtime.result.toValidationViolation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -154,6 +158,36 @@ class EntExceptionTest {
         assertFailsWith<IllegalArgumentException> {
             EntPrivacyDeniedException(LoadDenialOrigin.Root, emptyList())
         }
+    }
+
+    @Test
+    fun `read and mutation denials share the privacy failure marker`() {
+        val read = EntPrivacyDeniedException(
+            origin = LoadDenialOrigin.Root,
+            denials = listOf(PrivacyDenial("User", EntityKey("id", 3), "not visible")),
+        )
+        val mutation = EntMutationPrivacyDeniedException(
+            writeState = MutationWriteState.NotPersisted,
+            entityType = "User",
+            operation = EntOperation.UPDATE,
+            entityKey = EntityKey("id", 3),
+            reason = "not visible",
+        )
+
+        assertIs<EntPrivacyFailure>(read)
+        assertIs<EntPrivacyFailure>(mutation)
+    }
+
+    @Test
+    fun `an unexpected failure is not a privacy failure merely because its cause is one`() {
+        val denial = EntPrivacyDeniedException(
+            origin = LoadDenialOrigin.Root,
+            denials = listOf(PrivacyDenial("User", EntityKey("id", 3), "not visible")),
+        )
+        val unexpected: EntException =
+            EntUnexpectedMutationException(MutationWriteState.NotPersisted, denial)
+
+        assertFalse(unexpected is EntPrivacyFailure)
     }
 
     @Test

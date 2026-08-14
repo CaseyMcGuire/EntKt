@@ -477,7 +477,7 @@ throw from the terminal. A denied **read** is
 class EntPrivacyDeniedException(
     val origin: LoadDenialOrigin,       // Root, or EagerEdge(path) for a denied eager target
     val denials: List<PrivacyDenial>,   // non-empty; one entry per denied row, in query order
-) : EntException(...)
+) : EntException(...), EntPrivacyFailure
 
 data class PrivacyDenial(
     val entityType: String,   // e.g. "User"
@@ -495,6 +495,14 @@ or `saveAndLoad()` cannot disclose the returned entity — is
 rejection is always `NotPersisted`, while a disclosure denial after a
 successful write reports the real state (possibly `Committed` — the
 write is not rolled back because its result could not be shown).
+
+Both exception types implement the sealed `EntPrivacyFailure` marker.
+Trusted application boundaries can therefore apply one non-disclosure
+policy with `exception is EntPrivacyFailure` while retaining each
+exception's read- or mutation-specific payload. The marker means an
+EntKt privacy rule returned a denial decision; exceptions thrown by
+privacy-rule application code remain unexpected operational failures
+and do not implement it.
 
 All read operations (`all()`, `firstOrNull()`, `findById()`) and all
 write operations (`create`, `update`, `delete`) surface denial this

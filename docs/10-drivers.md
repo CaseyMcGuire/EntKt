@@ -334,6 +334,9 @@ client.withTransaction { tx ->
 The client-level `withTransaction` returns `TransactionResult<T>`
 (project with `.getOrThrow()`); a mutation failure produced through
 `tx` marks the scope rollback-only even if its result is ignored.
+After confirmed rollback, `.getOrThrow()` rethrows the stored exception
+directly; an unknown transaction outcome throws
+`EntTransactionOutcomeUnknownException` instead.
 The generated `tx` is an `EntTransactionClient`, which has no
 `withTransaction` member, so client-level nesting does not compile.
 Calling `withTransaction` on the transaction-scoped driver remains a

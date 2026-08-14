@@ -51,19 +51,21 @@ sealed interface TransactionResult<out T> {
 }
 
 /**
- * Thrown by [TransactionResult.getOrThrow]. The wrapper is required —
- * the projection asymmetry is intentional: mutation failures already
- * store a state-bearing framework exception, while a transaction
- * block's stored exception is arbitrary and cannot itself carry
- * [transactionState]; rethrowing it alone would discard whether
- * rollback was confirmed or the outcome is unknown. The stored failure
- * is exposed through the non-null [exception] property and also used
- * as the standard exception cause.
+ * Thrown by [TransactionResult.getOrThrow] only when commit or rollback
+ * could not be confirmed. The type itself represents
+ * [TransactionFailureState.OutcomeUnknown]; [exception] is the exact
+ * failure stored by [TransactionResult.Failed] and is also the standard
+ * exception cause.
+ *
+ * Confirmed rollback does not use a carrier exception: `getOrThrow()`
+ * rethrows the stored exception directly so ordinary typed catches keep
+ * working at application boundaries. The constructor is internal;
+ * callers catch and inspect instances produced by EntKt rather than
+ * fabricating transaction-outcome claims.
  */
-class EntTransactionFailedException(
-    val transactionState: TransactionFailureState,
+class EntTransactionOutcomeUnknownException internal constructor(
     val exception: Exception,
-) : EntException("Transaction failed with state $transactionState", exception)
+) : EntException("Transaction outcome is unknown", exception)
 
 /**
  * Thrown when `withTransaction()` is called on a transaction-scoped
@@ -76,11 +78,25 @@ class NestedTransactionUnsupportedException : IllegalStateException(
 )
 
 /**
- * Return the committed block value or throw
- * [EntTransactionFailedException] preserving [TransactionResult.Failed.transactionState]
- * with the stored exception as its non-null `exception` property and
- * cause. Performs no I/O and no additional transaction or driver work.
- * There is no transaction `orNull()` projection.
+ * Return the committed block value. A confirmed rollback rethrows the
+ * exact stored exception; an unknown commit/rollback outcome throws
+ * [EntTransactionOutcomeUnknownException] with the stored exception as
+ * both its [EntTransactionOutcomeUnknownException.exception] property
+ * and cause. The throwing shape therefore preserves the final state:
+ * a direct exception means [TransactionFailureState.NotCommitted],
+ * while the dedicated exception means
+ * [TransactionFailureState.OutcomeUnknown]. Performs no I/O and no
+ * additional transaction or driver work. There is no transaction
+ * `orNull()` projection.
+ *
+ * An [EntMutationException] stored inside a transaction retains the
+ * operation-time [EntMutationException.writeState] from when that
+ * mutation result was produced. For example, it may say
+ * [MutationWriteState.TransactionPending] even though a later direct
+ * rethrow from this projection establishes that the managed transaction
+ * rolled back. The projection outcome is authoritative for completion
+ * of that managed transaction; the mutation state remains a historical
+ * description of the inner operation and is not rewritten.
  *
  * **This is a propagation convenience, not a retry policy.** Blanket
  * `retry { withTransaction { ... }.getOrThrow() }` is unsafe:
@@ -95,7 +111,10 @@ class NestedTransactionUnsupportedException : IllegalStateException(
  */
 fun <T> TransactionResult<T>.getOrThrow(): T = when (this) {
     is TransactionResult.Success<T> -> value
-    is TransactionResult.Failed -> throw EntTransactionFailedException(transactionState, exception)
+    is TransactionResult.Failed -> when (transactionState) {
+        TransactionFailureState.NotCommitted -> throw exception
+        TransactionFailureState.OutcomeUnknown -> throw EntTransactionOutcomeUnknownException(exception)
+    }
 }
 
 /**

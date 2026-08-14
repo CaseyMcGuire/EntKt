@@ -17,6 +17,18 @@ abstract class EntException(
 ) : RuntimeException(message, cause)
 
 /**
+ * Marker for framework-classified privacy denials. Implemented by both
+ * read and mutation denial exceptions so application boundaries can
+ * apply one non-disclosure policy without erasing their distinct
+ * payloads or mutation write-state information.
+ *
+ * This means a privacy rule returned a denial decision. An exception
+ * thrown by privacy-rule application code is an unexpected operational
+ * failure and does not implement this interface.
+ */
+sealed interface EntPrivacyFailure
+
+/**
  * Base of every mutation failure stored in [MutationResult.Failed].
  * [writeState] records what EntKt knows about the mutation's database
  * effect when the failure was produced, so the raw result and the
@@ -87,7 +99,7 @@ class EntMutationPrivacyDeniedException(
 ) : EntMutationException(
     writeState,
     "$operation denied on $entityType: $reason",
-)
+), EntPrivacyFailure
 
 /**
  * Validation rejected the mutation. Always
@@ -196,7 +208,7 @@ class EntPrivacyDeniedException(
     val denials: List<PrivacyDenial>,
 ) : EntException(
     "LOAD denied for ${denials.size} ${denials.singleOrNull()?.entityType ?: "entities"}",
-) {
+), EntPrivacyFailure {
     init {
         require(denials.isNotEmpty()) {
             "EntPrivacyDeniedException requires at least one denial"

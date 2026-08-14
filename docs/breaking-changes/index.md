@@ -30,6 +30,21 @@ above it.
 
 ## Unreleased
 
+- **Rethrow confirmed transaction failures directly; reserve a dedicated exception for uncertain outcomes** (`runtime`)
+  `TransactionResult.getOrThrow()` no longer wraps every failure in
+  `EntTransactionFailedException`. A `NotCommitted` result now rethrows
+  the exact stored exception, restoring ordinary typed catches for
+  application, validation, and privacy failures. An `OutcomeUnknown`
+  result throws `EntTransactionOutcomeUnknownException`, which exposes
+  the exact stored exception through `exception` and `cause`. Read and
+  mutation privacy-denial exceptions now share the sealed
+  `EntPrivacyFailure` classification marker.
+  _Migration:_ replace `catch (EntTransactionFailedException)` with
+  ordinary typed catches plus a dedicated
+  `catch (EntTransactionOutcomeUnknownException)` branch. Inspect the
+  raw `TransactionResult.Failed` when both the exception and explicit
+  `transactionState` are needed without throwing.
+
 - **Canonical operation-result algebra: every generated data operation returns an exhaustive result** (`runtime`, `codegen`, `postgres`)
   The result-variants API (`*OrThrow` / `*OrNull` / `*OrError` / `visible*`
   generated terminal families, `EntResult`, the universal `EntError`
@@ -99,8 +114,8 @@ above it.
     `withTransactionOrError` and `bind()` are removed — use
     `orRollback()` on read/mutation results inside the block, and
     `.getOrThrow()` on the returned `TransactionResult`
-    (`EntTransactionFailedException` preserves `transactionState`:
-    `NotCommitted` or `OutcomeUnknown`). A mutation failure produced
+    (confirmed rollback rethrows the stored exception directly;
+    `OutcomeUnknown` throws `EntTransactionOutcomeUnknownException`). A mutation failure produced
     through the transaction client marks the scope rollback-only even if
     its result is ignored — a normally returning block then rolls back
     and reports the first recorded failure with later ones suppressed.
