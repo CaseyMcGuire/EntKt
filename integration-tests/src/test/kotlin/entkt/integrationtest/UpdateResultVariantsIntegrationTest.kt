@@ -20,7 +20,6 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntTargetAbsentException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
-import entkt.runtime.result.getOrThrow
 import kotlin.Unit
 import kotlin.test.Test
 import kotlin.test.assertEquals

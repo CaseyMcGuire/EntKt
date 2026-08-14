@@ -48,6 +48,46 @@ sealed interface TransactionResult<out T> {
             transactionState: TransactionFailureState,
         ): TransactionResult<Nothing> = Failed(exception, transactionState)
     }
+
+    /**
+     * Return the committed block value. A confirmed rollback rethrows the
+     * exact stored exception; an unknown commit/rollback outcome throws
+     * [EntTransactionOutcomeUnknownException] with the stored exception as
+     * both its [EntTransactionOutcomeUnknownException.exception] property
+     * and cause. The throwing shape therefore preserves the final state:
+     * a direct exception means [TransactionFailureState.NotCommitted],
+     * while the dedicated exception means
+     * [TransactionFailureState.OutcomeUnknown]. Performs no I/O and no
+     * additional transaction or driver work. There is no transaction
+     * `orNull()` projection.
+     *
+     * An [EntMutationException] stored inside a transaction retains the
+     * operation-time [EntMutationException.writeState] from when that
+     * mutation result was produced. For example, it may say
+     * [MutationWriteState.TransactionPending] even though a later direct
+     * rethrow from this projection establishes that the managed transaction
+     * rolled back. The projection outcome is authoritative for completion
+     * of that managed transaction; the mutation state remains a historical
+     * description of the inner operation and is not rewritten.
+     *
+     * **This is a propagation convenience, not a retry policy.** Blanket
+     * `retry { withTransaction { ... }.getOrThrow() }` is unsafe:
+     * [TransactionFailureState.OutcomeUnknown] means the managed database
+     * transaction may have committed, and
+     * [TransactionFailureState.NotCommitted] confirms only that the
+     * managed transaction did not commit — the block may already have
+     * performed external side effects or writes through another client
+     * that the transaction could not roll back. Retry only when the block
+     * and every side effect are deliberately idempotent or otherwise
+     * retry-safe.
+     */
+    fun getOrThrow(): T = when (this) {
+        is Success<T> -> value
+        is Failed -> when (transactionState) {
+            TransactionFailureState.NotCommitted -> throw exception
+            TransactionFailureState.OutcomeUnknown -> throw EntTransactionOutcomeUnknownException(exception)
+        }
+    }
 }
 
 /**
@@ -76,46 +116,6 @@ class EntTransactionOutcomeUnknownException internal constructor(
 class NestedTransactionUnsupportedException : IllegalStateException(
     "Nested withTransaction() is not supported",
 )
-
-/**
- * Return the committed block value. A confirmed rollback rethrows the
- * exact stored exception; an unknown commit/rollback outcome throws
- * [EntTransactionOutcomeUnknownException] with the stored exception as
- * both its [EntTransactionOutcomeUnknownException.exception] property
- * and cause. The throwing shape therefore preserves the final state:
- * a direct exception means [TransactionFailureState.NotCommitted],
- * while the dedicated exception means
- * [TransactionFailureState.OutcomeUnknown]. Performs no I/O and no
- * additional transaction or driver work. There is no transaction
- * `orNull()` projection.
- *
- * An [EntMutationException] stored inside a transaction retains the
- * operation-time [EntMutationException.writeState] from when that
- * mutation result was produced. For example, it may say
- * [MutationWriteState.TransactionPending] even though a later direct
- * rethrow from this projection establishes that the managed transaction
- * rolled back. The projection outcome is authoritative for completion
- * of that managed transaction; the mutation state remains a historical
- * description of the inner operation and is not rewritten.
- *
- * **This is a propagation convenience, not a retry policy.** Blanket
- * `retry { withTransaction { ... }.getOrThrow() }` is unsafe:
- * [TransactionFailureState.OutcomeUnknown] means the managed database
- * transaction may have committed, and
- * [TransactionFailureState.NotCommitted] confirms only that the
- * managed transaction did not commit — the block may already have
- * performed external side effects or writes through another client
- * that the transaction could not roll back. Retry only when the block
- * and every side effect are deliberately idempotent or otherwise
- * retry-safe.
- */
-fun <T> TransactionResult<T>.getOrThrow(): T = when (this) {
-    is TransactionResult.Success<T> -> value
-    is TransactionResult.Failed -> when (transactionState) {
-        TransactionFailureState.NotCommitted -> throw exception
-        TransactionFailureState.OutcomeUnknown -> throw EntTransactionOutcomeUnknownException(exception)
-    }
-}
 
 /**
  * Receiver scope of the `withTransaction { tx -> ... }` block,

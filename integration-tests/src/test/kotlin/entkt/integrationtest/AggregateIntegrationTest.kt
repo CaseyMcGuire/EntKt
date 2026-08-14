@@ -11,7 +11,6 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.ReadResult
-import entkt.runtime.result.getOrThrow
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals

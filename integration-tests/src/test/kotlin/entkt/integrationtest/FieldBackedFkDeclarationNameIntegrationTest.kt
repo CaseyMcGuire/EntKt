@@ -5,7 +5,6 @@ import entkt.integrationtest.ent.Note
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

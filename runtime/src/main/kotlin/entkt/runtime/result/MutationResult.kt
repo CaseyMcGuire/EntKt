@@ -53,36 +53,36 @@ sealed interface MutationResult<out T> {
             exception: EntMutationException,
         ): MutationResult<Nothing> = Failed(exception)
     }
-}
 
-/**
- * Return the successful value or throw the stored
- * [EntMutationException] directly — the same contract and name as
- * [ReadResult.getOrThrow]. Each mutation exception carries its write
- * state, so this projection neither introduces a wrapper nor discards
- * whether the mutation committed or has an uncertain persistence
- * outcome — the raw result and the throwing projection expose the
- * same exception instance. Performs no I/O.
- *
- * **This is a propagation convenience, not a retry policy.** A thrown
- * mutation exception does not imply the write rolled back, so blanket
- * `retry { ...save().getOrThrow() }` is unsafe. Callers deciding
- * whether to retry must inspect both the exception type and
- * [EntMutationException.writeState]: [MutationWriteState.Committed]
- * must not be repeated as though it failed to persist;
- * [MutationWriteState.PersistenceUnknown] requires reconciliation or
- * an idempotent retry mechanism; [MutationWriteState.TransactionPending]
- * is resolved by the enclosing transaction; and
- * [MutationWriteState.NotPersisted] establishes only that no write
- * survived, not that privacy, validation, or another deterministic
- * rejection will succeed on retry.
- *
- * There is deliberately no mutation `orNull()`: collapsing every
- * failure to null would hide materially different states, including a
- * definitely unpersisted write, a committed write whose callback
- * failed, and an unknown commit outcome.
- */
-fun <T> MutationResult<T>.getOrThrow(): T = when (this) {
-    is MutationResult.Success<T> -> value
-    is MutationResult.Failed -> throw exception
+    /**
+     * Return the successful value or throw the stored
+     * [EntMutationException] directly — the same contract and name as
+     * [ReadResult.getOrThrow]. Each mutation exception carries its write
+     * state, so this projection neither introduces a wrapper nor discards
+     * whether the mutation committed or has an uncertain persistence
+     * outcome — the raw result and the throwing projection expose the
+     * same exception instance. Performs no I/O.
+     *
+     * **This is a propagation convenience, not a retry policy.** A thrown
+     * mutation exception does not imply the write rolled back, so blanket
+     * `retry { ...save().getOrThrow() }` is unsafe. Callers deciding
+     * whether to retry must inspect both the exception type and
+     * [EntMutationException.writeState]: [MutationWriteState.Committed]
+     * must not be repeated as though it failed to persist;
+     * [MutationWriteState.PersistenceUnknown] requires reconciliation or
+     * an idempotent retry mechanism; [MutationWriteState.TransactionPending]
+     * is resolved by the enclosing transaction; and
+     * [MutationWriteState.NotPersisted] establishes only that no write
+     * survived, not that privacy, validation, or another deterministic
+     * rejection will succeed on retry.
+     *
+     * There is deliberately no mutation `orNull()`: collapsing every
+     * failure to null would hide materially different states, including a
+     * definitely unpersisted write, a committed write whose callback
+     * failed, and an unknown commit outcome.
+     */
+    fun getOrThrow(): T = when (this) {
+        is Success<T> -> value
+        is Failed -> throw exception
+    }
 }

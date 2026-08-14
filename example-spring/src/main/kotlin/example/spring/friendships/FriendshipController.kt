@@ -1,6 +1,5 @@
 package example.spring.friendships
 
-import entkt.runtime.result.getOrThrow
 import example.ent.EntClient
 import example.ent.Friendship
 import example.schema.FriendshipStatus

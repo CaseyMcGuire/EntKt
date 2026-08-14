@@ -22,7 +22,6 @@ import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionResult
-import entkt.runtime.result.getOrThrow
 import entkt.runtime.validation.ValidationDecision
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container

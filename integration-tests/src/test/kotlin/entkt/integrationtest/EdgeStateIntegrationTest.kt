@@ -14,7 +14,6 @@ import entkt.runtime.query.isLoaded
 import entkt.runtime.query.loadedOrNull
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.query.valueOrNull
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

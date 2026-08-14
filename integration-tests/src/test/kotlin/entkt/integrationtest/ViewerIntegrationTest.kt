@@ -5,7 +5,6 @@ import entkt.integrationtest.ent.GeneratedEntViewerRegistry
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.result.getOrThrow
 import entkt.viewer.EntViewer
 import entkt.viewer.EntViewerRequest
 import kotlin.test.Test

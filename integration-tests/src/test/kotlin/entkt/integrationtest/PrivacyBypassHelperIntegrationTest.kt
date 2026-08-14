@@ -9,7 +9,6 @@ import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

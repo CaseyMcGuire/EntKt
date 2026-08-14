@@ -10,7 +10,6 @@ import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionResult
-import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers

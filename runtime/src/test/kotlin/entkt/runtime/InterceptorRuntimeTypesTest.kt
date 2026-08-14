@@ -1,5 +1,4 @@
 package entkt.runtime
-import entkt.runtime.result.getOrThrow
 import entkt.runtime.query.QueryShape
 import entkt.query.QueryFlag
 import entkt.runtime.query.AbortQueryRejected

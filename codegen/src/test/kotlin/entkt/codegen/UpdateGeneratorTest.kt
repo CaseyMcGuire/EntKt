@@ -589,8 +589,8 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // The result-variant family is gone. The sole throwing
-        // projection anywhere is the runtime getOrThrow() extension on
-        // the result types, so the builder emits no throwing or
+        // projection anywhere is the getOrThrow() member on the result
+        // types, so the builder emits no throwing or
         // nullable terminals of its own.
         assert(!output.contains("fun saveOrNull")) { "saveOrNull must be gone\n$output" }
         assert(!output.contains("fun saveOrError")) { "saveOrError must be gone\n$output" }

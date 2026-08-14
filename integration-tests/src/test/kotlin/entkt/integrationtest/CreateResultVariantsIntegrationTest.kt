@@ -20,7 +20,6 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
-import entkt.runtime.result.getOrThrow
 import entkt.runtime.validation.ValidationDecision
 import kotlin.Unit
 import kotlin.test.Test

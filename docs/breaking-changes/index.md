@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **Make `getOrThrow()` a member of every operation result** (`runtime`)
+  `ReadResult`, `MutationResult`, and `TransactionResult` now declare
+  `getOrThrow()` directly instead of relying on overloaded top-level
+  extensions. Its behavior is unchanged; `visibleOrNull()` and
+  transaction-scoped `orRollback()` remain extensions because their receiver
+  constraints are part of their contracts.
+  _Migration:_ remove `import entkt.runtime.result.getOrThrow`; ordinary
+  receiver calls such as `result.getOrThrow()` are otherwise unchanged.
+
 - **Rethrow confirmed transaction failures directly; reserve a dedicated exception for uncertain outcomes** (`runtime`)
   `TransactionResult.getOrThrow()` no longer wraps every failure in
   `EntTransactionFailedException`. A `NotCommitted` result now rethrows

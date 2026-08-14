@@ -4,7 +4,6 @@ import entkt.integrationtest.ent.Article
 import entkt.integrationtest.schema.ArticleMeta
 import entkt.integrationtest.schema.HighlightRect
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

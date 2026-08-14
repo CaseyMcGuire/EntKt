@@ -57,17 +57,17 @@ sealed interface ReadResult<out T> {
             exception: Exception,
         ): ReadResult<Nothing> = Failed(exception)
     }
-}
 
-/**
- * Return the successful value — preserving its declared nullability,
- * so authoritative absence remains `null` — or throw the stored
- * exception directly. Framework-created exceptions retain their
- * structured diagnostics as payloads; there is no wrapper.
- */
-fun <T> ReadResult<T>.getOrThrow(): T = when (this) {
-    is ReadResult.Success<T> -> value
-    is ReadResult.Failed -> throw exception
+    /**
+     * Return the successful value — preserving its declared nullability,
+     * so authoritative absence remains `null` — or throw the stored
+     * exception directly. Framework-created exceptions retain their
+     * structured diagnostics as payloads; there is no wrapper.
+     */
+    fun getOrThrow(): T = when (this) {
+        is Success<T> -> value
+        is Failed -> throw exception
+    }
 }
 
 /**

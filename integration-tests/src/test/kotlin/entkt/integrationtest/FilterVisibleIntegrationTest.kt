@@ -23,7 +23,6 @@ import entkt.runtime.query.EdgeState
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs

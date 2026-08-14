@@ -140,7 +140,6 @@ class ReadClientPostureCompileTest {
                 import com.example.ent.CarLoadPrivacyRule
                 import com.example.ent.EntReadClient
                 import entkt.runtime.privacy.PrivacyDecision
-                import entkt.runtime.result.getOrThrow
                 import entkt.runtime.validation.ValidationDecision
 
                 fun anyCarExists(client: EntReadClient): Boolean =

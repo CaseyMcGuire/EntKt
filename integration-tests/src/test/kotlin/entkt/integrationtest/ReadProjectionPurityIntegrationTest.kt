@@ -17,7 +17,6 @@ import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.TransactionResult
-import entkt.runtime.result.getOrThrow
 import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals

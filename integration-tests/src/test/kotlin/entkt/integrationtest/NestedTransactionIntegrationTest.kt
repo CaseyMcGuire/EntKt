@@ -6,7 +6,6 @@ import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.NestedTransactionUnsupportedException
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

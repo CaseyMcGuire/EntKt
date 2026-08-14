@@ -11,7 +11,6 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
-import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
 import org.postgresql.util.PSQLException
 import org.testcontainers.junit.jupiter.Container

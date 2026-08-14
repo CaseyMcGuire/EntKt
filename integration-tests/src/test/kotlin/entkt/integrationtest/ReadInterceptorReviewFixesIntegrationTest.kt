@@ -19,7 +19,6 @@ import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

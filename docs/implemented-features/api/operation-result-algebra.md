@@ -617,13 +617,17 @@ representation never turns a one-row query into a scan.
 
 ## Read Projections
 
-The runtime module supplies generic extensions rather than generating them on
+Each result type declares its common throwing projection as a member, so it is
+available without an import. Receiver-specific transformations such as
+`visibleOrNull()` remain runtime extensions rather than being generated on
 every repository and query type.
 
 ### `getOrThrow()`
 
 ```kotlin
-fun <T> ReadResult<T>.getOrThrow(): T
+sealed interface ReadResult<out T> {
+    fun getOrThrow(): T
+}
 ```
 
 ```text
@@ -1125,10 +1129,12 @@ client.users.update(id) { ... }.save(): MutationResult<Unit>
 client.users.update(id) { ... }.saveAndLoad(): MutationResult<User>
 ```
 
-The runtime module provides one projection for every mutation result:
+`MutationResult` provides one directly discoverable projection:
 
 ```kotlin
-fun <T> MutationResult<T>.getOrThrow(): T
+sealed interface MutationResult<out T> {
+    fun getOrThrow(): T
+}
 ```
 
 Its value projection is deliberately simple:
@@ -1335,7 +1341,9 @@ enclosing `TransactionResult`.
 there is no current transaction it could roll back.
 
 ```kotlin
-fun <T> TransactionResult<T>.getOrThrow(): T
+sealed interface TransactionResult<out T> {
+    fun getOrThrow(): T
+}
 ```
 
 `TransactionResult.getOrThrow()` performs no I/O. It returns `Success.value`.

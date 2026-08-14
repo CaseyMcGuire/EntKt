@@ -1,7 +1,6 @@
 package example.spring.posts
 
 import entkt.runtime.query.requireLoaded
-import entkt.runtime.result.getOrThrow
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.PostTag

@@ -24,7 +24,6 @@ import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.TransactionResult
-import entkt.runtime.result.getOrThrow
 import entkt.runtime.validation.ValidationDecision
 import kotlin.test.Test
 import kotlin.test.assertEquals

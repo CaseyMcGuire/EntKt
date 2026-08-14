@@ -41,7 +41,6 @@ private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
 private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
 private val VISIBLE_OR_NULL = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "visibleOrNull")
-private val GET_OR_THROW = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "getOrThrow")
 
 /**
  * Emits the opt-in viewer bridge (`entkt { viewer.set(true) }`): one
@@ -319,8 +318,8 @@ internal class ViewerGenerator(private val packageName: String) {
                     // return null — the viewer's uniform not-found.
                     .addStatement("val parsed = %L", idParse)
                     .addStatement(
-                        "val entity = client.%L.findById(parsed).%M().%M() ?: return·null",
-                        repoProp, VISIBLE_OR_NULL, GET_OR_THROW,
+                        "val entity = client.%L.findById(parsed).%M().getOrThrow() ?: return·null",
+                        repoProp, VISIBLE_OR_NULL,
                     )
                     .addStatement("return toRow(entity)")
                     .build(),

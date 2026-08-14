@@ -20,7 +20,6 @@ import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.result.getOrThrow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

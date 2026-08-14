@@ -1,6 +1,5 @@
 package example.spring.tags
 
-import entkt.runtime.result.getOrThrow
 import example.ent.EntClient
 import example.ent.Tag
 import example.spring.posts.PostResponse

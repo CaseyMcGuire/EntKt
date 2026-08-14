@@ -57,7 +57,6 @@ class ValidationReadClientCompileTest {
         import com.example.ent.CarCreateValidationRule
         import com.example.ent.EntReadClient
         import com.example.ent.EntValidationReadClient
-        import entkt.runtime.result.getOrThrow
         import entkt.runtime.result.visibleOrNull
         import entkt.runtime.validation.ValidationDecision
         import java.util.UUID

@@ -135,7 +135,6 @@ an `EntClient`:
 ```kotlin
 import com.example.ent.*
 import entkt.postgres.PostgresDriver
-import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
 
 fun main() {

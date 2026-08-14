@@ -7,7 +7,6 @@ import entkt.runtime.query.ExcludeDeleted
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.MutationResult
-import entkt.runtime.result.getOrThrow
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals

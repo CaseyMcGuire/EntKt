@@ -1,7 +1,6 @@
 package example.spring.friendships
 
 import entkt.runtime.mutation.orElse
-import entkt.runtime.result.getOrThrow
 import example.ent.Friendship
 import example.ent.FriendshipCreateHookContext
 import example.ent.FriendshipHooks

@@ -2,7 +2,6 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.postgres.PostgresDriver
-import entkt.runtime.result.getOrThrow
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers

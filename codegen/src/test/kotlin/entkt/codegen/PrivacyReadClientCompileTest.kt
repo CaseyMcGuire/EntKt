@@ -58,7 +58,6 @@ class PrivacyReadClientCompileTest {
         import com.example.ent.EntPrivacyReadClient
         import com.example.ent.EntReadClient
         import entkt.runtime.privacy.PrivacyDecision
-        import entkt.runtime.result.getOrThrow
         import entkt.runtime.result.visibleOrNull
         import java.util.UUID
 
