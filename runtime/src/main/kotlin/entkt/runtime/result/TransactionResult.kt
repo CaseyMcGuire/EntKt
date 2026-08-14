@@ -67,9 +67,9 @@ class EntTransactionFailedException(
 
 /**
  * Thrown when `withTransaction()` is called on a transaction-scoped
- * client or driver, before the nested block or any nested transaction
- * I/O runs. Savepoint, reuse, and nested-rejection options belong to
- * a separate transaction-client design.
+ * driver, before the nested block or any nested transaction I/O runs.
+ * Generated transaction clients omit `withTransaction()` entirely, so
+ * the equivalent client-level misuse does not compile.
  */
 class NestedTransactionUnsupportedException : IllegalStateException(
     "Nested withTransaction() is not supported",

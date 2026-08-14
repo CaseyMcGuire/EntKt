@@ -344,13 +344,16 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has lateinit client property`() {
+    fun `repo keeps its client backlink private and exposes only the guarded attach method`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("internal lateinit var client: EntClient")) {
-            "Should have internal lateinit var client\n$output"
+        assert(output.contains("private lateinit var client: EntClient")) {
+            "The full client backlink must not escape through a transaction facade's repo\n$output"
+        }
+        assert(output.contains("internal fun attachClientForInternalUse(client: EntClient)")) {
+            "EntClient should retain a guarded generated wiring path\n$output"
         }
     }
 

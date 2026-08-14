@@ -641,6 +641,17 @@ class EntGenerator(
         ensureFinalized(schemas)
         val schemaNames: Map<EntSchema, String> = schemas.associate { it.schema to it.name }
 
+        // EntTransactionClient is declared inside EntClient.kt rather
+        // than in a same-named FileSpec, so the file-collision check
+        // below cannot detect a schema that would emit the same
+        // top-level Kotlin type.
+        if (schemas.any { it.name == "EntTransactionClient" }) {
+            error(
+                "Schema name 'EntTransactionClient' collides with the reserved generated " +
+                    "transaction-client type",
+            )
+        }
+
         // generated-member collision checks: reject schemas that would emit duplicate Kotlin
         // member names on the same generated artifact. Runs here
         // (not only via SchemaInspector.validate) so direct callers

@@ -131,6 +131,18 @@ class EntGeneratorTest {
     }
 
     @Test
+    fun `schema named EntTransactionClient is rejected as a reserved client type`() {
+        val schema = BoxSchema()
+        finalize(schema)
+
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(listOf(SchemaInput("EntTransactionClient", schema)))
+        }
+
+        assertContains(error.message!!, "reserved generated transaction-client type")
+    }
+
+    @Test
     fun `all generated files have correct package`() {
         val car = Car()
         val user = User()

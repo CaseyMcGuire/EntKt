@@ -62,8 +62,9 @@ transaction and reports the outcome structurally as
 an ordinary block failure with a confirmed rollback is
 `Failed(exception, NotCommitted)`; a failed rollback or commit is
 `Failed(exception, OutcomeUnknown)`. `CancellationException` and JVM
-`Error`s roll back and rethrow. Nested `withTransaction` calls are
-unsupported and throw `NestedTransactionUnsupportedException` before
-the nested block runs. The client-level transaction boundary
+`Error`s roll back and rethrow. Calling `withTransaction` again on the
+transaction-scoped driver throws `NestedTransactionUnsupportedException`
+before the nested block runs. Generated transaction clients omit the
+nested entry point entirely. The client-level transaction boundary
 (`runEntTransaction` + `TransactionScope.orRollback()`) builds on this
 contract; see the operation-result-algebra design note.

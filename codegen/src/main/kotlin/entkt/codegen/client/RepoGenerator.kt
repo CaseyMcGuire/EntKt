@@ -57,6 +57,7 @@ private val TO_VALIDATION_VIOLATION = MemberName("entkt.runtime.result", "toVali
 private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
 private val TRANSACTION_FAILURE_STATE = ClassName("entkt.runtime.result", "TransactionFailureState")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
+private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -142,11 +143,22 @@ internal class RepoGenerator(
                     .initializer("driver")
                     .build()
             )
-            // Client reference — set by EntClient after construction.
+            // Client reference — attached by EntClient after construction.
+            // Private so a repository exposed through EntTransactionClient
+            // cannot leak its hidden full EntClient and restore the nested
+            // transaction entry point.
             .addProperty(
                 PropertySpec.builder("client", clientClass)
-                    .addModifiers(KModifier.INTERNAL, KModifier.LATEINIT)
+                    .addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
                     .mutable(true)
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("attachClientForInternalUse")
+                    .addAnnotation(ENTKT_INTERNAL)
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter("client", clientClass)
+                    .addStatement("this.client = client")
                     .build()
             )
             // Hook list properties

@@ -62,6 +62,7 @@ internal class ClientGenerator(
         val sorted = topologicalSort(schemas)
 
         val clientClass = ClassName(packageName, "EntClient")
+        val transactionClientClass = ClassName(packageName, "EntTransactionClient")
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
         val t = TypeVariableName("T")
@@ -331,10 +332,11 @@ internal class ClientGenerator(
             .addFunction(buildAsPrivacyReadClientForInternalUse())
             .addFunction(buildWithPrivacyContext(clientClass, t, sorted))
             .addFunction(buildBypassPrivacyDangerous(clientClass, t))
-            .addFunction(buildWithTransaction(clientClass, configClass, t, sorted))
+            .addFunction(buildWithTransaction(clientClass, transactionClientClass, t, sorted))
             .addType(buildCompanionObject(sorted))
             .build()
 
+        fileBuilder.addType(buildTransactionClient(clientClass, transactionClientClass, sorted))
         fileBuilder.addType(typeSpec)
 
         return fileBuilder.build()
@@ -531,7 +533,7 @@ internal class ClientGenerator(
         val block = CodeBlock.builder()
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
-            block.addStatement("%L.client = this", propName)
+            block.addStatement("%L.attachClientForInternalUse(this)", propName)
         }
         block.addStatement("val cfg = %T().apply(config)", configClass)
         for (input in schemas) {
@@ -553,7 +555,7 @@ internal class ClientGenerator(
 
     private fun buildWithTransaction(
         clientClass: ClassName,
-        configClass: ClassName,
+        transactionClientClass: ClassName,
         t: TypeVariableName,
         schemas: List<SchemaInput>,
     ): FunSpec {
@@ -563,11 +565,11 @@ internal class ClientGenerator(
         val body = CodeBlock.builder()
         // The boundary loop, rollback-only bookkeeping, and failure
         // precedence live in the runtime's runEntTransaction — this
-        // adapter only builds the transaction-scoped clone and wires
-        // the coordinator into it so mutation terminals can record
-        // failures. Calling this on a transaction-scoped client makes
-        // runEntTransaction throw NestedTransactionUnsupportedException
-        // before the block or any transaction I/O runs.
+        // adapter only builds the internal transaction-scoped EntClient,
+        // wires the coordinator into it so mutation terminals can record
+        // failures, and returns the capability-narrowed public facade.
+        // EntTransactionClient has no withTransaction member, so a nested
+        // client transaction is unrepresentable through the supported API.
         body.beginControlFlow("return %M(driver, { txDriver, coordinator ->", runEntTransaction)
         body.addStatement("val tx = %T(txDriver)", clientClass)
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
@@ -582,7 +584,7 @@ internal class ClientGenerator(
             body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
             body.addStatement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
         }
-        body.addStatement("tx")
+        body.addStatement("%T(tx)", transactionClientClass)
         body.endControlFlow()
         body.add(", block)\n")
 
@@ -602,13 +604,117 @@ internal class ClientGenerator(
                 "block",
                 LambdaTypeName.get(
                     receiver = transactionScope,
-                    parameters = listOf(ParameterSpec.unnamed(clientClass)),
+                    parameters = listOf(ParameterSpec.unnamed(transactionClientClass)),
                     returnType = t,
                 ),
             )
             .returns(transactionResult.parameterizedBy(t))
             .addCode(body.build())
             .build()
+    }
+
+    /**
+     * Public transaction-scoped client capability. It delegates every
+     * repository operation to the hidden transaction-bound [EntClient]
+     * while deliberately omitting `withTransaction`, so nested client
+     * transactions fail at compile time rather than at execution.
+     * Privacy re-scoping returns another facade over the re-scoped
+     * transaction client and therefore cannot restore the root surface.
+     */
+    private fun buildTransactionClient(
+        clientClass: ClassName,
+        transactionClientClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): TypeSpec {
+        val t = TypeVariableName("T")
+        val builder = TypeSpec.classBuilder(transactionClientClass)
+            .addKdoc(
+                "Transaction-scoped EntKt client supplied to `withTransaction` blocks.\n" +
+                    "It exposes the ordinary generated repository surface and preserves\n" +
+                    "the transaction across privacy re-scoping, but deliberately has no\n" +
+                    "`withTransaction` entry point: nested client transactions are not a\n" +
+                    "supported operation and therefore do not compile.",
+            )
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                    .addModifiers(KModifier.INTERNAL)
+                    .addParameter("delegate", clientClass)
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("delegate", clientClass)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("delegate")
+                    .build(),
+            )
+
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val repoClass = ClassName(packageName, "${input.name}Repo")
+            builder.addProperty(
+                PropertySpec.builder(propName, repoClass)
+                    .getter(
+                        FunSpec.getterBuilder()
+                            .addStatement("return delegate.%L", propName)
+                            .build(),
+                    )
+                    .build(),
+            )
+        }
+
+        builder.addFunction(
+            FunSpec.builder("currentPrivacyContext")
+                .returns(PRIVACY_CONTEXT)
+                .addStatement("return delegate.currentPrivacyContext()")
+                .build(),
+        )
+        builder.addFunction(
+            FunSpec.builder("withPrivacyContext")
+                .addTypeVariable(t)
+                .addParameter("context", PRIVACY_CONTEXT)
+                .addParameter(
+                    "block",
+                    LambdaTypeName.get(
+                        parameters = listOf(ParameterSpec.unnamed(transactionClientClass)),
+                        returnType = t,
+                    ),
+                )
+                .returns(t)
+                .addCode(
+                    CodeBlock.builder()
+                        .add("return delegate.withPrivacyContext(context) { scoped ->\n")
+                        .add("  block(%T(scoped))\n", transactionClientClass)
+                        .add("}\n")
+                        .build(),
+                )
+                .build(),
+        )
+        builder.addFunction(
+            FunSpec.builder("bypassPrivacy_DANGEROUS")
+                .addTypeVariable(t)
+                .addParameter("reason", String::class)
+                .addParameter(
+                    "block",
+                    LambdaTypeName.get(
+                        parameters = listOf(ParameterSpec.unnamed(transactionClientClass)),
+                        returnType = t,
+                    ),
+                )
+                .returns(t)
+                .addStatement(
+                    "require(reason.isNotBlank()) { %S }",
+                    "bypassPrivacy_DANGEROUS requires a non-blank reason",
+                )
+                .addStatement(
+                    "return withPrivacyContext(%T(%T.PrivacyBypass(reason)), block)",
+                    PRIVACY_CONTEXT,
+                    VIEWER,
+                )
+                .build(),
+        )
+
+        return builder.build()
     }
 
     private fun buildCompanionObject(schemas: List<SchemaInput>): TypeSpec {

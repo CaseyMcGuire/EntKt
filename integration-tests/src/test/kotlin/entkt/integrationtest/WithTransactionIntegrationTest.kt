@@ -109,6 +109,27 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         assertEquals(1L, client.articles.query().rawCount().getOrThrow())
     }
 
+    @Test
+    fun `privacy re-scoping on the transaction client preserves rollback`() {
+        val client = freshClient()
+        val stop = IllegalStateException("roll back after scoped write")
+
+        val result = client.withTransaction<Unit> { tx ->
+            tx.withPrivacyContext(PrivacyContext(Viewer.Anonymous)) { scoped ->
+                assertEquals(Viewer.Anonymous, scoped.currentPrivacyContext().viewer)
+                scoped.users.create { name = "Scoped"; email = "scoped@example.com" }
+                    .save()
+                    .orRollback()
+            }
+            throw stop
+        }
+
+        val failed = assertIs<TransactionResult.Failed>(result)
+        assertSame(stop, failed.exception)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals(0L, userCount(client))
+    }
+
     // ---- orRollback on mutation results ----
 
     @Test

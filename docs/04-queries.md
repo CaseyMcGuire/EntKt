@@ -763,8 +763,8 @@ edges.
 
 Queries participate in transactions automatically when using a
 transaction-scoped client. `withTransaction` runs its block with a
-`TransactionScope` receiver and returns the exhaustive
-`TransactionResult<T>`:
+`TransactionScope` receiver and an `EntTransactionClient` parameter,
+then returns the exhaustive `TransactionResult<T>`:
 
 ```kotlin
 val posts = client.withTransaction { tx ->
@@ -788,8 +788,11 @@ recorded failure. If the block throws, the transaction rolls back.
 `Failed(exception, transactionState)` with `transactionState` either
 `NotCommitted` (rollback confirmed) or `OutcomeUnknown`;
 `.getOrThrow()` throws `EntTransactionFailedException` preserving both.
-Nested `withTransaction` calls are unsupported and throw
-`NestedTransactionUnsupportedException` before the nested block runs.
+`EntTransactionClient` exposes repositories and privacy re-scoping but
+has no `withTransaction` member, so nested client transactions do not
+compile. At the lower-level driver API, an already-transactional driver
+still throws `NestedTransactionUnsupportedException` before the nested
+block runs.
 
 For write-side transaction discipline — `TransactionRequirement`
 (client-level write guardrail) and `UpdateConsistency.Pessimistic`

@@ -31,6 +31,9 @@ class ClientGeneratorTest {
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("class EntClient")) { "Should generate EntClient\n$output" }
+        assert(output.contains("class EntTransactionClient")) {
+            "Should generate the transaction-scoped facade\n$output"
+        }
     }
 
     @Test
@@ -114,15 +117,15 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient init block sets client on repos and applies hooks`() {
+    fun `EntClient init block attaches client to repos and applies hooks`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("cars.client = this")) {
-            "Should set client on cars repo\n$output"
+        assert(output.contains("cars.attachClientForInternalUse(this)")) {
+            "Should attach client to cars repo without exposing a backlink\n$output"
         }
-        assert(output.contains("users.client = this")) {
-            "Should set client on users repo\n$output"
+        assert(output.contains("users.attachClientForInternalUse(this)")) {
+            "Should attach client to users repo without exposing a backlink\n$output"
         }
         assert(output.contains("val cfg = EntClientConfig().apply(config)")) {
             "Should create config and apply lambda\n$output"
@@ -154,7 +157,7 @@ class ClientGeneratorTest {
         // transaction-scoped client and wires the coordinator into it.
         assert(
             output.contains(
-                "public fun <T> withTransaction(block: TransactionScope.(EntClient) -> T): " +
+                "public fun <T> withTransaction(block: TransactionScope.(EntTransactionClient) -> T): " +
                     "TransactionResult<T> = runEntTransaction(driver, { txDriver, coordinator ->"
             )
         ) {
@@ -165,6 +168,9 @@ class ClientGeneratorTest {
         }
         assert(output.contains("tx.transactionCoordinator = coordinator")) {
             "makeTxClient should wire the coordinator into the tx client\n$output"
+        }
+        assert(output.contains("EntTransactionClient(tx)")) {
+            "makeTxClient should expose only the transaction-scoped facade\n$output"
         }
 
         // The client owns the coordinator slot and the hook repos call at
@@ -192,6 +198,31 @@ class ClientGeneratorTest {
         }
         assert(!output.contains("visibleOverfetchLimit")) {
             "visibleOverfetchLimit should be gone from the client and config\n$output"
+        }
+    }
+
+    @Test
+    fun `EntTransactionClient exposes repos and scoped privacy but no nested transaction entry point`() {
+        val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
+        val start = output.indexOf("class EntTransactionClient")
+        val end = output.indexOf("class EntClient(", start)
+        assert(start >= 0 && end > start) { "Could not isolate EntTransactionClient\n$output" }
+        val transactionClient = output.substring(start, end)
+
+        assert(transactionClient.contains("val cars: CarRepo get() = delegate.cars")) {
+            "Transaction facade should expose full repositories\n$transactionClient"
+        }
+        assert(transactionClient.contains("fun <T> withPrivacyContext(")) {
+            "Transaction facade should preserve privacy re-scoping\n$transactionClient"
+        }
+        assert(transactionClient.contains("fun <T> bypassPrivacy_DANGEROUS(")) {
+            "Transaction facade should preserve the explicit privacy bypass\n$transactionClient"
+        }
+        assert(!transactionClient.contains("fun <T> withTransaction(")) {
+            "Nested transactions must be absent from the transaction facade\n$transactionClient"
+        }
+        assert(transactionClient.contains("private val `delegate`: EntClient")) {
+            "The full transaction-bound EntClient must not be exposed\n$transactionClient"
         }
     }
 

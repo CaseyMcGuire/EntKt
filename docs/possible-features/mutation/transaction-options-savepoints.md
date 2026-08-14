@@ -9,11 +9,12 @@ Possible future feature. This is not implemented.
 Extend transaction APIs with explicit transaction options and optional
 savepoint support.
 
-The current contract is intentionally simple: `withTransaction` starts a
-transaction, commits on success, rolls back on exception, and nested calls reuse
-the existing transaction. This RFC keeps that default, but adds a named way for
-callers to request isolation, read-only behavior, retry policy, and nested
-savepoints when the driver supports them.
+The current contract is intentionally simple: root `withTransaction` starts a
+transaction, commits on success, and rolls back on failure. Its block receives
+an `EntTransactionClient` with no `withTransaction` member, while direct nested
+driver calls fail before entering the nested block. This RFC would add an
+explicit nested-transaction surface alongside named isolation, read-only,
+retry, and savepoint options when the driver supports them.
 
 ## Motivation
 
@@ -85,7 +86,7 @@ enum class NestedTransactionMode {
 }
 ```
 
-`Reuse` preserves the current behavior for nested `withTransaction` calls.
+`Reuse` runs the nested block in the outer transaction without a savepoint.
 `Savepoint` asks the driver to create a savepoint when already inside a
 transaction. `Reject` fails if the call is already nested.
 
@@ -185,7 +186,7 @@ Before implementation, add tests for:
 - default `withTransaction` behavior is unchanged
 - isolation and read-only options are forwarded to supporting drivers
 - unsupported options fail before the block runs
-- nested `Reuse` preserves current behavior
+- nested `Reuse` runs in the outer transaction without a savepoint
 - nested `Reject` fails inside an active transaction
 - nested `Savepoint` rolls back only nested writes
 - savepoint failures preserve the outer transaction

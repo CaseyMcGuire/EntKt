@@ -988,10 +988,11 @@ and this RFC has no operation that can fail after a confirmed commit, so
 `Committed` is not a transaction failure state. A future post-commit API may
 add that state when it defines a real path that requires it.
 
-Calling `withTransaction()` on a transaction-scoped generated client or driver
-is unsupported by this RFC. It throws `NestedTransactionUnsupportedException`
-before entering the block or performing transaction I/O. Savepoint, reuse, and
-nested-rejection options belong to a separate transaction-client design.
+The generated transaction-scoped client is an `EntTransactionClient`, which
+has no `withTransaction()` member, so client-level nesting does not compile.
+Calling `withTransaction()` on a transaction-scoped driver remains unsupported
+and throws `NestedTransactionUnsupportedException` before entering the block or
+performing transaction I/O.
 
 The driver rolls back and rethrows `CancellationException` and JVM `Error`s;
 it does not store them in `DriverTransactionResult.Failed`. The generated
@@ -1208,7 +1209,7 @@ class NestedTransactionUnsupportedException : IllegalStateException(
 )
 
 fun <T> EntClient.withTransaction(
-    block: TransactionScope.(EntClient) -> T,
+    block: TransactionScope.(EntTransactionClient) -> T,
 ): TransactionResult<T>
 ```
 
@@ -1302,13 +1303,12 @@ coordinator. A required read therefore uses `orRollback()`. A database read
 failure that puts the underlying transaction into an aborted state still makes
 the transaction boundary fail rather than report a successful commit.
 
-The transaction-scoped `tx` value temporarily retains the generated
-`withTransaction()` member for implementation compatibility, but calling it
-throws `NestedTransactionUnsupportedException` immediately. The nested block
-does not run, no savepoint is created, and the outer transaction is unchanged
-unless the caller allows that exception to leave the outer block. A separate
-RFC will replace this temporary runtime guard with a narrower generated
-transaction-client type on which `withTransaction()` does not exist.
+The transaction-scoped `tx` value is an `EntTransactionClient`. It exposes the
+generated repositories, `currentPrivacyContext()`, `withPrivacyContext()`, and
+`bypassPrivacy_DANGEROUS()`, but no `withTransaction()` member. Privacy
+re-scoping returns another `EntTransactionClient`, so it cannot restore the
+root-only transaction entry point. The lower-level driver retains a runtime
+guard for direct nested driver calls.
 
 The transaction boundary owns commit failures. A failure before commit is
 attempted is rolled back when possible; an exception during commit uses the
@@ -1536,8 +1536,9 @@ The implementation must add one consolidated newest-first entry to
   `getOrThrow()` as their sole throwing projection, with no `orThrow()` alias
 - `withTransaction()` returning `TransactionResult`, removal of
   `withTransactionOrError()`, and replacement of `bind()` with `orRollback()`
-- nested `withTransaction()` calls becoming unsupported and throwing
-  `NestedTransactionUnsupportedException` before the nested block runs
+- transaction blocks receiving `EntTransactionClient`, whose surface omits
+  `withTransaction()` so nested client transactions do not compile, while
+  nested driver calls throw `NestedTransactionUnsupportedException`
 - removal of `EntResult`, `EntError`, and `EntException.error`
 - structured failure inspection moving from nested `EntError` payloads to
   direct properties on the corresponding typed exceptions
@@ -1796,9 +1797,10 @@ Before implementation, add or update tests for:
 - a read failure marks the scope rollback-only only when projected through
   `orRollback()`, except that an underlying aborted database transaction is
   always detected at the transaction boundary
-- calling `withTransaction()` through a transaction-scoped client or driver
-  throws `NestedTransactionUnsupportedException` before the nested block or any
-  nested transaction I/O runs
+- `EntTransactionClient` has no `withTransaction()` member, so nested client
+  transactions do not compile; calling `withTransaction()` on a
+  transaction-scoped driver throws `NestedTransactionUnsupportedException`
+  before the nested block or any nested transaction I/O runs
 - `TransactionResult.getOrThrow()` preserves `transactionState` in its wrapper
   exception, exposes the stored failure as the same non-null `exception` used
   as its cause, and performs no additional transaction or driver work

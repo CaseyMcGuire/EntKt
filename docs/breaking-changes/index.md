@@ -95,7 +95,7 @@ above it.
     `Error`s still propagate. Builder/DSL argument validation still
     throws.
   - *Transactions.* `withTransaction` becomes
-    `fun <T> withTransaction(block: TransactionScope.(EntClient) -> T): TransactionResult<T>`;
+    `fun <T> withTransaction(block: TransactionScope.(EntTransactionClient) -> T): TransactionResult<T>`;
     `withTransactionOrError` and `bind()` are removed — use
     `orRollback()` on read/mutation results inside the block, and
     `.getOrThrow()` on the returned `TransactionResult`
@@ -104,10 +104,14 @@ above it.
     through the transaction client marks the scope rollback-only even if
     its result is ignored — a normally returning block then rolls back
     and reports the first recorded failure with later ones suppressed.
-    Nested `withTransaction` calls are unsupported and throw
-    `NestedTransactionUnsupportedException` before the nested block runs
-    (the previous savepoint semantics are removed; a future
-    transaction-client design may reintroduce scoped isolation).
+    The generated `EntTransactionClient` exposes repositories and
+    privacy re-scoping but no `withTransaction` member, so nested client
+    transactions no longer compile. Helpers that currently require
+    `EntClient` must accept `EntTransactionClient` when called with `tx`,
+    be overloaded for the two generated client types, or accept the
+    repositories they actually use. Nested driver transactions remain
+    unsupported and throw `NestedTransactionUnsupportedException`
+    before the nested block runs.
   - *Driver SPI.* `Driver.withTransaction` returns
     `DriverTransactionResult<T>` with `TransactionFailureState`
     (`Success` only after confirmed commit; commit failure is
