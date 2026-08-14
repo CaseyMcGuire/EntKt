@@ -62,7 +62,9 @@ internal class ClientGenerator(
         val sorted = topologicalSort(schemas)
 
         val clientClass = ClassName(packageName, "EntClient")
+        val clientScopeClass = ClassName(packageName, "EntClientScope")
         val transactionClientClass = ClassName(packageName, "EntTransactionClient")
+        val hookClientScopeFacadeClass = ClassName(packageName, "_EntHookClientScope")
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
         val t = TypeVariableName("T")
@@ -117,6 +119,7 @@ internal class ClientGenerator(
             // existed — the query constructors' `EntReadRuntime?` accepts
             // the full client by upcast.
             .addSuperinterface(ClassName(packageName, "EntReadRuntime"))
+            .addSuperinterface(clientScopeClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("driver", DRIVER)
@@ -318,6 +321,15 @@ internal class ClientGenerator(
                     .addCode("")
                     .build()
             )
+            .addProperty(
+                // Hook contexts expose a stable repository capability rather
+                // than this full client. The private facade prevents a cast
+                // from restoring withTransaction or configuration APIs.
+                PropertySpec.builder("hookClientScopeForInternalUse", clientScopeClass)
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T(this)", hookClientScopeFacadeClass)
+                    .build()
+            )
             .addProperties(sorted.map { buildRepoProperty(it) })
             .addInitializerBlock(buildInitBlock(configClass, sorted))
             .addFunction(
@@ -336,7 +348,23 @@ internal class ClientGenerator(
             .addType(buildCompanionObject(sorted))
             .build()
 
-        fileBuilder.addType(buildTransactionClient(clientClass, transactionClientClass, sorted))
+        fileBuilder.addType(buildClientScope(clientScopeClass, sorted))
+        fileBuilder.addType(
+            buildHookClientScopeFacade(
+                clientClass,
+                clientScopeClass,
+                hookClientScopeFacadeClass,
+                sorted,
+            )
+        )
+        fileBuilder.addType(
+            buildTransactionClient(
+                clientClass,
+                clientScopeClass,
+                transactionClientClass,
+                sorted,
+            )
+        )
         fileBuilder.addType(typeSpec)
 
         return fileBuilder.build()
@@ -623,6 +651,7 @@ internal class ClientGenerator(
      */
     private fun buildTransactionClient(
         clientClass: ClassName,
+        clientScopeClass: ClassName,
         transactionClientClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
@@ -635,6 +664,7 @@ internal class ClientGenerator(
                     "`withTransaction` entry point: nested client transactions are not a\n" +
                     "supported operation and therefore do not compile.",
             )
+            .addSuperinterface(clientScopeClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addAnnotation(ClassName("entkt.query", "EntktInternal"))
@@ -654,6 +684,7 @@ internal class ClientGenerator(
             val repoClass = ClassName(packageName, "${input.name}Repo")
             builder.addProperty(
                 PropertySpec.builder(propName, repoClass)
+                    .addModifiers(KModifier.OVERRIDE)
                     .getter(
                         FunSpec.getterBuilder()
                             .addStatement("return delegate.%L", propName)
@@ -665,6 +696,7 @@ internal class ClientGenerator(
 
         builder.addFunction(
             FunSpec.builder("currentPrivacyContext")
+                .addModifiers(KModifier.OVERRIDE)
                 .returns(PRIVACY_CONTEXT)
                 .addStatement("return delegate.currentPrivacyContext()")
                 .build(),
@@ -714,6 +746,96 @@ internal class ClientGenerator(
                 .build(),
         )
 
+        return builder.build()
+    }
+
+    /**
+     * Repository capability shared by root and transaction-scoped clients.
+     * It deliberately omits transaction entry, privacy re-scoping, bypass,
+     * and configuration APIs, so helpers can operate on either client without
+     * regaining capabilities that are invalid from nested contexts.
+     */
+    private fun buildClientScope(
+        clientScopeClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): TypeSpec {
+        val builder = TypeSpec.interfaceBuilder(clientScopeClass)
+            .addKdoc(
+                "Common generated repository surface implemented by [EntClient] and\n" +
+                    "[EntTransactionClient]. Accept this type in helpers that should work\n" +
+                    "with either client. It intentionally omits transaction entry, privacy\n" +
+                    "re-scoping and bypass, and client configuration APIs.\n",
+            )
+
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val repoClass = ClassName(packageName, "${input.name}Repo")
+            builder.addProperty(
+                PropertySpec.builder(propName, repoClass)
+                    .addModifiers(KModifier.ABSTRACT)
+                    .build(),
+            )
+        }
+
+        builder.addFunction(
+            FunSpec.builder("currentPrivacyContext")
+                .addModifiers(KModifier.ABSTRACT)
+                .returns(PRIVACY_CONTEXT)
+                .build(),
+        )
+        return builder.build()
+    }
+
+    /**
+     * Actual object handed to hook contexts. Although both public clients
+     * implement [clientScopeClass], passing either concrete client would let
+     * application code cast back to it and recover broader capabilities. This
+     * private facade exposes only the common interface while delegating to the
+     * repositories already bound to the correct driver and transaction.
+     */
+    private fun buildHookClientScopeFacade(
+        clientClass: ClassName,
+        clientScopeClass: ClassName,
+        facadeClass: ClassName,
+        schemas: List<SchemaInput>,
+    ): TypeSpec {
+        val builder = TypeSpec.classBuilder(facadeClass)
+            .addModifiers(KModifier.PRIVATE)
+            .addSuperinterface(clientScopeClass)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter("delegate", clientClass)
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("delegate", clientClass)
+                    .addModifiers(KModifier.PRIVATE)
+                    .initializer("delegate")
+                    .build(),
+            )
+
+        for (input in schemas) {
+            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val repoClass = ClassName(packageName, "${input.name}Repo")
+            builder.addProperty(
+                PropertySpec.builder(propName, repoClass)
+                    .addModifiers(KModifier.OVERRIDE)
+                    .getter(
+                        FunSpec.getterBuilder()
+                            .addStatement("return delegate.%L", propName)
+                            .build(),
+                    )
+                    .build(),
+            )
+        }
+
+        builder.addFunction(
+            FunSpec.builder("currentPrivacyContext")
+                .addModifiers(KModifier.OVERRIDE)
+                .returns(PRIVACY_CONTEXT)
+                .addStatement("return delegate.currentPrivacyContext()")
+                .build(),
+        )
         return builder.build()
     }
 

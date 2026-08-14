@@ -208,12 +208,11 @@ contexts use the normal client/driver.
 **Hook context surface.** `ctx.client` is exposed on the hooks whose
 generated lambda parameter is a context object: `beforeCreate` (receives
 `{Entity}CreateHookContext`) and `beforeUpdate` (receives
-`{Entity}UpdateHookContext`). When a save runs on a transaction-scoped
-client, that `ctx.client` is the transaction-scoped sub-client, so hook
-reads and writes share the same transaction snapshot as the save (the
-existing `withTransaction` wiring already copies hook lists, privacy,
-validation, and the transaction requirement onto the sub-client). On a
-normal client, `ctx.client` is the normal client.
+`{Entity}UpdateHookContext`). Its static type is `EntClientScope`: the
+repository surface shared by root and transaction clients, without
+`withTransaction`, privacy re-scoping or bypass, or configuration APIs. Hook
+reads and writes therefore share the same transaction snapshot as the save,
+while a nested client transaction does not compile.
 
 The other hook surfaces today don't receive a context object —
 `beforeSave` takes the entity's `Mutation` interface, and `afterCreate`,
@@ -930,6 +929,8 @@ Before implementation, add tests for:
   driver/client for any follow-up read needed to hydrate the returned entity
 - hook `ctx.client` queries and writes use the transaction-scoped
   driver/client when the save runs on a transaction-scoped client.
+  The property is typed `EntClientScope`, so it cannot start a nested
+  transaction or reconfigure/re-scope the client.
   V1 exposes `ctx.client` only on the hooks whose generated lambda
   parameter is a context object — `beforeCreate`
   (`{Entity}CreateHookContext`) and `beforeUpdate`

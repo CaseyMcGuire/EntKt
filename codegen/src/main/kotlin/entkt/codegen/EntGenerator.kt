@@ -641,14 +641,17 @@ class EntGenerator(
         ensureFinalized(schemas)
         val schemaNames: Map<EntSchema, String> = schemas.associate { it.schema to it.name }
 
-        // EntTransactionClient is declared inside EntClient.kt rather
-        // than in a same-named FileSpec, so the file-collision check
-        // below cannot detect a schema that would emit the same
-        // top-level Kotlin type.
-        if (schemas.any { it.name == "EntTransactionClient" }) {
+        // These client capability types are declared inside EntClient.kt
+        // rather than in same-named FileSpecs, so the file-collision check
+        // below cannot detect schemas that would emit the same top-level
+        // Kotlin types.
+        val reservedClientType = schemas.firstOrNull {
+            it.name == "EntTransactionClient" || it.name == "EntClientScope"
+        }?.name
+        if (reservedClientType != null) {
             error(
-                "Schema name 'EntTransactionClient' collides with the reserved generated " +
-                    "transaction-client type",
+                "Schema name '$reservedClientType' collides with a reserved generated " +
+                    "client capability type",
             )
         }
 

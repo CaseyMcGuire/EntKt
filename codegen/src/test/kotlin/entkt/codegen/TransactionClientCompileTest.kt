@@ -75,6 +75,75 @@ class TransactionClientCompileTest {
     }
 
     @Test
+    fun `shared repository helpers accept root and transaction clients`() {
+        val result = compile(
+            SourceFile.kotlin(
+                "SharedClientScopeSnippet.kt",
+                """
+                package com.example.app
+
+                import com.example.ent.EntClient
+                import com.example.ent.EntClientScope
+
+                fun sharedHelper(client: EntClientScope) {
+                    client.cars.query { }.all()
+                    client.users.create { name = "helper" }.save()
+                    client.currentPrivacyContext()
+                }
+
+                fun useBoth(client: EntClient) {
+                    sharedHelper(client)
+                    client.withTransaction { tx ->
+                        sharedHelper(tx)
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Expected EntClientScope helpers to accept both client types, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `hook contexts cannot start transactions`() {
+        val result = compile(
+            SourceFile.kotlin(
+                "HookNestedTransactionSnippet.kt",
+                """
+                package com.example.app
+
+                import com.example.ent.EntClient
+                import entkt.runtime.driver.Driver
+
+                fun configuredClient(driver: Driver): EntClient = EntClient(driver) {
+                    hooks {
+                        cars {
+                            beforeCreate { ctx ->
+                                ctx.client.withTransaction { }
+                            }
+                            beforeUpdate { ctx ->
+                                ctx.client.withTransaction { }
+                            }
+                        }
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertNotEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        assertTrue(
+            result.messages.contains("withTransaction") &&
+                (result.messages.contains("Unresolved reference") || result.messages.contains("unresolved reference")),
+            "Expected withTransaction to be absent from hook client scopes, got:\n${result.messages}",
+        )
+    }
+
+    @Test
     fun `nested client transactions do not compile`() {
         val result = compile(
             SourceFile.kotlin(

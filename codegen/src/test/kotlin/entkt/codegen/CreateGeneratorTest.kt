@@ -639,7 +639,7 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarCreateHookContext(client, _createMutationView)")) {
+        assert(output.contains("CarCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)")) {
             "CreateHookContext should wrap _createMutationView, not `this`\n$output"
         }
         assert(!output.contains("CarCreateHookContext(client, this)")) {

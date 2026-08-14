@@ -1203,7 +1203,7 @@ class EdgeCodegenTest {
         // (`this`). This matches the runtime-enforced contract
         // the update path has had since transaction locking and link-table M2M helpers — a hook
         // attempting `ctx.mutation as PetCreate` throws.
-        assert(output.contains("val createCtx = PetCreateHookContext(client, _createMutationView)")) {
+        assert(output.contains("val createCtx = PetCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)")) {
             "save() should construct a CreateHookContext wrapping _createMutationView\n$output"
         }
         assert(output.contains("for (hook in beforeCreateHooks) hook(createCtx)")) {

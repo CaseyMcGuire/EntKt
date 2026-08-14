@@ -30,6 +30,18 @@ above it.
 
 ## Unreleased
 
+- **Share repository helpers safely across root, transaction, and hook clients** (`codegen`)
+  Generated `EntClient` and `EntTransactionClient` now implement
+  `EntClientScope`, which exposes repositories and `currentPrivacyContext()`
+  but omits transaction entry, privacy re-scoping and bypass, and client
+  configuration. `beforeCreate` and `beforeUpdate` hook contexts now type
+  `ctx.client` as this interface and receive a narrow facade, so
+  `ctx.client.withTransaction { ... }` no longer compiles.
+  _Migration:_ type helpers that need repositories from either client as
+  `EntClientScope`. Hook code using repository access is unchanged; move any
+  transaction, privacy re-scoping, bypass, or configuration call out of the
+  hook context and perform it explicitly at the application boundary.
+
 - **Make `getOrThrow()` a member of every operation result** (`runtime`)
   `ReadResult`, `MutationResult`, and `TransactionResult` now declare
   `getOrThrow()` directly instead of relying on overloaded top-level
@@ -130,9 +142,8 @@ above it.
     and reports the first recorded failure with later ones suppressed.
     The generated `EntTransactionClient` exposes repositories and
     privacy re-scoping but no `withTransaction` member, so nested client
-    transactions no longer compile. Helpers that currently require
-    `EntClient` must accept `EntTransactionClient` when called with `tx`,
-    be overloaded for the two generated client types, or accept the
+    transactions no longer compile. Helpers that need the shared repository
+    surface should accept `EntClientScope`; narrower helpers may accept the
     repositories they actually use. Nested driver transactions remain
     unsupported and throw `NestedTransactionUnsupportedException`
     before the nested block runs.

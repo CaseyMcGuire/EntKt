@@ -34,6 +34,31 @@ class ClientGeneratorTest {
         assert(output.contains("class EntTransactionClient")) {
             "Should generate the transaction-scoped facade\n$output"
         }
+        assert(output.contains("interface EntClientScope")) {
+            "Should generate the shared repository capability\n$output"
+        }
+    }
+
+    @Test
+    fun `root transaction and hook facades share the narrow client scope`() {
+        val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
+
+        val scopeStart = output.indexOf("interface EntClientScope")
+        val scopeEnd = output.indexOf("private class _EntHookClientScope", scopeStart)
+        val scope = output.substring(scopeStart, scopeEnd)
+        assert(scope.contains("val cars: CarRepo") && scope.contains("val users: UserRepo") &&
+            scope.contains("fun currentPrivacyContext(): PrivacyContext")) {
+            "EntClientScope should expose repositories and the current privacy context only\n$output"
+        }
+        assert(output.contains("class EntTransactionClient") && output.contains(": EntClientScope")) {
+            "EntTransactionClient should implement EntClientScope\n$output"
+        }
+        assert(output.contains("internal val hookClientScopeForInternalUse: EntClientScope = _EntHookClientScope(this)")) {
+            "EntClient should cache a narrow hook facade\n$output"
+        }
+        assert(output.contains("private class _EntHookClientScope") && output.contains(": EntClientScope")) {
+            "Hook contexts should receive a private facade rather than the full client\n$output"
+        }
     }
 
     @Test
@@ -52,9 +77,10 @@ class ClientGeneratorTest {
         // run in declaration order — so the batch call has to live on the
         // `driver` property (declared first), not in the init block that
         // follows the repo properties.
-        val driverProp = output.indexOf("registerAll(SCHEMAS)")
-        val firstRepo = output.indexOf("override val cars:")
-        val initBlock = output.indexOf("init {")
+        val clientStart = output.indexOf("public class EntClient(")
+        val driverProp = output.indexOf("registerAll(SCHEMAS)", clientStart)
+        val firstRepo = output.indexOf("override val cars:", clientStart)
+        val initBlock = output.indexOf("init {", clientStart)
         assert(driverProp in 0 until firstRepo) {
             "registerAll must be wired before the first repo property\n$output"
         }

@@ -341,7 +341,7 @@ internal class UpdateSaveEmitter(
         builder.beginControlFlow("for (hook in beforeUpdateHooks)")
         builder.addStatement("val snapshot = _buildRequestedPatch()")
         builder.addStatement(
-            "val ctx = %T(client, entity, snapshot, pendingEdges, _mutationView)",
+            "val ctx = %T(client.hookClientScopeForInternalUse, entity, snapshot, pendingEdges, _mutationView)",
             updateHookCtxClass,
         )
         builder.addStatement("hook(ctx)")

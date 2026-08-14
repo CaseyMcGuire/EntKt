@@ -799,6 +799,15 @@ compile. At the lower-level driver API, an already-transactional driver
 still throws `NestedTransactionUnsupportedException` before the nested
 block runs.
 
+`EntClient` and `EntTransactionClient` both implement the generated
+`EntClientScope` interface, which contains the repositories and
+`currentPrivacyContext()` but no transaction entry point, privacy re-scoping,
+or configuration APIs. Helpers that should operate with either client can
+accept this interface instead of overloading on the two concrete types.
+`beforeCreate` and `beforeUpdate` hook contexts expose the same narrow type,
+so nested client transactions do not become reachable again through
+`ctx.client`.
+
 For write-side transaction discipline — `TransactionRequirement`
 (client-level write guardrail) and `UpdateConsistency.Pessimistic`
 (per-save row-locking update mode) — see [Hooks → Execution

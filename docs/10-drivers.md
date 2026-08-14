@@ -339,6 +339,10 @@ directly; an unknown transaction outcome throws
 `EntTransactionOutcomeUnknownException` instead.
 The generated `tx` is an `EntTransactionClient`, which has no
 `withTransaction` member, so client-level nesting does not compile.
+Both it and the root `EntClient` implement `EntClientScope`; shared
+repository helpers should accept that interface. Hook contexts also expose
+`EntClientScope`, preventing `ctx.client` from restoring the root-only
+transaction entry point.
 Calling `withTransaction` on the transaction-scoped driver remains a
 runtime error and throws `NestedTransactionUnsupportedException` before
 the nested block runs.

@@ -347,7 +347,7 @@ class UpdateGeneratorTest {
         // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client, entity, snapshot, pendingEdges, _mutationView) hook(ctx) }",
+                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, entity, snapshot, pendingEdges, _mutationView) hook(ctx) }",
             ),
         ) {
             "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
@@ -1245,7 +1245,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // The 5-arg form: (client, entity, snapshot, pendingEdges, _mutationView).
-        assert(output.contains("M2MPostUpdateHookContext(client, entity, snapshot, pendingEdges, _mutationView)")) {
+        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, entity, snapshot, pendingEdges, _mutationView)")) {
             "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
         }
     }

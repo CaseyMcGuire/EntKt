@@ -1327,6 +1327,14 @@ re-scoping returns another `EntTransactionClient`, so it cannot restore the
 root-only transaction entry point. The lower-level driver retains a runtime
 guard for direct nested driver calls.
 
+The root and transaction clients both implement `EntClientScope`, containing
+the generated repositories and `currentPrivacyContext()` but not transaction
+entry, privacy re-scoping or bypass, or configuration APIs. Cross-context
+helpers accept this interface. `beforeCreate` and `beforeUpdate` hook contexts
+also expose it through a narrow facade, so their `ctx.client` cannot restore
+`withTransaction()` even when the repository operation is backed by the hidden
+transaction client.
+
 The transaction boundary owns commit failures. A failure before commit is
 attempted is rolled back when possible; an exception during commit uses the
 driver's structured transaction outcome and reports `OutcomeUnknown`. An
@@ -1857,7 +1865,8 @@ Before implementation, add or update tests for:
   `orRollback()`, except that an underlying aborted database transaction is
   always detected at the transaction boundary
 - `EntTransactionClient` has no `withTransaction()` member, so nested client
-  transactions do not compile; calling `withTransaction()` on a
+  transactions do not compile; hook contexts expose `EntClientScope`, which
+  also omits that member; calling `withTransaction()` on a
   transaction-scoped driver throws `NestedTransactionUnsupportedException`
   before the nested block or any nested transaction I/O runs
 - `TransactionResult.getOrThrow()` rethrows the exact stored exception for

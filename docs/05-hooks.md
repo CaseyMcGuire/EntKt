@@ -12,7 +12,7 @@ val client = EntClient(driver) {
     hooks {
         users {
             beforeSave { it.updatedAt = Instant.now() }
-            beforeCreate { it.createdAt = Instant.now() }
+            beforeCreate { it.mutation.createdAt = Instant.now() }
             afterCreate { user -> println("Created: ${user.name}") }
         }
         posts {
@@ -27,7 +27,7 @@ val client = EntClient(driver) {
 | Hook | Receives | When | Use Case |
 |------|----------|------|----------|
 | `beforeSave` | `UserMutation` | Before both create and update, before validation | Timestamps, computed fields |
-| `beforeCreate` | `UserCreate` | Create only, after `beforeSave` | Set creation-only defaults |
+| `beforeCreate` | `UserCreateHookContext` | Create only, after `beforeSave` | Set creation-only defaults, query related data |
 | `afterCreate` | `User` | After successful insert | Logging, notifications |
 | `beforeUpdate` | `UserUpdateHookContext` | Update only, after `beforeSave` | Audit trails, normalize patch |
 | `afterUpdate` | `User` | After successful update | Cache invalidation |
@@ -49,11 +49,32 @@ users {
 }
 ```
 
+## Hook Client Access
+
+`beforeCreate` and `beforeUpdate` contexts expose `client: EntClientScope`.
+This is the generated repository surface shared by `EntClient` and
+`EntTransactionClient`, so helpers accepting it work in either context:
+
+```kotlin
+fun emailIsTaken(client: EntClientScope, email: String): Boolean =
+    client.users.indexes.email(email).find().getOrThrow() != null
+```
+
+The scope exposes every generated repository and
+`currentPrivacyContext()`. It deliberately does not expose
+`withTransaction()`, privacy re-scoping or bypass, or client configuration.
+Consequently, a hook cannot start a transaction that would be independent
+outside a transaction and nested inside one. Repository operations issued
+through `ctx.client` still use the same driver and transaction as the save.
+
+`beforeCreate` also receives `mutation`, the restricted writable create view.
+
 ## The Update Hook Context
 
 The `beforeUpdate` hook receives a `${Entity}UpdateHookContext` with
-four fields:
+five fields:
 
+- **`client`** — the transaction-safe `EntClientScope` described above.
 - **`before`** — the current stored entity, loaded before any update hooks run.
   This load is not blocked by LOAD privacy. The default
   `UpdateConsistency.ReadCurrent` provides a current snapshot.

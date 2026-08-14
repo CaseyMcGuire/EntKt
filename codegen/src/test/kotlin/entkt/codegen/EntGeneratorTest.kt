@@ -139,7 +139,19 @@ class EntGeneratorTest {
             generator.generate(listOf(SchemaInput("EntTransactionClient", schema)))
         }
 
-        assertContains(error.message!!, "reserved generated transaction-client type")
+        assertContains(error.message!!, "reserved generated client capability type")
+    }
+
+    @Test
+    fun `schema named EntClientScope is rejected as a reserved client type`() {
+        val schema = BoxSchema()
+        finalize(schema)
+
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(listOf(SchemaInput("EntClientScope", schema)))
+        }
+
+        assertContains(error.message!!, "reserved generated client capability type")
     }
 
     @Test

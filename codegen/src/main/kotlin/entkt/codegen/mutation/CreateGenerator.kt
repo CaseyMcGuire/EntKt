@@ -811,7 +811,7 @@ internal class CreateGenerator(
         builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         builder.addStatement(
-            "val createCtx = %T(client, _createMutationView)",
+            "val createCtx = %T(client.hookClientScopeForInternalUse, _createMutationView)",
             createHookCtxClass,
         )
         builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")
