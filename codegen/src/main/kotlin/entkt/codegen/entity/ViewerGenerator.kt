@@ -319,7 +319,7 @@ internal class ViewerGenerator(private val packageName: String) {
                     // return null — the viewer's uniform not-found.
                     .addStatement("val parsed = %L", idParse)
                     .addStatement(
-                        "val entity = client.%L.findById(parsed).%M().%M() ?: return null",
+                        "val entity = client.%L.findById(parsed).%M().%M() ?: return·null",
                         repoProp, VISIBLE_OR_NULL, GET_OR_THROW,
                     )
                     .addStatement("return toRow(entity)")

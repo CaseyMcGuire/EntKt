@@ -25,7 +25,11 @@ private class ViewerPost : EntSchema("viewer_posts") {
 
 class ViewerCodegenTest {
 
-    private fun gen(viewer: Boolean): Map<String, String> {
+    private fun gen(
+        viewer: Boolean,
+        userName: String = "ViewerUser",
+        normalizeWhitespace: Boolean = true,
+    ): Map<String, String> {
         val user = ViewerUser()
         val post = ViewerPost()
         val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(
@@ -34,8 +38,11 @@ class ViewerCodegenTest {
         user.finalize(registry)
         post.finalize(registry)
         return EntGenerator("com.example.ent", viewer = viewer)
-            .generate(listOf(SchemaInput("ViewerUser", user), SchemaInput("ViewerPost", post)))
-            .associate { it.name to it.toString().replace("\\s+".toRegex(), " ") }
+            .generate(listOf(SchemaInput(userName, user), SchemaInput("ViewerPost", post)))
+            .associate {
+                val source = it.toString()
+                it.name to if (normalizeWhitespace) source.replace("\\s+".toRegex(), " ") else source
+            }
     }
 
     @Test
@@ -106,6 +113,18 @@ class ViewerCodegenTest {
         assertFalse("OverfetchCapExceeded" in adapter, adapter)
         assertFalse("client.driver" in adapter, "must not touch the raw driver: $adapter")
         assertFalse("Driver.query" in adapter, "must not touch the raw driver: $adapter")
+    }
+
+    @Test
+    fun `long repository names keep return null on one logical line`() {
+        val adapter = gen(
+            viewer = true,
+            userName = "ConversationAsset",
+            normalizeWhitespace = false,
+        ).getValue("ConversationAssetViewerEntity")
+
+        assertTrue("?: return null" in adapter, adapter)
+        assertFalse(Regex("return\\s*\\n\\s*null").containsMatchIn(adapter), adapter)
     }
 
     @Test
