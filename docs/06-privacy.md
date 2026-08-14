@@ -518,6 +518,150 @@ trusted diagnostic data. A `Failed` denial proves more than
 must not pass that distinction, the keys, or the reasons to untrusted
 clients without an explicit mapping.
 
+## Application Boundary Handling
+
+HTTP, GraphQL, RPC, and job-runner boundaries choose their own response
+formats, but they must preserve EntKt's distinction between absence, denial,
+operational failure, and an uncertain write outcome. In particular, do not
+recursively unwrap EntKt exceptions before checking whether a transaction may
+have committed.
+
+### Singular reads: opt into nondisclosure
+
+When a missing and an invisible entity should be indistinguishable, apply
+`visibleOrNull()` before projecting the result:
+
+```kotlin
+fun findNote(id: Long): Note? =
+    client.notes
+        .findById(id)
+        .visibleOrNull()
+        .getOrThrow()
+```
+
+`visibleOrNull()` converts only
+`Failed(EntPrivacyDeniedException(LoadDenialOrigin.Root, ...))` to
+`Success(null)`. It does not swallow operational failures, ordinary exceptions
+thrown by privacy-rule code, or eager-edge privacy failures. It performs no
+additional query or privacy evaluation.
+
+### Collections remain strict
+
+`all()` returns `ReadResult<List<T>>`, so `visibleOrNull()` is deliberately not
+available. If any root in the selected window is denied, the result is
+`Failed(EntPrivacyDeniedException)` rather than a partial list. A caller that
+maps such a failure to an empty list is discarding the entire selected window,
+including any rows that were visible; that coarse policy must be explicit:
+
+```kotlin
+fun notesForUser(userId: Long): List<Note> {
+    val result = client.notes.query {
+        where(Note.userId eq userId)
+    }.all()
+
+    return when (result) {
+        is ReadResult.Success -> result.value
+        is ReadResult.Failed -> {
+            val failure = result.exception
+            if (
+                failure is EntPrivacyDeniedException &&
+                failure.origin is LoadDenialOrigin.Root
+            ) {
+                emptyList()
+            } else {
+                throw failure
+            }
+        }
+    }
+}
+```
+
+Most viewer-scoped collection endpoints should instead construct predicates
+whose selected roots are all visible and let an unexpected denial fail loudly.
+`filterVisible()` is a separate opt-in for one eagerly loaded edge; it does not
+filter the roots returned by `all()`.
+
+### Direct mutations: interpret `writeState`
+
+A direct mutation failure remains ordinarily catchable:
+
+```kotlin
+try {
+    client.notes.update(id) {
+        title = newTitle
+    }.saveAndLoad().getOrThrow()
+} catch (e: EntMutationPrivacyDeniedException) {
+    // Choose the boundary response using both the denial and e.writeState.
+}
+```
+
+The exception type explains why the terminal failed; `writeState` explains
+what EntKt knows about persistence:
+
+| `MutationWriteState` | Boundary meaning |
+|----------------------|------------------|
+| `NotPersisted` | No write survived. It may be treated as an ordinary rejection, though retrying the same deterministic denial will not make it succeed. |
+| `TransactionPending` | The mutation belonged to an enclosing transaction. Resolve that transaction before choosing the external response. |
+| `Committed` | The write happened even though later work, such as returned-entity LOAD disclosure, failed. Do not present it as an unperformed write or blindly retry it. |
+| `PersistenceUnknown` | EntKt cannot establish whether persistence happened. Reconcile or use a deliberately idempotent retry strategy. |
+
+For example, `saveAndLoad()` can commit its write and then fail LOAD privacy for
+the returned entity. Mapping every `EntMutationPrivacyDeniedException` to a
+normal not-found response without considering `writeState` can cause a caller
+to repeat a write that already happened.
+
+### Transactions: uncertainty is not a normal rejection
+
+`TransactionResult.getOrThrow()` deliberately has two failure shapes:
+
+```text
+NotCommitted  -> rethrow the exact stored exception
+OutcomeUnknown -> throw EntTransactionOutcomeUnknownException
+```
+
+A boundary should handle transaction uncertainty before ordinary typed
+failures and must not unwrap it into validation, privacy, or not-found:
+
+```kotlin
+try {
+    val note = client.withTransaction { tx ->
+        val note = tx.notes.create {
+            userId = currentUserId
+            content = input.content
+        }.saveAndLoad().orRollback()
+
+        tx.noteAssets.create {
+            noteId = note.id
+            assetId = input.assetId
+        }.save().orRollback()
+
+        note
+    }.getOrThrow()
+
+    CreateNoteSuccess(note)
+} catch (e: EntTransactionOutcomeUnknownException) {
+    log.error("Create-note transaction outcome is unknown", e)
+    UnexpectedError("The operation outcome could not be confirmed")
+} catch (e: EntMutationPrivacyDeniedException) {
+    NotFoundError("Not found")
+} catch (e: EntValidationException) {
+    ValidationError(e.violations.first().message)
+} catch (e: NotFoundException) {
+    NotFoundError(e.message ?: "Not found")
+}
+```
+
+After confirmed rollback, the original exception is safe to classify for the
+managed transaction. `EntTransactionOutcomeUnknownException`, by contrast,
+means that transaction may have committed. Its `exception` and `cause` retain
+the underlying failure for diagnostics, not normalization into an ordinary
+client error. Do not blindly retry unless the complete operation—including
+external side effects—is deliberately idempotent.
+
+`NotCommitted` describes only the managed transaction. Writes made through a
+captured root client, another database connection, or an external service are
+outside that guarantee and may already have completed.
+
 ## Generated Privacy API
 
 For each schema with a policy, entkt provides:

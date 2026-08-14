@@ -149,8 +149,9 @@ still available, but it is an explicit projection at the call site.
 - Do not define privacy-skipping scans or visible-page filling. Those may be
   added later if concrete application requirements justify the additional
   ordering, cursor, and scan-budget contracts.
-- Do not define HTTP, GraphQL, or other untrusted-boundary mappings for privacy
-  denials.
+- Do not prescribe protocol-specific status codes or response schemas. The
+  result and exception contracts still document the information an HTTP,
+  GraphQL, RPC, or job boundary must preserve.
 - Do not add `map()`, `flatMap()`, `fold()`, or other general result-composition
   helpers. Callers can use exhaustive `when`; narrowly useful transformations
   may be added later with operation-specific semantics.
@@ -1402,6 +1403,11 @@ retry-safe. The runtime KDoc for transaction `getOrThrow()` must carry this warn
 prominently.
 
 ### Application boundary mapping
+
+The user-facing [Privacy guide](../../06-privacy.md#application-boundary-handling)
+contains the canonical boundary examples for singular and collection reads,
+direct mutation write states, and transactions. The transaction-specific rule
+is summarized here because it is part of the throwing projection's contract.
 
 The dedicated uncertainty exception lets HTTP and GraphQL boundaries preserve
 ordinary typed handling without manually unwrapping every transaction failure:
