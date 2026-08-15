@@ -94,13 +94,11 @@ private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ct
 }
 
 /**
- * A rule that misuses a raw terminal. rawExists skips LOAD privacy, so
- * inside a viewer-scoped rule it could leak invisible rows into the
- * authorization decision — the runtime gate rejects it as
- * `Failed(IllegalStateException)`, which this rule's `getOrThrow`
- * rethrows so the failure surfaces loudly at the root terminal.
+ * A rule that deliberately uses a storage-level existence fact. The
+ * raw terminal does not materialize users or evaluate their LOAD
+ * policy, which also avoids recursively entering user LOAD rules.
  */
-private val LeakyRawExistsRule = ArticleLoadPrivacyRule { ctx ->
+private val RawUserExistsRule = ArticleLoadPrivacyRule { ctx ->
     if (ctx.client.users.query { }.rawExists().getOrThrow()) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
@@ -143,9 +141,9 @@ private object MemberGateArticlePolicy : EntityPolicy<Article, ArticlePolicyScop
     }
 }
 
-private object LeakyRawExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+private object RawUserExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
-        privacy { load(LeakyRawExistsRule) }
+        privacy { load(RawUserExistsRule) }
     }
 }
 
@@ -188,10 +186,9 @@ private object SecretMemberGateArticlePolicy : EntityPolicy<Article, ArticlePoli
  * both denial projections — the rethrowing `getOrThrow` and the
  * null-collapsing `visibleOrNull`), transaction-scoped, and still pass
  * through read interceptors under the caller's viewer. Raw terminals
- * (`rawCount` / `rawExists` / raw aggregates) are gated on this
- * posture: the gate now sits inside the capture boundary, so the
- * misuse surfaces as `ReadResult.Failed(IllegalStateException)` rather
- * than a thrown exception. The compile-time no-writes and opt-in-gate
+ * (`rawCount` / `rawExists` / raw aggregates) are explicit
+ * storage-level reads: they remain available and skip LOAD privacy and
+ * entity materialization. The compile-time no-writes and opt-in-gate
  * guarantees are pinned in `codegen`'s `PrivacyReadClientCompileTest`.
  */
 class PrivacyReadClientIntegrationTest : PostgresTestBase() {
@@ -326,79 +323,51 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         assertNotNull(article)
     }
 
-    // ---- Raw terminals are gated on viewer-scoped readers ----
+    // ---- Raw terminals are storage-level on viewer-scoped readers ----
 
     @Test
-    fun `raw terminals fail inside privacy rules instead of bypassing LOAD privacy`() {
+    fun `raw terminals can provide storage facts without evaluating LOAD privacy`() {
         val client = freshClient {
             privacyContext { PrivacyContext(Viewer.Anonymous) }
             policies {
                 users(AuthenticatedReadersUserPolicy)
-                articles(LeakyRawExistsArticlePolicy)
+                articles(RawUserExistsArticlePolicy)
             }
         }
-        val (author, article) = seedAuthorAndArticle(client)
+        val (_, article) = seedAuthorAndArticle(client)
 
-        // The rule's rawExists hits the privacy-bypassing-read gate. The
-        // gate sits inside the capture boundary, so the rejection is
-        // Failed(IllegalStateException); the rule's getOrThrow rethrows
-        // it and the article's root terminal reports it as the read's
-        // Failed exception — a loud failure, never a silent existence
-        // probe over rows the viewer cannot see. (Validation rules keep
-        // raw terminals: their reader's bypass context makes raw ≡
-        // visible — pinned by ValidationReadClientIntegrationTest's
-        // rawExists rule.)
-        val result = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-            c.articles.findById(article.id)
-        }
-        val failed = assertIs<ReadResult.Failed>(result)
-        val ex = assertIs<IllegalStateException>(failed.exception)
-        assertTrue(
-            "rawExists" in (ex.message ?: "") && "privacy-rule" in (ex.message ?: ""),
-            "Expected the raw-terminal gate message naming rawExists; got: ${ex.message}",
-        )
+        // Anonymous cannot materialize the user row, but the article
+        // rule may deliberately use its storage-level existence as an
+        // authorization input. No User entity is returned from the raw
+        // terminal, so User LOAD privacy is never evaluated.
+        val loaded = client.articles.findById(article.id).getOrThrow()
+        assertNotNull(loaded)
     }
 
     @Test
-    fun `raw aggregate gate is captured as Failed inside the rule, not thrown`() {
-        // The gate moved inside the capture boundary: a rule that ignores
-        // the aggregate's result no longer aborts the outer read — but it
-        // also never sees data, only Failed(IllegalStateException). The
-        // capture list lets the test assert that shape directly.
+    fun `raw aggregates are available inside privacy rules`() {
         val captured = mutableListOf<ReadResult<String?>>()
-        val leakyAggregateRule = ArticleLoadPrivacyRule { ctx ->
+        val storageAggregateRule = ArticleLoadPrivacyRule { ctx ->
             captured.add(ctx.client.users.query { }.rawMin(User.email))
             PrivacyDecision.Allow
         }
-        val leakyAggregatePolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
+        val storageAggregatePolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
-                privacy { load(leakyAggregateRule) }
+                privacy { load(storageAggregateRule) }
             }
         }
         val client = freshClient {
             privacyContext { PrivacyContext(Viewer.Anonymous) }
             policies {
                 users(AuthenticatedReadersUserPolicy)
-                articles(leakyAggregatePolicy)
+                articles(storageAggregatePolicy)
             }
         }
-        val (author, article) = seedAuthorAndArticle(client)
+        val (_, article) = seedAuthorAndArticle(client)
 
-        // The read SUCCEEDS: the gate rejection was captured inside the
-        // raw terminal rather than thrown through the rule, so the (badly
-        // written) rule proceeded to Allow — without any leaked aggregate
-        // data ever reaching it.
-        val loaded = client.withPrivacyContext(PrivacyContext(Viewer.User(author.id))) { c ->
-            c.articles.findById(article.id).getOrThrow()
-        }
+        val loaded = client.articles.findById(article.id).getOrThrow()
         assertNotNull(loaded)
-
-        val failed = assertIs<ReadResult.Failed>(captured.single())
-        val gate = assertIs<IllegalStateException>(failed.exception)
-        assertTrue(
-            "raw aggregates" in (gate.message ?: "") && "privacy-rule" in (gate.message ?: ""),
-            "Expected the raw-terminal gate message naming raw aggregates; got: ${gate.message}",
-        )
+        assertEquals(ReadResult.Success("alice@test.com"), captured.single())
     }
 
     // ---- Predicate-based inference (documented limitation) ----

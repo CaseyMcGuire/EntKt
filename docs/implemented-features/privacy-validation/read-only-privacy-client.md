@@ -29,9 +29,18 @@ replaced by posture-specific `asValidationReadClientForInternalUse()` /
 `asPrivacyReadClientForInternalUse(privacy)` adapters. This essentially
 adopts the fork's Option B names, but over one shared internal
 implementation and shared repos — answering the repo-drift objection
-that motivated rejecting Option B below. The runtime raw-terminal gate,
-read semantics, and everything else this document records are
-unchanged.
+that motivated rejecting Option B below. At that point the runtime
+raw-terminal gate and read semantics were unchanged.
+
+**Follow-up 2026-08-14 — raw-terminal gate removed.** Raw terminals now execute
+on `EntPrivacyReadClient` as explicit storage-level reads that skip entity
+materialization and LOAD privacy while retaining read interceptors. Privacy
+rules are trusted authorization code; this capability is useful for ACL and
+membership facts and can avoid recursive LOAD-policy evaluation. Materializing
+reads remain viewer-scoped. The narrowed privacy-query proposal was
+[rejected](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md).
+The gate discussion below is retained as history and is no longer the current
+API contract.
 
 **Post-review tightening — raw terminals are gated on viewer-scoped
 readers.** Review found that `rawCount` / `rawExists` / the raw

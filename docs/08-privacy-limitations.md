@@ -10,6 +10,14 @@ how many rows match a predicate, even if those rows would make
 `query.all()` fail with `Failed(EntPrivacyDeniedException)`. The same
 holds for `rawExists()` and the raw aggregates.
 
+This behavior is also available inside privacy rules. Rules are trusted
+authorization code and may deliberately use raw storage facts for ACL,
+membership, or similar control-plane decisions without materializing the
+matching entities. Use a materializing terminal when the matching entity's
+LOAD visibility must affect the decision. The `raw` prefix is the warning that
+visibility is not evaluated; the framework does not infer which posture the
+application intended.
+
 There is no privacy-aware count or existence terminal: the former
 `visible*` scanning family was removed with the operation-result
 algebra, and privacy-skipping scans are an explicit non-goal. A

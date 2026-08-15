@@ -337,17 +337,6 @@ internal class ClientGenerator(
                     )
                     .build()
             )
-            .addFunction(
-                // No-op on the full client: raw terminals are part of the
-                // deliberate application query surface here (documented as
-                // skipping LOAD privacy). The read client's override is
-                // where the viewer-scoped gate lives.
-                FunSpec.builder("checkPrivacyBypassingRead")
-                    .addModifiers(KModifier.OVERRIDE)
-                    .addParameter("terminal", String::class)
-                    .addCode("")
-                    .build()
-            )
             .addProperty(
                 // Hook contexts expose a stable repository capability rather
                 // than this full client. The private facade prevents a cast
@@ -1191,9 +1180,10 @@ internal class ClientGenerator(
             .addKdoc(
                 "Read-only view of this client for generated privacy evaluators, with\n" +
                     "the caller's [privacy] context fixed for its lifetime — rule reads\n" +
-                    "are viewer-scoped, and raw terminals throw. Same driver (transaction\n" +
-                    "scoping preserved), same read interceptors. No write surface\n" +
-                    "compiles against it.",
+                    "that materialize entities are viewer-scoped. Raw terminals remain\n" +
+                    "explicit storage-level reads that skip LOAD privacy. Same driver\n" +
+                    "(transaction scoping preserved), same read interceptors. No write\n" +
+                    "surface compiles against it.",
             )
             .addAnnotation(ClassName("entkt.query", "EntktInternal"))
             .addModifiers(KModifier.INTERNAL)

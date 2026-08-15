@@ -27,19 +27,17 @@ class QueryGeneratorTest {
     private val generator = QueryGenerator("com.example.ent")
 
     @Test
-    fun `raw aggregate terminals return ReadResult and share one gated execution path`() {
+    fun `raw aggregate terminals return ReadResult and share one execution path`() {
         // Car has year (Int → IntegralColumn), price (Float? → FloatingColumn).
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // The shared helper routes through RAW_AGGREGATE + driver.aggregate,
-        // and hosts the privacy-bypass gate so viewer-scoped rejection
-        // happens inside every aggregate terminal's capture boundary.
+        // The shared helper routes through RAW_AGGREGATE + driver.aggregate.
         assert(output.contains("ReadOperation.RAW_AGGREGATE")) { "aggregateRows uses RAW_AGGREGATE\n$output" }
         assert(output.contains("driver.aggregate(Car.TABLE,")) { "aggregateRows calls driver.aggregate\n$output" }
-        assert(output.contains("checkPrivacyBypassingRead(\"raw aggregates\")")) {
-            "aggregateRows carries the privacy-bypass gate for all aggregate terminals\n$output"
+        assert(!output.contains("checkPrivacyBypassingRead")) {
+            "raw aggregates should be available in every read posture\n$output"
         }
 
         // Ungrouped scalar terminals, typed by the column marker, wrapped in ReadResult.
@@ -346,13 +344,9 @@ class QueryGeneratorTest {
                 "removed legacy surface '$legacy' must not be emitted\n$output"
             }
         }
-        // The privacy-bypassing raw family is what remains for
-        // count/exists/aggregates, and every raw terminal preflights
-        // through the client's capability gate.
-        val gates = Regex(Regex.escape("checkPrivacyBypassingRead(")).findAll(output).count()
-        assert(gates == 3) {
-            "rawCount, rawExists, and the shared aggregateRows helper should each gate " +
-                "via checkPrivacyBypassingRead; found $gates\n$output"
+        // The storage-level raw family is available in every read posture.
+        assert(!output.contains("checkPrivacyBypassingRead")) {
+            "raw terminals should not carry a posture gate\n$output"
         }
     }
 
@@ -362,15 +356,13 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // The gate sits INSIDE the `= try {` capture boundary, so a
-        // viewer-scoped capability rejection is Failed, not a throw.
         assert(
             output.contains(
                 "public fun rawCount(): ReadResult<Long> = try { " +
-                    "val c = requireClient() c.checkPrivacyBypassingRead(\"rawCount\")"
+                    "val c = requireClient() val privacy = c.currentPrivacyContext()"
             )
         ) {
-            "Should generate rawCount(): ReadResult<Long> gated inside the capture boundary\n$output"
+            "Should generate rawCount(): ReadResult<Long> inside the capture boundary\n$output"
         }
         assert(output.contains("runReadInterceptors(ReadOperation.RAW_COUNT, privacy)")) {
             "rawCount runs interceptors with RAW_COUNT\n$output"
@@ -395,15 +387,14 @@ class QueryGeneratorTest {
         assert(!output.contains("visibleExists")) {
             "visibleExists is deleted with the visible* family\n$output"
         }
-        // rawExists bypasses LOAD privacy behind the capability gate,
-        // inside the capture boundary.
+        // rawExists bypasses LOAD privacy in every read posture.
         assert(
             output.contains(
                 "public fun rawExists(): ReadResult<Boolean> = try { " +
-                    "val c = requireClient() c.checkPrivacyBypassingRead(\"rawExists\")"
+                    "val c = requireClient() val privacy = c.currentPrivacyContext()"
             )
         ) {
-            "Should generate rawExists(): ReadResult<Boolean> gated inside the capture boundary\n$output"
+            "Should generate rawExists(): ReadResult<Boolean> inside the capture boundary\n$output"
         }
         assert(output.contains("runReadInterceptors(ReadOperation.RAW_EXISTS, privacy)")) {
             "rawExists runs interceptors with RAW_EXISTS\n$output"

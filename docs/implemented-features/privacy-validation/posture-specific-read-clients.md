@@ -13,8 +13,19 @@ read-repository interface; validation contexts expose the concrete
 `PrivacyBypass("validation read")`) and
 `asPrivacyReadClientForInternalUse(privacy)` (freezes the caller's
 context); both call one private `readClientImpl(context)` builder.
-Repos, queries, and the runtime raw-terminal gate are unchanged — no
-read results changed.
+At implementation time, repos, queries, and the runtime raw-terminal gate were
+unchanged, so this type split did not change read results.
+
+**Follow-up 2026-08-14 — raw reads unified across postures.** The runtime
+raw-terminal gate was subsequently removed. `rawCount`, `rawExists`, and raw
+aggregates are now explicit storage-level reads on both concrete client types:
+they run interceptors but skip entity materialization and LOAD privacy.
+Materializing privacy-client reads remain viewer-scoped. The proposed narrowed
+query hierarchy was
+[rejected](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md)
+because privacy rules are trusted authorization code and raw reads are useful
+for control-plane facts and avoiding recursive LOAD evaluation. References to
+the gate below describe the historical design this RFC originally implemented.
 
 Pinned by `codegen`'s `ReadClientGeneratorTest` (generated shape:
 interface, distinct non-alias wrappers, guarded internal constructors,

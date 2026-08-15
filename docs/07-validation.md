@@ -225,11 +225,11 @@ from the same transaction.
 Privacy-rule contexts expose `EntPrivacyReadClient` instead, whose reads use
 the caller's privacy context. Both concrete types implement the shared
 `EntReadClient` interface: helpers that work correctly under either posture
-can accept `EntReadClient` (and must then avoid raw terminals, which fail with
-`ReadResult.Failed(IllegalStateException)` on privacy readers), while helpers
-that rely on privacy-bypassing reads should
-accept `EntValidationReadClient` so they cannot be handed a viewer-scoped
-reader. See [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
+can accept `EntReadClient`. Raw terminals have the same storage-level behavior
+under both postures: they skip LOAD privacy and entity materialization. Helpers
+that rely on privacy-bypassed *materialization* should accept
+`EntValidationReadClient` so they cannot be handed a viewer-scoped reader.
+See [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
 ### WriteCandidate
 

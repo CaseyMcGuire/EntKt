@@ -116,29 +116,6 @@ internal class ReadRuntimeGenerator(
                     .returns(PRIVACY_CONTEXT)
                     .build()
             )
-            .addFunction(
-                // Raw terminals (rawCount / rawExists / raw aggregates)
-                // read without evaluating LOAD privacy. On the full
-                // client that is the deliberate application query
-                // surface; on read clients it is only sound under a
-                // PrivacyBypass context, where raw and visible coincide.
-                // Viewer-scoped privacy-rule readers throw here — a raw
-                // read could leak rows the viewer cannot see into an
-                // authorization decision.
-                FunSpec.builder("checkPrivacyBypassingRead")
-                    .addModifiers(KModifier.ABSTRACT)
-                    .addParameter("terminal", String::class)
-                    .addKdoc(
-                        "Preflight for raw terminals, which skip LOAD privacy. No-op on the\n" +
-                            "full client and on bypass-scoped read clients (validation reads);\n" +
-                            "rejects viewer-scoped privacy-rule readers with an [IllegalStateException]\n" +
-                            "that the canonical terminal's capture boundary returns as\n" +
-                            "`ReadResult.Failed`,\n" +
-                            "where a privacy-bypassing read could leak invisible rows into an\n" +
-                            "authorization decision. Use LOAD-checked terminals there instead.",
-                    )
-                    .build()
-            )
             .addProperty(
                 // Keeps the concrete property's `@EntktInternal` guard:
                 // interface members can't be `internal`, so the opt-in

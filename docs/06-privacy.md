@@ -264,23 +264,24 @@ row its viewer cannot see gets the denial
 `.visibleOrNull()` collapses that root denial to `Success(null)`),
 never the row. This is deliberately the opposite posture from
 validation contexts, whose `EntValidationReadClient` reads are
-privacy-bypass-scoped — invariant checks must see all rows,
-authorization checks must not. Both concrete types implement the
-shared `EntReadClient` interface, so a helper that works correctly
-under either posture can accept `EntReadClient`; a helper that is
+privacy-bypass-scoped — invariant checks can materialize every row,
+while authorization reads materialize only viewer-visible rows. Both
+concrete types implement the shared `EntReadClient` interface, so a
+helper that works correctly under either posture can accept
+`EntReadClient`; a helper that is
 specifically part of an authorization decision should accept
 `EntPrivacyReadClient` and then cannot be handed a privacy-bypassing
 reader by mistake.
 
-The raw terminals (`rawCount` / `rawExists` and the raw aggregates)
-skip LOAD privacy by design, which would break that guarantee — so on
-`EntPrivacyReadClient` they return
-`ReadResult.Failed(IllegalStateException)` instead of silently probing
-rows the viewer cannot see. They remain available everywhere else
-(application queries, validation rules), where their privacy posture
-is deliberate. Use a LOAD-checked terminal inside privacy rules; a
-posture-agnostic helper accepting `EntReadClient` must likewise avoid
-raw terminals, since it may run under either posture.
+The raw terminals (`rawCount` / `rawExists` and the raw aggregates) are
+available on every read client and have one explicit meaning: they query
+storage without materializing entities or evaluating LOAD privacy. They still
+run read interceptors under the operation's captured privacy context. Privacy
+rules are trusted authorization code and may use raw terminals for facts such
+as ACL membership or existence; doing so can also avoid recursive LOAD-policy
+evaluation. Use `findById`, `firstOrNull`, or `all` instead when the referenced
+entity's visibility must participate in the decision. Raw results must not be
+mistaken for proof that the viewer could load the matching entities.
 
 LOAD privacy applies to returned entities, not related entities used only to
 filter a query. That holds for both application queries and rule reads: a rule

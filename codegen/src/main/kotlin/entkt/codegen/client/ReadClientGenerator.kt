@@ -18,7 +18,6 @@ import entkt.schema.EntSchema
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
-private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
@@ -36,8 +35,9 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * (fixed `PrivacyBypass("validation read")` context, so invariant
  * checks are not blocked by LOAD privacy and raw terminals work);
  * privacy contexts carry `EntPrivacyReadClient` (the caller's own
- * context, so authorization reads see only what the viewer sees and
- * raw terminals throw). Both wrappers delegate `EntReadClient` to one
+ * context, so materializing authorization reads see only what the
+ * viewer sees; raw terminals remain explicit storage-level reads that
+ * skip LOAD privacy). Both wrappers delegate `EntReadClient` to one
  * `EntReadClientImpl`, which owns the read state and repositories —
  * the two semantic types cannot drift, and helpers that are genuinely
  * posture-agnostic accept the shared interface.
@@ -113,10 +113,10 @@ internal class ReadClientGenerator(
             buildPostureWrapper(
                 name = "EntPrivacyReadClient",
                 kdoc = "Read client handed to generated privacy-rule contexts. Reads are\n" +
-                    "viewer-scoped: materialized rows are evaluated under the caller's\n" +
-                    "LOAD privacy, and raw terminals (`rawCount`, `rawExists`, raw\n" +
-                    "aggregates) throw [IllegalStateException] — a privacy-bypassing read\n" +
-                    "could leak invisible rows into an authorization decision. Same\n" +
+                    "viewer-scoped when they materialize rows: returned entities are\n" +
+                    "evaluated under the caller's LOAD privacy. Raw terminals (`rawCount`,\n" +
+                    "`rawExists`, raw aggregates) are explicit storage-level reads that\n" +
+                    "skip LOAD privacy and entity materialization. Same\n" +
                     "driver instance as the operation's client (transaction-scoped reads\n" +
                     "see prior writes), same read interceptors. The posture is fixed for\n" +
                     "the instance's lifetime — there is no re-scoping surface. Helpers\n" +
@@ -221,9 +221,10 @@ internal class ReadClientGenerator(
                     "and privacy contexts. Implemented by [EntValidationReadClient]\n" +
                     "(privacy-bypassing reads, for validators) and [EntPrivacyReadClient]\n" +
                     "(viewer-scoped reads, for privacy rules). A helper accepting this\n" +
-                    "interface promises to work correctly under either posture, so it\n" +
-                    "must not assume raw terminals are available — they throw on\n" +
-                    "viewer-scoped privacy readers. Helpers that rely on one posture\n" +
+                    "interface promises to work correctly under either posture. Raw\n" +
+                    "terminals are available under both postures and always skip LOAD\n" +
+                    "privacy; helpers should use them only when storage-level facts are\n" +
+                    "the intended authorization input. Helpers that rely on one posture\n" +
                     "should accept the matching concrete type instead. Write-side state\n" +
                     "(`transactionRequirement`, hooks, validation config) is deliberately\n" +
                     "absent from the whole surface — its absence is part of the\n" +
@@ -370,29 +371,6 @@ internal class ReadClientGenerator(
                     "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
                 )
                 .addStatement("return privacyContext")
-                .build()
-        )
-
-        builder.addFunction(
-            // Under bypass (validation reads) raw and visible coincide, so
-            // raw terminals stay available; under a real viewer (privacy
-            // rule reads) a privacy-bypassing read could leak invisible
-            // rows into an authorization decision — fail loudly instead.
-            FunSpec.builder("checkPrivacyBypassingRead")
-                .addModifiers(KModifier.OVERRIDE)
-                .addParameter("terminal", String::class)
-                .addCode(
-                    CodeBlock.builder()
-                        .beginControlFlow("check(privacyContext.viewer is %T.PrivacyBypass)", VIEWER)
-                        .addStatement(
-                            "terminal + %S",
-                            " bypasses LOAD privacy and is unavailable on viewer-scoped privacy-rule " +
-                                "readers; use a LOAD-checked terminal (findById / firstOrNull / all) " +
-                                "instead",
-                        )
-                        .endControlFlow()
-                        .build()
-                )
                 .build()
         )
 

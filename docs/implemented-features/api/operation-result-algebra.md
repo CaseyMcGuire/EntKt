@@ -1564,14 +1564,12 @@ does not add a parallel strict lookup. A strict convenience may be added later
 under an explicitly non-null name if real call sites justify more generated
 surface.
 
-This RFC may land before
-[Privacy-Safe Query Surfaces](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md).
-During that temporary ordering, raw terminals remain nameable through a
-privacy-rule client and their existing runtime capability rejection is captured
-as `ReadResult.Failed(IllegalStateException)`. That is transitional
-compatibility, not the intended privacy API: the separate RFC removes those
-terminals from the privacy-safe type entirely. Neither RFC is an implementation
-prerequisite for the other.
+The proposed
+[Privacy-Safe Query Surfaces](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md)
+RFC was later rejected. Raw terminals remain nameable through privacy-rule
+clients and execute as explicit storage-level reads that skip LOAD privacy and
+entity materialization. Their ordinary execution failures still use
+`ReadResult.Failed`; there is no posture-capability rejection.
 
 ## Migration Plan
 

@@ -44,25 +44,22 @@ private val KOTLIN_COMPARABLE = ClassName("kotlin", "Comparable")
 /**
  * `rawCount(): ReadResult<Long>` — count matching rows without
  * materializing them. This is a raw aggregate: LOAD privacy is not
- * evaluated, so there is no privacy-denial surface here. On a
- * viewer-scoped privacy-rule reader the capability gate's
- * `IllegalStateException` is captured as `Failed` (transitional
- * behavior until the privacy-safe query-surfaces design removes
- * these terminals from that reader type entirely).
+ * evaluated, so there is no privacy-denial surface here. The `raw`
+ * name makes that storage-level posture explicit, including inside
+ * privacy rules.
  */
 internal fun buildRawCount(schemaName: String, entityClass: ClassName): FunSpec {
     return FunSpec.builder("rawCount")
         .addKdoc(
             "Count matching rows. This is a raw aggregate that does not evaluate LOAD\n" +
-            "privacy. On viewer-scoped privacy-rule readers the capability rejection is\n" +
-            "captured as `Failed(IllegalStateException)`.",
+            "privacy or materialize entities. This storage-level behavior is the same\n" +
+            "on application, validation, and privacy-rule clients.",
         )
         .returns(READ_RESULT.parameterizedBy(LONG))
         .addCode(
             canonicalReadBody(
                 CodeBlock.builder()
                     .add("  val c = requireClient()\n")
-                    .add("  c.checkPrivacyBypassingRead(%S)\n", "rawCount")
                     .add("  val privacy = c.currentPrivacyContext()\n")
                     .add("  val spec = runReadInterceptors(%T.RAW_COUNT, privacy)\n", READ_OPERATION)
                     .add(
@@ -97,22 +94,21 @@ internal fun buildRawCountExplain(queryPlan: ClassName, entityClass: ClassName):
 /**
  * `rawExists(): ReadResult<Boolean>` — fast existence check; skips
  * LOAD privacy. `Success(true)` iff at least one storage row matches
- * the predicate. Same capability-gate capture behavior as
- * [buildRawCount].
+ * the predicate. This storage-level behavior is available in every
+ * read posture.
  */
 internal fun buildRawExists(schemaName: String, entityClass: ClassName): FunSpec {
     return FunSpec.builder("rawExists")
         .addKdoc(
             "Fast existence check; skips LOAD privacy. `Success(true)` iff at least one\n" +
-            "storage row matches the predicate. On viewer-scoped privacy-rule readers\n" +
-            "the capability rejection is captured as `Failed(IllegalStateException)`.",
+            "storage row matches the predicate. No entities are materialized. This\n" +
+            "storage-level behavior is the same in every read posture.",
         )
         .returns(READ_RESULT.parameterizedBy(BOOLEAN))
         .addCode(
             canonicalReadBody(
                 CodeBlock.builder()
                     .add("  val c = requireClient()\n")
-                    .add("  c.checkPrivacyBypassingRead(%S)\n", "rawExists")
                     .add("  val privacy = c.currentPrivacyContext()\n")
                     .add("  val spec = runReadInterceptors(%T.RAW_EXISTS, privacy)\n", READ_OPERATION)
                     // exists is fixed at limit-1 — interceptor clamps
@@ -172,20 +168,15 @@ internal fun buildExistsShapedExplain(
  * the aggregate's documented SQL-null result, not entity absence),
  * and grouped `raw…By` returning
  * `ReadResult<List<AggregateBucket<K, V>>>`. All route through the
- * private `aggregateRows` helper, which gates privacy-bypassing
- * capability inside the capture boundary, runs the read interceptors
- * as RAW_AGGREGATE, and calls `driver.aggregate`.
+ * private `aggregateRows` helper, which runs the read interceptors as
+ * RAW_AGGREGATE and calls `driver.aggregate`.
  */
 internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName): List<FunSpec> {
     val specs = mutableListOf<FunSpec>()
     val suppress = AnnotationSpec.builder(Suppress::class)
         .addMember("%S", "UNCHECKED_CAST").build()
 
-    // The private helper every aggregate terminal delegates to. The
-    // privacy-bypassing-read gate lives here; each terminal invokes
-    // this helper inside its canonical capture boundary, so the
-    // gate's IllegalStateException surfaces as Failed rather than a
-    // thrown exception.
+    // The private helper every aggregate terminal delegates to.
     specs += FunSpec.builder("aggregateRows")
         .addModifiers(KModifier.PRIVATE)
         .addParameter("function", AGG_FUNCTION)
@@ -193,7 +184,6 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
         .addParameter("groupBy", STRING.copy(nullable = true))
         .returns(LIST.parameterizedBy(AGG_RESULT_ROW))
         .addStatement("val c = requireClient()")
-        .addStatement("c.checkPrivacyBypassingRead(%S)", "raw aggregates")
         .addStatement("val privacy = c.currentPrivacyContext()")
         .addStatement("val spec = runReadInterceptors(%T.RAW_AGGREGATE, privacy)", READ_OPERATION)
         .addStatement(

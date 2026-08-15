@@ -30,6 +30,16 @@ above it.
 
 ## Unreleased
 
+- **Allow explicit raw storage reads in privacy rules** (`codegen`)
+  `rawCount()`, `rawExists()`, and raw aggregate terminals no longer fail on
+  `EntPrivacyReadClient`. Their `raw` prefix now has one consistent meaning in
+  every read posture: they run read interceptors but do not materialize
+  entities or evaluate LOAD privacy. Materializing reads through privacy-rule
+  clients remain viewer-scoped and LOAD-checked.
+  _Migration:_ audit privacy rules that call raw terminals. Keep them when a
+  storage-level fact is intentional; use `findById`, `firstOrNull`, or `all`
+  when the referenced entity's visibility must participate in authorization.
+
 - **Reject captured root-client work inside its transaction** (`codegen`, `runtime`, `postgres`)
   Reads, mutations, and another `withTransaction` call through the same root
   client no longer execute on an independent connection from inside that
