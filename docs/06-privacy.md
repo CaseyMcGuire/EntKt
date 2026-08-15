@@ -74,11 +74,11 @@ Typed helpers are exact type checks. For example, `longIdOrNull()` returns
 ### PrivacyContext
 
 `PrivacyContext` bundles the viewer captured for a generated operation.
-Scalar operations capture one context and share it across all privacy
-checks in that operation. Bulk convenience methods may invoke the
-provider once per item because they delegate to the per-entity create or
-delete paths; providers should be stable for the duration of a request
-or logical operation.
+Each generated read terminal captures one context and shares it across
+query interceptors, traversal and eager subqueries, and LOAD checks.
+Bulk convenience methods may invoke the provider once per item because
+they delegate to the per-entity create or delete paths; providers should
+be stable for the duration of a request or logical operation.
 
 ```kotlin
 data class PrivacyContext(val viewer: Viewer)

@@ -51,7 +51,7 @@ internal fun buildAll(schemaName: String, entityClass: ClassName, hasEdges: Bool
                 CodeBlock.builder()
                     .add("  val c = requireClient()\n")
                     .add("  val privacy = c.currentPrivacyContext()\n")
-                    .add("  val spec = runReadInterceptors(%T.ALL)\n", READ_OPERATION)
+                    .add("  val spec = runReadInterceptors(%T.ALL, privacy)\n", READ_OPERATION)
                     .add(
                         "  val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)\n",
                         entityClass,
@@ -91,7 +91,7 @@ internal fun buildRowShapedExplain(
             "carrying the rejection metadata; explain does NOT throw."
         )
         .returns(queryPlan)
-        .addCode(explainBody("ALL", CodeBlock.of("buildQueryPlan(spec, true)")))
+        .addCode(explainBody("ALL", CodeBlock.of("buildQueryPlan(spec, true, privacy)")))
         .build()
 }
 
@@ -117,7 +117,7 @@ internal fun buildFirstOrNull(schemaName: String, entityClass: ClassName, hasEdg
     val happy = CodeBlock.builder()
         .add("  val c = requireClient()\n")
         .add("  val privacy = c.currentPrivacyContext()\n")
-        .add("  val spec = runReadInterceptors(%T.FIRST)\n", READ_OPERATION)
+        .add("  val spec = runReadInterceptors(%T.FIRST, privacy)\n", READ_OPERATION)
         // `first` semantics: at most one row — but `minOf(1, ...)`
         // rather than a hardwired 1, so an explicit
         // `query { limit(0) }` still means "no rows" here exactly
@@ -178,7 +178,7 @@ internal fun buildFirstShapedExplain(
         )
         .returns(queryPlan)
         .addCode(
-            explainBody("FIRST", CodeBlock.of("buildQueryPlan(spec.copy(limit = %L), true)", SINGLE_ROW_LIMIT_EXPR)),
+            explainBody("FIRST", CodeBlock.of("buildQueryPlan(spec.copy(limit = %L), true, privacy)", SINGLE_ROW_LIMIT_EXPR)),
         )
         .build()
 }

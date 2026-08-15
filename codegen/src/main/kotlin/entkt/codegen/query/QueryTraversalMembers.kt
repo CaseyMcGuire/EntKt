@@ -15,6 +15,7 @@ private val TRAVERSAL_SOURCE_SHAPE = ClassName("entkt.query", "TraversalSourceSh
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 
 // ------------------------------------------------------------------
 // queryX() traversal generation: the deferred-source-step bridge and
@@ -57,14 +58,14 @@ private fun deferredShapedSourceStep(
         // seeder so application code can't clear / overwrite
         // deferredSourceStep without an explicit opt-in (it
         // is `private` on the target class).
-        .add("target.setDeferredSourceStep {\n")
+        .add("target.setDeferredSourceStep { privacy ->\n")
         // The source's interceptor chain does NOT fire at queryX()
         // time; it fires here, at the terminal's call site inside
         // the terminal's try/catch — which is what lets
         // `.queryX().all()` capture source-step rejections as
         // `Err(QueryRejected)`.
         .add(
-            "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL)\n",
+            "  val sourceSpec = sourceQ.runReadInterceptors(%T.EDGE_TRAVERSAL, privacy)\n",
             READ_OPERATION,
         )
         // The embedded shape is the POST-interceptor source shape:
@@ -154,6 +155,7 @@ internal fun buildSnapshotForTraversal(queryClass: ClassName, clientClass: Class
 internal fun buildSetDeferredSourceStep(entityClass: ClassName): FunSpec {
     val lambdaType = LambdaTypeName.get(
         receiver = null,
+        parameters = listOf(ParameterSpec.unnamed(PRIVACY_CONTEXT)),
         returnType = ClassName("entkt.runtime.query", "TraversalSourceResult")
             .parameterizedBy(entityClass),
     ).copy(nullable = true)

@@ -19,6 +19,7 @@ import entkt.schema.EntSchema
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val EDGE_QUERY = ClassName("entkt.query", "EdgeQuery")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 
 // Generated queries depend on the read-runtime contract, not the full
 // EntClient: every internal use (requireClient, interceptor lookup,
@@ -235,6 +236,7 @@ internal class QueryGenerator(
                     "deferredSourceStep",
                     LambdaTypeName.get(
                         receiver = null,
+                        parameters = listOf(ParameterSpec.unnamed(PRIVACY_CONTEXT)),
                         returnType = ClassName("entkt.runtime.query", "TraversalSourceResult")
                             .parameterizedBy(entityClass),
                     ).copy(nullable = true),
@@ -347,6 +349,7 @@ internal class QueryGenerator(
             // call carries E through.
             .addParameter("spec", FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
             .addParameter("includeEager", BOOLEAN)
+            .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter(
                 ParameterSpec.builder("junctionExplain", QUERY_EXPLANATION.copy(nullable = true))
                     .defaultValue("null")

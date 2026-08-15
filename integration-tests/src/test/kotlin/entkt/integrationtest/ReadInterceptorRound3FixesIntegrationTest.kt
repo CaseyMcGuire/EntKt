@@ -68,6 +68,83 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
+    @Test
+    fun `one privacy context is shared by traversal edge predicate eager load and LOAD privacy`() {
+        val driver = freshDriver()
+        val firstPrivacy = PrivacyContext(Viewer.User("viewer-a"))
+        val laterPrivacy = PrivacyContext(Viewer.User("viewer-b"))
+        var providerCalls = 0
+        val interceptorObservations = mutableListOf<Pair<ReadOperation, PrivacyContext>>()
+        val loadContexts = mutableListOf<PrivacyContext>()
+        val client = EntClient(driver) {
+            privacyContext {
+                providerCalls++
+                if (providerCalls == 1) firstPrivacy else laterPrivacy
+            }
+            interceptors {
+                users(
+                    QueryInterceptor { _, ctx -> interceptorObservations += ctx.operation to ctx.privacy },
+                    name = "user-context-observer",
+                )
+                articles(
+                    QueryInterceptor { _, ctx -> interceptorObservations += ctx.operation to ctx.privacy },
+                    name = "article-context-observer",
+                )
+            }
+            policies {
+                users(object : entkt.runtime.privacy.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
+                    override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
+                        privacy {
+                            load(entkt.integrationtest.ent.UserLoadPrivacyRule { ctx ->
+                                loadContexts += ctx.privacy
+                                entkt.runtime.privacy.PrivacyDecision.Allow
+                            })
+                        }
+                    }
+                })
+                articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
+                    override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
+                        privacy {
+                            load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { ctx ->
+                                loadContexts += ctx.privacy
+                                entkt.runtime.privacy.PrivacyDecision.Allow
+                            })
+                        }
+                    }
+                })
+            }
+        }
+
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
+            val author = sys.users.create { name = "author"; email = "author@x" }.saveAndLoad().getOrThrow()
+            sys.articles.create { title = "article"; authorId = author.id }.saveAndLoad().getOrThrow()
+        }
+        providerCalls = 0
+        interceptorObservations.clear()
+        loadContexts.clear()
+
+        val articles = client.users.query().queryArticles {
+            where(Predicate.HasEdge<Article>("author"))
+            withAuthor()
+        }.all().getOrThrow()
+
+        assertEquals(1, articles.size)
+        assertEquals(1, providerCalls, "a read terminal must capture its PrivacyContext exactly once")
+        assertEquals(
+            listOf(
+                ReadOperation.EDGE_TRAVERSAL,
+                ReadOperation.ALL,
+                ReadOperation.EDGE_PREDICATE,
+                ReadOperation.EAGER_LOAD,
+            ),
+            interceptorObservations.map { it.first },
+        )
+        assertEquals(2, loadContexts.size, "root and eager-target LOAD privacy should both run")
+        (interceptorObservations.map { it.second } + loadContexts).forEach { captured ->
+            assertSame(firstPrivacy, captured, "every nested read phase must receive the terminal's captured context")
+        }
+    }
+
     // ---------- traversal-source rejection captured by the terminal ----------
 
     @Test

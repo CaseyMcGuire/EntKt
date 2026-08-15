@@ -540,8 +540,9 @@ internal class RepoGenerator(
                         "    val q = %T(driver, client).apply { for (p in predicates) where(p) }\n",
                         queryClass,
                     )
+                    .add("    val selectionPrivacy = client.currentPrivacyContext()\n")
                     .add(
-                        "    val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES)\n",
+                        "    val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES, selectionPrivacy)\n",
                         READ_OPERATION,
                     )
                     .add(

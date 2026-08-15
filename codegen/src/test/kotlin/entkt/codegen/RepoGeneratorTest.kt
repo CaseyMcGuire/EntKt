@@ -92,7 +92,7 @@ class RepoGeneratorTest {
         // interceptors (tenant scoping, soft-delete).
         assert(
             output.contains(
-                "val spec = q.runReadInterceptors( operation = ReadOperation.BY_ID, extraStructural = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)), )",
+                "val spec = q.runReadInterceptors( operation = ReadOperation.BY_ID, privacy = privacy, extraStructural = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)), )",
             ),
         ) {
             "findById should run interceptors with BY_ID and the id as an extraStructural leaf\n$output"
@@ -171,7 +171,7 @@ class RepoGeneratorTest {
         // Explain stays outside the result algebra: interceptor
         // rejection is a diagnostic plan, not an exception, and the
         // plan hardwires the runtime call's limit = 1 / offset = null.
-        assert(output.contains("q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false)")) {
+        assert(output.contains("q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false, privacy = privacy)")) {
             "explainFindById should build the plan with limit 1 / no offset, no eager\n$output"
         }
         assert(output.contains("} catch (e: EntQueryRejectedException) { QueryPlan.rejected(e) }")) {
@@ -744,11 +744,11 @@ class RepoGeneratorTest {
         assert(output.contains("CarQuery(driver, client).apply { for (p in predicates) where(p) }")) {
             "deleteMany should construct a transient CarQuery from caller predicates via the public DSL\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES)")) {
-            "deleteMany should fire interceptors with DELETE_CANDIDATES (no entOperation param)\n$output"
+        assert(output.contains("val selectionPrivacy = client.currentPrivacyContext()")) {
+            "deleteMany should capture a privacy context for candidate-selection interceptors\n$output"
         }
-        assert(!output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, ")) {
-            "the dropped entOperation parameter must not reappear\n$output"
+        assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, selectionPrivacy)")) {
+            "deleteMany should fire interceptors with DELETE_CANDIDATES and its captured privacy context\n$output"
         }
         assert(output.contains("driver.query(Car.TABLE, spec.predicates, emptyList(), null, null)")) {
             "deleteMany should pass the post-interceptor spec.predicates to driver.query\n$output"

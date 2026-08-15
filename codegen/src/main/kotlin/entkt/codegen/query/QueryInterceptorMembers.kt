@@ -17,6 +17,7 @@ private val QUERY_SPEC_BUILDER = ClassName("entkt.runtime.query", "QuerySpecBuil
 private val QUERY_CONTEXT = ClassName("entkt.runtime.query", "QueryContext")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime.query", "InterceptorEngine")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 
 // ------------------------------------------------------------------
 // Interceptor plumbing on the generated query class: the shared
@@ -40,6 +41,9 @@ private val INTERCEPTOR_ENGINE = ClassName("entkt.runtime.query", "InterceptorEn
  * downstream terminal code only ever sees the public type — data
  * terminals store it in `ReadResult.Failed` via their capture
  * boundary; explain wrappers catch it and build a rejected plan.
+ * `privacy` is captured once by the terminal and must be forwarded
+ * unchanged through traversal, edge-predicate, and eager subqueries;
+ * this helper deliberately never samples the client's provider.
  */
 internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName): FunSpec {
     val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -55,6 +59,7 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
     return FunSpec.builder("runReadInterceptors")
         .addModifiers(KModifier.INTERNAL)
         .addParameter("operation", readOp)
+        .addParameter("privacy", PRIVACY_CONTEXT)
         .addParameter(
             ParameterSpec.builder("extraStructural", structuralListType)
                 .defaultValue("emptyList()")
@@ -68,7 +73,6 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
         .addCode(
             CodeBlock.builder()
                 .addStatement("val c = requireClient()")
-                .addStatement("val privacy = c.currentPrivacyContext()")
                 // Resolve the deferred source step (if any) at
                 // terminal time. The lambda runs the source
                 // entity's interceptor chain — a source-step
@@ -77,7 +81,7 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
                 // boundary stores as ReadResult.Failed. Eager
                 // invocation at queryX() time would have raised
                 // the throw before the terminal could capture it.
-                .addStatement("val sourceResult = deferredSourceStep?.invoke()")
+                .addStatement("val sourceResult = deferredSourceStep?.invoke(privacy)")
                 // Source annotations seed the builder so they
                 // surface on the final terminal's
                 // QueryPlan.annotations — interceptors at this
@@ -183,7 +187,7 @@ internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName
                 // No cast needed at the walker
                 // call.
                 .addStatement(
-                    "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations) }",
+                    "val walked = frozen.predicates.map { p -> if (skipWalk.any { it === p }) p else runEdgePredicateInterceptors(p, traversalPath, edgeAnnotations, privacy) }",
                 )
                 .addStatement(
                     "return frozen.copy(predicates = walked, annotations = edgeAnnotations + frozen.annotations)",
@@ -246,11 +250,11 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
     body.add("}\n")
     body.add("return when (predicate) {\n")
     body.add(
-        "  is %T.And<%T> -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
+        "  is %T.And<%T> -> %T.And(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations, privacy), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations, privacy))\n",
         PREDICATE, entityClass, PREDICATE,
     )
     body.add(
-        "  is %T.Or<%T> -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations))\n",
+        "  is %T.Or<%T> -> %T.Or(runEdgePredicateInterceptors(predicate.left, parentPath, edgeAnnotations, privacy), runEdgePredicateInterceptors(predicate.right, parentPath, edgeAnnotations, privacy))\n",
         PREDICATE, entityClass, PREDICATE,
     )
     // HasEdgeWith dispatch. Predicate.HasEdgeWith<E, Target>.inner
@@ -292,7 +296,7 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
             entityClass, edgeStepClass, entityClass, targetClass,
         )
         body.add(
-            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE)\n",
+            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, privacy)\n",
             READ_OPERATION,
         )
         // Bubble up target-step annotations into the outer
@@ -335,7 +339,7 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
             entityClass, edgeStepClass, entityClass, targetClass,
         )
         body.add(
-            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE)\n",
+            "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, privacy)\n",
             READ_OPERATION,
         )
         // Bubble up target-step annotations even when the
@@ -378,6 +382,7 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
                 String::class.asClassName(),
             ),
         )
+        .addParameter("privacy", PRIVACY_CONTEXT)
         .returns(predicateForThis)
         .addCode(body.build())
         .build()

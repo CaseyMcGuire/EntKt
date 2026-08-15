@@ -133,7 +133,8 @@ internal fun buildEagerEdgeSpec(
 /**
  * Build the `loadEdges` method that batch-loads all eager edges.
  * Generated per-query, with edge-type-specific blocks for each
- * declared edge. Called by `all()` and `firstOrNull()`.
+ * declared edge. Called by `all()` and `firstOrNull()` with their
+ * single terminal-captured privacy context.
  */
 internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
     val entityClass = resolved.entityClass
@@ -165,11 +166,7 @@ internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
     return FunSpec.builder("loadEdges")
         .addModifiers(KModifier.INTERNAL)
         .addParameter("results", List::class.asClassName().parameterizedBy(entityClass))
-        .addParameter(
-            ParameterSpec.builder("eagerPrivacyContext", PRIVACY_CONTEXT.copy(nullable = true))
-                .defaultValue("null")
-                .build()
-        )
+        .addParameter("eagerPrivacyContext", PRIVACY_CONTEXT)
         .returns(List::class.asClassName().parameterizedBy(entityClass))
         .addCode(body.build())
         .build()
@@ -195,7 +192,7 @@ private fun emitToManyEagerBlock(
     // not CALLER. Fetch all matching rows — limit/offset are
     // applied per group below.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Bounds are resolved before the fetch so a window that admits
@@ -255,7 +252,7 @@ private fun emitHasOneEagerBlock(
     body.addStatement("val sourceIds = entities.map { it.id }")
     emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Bounds are resolved before the fetch so a window that admits
@@ -376,7 +373,7 @@ private fun emitToOneEagerBlock(
     // `explain()` fires it unconditionally too. An empty `fkValues`
     // just means the structural IN predicate is empty.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Only the fetch is conditional. Skipped when nothing could
@@ -452,7 +449,7 @@ private fun emitM2MEagerBlock(
     // unconditionally too. No junction rows just means the structural
     // IN predicate is empty.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
         READ_OPERATION, PREDICATE, targetClass, "id", OP,
     )
     // Bounds resolved before the fetch, as on the direct-edge paths:
@@ -609,7 +606,7 @@ private fun emitEagerPrivacyCheck(
 ) {
     val targetRepoProp = pluralize(targetName.replaceFirstChar { it.lowercase() })
     body.addStatement("val eagerClient = client")
-    body.beginControlFlow("if (eagerClient != null && eagerPrivacyContext != null && eagerClient.%L.hasLoadPrivacy())", targetRepoProp)
+    body.beginControlFlow("if (eagerClient != null && eagerClient.%L.hasLoadPrivacy())", targetRepoProp)
     body.beginControlFlow("if (%LFilterVisible)", eagerPropName)
     if (grouped) {
         // Filtered mode mirrors the strict pass's evaluation contract:
@@ -684,7 +681,7 @@ private fun emitEagerDenialThrow(body: CodeBlock.Builder, targetRepoProp: String
  *
  * 1. Set up the sub-query's traversal context (sourceEntity /
  *    edgeName / path) — same as runtime.
- * 2. Run `subQuery.runReadInterceptors(EAGER_LOAD, QUERY,
+ * 2. Run `subQuery.runReadInterceptors(EAGER_LOAD, privacy, QUERY,
  *    listOf(IN-predicate))`. The target's interceptors fire with
  *    `context.operation == EAGER_LOAD` (not ALL as the previous
  *    `subQuery.explain()` route would have done), and the
@@ -740,7 +737,7 @@ internal fun buildEagerExplainBlock(
         )
         body.add("edges[%S] = try {\n", info.name)
         body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
             READ_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
         )
         // Strip limit/offset before handing to buildQueryPlan:
@@ -752,7 +749,7 @@ internal fun buildEagerExplainBlock(
         // runtime. Predicates / orderBy / annotations DO flow
         // through accurately.
         body.add(
-            "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, junctionExplain = junctionExplain)\n",
+            "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy, junctionExplain = junctionExplain)\n",
         )
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
         body.add("  %T.rejected(e)\n", queryPlanLocal)
@@ -763,13 +760,13 @@ internal fun buildEagerExplainBlock(
         // belongsTo: IN on targetColumn ("id" on target side).
         body.add("edges[%S] = try {\n", info.name)
         body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
             READ_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,
         )
         // See M2M branch above for why limit/offset are
         // stripped here.
         body.add(
-            "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true)\n",
+            "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy)\n",
         )
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
         body.add("  %T.rejected(e)\n", queryPlanLocal)

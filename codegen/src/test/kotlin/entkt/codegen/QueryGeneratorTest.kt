@@ -349,7 +349,7 @@ class QueryGeneratorTest {
         // The privacy-bypassing raw family is what remains for
         // count/exists/aggregates, and every raw terminal preflights
         // through the client's capability gate.
-        val gates = Regex(Regex.escape("requireClient().checkPrivacyBypassingRead(")).findAll(output).count()
+        val gates = Regex(Regex.escape("checkPrivacyBypassingRead(")).findAll(output).count()
         assert(gates == 3) {
             "rawCount, rawExists, and the shared aggregateRows helper should each gate " +
                 "via checkPrivacyBypassingRead; found $gates\n$output"
@@ -367,12 +367,12 @@ class QueryGeneratorTest {
         assert(
             output.contains(
                 "public fun rawCount(): ReadResult<Long> = try { " +
-                    "requireClient().checkPrivacyBypassingRead(\"rawCount\")"
+                    "val c = requireClient() c.checkPrivacyBypassingRead(\"rawCount\")"
             )
         ) {
             "Should generate rawCount(): ReadResult<Long> gated inside the capture boundary\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.RAW_COUNT)")) {
+        assert(output.contains("runReadInterceptors(ReadOperation.RAW_COUNT, privacy)")) {
             "rawCount runs interceptors with RAW_COUNT\n$output"
         }
         assert(output.contains("ReadResult.Success(driver.count(Car.TABLE, spec.predicates))")) {
@@ -400,12 +400,12 @@ class QueryGeneratorTest {
         assert(
             output.contains(
                 "public fun rawExists(): ReadResult<Boolean> = try { " +
-                    "requireClient().checkPrivacyBypassingRead(\"rawExists\")"
+                    "val c = requireClient() c.checkPrivacyBypassingRead(\"rawExists\")"
             )
         ) {
             "Should generate rawExists(): ReadResult<Boolean> gated inside the capture boundary\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.RAW_EXISTS)")) {
+        assert(output.contains("runReadInterceptors(ReadOperation.RAW_EXISTS, privacy)")) {
             "rawExists runs interceptors with RAW_EXISTS\n$output"
         }
         // It probes one storage row via driver.query (no orderBy) and
@@ -433,10 +433,10 @@ class QueryGeneratorTest {
         // mirrors of the deleted visible* / OrThrow / OrError terminals
         // are gone with them.
         for (name in listOf(
-            "public fun explainAll(): QueryPlan = try {",
-            "public fun explainFirstOrNull(): QueryPlan = try {",
-            "public fun explainRawCount(): QueryPlan = try {",
-            "public fun explainRawExists(): QueryPlan = try {",
+            "public fun explainAll(): QueryPlan {",
+            "public fun explainFirstOrNull(): QueryPlan {",
+            "public fun explainRawCount(): QueryPlan {",
+            "public fun explainRawExists(): QueryPlan {",
         )) {
             assert(output.contains(name)) { "Should generate $name\n$output" }
         }

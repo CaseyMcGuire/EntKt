@@ -61,8 +61,10 @@ internal fun buildRawCount(schemaName: String, entityClass: ClassName): FunSpec 
         .addCode(
             canonicalReadBody(
                 CodeBlock.builder()
-                    .add("  requireClient().checkPrivacyBypassingRead(%S)\n", "rawCount")
-                    .add("  val spec = runReadInterceptors(%T.RAW_COUNT)\n", READ_OPERATION)
+                    .add("  val c = requireClient()\n")
+                    .add("  c.checkPrivacyBypassingRead(%S)\n", "rawCount")
+                    .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add("  val spec = runReadInterceptors(%T.RAW_COUNT, privacy)\n", READ_OPERATION)
                     .add(
                         "  %T.Success(driver.count(%T.TABLE, spec.predicates))\n",
                         READ_RESULT, entityClass,
@@ -109,8 +111,10 @@ internal fun buildRawExists(schemaName: String, entityClass: ClassName): FunSpec
         .addCode(
             canonicalReadBody(
                 CodeBlock.builder()
-                    .add("  requireClient().checkPrivacyBypassingRead(%S)\n", "rawExists")
-                    .add("  val spec = runReadInterceptors(%T.RAW_EXISTS)\n", READ_OPERATION)
+                    .add("  val c = requireClient()\n")
+                    .add("  c.checkPrivacyBypassingRead(%S)\n", "rawExists")
+                    .add("  val privacy = c.currentPrivacyContext()\n")
+                    .add("  val spec = runReadInterceptors(%T.RAW_EXISTS, privacy)\n", READ_OPERATION)
                     // exists is fixed at limit-1 — interceptor clamps
                     // can only further restrict (to 0) so honor
                     // spec.limit if it's been set lower than 1.
@@ -156,7 +160,7 @@ internal fun buildExistsShapedExplain(
         .addCode(
             explainBody(
                 operationName,
-                CodeBlock.of("buildQueryPlan(spec.copy(orderBy = emptyList(), limit = %L), false)", SINGLE_ROW_LIMIT_EXPR),
+                CodeBlock.of("buildQueryPlan(spec.copy(orderBy = emptyList(), limit = %L), false, privacy)", SINGLE_ROW_LIMIT_EXPR),
             ),
         )
         .build()
@@ -188,8 +192,10 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
         .addParameter("column", STRING.copy(nullable = true))
         .addParameter("groupBy", STRING.copy(nullable = true))
         .returns(LIST.parameterizedBy(AGG_RESULT_ROW))
-        .addStatement("requireClient().checkPrivacyBypassingRead(%S)", "raw aggregates")
-        .addStatement("val spec = runReadInterceptors(%T.RAW_AGGREGATE)", READ_OPERATION)
+        .addStatement("val c = requireClient()")
+        .addStatement("c.checkPrivacyBypassingRead(%S)", "raw aggregates")
+        .addStatement("val privacy = c.currentPrivacyContext()")
+        .addStatement("val spec = runReadInterceptors(%T.RAW_AGGREGATE, privacy)", READ_OPERATION)
         .addStatement(
             "return driver.aggregate(%T.TABLE, function, column, spec.predicates, groupBy)",
             entityClass,

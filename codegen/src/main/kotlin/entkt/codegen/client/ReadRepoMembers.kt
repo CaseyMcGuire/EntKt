@@ -62,6 +62,7 @@ internal fun buildFindById(
         .add("  val q = %T(driver, %L)\n", queryClass, clientRef)
         .add("  val spec = q.runReadInterceptors(\n")
         .add("    operation = %T.BY_ID,\n", READ_OPERATION)
+        .add("    privacy = privacy,\n")
         .add(
             "    extraStructural = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
             PREDICATE, entityClass, "id", OP,
@@ -119,10 +120,12 @@ internal fun buildFindByIdExplainMethod(
         )
         .addCode(
             CodeBlock.builder()
+                .add("val privacy = %L.currentPrivacyContext()\n", clientRef)
                 .add("val q = %T(driver, %L)\n", queryClass, clientRef)
                 .add("return try {\n")
                 .add("  val spec = q.runReadInterceptors(\n")
                 .add("    operation = %T.BY_ID,\n", READ_OPERATION)
+                .add("    privacy = privacy,\n")
                 .add(
                     "    extraStructural = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
                     PREDICATE, entityClass, "id", OP,
@@ -131,7 +134,7 @@ internal fun buildFindByIdExplainMethod(
                 // By-id is a single-row PK lookup; hardwire
                 // limit = 1 / offset = null in the plan so the
                 // explain output matches the runtime call.
-                .add("  q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false)\n")
+                .add("  q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false, privacy = privacy)\n")
                 .add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
                 .add("  %T.rejected(e)\n", queryPlan)
                 .add("}\n")

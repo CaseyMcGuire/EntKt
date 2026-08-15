@@ -66,14 +66,16 @@ internal fun canonicalReadBody(happyPath: CodeBlock): CodeBlock =
  * instead of throwing, and otherwise calls [bodyOnSuccess] with
  * the `spec` local in scope to produce the QueryPlan body. The
  * caller's body is responsible for the final `buildQueryPlan(...)`
- * (or `QueryPlan(driver.explainCount(...))`) expression.
+ * (or `QueryPlan(driver.explainCount(...))`) expression. The wrapper
+ * captures one privacy context for the entire root + eager plan tree.
  */
 internal fun explainBody(operationName: String, bodyOnSuccess: CodeBlock): CodeBlock {
     val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
     return CodeBlock.builder()
+        .add("val privacy = requireClient().currentPrivacyContext()\n")
         .add("return try {\n")
         .add(
-            "  val spec = runReadInterceptors(%T.%L)\n",
+            "  val spec = runReadInterceptors(%T.%L, privacy)\n",
             READ_OPERATION, operationName,
         )
         .add("  ")
