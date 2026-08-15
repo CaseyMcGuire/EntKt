@@ -68,7 +68,7 @@ context provider cannot cause one terminal to authorize different parts of the
 same read as different viewers.
 
 ```mermaid
-flowchart LR
+flowchart TD
     context["Capture one privacy context"] --> interceptors["Run read interceptors"]
     interceptors --> query["Execute root query"]
     query --> materialize["Materialize root rows"]
@@ -118,41 +118,20 @@ handling.
 `create { ... }.save()` and `create { ... }.saveAndLoad()` share one write
 pipeline:
 
-The three mutation pipelines differ most visibly in where hooks and privacy
-run. These lanes show the successful, write-performing paths; the detailed
-sections below cover absence, no-op updates, and failures.
+The diagram shows the successful, write-performing path. The numbered lifecycle
+below covers the failure boundaries.
 
 ```mermaid
-flowchart TB
-    subgraph create[Create]
-        direction LR
-        cHooks["Before hooks"] --> cFields["Defaults and field checks"]
-        cFields --> cPrivacy["CREATE privacy"]
-        cPrivacy --> cValidation["Entity validation"]
-        cValidation --> cWrite["Insert"]
-        cWrite --> cAfter["afterCreate"]
-        cAfter -. "saveAndLoad" .-> cLoad["Returned LOAD privacy"]
-    end
-
-    subgraph update[Update]
-        direction LR
-        uReload["Reload current row"] --> uHooks["Before hooks"]
-        uHooks --> uFields["Patch and field checks"]
-        uFields --> uPrivacy["UPDATE privacy"]
-        uPrivacy --> uValidation["Entity validation"]
-        uValidation --> uWrite["Persist changes"]
-        uWrite --> uAfter["afterUpdate"]
-        uAfter -. "saveAndLoad" .-> uLoad["Returned LOAD privacy"]
-    end
-
-    subgraph delete[Delete]
-        direction LR
-        dReload["Reload current row"] --> dPrivacy["DELETE privacy"]
-        dPrivacy --> dValidation["Entity validation"]
-        dValidation --> dBefore["beforeDelete"]
-        dBefore --> dWrite["Delete"]
-        dWrite --> dAfter["afterDelete"]
-    end
+flowchart TD
+    hooks["beforeSave, then beforeCreate"] --> fields["Defaults and field checks"]
+    fields --> privacy["CREATE privacy"]
+    privacy --> validation["Entity validation"]
+    validation --> write["Insert"]
+    write --> after["afterCreate"]
+    after --> terminal{"Terminal"}
+    terminal -- save --> result["Return MutationResult"]
+    terminal -- saveAndLoad --> load["Returned LOAD privacy"]
+    load --> result
 ```
 
 1. Enforce the configured transaction requirement.
@@ -216,6 +195,20 @@ scalar, foreign-key, or link-table edge update:
 14. For `saveAndLoad()` only, run LOAD privacy on the returned entity.
 15. Return success or the captured failure.
 
+```mermaid
+flowchart TD
+    reload["Reload current row"] --> hooks["beforeSave, then beforeUpdate"]
+    hooks --> fields["Build patch and run field checks"]
+    fields --> privacy["UPDATE privacy"]
+    privacy --> validation["Entity validation"]
+    validation --> write["Persist owner and edge changes"]
+    write --> after["afterUpdate"]
+    after --> terminal{"Terminal"}
+    terminal -- save --> result["Return MutationResult"]
+    terminal -- saveAndLoad --> load["Returned LOAD privacy"]
+    load --> result
+```
+
 ### No-op updates
 
 An empty request, or one whose before hooks remove every scalar, foreign-key,
@@ -233,7 +226,7 @@ because it contains no scalar assignment; EntKt computes and applies its actual
 edge delta.
 
 ```mermaid
-flowchart LR
+flowchart TD
     reload["Reload current row"] --> hooks["Run before hooks"]
     hooks --> patch["Build effective patch"]
     patch --> changed{"Any effective change?"}
@@ -292,6 +285,20 @@ values are not trusted as current state.
 8. Issue the delete.
 9. If this call removed the row, run every `afterDelete` hook.
 10. Return success or the captured failure.
+
+```mermaid
+flowchart TD
+    reload["Reload current row"] --> exists{"Row exists?"}
+    exists -- No --> absent["Return successful absence"]
+    exists -- Yes --> privacy["DELETE privacy"]
+    privacy --> validation["Entity validation"]
+    validation --> before["beforeDelete"]
+    before --> remove["Issue delete"]
+    remove --> removed{"Row removed?"}
+    removed -- No --> result["Return MutationResult"]
+    removed -- Yes --> after["afterDelete"]
+    after --> result
+```
 
 ### Delete guarantees and pitfalls
 
