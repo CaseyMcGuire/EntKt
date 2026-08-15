@@ -21,6 +21,8 @@ private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
+private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
 
 /**
  * Emits the read-only client surface generated validation and privacy
@@ -271,9 +273,10 @@ internal class ReadClientGenerator(
             .addKdoc(
                 "Shared implementation behind [EntValidationReadClient] and\n" +
                     "[EntPrivacyReadClient]. Constructed by the `EntClient` posture\n" +
-                    "adapters from the operation's current client: same driver instance\n" +
-                    "(a transaction-scoped client yields a transaction-scoped read\n" +
-                    "client), same read interceptors, same per-repo LOAD-privacy\n" +
+                "adapters from the operation's current client: same driver instance\n" +
+                "(a transaction-scoped client yields a transaction-scoped read\n" +
+                    "client), same transaction execution authorization, same read\n" +
+                    "interceptors, same per-repo LOAD-privacy\n" +
                     "behavior, and the passed context fixed for this instance's lifetime\n" +
                     "— bypass-scoped for validation reads, caller-scoped for privacy\n" +
                     "rule reads. Owns repository construction and the [EntReadRuntime]\n" +
@@ -289,6 +292,11 @@ internal class ReadClientGenerator(
             .addParameter("driver", DRIVER)
             .addParameter("privacyContext", PRIVACY_CONTEXT)
             .addParameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
+            .addParameter("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
+            .addParameter(
+                "transactionExecutionToken",
+                TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
+            )
         for (input in sorted) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             ctor.addParameter("${propName}Host", ClassName(packageName, "${input.name}ReadSurface"))
@@ -299,6 +307,21 @@ internal class ReadClientGenerator(
             PropertySpec.builder("privacyContext", PRIVACY_CONTEXT)
                 .addModifiers(KModifier.PRIVATE)
                 .initializer("privacyContext")
+                .build()
+        )
+        builder.addProperty(
+            PropertySpec.builder("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
+                .addModifiers(KModifier.PRIVATE)
+                .initializer("transactionExecutionGuard")
+                .build()
+        )
+        builder.addProperty(
+            PropertySpec.builder(
+                "transactionExecutionToken",
+                TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
+            )
+                .addModifiers(KModifier.PRIVATE)
+                .initializer("transactionExecutionToken")
                 .build()
         )
         builder.addProperty(
@@ -343,6 +366,9 @@ internal class ReadClientGenerator(
             FunSpec.builder("currentPrivacyContext")
                 .addModifiers(KModifier.OVERRIDE)
                 .returns(PRIVACY_CONTEXT)
+                .addStatement(
+                    "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
+                )
                 .addStatement("return privacyContext")
                 .build()
         )

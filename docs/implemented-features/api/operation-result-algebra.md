@@ -1006,6 +1006,11 @@ add that state when it defines a real path that requires it.
 
 The generated transaction-scoped client is an `EntTransactionClient`, which
 has no `withTransaction()` member, so client-level nesting does not compile.
+Using the captured root client inside its own transaction is also rejected:
+reads and mutations fail before callbacks or database I/O, and another root
+`withTransaction()` throws `NestedTransactionUnsupportedException` before its
+block runs. This execution-local guard prevents work from silently escaping
+the transaction on another connection.
 Calling `withTransaction()` on a transaction-scoped driver remains unsupported
 and throws `NestedTransactionUnsupportedException` before entering the block or
 performing transaction I/O.
@@ -1226,6 +1231,8 @@ class NestedTransactionUnsupportedException : IllegalStateException(
     "Nested withTransaction() is not supported",
 )
 
+class RootOperationInsideTransactionException : IllegalStateException(...)
+
 fun <T> EntClient.withTransaction(
     block: TransactionScope.(EntTransactionClient) -> T,
 ): TransactionResult<T>
@@ -1261,24 +1268,23 @@ stops the block so the current transaction boundary can roll back. The original
 result remains available to callers that handle it outside `orRollback()`.
 
 `orRollback()` is a control-flow operation on the currently executing
-transaction. It does not claim that the operation producing its receiver ran
-in that transaction, and it does not carry or validate result provenance. Only
-operations executed through the `tx` client participate in the transaction's
-atomic commit or rollback:
+transaction. Operations in the block must use the `tx` client:
 
 ```kotlin
 client.withTransaction { tx ->
     tx.users.create { ... }.saveAndLoad().orRollback() // transactional
-    client.audit.create { ... }.save().orRollback()   // independently executed
+    client.audit.create { ... }.save().orRollback()   // rejected before callbacks or I/O
 }
 ```
 
-In the second call, a failure aborts the current transaction, but any database
-effect independently committed through `client` is not undone. Applications
-must use the provided `tx` client for operations that must be atomic. Preventing
-mixed-client execution before I/O would require a separate transaction-safety
-feature; result-level provenance checking would occur too late to provide that
-guarantee.
+The second call returns a mutation failure whose cause is
+`RootOperationInsideTransactionException`; a root read similarly returns
+`ReadResult.Failed(RootOperationInsideTransactionException)`. The preflight
+runs before context providers, hooks, privacy, validation, interceptors, and
+SQL. A captured call to `client.withTransaction` throws
+`NestedTransactionUnsupportedException` directly. The guard is scoped to the
+current synchronous execution and root driver, so unrelated work on another
+thread or through a different root remains usable.
 
 Every mutation terminal executed through the provided transaction client shares
 an internal transaction coordinator. Producing `MutationResult.Failed` marks

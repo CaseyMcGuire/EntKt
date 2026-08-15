@@ -14,9 +14,11 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.RootOperationInsideTransactionException
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
 import kotlin.test.Test
@@ -275,31 +277,25 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         assertEquals(1L, userCount(client))
     }
 
-    // ---- Outer-client independence ----
+    // ---- Captured-root rejection ----
 
     @Test
-    fun `mutations through the outer client inside the block are not rolled back`() {
+    fun `mutations through the root client inside the block are rejected`() {
         val client = freshClient()
 
         val result = client.withTransaction { tx ->
-            // Executed on the OUTER client: autocommit, independent of the
-            // transaction. Only operations through `tx` participate.
+            tx.users.create { name = "Inside"; email = "inside@example.com" }
+                .save().orRollback()
             client.users.create { name = "Outside"; email = "outside@example.com" }
                 .save().getOrThrow()
-            // Force a rollback of the transaction itself.
-            tx.users.create { name = "Broken" }.save().orRollback()
             "unreachable"
         }
 
-        assertIs<TransactionResult.Failed>(result)
-        // The outer-client write survives the rollback — documented
-        // independent-execution semantics.
-        assertEquals(1L, userCount(client))
-        assertEquals(
-            1L,
-            client.users.query { where(User.email eq "outside@example.com") }
-                .rawCount().getOrThrow(),
-        )
+        val failure = assertIs<TransactionResult.Failed>(result)
+        val mutation = assertIs<EntUnexpectedMutationException>(failure.exception)
+        assertIs<RootOperationInsideTransactionException>(mutation.cause)
+        assertEquals(TransactionFailureState.NotCommitted, failure.transactionState)
+        assertEquals(0L, userCount(client))
     }
 
     // ---- getOrThrow ----

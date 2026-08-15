@@ -1,3 +1,5 @@
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.postgres
 
 import entkt.migrations.MigrationOp
@@ -16,6 +18,7 @@ import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.JsonColumnCodec
 import entkt.runtime.driver.KotlinxJsonCodec
 import entkt.runtime.result.TransactionFailureState
+import entkt.runtime.result.TransactionExecutionGuard
 import entkt.runtime.query.QueryExplanation
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
@@ -47,7 +50,9 @@ import javax.sql.DataSource
  * [PostgresOperations] as a function of an explicit connection, with
  * value conversion in [PostgresValueCodec]. [withTransaction] hands the
  * same operation core to a [PostgresTransactionalDriver] pinned to one
- * connection.
+ * connection. An execution-local guard rejects calls through this root
+ * driver while that transaction is active on the current thread; callers
+ * must use the driver supplied to the block.
  */
 class PostgresDriver(
     private val dataSource: DataSource,
@@ -66,6 +71,7 @@ class PostgresDriver(
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
     private val ddl = PostgresDdl()
     private val ops = PostgresOperations(schemas, PostgresValueCodec(jsonCodec))
+    private val transactionExecutionGuard = TransactionExecutionGuard()
 
     /**
      * Serializes the mutating part of [registerAll] — validation, DDL,
@@ -99,6 +105,7 @@ class PostgresDriver(
      * the pool's setting doesn't affect its outcome.
      */
     private inline fun <T> withConnection(block: (java.sql.Connection) -> T): T {
+        transactionExecutionGuard.checkClientOperation(null)
         val conn = dataSource.connection
         // A `finally` can't see the in-flight exception, so the catch
         // records it for the release to attach to.
@@ -174,6 +181,7 @@ class PostgresDriver(
         // client construction, so this must stay free of both I/O and
         // lock contention.
         if (schemas.all { alreadyRegistered(it) }) return
+        transactionExecutionGuard.checkClientOperation(null)
 
         // Everything past here mutates the database, so it runs one
         // batch at a time. A CAS on the schema cache can't stand in for
@@ -841,6 +849,7 @@ class PostgresDriver(
         limit: Int?,
         offset: Int?,
     ): QueryExplanation {
+        transactionExecutionGuard.checkClientOperation(null)
         val prepared = ops.buildSelectSql(table, predicates, orderBy, limit, offset)
         return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
     }
@@ -849,6 +858,7 @@ class PostgresDriver(
         table: String,
         predicates: List<Predicate<*>>,
     ): QueryExplanation {
+        transactionExecutionGuard.checkClientOperation(null)
         val prepared = ops.buildCountSql(table, predicates)
         return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
     }
@@ -917,6 +927,15 @@ class PostgresDriver(
      * pooled connection.
      */
     override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+        val executionToken = transactionExecutionGuard.enterTransaction()
+        return try {
+            runTransaction(block)
+        } finally {
+            transactionExecutionGuard.exitTransaction(executionToken)
+        }
+    }
+
+    private fun <T> runTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
         val conn = dataSource.connection
         // The exception the caller will observe — thrown (cancellation
         // / JVM errors / setup failures) or stored in Failed. Cleanup

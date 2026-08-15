@@ -178,22 +178,35 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        // The canonical transaction entry point is a thin adapter over the
-        // runtime's runEntTransaction: the makeTxClient lambda builds the
-        // transaction-scoped client and wires the coordinator into it.
+        // The canonical transaction entry point enters the root-client
+        // execution guard, then delegates to runEntTransaction. The
+        // makeTxClient lambda carries the matching capability into the
+        // transaction-scoped client.
         assert(
             output.contains(
                 "public fun <T> withTransaction(block: TransactionScope.(EntTransactionClient) -> T): " +
-                    "TransactionResult<T> = runEntTransaction(driver, { txDriver, coordinator ->"
+                    "TransactionResult<T> {"
             )
         ) {
-            "withTransaction should return TransactionResult<T> by delegating to runEntTransaction\n$output"
+            "withTransaction should return TransactionResult<T>\n$output"
+        }
+        assert(output.contains("val executionToken = transactionExecutionGuard.enterTransaction()")) {
+            "withTransaction should enter the root-client execution guard\n$output"
+        }
+        assert(output.contains("runEntTransaction(driver, { txDriver, coordinator ->")) {
+            "withTransaction should delegate to runEntTransaction\n$output"
         }
         assert(output.contains("val tx = EntClient(txDriver)")) {
             "makeTxClient should build the transactional client on the tx driver\n$output"
         }
         assert(output.contains("tx.transactionCoordinator = coordinator")) {
             "makeTxClient should wire the coordinator into the tx client\n$output"
+        }
+        assert(output.contains("tx.transactionExecutionToken = executionToken")) {
+            "makeTxClient should authorize the transaction-scoped client\n$output"
+        }
+        assert(output.contains("transactionExecutionGuard.exitTransaction(executionToken)")) {
+            "withTransaction should clear the execution guard in finally\n$output"
         }
         assert(output.contains("EntTransactionClient(tx)")) {
             "makeTxClient should expose only the transaction-scoped facade\n$output"
@@ -215,6 +228,16 @@ class ClientGeneratorTest {
         }
         assert(output.contains("scoped.transactionCoordinator = this.transactionCoordinator")) {
             "withPrivacyContext should propagate the coordinator to the scoped clone\n$output"
+        }
+        assert(output.contains("scoped.transactionExecutionToken = this.transactionExecutionToken")) {
+            "withPrivacyContext should preserve transaction execution authorization\n$output"
+        }
+        assert(
+            output.contains(
+                "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)"
+            )
+        ) {
+            "read and mutation preflights should reject captured-root operations\n$output"
         }
 
         // No throwing/OrError transaction variant survives, and the

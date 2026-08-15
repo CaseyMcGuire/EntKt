@@ -343,9 +343,21 @@ Both it and the root `EntClient` implement `EntClientScope`; shared
 repository helpers should accept that interface. Hook contexts also expose
 `EntClientScope`, preventing `ctx.client` from restoring the root-only
 transaction entry point.
-Calling `withTransaction` on the transaction-scoped driver remains a
-runtime error and throws `NestedTransactionUnsupportedException` before
-the nested block runs.
+Do not capture and use the root `client` inside the block. EntKt rejects
+same-root reads and mutations before privacy-context providers, hooks,
+privacy, validation, interceptors, or database I/O; calling the captured
+root's `withTransaction` throws `NestedTransactionUnsupportedException`
+before the nested block runs. The PostgreSQL driver applies the same
+execution-local backstop to direct root-driver I/O. This guard is local to
+the current synchronous execution, so unrelated work on another thread or
+through a different root driver remains usable.
+
+A canonical root read stores `RootOperationInsideTransactionException`
+directly in `ReadResult.Failed`. A root mutation stores an
+`EntUnexpectedMutationException(NotPersisted)` whose cause is that exception.
+
+Calling `withTransaction` on the transaction-scoped driver also throws
+`NestedTransactionUnsupportedException` before the nested block runs.
 
 ### Locking (RFC #4)
 

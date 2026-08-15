@@ -107,11 +107,15 @@ internal class PostgresTransactionalDriver(
         limit: Int?,
         offset: Int?,
     ): QueryExplanation {
-        checkOpen(); return root.explainQuery(table, predicates, orderBy, limit, offset)
+        checkOpen()
+        val prepared = ops.buildSelectSql(table, predicates, orderBy, limit, offset)
+        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
     }
 
     override fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation {
-        checkOpen(); return root.explainCount(table, predicates)
+        checkOpen()
+        val prepared = ops.buildCountSql(table, predicates)
+        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
     }
 
     override fun delete(table: String, id: Any): Boolean {

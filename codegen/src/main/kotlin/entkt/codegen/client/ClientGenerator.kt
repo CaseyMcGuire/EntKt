@@ -31,6 +31,10 @@ private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "Trans
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
+private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
+private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
+private val TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE =
+    MemberName("entkt.runtime.result", "transactionExecutionGuardForInternalUse")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -200,6 +204,26 @@ internal class ClientGenerator(
                     .initializer("null")
                     .build()
             )
+            .addProperty(
+                // Shared by every generated client over this root
+                // driver. During withTransaction, only the clone
+                // carrying the matching token may start a terminal.
+                PropertySpec.builder("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("%M(driver)", TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE)
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.builder(
+                    "transactionExecutionToken",
+                    TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
+                )
+                    .addModifiers(KModifier.INTERNAL)
+                    .mutable(true)
+                    .initializer("null")
+                    .build()
+            )
             .addFunction(
                 // Called by generated mutation terminals at every
                 // MutationResult.Failed construction site. No-op outside
@@ -285,6 +309,9 @@ internal class ClientGenerator(
                     )
                     .addCode(
                         CodeBlock.builder()
+                            .addStatement(
+                                "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
+                            )
                             .beginControlFlow("when (transactionRequirement)")
                             .addStatement("%T.Optional -> Unit", TRANSACTION_REQUIREMENT)
                             .beginControlFlow("%T.RequiredForMultiWrite ->", TRANSACTION_REQUIREMENT)
@@ -336,6 +363,9 @@ internal class ClientGenerator(
                 FunSpec.builder("currentPrivacyContext")
                     .addModifiers(KModifier.OVERRIDE)
                     .returns(PRIVACY_CONTEXT)
+                    .addStatement(
+                        "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
+                    )
                     .addStatement("return privacyContextProvider()")
                     .build()
             )
@@ -598,7 +628,9 @@ internal class ClientGenerator(
         // failures, and returns the capability-narrowed public facade.
         // EntTransactionClient has no withTransaction member, so a nested
         // client transaction is unrepresentable through the supported API.
-        body.beginControlFlow("return %M(driver, { txDriver, coordinator ->", runEntTransaction)
+        body.addStatement("val executionToken = transactionExecutionGuard.enterTransaction()")
+        body.beginControlFlow("return try")
+        body.beginControlFlow("%M(driver, { txDriver, coordinator ->", runEntTransaction)
         body.addStatement("val tx = %T(txDriver)", clientClass)
         body.addStatement("tx.privacyContextProvider = this.privacyContextProvider")
         body.addStatement("tx.transactionRequirement = this.transactionRequirement")
@@ -606,6 +638,8 @@ internal class ClientGenerator(
         body.addStatement("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")
         body.addStatement("tx.entityInterceptors = this.entityInterceptors")
         body.addStatement("tx.transactionCoordinator = coordinator")
+        body.addStatement("tx.transactionExecutionGuard = this.transactionExecutionGuard")
+        body.addStatement("tx.transactionExecutionToken = executionToken")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
@@ -615,12 +649,16 @@ internal class ClientGenerator(
         body.addStatement("%T(tx)", transactionClientClass)
         body.endControlFlow()
         body.add(", block)\n")
+        body.nextControlFlow("finally")
+        body.addStatement("transactionExecutionGuard.exitTransaction(executionToken)")
+        body.endControlFlow()
 
         return FunSpec.builder("withTransaction")
             .addKdoc(
-                "The canonical transaction entry point. The block receives a\n" +
-                    "transaction-scoped client; only operations executed through it\n" +
-                    "participate in the transaction's atomic commit or rollback.\n" +
+                    "The canonical transaction entry point. The block receives a\n" +
+                    "transaction-scoped client. Use that client for every operation in\n" +
+                    "the block: using this root client there throws before callbacks or\n" +
+                    "database I/O, because it would otherwise use another connection.\n" +
                     "`orRollback()` on a read or mutation result extracts success or\n" +
                     "stops the block; a mutation failure produced through the\n" +
                     "transaction client marks the scope rollback-only even when its\n" +
@@ -994,6 +1032,8 @@ internal class ClientGenerator(
         // Propagate the transaction coordinator so a privacy re-scope
         // inside a withTransaction block keeps rollback-only marking.
         body.addStatement("scoped.transactionCoordinator = this.transactionCoordinator")
+        body.addStatement("scoped.transactionExecutionGuard = this.transactionExecutionGuard")
+        body.addStatement("scoped.transactionExecutionToken = this.transactionExecutionToken")
         body.addStatement("scoped.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
@@ -1073,8 +1113,8 @@ internal class ClientGenerator(
      * type). Copies only the read-relevant adapter state — the same
      * driver instance (so a transaction-scoped client yields a
      * transaction-scoped read client), the passed context fixed for the
-     * reader's lifetime, the shared interceptor registry, and the repos
-     * as per-entity read surfaces (LOAD-privacy
+     * reader's lifetime, the shared transaction execution authorization,
+     * the interceptor registry, and the repos as per-entity read surfaces (LOAD-privacy
      * behavior identical to this client's). `transactionRequirement`,
      * hooks, and validation config are deliberately absent — they are
      * write-side state, and their absence is part of the no-writes
@@ -1090,6 +1130,8 @@ internal class ClientGenerator(
         body.add("  driver,\n")
         body.add("  context,\n")
         body.add("  entityInterceptors,\n")
+        body.add("  transactionExecutionGuard,\n")
+        body.add("  transactionExecutionToken,\n")
         for (input in schemas) {
             val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
             body.add("  %L,\n", propName)

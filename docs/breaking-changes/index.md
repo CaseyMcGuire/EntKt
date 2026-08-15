@@ -30,6 +30,17 @@ above it.
 
 ## Unreleased
 
+- **Reject captured root-client work inside its transaction** (`codegen`, `runtime`, `postgres`)
+  Reads, mutations, and another `withTransaction` call through the same root
+  client no longer execute on an independent connection from inside that
+  root's transaction block. Reads and mutations fail before callbacks or I/O;
+  nested root transaction entry throws `NestedTransactionUnsupportedException`.
+  PostgreSQL also rejects direct root-driver I/O in the same synchronous
+  execution.
+  _Migration:_ use the `EntTransactionClient` supplied to the block for every
+  operation that runs inside it. Pass `EntClientScope` or the required
+  repositories into helpers instead of capturing the root client.
+
 - **Share repository helpers safely across root, transaction, and hook clients** (`codegen`)
   Generated `EntClient` and `EntTransactionClient` now implement
   `EntClientScope`, which exposes repositories and `currentPrivacyContext()`

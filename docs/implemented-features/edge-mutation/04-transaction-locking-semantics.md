@@ -220,9 +220,10 @@ The other hook surfaces today don't receive a context object —
 A hook lambda registered on those surfaces that wants to issue queries
 or writes against the same client must capture the application's
 `EntClient` from its enclosing scope rather than read it through `ctx`.
-That captured client is *not* automatically the transaction-scoped
-sub-client — the captured client is whichever `EntClient` the hook
-closure was constructed against, typically the application root.
+That captured client is *not* the transaction-scoped sub-client. If the
+save is transactional, using the captured root client is rejected before
+callbacks or database I/O so the hook cannot silently commit work outside
+the surrounding transaction.
 
 Lifting the missing surfaces (`beforeSave`, `afterCreate`,
 `afterUpdate`, `beforeDelete`, `afterDelete`) into context-object
@@ -231,9 +232,8 @@ plausible follow-up RFC iteration. It's a breaking change to the hook
 DSL signature, so it isn't bundled in here. Until that lands, hook
 authors who need transaction-scoped client access from the
 non-context-bearing hooks should put their logic in `beforeCreate` /
-`beforeUpdate` instead, or accept that captured-client writes happen
-on the application root client (and would not roll back with the save's
-transaction).
+`beforeUpdate` instead. Capturing the application root is not a supported
+escape hatch inside a transaction.
 
 ## Update Consistency Modes
 

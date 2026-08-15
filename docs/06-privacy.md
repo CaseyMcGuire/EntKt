@@ -658,9 +658,11 @@ the underlying failure for diagnostics, not normalization into an ordinary
 client error. Do not blindly retry unless the complete operation—including
 external side effects—is deliberately idempotent.
 
-`NotCommitted` describes only the managed transaction. Writes made through a
-captured root client, another database connection, or an external service are
-outside that guarantee and may already have completed.
+`NotCommitted` describes only the managed transaction. EntKt rejects use of
+that transaction's captured root client before callbacks or database I/O, but
+writes made through a different root driver, another database connection, or
+an external service remain outside the guarantee and may already have
+completed.
 
 ## Generated Privacy API
 
