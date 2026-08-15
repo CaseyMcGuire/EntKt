@@ -224,8 +224,10 @@ abstract class EntSchema(val tableName: String) {
      * wrapper class needed). Under the default kotlinx mapper, every class in
      * the type must have a kotlinx serializer: `@Serializable` classes
      * (including `@Serializable` enums), primitives/`String`, and
-     * `List`/`Set`/`Map`/`Pair`/`Triple`; other mappers resolve their own
-     * (de)serialization from the captured type.
+     * `List`/`Set`/`Map`/`Pair`/`Triple`, and Kotlin array types; other mappers
+     * resolve their own (de)serialization from the captured type. EntKt emits
+     * any opt-ins required by kotlinx array serializer factories in generated
+     * source, so applications do not need to enable them globally.
      */
     protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder =
         registerJson(name, typeOf<T>())

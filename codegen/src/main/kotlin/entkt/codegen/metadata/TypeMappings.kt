@@ -64,11 +64,29 @@ private const val SERIALIZATION_BUILTINS = "kotlinx.serialization.builtins"
  * generated companion `serializer(...)`.
  */
 private val BUILTIN_SERIALIZER_FACTORIES = mapOf(
+    "kotlin.Array" to "ArraySerializer",
     "kotlin.collections.List" to "ListSerializer",
     "kotlin.collections.Set" to "SetSerializer",
     "kotlin.collections.Map" to "MapSerializer",
+    "kotlin.collections.Map.Entry" to "MapEntrySerializer",
     "kotlin.Pair" to "PairSerializer",
     "kotlin.Triple" to "TripleSerializer",
+)
+
+/** Built-in serializers exposed as top-level, no-argument factory functions. */
+private val BUILTIN_NO_ARG_SERIALIZER_FACTORIES = mapOf(
+    "kotlin.BooleanArray" to "BooleanArraySerializer",
+    "kotlin.ByteArray" to "ByteArraySerializer",
+    "kotlin.CharArray" to "CharArraySerializer",
+    "kotlin.DoubleArray" to "DoubleArraySerializer",
+    "kotlin.FloatArray" to "FloatArraySerializer",
+    "kotlin.IntArray" to "IntArraySerializer",
+    "kotlin.LongArray" to "LongArraySerializer",
+    "kotlin.ShortArray" to "ShortArraySerializer",
+    "kotlin.UByteArray" to "UByteArraySerializer",
+    "kotlin.UIntArray" to "UIntArraySerializer",
+    "kotlin.ULongArray" to "ULongArraySerializer",
+    "kotlin.UShortArray" to "UShortArraySerializer",
 )
 
 /**
@@ -80,15 +98,46 @@ private val BUILTIN_SERIALIZER_FACTORIES = mapOf(
 private val BUILTIN_COMPANION_SERIALIZERS = setOf(
     "kotlin.String", "kotlin.Char", "kotlin.Boolean",
     "kotlin.Byte", "kotlin.Short", "kotlin.Int", "kotlin.Long",
-    "kotlin.Float", "kotlin.Double",
+    "kotlin.Float", "kotlin.Double", "kotlin.UByte", "kotlin.UShort",
+    "kotlin.UInt", "kotlin.ULong", "kotlin.Unit", "kotlin.time.Duration",
+    "kotlin.time.Instant", "kotlin.uuid.Uuid",
 )
+
+private val EXPERIMENTAL_SERIALIZATION_API =
+    ClassName("kotlinx.serialization", "ExperimentalSerializationApi")
+private val EXPERIMENTAL_UNSIGNED_TYPES = ClassName("kotlin", "ExperimentalUnsignedTypes")
+private val EXPERIMENTAL_TIME = ClassName("kotlin.time", "ExperimentalTime")
+private val EXPERIMENTAL_UUID_API = ClassName("kotlin.uuid", "ExperimentalUuidApi")
+
+/** Opt-ins required by built-in serializer calls emitted for [type]. */
+internal fun kotlinxJsonSerializerOptIns(type: KType): Set<ClassName> {
+    val result = linkedSetOf<ClassName>()
+
+    fun visit(current: KType) {
+        val qualifiedName = (current.classifier as? KClass<*>)?.qualifiedName
+        when (qualifiedName) {
+            "kotlin.Array" -> result += EXPERIMENTAL_SERIALIZATION_API
+            "kotlin.UByteArray", "kotlin.UIntArray", "kotlin.ULongArray", "kotlin.UShortArray" -> {
+                result += EXPERIMENTAL_SERIALIZATION_API
+                result += EXPERIMENTAL_UNSIGNED_TYPES
+            }
+            "kotlin.time.Instant" -> result += EXPERIMENTAL_TIME
+            "kotlin.uuid.Uuid" -> result += EXPERIMENTAL_UUID_API
+        }
+        current.arguments.mapNotNull { it.type }.forEach(::visit)
+    }
+
+    visit(type)
+    return result
+}
 
 /**
  * Build the kotlinx serializer expression for a JSON field's [KType],
  * recursing into type arguments: `Meta.serializer()`,
  * `ListSerializer(Meta.serializer())`,
- * `MapSerializer(String.serializer(), Meta.serializer().nullable)`, or a
- * generic `@Serializable` user class's `Box.serializer(Int.serializer())`.
+ * `MapSerializer(String.serializer(), Meta.serializer().nullable)`,
+ * `ByteArraySerializer()`, or a generic `@Serializable` user class's
+ * `Box.serializer(Int.serializer())`.
  *
  * Every leaf references a statically-resolved serializer, which keeps the
  * typed-JSON contract that a type without kotlinx serialization support fails
@@ -107,9 +156,12 @@ internal fun jsonSerializerCodeBlock(fieldName: String, type: KType): CodeBlock 
         jsonSerializerCodeBlock(fieldName, argType)
     }
     val factory = BUILTIN_SERIALIZER_FACTORIES[qualifiedName]
+    val noArgFactory = BUILTIN_NO_ARG_SERIALIZER_FACTORIES[qualifiedName]
     val serializer = when {
         factory != null && argSerializers.isNotEmpty() ->
             CodeBlock.of("%M(%L)", MemberName(SERIALIZATION_BUILTINS, factory), argSerializers.joinToCode(", "))
+        noArgFactory != null ->
+            CodeBlock.of("%M()", MemberName(SERIALIZATION_BUILTINS, noArgFactory))
         qualifiedName in BUILTIN_COMPANION_SERIALIZERS ->
             CodeBlock.of("%T.%M()", klass.asClassName(), MemberName(SERIALIZATION_BUILTINS, "serializer"))
         else ->

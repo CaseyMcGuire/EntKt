@@ -769,7 +769,10 @@ A mismatch fails during application startup. With Jackson, register
   rejected there. Type arguments may be nullable (`List<HighlightRect?>`).
 - With the kotlinx mapper, every class in the type needs a kotlinx serializer: `@Serializable` classes
   (including generic ones), primitives and `String`, and supported collection
-  shapes. An **enum used inside a JSON type must itself be `@Serializable`**.
+  and array shapes. Built-in Kotlin arrays use their matching kotlinx serializer
+  factories; generated source contains any opt-ins required for reference or
+  unsigned arrays. An **enum used inside a JSON type must itself be
+  `@Serializable`**.
 - Configure kotlinx behavior with
   `PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json { ignoreUnknownKeys = true }))`
   (the default is `KotlinxJsonCodec(Json.Default)`).

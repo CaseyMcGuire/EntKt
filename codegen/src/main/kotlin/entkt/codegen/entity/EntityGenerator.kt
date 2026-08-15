@@ -20,10 +20,12 @@ import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.entitySchemaCodeBlock
 import entkt.codegen.metadata.fkPropertyKdoc
+import entkt.codegen.metadata.kotlinxJsonSerializerOptIns
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.toCamelCase
+import entkt.runtime.driver.JsonMapperIds
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -133,15 +135,21 @@ internal class EntityGenerator(
         // fabricated from application code.
         // Emitting the file-level OptIn lets the per-edge initializers
         // compile without per-call annotation.
+        val fileOptIn = AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+            .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+            .addMember("%T::class", ENTKT_INTERNAL)
+        if (jsonMapper == JsonMapperIds.KOTLINX) {
+            allFields.asSequence()
+                .filter { it.type == FieldType.JSON }
+                .mapNotNull { it.jsonType }
+                .flatMap { kotlinxJsonSerializerOptIns(it).asSequence() }
+                .distinct()
+                .sortedBy { it.canonicalName }
+                .forEach { fileOptIn.addMember("%T::class", it) }
+        }
+
         return FileSpec.builder(packageName, className)
-            .addAnnotation(
-                com.squareup.kotlinpoet.AnnotationSpec.builder(
-                    ClassName("kotlin", "OptIn"),
-                )
-                    .useSiteTarget(com.squareup.kotlinpoet.AnnotationSpec.UseSiteTarget.FILE)
-                    .addMember("%T::class", ENTKT_INTERNAL)
-                    .build()
-            )
+            .addAnnotation(fileOptIn.build())
             .addType(typeSpec)
             .build()
     }

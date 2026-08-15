@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
 package entkt.codegen
 
 import entkt.schema.EntId
@@ -24,6 +26,23 @@ private class JsonBoard : EntSchema("boards") {
     val rects = json<List<Meta>>("rects")
     val labels = json<Map<String, Meta>>("labels").nullable()
     val sparse = json<List<Meta?>>("sparse")
+}
+
+private class JsonArrayBoard : EntSchema("array_boards") {
+    override fun id() = EntId.long()
+    val booleans = json<BooleanArray>("booleans")
+    val bytes = json<ByteArray>("bytes")
+    val chars = json<CharArray>("chars")
+    val counts = json<IntArray>("counts")
+    val doubles = json<DoubleArray>("doubles")
+    val floats = json<FloatArray>("floats")
+    val longs = json<LongArray>("longs")
+    val shorts = json<ShortArray>("shorts")
+    val unsignedBytes = json<UByteArray>("unsigned_bytes")
+    val unsignedCounts = json<UIntArray>("unsigned_counts")
+    val unsignedLongs = json<ULongArray>("unsigned_longs")
+    val unsignedShorts = json<UShortArray>("unsigned_shorts")
+    val labels = json<Array<String?>>("labels")
 }
 
 class JsonCodegenTest {
@@ -135,6 +154,42 @@ class JsonCodegenTest {
         val create = genGeneric().getValue("BoardCreate")
         assertTrue(""""rects" to rects,""" in create, create)
         assertTrue("rects: List<Meta>" in create, create)
+    }
+
+    @Test
+    fun `built-in arrays use their kotlinx serializer factories`() {
+        val entity = gen("ArrayBoard", JsonArrayBoard()).getValue("ArrayBoard")
+        listOf(
+            "BooleanArraySerializer",
+            "ByteArraySerializer",
+            "CharArraySerializer",
+            "DoubleArraySerializer",
+            "FloatArraySerializer",
+            "IntArraySerializer",
+            "LongArraySerializer",
+            "ShortArraySerializer",
+            "UByteArraySerializer",
+            "UIntArraySerializer",
+            "ULongArraySerializer",
+            "UShortArraySerializer",
+        ).forEach { factory ->
+            assertTrue("kotlinxSerializer = $factory()" in entity, entity)
+            assertTrue("import kotlinx.serialization.builtins.$factory" in entity, entity)
+        }
+        assertTrue(
+            "kotlinxSerializer = ArraySerializer(String.serializer().nullable)" in entity,
+            entity,
+        )
+        assertTrue("import kotlinx.serialization.builtins.ArraySerializer" in entity, entity)
+    }
+
+    @Test
+    fun `reference arrays opt in within generated source`() {
+        val entity = gen("ArrayBoard", JsonArrayBoard()).getValue("ArrayBoard")
+        assertTrue("ExperimentalSerializationApi::class" in entity, entity)
+        assertTrue("import kotlinx.serialization.ExperimentalSerializationApi" in entity, entity)
+        assertTrue("ExperimentalUnsignedTypes::class" in entity, entity)
+        assertTrue("import kotlin.ExperimentalUnsignedTypes" in entity, entity)
     }
 
     // ── Non-kotlinx mappers ────────────────────────────────────────

@@ -1,4 +1,7 @@
-@file:OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class)
+@file:OptIn(
+    org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class,
+    kotlin.ExperimentalUnsignedTypes::class,
+)
 
 package entkt.codegen
 
@@ -25,6 +28,23 @@ private class RectBoard : EntSchema("rect_boards") {
 private class BareBoard : EntSchema("bare_boards") {
     override fun id() = EntId.long()
     val title = string("title")
+}
+
+private class BuiltinArrayBoard : EntSchema("builtin_array_boards") {
+    override fun id() = EntId.long()
+    val booleans = json<BooleanArray>("booleans")
+    val bytes = json<ByteArray>("bytes")
+    val chars = json<CharArray>("chars")
+    val counts = json<IntArray>("counts")
+    val doubles = json<DoubleArray>("doubles")
+    val floats = json<FloatArray>("floats")
+    val longs = json<LongArray>("longs")
+    val shorts = json<ShortArray>("shorts")
+    val unsignedBytes = json<UByteArray>("unsigned_bytes")
+    val unsignedCounts = json<UIntArray>("unsigned_counts")
+    val unsignedLongs = json<ULongArray>("unsigned_longs")
+    val unsignedShorts = json<UShortArray>("unsigned_shorts")
+    val labels = json<Array<String?>>("labels")
 }
 
 /**
@@ -81,6 +101,16 @@ class JsonCompileFailTest {
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
             "Expected the json-free generated code to compile, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `generated code for built-in arrays compiles`() {
+        val result = compile(generatedSources("BuiltinArrayBoard", BuiltinArrayBoard()))
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Expected generated code for built-in arrays to compile, got:\n${result.messages}",
         )
     }
 
