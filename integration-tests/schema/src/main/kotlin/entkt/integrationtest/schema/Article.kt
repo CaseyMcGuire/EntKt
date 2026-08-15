@@ -27,6 +27,7 @@ class Article : EntSchema("articles") {
     val title = string("title")
     val notes = string("notes").nullable()
     val published = bool("published").default(false)
+    val payload = bytes("payload").nullable()
     val metadata = json("metadata", ArticleMeta::class).nullable()
     // Generic JSON shape: the full List<HighlightRect> type is captured, so
     // the generated property is typed and elements round-trip through the

@@ -15,6 +15,8 @@ import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.byteArrayPatchSnapshot
+import entkt.codegen.byteArraySnapshot
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
@@ -38,6 +40,7 @@ import entkt.codegen.pluralize
 import entkt.codegen.query.indexHelperTree
 import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
+import entkt.schema.Field
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -97,6 +100,7 @@ internal class RepoGenerator(
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
+        val fields = scalarFields(schema)
 
         val createLambda = LambdaTypeName.get(
             receiver = createClass,
@@ -245,16 +249,16 @@ internal class RepoGenerator(
             .addFunction(buildHasPrivacy("hasCreatePrivacy"))
             .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             .addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            .addFunction(buildLoadDenialOrNull(schemaName, entityClass, loadCtxClass))
-            .addFunction(buildCreateDenialReasonOrNull(schemaName, candidateClass))
-            .addFunction(buildUpdateDenialReasonOrNull(schemaName, entityClass, candidateClass))
-            .addFunction(buildDeleteDenialReasonOrNull(schemaName, entityClass, candidateClass))
+            .addFunction(buildLoadDenialOrNull(schemaName, entityClass, loadCtxClass, fields))
+            .addFunction(buildCreateDenialReasonOrNull(schemaName, candidateClass, fields))
+            .addFunction(buildUpdateDenialReasonOrNull(schemaName, entityClass, candidateClass, fields))
+            .addFunction(buildDeleteDenialReasonOrNull(schemaName, entityClass, candidateClass, fields))
             .addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
             .addFunction(buildApplyValidation(validationConfigClass))
             .addFunction(buildCopyValidationFrom(repoClass))
-            .addFunction(buildEvaluateCreateValidation(schemaName, candidateClass))
-            .addFunction(buildEvaluateUpdateValidation(schemaName, entityClass, candidateClass))
-            .addFunction(buildEvaluateDeleteValidation(schemaName, entityClass, candidateClass))
+            .addFunction(buildEvaluateCreateValidation(schemaName, candidateClass, fields))
+            .addFunction(buildEvaluateUpdateValidation(schemaName, entityClass, candidateClass, fields))
+            .addFunction(buildEvaluateDeleteValidation(schemaName, entityClass, candidateClass, fields))
             .build()
 
         // The repo class implements the `@EntktInternal`-guarded
@@ -713,6 +717,7 @@ internal class RepoGenerator(
         schemaName: String,
         entityClass: ClassName,
         loadCtxClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         // Overrides `${Entity}ReadSurface` (public, was internal): the
         // LOAD evaluation is what validation read repos delegate to, so
@@ -733,8 +738,14 @@ internal class RepoGenerator(
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.loadRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ctx = %T(privacy, privacyClient, entity)", loadCtxClass)
                 .beginControlFlow("for (rule in rules)")
+                // A fresh context per rule keeps mutable snapshot values
+                // isolated from persistence and from later rules.
+                .addStatement(
+                    "val ctx = %T(privacy, privacyClient, %L)",
+                    loadCtxClass,
+                    byteArraySnapshot("entity", fields),
+                )
                 .beginControlFlow("when (val decision = rule.run(ctx))")
                 .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
                 .addStatement(
@@ -768,6 +779,7 @@ internal class RepoGenerator(
     private fun buildCreateDenialReasonOrNull(
         schemaName: String,
         candidateClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
         return FunSpec.builder("createDenialReasonOrNull")
@@ -779,8 +791,12 @@ internal class RepoGenerator(
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.createRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ctx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in rules)")
+                .addStatement(
+                    "val ctx = %T(privacy, privacyClient, %L)",
+                    createCtxClass,
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.run(ctx))")
                 .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
                 .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
@@ -798,6 +814,7 @@ internal class RepoGenerator(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdatePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
@@ -816,11 +833,15 @@ internal class RepoGenerator(
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement(
-                    "val ctx = %T(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
-                    updateCtxClass,
-                )
                 .beginControlFlow("for (rule in rules)")
+                .addStatement(
+                    "val ctx = %T(privacy, privacyClient, %L, %L, %L, %L, edgeChanges)",
+                    updateCtxClass,
+                    byteArraySnapshot("before", fields),
+                    byteArrayPatchSnapshot("requestedPatch", fields),
+                    byteArrayPatchSnapshot("effectivePatch", fields),
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.run(ctx))")
                 .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
                 .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
@@ -828,8 +849,12 @@ internal class RepoGenerator(
                 .endControlFlow()
                 .endControlFlow()
                 .beginControlFlow("if (privacyConfig.updateDerivesFromCreate)")
-                .addStatement("val createCtx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in privacyConfig.createRules)")
+                .addStatement(
+                    "val createCtx = %T(privacy, privacyClient, %L)",
+                    createCtxClass,
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.run(createCtx))")
                 .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
                 .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
@@ -848,6 +873,7 @@ internal class RepoGenerator(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         val deleteCtxClass = ClassName(packageName, "${schemaName}DeletePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
@@ -861,8 +887,13 @@ internal class RepoGenerator(
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.deleteRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ctx = %T(privacy, privacyClient, entity, candidate)", deleteCtxClass)
                 .beginControlFlow("for (rule in rules)")
+                .addStatement(
+                    "val ctx = %T(privacy, privacyClient, %L, %L)",
+                    deleteCtxClass,
+                    byteArraySnapshot("entity", fields),
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.run(ctx))")
                 .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
                 .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
@@ -870,8 +901,12 @@ internal class RepoGenerator(
                 .endControlFlow()
                 .endControlFlow()
                 .beginControlFlow("if (privacyConfig.deleteDerivesFromCreate)")
-                .addStatement("val createCtx = %T(privacy, privacyClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in privacyConfig.createRules)")
+                .addStatement(
+                    "val createCtx = %T(privacy, privacyClient, %L)",
+                    createCtxClass,
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.run(createCtx))")
                 .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
                 .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
@@ -1223,6 +1258,7 @@ internal class RepoGenerator(
     private fun buildEvaluateCreateValidation(
         schemaName: String,
         candidateClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
         return FunSpec.builder("evaluateCreateValidation")
@@ -1233,8 +1269,12 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.createRules")
                 .addStatement("if (rules.isEmpty()) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("val ctx = %T(validationClient, candidate)", createCtxClass)
                 .addStatement("return rules.mapNotNull { rule ->")
+                .addStatement(
+                    "  val ctx = %T(validationClient, %L)",
+                    createCtxClass,
+                    byteArraySnapshot("candidate", fields),
+                )
                 .addStatement("  when (val decision = rule.validate(ctx)) {")
                 .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
                 .addStatement("    is %T.Invalid -> decision.%M()", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
@@ -1249,6 +1289,7 @@ internal class RepoGenerator(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdateValidationContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
@@ -1266,20 +1307,28 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement(
-                    "val updateCtx = %T(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
-                    updateCtxClass,
-                )
                 .addStatement("val violations = mutableListOf<%T>()", MUTATION_VALIDATION_VIOLATION)
                 .beginControlFlow("for (rule in rules)")
+                .addStatement(
+                    "val updateCtx = %T(validationClient, %L, %L, %L, %L, edgeChanges)",
+                    updateCtxClass,
+                    byteArraySnapshot("before", fields),
+                    byteArrayPatchSnapshot("requestedPatch", fields),
+                    byteArrayPatchSnapshot("effectivePatch", fields),
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.validate(updateCtx))")
                 .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
                 .addStatement("is %T.Invalid -> violations.add(decision.%M())", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
                 .endControlFlow()
                 .endControlFlow()
                 .beginControlFlow("if (validationConfig.updateDerivesFromCreate)")
-                .addStatement("val createCtx = %T(validationClient, candidate)", createCtxClass)
                 .beginControlFlow("for (rule in validationConfig.createRules)")
+                .addStatement(
+                    "val createCtx = %T(validationClient, %L)",
+                    createCtxClass,
+                    byteArraySnapshot("candidate", fields),
+                )
                 .beginControlFlow("when (val decision = rule.validate(createCtx))")
                 .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
                 .addStatement("is %T.Invalid -> violations.add(decision.%M())", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
@@ -1296,6 +1345,7 @@ internal class RepoGenerator(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
+        fields: List<Field>,
     ): FunSpec {
         val deleteCtxClass = ClassName(packageName, "${schemaName}DeleteValidationContext")
         return FunSpec.builder("evaluateDeleteValidation")
@@ -1307,8 +1357,13 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.deleteRules")
                 .addStatement("if (rules.isEmpty()) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("val ctx = %T(validationClient, entity, candidate)", deleteCtxClass)
                 .addStatement("return rules.mapNotNull { rule ->")
+                .addStatement(
+                    "  val ctx = %T(validationClient, %L, %L)",
+                    deleteCtxClass,
+                    byteArraySnapshot("entity", fields),
+                    byteArraySnapshot("candidate", fields),
+                )
                 .addStatement("  when (val decision = rule.validate(ctx)) {")
                 .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
                 .addStatement("    is %T.Invalid -> decision.%M()", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)

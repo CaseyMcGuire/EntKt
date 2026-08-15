@@ -248,6 +248,11 @@ data class PostWriteCandidate(
 )
 ```
 
+Each validator receives its own snapshot. Generated `bytes()` values are
+defensively copied, including values inside update patches, so mutating a
+`ByteArray` obtained from one context cannot change the pending database write
+or another validator's input.
+
 ## Evaluation Semantics
 
 All rules for an operation run unconditionally. Invalid results are

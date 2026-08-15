@@ -385,6 +385,11 @@ data class UserWriteCandidate(
 )
 ```
 
+Each rule receives its own snapshot. Generated `bytes()` values are
+defensively copied, including values inside update patches, so mutating a
+`ByteArray` obtained from one rule context cannot change the pending database
+write or another rule's input.
+
 ## Rule Derivation
 
 When write rules are the same across operations, use derivation to

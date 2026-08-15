@@ -10,9 +10,54 @@ private fun finalize(vararg schemas: EntSchema) {
     schemas.forEach { it.finalize(registry) }
 }
 
+private class RepoBytesRecord : EntSchema("repo_bytes_records") {
+    override fun id() = entkt.schema.EntId.long()
+    val payload = bytes("payload")
+    val thumbnail = bytes("thumbnail").nullable()
+}
+
 class RepoGeneratorTest {
 
     private val generator = RepoGenerator("com.example.ent")
+
+    @Test
+    fun `rule evaluators construct a fresh snapshot context for every rule`() {
+        val schema = RepoBytesRecord()
+        finalize(schema)
+        val output = generator.generate("RepoBytesRecord", schema).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("for (rule in rules) { val ctx = RepoBytesRecordCreatePrivacyContext")) {
+            "create privacy should construct the context inside the rule loop\n$output"
+        }
+        assert(output.contains("return rules.mapNotNull { rule -> val ctx = RepoBytesRecordCreateValidationContext")) {
+            "create validation should construct the context inside the rule loop\n$output"
+        }
+        assert(output.contains("for (rule in rules) { val ctx = RepoBytesRecordUpdatePrivacyContext")) {
+            "update privacy should construct the context inside the rule loop\n$output"
+        }
+        assert(output.contains("for (rule in rules) { val updateCtx = RepoBytesRecordUpdateValidationContext")) {
+            "update validation should construct the context inside the rule loop\n$output"
+        }
+        assert(output.contains("candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )")) {
+            "rule candidates should not alias database-bound byte arrays\n$output"
+        }
+        assert(output.contains("before.copy( payload = before.payload.copyOf(), thumbnail = before.thumbnail?.copyOf(), )")) {
+            "rule before-entities should have isolated byte arrays\n$output"
+        }
+        assert(output.contains("requestedPatch.copy(")) {
+            "requested update patches should copy byte entries\n$output"
+        }
+        assert(output.contains("effectivePatch.copy(")) {
+            "effective update patches should copy byte entries\n$output"
+        }
+        assert(output.contains("is FieldPatch.Set -> FieldPatch.Set(entry.value.copyOf())")) {
+            "required byte patch entries should copy their value\n$output"
+        }
+        assert(output.contains("is FieldPatch.Set -> FieldPatch.Set(entry.value?.copyOf())")) {
+            "nullable byte patch entries should preserve null while copying values\n$output"
+        }
+    }
 
     @Test
     fun `generates repo class`() {
