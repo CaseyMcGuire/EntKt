@@ -295,14 +295,14 @@ Uses `SELECT COUNT(*)` without materializing rows. Does **not** evaluate
 LOAD privacy, so it may count rows the viewer cannot read. Ignores
 `orderBy`, `limit`, and `offset`. Returns `ReadResult<Long>`.
 
-Because they skip LOAD privacy, `rawCount` / `rawExists` and the raw
-aggregates are unavailable inside **privacy rules**: rule reads are
-viewer-scoped, and a privacy-bypassing probe could leak invisible rows
-into an authorization decision. Calling one there produces
-`ReadResult.Failed(IllegalStateException)` — use a LOAD-checked
-terminal (`firstOrNull`, `all`, `findById`) instead. Validation rules
-keep them: validation reads run under `PrivacyBypass`, where raw reads
-disclose nothing extra. See
+The raw family has the same storage-level contract on every read client,
+including `EntPrivacyReadClient`: it runs read interceptors but does not
+materialize entities or evaluate LOAD privacy. Privacy rules may deliberately
+use raw facts for ACL membership, existence, or other control-plane decisions,
+including to avoid recursive LOAD-policy evaluation. Use `findById`,
+`firstOrNull`, or `all` instead when the referenced entity's visibility must
+participate in authorization. A raw result proves only that matching storage
+exists; it does not prove the viewer could load the matching entities. See
 [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
 
 ```kotlin
