@@ -205,6 +205,31 @@ class PostgresDriverTest {
     }
 
     @Test
+    fun `raw inserts reject lossy integral values before SQL`() {
+        val driver = fresh()
+
+        val fractional = assertFailsWith<IllegalArgumentException> {
+            driver.insert(
+                "users",
+                mapOf("name" to "Fractional", "age" to java.math.BigDecimal("1.9")),
+            )
+        }
+        assertTrue("INT requires a finite whole number" in fractional.message.orEmpty(), fractional.message)
+
+        val oversizedId = assertFailsWith<IllegalArgumentException> {
+            driver.insert(
+                "users",
+                mapOf(
+                    "id" to java.math.BigInteger.valueOf(Long.MAX_VALUE).add(java.math.BigInteger.ONE),
+                    "name" to "Overflow",
+                ),
+            )
+        }
+        assertTrue("LONG requires a finite whole number" in oversizedId.message.orEmpty(), oversizedId.message)
+        assertTrue(driver.query("users", emptyList(), emptyList(), null, null).isEmpty())
+    }
+
+    @Test
     fun `byId returns null for missing rows and the persisted row otherwise`() {
         val driver = fresh()
         val inserted = driver.insert(
@@ -1428,9 +1453,9 @@ class PostgresDriverTest {
 
     @Test
     fun `insertMany correlates ids bound through any Number type`() {
-        // The codec's integral bind accepts any java.lang.Number for
-        // INT/LONG columns, so correlation must widen the same way — a
-        // Byte-keyed input has to match the Long the decode produces.
+        // The codec's integral bind accepts any exactly representable
+        // java.lang.Number for INT/LONG columns, so correlation must widen the
+        // same way — a Byte-keyed input has to match the decoded Long.
         val driver = fresh()
         val rows = driver.insertMany("users", listOf(
             mapOf("id" to 2.toByte(), "name" to "Bob"),

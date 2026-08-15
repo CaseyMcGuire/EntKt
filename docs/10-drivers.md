@@ -67,6 +67,13 @@ interface Driver {
 - `insert()` returns the persisted row including any server-assigned values
   (auto-increment IDs, defaults).
 - `update()` returns the updated row, or `null` if the row was not found.
+- Postgres raw row maps may use any `Number` subtype for numeric columns.
+  `INT`/`LONG` values must be finite whole numbers inside the target range;
+  fractional and overflowing values fail before SQL rather than truncating or
+  wrapping. `FLOAT`/`DOUBLE` retain normal floating-point rounding, but a finite
+  non-zero input that would overflow to infinity or underflow to zero is
+  rejected. Generated repositories already enforce the usual Kotlin numeric
+  types at compile time.
 - `count()` / `exists()` evaluate the same predicate tree as `query()`;
   drivers may short-circuit `exists()` (Postgres uses `SELECT EXISTS(...)`
   / `LIMIT 1`).

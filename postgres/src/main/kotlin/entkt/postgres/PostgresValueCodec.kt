@@ -4,6 +4,8 @@ import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Types
@@ -86,10 +88,10 @@ internal class PostgresValueCodec(
             FieldType.STRING, FieldType.TEXT, FieldType.ENUM ->
                 stmt.setString(idx, value as String)
             FieldType.BOOL -> stmt.setBoolean(idx, value as Boolean)
-            FieldType.INT -> stmt.setInt(idx, (value as Number).toInt())
-            FieldType.LONG -> stmt.setLong(idx, (value as Number).toLong())
-            FieldType.FLOAT -> stmt.setFloat(idx, (value as Number).toFloat())
-            FieldType.DOUBLE -> stmt.setDouble(idx, (value as Number).toDouble())
+            FieldType.INT -> stmt.setInt(idx, exactInt(value))
+            FieldType.LONG -> stmt.setLong(idx, exactLong(value))
+            FieldType.FLOAT -> stmt.setFloat(idx, boundedFloat(value))
+            FieldType.DOUBLE -> stmt.setDouble(idx, boundedDouble(value))
             FieldType.TIME -> {
                 val instant = when (value) {
                     is Instant -> value
@@ -116,6 +118,96 @@ internal class PostgresValueCodec(
             null -> stmt.setObject(idx, value)
         }
     }
+
+    /**
+     * Raw driver calls can supply any [Number] subtype. Integer targets must
+     * never inherit the truncating/saturating behavior of `Number.toInt()` or
+     * `toLong()`: accept only finite whole values inside the target range.
+     */
+    private fun exactInt(value: Any): Int = try {
+        numericDecimal(value, "INT").intValueExact()
+    } catch (e: RuntimeException) {
+        throw integralConversionError(value, "INT", Int.MIN_VALUE, Int.MAX_VALUE, e)
+    }
+
+    private fun exactLong(value: Any): Long = try {
+        numericDecimal(value, "LONG").longValueExact()
+    } catch (e: RuntimeException) {
+        throw integralConversionError(value, "LONG", Long.MIN_VALUE, Long.MAX_VALUE, e)
+    }
+
+    /**
+     * Floating targets necessarily round many finite values, but a finite,
+     * non-zero input must not silently become infinity or zero merely because
+     * the target is narrower. Explicit NaN/infinity values remain valid
+     * Postgres floating-point values.
+     */
+    private fun boundedFloat(value: Any): Float {
+        val number = numericValue(value, "FLOAT")
+        val converted = number.toFloat()
+        if (number is Float || number is Double && !number.isFinite()) return converted
+
+        val decimal = numericDecimal(number, "FLOAT")
+        require(converted.isFinite() && (converted != 0f || decimal.signum() == 0)) {
+            "Numeric value of type ${number::class.qualifiedName} cannot be represented as FLOAT " +
+                "without overflow or underflow"
+        }
+        return converted
+    }
+
+    private fun boundedDouble(value: Any): Double {
+        val number = numericValue(value, "DOUBLE")
+        val converted = number.toDouble()
+        if (number is Double || number is Float && !number.isFinite()) return converted
+
+        val decimal = numericDecimal(number, "DOUBLE")
+        require(converted.isFinite() && (converted != 0.0 || decimal.signum() == 0)) {
+            "Numeric value of type ${number::class.qualifiedName} cannot be represented as DOUBLE " +
+                "without overflow or underflow"
+        }
+        return converted
+    }
+
+    private fun numericDecimal(value: Any, target: String): BigDecimal {
+        val number = numericValue(value, target)
+        return try {
+            when (number) {
+                is BigDecimal -> number
+                is BigInteger -> number.toBigDecimal()
+                is Byte, is Short, is Int, is Long -> BigDecimal.valueOf(number.toLong())
+                is Float -> {
+                    require(number.isFinite()) { "$target requires a finite numeric value" }
+                    BigDecimal(number.toString())
+                }
+                is Double -> {
+                    require(number.isFinite()) { "$target requires a finite numeric value" }
+                    BigDecimal.valueOf(number)
+                }
+                else -> BigDecimal(number.toString())
+            }
+        } catch (e: NumberFormatException) {
+            throw IllegalArgumentException(
+                "Numeric value of type ${number::class.qualifiedName} cannot be converted to $target",
+                e,
+            )
+        }
+    }
+
+    private fun numericValue(value: Any, target: String): Number =
+        value as? Number ?: throw IllegalArgumentException(
+            "$target requires a Number, got ${value::class.qualifiedName}",
+        )
+
+    private fun integralConversionError(
+        value: Any,
+        target: String,
+        min: Number,
+        max: Number,
+        cause: Exception,
+    ): IllegalArgumentException = IllegalArgumentException(
+        "$target requires a finite whole number between $min and $max; got ${value::class.qualifiedName}",
+        cause,
+    )
 
     private fun jdbcTypeFor(type: FieldType?): Int = when (type) {
         FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> Types.VARCHAR

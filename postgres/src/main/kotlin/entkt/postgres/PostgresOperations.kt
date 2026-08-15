@@ -611,9 +611,9 @@ internal class PostgresOperations(
 
     /**
      * Normalize an id value for correlation-map lookups: numeric ids
-     * widen to Long — mirroring [PostgresValueCodec]'s integral bind
-     * coercion, which accepts any [Number] for INT/LONG columns — so a
-     * bound Byte/Int/BigInteger and a decoded Long compare equal.
+     * widen to Long — mirroring [PostgresValueCodec]'s exact integral bind
+     * coercion, which accepts any representable [Number] for INT/LONG columns
+     * — so a bound Byte/Int/BigInteger and a decoded Long compare equal.
      * Everything else correlates by its own equals.
      */
     private fun idKey(v: Any?): Any? = when (v) {
