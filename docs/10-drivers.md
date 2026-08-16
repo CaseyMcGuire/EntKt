@@ -112,8 +112,11 @@ fire lifecycle hooks. The generated repo methods (`createMany`,
   `Failed(exception, NotCommitted)`; a failed rollback returns
   `OutcomeUnknown`, and a failed commit returns `OutcomeUnknown` even
   if a later rollback appears to succeed (the commit may already have
-  reached the database). `CancellationException` and JVM `Error`s are
-  rolled back and rethrown, never stored. Calling `withTransaction()`
+  reached the database). A `CancellationException` is rethrown only
+  after confirmed rollback; commit-time cancellation or cancellation
+  followed by an unconfirmed rollback returns
+  `Failed(cancellation, OutcomeUnknown)`. JVM `Error`s still rethrow.
+  Calling `withTransaction()`
   on an already-transactional driver throws
   `NestedTransactionUnsupportedException` before entering the block.
 - `classifyMutationException()` maps a low-level exception from a **mutation**

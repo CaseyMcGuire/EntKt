@@ -29,16 +29,14 @@ internal fun rollbackAttributingFailure(conn: Connection, cause: Throwable): Boo
         conn.rollback()
         true
     } catch (rollbackFailure: Throwable) {
-        if (rollbackFailure is java.util.concurrent.CancellationException ||
-            rollbackFailure !is Exception
-        ) {
-            // The algebra's propagation guarantee outranks attribution:
-            // cancellation and JVM errors escape, carrying the business
-            // failure as suppressed context instead of the reverse.
-            rollbackFailure.addSuppressed(cause)
+        if (rollbackFailure !is Exception) {
+            // JVM errors cannot be represented by the transaction
+            // result algebra, so they still escape with the original
+            // failure retained as context.
+            if (rollbackFailure !== cause) rollbackFailure.addSuppressed(cause)
             throw rollbackFailure
         }
-        cause.addSuppressed(rollbackFailure)
+        if (rollbackFailure !== cause) cause.addSuppressed(rollbackFailure)
         false
     }
 
@@ -126,13 +124,9 @@ internal inline fun <T : AutoCloseable?, R> T.useQuietClose(block: (T) -> R): R 
         try {
             this?.close()
         } catch (closeFailure: Throwable) {
-            if (closeFailure is java.util.concurrent.CancellationException ||
-                closeFailure !is Exception
-            ) {
-                propagating?.let(closeFailure::addSuppressed)
-                throw closeFailure
+            if (propagating != null && propagating !== closeFailure) {
+                propagating.addSuppressed(closeFailure)
             }
-            propagating?.addSuppressed(closeFailure)
         }
     }
 }

@@ -119,7 +119,9 @@ class PostgresTransactionCleanupTest {
         return driver to recorder
     }
 
-    private fun driverWithFallbackProbeCloseFailure(): Pair<PostgresDriver, Recorder> {
+    private fun driverWithFallbackProbeCloseFailure(
+        closeFailure: () -> Throwable = { SQLException("injected fallback probe Statement.close failure") },
+    ): Pair<PostgresDriver, Recorder> {
         val recorder = Recorder()
         val failing = object : DataSource by realDataSource {
             override fun getConnection(): Connection {
@@ -128,7 +130,7 @@ class PostgresTransactionCleanupTest {
                 return Proxy.newProxyInstance(
                     Connection::class.java.classLoader,
                     arrayOf(Connection::class.java),
-                    FallbackProbeCloseFailingHandler(delegate, recorder),
+                    FallbackProbeCloseFailingHandler(delegate, recorder, closeFailure),
                 ) as Connection
             }
         }
@@ -185,6 +187,25 @@ class PostgresTransactionCleanupTest {
             "must not restore autocommit while the transaction is unresolved; saw ${recorder.calls}",
         )
         assertTrue(recorder.calls.contains("close"), "connection must still be released; saw ${recorder.calls}")
+    }
+
+    @Test
+    fun `cancellation with an unconfirmed rollback reports OutcomeUnknown`() {
+        freshLedger()
+        val cancellation = CancellationException("cancelled inside transaction block")
+        val (driver, recorder) = driverThrowingOn(
+            "rollback" to SQLException("injected rollback failure"),
+        )
+
+        val result = driver.withTransaction<Unit> { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+            throw cancellation
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(cancellation, failed.exception)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        assertTrue(recorder.calls.contains("rollback"), "cancellation must trigger rollback; saw ${recorder.calls}")
     }
 
     @Test
@@ -256,6 +277,23 @@ class PostgresTransactionCleanupTest {
             suppressed.any { "close" in it },
             "the close failure rides along as suppressed; got $suppressed",
         )
+    }
+
+    @Test
+    fun `cancellation thrown by commit reports OutcomeUnknown`() {
+        freshLedger()
+        val cancellation = CancellationException("commit was cancelled")
+        val (driver, recorder) = driverThrowingOn("commit" to cancellation)
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+            "value"
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(cancellation, failed.exception)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        assertTrue(recorder.calls.contains("rollback"), "failed commit must trigger hygiene rollback; saw ${recorder.calls}")
     }
 
     @Test
@@ -564,6 +602,24 @@ class PostgresTransactionCleanupTest {
         assertEquals(listOf("committed"), memos())
     }
 
+    @Test
+    fun `fallback probe close cancellation does not roll back a healthy transaction`() {
+        freshLedger()
+        val (driver, recorder) = driverWithFallbackProbeCloseFailure {
+            CancellationException("fallback probe close was cancelled")
+        }
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "committed"))
+            "ok"
+        }
+
+        assertEquals(DriverTransactionResult.Success("ok"), result)
+        assertTrue(recorder.calls.contains("commit"), "healthy transaction must commit; saw ${recorder.calls}")
+        assertFalse(recorder.calls.contains("rollback"), "probe cleanup must not trigger rollback; saw ${recorder.calls}")
+        assertEquals(listOf("committed"), memos())
+    }
+
     // ---------- cleanup while an exception is already propagating ----------
 
     @Test
@@ -597,14 +653,16 @@ class PostgresTransactionCleanupTest {
      * Everything else — including the connection — behaves normally, so
      * only the inner release is under test.
      */
-    private fun driverWithUnclosableStatements(): PostgresDriver {
+    private fun driverWithUnclosableStatements(
+        closeFailure: (String) -> Throwable = { target -> SQLException("injected failure: $target") },
+    ): PostgresDriver {
         val failing = object : DataSource by realDataSource {
             override fun getConnection(): Connection {
                 val delegate = realDataSource.connection
                 return Proxy.newProxyInstance(
                     Connection::class.java.classLoader,
                     arrayOf(Connection::class.java),
-                    StatementCloseFailingHandler(delegate),
+                    StatementCloseFailingHandler(delegate, closeFailure),
                 ) as Connection
             }
         }
@@ -630,6 +688,32 @@ class PostgresTransactionCleanupTest {
         assertEquals(listOf("a", "b"), memos())
 
         assertEquals(2, driver.query("tx_ledger", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `a JVM Error closing a statement does not fail a durable autocommit write`() {
+        freshLedger()
+        class StatementCleanupError(target: String) : AssertionError("injected failure: $target")
+        val driver = driverWithUnclosableStatements { StatementCleanupError(it) }
+
+        driver.insert("tx_ledger", mapOf("memo" to "durable"))
+
+        assertEquals(listOf("durable"), memos())
+    }
+
+    @Test
+    fun `a cleanup Error does not replace the primary statement failure`() {
+        class StatementCleanupError : AssertionError("injected close failure")
+        val primary = IllegalStateException("statement execution failed")
+        val cleanup = StatementCleanupError()
+        val resource = AutoCloseable { throw cleanup }
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            resource.useQuietClose { throw primary }
+        }
+
+        assertSame(primary, thrown)
+        assertTrue(primary.suppressed.any { it === cleanup })
     }
 
     @Test
@@ -699,7 +783,10 @@ class PostgresTransactionCleanupTest {
      * out — and every `ResultSet` those produce — so that `close()`
      * throws while all real work still succeeds.
      */
-    private class StatementCloseFailingHandler(private val delegate: Connection) : InvocationHandler {
+    private class StatementCloseFailingHandler(
+        private val delegate: Connection,
+        private val closeFailure: (String) -> Throwable,
+    ) : InvocationHandler {
         override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
             val result = try {
                 method.invoke(delegate, *(args ?: emptyArray()))
@@ -715,7 +802,7 @@ class PostgresTransactionCleanupTest {
 
         private fun <T : Any> wrap(target: T, iface: Class<T>): Any =
             Proxy.newProxyInstance(iface.classLoader, arrayOf(iface)) { _, method, args ->
-                if (method.name == "close") throw SQLException("injected failure: ${iface.simpleName}.close")
+                if (method.name == "close") throw closeFailure("${iface.simpleName}.close")
                 val inner = try {
                     method.invoke(target, *(args ?: emptyArray()))
                 } catch (e: InvocationTargetException) {
@@ -726,7 +813,7 @@ class PostgresTransactionCleanupTest {
                         java.sql.ResultSet::class.java.classLoader,
                         arrayOf(java.sql.ResultSet::class.java),
                     ) { _, rsMethod, rsArgs ->
-                        if (rsMethod.name == "close") throw SQLException("injected failure: ResultSet.close")
+                        if (rsMethod.name == "close") throw closeFailure("ResultSet.close")
                         try {
                             rsMethod.invoke(inner, *(rsArgs ?: emptyArray()))
                         } catch (e: InvocationTargetException) {
@@ -776,6 +863,7 @@ class PostgresTransactionCleanupTest {
     private class FallbackProbeCloseFailingHandler(
         private val delegate: Connection,
         private val recorder: Recorder,
+        private val closeFailure: () -> Throwable,
     ) : InvocationHandler {
         override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
             val key = if (method.name == "setAutoCommit") "setAutoCommit(${args?.firstOrNull()})" else method.name
@@ -792,7 +880,7 @@ class PostgresTransactionCleanupTest {
                 arrayOf(java.sql.Statement::class.java),
             ) { _, statementMethod, statementArgs ->
                 if (statementMethod.name == "close") {
-                    throw SQLException("injected fallback probe Statement.close failure")
+                    throw closeFailure()
                 }
                 try {
                     statementMethod.invoke(result, *(statementArgs ?: emptyArray()))

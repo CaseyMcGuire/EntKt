@@ -902,8 +902,11 @@ class PostgresDriver(
      * `Failed(exception, OutcomeUnknown)` — a failed COMMIT may
      * already have reached the server, so a later apparently
      * successful rollback never downgrades it to `NotCommitted`.
-     * `CancellationException` and JVM `Error`s roll back and rethrow;
-     * they are never stored in a result.
+     * A `CancellationException` is rethrown only when rollback is
+     * confirmed before commit; commit-time cancellation or an
+     * unconfirmed rollback is `Failed(exception, OutcomeUnknown)`.
+     * JVM `Error`s roll back and rethrow because the result algebra
+     * stores only `Exception`s.
      *
      * **Cleanup never changes the observed outcome.** Three separate
      * failures can happen while unwinding — `rollback()`, restoring
@@ -954,9 +957,12 @@ class PostgresDriver(
                 attachTo = e
                 val rolledBack = rollbackAttributingFailure(conn, e)
                 resolved = rolledBack
-                if (e is java.util.concurrent.CancellationException || e !is Exception) {
-                    // Cancellation and JVM errors propagate; the
-                    // rollback above already ran.
+                if (e is java.util.concurrent.CancellationException && rolledBack) {
+                    // Pre-commit cancellation is safe to rethrow only
+                    // after rollback is confirmed.
+                    throw e
+                }
+                if (e !is Exception) {
                     throw e
                 }
                 return DriverTransactionResult.Failed(
@@ -979,9 +985,10 @@ class PostgresDriver(
                 attachTo = inspectionFailure
                 val rolledBack = rollbackAttributingFailure(conn, inspectionFailure)
                 resolved = rolledBack
-                if (inspectionFailure is java.util.concurrent.CancellationException ||
-                    inspectionFailure !is Exception
-                ) {
+                if (inspectionFailure is java.util.concurrent.CancellationException && rolledBack) {
+                    throw inspectionFailure
+                }
+                if (inspectionFailure !is Exception) {
                     throw inspectionFailure
                 }
                 return DriverTransactionResult.Failed(
@@ -1012,12 +1019,10 @@ class PostgresDriver(
                 // outcome stays OutcomeUnknown regardless of whether
                 // that rollback appears to succeed.
                 resolved = rollbackAttributingFailure(conn, commitFailure)
-                if (commitFailure is java.util.concurrent.CancellationException ||
-                    commitFailure !is Exception
-                ) {
-                    // Cancellation and JVM errors are rolled back and
-                    // rethrown, never stored — same contract as the
-                    // block-failure path above.
+                if (commitFailure !is Exception) {
+                    // JVM errors cannot be stored in the result
+                    // algebra. Cancellation is an Exception and stays
+                    // structural here because commit may have happened.
                     throw commitFailure
                 }
                 DriverTransactionResult.Failed(

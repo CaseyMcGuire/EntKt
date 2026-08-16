@@ -61,9 +61,11 @@ transaction and reports the outcome structurally as
 `DriverTransactionResult<T>`: `Success` only after a confirmed commit;
 an ordinary block failure with a confirmed rollback is
 `Failed(exception, NotCommitted)`; a failed rollback or commit is
-`Failed(exception, OutcomeUnknown)`. `CancellationException` and JVM
-`Error`s roll back and rethrow. Calling `withTransaction` again on the
-transaction-scoped driver throws `NestedTransactionUnsupportedException`
+`Failed(exception, OutcomeUnknown)`. `CancellationException` rethrows only
+after confirmed rollback; commit-time cancellation or an unconfirmed rollback
+is `Failed(cancellation, OutcomeUnknown)`. JVM `Error`s still rethrow. Calling
+`withTransaction` again on the transaction-scoped driver throws
+`NestedTransactionUnsupportedException`
 before the nested block runs. Generated transaction clients omit the
 nested entry point entirely. The client-level transaction boundary
 (`runEntTransaction` + `TransactionScope.orRollback()`) builds on this

@@ -23,8 +23,12 @@ import entkt.runtime.result.TransactionFailureState
  *   may already have reached the database.
  * - Cleanup failures after a confirmed commit must never demote
  *   [Success] to a failed or unknown outcome.
- * - `CancellationException` and JVM `Error`s are rolled back and
- *   rethrown, never stored in [Failed].
+ * - A `CancellationException` before commit is rethrown only after
+ *   rollback is confirmed. Commit-time cancellation, or cancellation
+ *   followed by an unconfirmed rollback, is
+ *   `Failed(cancellation, OutcomeUnknown)`.
+ * - JVM `Error`s are rolled back and rethrown because [Failed] stores
+ *   only [Exception] values.
  */
 sealed interface DriverTransactionResult<out T> {
     /** Commit confirmed; [value] is the block's return value. */

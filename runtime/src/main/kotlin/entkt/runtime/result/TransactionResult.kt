@@ -263,8 +263,9 @@ class TransactionCoordinator @EntktInternal constructor() {
  * - block returned normally while rollback-only → rollback; the
  *   *first* recorded failure is primary with later distinct recorded
  *   failures suppressed onto it.
- * - `CancellationException` and JVM `Error`s roll back and rethrow;
- *   they are never stored in a result.
+ * - A `CancellationException` rethrows only after confirmed rollback.
+ *   Commit-time cancellation or an unconfirmed rollback becomes
+ *   `Failed(..., OutcomeUnknown)`. JVM `Error`s still rethrow.
  */
 @EntktInternal
 fun <C, T> runEntTransaction(
