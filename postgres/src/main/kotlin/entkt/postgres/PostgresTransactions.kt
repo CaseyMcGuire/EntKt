@@ -70,13 +70,9 @@ internal fun restoreAutoCommit(conn: Connection, propagating: Throwable?, transa
     try {
         conn.autoCommit = true
     } catch (restoreFailure: Throwable) {
-        if (restoreFailure is java.util.concurrent.CancellationException ||
-            restoreFailure !is Exception
-        ) {
-            propagating?.let(restoreFailure::addSuppressed)
-            throw restoreFailure
+        if (propagating != null && propagating !== restoreFailure) {
+            propagating.addSuppressed(restoreFailure)
         }
-        propagating?.addSuppressed(restoreFailure)
     }
 }
 
@@ -100,13 +96,9 @@ internal fun closeAttributingFailure(conn: Connection, propagating: Throwable?) 
     try {
         conn.close()
     } catch (closeFailure: Throwable) {
-        if (closeFailure is java.util.concurrent.CancellationException ||
-            closeFailure !is Exception
-        ) {
-            propagating?.let(closeFailure::addSuppressed)
-            throw closeFailure
+        if (propagating != null && propagating !== closeFailure) {
+            propagating.addSuppressed(closeFailure)
         }
-        propagating?.addSuppressed(closeFailure)
     }
 }
 

@@ -973,7 +973,24 @@ class PostgresDriver(
             // turn the COMMIT into a ROLLBACK — success reported,
             // nothing persisted. Roll back and report the aborted
             // state as a failure instead.
-            if (transactionAborted(conn)) {
+            val aborted = try {
+                transactionAborted(conn)
+            } catch (inspectionFailure: Throwable) {
+                attachTo = inspectionFailure
+                val rolledBack = rollbackAttributingFailure(conn, inspectionFailure)
+                resolved = rolledBack
+                if (inspectionFailure is java.util.concurrent.CancellationException ||
+                    inspectionFailure !is Exception
+                ) {
+                    throw inspectionFailure
+                }
+                return DriverTransactionResult.Failed(
+                    inspectionFailure,
+                    if (rolledBack) TransactionFailureState.NotCommitted
+                    else TransactionFailureState.OutcomeUnknown,
+                )
+            }
+            if (aborted) {
                 val aborted = IllegalStateException(TRANSACTION_ABORTED_MESSAGE)
                 attachTo = aborted
                 val rolledBack = rollbackAttributingFailure(conn, aborted)

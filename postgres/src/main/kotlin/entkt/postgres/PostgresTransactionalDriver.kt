@@ -219,7 +219,7 @@ internal fun transactionAborted(conn: Connection): Boolean = try {
     // than letting pgjdbc silently turn COMMIT into ROLLBACK while
     // Success is reported.
     try {
-        conn.createStatement().use { it.execute("SELECT 1") }
+        conn.createStatement().useQuietClose { it.execute("SELECT 1") }
         false
     } catch (_: java.sql.SQLException) {
         true

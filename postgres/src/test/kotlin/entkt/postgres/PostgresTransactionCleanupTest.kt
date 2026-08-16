@@ -13,6 +13,7 @@ import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import java.sql.Connection
 import java.sql.SQLException
+import java.util.concurrent.CancellationException
 import javax.sql.DataSource
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -20,6 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 private val LEDGER = EntitySchema(
@@ -93,6 +95,40 @@ class PostgresTransactionCleanupTest {
                     Connection::class.java.classLoader,
                     arrayOf(Connection::class.java),
                     FailingHandler(delegate, operations.toSet(), recorder),
+                ) as Connection
+            }
+        }
+        val driver = PostgresDriver(failing, autoDdl = false).also { it.register(LEDGER) }
+        return driver to recorder
+    }
+
+    private fun driverThrowingOn(vararg failures: Pair<String, Throwable>): Pair<PostgresDriver, Recorder> {
+        val recorder = Recorder()
+        val failing = object : DataSource by realDataSource {
+            override fun getConnection(): Connection {
+                val delegate = realDataSource.connection
+                leaked += delegate
+                return Proxy.newProxyInstance(
+                    Connection::class.java.classLoader,
+                    arrayOf(Connection::class.java),
+                    ThrowableFailingHandler(delegate, failures.toMap(), recorder),
+                ) as Connection
+            }
+        }
+        val driver = PostgresDriver(failing, autoDdl = false).also { it.register(LEDGER) }
+        return driver to recorder
+    }
+
+    private fun driverWithFallbackProbeCloseFailure(): Pair<PostgresDriver, Recorder> {
+        val recorder = Recorder()
+        val failing = object : DataSource by realDataSource {
+            override fun getConnection(): Connection {
+                val delegate = realDataSource.connection
+                leaked += delegate
+                return Proxy.newProxyInstance(
+                    Connection::class.java.classLoader,
+                    arrayOf(Connection::class.java),
+                    FallbackProbeCloseFailingHandler(delegate, recorder),
                 ) as Connection
             }
         }
@@ -439,6 +475,95 @@ class PostgresTransactionCleanupTest {
         assertEquals(listOf("committed"), memos())
     }
 
+    @Test
+    fun `a post-commit JVM Error restoring autoCommit neither demotes success nor skips close`() {
+        freshLedger()
+        class RestoreError : AssertionError("injected restore error")
+        val (driver, recorder) = driverThrowingOn("setAutoCommit(true)" to RestoreError())
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "committed"))
+            "ok"
+        }
+
+        assertEquals(DriverTransactionResult.Success("ok"), result)
+        assertTrue(recorder.calls.contains("close"), "restore failure must not skip close; saw ${recorder.calls}")
+        assertEquals(listOf("committed"), memos())
+    }
+
+    @Test
+    fun `a post-commit cancellation from close does not demote success`() {
+        freshLedger()
+        val cancellation = CancellationException("injected close cancellation")
+        val (driver, _) = driverThrowingOn("close" to cancellation)
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "committed"))
+            "ok"
+        }
+
+        assertEquals(DriverTransactionResult.Success("ok"), result)
+        assertEquals(listOf("committed"), memos())
+    }
+
+    // ---------- aborted-state inspection ----------
+
+    @Test
+    fun `a runtime inspection failure with confirmed rollback reports NotCommitted`() {
+        freshLedger()
+        val inspectionFailure = IllegalStateException("pool failed while unwrapping the connection")
+        val (driver, recorder) = driverThrowingOn("unwrap" to inspectionFailure)
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "rolled back"))
+            "value"
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(inspectionFailure, failed.exception)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertTrue(recorder.calls.contains("rollback"), "inspection failure must trigger rollback; saw ${recorder.calls}")
+        assertEquals(emptyList(), memos())
+    }
+
+    @Test
+    fun `a runtime inspection failure with unconfirmed rollback reports OutcomeUnknown`() {
+        freshLedger()
+        val inspectionFailure = IllegalStateException("pool failed while unwrapping the connection")
+        val (driver, recorder) = driverThrowingOn(
+            "unwrap" to inspectionFailure,
+            "rollback" to SQLException("injected rollback failure"),
+            "close" to SQLException("injected close failure"),
+        )
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+            "value"
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(inspectionFailure, failed.exception)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        assertTrue(recorder.calls.contains("rollback"), "inspection failure must trigger rollback; saw ${recorder.calls}")
+        assertTrue(recorder.calls.contains("close"), "connection must still be released; saw ${recorder.calls}")
+    }
+
+    @Test
+    fun `a fallback probe close failure does not roll back a healthy transaction`() {
+        freshLedger()
+        val (driver, recorder) = driverWithFallbackProbeCloseFailure()
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "committed"))
+            "ok"
+        }
+
+        assertEquals(DriverTransactionResult.Success("ok"), result)
+        assertTrue(recorder.calls.contains("commit"), "healthy transaction must commit; saw ${recorder.calls}")
+        assertFalse(recorder.calls.contains("rollback"), "probe cleanup must not trigger rollback; saw ${recorder.calls}")
+        assertEquals(listOf("committed"), memos())
+    }
+
     // ---------- cleanup while an exception is already propagating ----------
 
     @Test
@@ -627,6 +752,53 @@ class PostgresTransactionCleanupTest {
                 method.invoke(delegate, *(args ?: emptyArray()))
             } catch (e: InvocationTargetException) {
                 throw e.targetException
+            }
+        }
+    }
+
+    private class ThrowableFailingHandler(
+        private val delegate: Connection,
+        private val failures: Map<String, Throwable>,
+        private val recorder: Recorder,
+    ) : InvocationHandler {
+        override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
+            val key = if (method.name == "setAutoCommit") "setAutoCommit(${args?.firstOrNull()})" else method.name
+            recorder.calls += key
+            failures[key]?.let { throw it }
+            return try {
+                method.invoke(delegate, *(args ?: emptyArray()))
+            } catch (e: InvocationTargetException) {
+                throw e.targetException
+            }
+        }
+    }
+
+    private class FallbackProbeCloseFailingHandler(
+        private val delegate: Connection,
+        private val recorder: Recorder,
+    ) : InvocationHandler {
+        override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
+            val key = if (method.name == "setAutoCommit") "setAutoCommit(${args?.firstOrNull()})" else method.name
+            recorder.calls += key
+            if (method.name == "unwrap") throw SQLException("force fallback transaction-state probe")
+            val result = try {
+                method.invoke(delegate, *(args ?: emptyArray()))
+            } catch (e: InvocationTargetException) {
+                throw e.targetException
+            }
+            if (method.name != "createStatement" || result !is java.sql.Statement) return result
+            return Proxy.newProxyInstance(
+                java.sql.Statement::class.java.classLoader,
+                arrayOf(java.sql.Statement::class.java),
+            ) { _, statementMethod, statementArgs ->
+                if (statementMethod.name == "close") {
+                    throw SQLException("injected fallback probe Statement.close failure")
+                }
+                try {
+                    statementMethod.invoke(result, *(statementArgs ?: emptyArray()))
+                } catch (e: InvocationTargetException) {
+                    throw e.targetException
+                }
             }
         }
     }
