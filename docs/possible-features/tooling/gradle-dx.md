@@ -51,6 +51,18 @@ Gradle errors should include:
 - generated file path when generation fails
 - suggested next command when migrations are stale
 
+## Same-Module Schemas
+
+The current compiled-schema workflow requires a separate schema module. A
+source-processing track may remove that requirement while preserving the same
+resolved schema graph and generated APIs.
+
+Gradle UX should not assume that direction is already chosen. If it lands, the
+plugin should make same-module processing the simple default while retaining an
+explicit classpath-schema mode for CLI and multi-module users.
+
+See [Same-Module Schema Processing](same-module-schema-processing.md).
+
 ## Test Requirements
 
 Before implementation, add tests for:
@@ -60,4 +72,5 @@ Before implementation, add tests for:
 - stale generated code is detected when configured
 - errors include schema and field context
 - tasks are cacheable where appropriate
-
+- same-module processing, if selected, avoids compile/generate cycles
+- source and classpath schema modes produce equivalent resolved snapshots

@@ -47,7 +47,29 @@ data class PageInfo(
     val hasNextPage: Boolean,
     val hasPreviousPage: Boolean,
 )
+
+fun page(): ReadResult<Page<Post>>
 ```
+
+The terminal follows the canonical read-result contract. Query rejection,
+driver failure, malformed cursor data, and LOAD privacy denial are
+`ReadResult.Failed`; an empty page is `Success(Page(nodes = emptyList(), ...))`.
+
+## Ordering Contract
+
+`page()` requires an explicit deterministic order. If the caller's order is
+not unique, EntKt appends the entity primary key in the same effective
+direction as a tie-breaker. The cursor encodes every effective order value,
+including that key.
+
+The terminal rejects:
+
+- no explicit order
+- an order expression that cannot be encoded and compared by the driver
+- a cursor created for another entity or effective ordering
+- mixed forward/backward options whose meaning is ambiguous
+
+EntKt must not silently fall back to offset pagination.
 
 ## Cursor Encoding
 
@@ -64,16 +86,23 @@ so it can evolve.
 
 ## Privacy Behavior
 
-Cursor pagination must define interaction with strict LOAD privacy. The first
-version should follow existing query semantics:
+When query-time visibility predicates exist, they apply before the cursor
+boundary and page limit. Strict LOAD privacy then evaluates the materialized
+page:
 
-- driver applies cursor and limit
+- driver applies query visibility, cursor, and limit
 - entkt materializes rows
 - LOAD privacy is evaluated on returned rows
-- denial throws
+- denial returns `ReadResult.Failed(EntPrivacyDeniedException)`; callers using
+  `getOrThrow()` receive that stored exception
 
-This can return fewer pages than expected if callers choose broad predicates
-that include denied rows.
+Arbitrary LOAD denial remains a failed read rather than silently shortening the
+page. A separate visible-scan API may fill pages under arbitrary post-load
+filtering, but its scan budget and cursor semantics must be explicit.
+
+See
+[Query-Time Visibility Predicates](../privacy-validation/query-time-visibility-predicates.md)
+and [Privacy-Aware Visible Pagination](privacy-aware-visible-pagination.md).
 
 ## Test Requirements
 
@@ -83,5 +112,8 @@ Before implementation, add tests for:
 - backward pagination if supported
 - primary key tie-breaker prevents duplicate or skipped rows
 - cursor rejects wrong entity or malformed data
+- cursor rejects a different effective order or unsupported order expression
+- no-order page fails before driver execution
+- query visibility applies before cursor selection
 - LOAD privacy denial throws after page materialization
-
+- terminal failures use `ReadResult.Failed`

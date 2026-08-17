@@ -55,11 +55,13 @@ Human-readable output can then group operations:
 ```text
 Migration plan: add_posts_table
 
-Safe operations:
+Planned operations:
   + CreateTable posts
       from schema Post
-  + AddColumn posts.title text NOT NULL
-      from Post.title
+      risks: AdditiveSafe
+  + AddIndex idx_posts_slug on posts(slug)
+      from Post.bySlug
+      risks: DataDependent, Blocking
 
 Manual operations:
   ! DropColumn users.legacy_name
@@ -144,11 +146,15 @@ entkt schemas match committed Flyway migrations.
 This RFC is specifically about migration report content and machine-readable
 diagnostics.
 
+[Migration Risk And Online DDL](migration-risk-and-online-ddl.md) defines the
+risk codes and explicit rendering strategies these diagnostics should expose.
+
 ## Test Requirements
 
 Before implementation, add tests for:
 
-- safe operations are grouped separately from manual operations
+- every planned operation reports structured risk codes
+- additive, data-dependent, blocking, and destructive labels stay distinct
 - manual operations include reasons
 - operation diagnostics include schema declaration attribution when available
 - no migration file is written in fail mode when manual operations exist

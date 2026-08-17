@@ -10,7 +10,8 @@ Make generated writes run through a first-class mutation pipeline with
 well-defined phases:
 
 ```text
-normalize -> validate -> derive -> persist -> afterCommit
+normalize -> validateInput -> derive -> authorize -> validateInvariant
+          -> persist -> afterPersist -> afterCommit
 ```
 
 The goal is not to add "more hooks". The goal is to give entkt one
@@ -50,10 +51,13 @@ generated builders.
 Every generated write runs through the same conceptual phases:
 
 1. `normalize`
-2. `validate`
+2. `validateInput`
 3. `derive`
-4. `persist`
-5. `afterCommit`
+4. `authorize`
+5. `validateInvariant`
+6. `persist`
+7. `afterPersist`
+8. `afterCommit`
 
 ### Normalize
 
@@ -73,37 +77,30 @@ Not allowed:
 - external side effects
 - database writes outside the pending entity write
 
-### Validate
+### Validate Input
 
 Purpose:
 
 - field validation
-- entity validation
-- privacy checks
-- cross-field checks
-- state transition checks
+- required-field checks
+- reject malformed local input before policy or database reads
 
 Allowed:
 
-- read current entity state, draft values, privacy context, and ephemeral inputs
+- read the normalized input draft
 - reject the mutation with one or more errors
 
 Not allowed:
 
 - external side effects
-
-Open question:
-
-- Should framework-owned derived fields that are required at persistence time be
-  applied before validation, or should the framework run a final invariant check
-  after `derive`? The first version should pick one rule and document it
-  sharply.
+- cross-entity reads
+- authorization decisions
 
 ### Derive
 
 Purpose:
 
-- compute final persisted values that depend on validated inputs or current state
+- compute final persisted values that depend on input-valid values or current state
 - set timestamps
 - compute slugs
 - stamp actor IDs
@@ -117,6 +114,54 @@ Not allowed:
 
 - external side effects
 
+Derivation completes before authorization and invariant validation so both
+phases inspect the same final candidate that persistence will receive. If one
+derived value can itself violate a field constraint, the framework runs the
+relevant constraint against the final candidate before persistence.
+
+### Authorize
+
+Purpose:
+
+- evaluate CREATE, UPDATE, or DELETE privacy
+- decide whether the viewer may perform this exact final write
+
+Allowed:
+
+- read the current row, requested changes, final candidate, edge changes,
+  privacy context, and policy read client
+- reject with the existing structured privacy failure
+
+Not allowed:
+
+- mutate the final candidate
+- external side effects
+
+Authorization precedes invariant validation so an unauthorized caller cannot
+use cross-entity validation failures as a data oracle. Local input validation
+already ran because malformed request shape does not inspect protected stored
+data.
+
+### Validate Invariant
+
+Purpose:
+
+- entity and cross-field validation
+- cross-entity invariants
+- state-transition checks
+- final field checks after derivation
+
+Allowed:
+
+- read the authorized final candidate, current state, edge changes, ephemeral
+  inputs, and validation read client
+- return one or more structured violations
+
+Not allowed:
+
+- mutate the final candidate
+- external side effects
+
 ### Persist
 
 Purpose:
@@ -126,6 +171,28 @@ Purpose:
 - return the persisted entity
 
 This remains framework-owned.
+
+### After Persist
+
+Purpose:
+
+- observe the row written by the database
+- perform additional work that intentionally belongs to the same transaction
+- register post-commit effects
+
+`afterPersist` replaces the ambiguous interpretation of today's
+`afterCreate`, `afterUpdate`, and `afterDelete`: the write has happened, but an
+enclosing transaction may still roll back.
+
+Allowed:
+
+- transaction-bound database work through the current scoped client
+- registering `afterCommit` callbacks or outbox records
+
+Not allowed:
+
+- claiming that the transaction committed
+- assuming external messages or network calls can be rolled back
 
 ### After Commit
 
@@ -144,6 +211,16 @@ Not allowed:
 
 - mutating the already-persisted row
 
+An `afterCommit` callback runs only after EntKt confirms the owning transaction
+committed. For a caller-owned transaction, callbacks registered by individual
+saves are deferred to the outermost transaction boundary and run in
+registration order.
+
+If an `afterCommit` callback fails, the database commit remains successful. The
+failure must therefore carry committed write state and must never be reported
+as though retrying the mutation were safe. Applications requiring reliable
+delivery should write an outbox row in `afterPersist` and deliver it separately.
+
 ## Relationship To Existing Hooks
 
 This feature should tighten the write lifecycle, not throw away the existing
@@ -151,10 +228,11 @@ hook model on day one.
 
 Plausible mapping:
 
-- `beforeSave` and `beforeCreate` become structured pre-persist stages
-- `afterCreate`, `afterUpdate`, and `afterDelete` remain post-persist callbacks
-- a new `afterCommit` surface may be needed for side effects that must not run
-  on rollback
+- `beforeSave` and operation-specific before hooks become compatibility adapters
+  over documented mutable pre-persist phases
+- today's `afterCreate`, `afterUpdate`, and `afterDelete` semantics are named
+  `afterPersist`
+- a new `afterCommit` surface owns effects that must not run on rollback
 
 The important design point is that hooks should stop being "arbitrary callbacks
 somewhere around save" and instead attach to named pipeline phases with clear
@@ -172,12 +250,9 @@ val client = EntClient(driver) {
                 draft.title = draft.title?.trim()
             }
 
-            validate { ctx ->
+            validateInput { ctx ->
                 if (ctx.draft.title.isNullOrBlank()) {
                     error("title is required")
-                }
-                if (ctx.privacy.viewer is Viewer.Anonymous) {
-                    error("authentication required")
                 }
             }
 
@@ -186,6 +261,27 @@ val client = EntClient(driver) {
                     ctx.draft.createdAt = Instant.now()
                 }
                 ctx.draft.updatedAt = Instant.now()
+            }
+
+            authorize { ctx ->
+                if (ctx.privacy.viewer is Viewer.Anonymous) {
+                    PrivacyDecision.Deny("authentication required")
+                } else {
+                    PrivacyDecision.Allow
+                }
+            }
+
+            validateInvariant { ctx ->
+                if (ctx.candidate.published && ctx.candidate.body.isBlank()) {
+                    invalid("published posts require a body", field = "body")
+                }
+            }
+
+            afterPersist { ctx ->
+                ctx.client.outbox.create {
+                    topic = "post.changed"
+                    entityId = ctx.entity.id
+                }.save().orRollback()
             }
 
             afterCommit { post ->
@@ -222,9 +318,10 @@ in ad hoc `beforeSave` hooks.
 Failures should stay structured:
 
 - normalization failures should identify the field or input source
-- validation failures should preserve entity and field context
+- input and invariant validation failures should preserve entity and field context
 - privacy denial should preserve the current privacy error shape
 - database constraint failures should keep current behavior
+- after-commit failure should state that persistence is already committed
 
 This feature should not force applications back into raw exception parsing.
 
@@ -232,10 +329,15 @@ This feature should not force applications back into raw exception parsing.
 
 Before implementation, add tests for:
 
-- normalization runs before validation
-- validation stops the write before any database mutation
-- derive can rewrite final persisted values
+- normalization runs before input validation
+- input validation performs no policy or cross-entity reads
+- derivation produces the candidate seen by authorization and invariant validation
+- authorization denial prevents invariant validation and persistence
+- invariant validation stops the write before any database mutation
+- after-persist callbacks run inside and can roll back with the transaction
 - after-commit callbacks do not run when the transaction rolls back
+- caller-owned transactions defer callbacks to the outermost confirmed commit
+- after-commit failure reports committed state and never implies safe mutation retry
 - privacy and validation still use the same viewer and candidate values the
   rest of entkt already enforces
 - generated hooks and pipeline phases run in documented order

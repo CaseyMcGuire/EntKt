@@ -75,14 +75,15 @@ Use a richer support enum where a boolean would be ambiguous:
 
 ```kotlin
 enum class CapabilitySupport {
-    Supported,
-    Unsupported,
+    Native,
     Emulated,
+    Unsupported,
 }
 ```
 
 `Emulated` is important for features that work but have different performance
-or semantics than native support.
+or semantics than native support. `Native` says the driver can provide the
+documented operation directly; it does not imply that the operation is cheap.
 
 ## Generated Feature Requirements
 
@@ -91,7 +92,7 @@ Generated code and optional features can declare requirements:
 ```kotlin
 data class FeatureRequirement(
     val capability: CapabilityKey,
-    val requiredSupport: Set<CapabilitySupport> = setOf(CapabilitySupport.Supported),
+    val acceptedSupport: Set<CapabilitySupport> = setOf(CapabilitySupport.Native),
     val reason: String,
 )
 ```
@@ -126,7 +127,7 @@ model is introduced:
 
 ```kotlin
 val supportsReadRowForUpdate: Boolean
-    get() = capabilities.locking.readRowForUpdate == CapabilitySupport.Supported
+    get() = capabilities.locking.readRowForUpdate == CapabilitySupport.Native
 ```
 
 The structured model should become the canonical source.
@@ -137,12 +138,12 @@ Generate or maintain a documentation table:
 
 | Capability | Postgres JDBC | Postgres R2DBC | Notes |
 |---|---:|---:|---|
-| transactions | supported | planned | |
-| savepoints | supported | unknown | |
-| row lock for update | supported | planned | requires active transaction |
-| SQL explain | supported | unknown | bind values redacted by default |
+| transactions | native | planned | |
+| savepoints | native | unknown | |
+| row lock for update | native | planned | requires active transaction |
+| SQL explain | native | unknown | bind values redacted by default |
 | JSON containment | planned | planned | Postgres only |
-| Flyway migration generation | supported | n/a | tooling feature |
+| Flyway migration generation | native | n/a | tooling feature |
 
 This table should be derived from code or tested constants when possible, so
 docs do not drift from implementation.
@@ -181,3 +182,6 @@ Before implementation, add tests for:
   capabilities
 - custom drivers can report partial capabilities without implementing optional
   methods
+
+See [Modular Driver SPI](modular-driver-spi.md) for separating session and
+optional-operation contracts after capabilities become canonical.

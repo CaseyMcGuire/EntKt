@@ -6,8 +6,12 @@ These pages are design notes, not committed API contracts.
 Implemented RFCs have moved to the
 [Implemented Features Index](../implemented-features/index.md).
 
+For the cross-cutting repository audit and links to its focused design notes,
+see [EntKt ORM Design Improvements](orm-design-improvements.md).
+
 ## Privacy And Validation
 
+- [Query-Time Visibility Predicates](privacy-validation/query-time-visibility-predicates.md)
 - [Privacy Rule Primitives And Viewer Flavors](privacy-validation/privacy-rule-primitives-and-viewer-flavors.md)
 - [Privacy / Validation Explain Mode](privacy-validation/privacy-validation-explain-mode.md)
 - [Policy Test Helpers](privacy-validation/policy-test-helpers.md)
@@ -18,6 +22,7 @@ Implemented RFCs have moved to the
 ## Mutation APIs
 
 - [Structured Mutation Pipeline](mutation/structured-mutation-pipeline.md)
+- [Coherent Write Concurrency Model](mutation/coherent-write-concurrency.md)
 - [Explicit Save Terminals](mutation/explicit-save-terminals.md)
 - [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
@@ -30,6 +35,8 @@ Implemented RFCs have moved to the
 
 ## Query APIs
 
+- [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
+- [Explicit Query Authority And Cost](query/explicit-query-authority-and-cost.md)
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
 - [Privacy-Aware Visible Pagination](query/privacy-aware-visible-pagination.md)
 - [Query `forUpdate()` Row Locking](query/for-update-query-locking.md)
@@ -55,6 +62,10 @@ Implemented RFCs have moved to the
 
 ## Codegen And Tooling
 
+- [Thin Codegen And Runtime Execution Engines](tooling/thin-codegen-runtime-engines.md)
+- [Modular Driver SPI](tooling/modular-driver-spi.md)
+- [Same-Module Schema Processing](tooling/same-module-schema-processing.md)
+- [Migration Risk And Online DDL](tooling/migration-risk-and-online-ddl.md)
 - [Codegen Plugin Hooks](tooling/codegen-plugin-hooks.md)
 - [OpenAPI / JSON Schema Generation](tooling/openapi-json-schema-generation.md)
 - [GraphQL Kotlin Type Generation](tooling/graphql-kotlin-generation.md)
