@@ -82,6 +82,17 @@ private val POST_SCHEMA = EntitySchema(
     ),
 )
 
+private val AUTO_INT_ITEM_SCHEMA = EntitySchema(
+    table = "auto_int_items",
+    idColumn = "id",
+    idStrategy = IdStrategy.AUTO_INT,
+    columns = listOf(
+        ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
+        ColumnMetadata("name", FieldType.STRING, nullable = false),
+    ),
+    edges = emptyMap(),
+)
+
 // ---------- M2M test schemas ----------
 
 private val M2M_USER_SCHEMA = EntitySchema(
@@ -147,6 +158,20 @@ private fun quoteIdent(identifier: String): String =
 
 /** A JVM [Error] for pinning the roll-back-and-rethrow contract. */
 private class FatalTestError : Error("fatal")
+
+/** A legal Number whose decimal representation deliberately disagrees with toLong(). */
+private class DecimalTextNumber(
+    private val decimalText: String,
+    private val misleadingLong: Long,
+) : Number() {
+    override fun toByte(): Byte = misleadingLong.toByte()
+    override fun toDouble(): Double = misleadingLong.toDouble()
+    override fun toFloat(): Float = misleadingLong.toFloat()
+    override fun toInt(): Int = misleadingLong.toInt()
+    override fun toLong(): Long = misleadingLong
+    override fun toShort(): Short = misleadingLong.toShort()
+    override fun toString(): String = decimalText
+}
 
 /**
  * Driver-contract tests for [PostgresDriver] against a real Postgres
@@ -1452,6 +1477,78 @@ class PostgresDriverTest {
     }
 
     @Test
+    fun `insertMany never wraps exhausted auto-int sequence ids`() {
+        val driver = PostgresDriver(dataSource, autoDdl = true)
+        driver.register(AUTO_INT_ITEM_SCHEMA)
+        dataSource.connection.use { conn ->
+            conn.createStatement().use { statement ->
+                statement.execute("TRUNCATE TABLE \"auto_int_items\" RESTART IDENTITY")
+                // Widen the backing sequence so the driver, rather than
+                // nextval(), observes an out-of-INT-range value.
+                statement.execute(
+                    "ALTER SEQUENCE \"auto_int_items_id_seq\" AS bigint " +
+                        "MAXVALUE 9223372036854775807",
+                )
+                statement.execute(
+                    "SELECT setval('\"auto_int_items_id_seq\"', ${Int.MAX_VALUE}, true)",
+                )
+            }
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            driver.insertMany(
+                "auto_int_items",
+                listOf(mapOf("name" to "A"), mapOf("name" to "B")),
+            )
+        }
+
+        assertTrue("exceeds the INT range" in failure.message.orEmpty(), failure.message)
+        assertEquals(
+            emptyList(),
+            driver.query("auto_int_items", emptyList(), emptyList(), null, null),
+        )
+    }
+
+    @Test
+    fun `insertMany chunks statements at the PostgreSQL bind limit without losing order`() {
+        val driver = fresh()
+        // Auto-id correlation adds the id to these three supplied columns, so
+        // 16,384 rows require 65,536 binds and must become two statements.
+        val values = (0 until 16_384).map { index ->
+            mapOf<String, Any?>(
+                "name" to "user-$index",
+                "age" to index,
+                "active" to (index % 2 == 0),
+            )
+        }
+
+        val rows = driver.insertMany("users", values)
+
+        assertEquals(values.size, rows.size)
+        assertEquals(values.map { it["name"] }, rows.map { it["name"] })
+        assertEquals(values.map { it["age"] }, rows.map { it["age"] })
+        assertEquals((1L..values.size.toLong()).toList(), rows.map { it["id"] })
+    }
+
+    @Test
+    fun `insertMany rolls back earlier bind-limit chunks when a later chunk fails`() {
+        val driver = fresh()
+        val values = (0 until 16_384).map { index ->
+            mapOf<String, Any?>(
+                "name" to if (index == 16_383) null else "user-$index",
+                "age" to index,
+                "active" to true,
+            )
+        }
+
+        assertFailsWith<Exception> {
+            driver.insertMany("users", values)
+        }
+
+        assertEquals(emptyList(), driver.query("users", emptyList(), emptyList(), null, null))
+    }
+
+    @Test
     fun `insertMany correlates ids bound through any Number type`() {
         // The codec's integral bind accepts any exactly representable
         // java.lang.Number for INT/LONG columns, so correlation must widen the
@@ -1464,6 +1561,18 @@ class PostgresDriverTest {
 
         assertEquals(listOf(2L, 1L), rows.map { it["id"] })
         assertEquals(listOf("Bob", "Alice"), rows.map { it["name"] })
+    }
+
+    @Test
+    fun `insertMany correlates custom Number ids by their bound decimal value`() {
+        val driver = fresh()
+        val rows = driver.insertMany("users", listOf(
+            mapOf("id" to DecimalTextNumber("30", 300), "name" to "Carol"),
+            mapOf("id" to DecimalTextNumber("10", 100), "name" to "Alice"),
+        ))
+
+        assertEquals(listOf(30L, 10L), rows.map { it["id"] })
+        assertEquals(listOf("Carol", "Alice"), rows.map { it["name"] })
     }
 
     @Test
@@ -1539,6 +1648,49 @@ class PostgresDriverTest {
         val count = driver.deleteMany("users", emptyList())
         assertEquals(2, count)
         assertEquals(0, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `deleteManyByIds reasserts predicates and returns only removed ids`() {
+        val driver = fresh()
+        val alice = driver.insert("users", mapOf("name" to "Alice", "age" to 30))
+        val bob = driver.insert("users", mapOf("name" to "Bob", "age" to 17))
+        val carol = driver.insert("users", mapOf("name" to "Carol", "age" to 65))
+        val aliceId = checkNotNull(alice["id"])
+        val bobId = checkNotNull(bob["id"])
+        val carolId = checkNotNull(carol["id"])
+
+        val deleted = driver.deleteManyByIds(
+            "users",
+            "id",
+            listOf(carolId, bobId, aliceId, aliceId),
+            listOf(Predicate.Leaf<Any>("age", Op.GTE, 30)),
+        )
+
+        assertEquals(setOf(aliceId, carolId), deleted.toSet())
+        assertEquals(deleted.size, deleted.toSet().size)
+        val remaining = driver.query("users", emptyList(), emptyList(), null, null)
+        assertEquals(listOf("Bob"), remaining.map { it["name"] })
+    }
+
+    @Test
+    fun `deleteManyByIds rejects a non-id column`() {
+        val driver = fresh()
+        val row = driver.insert("users", mapOf("name" to "Alice"))
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            driver.deleteManyByIds("users", "name", listOf(checkNotNull(row["id"])), emptyList())
+        }
+
+        assertTrue(error.message.orEmpty().contains("registered ID column 'id'"))
+        assertEquals(1, driver.query("users", emptyList(), emptyList(), null, null).size)
+    }
+
+    @Test
+    fun `empty deleteManyByIds performs no schema lookup`() {
+        val driver = fresh()
+
+        assertEquals(emptyList(), driver.deleteManyByIds("unregistered", "not_an_id", emptyList(), emptyList()))
     }
 
     // ---------- ON DELETE referential actions ----------

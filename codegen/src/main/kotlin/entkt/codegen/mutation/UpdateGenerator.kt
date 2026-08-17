@@ -16,6 +16,7 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
+import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.computeEdgeFks
@@ -39,6 +40,8 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val ILLEGAL_STATE_EXCEPTION = ClassName("kotlin", "IllegalStateException")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
 private val COMPUTE_EDGE_CHANGES = MemberName("entkt.runtime.mutation", "computeEdgeChanges")
+private val IMMUTABLE_SET_SNAPSHOT =
+    MemberName("entkt.runtime.mutation", "immutableSetSnapshotForInternalUse")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 
@@ -601,7 +604,7 @@ internal class UpdateGenerator(
             .returns(patchClass)
 
         val code = CodeBlock.builder()
-        code.add("return %T(\n", patchClass)
+        code.add("val snapshot = %T(\n", patchClass)
         for (field in mutableFields) {
             val prop = toCamelCase(field.name)
             if (field.nullable) {
@@ -642,6 +645,10 @@ internal class UpdateGenerator(
         }
         code.add(")\n")
         builder.addCode(code.build())
+        builder.addStatement(
+            "return %L",
+            lifecyclePatchSnapshot("snapshot", mutableFields, ClassName(packageName, schemaName)),
+        )
         return builder.build()
     }
 
@@ -884,11 +891,14 @@ internal class UpdateGenerator(
                     .returns(pendingEdgeOpsParamed)
                     .addStatement(
                         "return %T(\n" +
-                            "  requestedSet = _requestedSet?.toSet(),\n" +
-                            "  requestedAdds = _adds.toSet(),\n" +
-                            "  requestedRemoves = _removes.toSet(),\n" +
+                            "  requestedSet = _requestedSet?.let { %M(it) },\n" +
+                            "  requestedAdds = %M(_adds),\n" +
+                            "  requestedRemoves = %M(_removes),\n" +
                             ")",
                         PENDING_EDGE_OPS,
+                        IMMUTABLE_SET_SNAPSHOT,
+                        IMMUTABLE_SET_SNAPSHOT,
+                        IMMUTABLE_SET_SNAPSHOT,
                     )
                     .build(),
             )

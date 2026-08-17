@@ -7,6 +7,7 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.SchemaInput
@@ -18,6 +19,7 @@ import entkt.schema.EntSchema
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
+private val LIST = ClassName("kotlin.collections", "List")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
@@ -56,7 +58,7 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * wrappers do not implement `EntReadRuntime`; that framework-internal
  * contract stays on the delegate. LOAD-privacy behavior is delegated
  * to the host client's repos (typed as the narrow read surfaces), so
- * `hasLoadPrivacy` / `evaluateLoadPrivacy` behave identically through
+ * `hasLoadPrivacy` / `loadDenials` behave identically through
  * either client.
  *
  * Construction is framework-internal: the constructors here carry
@@ -189,6 +191,15 @@ internal class ReadClientGenerator(
                     .addModifiers(KModifier.OVERRIDE)
                     .returns(Boolean::class)
                     .addStatement("return host.hasLoadPrivacy()")
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("loadDenials")
+                    .addModifiers(KModifier.OVERRIDE)
+                    .addParameter("privacy", PRIVACY_CONTEXT)
+                    .addParameter("entities", LIST.parameterizedBy(entityClass))
+                    .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
+                    .addStatement("return host.loadDenials(privacy, entities)")
                     .build()
             )
             .addFunction(

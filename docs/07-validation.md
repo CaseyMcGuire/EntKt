@@ -74,16 +74,65 @@ identifier for i18n or programmatic error handling. Both are optional.
 ### ValidationRule
 
 A rule is a `fun interface` that takes a typed context and returns a
-decision:
+decision. It automatically adapts to batch evaluation by visiting contexts
+serially in encounter order:
 
 ```kotlin
-fun interface ValidationRule<in C> {
+fun interface ValidationRule<in C> : BatchValidationRule<C> {
     fun validate(ctx: C): ValidationDecision
+
+    override fun validateBatch(contexts: List<C>): List<ValidationDecision> =
+        contexts.map { validate(it) }
 }
 ```
 
 Each operation gets its own context type, so rules are type-safe for
 the operation they guard.
+
+### BatchValidationRule
+
+Use `batchValidationRule` when one validator should see the complete ordered
+phase list, commonly to replace per-item reads with one set-based lookup:
+
+```kotlin
+import entkt.runtime.validation.batchValidationRule
+
+interface BatchValidationRule<in C> {
+    fun validateBatch(contexts: List<C>): List<ValidationDecision>
+}
+
+fun <C> batchValidationRule(
+    block: (List<C>) -> List<ValidationDecision>,
+): BatchValidationRule<C>
+
+val uniqueSlugs = batchValidationRule<PostCreateValidationContext> { contexts ->
+    val existingSlugs = loadExistingSlugs(
+        contexts.first().client,
+        contexts.map { it.candidate.slug },
+    )
+    contexts.map { ctx ->
+        if (ctx.candidate.slug in existingSlugs) {
+            ValidationDecision.Invalid("slug already taken", field = "slug")
+        } else {
+            ValidationDecision.Valid
+        }
+    }
+}
+
+validation {
+    create(uniqueSlugs)
+}
+```
+
+`BatchValidationRule<C>.validateBatch(contexts)` must return exactly one
+decision per context in the same order. The explicit factory keeps a
+list-taking lambda distinct from a scalar one. A cardinality mismatch is an
+operational `EntBatchRuleContractException`, not an invalid decision. Scalar
+and batch validators use the same `create`, `update`, and `delete` registration
+names in Kotlin and one shared registration order. Generated batch overloads
+use JVM names such as `createBatchRule` so Java lambdas remain unambiguous. A
+batch validator receives a singleton list for a scalar mutation and is not
+invoked for an empty phase.
 
 ### EntValidationException
 
@@ -143,11 +192,13 @@ val client = EntClient(driver) {
 
 The `validation { }` block exposes three methods:
 
-- `create(vararg rules)` — run before insert
-- `update(vararg rules)` — run before update
-- `delete(vararg rules)` — run before delete
+- `create(vararg scalarRules)` or `create(batchRule)` — run before insert
+- `update(vararg scalarRules)` or `update(batchRule)` — run before update
+- `delete(vararg scalarRules)` or `delete(batchRule)` — run before delete
 
-There is no `load` validation — validation guards writes, not reads.
+Register multiple batch rules with repeated calls. There are no
+`createBatch`-style methods. There is no `load` validation — validation guards
+writes, not reads.
 
 ## Operation Contexts
 
@@ -248,16 +299,28 @@ data class PostWriteCandidate(
 )
 ```
 
-Each validator receives its own snapshot. Generated `bytes()` values are
-defensively copied, including values inside update patches, so mutating a
-`ByteArray` obtained from one context cannot change the pending database write
-or another validator's input.
+Each validator receives its own snapshot. Generated `bytes()` values are copied
+directly, and typed JSON values are round-tripped through the driver's
+configured JSON mapper, including values inside update patches. Mutating a
+`ByteArray` or a mutable collection nested in JSON from one validator context
+cannot change the pending database write or another validator's input.
 
 ## Evaluation Semantics
 
-All rules for an operation run unconditionally. Invalid results are
-collected into one `EntValidationException` carried by
-`MutationResult.Failed`.
+All rules for an operation run unconditionally. In a multi-item phase,
+evaluation is rule-major: rule one receives every context in encounter order,
+then rule two receives every context. `Invalid` decisions are retained by
+original item position and appended in rule registration order. A scalar rule's
+default adapter is invoked once per item; an explicit batch rule is invoked
+once with the list. Rules are not run concurrently.
+
+For a scalar mutation, every invalid result is collected into one
+`EntValidationException` carried by `MutationResult.Failed`. For a bulk
+mutation with several invalid items, the terminal reports the first invalid
+item in encounter order and includes every violation collected for that item;
+it does not return a partial-success or multi-item error payload. A thrown rule
+exception stops the phase at that registered rule rather than becoming a
+validation decision.
 
 `Viewer.PrivacyBypass` does **not** bypass validation. Validation enforces
 data model invariants that apply regardless of who is performing the
@@ -413,12 +476,13 @@ validation {
 
 ## Bulk Operations
 
-**Bulk methods (`createMany`, `deleteMany`) delegate per item.** Each
-item runs the full validation pipeline independently, and the whole
-operation is atomic: it shares one transaction (the caller's, or an
-EntKt-owned one when the caller has none), so the first validation
-failure aborts the batch with `Failed(EntValidationException)` and a
-confirmed rollback leaves no committed subset.
+`createMany` and `deleteMany` evaluate entity validation once per registered
+rule over the complete candidate list. Their privacy phase finishes for every
+candidate before entity validation begins, so a denial on a later item takes
+precedence over a validation failure on an earlier item. Any invalid candidate
+fails the operation before its target insert or delete statement. The database
+work shares one transaction (the caller's, or an EntKt-owned transaction), and
+a confirmed rollback leaves no committed subset.
 
 ## Generated Validation API
 
@@ -429,6 +493,9 @@ For each schema, entkt provides:
 | `{Entity}CreateValidationRule` | Typealias for create validation rules |
 | `{Entity}UpdateValidationRule` | Typealias for update validation rules |
 | `{Entity}DeleteValidationRule` | Typealias for delete validation rules |
+| `{Entity}CreateBatchValidationRule` | Typealias for batch create validation rules |
+| `{Entity}UpdateBatchValidationRule` | Typealias for batch update validation rules |
+| `{Entity}DeleteBatchValidationRule` | Typealias for batch delete validation rules |
 | `{Entity}CreateValidationContext` | Context for create validators |
 | `{Entity}UpdateValidationContext` | Context for update validators |
 | `{Entity}DeleteValidationContext` | Context for delete validators |

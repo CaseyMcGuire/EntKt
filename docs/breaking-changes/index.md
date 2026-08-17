@@ -30,6 +30,37 @@ above it.
 
 ## Unreleased
 
+- **Make lifecycle callbacks batch-aware and bulk execution phase-major** (`runtime`, `codegen`, `postgres`)
+  Scalar `PrivacyRule`, `ValidationRule`, and hook call sites keep their
+  existing syntax and adapt over ordered batches automatically; optimized
+  callbacks can use `batchPrivacyRule`, `batchValidationRule`, and `batchHook`
+  under the same generated lifecycle names. Collection and eager LOAD privacy
+  now evaluate rule-major batches with one privacy context per logical
+  operation. `createMany()` completes every pre-write phase before one logical
+  `insertMany()`, hydrates the complete result before hook-major `afterCreate`,
+  and then applies returned LOAD privacy. `deleteMany()` completes batch
+  privacy, validation, and `beforeDelete` before one logical ID-returning
+  delete, reasserting the frozen caller-plus-interceptor predicates; only rows
+  actually removed reach `afterDelete`. PostgreSQL statement counts and shapes
+  therefore change. See the
+  [batch-aware lifecycle design](../possible-features/privacy-validation/batch-aware-lifecycle-evaluation.md)
+  for the full ordering and transaction contract.
+  Custom drivers are source-broken: `Driver.registeredIdColumn(table)` is a new
+  abstract method. `Driver.deleteManyByIds(...)` has a correct default that
+  calls `deleteMany()` once per distinct ID; drivers may override it for a
+  set-based returning delete. Drivers that advertise typed JSON must also
+  override the new default `copyJsonValue(...)` lifecycle-snapshot operation;
+  its non-null default fails explicitly. No generated lifecycle-aware
+  `updateMany()` was added.
+  _Migration:_ scalar callback and policy registrations need no change. Audit
+  code that depends on row-major cross-item callback order or on earlier
+  `createMany` rows being visible to later pre-write callbacks; use scalar
+  terminals in an explicit transaction when that ordering is required. Use the
+  explicit batch factories for set-based callback reads. Custom drivers must
+  retain registered schema metadata and implement `registeredIdColumn`; audit
+  driver-call-count assertions, implement `copyJsonValue` when supporting typed
+  JSON, and optionally override `deleteManyByIds` for performance.
+
 - **Allow explicit raw storage reads in privacy rules** (`codegen`)
   `rawCount()`, `rawExists()`, and raw aggregate terminals no longer fail on
   `EntPrivacyReadClient`. Their `raw` prefix now has one consistent meaning in

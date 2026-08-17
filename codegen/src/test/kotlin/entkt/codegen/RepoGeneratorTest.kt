@@ -27,19 +27,35 @@ class RepoGeneratorTest {
         val output = generator.generate("RepoBytesRecord", schema).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("for (rule in rules) { val ctx = RepoBytesRecordCreatePrivacyContext")) {
-            "create privacy should construct the context inside the rule loop\n$output"
+        assert(
+            output.contains(
+                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord CREATE privacy\", candidateSnapshot, rules) { item -> RepoBytesRecordCreatePrivacyContext",
+            ),
+        ) {
+            "create privacy should delegate through the batch evaluator with a fresh-context factory\n$output"
         }
-        assert(output.contains("return rules.mapNotNull { rule -> val ctx = RepoBytesRecordCreateValidationContext")) {
-            "create validation should construct the context inside the rule loop\n$output"
+        assert(
+            output.contains(
+                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord CREATE validation\", candidateSnapshot, rules) { item -> RepoBytesRecordCreateValidationContext",
+            ),
+        ) {
+            "create validation should delegate through the batch evaluator with a fresh-context factory\n$output"
         }
-        assert(output.contains("for (rule in rules) { val ctx = RepoBytesRecordUpdatePrivacyContext")) {
-            "update privacy should construct the context inside the rule loop\n$output"
+        assert(
+            output.contains(
+                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord UPDATE privacy\", listOf(candidate), rules) { item -> RepoBytesRecordUpdatePrivacyContext",
+            ),
+        ) {
+            "update privacy should delegate through the batch evaluator with a fresh-context factory\n$output"
         }
-        assert(output.contains("for (rule in rules) { val updateCtx = RepoBytesRecordUpdateValidationContext")) {
-            "update validation should construct the context inside the rule loop\n$output"
+        assert(
+            output.contains(
+                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord UPDATE validation\", listOf(candidate), rules) { item -> RepoBytesRecordUpdateValidationContext",
+            ),
+        ) {
+            "update validation should delegate through the batch evaluator with a fresh-context factory\n$output"
         }
-        assert(output.contains("candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )")) {
+        assert(output.contains("item.copy( payload = item.payload.copyOf(), thumbnail = item.thumbnail?.copyOf(), )")) {
             "rule candidates should not alias database-bound byte arrays\n$output"
         }
         assert(output.contains("before.copy( payload = before.payload.copyOf(), thumbnail = before.thumbnail?.copyOf(), )")) {
@@ -56,6 +72,12 @@ class RepoGeneratorTest {
         }
         assert(output.contains("is FieldPatch.Set -> FieldPatch.Set(entry.value?.copyOf())")) {
             "nullable byte patch entries should preserve null while copying values\n$output"
+        }
+        assert(!output.contains("rule.run(")) {
+            "generated privacy evaluators should not bypass the shared batch engine\n$output"
+        }
+        assert(!output.contains("rule.validate(")) {
+            "generated validation evaluators should not bypass the shared batch engine\n$output"
         }
     }
 
@@ -314,7 +336,7 @@ class RepoGeneratorTest {
         assert(output.contains("private fun deleteLoaded(entity: Car): MutationResult<Boolean>")) {
             "deleteLoaded should be the private MutationResult<Boolean> pipeline\n$output"
         }
-        assert(output.contains("for (hook in beforeDeleteHooks) hook(entity)")) {
+        assert(output.contains("runBatchHooksForInternalUse(listOf(entity), beforeDeleteHooks)")) {
             "deleteLoaded should call beforeDelete hooks\n$output"
         }
         assert(output.contains("driver.delete(Car.TABLE, entity.id)")) {
@@ -322,7 +344,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "if (deleted) { writeState = postWriteState for (hook in afterDeleteHooks) hook(entity) }",
+                "if (deleted) { writeState = postWriteState runBatchHooksForInternalUse(listOf(entity), afterDeleteHooks) }",
             ),
         ) {
             "deleteLoaded should advance writeState and run afterDelete hooks only when the row was removed\n$output"
@@ -483,26 +505,55 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `createMany shares the per-row create pipeline and short-circuits on the first failure`() {
+    fun `createMany runs phase-major lifecycle work before one set-based insert`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Each block runs the full per-row create pipeline (hooks,
-        // privacy, validation, classification) via the internal
-        // executeSaveForInternalUse WITHOUT the disclosure step —
-        // disclosure runs batched after all writes. The first Failed
-        // returns immediately: no later block runs.
-        assert(output.contains("for (block in blocks)")) {
-            "createMany should iterate blocks explicitly so it can short-circuit\n$output"
+        assert(output.contains("val managedSaveFailures = ArrayList<EntMutationException>()")) {
+            "createMany should share one encounter-ordered managed-save tracker\n$output"
         }
         assert(
             output.contains(
-                "when (val result = create(block).executeSaveForInternalUse(applyLoadPrivacy = false)) { is MutationResult.Success -> out.add(result.value) is MutationResult.Failed -> { val rowException = result.exception return if (out.isNotEmpty() && rowException.writeState == MutationWriteState.NotPersisted) { val staged = EntUnexpectedMutationException(MutationWriteState.TransactionPending, rowException) client.replaceTransactionMutationFailure(rowException, staged) MutationResult.failedForInternalUse(staged) } else result } }",
+                "val builders = ArrayList<CarCreate>(blocks.size) for (block in blocks) { " +
+                    "val builder = create { } val configured = try { " +
+                    "builder.configureForCreateManyForInternalUse(block, managedSaveFailures)",
             ),
         ) {
-            "createMany should delegate rows through create(block).executeSaveForInternalUse(applyLoadPrivacy = false) and return the first Failed\n$output"
+            "createMany should instantiate and safely configure every builder in input order\n$output"
+        }
+        assert(output.contains("runBatchHooksForInternalUse(builders.map { it.beforeSaveHookValueForInternalUse() }, beforeSaveHooks)")) {
+            "createMany should run beforeSave once over the full ordered batch\n$output"
+        }
+        assert(output.contains("runBatchHooksForInternalUse(builders.map { it.beforeCreateHookValueForInternalUse() }, beforeCreateHooks)")) {
+            "createMany should run beforeCreate once over the full ordered batch\n$output"
+        }
+        assert(output.contains("val denialReasons = createDenialReasons(privacy, candidates)")) {
+            "CREATE privacy should evaluate the complete candidate list\n$output"
+        }
+        assert(output.contains("val violationsByCandidate = evaluateCreateValidations(candidates)")) {
+            "CREATE validation should evaluate only after batch privacy\n$output"
+        }
+        assert(output.contains("driver.insertMany(Car.TABLE, prepared.map { it.values })")) {
+            "createMany should make one logical set-based driver call\n$output"
+        }
+        assert(
+            output.contains(
+                "if (promoteDriverNotPersisted && prepared.size > 1 && " +
+                    "classified.writeState == MutationWriteState.NotPersisted)",
+            ),
+        ) {
+            "caller-owned multi-input batches should promote statement-level failures to pending\n$output"
+        }
+        assert(output.contains("check(rows.size == prepared.size)")) {
+            "createMany should reject malformed driver cardinality before hydration\n$output"
+        }
+        assert(output.contains("val entities = rows.map { row -> Car.fromRow(row) } runBatchHooksForInternalUse(entities, afterCreateHooks)")) {
+            "createMany should hydrate the whole result before the afterCreate phase\n$output"
+        }
+        assert(!output.contains("executeSaveForInternalUse(applyLoadPrivacy = false)")) {
+            "createMany must not fall back to the scalar per-row pipeline\n$output"
         }
     }
 
@@ -513,11 +564,8 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Atomicity is EntKt-owned when no caller transaction exists:
-        // the whole batch runs inside one client.withTransaction (a
-        // nested withTransaction would throw, hence the
-        // driver.inTransaction branch), sharing the same per-row
-        // internal execution through the tx-scoped repo.
+        // Atomicity is EntKt-owned when no caller transaction exists;
+        // all phases run through the transaction-scoped repo helper.
         assert(output.contains("if (driver.inTransaction) {")) {
             "createMany should branch on driver.inTransaction\n$output"
         }
@@ -526,41 +574,49 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "batch.add(tx.cars.create(block).executeSaveForInternalUse(applyLoadPrivacy = false).orRollback())",
+                "val completion = tx.cars._executeCreateManyWritePhases(" +
+                    "blockSnapshot, promoteDriverNotPersisted = false).orRollback()",
             ),
         ) {
-            "the EntKt-owned batch should run per-row creates through the tx-scoped repo with orRollback\n$output"
+            "the EntKt-owned batch should run the phase-major write helper through the tx-scoped repo\n$output"
         }
     }
 
     @Test
-    fun `createMany applies LOAD disclosure per returned entity after all writes`() {
+    fun `createMany batch evaluates returned LOAD with the captured CREATE context`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Return processing runs after every write: a denial inside a
-        // caller-owned transaction reports TransactionPending; in the
-        // EntKt-owned path the batch still COMMITS and the denial
-        // reports Committed. Both use operation = LOAD and identify the
-        // one denied entity by key.
-        assert(output.contains("val denial = loadDenialOrNull(privacy, entity)")) {
-            "createMany should evaluate LOAD disclosure per returned entity\n$output"
+        assert(output.contains("loadDenials(completion.privacy, completion.entities).filterNotNull().firstOrNull()")) {
+            "caller-owned createMany should batch LOAD disclosure with the captured context\n$output"
+        }
+        assert(output.contains("tx.cars.loadDenials(completion.privacy, completion.entities).filterNotNull().firstOrNull()")) {
+            "owned createMany should batch LOAD disclosure through the transaction repo\n$output"
         }
         assert(
             output.contains(
-                "val exception = EntMutationPrivacyDeniedException(MutationWriteState.TransactionPending, \"Car\", EntOperation.LOAD, EntityKey(\"id\", entity.id), denial.reason)",
+                "val exception = EntMutationPrivacyDeniedException(MutationWriteState.TransactionPending, \"Car\", EntOperation.LOAD, denial.entityKey, denial.reason)",
             ),
         ) {
             "a caller-owned-tx disclosure denial should be LOAD + TransactionPending with the entity key\n$output"
         }
         assert(
             output.contains(
-                "EntMutationPrivacyDeniedException(MutationWriteState.Committed, \"Car\", EntOperation.LOAD, EntityKey(\"id\", disclosureDeniedId!!), reason)",
+                "EntMutationPrivacyDeniedException(MutationWriteState.Committed, \"Car\", EntOperation.LOAD, disclosure.denial.entityKey, disclosure.denial.reason)",
             ),
         ) {
             "an EntKt-owned-tx disclosure denial should report Committed — the batch is not rolled back\n$output"
+        }
+        assert(output.contains("var disclosureFailure: Exception? = null")) { output }
+        assert(output.contains("disclosureFailure = e")) { output }
+        assert(output.contains("EntUnexpectedMutationException(MutationWriteState.NotPersisted, disclosure)")) {
+            "a LOAD exception that aborts the owned transaction should remain the confirmed-rollback cause\n$output"
+        }
+        assert(output.contains("rolledBack.addSuppressed(stored)")) { output }
+        assert(output.contains("unknown.addSuppressed(disclosure)")) {
+            "an unknown transaction outcome must remain primary while retaining the LOAD failure\n$output"
         }
     }
 
@@ -579,44 +635,67 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `deleteMany queries then deletes through deleteLoaded (hook path, no double preflight)`() {
-        // Per-entity deletes go through deleteLoaded so they get the
-        // hook/privacy/validation path without re-running deleteMany's
-        // outer multi-write preflight per row; the first per-row Failed
-        // short-circuits (no denied candidate is silently skipped).
+    fun `deleteMany phases preflight the batch then use one ID-returning write`() {
         val car = Car()
         finalize(car, User())
         val raw = generator.generate("Car", car).toString()
         val output = raw.replace("\\s+".toRegex(), " ")
 
+        assert(output.contains("private fun _executeDeleteManyPhases(")) {
+            "deleteMany should isolate its transaction-scoped phase-major pipeline\n$output"
+        }
+        val privacyAt = output.indexOf("deleteDenialReasons(privacy, entities, candidates)")
+        val validationAt = output.indexOf("evaluateDeleteValidations(entities, candidates)")
+        val beforeHookAt = output.indexOf("runBatchHooksForInternalUse(entities, beforeDeleteHooks)")
+        val writeAt = output.indexOf(
+            "driver.deleteManyByIds(Car.TABLE, Car.SCHEMA.idColumn, approvedIds, effectivePredicates)",
+        )
+        val afterHookAt = output.indexOf("runBatchHooksForInternalUse(deletedEntities, afterDeleteHooks)")
+        assert(privacyAt >= 0 && privacyAt < validationAt && validationAt < beforeHookAt && beforeHookAt < writeAt) {
+            "deleteMany should finish privacy, validation, and beforeDelete before its one write\n$output"
+        }
+        assert(writeAt < afterHookAt) {
+            "deleteMany should run afterDelete only after the ID-returning write\n$output"
+        }
         assert(
             output.contains(
-                "when (val result = deleteLoaded(entity)) { is MutationResult.Success -> if (result.value) count++ is MutationResult.Failed -> { val rowException = result.exception return if (count > 0 && rowException.writeState == MutationWriteState.NotPersisted) { val staged = EntUnexpectedMutationException(MutationWriteState.TransactionPending, rowException) client.replaceTransactionMutationFailure(rowException, staged) MutationResult.failedForInternalUse(staged) } else result } }",
+                "check(deletedIdSnapshot.size == deletedIdSet.size && deletedIdSet.all { it in approvedIdSet })",
             ),
         ) {
-            "deleteMany should count deleteLoaded successes and return the first Failed\n$output"
+            "deleteMany should reject duplicate or unapproved returned IDs before afterDelete\n$output"
         }
-        val body = raw.substring(raw.indexOf("fun deleteMany("), raw.indexOf("fun _classifyDriverFailure("))
-        assert(!body.contains("delete(entity)")) {
-            "deleteMany must not loop through the public delete(entity) — that would re-run preflight per row\n$body"
+        assert(output.contains("val deletedEntities = entities.filter { it.id in deletedIdSet }")) {
+            "deleteMany should restore returned IDs to candidate encounter order\n$output"
+        }
+        val phases = raw.substring(
+            raw.indexOf("fun _executeDeleteManyPhases("),
+            raw.indexOf("fun deleteMany("),
+        )
+        assert(!phases.contains("deleteLoaded(") && !phases.contains("driver.delete(")) {
+            "deleteMany must not fall back to the scalar delete pipeline\n$phases"
         }
     }
 
     @Test
-    fun `deleteMany self-delegates through withTransaction outside a caller-owned transaction`() {
+    fun `deleteMany delegates its private phases through one owned transaction`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Outside a transaction, deleteMany re-enters itself through
-        // the canonical client.withTransaction boundary (the nested
-        // call takes the caller-owned branch), then converts the
-        // TransactionResult: unknown outcome → PersistenceUnknown,
-        // recorded EntMutationException passthrough, anything else →
-        // NotPersisted after the confirmed rollback.
-        assert(output.contains("tx.cars.deleteMany(*predicates).orRollback()")) {
-            "deleteMany should self-delegate through the tx-scoped repo with orRollback\n$output"
+        assert(
+            output.contains(
+                "if (driver.inTransaction) { _executeDeleteManyPhases(predicateSnapshot, promoteDriverNotPersisted = true)",
+            ),
+        ) {
+            "caller-owned deleteMany should run the private phases in place\n$output"
+        }
+        assert(
+            output.contains(
+                "tx.cars._executeDeleteManyPhases(predicateSnapshot, promoteDriverNotPersisted = false).orRollback()",
+            ),
+        ) {
+            "deleteMany should run the same private phases once in its owned transaction\n$output"
         }
         assert(
             output.contains(
@@ -680,21 +759,50 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has decision-returning denial evaluators for load, create, update, and delete privacy`() {
+    fun `repo has positional plural LOAD evaluator plus singleton and write denial evaluators`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // LOAD returns a keyed PrivacyDenial (aggregatable by strict
-        // read terminals); the write side returns the bare denial
-        // reason — the terminals construct the typed
-        // EntMutationPrivacyDeniedException at their classification
-        // point. None of these throw: a rule-THROWN exception escapes
-        // to the terminal capture boundary as a foreign failure.
+        // LOAD evaluates the immutable entity snapshot in one batch and
+        // maps decisions back by position. This preserves duplicate IDs
+        // and caller order; the singleton API is only a projection of the
+        // plural contract.
+        assert(output.contains("override fun loadDenials(privacy: PrivacyContext, entities: List<Car>): List<PrivacyDenial?>")) {
+            "Should expose the plural LOAD evaluator through the read surface\n$output"
+        }
+        assert(output.contains("if (entities.isEmpty()) return emptyList() val entitySnapshot = entities.toList()")) {
+            "Plural LOAD evaluation should skip empty batches and snapshot non-empty input\n$output"
+        }
+        assert(
+            output.contains(
+                "val decisions = evaluateBatchPrivacyRulesForInternalUse(\"Car LOAD privacy\", entitySnapshot, rules) { item -> CarLoadPrivacyContext(privacy, privacyClient, item) }",
+            ),
+        ) {
+            "Plural LOAD evaluation should submit the complete ordered snapshot to the batch engine\n$output"
+        }
+        assert(output.contains("return entitySnapshot.mapIndexed { index, entity -> when (val decision = decisions[index])")) {
+            "Plural LOAD decisions should remain positionally aligned with their entities\n$output"
+        }
+        assert(
+            output.contains(
+                "is PrivacyDecision.Deny -> PrivacyDenial(\"Car\", EntityKey(\"id\", entity.id), decision.reason)",
+            ),
+        ) {
+            "Each positional LOAD denial should be keyed from the corresponding entity\n$output"
+        }
         assert(output.contains("override fun loadDenialOrNull(privacy: PrivacyContext, entity: Car): PrivacyDenial?")) {
             "Should have loadDenialOrNull overriding the read surface\n$output"
         }
+        assert(output.contains("loadDenialOrNull(privacy: PrivacyContext, entity: Car): PrivacyDenial? = loadDenials(privacy, listOf(entity)).single()")) {
+            "Singleton LOAD evaluation should delegate to the plural evaluator\n$output"
+        }
+
+        // The write side returns the bare denial reason — terminals
+        // construct EntMutationPrivacyDeniedException at classification.
+        // A rule-thrown exception escapes every helper to the terminal
+        // capture boundary as an operational failure.
         assert(output.contains("internal fun createDenialReasonOrNull(privacy: PrivacyContext, candidate: CarWriteCandidate): String?")) {
             "Should have createDenialReasonOrNull returning String?\n$output"
         }
@@ -721,34 +829,108 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // With no allowing rule — including no rules at all — the empty
-        // loop falls through to the fail-closed default denial. The
-        // evaluators RETURN the denial (they never throw), and the
-        // PrivacyBypass viewer short-circuits every one of them.
+        // With no allowing rule — including no rules at all — the
+        // evaluators return the fail-closed denial (they never throw).
+        // Plural LOAD, CREATE, and DELETE paths preserve positional
+        // cardinality for a bypass viewer; singleton UPDATE returns null.
         assert(
             output.contains(
-                "return PrivacyDenial(\"Car\", EntityKey(\"id\", entity.id), \"no load rule allowed access\")",
+                "is PrivacyDecision.Continue -> PrivacyDenial(\"Car\", EntityKey(\"id\", entity.id), \"no load rule allowed access\")",
             ),
         ) {
-            "loadDenialOrNull should end in the fail-closed keyed denial\n$output"
+            "loadDenials should map a continued decision to the fail-closed keyed denial\n$output"
         }
-        assert(output.contains("return \"no create rule allowed access\"")) {
+        assert(output.contains("is PrivacyDecision.Continue -> \"no create rule allowed access\"")) {
             "createDenialReasonOrNull should end in the fail-closed default reason\n$output"
         }
-        assert(output.contains("return \"no update rule allowed access\"")) {
+        assert(output.contains("is PrivacyDecision.Continue -> \"no update rule allowed access\"")) {
             "updateDenialReasonOrNull should end in the fail-closed default reason\n$output"
         }
-        assert(output.contains("return \"no delete rule allowed access\"")) {
+        assert(output.contains("is PrivacyDecision.Continue -> \"no delete rule allowed access\"")) {
             "deleteDenialReasonOrNull should end in the fail-closed default reason\n$output"
         }
-        assert(output.contains("is PrivacyDecision.Deny -> return decision.reason")) {
+        assert(output.contains("is PrivacyDecision.Deny -> decision.reason")) {
             "write-side rule Deny should RETURN the reason, not throw\n$output"
         }
-        val bypasses = Regex(
+        assert(
+            output.contains(
+                "if (privacy.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }",
+            ),
+        ) {
+            "Plural LOAD bypass should retain one null slot per snapshotted entity\n$output"
+        }
+        assert(
+            output.contains(
+                "if (privacy.viewer is Viewer.PrivacyBypass) return List(candidateSnapshot.size) { null }",
+            ),
+        ) {
+            "Plural CREATE bypass should retain one null slot per candidate\n$output"
+        }
+        val entityBatchBypasses = Regex(
+            Regex.escape("if (privacy.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }")
+        ).findAll(output).count()
+        assert(entityBatchBypasses == 2) {
+            "LOAD and DELETE batch evaluators should retain positional nulls; found $entityBatchBypasses\n$output"
+        }
+        val scalarWriteBypasses = Regex(
             Regex.escape("if (privacy.viewer is Viewer.PrivacyBypass) return null")
         ).findAll(output).count()
-        assert(bypasses == 4) {
-            "All four denial evaluators should short-circuit for PrivacyBypass; found $bypasses\n$output"
+        assert(scalarWriteBypasses == 1) {
+            "The singleton UPDATE evaluator should return null for PrivacyBypass; found $scalarWriteBypasses\n$output"
+        }
+    }
+
+    @Test
+    fun `derived create privacy evaluates only unresolved writes under the enclosing lifecycle`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "if (decision is PrivacyDecision.Continue && privacyConfig.updateDerivesFromCreate) { decision = evaluateBatchPrivacyRulesForInternalUse(\"Car UPDATE privacy\", listOf(candidate), privacyConfig.createRules)",
+            ),
+        ) {
+            "derived CREATE privacy should run only after UPDATE remains Continue and retain the UPDATE lifecycle label\n$output"
+        }
+        assert(output.contains("val unresolvedIndexes = decisions.indices.filter { decisions[it] is PrivacyDecision.Continue }")) {
+            "DELETE derivation should retain the original indexes of only unresolved candidates\n$output"
+        }
+        assert(
+            output.contains(
+                "evaluateBatchPrivacyRulesForInternalUse(\"Car DELETE privacy\", unresolvedIndexes, privacyConfig.createRules)",
+            ),
+        ) {
+            "derived CREATE privacy should batch only unresolved DELETE candidates under the DELETE label\n$output"
+        }
+        assert(
+            output.contains(
+                "unresolvedIndexes.forEachIndexed { resultIndex, originalIndex -> decisions[originalIndex] = derived[resultIndex] }",
+            ),
+        ) {
+            "derived DELETE decisions should map back to their original encounter indexes\n$output"
+        }
+    }
+
+    @Test
+    fun `derived create validation appends after update invalids under the update lifecycle`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        val updateAt = output.indexOf(
+            "val invalids = evaluateBatchValidationRulesForInternalUse(\"Car UPDATE validation\", listOf(candidate), rules)",
+        )
+        val derivedAt = output.indexOf(
+            "invalids += evaluateBatchValidationRulesForInternalUse(\"Car UPDATE validation\", listOf(candidate), validationConfig.createRules)",
+        )
+        assert(updateAt >= 0 && derivedAt > updateAt) {
+            "UPDATE invalids should precede and then combine with derived CREATE invalids under the UPDATE lifecycle label\n$output"
+        }
+        assert(output.indexOf("return invalids.map { it.toValidationViolation() }", derivedAt) > derivedAt) {
+            "combined invalid decisions should map to violations after derivation\n$output"
         }
     }
 
@@ -779,6 +961,7 @@ class RepoGeneratorTest {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
 
         // deleteMany candidate selection fires interceptors with
         // operation = DELETE_CANDIDATES so tenant-scoping /
@@ -786,16 +969,19 @@ class RepoGeneratorTest {
         // to bulk deletes. The chain takes no entOperation parameter
         // anymore. The generated query's `predicates` backing field is
         // private, so deleteMany seeds it via the public `where()` DSL.
-        assert(output.contains("CarQuery(driver, client).apply { for (p in predicates) where(p) }")) {
+        assert(output.contains("CarQuery(driver, client).apply { for (predicate in predicates) where(predicate) }")) {
             "deleteMany should construct a transient CarQuery from caller predicates via the public DSL\n$output"
         }
-        assert(output.contains("val selectionPrivacy = client.currentPrivacyContext()")) {
+        assert(output.contains("val privacy = client.currentPrivacyContext()")) {
             "deleteMany should capture a privacy context for candidate-selection interceptors\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, selectionPrivacy)")) {
+        assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, privacy)")) {
             "deleteMany should fire interceptors with DELETE_CANDIDATES and its captured privacy context\n$output"
         }
-        assert(output.contains("driver.query(Car.TABLE, spec.predicates, emptyList(), null, null)")) {
+        assert(output.contains("val effectivePredicates = spec.predicates.toList()")) {
+            "deleteMany should freeze the intercepted predicate list once\n$output"
+        }
+        assert(output.contains("driver.query(Car.TABLE, effectivePredicates, emptyList(), null, null)")) {
             "deleteMany should pass the post-interceptor spec.predicates to driver.query\n$output"
         }
         // Negative guard: the pre-fix raw shape must not reappear.
@@ -843,7 +1029,7 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `_classifyDriverFailure routes driver exceptions through the driver classification SPI`() {
+    fun `operation-specific driver classifiers use the correct operation`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -853,11 +1039,17 @@ class RepoGeneratorTest {
         // unrecognized exception falls back to the caller's
         // phase-tracked write state, and a classification without a
         // state defaults to PersistenceUnknown.
-        assert(output.contains("private fun _classifyDriverFailure(e: Exception, fallback: MutationWriteState): EntMutationException")) {
-            "Should have the private _classifyDriverFailure helper\n$output"
+        assert(output.contains("private fun _classifyCreateDriverFailure(e: Exception, fallback: MutationWriteState): EntMutationException")) {
+            "Should have a CREATE-specific driver classifier\n$output"
+        }
+        assert(output.contains("driver.classifyMutationException(e, \"Car\", EntOperation.CREATE)")) {
+            "The create classifier should use EntOperation.CREATE\n$output"
+        }
+        assert(output.contains("private fun _classifyDeleteDriverFailure(e: Exception, fallback: MutationWriteState): EntMutationException")) {
+            "Should have a DELETE-specific driver classifier\n$output"
         }
         assert(output.contains("driver.classifyMutationException(e, \"Car\", EntOperation.DELETE)")) {
-            "The helper should call the driver classification SPI with the entity name and operation\n$output"
+            "The delete classifier should use EntOperation.DELETE\n$output"
         }
         assert(output.contains("?: EntUnexpectedMutationException(fallback, e)")) {
             "An unclassified exception should fall back to the phase-tracked write state\n$output"
@@ -954,7 +1146,7 @@ class RepoGeneratorTest {
             "updateDenialReasonOrNull should accept edgeChanges: CarEdgeChangesView\n$output"
         }
         assert(output.contains(
-            "CarUpdatePrivacyContext(privacy, privacyClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "CarUpdatePrivacyContext(privacy, privacyClient, before, requestedPatch, effectivePatch, item, edgeChanges)",
         )) {
             "Constructor call should thread edgeChanges through as the final positional arg\n$output"
         }
@@ -971,7 +1163,7 @@ class RepoGeneratorTest {
             "evaluateUpdateValidation should accept edgeChanges: CarEdgeChangesView\n$output"
         }
         assert(output.contains(
-            "CarUpdateValidationContext(validationClient, before, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "CarUpdateValidationContext(validationClient, before, requestedPatch, effectivePatch, item, edgeChanges)",
         )) {
             "Validation context constructor call should thread edgeChanges through\n$output"
         }

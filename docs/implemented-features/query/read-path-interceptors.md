@@ -689,8 +689,8 @@ call:
   interceptors. See "Multi-step traversal chains" below for which
   interceptors fire on each step of a chained traversal.
 - edge predicates: `has`, `hasWhere` on the target entity
-- delete candidate fetches: the per-row read that
-  `deleteMany(...)` performs before issuing per-entity DELETEs
+- delete candidate fetches: the single candidate query that
+  `deleteMany(...)` performs before its logical ID-scoped returning delete
   routes through the full interceptor chain with
   `context.operation = DELETE_CANDIDATES`. This makes tenant
   scoping, soft-delete, and other predicate-shaping interceptors

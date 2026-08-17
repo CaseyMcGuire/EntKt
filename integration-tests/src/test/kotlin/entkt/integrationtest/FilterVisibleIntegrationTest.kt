@@ -8,6 +8,7 @@ import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.PostLoadPrivacyRule
 import entkt.integrationtest.ent.PostPolicyScope
 import entkt.integrationtest.ent.Tag
+import entkt.integrationtest.ent.TagLoadPrivacyContext
 import entkt.integrationtest.ent.TagLoadPrivacyRule
 import entkt.integrationtest.ent.TagPolicyScope
 import entkt.integrationtest.ent.User
@@ -19,7 +20,9 @@ import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
+import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.query.EdgeState
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
@@ -91,6 +94,55 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
 
         val tags = assertIs<EdgeState.Loaded<List<Tag>>>(loaded.single().edges.tags)
         assertEquals(listOf("b-second"), tags.value.map { it.name })
+    }
+
+    @Test
+    fun `a shared M2M target is batch checked once and filtered from every parent`() {
+        val invocations = mutableListOf<List<String>>()
+        val driver = resetAndDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies {
+                posts(openPosts())
+                tags(object : EntityPolicy<Tag, TagPolicyScope> {
+                    override fun configure(scope: TagPolicyScope) = scope.run {
+                        privacy {
+                            load(batchPrivacyRule<TagLoadPrivacyContext> { contexts ->
+                                invocations += contexts.map { it.entity.name }
+                                contexts.map {
+                                    if (it.entity.name == "a-denied-shared") {
+                                        PrivacyDecision.Deny("tag hidden")
+                                    } else {
+                                        PrivacyDecision.Allow
+                                    }
+                                }
+                            })
+                        }
+                    }
+                })
+            }
+        }
+        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+            val postA = sys.posts.create { title = "a-parent" }.saveAndLoad().getOrThrow()
+            val postB = sys.posts.create { title = "b-parent" }.saveAndLoad().getOrThrow()
+            val visible = sys.tags.create { name = "b-visible-shared" }.saveAndLoad().getOrThrow()
+            val denied = sys.tags.create { name = "a-denied-shared" }.saveAndLoad().getOrThrow()
+            for (post in listOf(postA, postB)) {
+                sys.postTags.create { postId = post.id; tagId = denied.id }.save().getOrThrow()
+                sys.postTags.create { postId = post.id; tagId = visible.id }.save().getOrThrow()
+            }
+        }
+
+        val loaded = client.posts.query {
+            orderBy(Post.title.asc())
+            withTags { orderBy(Tag.name.asc()) }.filterVisible()
+        }.all().getOrThrow()
+
+        assertEquals(listOf(listOf("a-denied-shared", "b-visible-shared")), invocations)
+        assertEquals(
+            listOf(listOf("b-visible-shared"), listOf("b-visible-shared")),
+            loaded.map { post -> post.edges.tags.requireLoaded().map { it.name } },
+        )
     }
 
     @Test

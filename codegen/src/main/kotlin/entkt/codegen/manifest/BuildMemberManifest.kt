@@ -499,6 +499,13 @@ private fun addFixedBuilderMembers(
             // collide with these.
             "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
             "_createMutationView" to GeneratedMemberKind.PROPERTY,
+            "_managedByCreateMany" to GeneratedMemberKind.PROPERTY,
+            "_managedSaveFailure" to GeneratedMemberKind.PROPERTY,
+            "_managedSaveFailures" to GeneratedMemberKind.PROPERTY,
+            "beforeSaveHookValueForInternalUse" to GeneratedMemberKind.FUNCTION,
+            "beforeCreateHookValueForInternalUse" to GeneratedMemberKind.FUNCTION,
+            "configureForCreateManyForInternalUse" to GeneratedMemberKind.FUNCTION,
+            "prepareForInternalUse" to GeneratedMemberKind.FUNCTION,
             "executeSaveForInternalUse" to GeneratedMemberKind.FUNCTION,
         )
         for ((n, kind) in createOnly) {

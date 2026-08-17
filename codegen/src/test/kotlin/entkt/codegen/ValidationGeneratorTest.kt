@@ -29,6 +29,15 @@ class ValidationGeneratorTest {
         assert(output.contains("typealias UserDeleteValidationRule = ValidationRule<UserDeleteValidationContext>")) {
             "Should generate delete rule typealias\n$output"
         }
+        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<UserCreateValidationContext>")) {
+            "Should generate create batch rule typealias\n$output"
+        }
+        assert(output.contains("typealias UserUpdateBatchValidationRule = BatchValidationRule<UserUpdateValidationContext>")) {
+            "Should generate update batch rule typealias\n$output"
+        }
+        assert(output.contains("typealias UserDeleteBatchValidationRule = BatchValidationRule<UserDeleteValidationContext>")) {
+            "Should generate delete batch rule typealias\n$output"
+        }
     }
 
     @Test
@@ -113,14 +122,14 @@ class ValidationGeneratorTest {
         assert(output.contains("class UserValidationConfig")) {
             "Should generate ValidationConfig\n$output"
         }
-        assert(output.contains("val createRules: MutableList<UserCreateValidationRule>")) {
-            "Should have createRules\n$output"
+        assert(output.contains("val createRules: MutableList<UserCreateBatchValidationRule>")) {
+            "Should store create rules through the shared batch contract\n$output"
         }
-        assert(output.contains("val updateRules: MutableList<UserUpdateValidationRule>")) {
-            "Should have updateRules\n$output"
+        assert(output.contains("val updateRules: MutableList<UserUpdateBatchValidationRule>")) {
+            "Should store update rules through the shared batch contract\n$output"
         }
-        assert(output.contains("val deleteRules: MutableList<UserDeleteValidationRule>")) {
-            "Should have deleteRules\n$output"
+        assert(output.contains("val deleteRules: MutableList<UserDeleteBatchValidationRule>")) {
+            "Should store delete rules through the shared batch contract\n$output"
         }
         assert(output.contains("var updateDerivesFromCreate: Boolean = false")) {
             "Should have updateDerivesFromCreate flag\n$output"
@@ -155,6 +164,26 @@ class ValidationGeneratorTest {
         }
         assert(output.contains("fun delete(vararg rules: UserDeleteValidationRule)")) {
             "Should have delete method\n$output"
+        }
+        assert(output.contains("fun create(rule: UserCreateBatchValidationRule)")) {
+            "Should register a single batch create rule under the existing DSL name\n$output"
+        }
+        assert(output.contains("fun update(rule: UserUpdateBatchValidationRule)")) {
+            "Should register a single batch update rule under the existing DSL name\n$output"
+        }
+        assert(output.contains("fun delete(rule: UserDeleteBatchValidationRule)")) {
+            "Should register a single batch delete rule under the existing DSL name\n$output"
+        }
+        listOf("create", "update", "delete").forEach { operation ->
+            assert(output.contains("@JvmName(\"${operation}BatchRule\")")) {
+                "Batch $operation overload should have a distinct Java name\n$output"
+            }
+            assert(output.contains("config.${operation}Rules.addAll(rules)")) {
+                "Scalar $operation overload should append to the shared list\n$output"
+            }
+            assert(output.contains("config.${operation}Rules.add(rule)")) {
+                "Batch $operation overload should append to the shared list\n$output"
+            }
         }
         assert(output.contains("fun updateDerivesFromCreate()")) {
             "Should have updateDerivesFromCreate method\n$output"

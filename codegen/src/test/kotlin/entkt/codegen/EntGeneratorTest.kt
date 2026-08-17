@@ -113,6 +113,27 @@ class EntGeneratorTest {
     }
 
     @Test
+    fun `schema name colliding with a generated batch rule alias is rejected`() {
+        val post = ArtifactBaseSchema()
+        val aliasNamedEntity = ArtifactSuffixedSchema()
+        finalize(post, aliasNamedEntity)
+
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(
+                listOf(
+                    SchemaInput("Post", post),
+                    SchemaInput("PostLoadBatchPrivacyRule", aliasNamedEntity),
+                ),
+            )
+        }
+
+        assertContains(error.message!!, "Generated top-level type collisions")
+        assertContains(error.message!!, "'PostLoadBatchPrivacyRule'")
+        assertContains(error.message!!, "PostPrivacy.kt")
+        assertContains(error.message!!, "PostLoadBatchPrivacyRule.kt")
+    }
+
+    @Test
     fun `schemas deriving the same pluralized client property are rejected`() {
         val box = BoxSchema()
         val boxe = BoxeSchema()

@@ -104,6 +104,21 @@ class JsonPostgresDriverTest {
     }
 
     @Test
+    fun `lifecycle snapshot copy detaches nested mutable JSON values`() {
+        val driver = fresh()
+        val originalTags = mutableListOf("cat")
+        val original = Meta(nickname = "Mochi", tags = originalTags)
+
+        val copied = driver.copyJsonValue("json_items", "metadata", original)
+        @Suppress("UNCHECKED_CAST")
+        (copied.tags as MutableList<String>) += "senior"
+
+        assertEquals(listOf("cat"), originalTags)
+        assertEquals(listOf("cat", "senior"), copied.tags)
+        assertNull(driver.copyJsonValue<Meta?>("json_items", "metadata", null))
+    }
+
+    @Test
     fun `round-trips a generic List column through the element serializer`() {
         val driver = fresh()
         val rects = listOf(Meta("a", listOf("x")), Meta(null, emptyList()))

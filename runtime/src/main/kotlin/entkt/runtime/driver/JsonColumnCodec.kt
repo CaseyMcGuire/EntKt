@@ -34,6 +34,9 @@ object JsonMapperIds {
  *
  * SQL NULL never reaches a codec — the driver binds/returns null before
  * encode/decode is called — so [encode]/[decode] deal in non-null values.
+ * Every [decode] call must return a value that shares no mutable state with a
+ * prior decode result or codec-held cache. [copyValue] additionally makes that
+ * detachment requirement explicit for lifecycle-rule snapshots.
  */
 interface JsonColumnCodec {
     /** Stable codec id, matched against [JsonColumnMetadata.mapper] at register(). */
@@ -52,6 +55,15 @@ interface JsonColumnCodec {
 
     /** Decode JSON [text] to the column's Kotlin value. Failures must name `table.column` and the expected type. */
     fun decode(table: String, column: ColumnMetadata, text: String): Any
+
+    /**
+     * Return a detached copy of [value] using this codec's exact mapper
+     * configuration. The default encode/decode round trip is correct only when
+     * [decode] honors its fresh-result contract. A codec that interns or caches
+     * decoded objects must override this method and allocate a detached graph.
+     */
+    fun copyValue(table: String, column: ColumnMetadata, value: Any): Any =
+        decode(table, column, encode(table, column, value))
 }
 
 /**

@@ -1,5 +1,6 @@
 package entkt.codegen.mutation
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -12,6 +13,8 @@ import com.squareup.kotlinpoet.UNIT
 import entkt.schema.EntSchema
 
 private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationRule")
+private val BATCH_VALIDATION_RULE = ClassName("entkt.runtime.validation", "BatchValidationRule")
+private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 
 /**
@@ -20,7 +23,7 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
  * - `{Entity}ValidationConfig` — internal mutable config holding rule lists
  * - `{Entity}ValidationScope` — DSL scope for declaring rules per operation
  * - `{Entity}{Op}ValidationContext` — context classes for create/update/delete
- * - `{Entity}{Op}ValidationRule` — typealiases for each operation's rule type
+ * - `{Entity}{Op}ValidationRule` and `{Entity}{Op}BatchValidationRule` — typealiases for each operation's rule types
  *
  * Unlike privacy, validation has no LOAD operation and contexts do not
  * carry a [PrivacyContext] — validation is viewer-agnostic. The
@@ -61,6 +64,9 @@ internal class ValidationGenerator(
         val createRule = "${schemaName}CreateValidationRule"
         val updateRule = "${schemaName}UpdateValidationRule"
         val deleteRule = "${schemaName}DeleteValidationRule"
+        val createBatchRule = "${schemaName}CreateBatchValidationRule"
+        val updateBatchRule = "${schemaName}UpdateBatchValidationRule"
+        val deleteBatchRule = "${schemaName}DeleteBatchValidationRule"
 
         fileBuilder.addTypeAlias(
             TypeAliasSpec.builder(createRule, VALIDATION_RULE.parameterizedBy(createCtx)).build(),
@@ -70,6 +76,15 @@ internal class ValidationGenerator(
         )
         fileBuilder.addTypeAlias(
             TypeAliasSpec.builder(deleteRule, VALIDATION_RULE.parameterizedBy(deleteCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(createCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(updateBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(updateCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(deleteCtx)).build(),
         )
 
         // Operation context data classes
@@ -86,9 +101,9 @@ internal class ValidationGenerator(
         fileBuilder.addType(
             buildValidationConfig(
                 configClass,
-                ClassName(packageName, createRule),
-                ClassName(packageName, updateRule),
-                ClassName(packageName, deleteRule),
+                ClassName(packageName, createBatchRule),
+                ClassName(packageName, updateBatchRule),
+                ClassName(packageName, deleteBatchRule),
             ),
         )
 
@@ -100,6 +115,9 @@ internal class ValidationGenerator(
                 ClassName(packageName, createRule),
                 ClassName(packageName, updateRule),
                 ClassName(packageName, deleteRule),
+                ClassName(packageName, createBatchRule),
+                ClassName(packageName, updateBatchRule),
+                ClassName(packageName, deleteBatchRule),
             ),
         )
 
@@ -206,6 +224,9 @@ internal class ValidationGenerator(
         createRuleType: ClassName,
         updateRuleType: ClassName,
         deleteRuleType: ClassName,
+        createBatchRuleType: ClassName,
+        updateBatchRuleType: ClassName,
+        deleteBatchRuleType: ClassName,
     ): TypeSpec {
         return TypeSpec.classBuilder(scopeClass)
             .primaryConstructor(
@@ -227,9 +248,23 @@ internal class ValidationGenerator(
                     .build(),
             )
             .addFunction(
+                FunSpec.builder("create")
+                    .addAnnotation(jvmName("createBatchRule"))
+                    .addParameter("rule", createBatchRuleType)
+                    .addStatement("config.createRules.add(rule)")
+                    .build(),
+            )
+            .addFunction(
                 FunSpec.builder("update")
                     .addParameter("rules", updateRuleType, KModifier.VARARG)
                     .addStatement("config.updateRules.addAll(rules)")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("update")
+                    .addAnnotation(jvmName("updateBatchRule"))
+                    .addParameter("rule", updateBatchRuleType)
+                    .addStatement("config.updateRules.add(rule)")
                     .build(),
             )
             .addFunction(
@@ -239,10 +274,21 @@ internal class ValidationGenerator(
                     .build(),
             )
             .addFunction(
+                FunSpec.builder("delete")
+                    .addAnnotation(jvmName("deleteBatchRule"))
+                    .addParameter("rule", deleteBatchRuleType)
+                    .addStatement("config.deleteRules.add(rule)")
+                    .build(),
+            )
+            .addFunction(
                 FunSpec.builder("updateDerivesFromCreate")
                     .addStatement("config.updateDerivesFromCreate = true")
                     .build(),
             )
             .build()
     }
+
+    private fun jvmName(name: String): AnnotationSpec = AnnotationSpec.builder(JVM_NAME)
+        .addMember("%S", name)
+        .build()
 }

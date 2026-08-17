@@ -8,6 +8,7 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.NOTHING
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -33,6 +34,7 @@ import entkt.schema.ValidatorSpec
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
 
@@ -59,6 +61,9 @@ internal val MUTATION_VALIDATION_VIOLATION = ClassName("entkt.runtime.result", "
 internal val MUTATION_ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
 internal val MUTATION_CANCELLATION_EXCEPTION = ClassName("java.util.concurrent", "CancellationException")
 internal val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+internal val PREPARED_CREATE = ClassName("entkt.runtime.mutation", "PreparedCreate")
+internal val RUN_BATCH_HOOKS_FOR_INTERNAL_USE =
+    MemberName("entkt.runtime.hook", "runBatchHooksForInternalUse")
 
 // The read-side emitters reference `kotlin.Exception` (see
 // canonicalReadBody); the mutation side must use the SAME ClassName so
@@ -146,27 +151,35 @@ internal fun privacyDeniedFailure(
  * mutation pipeline. Opens with `} catch` so the caller supplies the
  * `... = try {` head and the driver-call statement. Rethrows
  * `CancellationException`, then routes the exception through the
- * generated `_classifyDriverFailure` member with [fallbackStateName]
+ * generated classifier member named by [classifierName] with [fallbackStateName]
  * as the phase-derived fallback: `NotPersisted` for pre-write reads
  * (owner load, delete reload), `PersistenceUnknown` for owner write
  * statements whose effect is unknown (never optimistic NotPersisted),
  * and `TransactionPending` for junction writes, which are
  * preflight-guaranteed to run inside a caller-owned transaction.
  */
-internal fun driverCallFailureTail(fallbackStateName: String): CodeBlock =
+internal fun driverCallFailureTail(
+    fallbackStateName: String,
+    classifierName: String = "_classifyDriverFailure",
+): CodeBlock =
     CodeBlock.builder()
         .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
         .add("  throw e\n")
         .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
-        .add("  val classified = _classifyDriverFailure(e, %T.%L)\n", MUTATION_WRITE_STATE, fallbackStateName)
+        .add(
+            "  val classified = %N(e, %T.%L)\n",
+            classifierName,
+            MUTATION_WRITE_STATE,
+            fallbackStateName,
+        )
         .add("  client.recordTransactionMutationFailure(classified)\n")
         .add("  return %T.failedForInternalUse(classified)\n", MUTATION_RESULT)
         .add("}\n")
         .build()
 
 /**
- * Build the private `_classifyDriverFailure(e, fallback)` member: the
- * driver-exception classification point for one entity + operation.
+ * Build the private driver-classification member named by [helperName]:
+ * the driver-exception classification point for one entity + operation.
  * Consults [entkt.runtime.driver.Driver.classifyMutationException]; a
  * classification carrying a sealed [ENT_MUTATION_EXCEPTION] (a
  * recognized constraint violation or expected conflict, both hardcoded
@@ -176,8 +189,12 @@ internal fun driverCallFailureTail(fallbackStateName: String): CodeBlock =
  * the returned exception's own writeState IS the classification (no
  * parallel state field).
  */
-internal fun buildClassifyDriverFailureHelper(schemaName: String, operationName: String): FunSpec =
-    FunSpec.builder("_classifyDriverFailure")
+internal fun buildClassifyDriverFailureHelper(
+    schemaName: String,
+    operationName: String,
+    helperName: String = "_classifyDriverFailure",
+): FunSpec =
+    FunSpec.builder(helperName)
         .addModifiers(KModifier.PRIVATE)
         .addParameter("e", KOTLIN_EXCEPTION)
         .addParameter("fallback", MUTATION_WRITE_STATE)
@@ -293,6 +310,30 @@ internal class CreateGenerator(
                     .initializer("afterCreateHooks")
                     .build()
             )
+            .addProperty(
+                PropertySpec.builder("_managedByCreateMany", BOOLEAN)
+                    .addModifiers(KModifier.PRIVATE)
+                    .mutable(true)
+                    .initializer("false")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("_managedSaveFailure", ENT_MUTATION_EXCEPTION.copy(nullable = true))
+                    .addModifiers(KModifier.PRIVATE)
+                    .mutable(true)
+                    .initializer("null")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder(
+                    "_managedSaveFailures",
+                    MUTABLE_LIST.parameterizedBy(ENT_MUTATION_EXCEPTION).copy(nullable = true),
+                )
+                    .addModifiers(KModifier.PRIVATE)
+                    .mutable(true)
+                    .initializer("null")
+                    .build(),
+            )
             .also { builder ->
                 if (idStrategy == "EXPLICIT") {
                     builder.addProperty(
@@ -355,7 +396,11 @@ internal class CreateGenerator(
                     edgeFks,
                 ),
             )
-            .addFunction(buildExecuteSaveFunction(schemaName, schema, allFields, edgeFks))
+            .addFunction(buildBeforeSaveHookValueForInternalUseFunction(mutationClass))
+            .addFunction(buildBeforeCreateHookValueForInternalUseFunction(createHookCtxClass))
+            .addFunction(buildConfigureForCreateManyForInternalUseFunction(schemaName))
+            .addFunction(buildPrepareForInternalUseFunction(schemaName, schema, allFields, edgeFks))
+            .addFunction(buildExecuteSaveFunction(schemaName))
             .addFunction(buildSaveFunction(schemaName))
             .addFunction(buildSaveAndLoadFunction(schemaName))
             .addFunction(buildValidationFailedHelper(schemaName, "CREATE"))
@@ -457,6 +502,104 @@ internal class CreateGenerator(
             .addModifiers(KModifier.PRIVATE)
             .initializer("%L", adapter.build())
             .build()
+    }
+
+    /** Hook-facing mutation value used by both scalar and batch execution. */
+    private fun buildBeforeSaveHookValueForInternalUseFunction(mutationClass: ClassName): FunSpec =
+        FunSpec.builder("beforeSaveHookValueForInternalUse")
+            .addAnnotation(ENTKT_INTERNAL)
+            .addModifiers(KModifier.INTERNAL)
+            .returns(mutationClass)
+            .addStatement("return _beforeSaveView")
+            .build()
+
+    /** Hook context used by both scalar and batch execution. */
+    private fun buildBeforeCreateHookValueForInternalUseFunction(createHookCtxClass: ClassName): FunSpec =
+        FunSpec.builder("beforeCreateHookValueForInternalUse")
+            .addAnnotation(ENTKT_INTERNAL)
+            .addModifiers(KModifier.INTERNAL)
+            .returns(createHookCtxClass)
+            .addStatement(
+                "return %T(client.hookClientScopeForInternalUse, _createMutationView)",
+                createHookCtxClass,
+            )
+            .build()
+
+    /**
+     * Permanently mark a builder as owned by createMany before applying its
+     * configuration block. The marker also prevents a later block or escaped
+     * reference from persisting this builder independently. A same-builder
+     * save attempt is returned through MutationResult even when the block
+     * ignored or projected it. Every builder in the logical batch shares one
+     * encounter-ordered failure list so cross-block attempts retain the same
+     * primary failure as the transaction coordinator.
+     */
+    private fun buildConfigureForCreateManyForInternalUseFunction(schemaName: String): FunSpec {
+        val createClass = ClassName(packageName, "${schemaName}Create")
+        val blockType = LambdaTypeName.get(receiver = createClass, returnType = UNIT)
+        return FunSpec.builder("configureForCreateManyForInternalUse")
+            .addAnnotation(ENTKT_INTERNAL)
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("block", blockType)
+            .addParameter(
+                "managedSaveFailures",
+                MUTABLE_LIST.parameterizedBy(ENT_MUTATION_EXCEPTION),
+            )
+            .returns(MUTATION_RESULT.parameterizedBy(createClass))
+            .addStatement("check(!_managedByCreateMany) { %S }", "Builder is already managed by createMany")
+            .addStatement("_managedByCreateMany = true")
+            .addStatement("_managedSaveFailures = managedSaveFailures")
+            .beginControlFlow("try")
+            .addStatement("apply(block)")
+            .nextControlFlow("catch (e: %T)", MUTATION_CANCELLATION_EXCEPTION)
+            .addStatement("throw e")
+            .nextControlFlow("catch (e: %T)", KOTLIN_EXCEPTION)
+            .addStatement("val failure = _managedSaveFailure ?: throw e")
+            .beginControlFlow("if (e !== failure && failure.suppressed.none { it === e })")
+            .addStatement("failure.addSuppressed(e)")
+            .endControlFlow()
+            .endControlFlow()
+            .addStatement("val failure = _managedSaveFailure")
+            .beginControlFlow("if (failure != null)")
+            .addStatement("client.recordTransactionMutationFailure(failure)")
+            .addStatement("return %T.failedForInternalUse(failure)", MUTATION_RESULT)
+            .endControlFlow()
+            .addStatement("return %T.Success(this)", MUTATION_RESULT)
+            .build()
+    }
+
+    /**
+     * Resolve defaults, required values, inline field validators, the
+     * driver row map, and the write candidate exactly once. Hooks,
+     * privacy, entity-level validation, and I/O deliberately live in
+     * the caller so createMany can evaluate each lifecycle phase over
+     * the whole input batch.
+     */
+    private fun buildPrepareForInternalUseFunction(
+        schemaName: String,
+        schema: EntSchema,
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): FunSpec {
+        val candidateType = ClassName(packageName, "${schemaName}WriteCandidate")
+        val preparedType = PREPARED_CREATE.parameterizedBy(candidateType)
+        val builder = FunSpec.builder("prepareForInternalUse")
+            .addAnnotation(ENTKT_INTERNAL)
+            .addModifiers(KModifier.INTERNAL)
+            .returns(MUTATION_RESULT.parameterizedBy(preparedType))
+
+        emitCreatePreparation(builder, schemaName, schema, allFields, edgeFks)
+        val candidateArgs = buildCandidateArgs(allFields, edgeFks)
+        builder.addStatement(
+            "val candidate = %T(${candidateArgs.joinToString(", ")})",
+            candidateType,
+        )
+        builder.addStatement(
+            "return %T.Success(%T(values, candidate))",
+            MUTATION_RESULT,
+            PREPARED_CREATE,
+        )
+        return builder.build()
     }
 
     /**
@@ -614,8 +757,9 @@ internal class CreateGenerator(
      * `operation = LOAD` and the current post-write state. `save()`
      * skips the check because it discloses no entity.
      *
-     * Internal (not private) so the repo's `createMany` can drive the
-     * identical per-row pipeline without the disclosure step.
+     * The repo's phase-major `createMany` does not call this scalar
+     * terminal. It shares the guarded hook-value and preparation seams
+     * above, then evaluates each lifecycle phase across the full batch.
      *
      * The driver minting strategy decides how the id is produced:
      * - `CLIENT_UUID`: we mint a `UUID` here so the caller can see it
@@ -630,9 +774,6 @@ internal class CreateGenerator(
      */
     private fun buildExecuteSaveFunction(
         schemaName: String,
-        schema: EntSchema,
-        allFields: List<Field>,
-        edgeFks: List<EdgeFk>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
@@ -648,6 +789,28 @@ internal class CreateGenerator(
 
         builder.addStatement("var writeState = %T.NotPersisted", MUTATION_WRITE_STATE)
         builder.beginControlFlow("try")
+        builder.beginControlFlow("if (_managedByCreateMany)")
+        builder.addStatement("val existing = _managedSaveFailure")
+        builder.beginControlFlow("val exception = if (existing != null)")
+        builder.addStatement("existing")
+        builder.nextControlFlow("else")
+        builder.addStatement(
+            "val created = %T(%T.NotPersisted, %T(%S))",
+            ENT_UNEXPECTED_MUTATION_EXCEPTION,
+            MUTATION_WRITE_STATE,
+            IllegalStateException::class,
+            "A builder managed by createMany cannot be persisted independently; let createMany execute the batch",
+        )
+        builder.addStatement("_managedSaveFailure = created")
+        builder.addStatement(
+            "checkNotNull(_managedSaveFailures) { %S }.add(created)",
+            "createMany-managed builder is missing its batch failure tracker",
+        )
+        builder.addStatement("created")
+        builder.endControlFlow()
+        builder.addStatement("client.recordTransactionMutationFailure(exception)")
+        builder.addStatement("return %T.failedForInternalUse(exception)", MUTATION_RESULT)
+        builder.endControlFlow()
         // Posture snapshot BEFORE persistence but INSIDE the terminal
         // boundary: a posture read that failed after a successful
         // write would otherwise let the boundary misreport a committed
@@ -659,8 +822,35 @@ internal class CreateGenerator(
             MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
         )
 
-        emitCreateBody(builder, schemaName, schema, allFields, edgeFks)
-        emitCreatePrivacy(builder, schemaName, allFields, edgeFks)
+        // ---- Transaction-requirement preflight (transaction locking).
+        // This stays ahead of every observable phase, including hooks
+        // and default evaluation. ----
+        builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName create")
+
+        // ---- Lifecycle hooks. Both scalar and createMany execution
+        // obtain their hook values through the same guarded accessors,
+        // so the restricted adapter contract cannot drift. ----
+        builder.addStatement(
+            "%M(listOf(beforeSaveHookValueForInternalUse()), beforeSaveHooks)",
+            RUN_BATCH_HOOKS_FOR_INTERNAL_USE,
+        )
+        builder.addStatement(
+            "%M(listOf(beforeCreateHookValueForInternalUse()), beforeCreateHooks)",
+            RUN_BATCH_HOOKS_FOR_INTERNAL_USE,
+        )
+
+        // ---- Normalize once. `prepareForInternalUse` owns defaults,
+        // required / inline field validation, the row map, and the
+        // candidate. A typed validation failure is already recorded by
+        // `_validationFailed`; propagate it unchanged. ----
+        builder.beginControlFlow("val prepared = when (val result = prepareForInternalUse())")
+        builder.addStatement("is %T.Success -> result.value", MUTATION_RESULT)
+        builder.addStatement("is %T.Failed -> return result", MUTATION_RESULT)
+        builder.endControlFlow()
+        builder.addStatement("val values = prepared.values")
+        builder.addStatement("val candidate = prepared.candidate")
+
+        emitCreatePrivacy(builder, schemaName)
         emitCreateValidation(builder, schemaName)
 
         // ---- Persist. The insert is the only write statement on the
@@ -678,7 +868,7 @@ internal class CreateGenerator(
             "writeState = postWriteState",
         )
         builder.addStatement("val entity = %T.fromRow(row)", entityClass)
-        builder.addStatement("for (hook in afterCreateHooks) hook(entity)")
+        builder.addStatement("%M(listOf(entity), afterCreateHooks)", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
 
         // ---- Returned-entity LOAD disclosure (saveAndLoad only). The
         // write has already succeeded; a denial reports the post-write
@@ -731,8 +921,12 @@ internal class CreateGenerator(
                     "records what EntKt knows about the database effect; `Failed` does\n" +
                     "NOT imply the write rolled back. `save()` does not apply\n" +
                     "returned-entity LOAD privacy because it discloses no entity — use\n" +
-                    "[saveAndLoad] to materialize the created row. There is deliberately\n" +
-                    "no `orNull()` projection (null cannot distinguish rejection,\n" +
+                    "[saveAndLoad] to materialize the created row. A builder owned by\n" +
+                    "`createMany` cannot be persisted independently; such\n" +
+                    "an attempt returns `Failed` before lifecycle work or I/O. During\n" +
+                    "batch configuration it also fails the enclosing batch even when\n" +
+                    "its result is ignored. There is\n" +
+                    "deliberately no `orNull()` projection (null cannot distinguish rejection,\n" +
                     "committed failure, and unknown write state); project with\n" +
                     "`getOrThrow()` or match on the result.",
             )
@@ -777,12 +971,12 @@ internal class CreateGenerator(
     }
 
     /**
-     * Emit the common body shared by the create pipeline: lifecycle
-     * hooks, field extraction with defaults and validation, FK
-     * validation, and the `values` map. After this method, the caller
-     * appends privacy, validation, and the driver call.
+     * Emit the pure preparation body shared by scalar and batch create:
+     * field extraction with defaults, required / inline field
+     * validation, FK resolution, and the driver `values` map. Hooks,
+     * entity rules, privacy, and I/O are deliberately absent.
      */
-    private fun emitCreateBody(
+    private fun emitCreatePreparation(
         builder: FunSpec.Builder,
         schemaName: String,
         schema: EntSchema,
@@ -790,31 +984,7 @@ internal class CreateGenerator(
         edgeFks: List<EdgeFk>,
     ) {
         val idStrategy = idStrategyName(schema)
-
-        // ---- Transaction-requirement preflight (transaction locking).
-        // Throws TransactionRequiredException before any observable work
-        // (hooks, defaults, validation, driver writes) when the
-        // configured TransactionRequirement isn't satisfied; the throw
-        // is captured by the terminal boundary as
-        // EntUnexpectedMutationException(NotPersisted). ----
-        builder.addStatement("client.checkTransactionRequirement(%S)", "$schemaName create")
-
-        // ---- Lifecycle hooks (before validation so hooks can set fields). ----
-        // create-hook adapter: route through the private `_beforeSaveView` and
-        // `_createMutationView` adapters so a misbehaving hook
-        // that tries to cast back to `${Schema}Create` (or to a
-        // wider sibling view) fails at runtime — matching the
-        // runtime-enforced contract the update path uses. A
-        // hook-thrown exception is FOREIGN and becomes the cause of
-        // EntUnexpectedMutationException(NotPersisted) at the boundary
-        // — even when the hook constructed an EntKt exception type.
-        builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
-        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
-        builder.addStatement(
-            "val createCtx = %T(client.hookClientScopeForInternalUse, _createMutationView)",
-            createHookCtxClass,
-        )
-        builder.addStatement("for (hook in beforeCreateHooks) hook(createCtx)")
+        val preparedValueNames = preparedCreateValueNames(allFields, edgeFks)
 
         // ---- Validate and bind each property to a local. ----
         // Required fields produce a typed EntValidationException
@@ -906,6 +1076,30 @@ internal class CreateGenerator(
             }
         }
 
+        // Detach mutable caller-owned values once at the preparation boundary.
+        // Both the driver row and the base WriteCandidate use this same stable
+        // value; per-rule snapshots are copied again by the repo evaluator.
+        // A callback that retained the caller's original array / JSON graph
+        // therefore cannot change a later rule's input or the pending write.
+        val entityClass = ClassName(packageName, schemaName)
+        for (field in allFields) {
+            if (field.type != FieldType.BYTES && field.type != FieldType.JSON) continue
+            val prop = toCamelCase(field.name)
+            val prepared = preparedValueNames.getValue(field)
+            if (field.type == FieldType.BYTES) {
+                val nullableAccess = if (field.nullable) "?" else ""
+                builder.addStatement("val %L = %L$nullableAccess.copyOf()", prepared, prop)
+            } else {
+                builder.addStatement(
+                    "val %L = driver.copyJsonValue(%T.TABLE, %S, %L)",
+                    prepared,
+                    entityClass,
+                    field.columnName,
+                    prop,
+                )
+            }
+        }
+
         // ---- Build the row map. ----
         val rowBuilder = CodeBlock.builder()
             .add("val values: Map<String, Any?> = mapOf(\n")
@@ -918,6 +1112,7 @@ internal class CreateGenerator(
 
         for (field in allFields) {
             val prop = toCamelCase(field.name)
+            val preparedProp = preparedValueNames.getValue(field)
             val col = field.columnName
             if (field.type == FieldType.ENUM) {
                 val nullable = field.nullable
@@ -937,7 +1132,7 @@ internal class CreateGenerator(
                     col, prop, dims, "${field.name} expects vector($dims)",
                 )
             } else {
-                rowBuilder.add("  %S to %L,\n", col, prop)
+                rowBuilder.add("  %S to %L,\n", col, preparedProp)
             }
         }
         for (fk in edgeFks) {
@@ -993,13 +1188,36 @@ internal class CreateGenerator(
 
     private fun buildCandidateArgs(allFields: List<Field>, edgeFks: List<EdgeFk>): List<String> {
         val args = mutableListOf<String>()
+        val preparedValueNames = preparedCreateValueNames(allFields, edgeFks)
         for (field in allFields) {
-            args.add("${toCamelCase(field.name)} = ${toCamelCase(field.name)}")
+            args.add("${toCamelCase(field.name)} = ${preparedValueNames.getValue(field)}")
         }
         for (fk in edgeFks) {
             args.add("${fk.propertyName} = ${fk.propertyName}")
         }
         return args
+    }
+
+    private fun preparedCreateValueNames(
+        allFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): Map<Field, String> {
+        val usedNames = buildSet {
+            allFields.forEach { add(toCamelCase(it.name)) }
+            edgeFks.forEach { add(it.propertyName) }
+        }
+            .toMutableSet()
+
+        return allFields.associateWith { field ->
+            val property = toCamelCase(field.name)
+            if (field.type != FieldType.BYTES && field.type != FieldType.JSON) {
+                property
+            } else {
+                var generated = "_entktPrepared${property.replaceFirstChar { it.uppercaseChar() }}"
+                while (!usedNames.add(generated)) generated += "_"
+                generated
+            }
+        }
     }
 
     /**
@@ -1021,9 +1239,8 @@ internal class CreateGenerator(
     }
 
     /**
-     * Emit CREATE privacy enforcement: build a WriteCandidate from the
-     * resolved field locals and call the repo's decision-returning
-     * createDenialReasonOrNull. A returned denial reason (a rule's
+     * Emit CREATE privacy enforcement for the already-prepared write
+     * candidate. A returned denial reason (a rule's
      * Deny or the fail-closed end of the rule list) becomes
      * EntMutationPrivacyDeniedException(NotPersisted, CREATE) with a
      * null entity key — pre-insert there is no persisted key to
@@ -1033,17 +1250,9 @@ internal class CreateGenerator(
     private fun emitCreatePrivacy(
         builder: FunSpec.Builder,
         schemaName: String,
-        allFields: List<Field>,
-        edgeFks: List<EdgeFk>,
     ) {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
-        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         builder.addStatement("val privacy = client.currentPrivacyContext()")
-        val candidateArgs = buildCandidateArgs(allFields, edgeFks)
-        builder.addStatement(
-            "val candidate = %T(${candidateArgs.joinToString(", ")})",
-            candidateClass,
-        )
         builder.addStatement(
             "val denialReason = client.%L.createDenialReasonOrNull(privacy, candidate)",
             repoPropName,
@@ -1064,7 +1273,7 @@ internal class CreateGenerator(
 
 internal fun hookListType(paramType: ClassName) =
     List::class.asClassName().parameterizedBy(
-        LambdaTypeName.get(parameters = arrayOf(paramType), returnType = UNIT),
+        ClassName("entkt.runtime.hook", "BatchHook").parameterizedBy(paramType),
     )
 
 /**

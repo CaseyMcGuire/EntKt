@@ -1,7 +1,9 @@
 # Privacy Limitations
 
-Privacy V1 intentionally keeps enforcement synchronous and row-by-row.
-The following limitations are part of the current contract.
+Privacy enforcement is synchronous and callback-driven. Explicit batch rules
+can combine application reads, but EntKt does not rewrite arbitrary scalar
+callbacks or infer a set-based query. The following limitations are part of the
+current contract.
 
 ## Aggregate Reads
 
@@ -70,11 +72,12 @@ decision must not use hidden related data, load the related row explicitly
 
 ## Bulk Operations
 
-Generated `createMany()` and `deleteMany()` run hooks and privacy rules for
-each item, inside one shared transaction — a denial anywhere aborts the
-whole operation with no committed subset.
-
-Because of that per-item delegation, the privacy context provider may be
-invoked once per item rather than once for the whole bulk call. Providers
-should return a stable viewer for the duration of a request or logical
-operation.
+Generated `createMany()` and `deleteMany()` evaluate privacy rule-major over
+the complete candidate list and capture one privacy context for the logical
+operation. A write-side CREATE or DELETE denial aborts the target write before
+persistence; it is not treated as filtering. Returned LOAD privacy for
+`createMany()` runs after insertion, so its failure carries the actual write
+state (`Committed` for a confirmed EntKt-owned commit or `TransactionPending`
+inside a caller transaction). Scalar rules still run once per item through
+their batch adapter, so a scalar rule that queries per item retains N+1
+behavior. Register an explicit batch rule when one set-based query is required.

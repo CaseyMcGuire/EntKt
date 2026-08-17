@@ -17,6 +17,28 @@ abstract class EntException(
 ) : RuntimeException(message, cause)
 
 /**
+ * A batch privacy or validation rule violated its positional result contract.
+ * [lifecycle] is the framework-supplied lifecycle description used for
+ * diagnostics; [expectedSize] is the number of contexts supplied to the rule,
+ * and [actualSize] is the number of decisions it returned. A non-null
+ * [invalidDecisionIndex] means the cardinality was correct but that position
+ * contained no valid decision, which can happen through Java or unchecked JVM
+ * interop despite Kotlin's non-null element type.
+ */
+class EntBatchRuleContractException(
+    val lifecycle: String,
+    val expectedSize: Int,
+    val actualSize: Int,
+    val invalidDecisionIndex: Int? = null,
+) : EntException(
+    if (invalidDecisionIndex == null) {
+        "Batch rule contract violation for $lifecycle: expected $expectedSize decisions but received $actualSize"
+    } else {
+        "Batch rule contract violation for $lifecycle: invalid decision at index $invalidDecisionIndex"
+    },
+)
+
+/**
  * Marker for framework-classified privacy denials. Implemented by both
  * read and mutation denial exceptions so application boundaries can
  * apply one non-disclosure policy without erasing their distinct

@@ -19,6 +19,12 @@ repositories {
     mavenCentral()
 }
 
+kotlin {
+    compilerOptions {
+        jvmDefault = org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode.ENABLE
+    }
+}
+
 dependencies {
     // Runtime needs Predicate / OrderField from the schema module's
     // entkt.query package. Eventually we may split entkt.query out into

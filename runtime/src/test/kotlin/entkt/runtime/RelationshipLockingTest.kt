@@ -124,6 +124,7 @@ class RelationshipLockingTest {
     private class DefaultsOnlyDriver : Driver {
         override fun register(schema: EntitySchema) {}
         override fun registerAll(schemas: List<EntitySchema>) {}
+        override fun registeredIdColumn(table: String): String = "id"
         override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> = emptyMap()
         override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? = null
         override fun byId(table: String, id: Any): Map<String, Any?>? = null

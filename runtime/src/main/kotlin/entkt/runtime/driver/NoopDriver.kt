@@ -34,6 +34,9 @@ object NoopDriver : Driver {
         // there's no ordering to honor and nothing to remember.
     }
 
+    override fun registeredIdColumn(table: String): String =
+        error("NoopDriver has no registered schema metadata")
+
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
         error("NoopDriver cannot insert — was a terminal op called inside EdgeRef.has { }?")
 

@@ -81,6 +81,12 @@ class PostgresDriver(
      */
     private val registrationLock = Any()
 
+    override fun registeredIdColumn(table: String): String =
+        schemas[table]?.idColumn ?: error("Unregistered table: $table")
+
+    override fun <T> copyJsonValue(table: String, column: String, value: T): T =
+        ops.copyJsonValue(table, column, value)
+
     /**
      * Borrow a pooled connection, run [block], and release it without
      * letting the release change what the caller observes.
@@ -889,6 +895,13 @@ class PostgresDriver(
 
     override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
         withConnection { ops.deleteMany(it, table, predicates) }
+
+    override fun deleteManyByIds(
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any> = withConnection { ops.deleteManyByIds(it, table, idColumn, ids, predicates) }
 
     // ---------- Transactions ----------
 

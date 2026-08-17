@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.SchemaInput
@@ -12,6 +13,7 @@ import entkt.codegen.pluralize
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
+private val LIST = ClassName("kotlin.collections", "List")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 
@@ -23,7 +25,7 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
  * host — `currentPrivacyContext()`, the
  * `@EntktInternal` interceptor registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
- * `evaluateLoadPrivacy(...)`, the only repo members query terminals
+ * `loadDenials(...)`, the only repo members query terminals
  * call). Both `EntClient` and `EntReadClientImpl` (the shared delegate
  * behind the posture read clients) implement it, so generated query and
  * index-stage constructors can accept the contract instead of the full
@@ -74,16 +76,24 @@ internal class ReadRuntimeGenerator(
                 "Narrow per-entity read surface of `%LRepo`: the only repo members\n" +
                     "generated query terminals call. `%LReadRepo` implements it by\n" +
                     "delegating to the host repo, so LOAD-privacy behavior is identical\n" +
-                    "through either client. `loadDenialOrNull` returns the keyed denial\n" +
-                    "for a rule-returned Deny (or the fail-closed default) and null when\n" +
-                    "the entity is visible; a rule-thrown exception escapes so the\n" +
-                    "terminal's capture boundary stores it as an operational failure.",
+                    "through either client. `loadDenials` returns one positionally aligned\n" +
+                    "keyed denial (or null) per entity; `loadDenialOrNull` is its singleton\n" +
+                    "projection. A rule-thrown exception escapes so the terminal's capture\n" +
+                    "boundary stores it as an operational failure.",
                 input.name, input.name,
             )
             .addFunction(
                 FunSpec.builder("hasLoadPrivacy")
                     .addModifiers(KModifier.ABSTRACT)
                     .returns(Boolean::class)
+                    .build()
+            )
+            .addFunction(
+                FunSpec.builder("loadDenials")
+                    .addModifiers(KModifier.ABSTRACT)
+                    .addParameter("privacy", PRIVACY_CONTEXT)
+                    .addParameter("entities", LIST.parameterizedBy(entityClass))
+                    .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
                     .build()
             )
             .addFunction(

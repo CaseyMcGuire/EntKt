@@ -11,14 +11,17 @@ package entkt.runtime.mutation
  * - [Optional]: no requirement. Saves run in whatever client scope
  *   they were called from. This is the default and matches behavior
  *   prior to transaction locking.
- * - [RequiredForMultiWrite]: saves that issue more than one driver
- *   write must run on a transaction-scoped client; single-row
- *   create/update/delete saves stay transaction-optional. The
- *   generated aggregate write APIs that classify as multi-write
- *   today are `createMany(...)` (when called with 2+ blocks) and
+ * - [RequiredForMultiWrite]: generated operations classified as a
+ *   multi-row or multi-write shape must run on a transaction-scoped
+ *   client; single-row create/update/delete saves stay
+ *   transaction-optional. This classification describes the logical
+ *   operation, not the number of driver method calls — a driver may
+ *   execute one set-based statement or chunk it internally. The
+ *   aggregate APIs classified this way today are `createMany(...)`
+ *   (when called with 2+ blocks) and
  *   `deleteMany(...)` (regardless of how many rows match — classified
  *   by operation shape, not result size, so an empty-match call
- *   still rejects). Future link-table M2M write helpers from link-table M2M helpers
+     *   still rejects). Future link-table M2M write helpers
  *   (`tags.add(...)`, `tags.remove(...)`, `tags.set(...)`) will join
  *   the same classification once they land.
  * - [RequiredForAllWrites]: every generated write — create, update,

@@ -98,9 +98,41 @@ class JsonCodegenTest {
     }
 
     @Test
-    fun `create write-map passes the typed JSON value straight through`() {
+    fun `create preparation detaches typed JSON before the write map and candidate`() {
         val create = gen().getValue("ArticleCreate")
-        assertTrue(""""metadata" to metadata,""" in create, create)
+        assertTrue(
+            """val _entktPreparedMetadata = driver.copyJsonValue(Article.TABLE, "metadata", metadata)""" in create,
+            create,
+        )
+        assertTrue(""""metadata" to _entktPreparedMetadata,""" in create, create)
+        assertTrue("metadata = _entktPreparedMetadata" in create, create)
+    }
+
+    @Test
+    fun `lifecycle value and patch snapshots copy JSON through the driver`() {
+        val repo = gen().getValue("ArticleRepo")
+        assertTrue(
+            """metadata = driver.copyJsonValue(Article.TABLE, "metadata", item.metadata)""" in repo,
+            repo,
+        )
+        assertTrue(
+            """FieldPatch.Set(driver.copyJsonValue(Article.TABLE, "metadata", entry.value))""" in repo,
+            repo,
+        )
+        assertFalse("copyJsonValue(Article.TABLE, \"metadata\", item.metadata) as Meta?" in repo, repo)
+
+        val update = gen().getValue("ArticleUpdate")
+        assertTrue("val snapshot = ArticleUpdatePatch(" in update, update)
+        assertTrue("metadata = when (val entry = snapshot.metadata)" in update, update)
+        assertTrue(
+            """driver.copyJsonValue(Article.TABLE, "metadata",""" in update,
+            update,
+        )
+        assertTrue("val beforeSnapshot = entity.copy(" in update, update)
+        assertTrue(
+            """metadata = driver.copyJsonValue(Article.TABLE, "metadata", entity.metadata)""" in update,
+            update,
+        )
     }
 
     // ── Generic JSON types ─────────────────────────────────────────
@@ -150,10 +182,26 @@ class JsonCodegenTest {
     }
 
     @Test
-    fun `generic create write-map passes the typed value straight through`() {
+    fun `generic create preparation detaches the typed value without a cast`() {
         val create = genGeneric().getValue("BoardCreate")
-        assertTrue(""""rects" to rects,""" in create, create)
+        assertTrue(
+            """val _entktPreparedRects = driver.copyJsonValue(Board.TABLE, "rects", rects)""" in create,
+            create,
+        )
+        assertTrue(""""rects" to _entktPreparedRects,""" in create, create)
+        assertTrue("rects = _entktPreparedRects" in create, create)
+        assertFalse("copyJsonValue(Board.TABLE, \"rects\", rects) as List<Meta>" in create, create)
         assertTrue("rects: List<Meta>" in create, create)
+    }
+
+    @Test
+    fun `generic JSON lifecycle snapshots preserve their declared type`() {
+        val repo = genGeneric().getValue("BoardRepo")
+        assertTrue(
+            """rects = driver.copyJsonValue(Board.TABLE, "rects", item.rects)""" in repo,
+            repo,
+        )
+        assertFalse("copyJsonValue(Board.TABLE, \"rects\", item.rects) as List<Meta>" in repo, repo)
     }
 
     @Test

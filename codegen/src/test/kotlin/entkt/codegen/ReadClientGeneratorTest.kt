@@ -35,6 +35,9 @@ class ReadClientGeneratorTest {
     private fun readClientOutput(): String =
         generateFiles().first { it.name == "EntReadClient" }.toString()
 
+    private fun readRuntimeOutput(): String =
+        generateFiles().first { it.name == "EntReadRuntime" }.toString()
+
     /**
      * The findById + explainFindById span of a repo class: from the
      * terminal's declaration through the end of the explain mirror's
@@ -122,6 +125,34 @@ class ReadClientGeneratorTest {
         val carRepos = Regex("public class \\w*CarReadRepo").findAll(output).count()
         assert(carRepos == 1 && !output.contains("CarValidationReadRepo") && !output.contains("CarPrivacyReadRepo")) {
             "Exactly one shared CarReadRepo should exist\n$output"
+        }
+    }
+
+    @Test
+    fun `read surface exposes positional LOAD batches and read repo delegates them to its host`() {
+        val runtimeOutput = readRuntimeOutput().replace("\\s+".toRegex(), " ")
+        val clientOutput = readClientOutput().replace("\\s+".toRegex(), " ")
+
+        assert(
+            runtimeOutput.contains(
+                "public interface CarReadSurface { public fun hasLoadPrivacy(): Boolean public fun loadDenials(privacy: PrivacyContext, entities: List<Car>): List<PrivacyDenial?> public fun loadDenialOrNull(",
+            ),
+        ) {
+            "CarReadSurface should expose the plural positional LOAD contract before its singleton projection\n$runtimeOutput"
+        }
+        assert(
+            clientOutput.contains(
+                "override fun loadDenials(privacy: PrivacyContext, entities: List<Car>): List<PrivacyDenial?> = host.loadDenials(privacy, entities)",
+            ),
+        ) {
+            "CarReadRepo should delegate the complete LOAD batch to its host surface\n$clientOutput"
+        }
+        assert(
+            clientOutput.contains(
+                "override fun loadDenialOrNull(privacy: PrivacyContext, entity: Car): PrivacyDenial? = host.loadDenialOrNull(privacy, entity)",
+            ),
+        ) {
+            "CarReadRepo should keep singleton LOAD delegation behavior aligned with its host\n$clientOutput"
         }
     }
 

@@ -1,6 +1,8 @@
 package entkt.codegen
 
 import entkt.codegen.mutation.CreateGenerator
+import entkt.codegen.mutation.buildClassifyDriverFailureHelper
+import entkt.codegen.mutation.driverCallFailureTail
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
@@ -128,13 +130,13 @@ class CreateGeneratorTest {
         assert(output.contains("client: EntClient")) {
             "Should take client\n$output"
         }
-        assert(output.contains("beforeSaveHooks: List<(CarMutation) -> Unit>")) {
+        assert(output.contains("beforeSaveHooks: List<BatchHook<CarMutation>>")) {
             "Should take beforeSaveHooks\n$output"
         }
-        assert(output.contains("beforeCreateHooks: List<(CarCreateHookContext) -> Unit>")) {
+        assert(output.contains("beforeCreateHooks: List<BatchHook<CarCreateHookContext>>")) {
             "beforeCreateHooks should be typed against CarCreateHookContext\n$output"
         }
-        assert(output.contains("afterCreateHooks: List<(Car) -> Unit>")) {
+        assert(output.contains("afterCreateHooks: List<BatchHook<Car>>")) {
             "Should take afterCreateHooks\n$output"
         }
     }
@@ -172,7 +174,7 @@ class CreateGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("for (hook in afterCreateHooks) hook(entity)")) {
+        assert(output.contains("runBatchHooksForInternalUse(listOf(entity), afterCreateHooks)")) {
             "Should call afterCreate hooks\n$output"
         }
     }
@@ -573,6 +575,117 @@ class CreateGeneratorTest {
         }
     }
 
+    @Test
+    fun `create preparation is a guarded pure seam shared by scalar and batch execution`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "internal fun prepareForInternalUse(): MutationResult<PreparedCreate<CarWriteCandidate>>",
+            ),
+        ) {
+            "Preparation should return the named runtime carrier\n$output"
+        }
+        assert(output.contains("return MutationResult.Success(PreparedCreate(values, candidate))")) {
+            "Preparation should keep the normalized row and matching candidate together\n$output"
+        }
+        assert(output.contains("internal fun beforeSaveHookValueForInternalUse(): CarMutation = _beforeSaveView")) {
+            "Should expose the restricted beforeSave hook value through a guarded seam\n$output"
+        }
+        assert(
+            output.contains(
+                "internal fun beforeCreateHookValueForInternalUse(): CarCreateHookContext = " +
+                    "CarCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)",
+            ),
+        ) {
+            "Should expose the restricted beforeCreate hook value through a guarded seam\n$output"
+        }
+        assert(
+            output.contains(
+                "internal fun configureForCreateManyForInternalUse(block: CarCreate.() -> Unit, " +
+                    "managedSaveFailures: MutableList<EntMutationException>): MutationResult<CarCreate>",
+            ),
+        ) {
+            "createMany should apply each block through the guarded configuration seam\n$output"
+        }
+        assert(
+            output.contains(
+                "if (_managedByCreateMany) { val existing = _managedSaveFailure " +
+                    "val exception = if (existing != null) { existing } else { " +
+                    "val created = EntUnexpectedMutationException(MutationWriteState.NotPersisted, " +
+                    "IllegalStateException(\"A builder managed by createMany cannot be persisted " +
+                    "independently; let createMany execute the batch\"))",
+            ),
+        ) {
+            "The scalar terminal should reject recursive persistence from a createMany block\n$output"
+        }
+
+        val preparation = output
+            .substringAfter("internal fun prepareForInternalUse()")
+            .substringBefore("internal fun executeSaveForInternalUse")
+        assert(preparation.contains("val values: Map<String, Any?>")) {
+            "Preparation should build the driver row map\n$output"
+        }
+        assert(preparation.contains("val candidate = CarWriteCandidate(")) {
+            "Preparation should build the matching write candidate\n$output"
+        }
+        for (forbidden in listOf(
+            "runBatchHooksForInternalUse",
+            "currentPrivacyContext",
+            "createDenialReasonOrNull",
+            "evaluateCreateValidation",
+            "driver.",
+        )) {
+            assert(!preparation.contains(forbidden)) {
+                "Preparation must not perform lifecycle or I/O work ('$forbidden')\n$preparation"
+            }
+        }
+
+        val execution = output.substringAfter("internal fun executeSaveForInternalUse")
+        val orderedStages = listOf(
+            "checkTransactionRequirement",
+            "beforeSaveHookValueForInternalUse()",
+            "beforeCreateHookValueForInternalUse()",
+            "prepareForInternalUse()",
+            "currentPrivacyContext()",
+            "createDenialReasonOrNull",
+            "evaluateCreateValidation",
+            "driver.insert",
+            "afterCreateHooks",
+            "loadDenialOrNull",
+        )
+        val positions = orderedStages.map(execution::indexOf)
+        assert(positions.all { it >= 0 } && positions.zipWithNext().all { (left, right) -> left < right }) {
+            "Scalar execution should preserve the established lifecycle order: ${orderedStages.zip(positions)}\n$output"
+        }
+    }
+
+    @Test
+    fun `shared driver failure emitters support an operation-specific classifier name`() {
+        val helper = buildClassifyDriverFailureHelper(
+            schemaName = "Car",
+            operationName = "CREATE",
+            helperName = "_classifyCreateDriverFailure",
+        ).toString()
+        val tail = driverCallFailureTail(
+            fallbackStateName = "PersistenceUnknown",
+            classifierName = "_classifyCreateDriverFailure",
+        ).toString()
+
+        assert(helper.contains("fun _classifyCreateDriverFailure(")) {
+            "Helper should use the requested generated member name\n$helper"
+        }
+        assert(
+            tail.contains("_classifyCreateDriverFailure(e,") &&
+                tail.contains("MutationWriteState.PersistenceUnknown"),
+        ) {
+            "Driver-call tail should invoke the matching requested classifier\n$tail"
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────
     // create-hook adapter: private hook-facing adapters on the create builder
     // ──────────────────────────────────────────────────────────────
@@ -624,10 +737,10 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("for (hook in beforeSaveHooks) hook(_beforeSaveView)")) {
-            "save() should pass _beforeSaveView to beforeSave hooks, not `this`\n$output"
+        assert(output.contains("runBatchHooksForInternalUse(listOf(beforeSaveHookValueForInternalUse()), beforeSaveHooks)")) {
+            "save() should obtain the restricted beforeSave value through the shared seam\n$output"
         }
-        assert(!output.contains("for (hook in beforeSaveHooks) hook(this)")) {
+        assert(!output.contains("runBatchHooksForInternalUse(listOf(this), beforeSaveHooks)")) {
             "save() must NOT pass `this` to beforeSave hooks — create-hook adapter contract\n$output"
         }
     }
@@ -639,8 +752,11 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
+        assert(output.contains("runBatchHooksForInternalUse(listOf(beforeCreateHookValueForInternalUse()), beforeCreateHooks)")) {
+            "save() should obtain the restricted beforeCreate value through the shared seam\n$output"
+        }
         assert(output.contains("CarCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)")) {
-            "CreateHookContext should wrap _createMutationView, not `this`\n$output"
+            "The shared hook-value seam should wrap _createMutationView, not `this`\n$output"
         }
         assert(!output.contains("CarCreateHookContext(client, this)")) {
             "CreateHookContext must NOT wrap `this` — create-hook adapter contract\n$output"
@@ -698,6 +814,37 @@ class CreateGeneratorTest {
         // The mutable scalar should still be there.
         assert(beforeSaveBlock.contains("override var name")) {
             "_beforeSaveView should still forward mutable scalars\n$output"
+        }
+    }
+
+    @Test
+    fun `mutable create snapshot locals avoid field-backed FK names`() {
+        class SnapshotParent : EntSchema("snapshot_parents") {
+            override fun id() = EntId.uuid()
+        }
+        class SnapshotChild : EntSchema("snapshot_children") {
+            override fun id() = EntId.long()
+            val payload = bytes("payload")
+            val _entktPreparedPayload = uuid("owner_id")
+            val owner = belongsTo<SnapshotParent>("owner").field(_entktPreparedPayload)
+        }
+        val parent = SnapshotParent()
+        val child = SnapshotChild()
+        finalize(parent, child)
+        val output = generator.generate(
+            "SnapshotChild",
+            child,
+            mapOf(parent to "SnapshotParent", child to "SnapshotChild"),
+        ).toString()
+
+        assert(output.contains("val _entktPreparedPayload_ = payload.copyOf()")) {
+            "prepared mutable local should move past the field-backed FK collision\n$output"
+        }
+        assert(output.contains("\"payload\" to _entktPreparedPayload_")) {
+            "driver values should use the collision-free detached local\n$output"
+        }
+        assert(output.contains("payload = _entktPreparedPayload_")) {
+            "candidate should use the same collision-free detached local\n$output"
         }
     }
 

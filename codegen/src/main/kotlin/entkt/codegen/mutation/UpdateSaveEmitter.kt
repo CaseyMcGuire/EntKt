@@ -9,6 +9,7 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
+import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.pluralize
@@ -331,7 +332,7 @@ internal class UpdateSaveEmitter(
         // inspection. Hook-thrown exceptions are FOREIGN — the
         // terminal boundary wraps them with the current (pre-write)
         // state regardless of the thrown runtime type.
-        builder.addStatement("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
+        builder.addStatement("%M(listOf(_beforeSaveView), beforeSaveHooks)", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
 
         // ---- beforeUpdate hooks (receive a per-hook context with snapshot). ----
         // `patch` in the context is a snapshot built *before* the hook
@@ -341,10 +342,17 @@ internal class UpdateSaveEmitter(
         builder.beginControlFlow("for (hook in beforeUpdateHooks)")
         builder.addStatement("val snapshot = _buildRequestedPatch()")
         builder.addStatement(
-            "val ctx = %T(client.hookClientScopeForInternalUse, entity, snapshot, pendingEdges, _mutationView)",
+            "val beforeSnapshot = %L",
+            lifecycleValueSnapshot("entity", allFields, entityClass),
+        )
+        builder.addStatement(
+            "val ctx = %T(client.hookClientScopeForInternalUse, beforeSnapshot, snapshot, pendingEdges, _mutationView)",
             updateHookCtxClass,
         )
-        builder.addStatement("hook(ctx)")
+        // Rebuild the update context before every hook so later hooks see
+        // mutations made by earlier hooks while each hook still enters
+        // through the batch contract with a singleton list.
+        builder.addStatement("%M(listOf(ctx), listOf(hook))", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
         builder.endControlFlow()
     }
 
@@ -761,7 +769,7 @@ internal class UpdateSaveEmitter(
         // terminal boundary with the flipped post-write state
         // (TransactionPending in a caller-owned transaction, Committed
         // after autocommit SQL).
-        builder.addStatement("for (hook in afterUpdateHooks) hook(updatedEntity)")
+        builder.addStatement("%M(listOf(updatedEntity), afterUpdateHooks)", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
         // Post-write LOAD disclosure (saveAndLoad only). The write has
         // already succeeded and is NOT undone by a denial: the typed
         // failure carries the current post-write state with

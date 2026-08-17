@@ -58,7 +58,7 @@ internal fun buildAll(schemaName: String, entityClass: ClassName, hasEdges: Bool
                     )
                     .add("  val results = rows.map { %T.fromRow(it) }\n", entityClass)
                     .add("  if (c.%L.hasLoadPrivacy()) {\n", repoPropName)
-                    .add("    val denials = results.mapNotNull { c.%L.loadDenialOrNull(privacy, it) }\n", repoPropName)
+                    .add("    val denials = c.%L.loadDenials(privacy, results).filterNotNull()\n", repoPropName)
                     .add("    if (denials.isNotEmpty()) {\n")
                     .add(
                         "      return %T.failedForInternalUse(%T(%T.Root, denials))\n",

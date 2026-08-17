@@ -13,6 +13,8 @@ interface Driver {
     // with the complete schema set; register() is the single-entity form.
     fun registerAll(schemas: List<EntitySchema>)
     fun register(schema: EntitySchema)
+    fun registeredIdColumn(table: String): String
+    fun <T> copyJsonValue(table: String, column: String, value: T): T
 
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
@@ -21,26 +23,32 @@ interface Driver {
 
     fun query(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>>
-    fun count(table: String, predicates: List<Predicate>): Long
-    fun exists(table: String, predicates: List<Predicate>): Boolean
+    fun count(table: String, predicates: List<Predicate<*>>): Long
+    fun exists(table: String, predicates: List<Predicate<*>>): Boolean
 
     fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
-    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
-    fun deleteMany(table: String, predicates: List<Predicate>): Int
+    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int
+    fun deleteMany(table: String, predicates: List<Predicate<*>>): Int
+    fun deleteManyByIds(
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any>
 
     fun explainQuery(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): QueryExplanation
-    fun explainCount(table: String, predicates: List<Predicate>): QueryExplanation
+    fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation
 
     fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
     val inTransaction: Boolean
@@ -64,6 +72,18 @@ interface Driver {
 
 - `register()` is called once per entity schema, typically during repo
   construction. It should be idempotent.
+- `registeredIdColumn(table)` returns the primary-key column captured during
+  registration and rejects an unregistered table. It is abstract: every
+  `Driver` implementation must provide this metadata lookup.
+- `copyJsonValue(table, column, value)` returns a detached value of the same
+  declared Kotlin type using the driver's configured JSON mapper. Generated
+  privacy and validation contexts use it to isolate mutable typed-JSON graphs
+  between rules and from pending writes. `null` returns unchanged; the default
+  rejects non-null values, so every driver that advertises typed JSON support
+  must override it. Postgres performs an encode/decode round trip through its
+  configured `JsonColumnCodec`. A custom codec's `decode()` must return a fresh
+  graph on every call; a codec that caches decoded objects must override
+  `copyValue()` to allocate the detached lifecycle snapshot explicitly.
 - `insert()` returns the persisted row including any server-assigned values
   (auto-increment IDs, defaults).
 - `update()` returns the updated row, or `null` if the row was not found.
@@ -77,8 +97,10 @@ interface Driver {
 - `count()` / `exists()` evaluate the same predicate tree as `query()`;
   drivers may short-circuit `exists()` (Postgres uses `SELECT EXISTS(...)`
   / `LIMIT 1`).
-- `insertMany()` batch-inserts multiple rows, returning all persisted rows
-  with assigned IDs **in input order**. PostgresDriver uses multi-row
+- `insertMany()` accepts one logical batch and returns exactly one persisted
+  row per input, with assigned IDs **in input order**. Generated `createMany()`
+  finishes its full pre-write lifecycle, calls this method once, then hydrates
+  the returned rows and runs post-write callbacks. PostgresDriver uses multi-row
   `INSERT ... VALUES` and enforces the ordering by correlating `RETURNING`
   rows to inputs by id — reserving ids from the sequence up front for
   multi-row auto-id batches (adding `OVERRIDING SYSTEM VALUE` for
@@ -89,15 +111,50 @@ interface Driver {
   falls back to per-row statements, which are inherently unambiguous
   (one row in, one row out) at the cost of the batching. Tables whose
   triggers rewrite ids during insert are outside the correlation
-  contract.
+  contract. Because Postgres reserves the whole batch's sequence values before
+  inserting and then supplies those IDs explicitly, the normal ID default is
+  bypassed. Other defaults or triggers that rely on row-local `currval()` or
+  `lastval()` progression are therefore unsupported for this optimized path:
+  they can observe the last reserved value for every row. The database role
+  must also have `INSERT` privilege on the ID column, even if scalar inserts
+  normally omit it. Drivers may chunk physically for parameter limits, but
+  every chunk must stay inside the surrounding transaction and lifecycle
+  callbacks still observe the complete logical batch.
 - `updateMany()` updates all rows matching the predicates with the same
-  values. Returns the count of updated rows.
+  values. Returns the count of updated rows. This remains a low-level,
+  lifecycle-free method; there is no generated `updateMany()` terminal.
 - `deleteMany()` deletes all rows matching the predicates. Returns the
-  count of deleted rows.
+  count of deleted rows. Generated `deleteMany()` does not call it directly;
+  it is the correctness fallback used by `deleteManyByIds()`.
+- `deleteManyByIds()` deletes only distinct supplied IDs that still match all
+  supplied predicates and returns the unique IDs actually removed; return order
+  is unspecified. It rejects an `idColumn` different from
+  `registeredIdColumn(table)`. The default calls predicate-based `deleteMany()`
+  once per distinct ID, preserving correctness but not set-based performance.
+  PostgresDriver overrides it with one logical
+  `DELETE ... WHERE id IN (...) AND <predicates> RETURNING id` operation.
+  Generated callers always run it inside a transaction; direct low-level callers
+  that require all-or-nothing behavior must do the same.
 
-These three bulk methods are low-level driver operations that do **not**
-fire lifecycle hooks. The generated repo methods (`createMany`,
-`deleteMany`) wrap them with hook support — see [Hooks](05-hooks.md).
+All driver bulk methods are low-level operations and do **not** run generated
+hooks, privacy, or validation themselves. Generated `createMany()` and
+`deleteMany()` perform their lifecycle phases first and then use
+`insertMany()` and `deleteManyByIds()` respectively. For delete, the generated
+repo passes the exact effective caller-plus-interceptor predicates captured
+during candidate selection; drivers must apply them again with the approved ID
+set rather than rerunning or reconstructing query policy. See
+[Operation Lifecycle](operation-lifecycle.md#bulk-operations).
+
+A multi-input logical batch may use several physical statements. If a later
+statement throws inside a caller-owned transaction, an earlier input may
+already be staged; generated code therefore reports that batch-level failure
+conservatively as `TransactionPending` and marks the transaction rollback-only.
+A one-input batch can retain an exact statement-level classification because
+there is no earlier input to account for. An EntKt-owned batch can report
+`NotPersisted` after rollback is confirmed. Drivers must let cancellation and
+JVM errors reach the transaction boundary so it can perform the same rollback
+discipline.
+
 - `explainQuery()` / `explainCount()` return a `QueryExplanation` for the
   SELECT / COUNT the driver *would* run, without executing it. Defaults
   to `UnsupportedQueryExplanation`; PostgresDriver returns SQL + bind
@@ -422,8 +479,8 @@ Requires Docker to be running.
 To support a new database, implement the `Driver` interface. The key
 contract:
 
-1. `registerAll()` and `register()` are both abstract and both must be
-   implemented — a driver that omits either won't compile.
+1. `registerAll()`, `register()`, and `registeredIdColumn()` are abstract and
+   must be implemented — a driver that omits any of them won't compile.
    `registerAll()` receives the complete schema set and is called once
    per client construction, before any repo exists; `register()` handles
    a single entity and is called from each repo's initializer. Both must
@@ -442,19 +499,39 @@ contract:
    explicitly. There is deliberately no `schemas.forEach(::register)`
    default: inheriting one would dissolve the batch back into
    one-at-a-time calls and silently drop the ordering guarantee.
-2. `insert()` must return the full row including server-assigned values
-3. `query()` must evaluate all `Predicate` types (including edge predicates)
-4. `withTransaction()` must honor the write-certainty contract:
+
+   `registeredIdColumn(table)` must return the registered schema's exact ID
+   column and reject an unregistered table. Decorating and transaction-scoped
+   drivers must forward this lookup as well. It is used to validate the raw
+   identifier accepted by the default ID-scoped bulk delete.
+2. `insert()` must return the full row including server-assigned values.
+   `insertMany()` must preserve positional input/result correlation, keep any
+   physical chunks inside the surrounding transaction, and never commit
+   internally.
+3. `query()` must evaluate all `Predicate` types (including edge predicates).
+   The default `deleteManyByIds()` is correct but issues one `deleteMany()` per
+   distinct ID; override it when the backend can combine the approved IDs and
+   frozen effective predicates into a set-based returning delete. The override
+   must return only unique supplied IDs that were actually deleted.
+4. A driver that reports typed JSON support must implement
+   `copyJsonValue(table, column, value)` by producing a detached graph through
+   the same mapper configuration used for storage. It must preserve `null` and
+   the column's declared Kotlin type; returning the input object is not valid
+   for mutable JSON values. Decorating and transaction-scoped drivers must
+   forward this operation.
+5. `withTransaction()` must honor the write-certainty contract:
    `DriverTransactionResult.Success` only after confirmed commit;
    `Failed(exception, NotCommitted)` only after confirmed rollback;
    `OutcomeUnknown` for rollback or commit failures (a failed commit
    stays `OutcomeUnknown` even if a later rollback appears to
    succeed); cleanup failures after a confirmed commit must not turn
-   success into failure. Cancellation and JVM errors are rolled back
-   and rethrown. The inner driver must report `inTransaction = true`,
+   success into failure. Block-time cancellation is rethrown only after
+   confirmed rollback; commit-time cancellation or an unconfirmed rollback is
+   `OutcomeUnknown`. JVM errors are rolled back best-effort and rethrown. The
+   inner driver must report `inTransaction = true`,
    and a nested call must throw
    `NestedTransactionUnsupportedException` before running the block.
-5. Optional: implement the RFC #4 lock capabilities. If the backend
+6. Optional: implement the RFC #4 lock capabilities. If the backend
    supports a true row lock that survives until transaction commit
    (e.g. `SELECT ... FOR UPDATE` in SQL or an equivalent), set
    `supportsReadRowForUpdate = true` and implement `readRowForUpdate`.
@@ -465,14 +542,14 @@ contract:
    without a containing transaction — call
    `requireTransactionForLocking("methodName")` for the canonical
    error.
-6. Optional: override `explainQuery` / `explainCount` to surface a
+7. Optional: override `explainQuery` / `explainCount` to surface a
    driver-specific `QueryExplanation` (default returns
    `UnsupportedQueryExplanation`).
 
 The flags advertise driver-family ability, not instance-level
-ability — see the RFC #4 capability section above. The default
-methods on `Driver` return `false` / throwing implementations, so a
-new driver gets safe defaults if it does nothing.
+ability — see the RFC #4 capability section above. Optional capability
+methods on `Driver` retain safe `false` / throwing defaults, but the three
+registration/metadata methods above are required.
 
 For migration planning, you'll also need:
 

@@ -10,8 +10,9 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 | Subpackage | Holds |
 |---|---|
 | `entkt.runtime.driver` | `Driver` SPI, `NoopDriver`, `DriverTransactionResult`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
-| `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, `PrivacyDecision`/`PrivacyRule`, `allowAll`, `EntityPolicy` |
-| `entkt.runtime.validation` | `ValidationDecision`, `ValidationRule` |
+| `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, scalar/batch privacy rules and evaluators, `allowAll`, `EntityPolicy` |
+| `entkt.runtime.validation` | Scalar/batch validation rules and evaluators |
+| `entkt.runtime.hook` | Scalar/batch lifecycle hook contracts and factories |
 | `entkt.runtime.query` | interceptors (`QueryInterceptor`, `InterceptScope`, `InterceptorEngine`, `ReadOperation`, …), `QueryPlan`/`QueryExplanation`, aggregate types, `ExcludeDeleted` |
 | `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
 | `entkt.runtime.result` | `ReadResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |
@@ -22,29 +23,38 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 interface Driver {
     fun registerAll(schemas: List<EntitySchema>)
     fun register(schema: EntitySchema)
+    fun registeredIdColumn(table: String): String
+    fun <T> copyJsonValue(table: String, column: String, value: T): T
     fun insert(table: String, values: Map<String, Any?>): Map<String, Any?>
     fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>?
     fun byId(table: String, id: Any): Map<String, Any?>?
     fun query(
         table: String,
-        predicates: List<Predicate>,
-        orderBy: List<OrderField>,
+        predicates: List<Predicate<*>>,
+        orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
     ): List<Map<String, Any?>>
-    fun count(table: String, predicates: List<Predicate>): Long
-    fun exists(table: String, predicates: List<Predicate>): Boolean
+    fun count(table: String, predicates: List<Predicate<*>>): Long
+    fun exists(table: String, predicates: List<Predicate<*>>): Boolean
     fun delete(table: String, id: Any): Boolean
     fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
-    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate>): Int
-    fun deleteMany(table: String, predicates: List<Predicate>): Int
+    fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int
+    fun deleteMany(table: String, predicates: List<Predicate<*>>): Int
+    fun deleteManyByIds(
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any>
     fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
 }
 ```
 
 Rows are plain `Map<String, Any?>` keyed by snake_case column name — the
 driver layer speaks in these maps and the generated entity classes provide
-the typed facade.
+the typed facade. See [Driver](../docs/10-drivers.md) for the complete SPI,
+including lifecycle snapshot and logical-batch guarantees.
 
 ## Predicates
 

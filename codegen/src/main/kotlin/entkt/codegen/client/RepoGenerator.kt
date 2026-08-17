@@ -1,6 +1,7 @@
 package entkt.codegen.client
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -15,9 +16,11 @@ import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
-import entkt.codegen.byteArrayPatchSnapshot
-import entkt.codegen.byteArraySnapshot
+import entkt.codegen.lifecyclePatchSnapshot
+import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
@@ -27,7 +30,9 @@ import entkt.codegen.mutation.MUTATION_ENT_OPERATION
 import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.mutation.MUTATION_VALIDATION_VIOLATION
 import entkt.codegen.mutation.MUTATION_WRITE_STATE
+import entkt.codegen.mutation.RUN_BATCH_HOOKS_FOR_INTERNAL_USE
 import entkt.codegen.mutation.ENT_MUTATION_EXCEPTION
+import entkt.codegen.mutation.ENT_MUTATION_PRIVACY_DENIED_EXCEPTION
 import entkt.codegen.mutation.ENT_UNEXPECTED_MUTATION_EXCEPTION
 import entkt.codegen.mutation.ENT_VALIDATION_EXCEPTION
 import entkt.codegen.mutation.KOTLIN_EXCEPTION
@@ -55,12 +60,18 @@ private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
 private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
-private val VALIDATION_DECISION = ClassName("entkt.runtime.validation", "ValidationDecision")
+private val EVALUATE_BATCH_PRIVACY_RULES =
+    MemberName("entkt.runtime.privacy", "evaluateBatchPrivacyRulesForInternalUse")
+private val EVALUATE_BATCH_VALIDATION_RULES =
+    MemberName("entkt.runtime.validation", "evaluateBatchValidationRulesForInternalUse")
 private val TO_VALIDATION_VIOLATION = MemberName("entkt.runtime.result", "toValidationViolation")
 private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
 private val TRANSACTION_FAILURE_STATE = ClassName("entkt.runtime.result", "TransactionFailureState")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val PREPARED_CREATE = ClassName("entkt.runtime.mutation", "PreparedCreate")
+private val SNAPSHOT_EDGE_CHANGES =
+    MemberName("entkt.runtime.mutation", "snapshotEdgeChangesForInternalUse")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -101,6 +112,7 @@ internal class RepoGenerator(
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
         val fields = scalarFields(schema)
+        val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
         val createLambda = LambdaTypeName.get(
             receiver = createClass,
@@ -117,22 +129,22 @@ internal class RepoGenerator(
 
         // Hook list types
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
-        val beforeSaveHookLambda = LambdaTypeName.get(parameters = arrayOf(mutationClass), returnType = UNIT)
+        val batchHookClass = ClassName("entkt.runtime.hook", "BatchHook")
         // beforeCreate hooks receive the restricted CreateHookContext
         // (view + client), not the concrete Create builder.
-        val beforeCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(createHookCtxClass), returnType = UNIT)
-        val afterCreateHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
-        val beforeUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(updateHookCtxClass), returnType = UNIT)
-        val afterUpdateHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
-        val beforeDeleteHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
-        val afterDeleteHookLambda = LambdaTypeName.get(parameters = arrayOf(entityClass), returnType = UNIT)
+        val beforeCreateHookType = batchHookClass.parameterizedBy(createHookCtxClass)
+        val afterCreateHookType = batchHookClass.parameterizedBy(entityClass)
+        val beforeUpdateHookType = batchHookClass.parameterizedBy(updateHookCtxClass)
+        val afterUpdateHookType = batchHookClass.parameterizedBy(entityClass)
+        val beforeDeleteHookType = batchHookClass.parameterizedBy(entityClass)
+        val afterDeleteHookType = batchHookClass.parameterizedBy(entityClass)
 
-        fun mutableHookList(lambdaType: LambdaTypeName) =
-            MUTABLE_LIST.parameterizedBy(lambdaType)
+        fun mutableHookList(hookType: com.squareup.kotlinpoet.TypeName) =
+            MUTABLE_LIST.parameterizedBy(hookType)
 
         val typeSpec = TypeSpec.classBuilder(className)
             // The repo is the entity's read surface: query terminals reach
-            // `hasLoadPrivacy()` / `evaluateLoadPrivacy(...)` through the
+            // `hasLoadPrivacy()` / `loadDenials(...)` through the
             // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
             // accessor, which EntClient overrides with this repo.
             .addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
@@ -166,13 +178,13 @@ internal class RepoGenerator(
                     .build()
             )
             // Hook list properties
-            .addProperty(hookListProperty("beforeSaveHooks", mutableHookList(beforeSaveHookLambda)))
-            .addProperty(hookListProperty("beforeCreateHooks", mutableHookList(beforeCreateHookLambda)))
-            .addProperty(hookListProperty("afterCreateHooks", mutableHookList(afterCreateHookLambda)))
-            .addProperty(hookListProperty("beforeUpdateHooks", mutableHookList(beforeUpdateHookLambda)))
-            .addProperty(hookListProperty("afterUpdateHooks", mutableHookList(afterUpdateHookLambda)))
-            .addProperty(hookListProperty("beforeDeleteHooks", mutableHookList(beforeDeleteHookLambda)))
-            .addProperty(hookListProperty("afterDeleteHooks", mutableHookList(afterDeleteHookLambda)))
+            .addProperty(hookListProperty("beforeSaveHooks", mutableHookList(batchHookClass.parameterizedBy(mutationClass))))
+            .addProperty(hookListProperty("beforeCreateHooks", mutableHookList(beforeCreateHookType)))
+            .addProperty(hookListProperty("afterCreateHooks", mutableHookList(afterCreateHookType)))
+            .addProperty(hookListProperty("beforeUpdateHooks", mutableHookList(beforeUpdateHookType)))
+            .addProperty(hookListProperty("afterUpdateHooks", mutableHookList(afterUpdateHookType)))
+            .addProperty(hookListProperty("beforeDeleteHooks", mutableHookList(beforeDeleteHookType)))
+            .addProperty(hookListProperty("afterDeleteHooks", mutableHookList(afterDeleteHookType)))
             // Privacy config
             .addProperty(
                 PropertySpec.builder("privacyConfig", privacyConfigClass)
@@ -236,11 +248,35 @@ internal class RepoGenerator(
             .addFunction(buildDeleteById(schemaName, entityClass, idType))
             .also { builder ->
                 if (idStrategyName(schema) != "EXPLICIT") {
-                    builder.addFunction(buildCreateMany(schemaName, entityClass, createLambda, idType))
+                    builder.addType(buildCreateManyWriteCompletionType(entityClass))
+                    builder.addType(buildCreateManyDisclosureType(entityClass))
+                    builder.addFunction(
+                        buildExecuteCreateManyWritePhases(
+                            schemaName = schemaName,
+                            entityClass = entityClass,
+                            createLambda = createLambda,
+                            candidateClass = candidateClass,
+                        ),
+                    )
+                    builder.addFunction(buildCreateMany(schemaName, entityClass, createLambda))
+                    builder.addFunction(
+                        buildClassifyDriverFailureHelper(
+                            schemaName,
+                            "CREATE",
+                            helperName = "_classifyCreateDriverFailure",
+                        ),
+                    )
                 }
             }
+            .addFunction(buildExecuteDeleteManyPhases(schemaName, entityClass))
             .addFunction(buildDeleteMany(schemaName, entityClass))
-            .addFunction(buildClassifyDriverFailureHelper(schemaName, "DELETE"))
+            .addFunction(
+                buildClassifyDriverFailureHelper(
+                    schemaName,
+                    "DELETE",
+                    helperName = "_classifyDeleteDriverFailure",
+                ),
+            )
             .addFunction(buildApplyHooks(entityHooksClass))
             .addFunction(buildCopyHooksFrom(repoClass))
             .addFunction(buildApplyPrivacy(privacyConfigClass))
@@ -249,16 +285,37 @@ internal class RepoGenerator(
             .addFunction(buildHasPrivacy("hasCreatePrivacy"))
             .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             .addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            .addFunction(buildLoadDenialOrNull(schemaName, entityClass, loadCtxClass, fields))
-            .addFunction(buildCreateDenialReasonOrNull(schemaName, candidateClass, fields))
-            .addFunction(buildUpdateDenialReasonOrNull(schemaName, entityClass, candidateClass, fields))
-            .addFunction(buildDeleteDenialReasonOrNull(schemaName, entityClass, candidateClass, fields))
+            .addFunction(buildLoadDenials(schemaName, entityClass, loadCtxClass, fields))
+            .addFunction(buildLoadDenialOrNull(entityClass))
+            .addFunction(buildCreateDenialReasons(schemaName, candidateClass, fields))
+            .addFunction(buildCreateDenialReasonOrNull(candidateClass))
+            .addFunction(
+                buildUpdateDenialReasonOrNull(
+                    schemaName,
+                    entityClass,
+                    candidateClass,
+                    fields,
+                    helperEligibleEdges,
+                ),
+            )
+            .addFunction(buildDeleteDenialReasons(schemaName, entityClass, candidateClass, fields))
+            .addFunction(buildDeleteDenialReasonOrNull(entityClass, candidateClass))
             .addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
             .addFunction(buildApplyValidation(validationConfigClass))
             .addFunction(buildCopyValidationFrom(repoClass))
-            .addFunction(buildEvaluateCreateValidation(schemaName, candidateClass, fields))
-            .addFunction(buildEvaluateUpdateValidation(schemaName, entityClass, candidateClass, fields))
-            .addFunction(buildEvaluateDeleteValidation(schemaName, entityClass, candidateClass, fields))
+            .addFunction(buildEvaluateCreateValidations(schemaName, candidateClass, fields))
+            .addFunction(buildEvaluateCreateValidation(candidateClass))
+            .addFunction(
+                buildEvaluateUpdateValidation(
+                    schemaName,
+                    entityClass,
+                    candidateClass,
+                    fields,
+                    helperEligibleEdges,
+                ),
+            )
+            .addFunction(buildEvaluateDeleteValidations(schemaName, entityClass, candidateClass, fields))
+            .addFunction(buildEvaluateDeleteValidation(entityClass, candidateClass))
             .build()
 
         // The repo class implements the `@EntktInternal`-guarded
@@ -307,7 +364,12 @@ internal class RepoGenerator(
                     .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
                     .add("  val row = try {\n")
                     .add("    driver.byId(%T.TABLE, entity.id)\n", entityClass)
-                    .add(driverCallFailureTail("NotPersisted").indented())
+                    .add(
+                        driverCallFailureTail(
+                            "NotPersisted",
+                            classifierName = "_classifyDeleteDriverFailure",
+                        ).indented(),
+                    )
                     .add("  if (row == null) {\n")
                     .add("    %T.Success(Unit)\n", MUTATION_RESULT)
                     .add("  } else {\n")
@@ -325,12 +387,11 @@ internal class RepoGenerator(
     /**
      * Private internal-only delete pipeline that assumes the caller
      * already ran the transaction-requirement preflight AND passes an
-     * entity freshly loaded from the database — every caller reloads
-     * ([buildDelete] and [buildDeleteById] via `byId`, deleteMany
-     * via its candidate query), so privacy, validation, and hooks
-     * always see current row state rather than a caller-controlled
-     * copy. Extracting this avoids a double preflight and keeps ONE
-     * classified delete pipeline for all three terminals.
+     * entity freshly loaded from the database. [buildDelete] and
+     * [buildDeleteById] both reload via `byId`, so privacy, validation,
+     * and hooks see current row state rather than a caller-controlled copy.
+     * Bulk deletion has a separate phase-major pipeline in
+     * [buildExecuteDeleteManyPhases].
      *
      * Positional classification: a rule-RETURNED Deny / Invalid from
      * the decision-returning evaluators becomes the typed
@@ -390,15 +451,20 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("  }\n")
-                    .add("  for (hook in beforeDeleteHooks) hook(entity)\n")
+                    .add("  %M(listOf(entity), beforeDeleteHooks)\n", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
                     .add("  val deleted = try {\n")
                     .add("    driver.delete(%T.TABLE, entity.id)\n", entityClass)
-                    .add(driverCallFailureTail("PersistenceUnknown").indented())
+                    .add(
+                        driverCallFailureTail(
+                            "PersistenceUnknown",
+                            classifierName = "_classifyDeleteDriverFailure",
+                        ).indented(),
+                    )
                     .add("  if (deleted) {\n")
                     .add(
                         "    writeState = postWriteState\n",
                     )
-                    .add("    for (hook in afterDeleteHooks) hook(entity)\n")
+                    .add("    %M(listOf(entity), afterDeleteHooks)\n", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
                     .add("  }\n")
                     .add("  return %T.Success(deleted)\n", MUTATION_RESULT)
                     .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
@@ -449,7 +515,12 @@ internal class RepoGenerator(
                     .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
                     .add("  val row = try {\n")
                     .add("    driver.byId(%T.TABLE, id)\n", entityClass)
-                    .add(driverCallFailureTail("NotPersisted").indented())
+                    .add(
+                        driverCallFailureTail(
+                            "NotPersisted",
+                            classifierName = "_classifyDeleteDriverFailure",
+                        ).indented(),
+                    )
                     .add("  if (row == null) {\n")
                     .add("    %T.Success(false)\n", MUTATION_RESULT)
                     .add("  } else {\n")
@@ -461,38 +532,141 @@ internal class RepoGenerator(
             .build()
     }
 
+    /** Execute the phase-major delete-many pipeline on a transaction-scoped repo. */
+    private fun buildExecuteDeleteManyPhases(
+        schemaName: String,
+        entityClass: ClassName,
+    ): FunSpec {
+        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
+        val predicateType = PREDICATE.parameterizedBy(entityClass)
+        return FunSpec.builder("_executeDeleteManyPhases")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("predicates", LIST.parameterizedBy(predicateType))
+            .addParameter("promoteDriverNotPersisted", BOOLEAN)
+            .returns(MUTATION_RESULT.parameterizedBy(INT))
+            .addCode(
+                CodeBlock.builder()
+                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+                    .add("try {\n")
+                    .add("  check(driver.inTransaction) { %S }\n", "deleteMany phases require a transaction-scoped driver")
+                    .add(
+                        "  val q = %T(driver, client).apply { for (predicate in predicates) where(predicate) }\n",
+                        queryClass,
+                    )
+                    .add("  val privacy = client.currentPrivacyContext()\n")
+                    .add(
+                        "  val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES, privacy)\n",
+                        READ_OPERATION,
+                    )
+                    .add("  val effectivePredicates = spec.predicates.toList()\n")
+                    .add(
+                        "  val rows = driver.query(%T.TABLE, effectivePredicates, emptyList(), null, null)\n",
+                        entityClass,
+                    )
+                    .add("  val entities = rows.map { %T.fromRow(it) }\n", entityClass)
+                    .add("  if (entities.isEmpty()) return %T.Success(0)\n", MUTATION_RESULT)
+                    .add("  val candidates = entities.map { buildDeleteCandidate(it) }\n")
+                    .add("  val denialReasons = deleteDenialReasons(privacy, entities, candidates)\n")
+                    .add("  val deniedIndex = denialReasons.indexOfFirst { it != null }\n")
+                    .add("  if (deniedIndex >= 0) {\n")
+                    .add(
+                        privacyDeniedFailure(
+                            writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                            schemaName = schemaName,
+                            operationName = "DELETE",
+                            entityKeyExpr = CodeBlock.of("%T(%S, entities[deniedIndex].id)", MUTATION_ENTITY_KEY, "id"),
+                            reasonExpr = "denialReasons[deniedIndex]!!",
+                        ).indented(),
+                    )
+                    .add("  }\n")
+                    .add("  val violationsByCandidate = evaluateDeleteValidations(entities, candidates)\n")
+                    .add("  val invalidIndex = violationsByCandidate.indexOfFirst { it.isNotEmpty() }\n")
+                    .add("  if (invalidIndex >= 0) {\n")
+                    .add(
+                        recordAndReturnFailure(
+                            CodeBlock.of(
+                                "%T(%S, %T.DELETE, violationsByCandidate[invalidIndex])",
+                                ENT_VALIDATION_EXCEPTION,
+                                schemaName,
+                                MUTATION_ENT_OPERATION,
+                            ),
+                        ).indented(),
+                    )
+                    .add("  }\n")
+                    .add("  %M(entities, beforeDeleteHooks)\n", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
+                    .add("  val approvedIds = entities.map { it.id }\n")
+                    // A default/optimized driver may execute several physical
+                    // statements. Once the logical call begins, earlier IDs
+                    // may already be staged in this open transaction.
+                    .add("  writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
+                    .add("  val deletedIds = try {\n")
+                    .add(
+                        "    driver.deleteManyByIds(%T.TABLE, %T.SCHEMA.idColumn, approvedIds, effectivePredicates)\n",
+                        entityClass,
+                        entityClass,
+                    )
+                    .add("  } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("    throw e\n")
+                    .add("  } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add(
+                        "    val classified = _classifyDeleteDriverFailure(e, %T.TransactionPending)\n",
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add(
+                        "    val reported = if (promoteDriverNotPersisted && approvedIds.size > 1 && " +
+                            "classified.writeState == %T.NotPersisted) {\n",
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add(
+                        "      %T(%T.TransactionPending, classified)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add("    } else classified\n")
+                    .add("    client.recordTransactionMutationFailure(reported)\n")
+                    .add("    return %T.failedForInternalUse(reported)\n", MUTATION_RESULT)
+                    .add("  }\n")
+                    .add("  val deletedIdSnapshot = deletedIds.toList()\n")
+                    .add("  val approvedIdSet = approvedIds.toSet()\n")
+                    .add("  val deletedIdSet = deletedIdSnapshot.toSet()\n")
+                    .add(
+                        "  check(deletedIdSnapshot.size == deletedIdSet.size && deletedIdSet.all { it in approvedIdSet }) { %S }\n",
+                        "Driver.deleteManyByIds returned duplicate or unapproved IDs",
+                    )
+                    .add("  val deletedEntities = entities.filter { it.id in deletedIdSet }\n")
+                    .add(
+                        "  check(deletedEntities.size == deletedIdSnapshot.size) { %S }\n",
+                        "Driver.deleteManyByIds acknowledgement could not be correlated to candidates",
+                    )
+                    .add("  %M(deletedEntities, afterDeleteHooks)\n", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
+                    .add("  return %T.Success(deletedIdSnapshot.size)\n", MUTATION_RESULT)
+                    .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("  throw e\n")
+                    .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add(
+                        recordAndReturnFailure(
+                            CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
+                        ).indented(),
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
     /**
      * `deleteMany(vararg predicates): MutationResult<Int>` — strict,
-     * ATOMIC bulk delete. Candidate selection flows through the
-     * read-interceptor chain (operation = DELETE_CANDIDATES) so
-     * predicate-shaping interceptors (tenant scoping, framework
-     * soft-delete, etc.) apply uniformly to bulk deletes — a bulk
-     * delete can NOT escape read-side scoping that would have hidden
-     * the same rows on the read path. Per-entity DELETE privacy /
-     * validation / hooks run inside `deleteLoaded` for each candidate,
-     * classified positionally like the single-row pipeline; a denied
-     * or invalid candidate is never silently skipped.
-     *
-     * Atomicity: inside a caller-owned transaction the selection and
-     * per-row deletes run in place — the first per-row `Failed` is
-     * recorded on the coordinator (rollback-only) and returned, so the
-     * rows already staged cannot commit. Outside a transaction the
-     * terminal self-delegates through the canonical
-     * `client.withTransaction` boundary so atomicity and rollback are
-     * owned by the tested runtime path, then converts the
-     * `TransactionResult` (a confirmed rollback with a recorded
-     * mutation exception is returned as-is; anything else wraps into
-     * `EntUnexpectedMutationException` with NotPersisted after a
-     * confirmed rollback or PersistenceUnknown for an unknown
-     * outcome). Interceptor rejection of the candidate query is
-     * `Failed(EntUnexpectedMutationException(NotPersisted,
-     * EntQueryRejectedException))`.
+     * atomic bulk delete. Candidate selection flows through the
+     * DELETE_CANDIDATES interceptor chain once. DELETE privacy, validation,
+     * and hooks then run phase-major over the complete ordered candidate
+     * list before one logical ID-returning driver delete. The write reasserts
+     * both the approved IDs and the frozen effective predicates; afterDelete
+     * receives only rows the driver confirms it removed.
      */
     private fun buildDeleteMany(
         schemaName: String,
         entityClass: ClassName,
     ): FunSpec {
-        val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
         val resultType = MUTATION_RESULT.parameterizedBy(INT)
         return FunSpec.builder("deleteMany")
@@ -510,9 +684,12 @@ internal class RepoGenerator(
                 "Atomically delete every row matching [predicates].\n" +
                     "`Success(n)` is the number of rows removed; the whole operation\n" +
                     "shares one transaction (the caller's, or an EntKt-owned one), so\n" +
-                    "a privacy, validation, hook, or driver failure on any candidate\n" +
-                    "leaves no committed subset after a confirmed rollback — no\n" +
-                    "denied or invalid candidate is silently skipped. `Failed` carries\n" +
+                    "DELETE privacy, validation, and lifecycle hooks run phase-major\n" +
+                    "over all selected candidates. The final write reasserts the\n" +
+                    "approved IDs and effective predicates, and afterDelete runs only\n" +
+                    "for rows actually removed. A failure leaves no committed subset\n" +
+                    "after a confirmed rollback; no denied or invalid candidate is\n" +
+                    "silently skipped. `Failed` carries\n" +
                     "a typed [entkt.runtime.result.EntMutationException] whose\n" +
                     "`writeState` records the database effect; inside a caller-owned\n" +
                     "transaction `Failed` marks the scope rollback-only rather than\n" +
@@ -522,74 +699,20 @@ internal class RepoGenerator(
             .addCode(
                 CodeBlock.builder()
                     .add("return try {\n")
-                    // Transaction-requirement preflight — classifies by
-                    // operation shape (multiWrite) against the CALLER's
-                    // transaction posture before any selection work; its
-                    // throw becomes Failed(EntUnexpectedMutationException(
-                    // NotPersisted, TransactionRequiredException)).
                     .add(
                         "  client.checkTransactionRequirement(%S, multiWrite = true)\n",
                         "$schemaName deleteMany",
                     )
+                    .add("  val predicateSnapshot = predicates.toList()\n")
                     .add("  if (driver.inTransaction) {\n")
-                    // Caller-owned transaction: run selection + per-row
-                    // deletes in place. Seed predicates through the public
-                    // `where()` DSL rather than writing the backing list
-                    // directly — `predicates` on the generated query class
-                    // is `private`, and the public DSL is functionally
-                    // equivalent. The chain's rejection throws
-                    // EntQueryRejectedException, captured by the terminal
-                    // boundary below.
-                    .add(
-                        "    val q = %T(driver, client).apply { for (p in predicates) where(p) }\n",
-                        queryClass,
-                    )
-                    .add("    val selectionPrivacy = client.currentPrivacyContext()\n")
-                    .add(
-                        "    val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES, selectionPrivacy)\n",
-                        READ_OPERATION,
-                    )
-                    .add(
-                        "    val rows = driver.query(%T.TABLE, spec.predicates, emptyList(), null, null)\n",
-                        entityClass,
-                    )
-                    .add("    val entities = rows.map { %T.fromRow(it) }\n", entityClass)
-                    .add("    var count = 0\n")
-                    .add("    for (entity in entities) {\n")
-                    .add("      when (val result = deleteLoaded(entity)) {\n")
-                    .add("        is %T.Success -> if (result.value) count++\n", MUTATION_RESULT)
-                    // First per-row failure: already recorded on the
-                    // coordinator inside deleteLoaded (rollback-only), so
-                    // the rows staged so far roll back at the boundary.
-                    // When earlier rows already deleted, a NotPersisted
-                    // row failure would misdescribe the BATCH — staged
-                    // effects exist in the open transaction — so the bulk
-                    // result reports TransactionPending with the row
-                    // failure as its cause.
-                    .add("        is %T.Failed -> {\n", MUTATION_RESULT)
-                    .add("          val rowException = result.exception\n")
-                    .add(
-                        "          return if (count > 0 && rowException.writeState == %T.NotPersisted) {\n",
-                        MUTATION_WRITE_STATE,
-                    )
-                    .add(
-                        "            val staged = %T(%T.TransactionPending, rowException)\n",
-                        ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
-                    )
-                    .add("            client.replaceTransactionMutationFailure(rowException, staged)\n")
-                    .add("            %T.failedForInternalUse(staged)\n", MUTATION_RESULT)
-                    .add("          } else result\n")
-                    .add("        }\n")
-                    .add("      }\n")
-                    .add("    }\n")
-                    .add("    %T.Success(count)\n", MUTATION_RESULT)
+                    .add("    _executeDeleteManyPhases(predicateSnapshot, promoteDriverNotPersisted = true)\n")
                     .add("  } else {\n")
-                    // EntKt-owned: self-delegate through the canonical
-                    // transaction boundary so atomicity + rollback are
-                    // owned by the tested runtime path (the nested call
-                    // takes the caller-owned branch above).
                     .add("    val txResult = client.withTransaction { tx ->\n")
-                    .add("      tx.%L.deleteMany(*predicates).orRollback()\n", repoPropName)
+                    .add(
+                        "      tx.%L._executeDeleteManyPhases(" +
+                            "predicateSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
+                        repoPropName,
+                    )
                     .add("    }\n")
                     .add("    when (txResult) {\n")
                     .add("      is %T.Success -> %T.Success(txResult.value)\n", TRANSACTION_RESULT, MUTATION_RESULT)
@@ -645,6 +768,108 @@ internal class RepoGenerator(
                 "  %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
                 ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
                 ENT_UNEXPECTED_MUTATION_EXCEPTION, KOTLIN_EXCEPTION,
+            )
+            .add("}\n")
+            .add("client.recordTransactionMutationFailure(exception)\n")
+            .add("%T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+            .build()
+
+    /**
+     * Create-many returned LOAD failures normally become `Committed` after a
+     * successful owned transaction. A LOAD rule may instead execute SQL that
+     * aborts PostgreSQL; the transaction driver then rolls back and reports its
+     * generic aborted-state marker. Preserve the actual disclosure exception
+     * as the confirmed-rollback cause unless the transaction coordinator had
+     * already recorded an earlier mutation failure; encounter-order precedence
+     * keeps that failure primary and attaches disclosure diagnostically. An
+     * unknown transaction outcome always stays primary.
+     */
+    private fun createManyTxFailureConversion(schemaName: String): CodeBlock =
+        CodeBlock.builder()
+            .add("val stored = txResult.exception\n")
+            .add("val disclosure = disclosureFailure\n")
+            .add("val denial = disclosureDenial\n")
+            .add(
+                "val exception = if (txResult.transactionState == %T.OutcomeUnknown) {\n",
+                TRANSACTION_FAILURE_STATE,
+            )
+            .add(
+                "  val unknown = %T(%T.PersistenceUnknown, stored)\n",
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                MUTATION_WRITE_STATE,
+            )
+            .add("  if (denial != null) {\n")
+            .add(
+                "    unknown.addSuppressed(%T(%T.PersistenceUnknown, %S, %T.LOAD, " +
+                    "denial.entityKey, denial.reason))\n",
+                ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
+                MUTATION_WRITE_STATE,
+                schemaName,
+                MUTATION_ENT_OPERATION,
+            )
+            .add("  }\n")
+            .add("  if (disclosure != null && disclosure !== stored) unknown.addSuppressed(disclosure)\n")
+            .add("  unknown\n")
+            .add("} else if (stored is %T) {\n", ENT_MUTATION_EXCEPTION)
+            .add("  val primary = if (stored.writeState == %T.NotPersisted) {\n", MUTATION_WRITE_STATE)
+            .add("    stored\n")
+            .add("  } else {\n")
+            .add(
+                "    %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                MUTATION_WRITE_STATE,
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                KOTLIN_EXCEPTION,
+            )
+            .add("  }\n")
+            .add("  if (primary !== stored) {\n")
+            .add("    stored.suppressed.forEach { suppressed ->\n")
+            .add("      if (suppressed !== primary && primary.suppressed.none { it === suppressed }) {\n")
+            .add("        primary.addSuppressed(suppressed)\n")
+            .add("      }\n")
+            .add("    }\n")
+            .add("  }\n")
+            .add("  if (denial != null) {\n")
+            .add(
+                "    primary.addSuppressed(%T(%T.NotPersisted, %S, %T.LOAD, " +
+                    "denial.entityKey, denial.reason))\n",
+                ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
+                MUTATION_WRITE_STATE,
+                schemaName,
+                MUTATION_ENT_OPERATION,
+            )
+            .add("  }\n")
+            .add(
+                "  if (disclosure != null && disclosure !== primary && " +
+                    "primary.suppressed.none { it === disclosure }) primary.addSuppressed(disclosure)\n",
+            )
+            .add("  primary\n")
+            .add("} else if (denial != null) {\n")
+            .add(
+                "  val rolledBack = %T(%T.NotPersisted, %S, %T.LOAD, " +
+                    "denial.entityKey, denial.reason)\n",
+                ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
+                MUTATION_WRITE_STATE,
+                schemaName,
+                MUTATION_ENT_OPERATION,
+            )
+            .add("  if (stored !== rolledBack) rolledBack.addSuppressed(stored)\n")
+            .add("  rolledBack\n")
+            .add("} else if (disclosure != null) {\n")
+            .add(
+                "  val rolledBack = %T(%T.NotPersisted, disclosure)\n",
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                MUTATION_WRITE_STATE,
+            )
+            .add("  if (stored !== disclosure) rolledBack.addSuppressed(stored)\n")
+            .add("  rolledBack\n")
+            .add("} else {\n")
+            .add(
+                "  %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                MUTATION_WRITE_STATE,
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                KOTLIN_EXCEPTION,
             )
             .add("}\n")
             .add("client.recordTransactionMutationFailure(exception)\n")
@@ -713,7 +938,7 @@ internal class RepoGenerator(
             .addStatement("return true")
             .build()
 
-    private fun buildLoadDenialOrNull(
+    private fun buildLoadDenials(
         schemaName: String,
         entityClass: ClassName,
         loadCtxClass: ClassName,
@@ -729,41 +954,57 @@ internal class RepoGenerator(
         // distinguishable from a rule-THROWN exception: the former
         // becomes a typed PrivacyDenial here, the latter escapes to the
         // terminal's capture boundary as an operational failure.
-        return FunSpec.builder("loadDenialOrNull")
+        return FunSpec.builder("loadDenials")
             .addModifiers(KModifier.OVERRIDE)
             .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("entity", entityClass)
-            .returns(PRIVACY_DENIAL.copy(nullable = true))
+            .addParameter("entities", LIST.parameterizedBy(entityClass))
+            .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
             .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
+                .addStatement("if (entities.isEmpty()) return emptyList()")
+                .addStatement("val entitySnapshot = entities.toList()")
+                .addStatement(
+                    "if (privacy.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
+                    VIEWER,
+                    LIST,
+                )
                 .addStatement("val rules = privacyConfig.loadRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .beginControlFlow("for (rule in rules)")
-                // A fresh context per rule keeps mutable snapshot values
-                // isolated from persistence and from later rules.
                 .addStatement(
-                    "val ctx = %T(privacy, privacyClient, %L)",
+                    "val decisions = %M(%S, entitySnapshot, rules) { item ->\n" +
+                        "  %T(privacy, privacyClient, %L)\n" +
+                        "}",
+                    EVALUATE_BATCH_PRIVACY_RULES,
+                    "$schemaName LOAD privacy",
                     loadCtxClass,
-                    byteArraySnapshot("entity", fields),
+                    lifecycleValueSnapshot("item", fields, entityClass),
                 )
-                .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
+                .beginControlFlow("return entitySnapshot.mapIndexed { index, entity ->")
+                .beginControlFlow("when (val decision = decisions[index])")
+                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
                 .addStatement(
-                    "is %T.Deny -> return %T(%S, %T(%S, entity.id), decision.reason)",
+                    "is %T.Deny -> %T(%S, %T(%S, entity.id), decision.reason)",
                     PRIVACY_DECISION, PRIVACY_DENIAL, schemaName, ENTITY_KEY, "id",
                 )
-                .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
-                .endControlFlow()
-                .endControlFlow()
-                // Fail-closed: no rule allowed → denied.
                 .addStatement(
-                    "return %T(%S, %T(%S, entity.id), %S)",
+                    "is %T.Continue -> %T(%S, %T(%S, entity.id), %S)",
+                    PRIVACY_DECISION,
                     PRIVACY_DENIAL, schemaName, ENTITY_KEY, "id", "no load rule allowed access",
                 )
+                .endControlFlow()
+                .endControlFlow()
                 .build()
             )
             .build()
     }
+
+    private fun buildLoadDenialOrNull(entityClass: ClassName): FunSpec =
+        FunSpec.builder("loadDenialOrNull")
+            .addModifiers(KModifier.OVERRIDE)
+            .addParameter("privacy", PRIVACY_CONTEXT)
+            .addParameter("entity", entityClass)
+            .returns(PRIVACY_DENIAL.copy(nullable = true))
+            .addStatement("return loadDenials(privacy, listOf(entity)).single()")
+            .build()
 
     // ── Write-side privacy evaluators ─────────────────────────────
     // DECISION-RETURNING (String? denial reason; null = allowed), so
@@ -776,37 +1017,83 @@ internal class RepoGenerator(
     // Allow, the helper returns the "no <op> rule allowed access"
     // reason.
 
-    private fun buildCreateDenialReasonOrNull(
+    private fun buildCreateDenialReasons(
         schemaName: String,
         candidateClass: ClassName,
         fields: List<Field>,
     ): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
-        return FunSpec.builder("createDenialReasonOrNull")
+        return FunSpec.builder("createDenialReasons")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("privacy", PRIVACY_CONTEXT)
+            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
+            .returns(LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)))
+            .addCode(CodeBlock.builder()
+                .addStatement("if (candidates.isEmpty()) return emptyList()")
+                .addStatement("val candidateSnapshot = candidates.toList()")
+                .addStatement(
+                    "if (privacy.viewer is %T.PrivacyBypass) return %T(candidateSnapshot.size) { null }",
+                    VIEWER,
+                    LIST,
+                )
+                .addStatement("val rules = privacyConfig.createRules")
+                .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+                .addStatement(
+                    "val decisions = %M(%S, candidateSnapshot, rules) { item ->\n" +
+                        "  %T(privacy, privacyClient, %L)\n" +
+                        "}",
+                    EVALUATE_BATCH_PRIVACY_RULES,
+                    "$schemaName CREATE privacy",
+                    createCtxClass,
+                    lifecycleValueSnapshot("item", fields, entityClass),
+                )
+                .beginControlFlow("return decisions.map { decision ->")
+                .beginControlFlow("when (decision)")
+                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> decision.reason", PRIVACY_DECISION)
+                .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no create rule allowed access")
+                .endControlFlow()
+                .endControlFlow()
+                .build()
+            )
+            .build()
+    }
+
+    private fun buildCreateDenialReasonOrNull(candidateClass: ClassName): FunSpec =
+        FunSpec.builder("createDenialReasonOrNull")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
             .addParameter("candidate", candidateClass)
             .returns(String::class.asClassName().copy(nullable = true))
-            .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
-                .addStatement("val rules = privacyConfig.createRules")
-                .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .beginControlFlow("for (rule in rules)")
-                .addStatement(
-                    "val ctx = %T(privacy, privacyClient, %L)",
-                    createCtxClass,
-                    byteArraySnapshot("candidate", fields),
-                )
-                .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
-                .endControlFlow()
-                .endControlFlow()
-                // Fail-closed: no rule allowed → denied.
-                .addStatement("return %S", "no create rule allowed access")
-                .build()
-            )
+            .addStatement("return createDenialReasons(privacy, listOf(candidate)).single()")
+            .build()
+
+    /**
+     * Build a fresh per-rule edge-change sidecar. A Kotlin `Set` is only
+     * read-only at compile time, so each runtime EdgeChanges value also wraps
+     * detached sets whose mutators fail on the JVM.
+     */
+    private fun edgeChangesSnapshot(
+        source: String,
+        helperEligibleEdges: List<HelperEligibleM2M>,
+    ): CodeBlock {
+        if (helperEligibleEdges.isEmpty()) return CodeBlock.of("%L", source)
+
+        return CodeBlock.builder()
+            .add("%L.copy(\n", source)
+            .apply {
+                for (edge in helperEligibleEdges) {
+                    add(
+                        "  %L = %M(%L.%L),\n",
+                        edge.mutatorPropertyName,
+                        SNAPSHOT_EDGE_CHANGES,
+                        source,
+                        edge.mutatorPropertyName,
+                    )
+                }
+            }
+            .add(")")
             .build()
     }
 
@@ -815,6 +1102,7 @@ internal class RepoGenerator(
         entityClass: ClassName,
         candidateClass: ClassName,
         fields: List<Field>,
+        helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec {
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdatePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
@@ -833,43 +1121,44 @@ internal class RepoGenerator(
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .beginControlFlow("for (rule in rules)")
                 .addStatement(
-                    "val ctx = %T(privacy, privacyClient, %L, %L, %L, %L, edgeChanges)",
+                    "var decision = %M(%S, listOf(candidate), rules) { item ->\n" +
+                    "  %T(privacy, privacyClient, %L, %L, %L, %L, %L)\n" +
+                        "}.single()",
+                    EVALUATE_BATCH_PRIVACY_RULES,
+                    "$schemaName UPDATE privacy",
                     updateCtxClass,
-                    byteArraySnapshot("before", fields),
-                    byteArrayPatchSnapshot("requestedPatch", fields),
-                    byteArrayPatchSnapshot("effectivePatch", fields),
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("before", fields, entityClass),
+                    lifecyclePatchSnapshot("requestedPatch", fields, entityClass),
+                    lifecyclePatchSnapshot("effectivePatch", fields, entityClass),
+                    lifecycleValueSnapshot("item", fields, entityClass),
+                    edgeChangesSnapshot("edgeChanges", helperEligibleEdges),
                 )
-                .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
-                .endControlFlow()
-                .endControlFlow()
-                .beginControlFlow("if (privacyConfig.updateDerivesFromCreate)")
-                .beginControlFlow("for (rule in privacyConfig.createRules)")
+                .beginControlFlow(
+                    "if (decision is %T.Continue && privacyConfig.updateDerivesFromCreate)",
+                    PRIVACY_DECISION,
+                )
                 .addStatement(
-                    "val createCtx = %T(privacy, privacyClient, %L)",
+                    "decision = %M(%S, listOf(candidate), privacyConfig.createRules) { item ->\n" +
+                        "  %T(privacy, privacyClient, %L)\n" +
+                        "}.single()",
+                    EVALUATE_BATCH_PRIVACY_RULES,
+                    "$schemaName UPDATE privacy",
                     createCtxClass,
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("item", fields, entityClass),
                 )
-                .beginControlFlow("when (val decision = rule.run(createCtx))")
-                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
                 .endControlFlow()
+                .beginControlFlow("return when (decision)")
+                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> decision.reason", PRIVACY_DECISION)
+                .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no update rule allowed access")
                 .endControlFlow()
-                .endControlFlow()
-                // Fail-closed: no rule (incl. derived create rules) allowed → denied.
-                .addStatement("return %S", "no update rule allowed access")
                 .build()
             )
             .build()
     }
 
-    private fun buildDeleteDenialReasonOrNull(
+    private fun buildDeleteDenialReasons(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
@@ -877,49 +1166,79 @@ internal class RepoGenerator(
     ): FunSpec {
         val deleteCtxClass = ClassName(packageName, "${schemaName}DeletePrivacyContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
-        return FunSpec.builder("deleteDenialReasonOrNull")
+        return FunSpec.builder("deleteDenialReasons")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("entity", entityClass)
-            .addParameter("candidate", candidateClass)
-            .returns(String::class.asClassName().copy(nullable = true))
+            .addParameter("entities", LIST.parameterizedBy(entityClass))
+            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
+            .returns(LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)))
             .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
+                .addStatement("require(entities.size == candidates.size) { %S }", "DELETE entity/candidate count mismatch")
+                .addStatement("if (entities.isEmpty()) return emptyList()")
+                .addStatement("val entitySnapshot = entities.toList()")
+                .addStatement("val candidateSnapshot = candidates.toList()")
+                .addStatement(
+                    "if (privacy.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
+                    VIEWER,
+                    LIST,
+                )
+                .addStatement("val indexes = entitySnapshot.indices.toList()")
                 .addStatement("val rules = privacyConfig.deleteRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .beginControlFlow("for (rule in rules)")
                 .addStatement(
-                    "val ctx = %T(privacy, privacyClient, %L, %L)",
+                    "val decisions = %M(%S, indexes, rules) { index ->\n" +
+                        "  %T(privacy, privacyClient, %L, %L)\n" +
+                        "}.toMutableList()",
+                    EVALUATE_BATCH_PRIVACY_RULES,
+                    "$schemaName DELETE privacy",
                     deleteCtxClass,
-                    byteArraySnapshot("entity", fields),
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("entitySnapshot[index]", fields, entityClass),
+                    lifecycleValueSnapshot("candidateSnapshot[index]", fields, entityClass),
                 )
-                .beginControlFlow("when (val decision = rule.run(ctx))")
-                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
-                .endControlFlow()
-                .endControlFlow()
-                .beginControlFlow("if (privacyConfig.deleteDerivesFromCreate)")
-                .beginControlFlow("for (rule in privacyConfig.createRules)")
                 .addStatement(
-                    "val createCtx = %T(privacy, privacyClient, %L)",
-                    createCtxClass,
-                    byteArraySnapshot("candidate", fields),
+                    "val unresolvedIndexes = decisions.indices.filter { decisions[it] is %T.Continue }",
+                    PRIVACY_DECISION,
                 )
-                .beginControlFlow("when (val decision = rule.run(createCtx))")
-                .addStatement("is %T.Allow -> return null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> return decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> { }", PRIVACY_DECISION)
+                .beginControlFlow("if (unresolvedIndexes.isNotEmpty() && privacyConfig.deleteDerivesFromCreate)")
+                .addStatement(
+                    "val derived = %M(%S, unresolvedIndexes, privacyConfig.createRules) { index ->\n" +
+                        "  %T(privacy, privacyClient, %L)\n" +
+                        "}",
+                    EVALUATE_BATCH_PRIVACY_RULES,
+                    "$schemaName DELETE privacy",
+                    createCtxClass,
+                    lifecycleValueSnapshot("candidateSnapshot[index]", fields, entityClass),
+                )
+                .addStatement(
+                    "unresolvedIndexes.forEachIndexed { resultIndex, originalIndex -> " +
+                        "decisions[originalIndex] = derived[resultIndex] }",
+                )
+                .endControlFlow()
+                .beginControlFlow("return decisions.map { decision ->")
+                .beginControlFlow("when (decision)")
+                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
+                .addStatement("is %T.Deny -> decision.reason", PRIVACY_DECISION)
+                .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no delete rule allowed access")
                 .endControlFlow()
                 .endControlFlow()
-                .endControlFlow()
-                // Fail-closed: no rule (incl. derived create rules) allowed → denied.
-                .addStatement("return %S", "no delete rule allowed access")
                 .build()
             )
             .build()
     }
+
+    private fun buildDeleteDenialReasonOrNull(
+        entityClass: ClassName,
+        candidateClass: ClassName,
+    ): FunSpec = FunSpec.builder("deleteDenialReasonOrNull")
+        .addModifiers(KModifier.INTERNAL)
+        .addParameter("privacy", PRIVACY_CONTEXT)
+        .addParameter("entity", entityClass)
+        .addParameter("candidate", candidateClass)
+        .returns(String::class.asClassName().copy(nullable = true))
+        .addStatement(
+            "return deleteDenialReasons(privacy, listOf(entity), listOf(candidate)).single()",
+        )
+        .build()
 
     private fun buildBuildDeleteCandidate(
         schemaName: String,
@@ -972,210 +1291,465 @@ internal class RepoGenerator(
     }
 
     /**
-     * `createMany(*blocks): MutationResult<List<T>>` — strict, ATOMIC
-     * bulk create sharing the per-row create pipeline
-     * (`${Schema}Create.executeSaveForInternalUse` WITHOUT the
-     * disclosure step) and running return processing — LOAD disclosure
-     * per created entity, input order, fail-fast — only after every
-     * row's writes and write-side lifecycle callbacks succeeded:
+     * Private generated carrier for the completed write-side portion of
+     * `createMany`. The exact privacy context captured for CREATE privacy
+     * travels with the hydrated entities so returned LOAD disclosure cannot
+     * accidentally authorize under a second viewer.
+     */
+    private fun buildCreateManyWriteCompletionType(entityClass: ClassName): TypeSpec =
+        TypeSpec.classBuilder("CreateManyWriteCompletion")
+            .addModifiers(KModifier.PRIVATE, KModifier.DATA)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter("entities", LIST.parameterizedBy(entityClass))
+                    .addParameter("privacy", PRIVACY_CONTEXT)
+                    .addParameter(
+                        "managedSaveFailures",
+                        LIST.parameterizedBy(ENT_MUTATION_EXCEPTION),
+                    )
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("entities", LIST.parameterizedBy(entityClass))
+                    .initializer("entities")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder("privacy", PRIVACY_CONTEXT)
+                    .initializer("privacy")
+                    .build(),
+            )
+            .addProperty(
+                PropertySpec.builder(
+                    "managedSaveFailures",
+                    LIST.parameterizedBy(ENT_MUTATION_EXCEPTION),
+                )
+                    .initializer("managedSaveFailures")
+                    .build(),
+            )
+            .build()
+
+    /**
+     * Observe an attempted scalar save on any builder owned by the active
+     * createMany call. The builder records its framework-created failure as
+     * soon as save is attempted; this projection makes the enclosing bulk
+     * terminal return that failure too. If the batch write has begun, promote
+     * it to the enclosing operation's current write state and replace the
+     * coordinator entry in place.
+     */
+    private fun createManyManagedSaveFailureCheck(caughtException: String? = null): CodeBlock =
+        CodeBlock.builder()
+            .add("managedSaveFailures.firstOrNull()?.let { managedFailure ->\n")
+            .apply {
+                if (caughtException != null) {
+                    add(
+                        "  if (%L !== managedFailure && managedFailure.suppressed.none { it === %L }) {\n",
+                        caughtException,
+                        caughtException,
+                    )
+                    add("    managedFailure.addSuppressed(%L)\n", caughtException)
+                    add("  }\n")
+                }
+            }
+            .add(
+                "  val reported = if (writeState == %T.NotPersisted) managedFailure " +
+                    "else %T(writeState, managedFailure)\n",
+                MUTATION_WRITE_STATE,
+                ENT_UNEXPECTED_MUTATION_EXCEPTION,
+            )
+            .add("  client.replaceTransactionMutationFailure(managedFailure, reported)\n")
+            .add("  return %T.failedForInternalUse(reported)\n", MUTATION_RESULT)
+            .add("}\n")
+            .build()
+
+    /**
+     * Neutral returned-disclosure outcome. In an EntKt-owned transaction a
+     * denial or ordinary LOAD failure must leave the block normally so commit
+     * can be attempted; only a confirmed successful commit may later classify
+     * it as `Committed`.
+     */
+    private fun buildCreateManyDisclosureType(entityClass: ClassName): TypeSpec {
+        val repoClass = ClassName(packageName, "${entityClass.simpleName}Repo")
+        val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
+        return TypeSpec.interfaceBuilder("CreateManyDisclosure")
+            .addModifiers(KModifier.PRIVATE, KModifier.SEALED)
+            .addType(
+                TypeSpec.classBuilder("Allowed")
+                    .addModifiers(KModifier.DATA)
+                    .primaryConstructor(
+                        FunSpec.constructorBuilder()
+                            .addParameter("entities", LIST.parameterizedBy(entityClass))
+                            .build(),
+                    )
+                    .addProperty(
+                        PropertySpec.builder("entities", LIST.parameterizedBy(entityClass))
+                            .initializer("entities")
+                            .build(),
+                    )
+                    .addSuperinterface(disclosureClass)
+                    .build(),
+            )
+            .addType(
+                TypeSpec.classBuilder("Denied")
+                    .addModifiers(KModifier.DATA)
+                    .primaryConstructor(
+                        FunSpec.constructorBuilder()
+                            .addParameter("denial", PRIVACY_DENIAL)
+                            .build(),
+                    )
+                    .addProperty(
+                        PropertySpec.builder("denial", PRIVACY_DENIAL)
+                            .initializer("denial")
+                            .build(),
+                    )
+                    .addSuperinterface(disclosureClass)
+                    .build(),
+            )
+            .addType(
+                TypeSpec.classBuilder("Failed")
+                    .addModifiers(KModifier.DATA)
+                    .primaryConstructor(
+                        FunSpec.constructorBuilder()
+                            .addParameter("exception", KOTLIN_EXCEPTION)
+                            .build(),
+                    )
+                    .addProperty(
+                        PropertySpec.builder("exception", KOTLIN_EXCEPTION)
+                            .initializer("exception")
+                            .build(),
+                    )
+                    .addSuperinterface(disclosureClass)
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * Execute every pre-completion create-many phase on an already
+     * transaction-scoped repo. All hooks and rules are phase-major; the sole
+     * persistence call is `insertMany`.
+     */
+    private fun buildExecuteCreateManyWritePhases(
+        schemaName: String,
+        entityClass: ClassName,
+        createLambda: LambdaTypeName,
+        candidateClass: ClassName,
+    ): FunSpec {
+        val repoClass = ClassName(packageName, "${schemaName}Repo")
+        val completionClass = repoClass.nestedClass("CreateManyWriteCompletion")
+        val preparedType = PREPARED_CREATE.parameterizedBy(candidateClass)
+        val createClass = ClassName(packageName, "${schemaName}Create")
+        return FunSpec.builder("_executeCreateManyWritePhases")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("blocks", LIST.parameterizedBy(createLambda))
+            .addParameter("promoteDriverNotPersisted", BOOLEAN)
+            .returns(MUTATION_RESULT.parameterizedBy(completionClass))
+            .addCode(
+                CodeBlock.builder()
+                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+                    .add("val managedSaveFailures = %T<%T>()\n", ArrayList::class, ENT_MUTATION_EXCEPTION)
+                    .add("try {\n")
+                    .add("  check(driver.inTransaction) { %S }\n", "createMany write phases require a transaction-scoped driver")
+                    .add("  val builders = %T<%T>(blocks.size)\n", ArrayList::class, createClass)
+                    .add("  for (block in blocks) {\n")
+                    .add("    val builder = create { }\n")
+                    .add("    val configured = try {\n")
+                    .add(
+                        "      builder.configureForCreateManyForInternalUse(block, managedSaveFailures)\n",
+                    )
+                    .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("      throw e\n")
+                    .add("    } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add("      val managedFailure = managedSaveFailures.firstOrNull() ?: throw e\n")
+                    .add("      if (e !== managedFailure && managedFailure.suppressed.none { it === e }) {\n")
+                    .add("        managedFailure.addSuppressed(e)\n")
+                    .add("      }\n")
+                    .add("      client.recordTransactionMutationFailure(managedFailure)\n")
+                    .add("      return %T.failedForInternalUse(managedFailure)\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("    val managedFailure = managedSaveFailures.firstOrNull()\n")
+                    .add("    if (managedFailure != null) {\n")
+                    .add("      client.recordTransactionMutationFailure(managedFailure)\n")
+                    .add("      return %T.failedForInternalUse(managedFailure)\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("    when (configured) {\n")
+                    .add("      is %T.Success -> builders.add(configured.value)\n", MUTATION_RESULT)
+                    .add("      is %T.Failed -> return configured\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("  }\n")
+                    .add(
+                        "  %M(builders.map { it.beforeSaveHookValueForInternalUse() }, beforeSaveHooks)\n",
+                        RUN_BATCH_HOOKS_FOR_INTERNAL_USE,
+                    )
+                    .add(createManyManagedSaveFailureCheck().indented())
+                    .add(
+                        "  %M(builders.map { it.beforeCreateHookValueForInternalUse() }, beforeCreateHooks)\n",
+                        RUN_BATCH_HOOKS_FOR_INTERNAL_USE,
+                    )
+                    .add(createManyManagedSaveFailureCheck().indented())
+                    .add("  val prepared = %T<%T>(builders.size)\n", ArrayList::class.asClassName(), preparedType)
+                    .add("  for (builder in builders) {\n")
+                    .add("    val result = builder.prepareForInternalUse()\n")
+                    .add(createManyManagedSaveFailureCheck().indented().indented())
+                    .add("    when (result) {\n")
+                    .add("      is %T.Success -> prepared.add(result.value)\n", MUTATION_RESULT)
+                    .add("      is %T.Failed -> return result\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("  }\n")
+                    .add("  val privacy = client.currentPrivacyContext()\n")
+                    .add(createManyManagedSaveFailureCheck().indented())
+                    .add("  val candidates = prepared.map { it.candidate }\n")
+                    .add("  val denialReasons = createDenialReasons(privacy, candidates)\n")
+                    .add(createManyManagedSaveFailureCheck().indented())
+                    .add("  val deniedIndex = denialReasons.indexOfFirst { it != null }\n")
+                    .add("  if (deniedIndex >= 0) {\n")
+                    .add(
+                        privacyDeniedFailure(
+                            writeStateExpr = CodeBlock.of("%T.NotPersisted", MUTATION_WRITE_STATE),
+                            schemaName = schemaName,
+                            operationName = "CREATE",
+                            entityKeyExpr = CodeBlock.of("null"),
+                            reasonExpr = "denialReasons[deniedIndex]!!",
+                        ).indented(),
+                    )
+                    .add("  }\n")
+                    .add("  val violationsByCandidate = evaluateCreateValidations(candidates)\n")
+                    .add(createManyManagedSaveFailureCheck().indented())
+                    .add("  val invalidIndex = violationsByCandidate.indexOfFirst { it.isNotEmpty() }\n")
+                    .add("  if (invalidIndex >= 0) {\n")
+                    .add(
+                        recordAndReturnFailure(
+                            CodeBlock.of(
+                                "%T(%S, %T.CREATE, violationsByCandidate[invalidIndex])",
+                                ENT_VALIDATION_EXCEPTION,
+                                schemaName,
+                                MUTATION_ENT_OPERATION,
+                            ),
+                        ).indented(),
+                    )
+                    .add("  }\n")
+                    // A transaction-scoped Driver.insertMany may use several
+                    // physical statements. Once the call begins, an exception
+                    // can follow an earlier staged chunk, so the batch is
+                    // conservatively pending until its transaction resolves.
+                    .add("  writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
+                    .add("  val rows = try {\n")
+                    .add("    driver.insertMany(%T.TABLE, prepared.map { it.values })\n", entityClass)
+                    .add("  } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("    throw e\n")
+                    .add("  } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add(
+                        "    val classified = _classifyCreateDriverFailure(e, %T.TransactionPending)\n",
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add("    val reported = if (promoteDriverNotPersisted && prepared.size > 1 && ")
+                    .add("classified.writeState == %T.NotPersisted) {\n", MUTATION_WRITE_STATE)
+                    .add(
+                        "      %T(%T.TransactionPending, classified)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add("    } else classified\n")
+                    .add("    client.recordTransactionMutationFailure(reported)\n")
+                    .add("    return %T.failedForInternalUse(reported)\n", MUTATION_RESULT)
+                    .add("  }\n")
+                    .add("  check(rows.size == prepared.size) {\n")
+                    .add(
+                        "    %S + prepared.size + %S + rows.size",
+                        "Driver.insertMany contract violation for $schemaName: expected ",
+                        " persisted rows but received ",
+                    )
+                    .add("\n  }\n")
+                    .add("  val entities = rows.map { row -> %T.fromRow(row) }\n", entityClass)
+                    .add("  %M(entities, afterCreateHooks)\n", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
+                    .add(createManyManagedSaveFailureCheck().indented())
+                    .add(
+                        "  return %T.Success(%T(entities, privacy, managedSaveFailures))\n",
+                        MUTATION_RESULT,
+                        completionClass,
+                    )
+                    .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("  throw e\n")
+                    .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add(createManyManagedSaveFailureCheck("e").indented())
+                    .add(
+                        recordAndReturnFailure(
+                            CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
+                        ).indented(),
+                    )
+                    .add("}\n")
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * `createMany(*blocks): MutationResult<List<T>>` — strict, atomic,
+     * phase-major bulk create. Every builder and before-hook phase completes,
+     * then CREATE privacy and validation evaluate the complete candidate list,
+     * before one correlated `Driver.insertMany` persists the batch. Every row
+     * is hydrated before the single afterCreate phase begins.
      *
-     *  - Caller-owned transaction (`driver.inTransaction`): rows run
-     *    in place; the first write-phase `Failed` is recorded
-     *    (rollback-only) and returned, so staged rows cannot commit.
-     *    A post-write disclosure failure reports `TransactionPending`
-     *    and marks the scope rollback-only.
-     *
-     *  - EntKt-owned (no surrounding transaction): the whole batch
-     *    runs inside one `client.withTransaction`. A pre-completion
-     *    failure rolls the whole batch back (no committed subset); a
-     *    disclosure failure AFTER all writes succeeded deliberately
-     *    bypasses the coordinator, COMMITS the complete batch, and
-     *    reports the failure with `Committed` — successful
-     *    persistence is not undone merely because the requested
-     *    return value cannot be disclosed.
-     *
-     *  - Zero blocks → `Success(emptyList())` without transaction
-     *    work (after the transaction-requirement preflight).
-     *
-     * The old hard `driver.inTransaction` throw is gone — atomicity is
-     * owned here. `checkTransactionRequirement(multiWrite = blocks.size > 1)`
-     * still classifies against the caller's transaction posture first.
+     * Returned LOAD disclosure uses the same privacy-context snapshot as
+     * CREATE privacy. A caller-owned transaction maps disclosure failure to
+     * `TransactionPending` and rollback-only. An EntKt-owned transaction
+     * captures it as a neutral value, attempts commit, and reports `Committed`
+     * only after commit is confirmed.
      */
     private fun buildCreateMany(
         schemaName: String,
         entityClass: ClassName,
         createLambda: LambdaTypeName,
-        idType: com.squareup.kotlinpoet.TypeName,
     ): FunSpec {
         val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val repoClass = ClassName(packageName, "${schemaName}Repo")
+        val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
         val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
         return FunSpec.builder("createMany")
             .addParameter(
                 ParameterSpec.builder("blocks", createLambda)
                     .addModifiers(KModifier.VARARG)
-                    .build()
+                    .build(),
             )
             .returns(resultType)
             .addKdoc(
-                "Atomically create one row per block. `Success` carries every\n" +
-                    "created entity in input order; the whole batch shares one\n" +
-                    "transaction (the caller's, or an EntKt-owned one), so any failure\n" +
-                    "before the batch's writes and write-side callbacks complete\n" +
-                    "leaves no committed subset after a confirmed rollback — a partial\n" +
-                    "list is never returned. Hook-required hydration is write-side\n" +
-                    "work and happens per row; return processing (LOAD disclosure\n" +
-                    "plus any additional return materialization, input order,\n" +
-                    "fail-fast) runs after all writes: a\n" +
-                    "denial there is `Failed(EntMutationPrivacyDeniedException)` with\n" +
-                    "`operation = LOAD` identifying the one denied entity, and — in an\n" +
-                    "EntKt-owned transaction — the batch still COMMITS, reported via\n" +
-                    "`writeState = Committed`. `Failed` therefore does NOT imply\n" +
-                    "rollback; inspect `exception.writeState`. There is no `orNull()`\n" +
-                    "projection — project with `getOrThrow()` or match on the result.",
+                "Atomically create one row per block. Lifecycle work is phase-major:\n" +
+                    "all before-hooks, CREATE privacy, and validation finish before one\n" +
+                    "set-based insert. `Success` carries the complete hydrated list in\n" +
+                    "input order; a partial list is never returned. Returned LOAD\n" +
+                    "privacy is batch-evaluated after every row is hydrated and after\n" +
+                    "the full afterCreate phase. In a caller-owned transaction a\n" +
+                    "disclosure failure is `TransactionPending` and marks rollback-only;\n" +
+                    "in an EntKt-owned transaction a confirmed commit reports it as\n" +
+                    "`Committed`, a confirmed rollback as `NotPersisted`, and an uncertain\n" +
+                    "boundary as `PersistenceUnknown`. `Failed` therefore\n" +
+                    "does not by itself imply rollback; inspect `exception.writeState`.\n" +
+                    "There is no `orNull()` projection — use `getOrThrow()` or match on\n" +
+                    "the result.",
             )
             .addCode(
                 CodeBlock.builder()
                     .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
                     .add("try {\n")
-                    // multiWrite reflects the documented "issues more
-                    // than one driver write" contract: a zero- or
-                    // one-row batch is not a multi-write, so
-                    // RequiredForMultiWrite must not reject it.
                     .add(
                         "  client.checkTransactionRequirement(%S, multiWrite = blocks.size > 1)\n",
                         "$schemaName createMany",
                     )
                     .add("  if (blocks.isEmpty()) return %T.Success(emptyList())\n", MUTATION_RESULT)
+                    .add("  val blockSnapshot = blocks.toList()\n")
                     .add("  if (driver.inTransaction) {\n")
-                    // ---- Caller-owned transaction: per-row pipeline in
-                    // place (write-side only; no disclosure), then batch
-                    // return processing. Each row's Failed was already
-                    // recorded on the coordinator inside the create
-                    // pipeline. ----
-                    .add("    val out = %T<%T>(blocks.size)\n", ArrayList::class.asClassName(), entityClass)
-                    .add("    for (block in blocks) {\n")
-                    .add("      when (val result = create(block).executeSaveForInternalUse(applyLoadPrivacy = false)) {\n")
-                    .add("        is %T.Success -> out.add(result.value)\n", MUTATION_RESULT)
-                    // Same staged-batch honesty rule as deleteMany: after
-                    // any prior row wrote, a NotPersisted row failure is
-                    // re-reported as TransactionPending for the batch.
-                    .add("        is %T.Failed -> {\n", MUTATION_RESULT)
-                    .add("          val rowException = result.exception\n")
                     .add(
-                        "          return if (out.isNotEmpty() && rowException.writeState == %T.NotPersisted) {\n",
+                        "    val completion = when (val result = " +
+                            "_executeCreateManyWritePhases(blockSnapshot, promoteDriverNotPersisted = true)) {\n",
+                    )
+                    .add("      is %T.Success -> result.value\n", MUTATION_RESULT)
+                    .add("      is %T.Failed -> return result\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("    writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
+                    .add("    val denial = try {\n")
+                    .add(
+                        "      loadDenials(completion.privacy, completion.entities)" +
+                            ".filterNotNull().firstOrNull()\n",
+                    )
+                    .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+                    .add("      throw e\n")
+                    .add("    } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add("      val managedFailure = completion.managedSaveFailures.firstOrNull() ?: throw e\n")
+                    .add("      if (e !== managedFailure && managedFailure.suppressed.none { it === e }) {\n")
+                    .add("        managedFailure.addSuppressed(e)\n")
+                    .add("      }\n")
+                    .add(
+                        "      val reported = %T(%T.TransactionPending, managedFailure)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION,
                         MUTATION_WRITE_STATE,
                     )
-                    .add(
-                        "            val staged = %T(%T.TransactionPending, rowException)\n",
-                        ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
-                    )
-                    .add("            client.replaceTransactionMutationFailure(rowException, staged)\n")
-                    .add("            %T.failedForInternalUse(staged)\n", MUTATION_RESULT)
-                    .add("          } else result\n")
-                    .add("        }\n")
-                    .add("      }\n")
+                    .add("      client.replaceTransactionMutationFailure(managedFailure, reported)\n")
+                    .add("      return %T.failedForInternalUse(reported)\n", MUTATION_RESULT)
                     .add("    }\n")
-                    // All writes + write-side callbacks succeeded; the
-                    // batch is staged in the caller's open transaction.
-                    // Return-processing failures from here (a thrown
-                    // privacy rule reaches the terminal boundary; a
-                    // returned denial is typed below) report
-                    // TransactionPending and mark rollback-only.
-                    .add("    writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
-                    .add("    val privacy = client.currentPrivacyContext()\n")
-                    .add("    for (entity in out) {\n")
-                    .add("      val denial = loadDenialOrNull(privacy, entity)\n")
-                    .add("      if (denial != null) {\n")
+                    .add("    completion.managedSaveFailures.firstOrNull()?.let { managedFailure ->\n")
+                    .add(
+                        "      val reported = %T(%T.TransactionPending, managedFailure)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                        MUTATION_WRITE_STATE,
+                    )
+                    .add("      client.replaceTransactionMutationFailure(managedFailure, reported)\n")
+                    .add("      return %T.failedForInternalUse(reported)\n", MUTATION_RESULT)
+                    .add("    }\n")
+                    .add("    if (denial != null) {\n")
                     .add(
                         privacyDeniedFailure(
                             writeStateExpr = CodeBlock.of("%T.TransactionPending", MUTATION_WRITE_STATE),
                             schemaName = schemaName,
                             operationName = "LOAD",
-                            entityKeyExpr = CodeBlock.of("%T(%S, entity.id)", MUTATION_ENTITY_KEY, "id"),
+                            entityKeyExpr = CodeBlock.of("denial.entityKey"),
                             reasonExpr = "denial.reason",
-                        ).indented().indented().indented(),
+                        ).indented(),
                     )
-                    .add("      }\n")
                     .add("    }\n")
-                    .add("    return %T.Success(out.toList())\n", MUTATION_RESULT)
+                    .add("    return %T.Success(completion.entities)\n", MUTATION_RESULT)
                     .add("  }\n")
-                    // ---- EntKt-owned: one transaction for the whole
-                    // batch. Write failures abort via orRollback (the
-                    // boundary rolls back — no committed subset); return-
-                    // processing failures are CAPTURED into locals instead
-                    // of thrown so the block returns normally and the
-                    // batch COMMITS. ----
-                    .add("  var disclosureDeniedId: %T = null\n", idType.copy(nullable = true))
-                    .add("  var disclosureDenialReason: String? = null\n")
                     .add("  var disclosureFailure: %T? = null\n", KOTLIN_EXCEPTION)
+                    .add("  var disclosureDenial: %T? = null\n", PRIVACY_DENIAL)
                     .add("  val txResult = client.withTransaction { tx ->\n")
-                    .add("    val batch = %T<%T>(blocks.size)\n", ArrayList::class.asClassName(), entityClass)
-                    .add("    for (block in blocks) {\n")
                     .add(
-                        "      batch.add(tx.%L.create(block).executeSaveForInternalUse(applyLoadPrivacy = false).orRollback())\n",
+                        "    val completion = tx.%L._executeCreateManyWritePhases(" +
+                            "blockSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
                         repoPropName,
                     )
-                    .add("    }\n")
-                    // Disclosure runs through the tx-scoped repo so
-                    // privacy-rule reads see the staged batch. Obtaining
-                    // the privacy context is already return processing:
-                    // a provider failure is captured so the completed
-                    // batch still COMMITS and reports the disclosure
-                    // failure with `Committed`.
-                    .add("    val privacy = try {\n")
-                    .add("      tx.currentPrivacyContext()\n")
+                    .add("    try {\n")
+                    .add(
+                        "      val denial = tx.%L.loadDenials(completion.privacy, completion.entities)" +
+                            ".filterNotNull().firstOrNull()\n",
+                        repoPropName,
+                    )
+                    .add("      completion.managedSaveFailures.firstOrNull()?.let { throw it }\n")
+                    .add("      if (denial == null) {\n")
+                    .add("        %T.Allowed(completion.entities)\n", disclosureClass)
+                    .add("      } else {\n")
+                    .add("        disclosureDenial = denial\n")
+                    .add("        %T.Denied(denial)\n", disclosureClass)
+                    .add("      }\n")
                     .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
                     .add("      throw e\n")
                     .add("    } catch (e: %T) {\n", KOTLIN_EXCEPTION)
+                    .add("      val managedFailure = completion.managedSaveFailures.firstOrNull()\n")
+                    .add("      if (managedFailure != null) {\n")
+                    .add("        if (e !== managedFailure && managedFailure.suppressed.none { it === e }) {\n")
+                    .add("          managedFailure.addSuppressed(e)\n")
+                    .add("        }\n")
+                    .add("        throw managedFailure\n")
+                    .add("      }\n")
                     .add("      disclosureFailure = e\n")
-                    .add("      return@withTransaction null\n")
+                    .add("      %T.Failed(e)\n", disclosureClass)
                     .add("    }\n")
-                    .add("    for (entity in batch) {\n")
-                    .add("      val denial = try {\n")
-                    .add("        tx.%L.loadDenialOrNull(privacy, entity)\n", repoPropName)
-                    .add("      } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-                    .add("        throw e\n")
-                    .add("      } catch (e: %T) {\n", KOTLIN_EXCEPTION)
-                    .add("        disclosureFailure = e\n")
-                    .add("        return@withTransaction null\n")
-                    .add("      }\n")
-                    .add("      if (denial != null) {\n")
-                    .add("        disclosureDeniedId = entity.id\n")
-                    .add("        disclosureDenialReason = denial.reason\n")
-                    .add("        return@withTransaction null\n")
-                    .add("      }\n")
-                    .add("    }\n")
-                    .add("    batch.toList()\n")
                     .add("  }\n")
                     .add("  return when (txResult) {\n")
-                    .add("    is %T.Success -> {\n", TRANSACTION_RESULT)
-                    .add("      val entities = txResult.value\n")
-                    .add("      if (entities != null) {\n")
-                    .add("        %T.Success(entities)\n", MUTATION_RESULT)
-                    .add("      } else {\n")
-                    // Commit succeeded but the return value cannot be
-                    // disclosed / materialized: report Committed. Not
-                    // routed through the coordinator by construction
-                    // (there is no caller-owned scope on this path).
-                    .add("        val reason = disclosureDenialReason\n")
-                    .add("        val exception = if (reason != null) {\n")
+                    .add("    is %T.Success -> when (val disclosure = txResult.value) {\n", TRANSACTION_RESULT)
+                    .add("      is %T.Allowed -> %T.Success(disclosure.entities)\n", disclosureClass, MUTATION_RESULT)
+                    .add("      is %T.Denied -> {\n", disclosureClass)
                     .add(
-                        "          %T(%T.Committed, %S, %T.LOAD, %T(%S, disclosureDeniedId!!), reason)\n",
-                        ClassName("entkt.runtime.result", "EntMutationPrivacyDeniedException"),
-                        MUTATION_WRITE_STATE, schemaName, MUTATION_ENT_OPERATION, MUTATION_ENTITY_KEY, "id",
+                        "        val exception = %T(%T.Committed, %S, %T.LOAD, " +
+                            "disclosure.denial.entityKey, disclosure.denial.reason)\n",
+                        ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
+                        MUTATION_WRITE_STATE,
+                        schemaName,
+                        MUTATION_ENT_OPERATION,
                     )
-                    .add("        } else {\n")
+                    .add("        client.recordTransactionMutationFailure(exception)\n")
+                    .add("        %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+                    .add("      }\n")
+                    .add("      is %T.Failed -> {\n", disclosureClass)
                     .add(
-                        "          %T(%T.Committed, disclosureFailure!!)\n",
-                        ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
+                        "        val exception = %T(%T.Committed, disclosure.exception)\n",
+                        ENT_UNEXPECTED_MUTATION_EXCEPTION,
+                        MUTATION_WRITE_STATE,
                     )
-                    .add("        }\n")
                     .add("        client.recordTransactionMutationFailure(exception)\n")
                     .add("        %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
                     .add("      }\n")
                     .add("    }\n")
                     .add("    is %T.Failed -> {\n", TRANSACTION_RESULT)
-                    .add(txFailureConversion().indented().indented().indented())
+                    .add(createManyTxFailureConversion(schemaName).indented().indented().indented())
                     .add("    }\n")
                     .add("  }\n")
                     .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
@@ -1255,41 +1829,56 @@ internal class RepoGenerator(
     // terminal's capture boundary as a foreign failure — even when the
     // rule threw an EntValidationException itself.
 
-    private fun buildEvaluateCreateValidation(
+    private fun buildEvaluateCreateValidations(
         schemaName: String,
         candidateClass: ClassName,
         fields: List<Field>,
     ): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
         val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
-        return FunSpec.builder("evaluateCreateValidation")
+        val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
+        return FunSpec.builder("evaluateCreateValidations")
             .addModifiers(KModifier.INTERNAL)
-            .addParameter("candidate", candidateClass)
-            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
+            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
+            .returns(LIST.parameterizedBy(violationList))
             .addCode(CodeBlock.builder()
+                .addStatement("if (candidates.isEmpty()) return emptyList()")
+                .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement("val rules = validationConfig.createRules")
-                .addStatement("if (rules.isEmpty()) return emptyList()")
+                .addStatement("if (rules.isEmpty()) return %T(candidateSnapshot.size) { emptyList() }", LIST)
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("return rules.mapNotNull { rule ->")
                 .addStatement(
-                    "  val ctx = %T(validationClient, %L)",
+                    "val invalidsByCandidate = %M(%S, candidateSnapshot, rules) { item ->\n" +
+                        "  %T(validationClient, %L)\n" +
+                        "}",
+                    EVALUATE_BATCH_VALIDATION_RULES,
+                    "$schemaName CREATE validation",
                     createCtxClass,
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("item", fields, entityClass),
                 )
-                .addStatement("  when (val decision = rule.validate(ctx)) {")
-                .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
-                .addStatement("    is %T.Invalid -> decision.%M()", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
-                .addStatement("  }")
-                .addStatement("}")
+                .addStatement(
+                    "return invalidsByCandidate.map { invalids -> invalids.map { it.%M() } }",
+                    TO_VALIDATION_VIOLATION,
+                )
                 .build()
             )
             .build()
     }
+
+    private fun buildEvaluateCreateValidation(candidateClass: ClassName): FunSpec =
+        FunSpec.builder("evaluateCreateValidation")
+            .addModifiers(KModifier.INTERNAL)
+            .addParameter("candidate", candidateClass)
+            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
+            .addStatement("return evaluateCreateValidations(listOf(candidate)).single()")
+            .build()
 
     private fun buildEvaluateUpdateValidation(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
         fields: List<Field>,
+        helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec {
         val updateCtxClass = ClassName(packageName, "${schemaName}UpdateValidationContext")
         val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
@@ -1307,70 +1896,84 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("val violations = mutableListOf<%T>()", MUTATION_VALIDATION_VIOLATION)
-                .beginControlFlow("for (rule in rules)")
                 .addStatement(
-                    "val updateCtx = %T(validationClient, %L, %L, %L, %L, edgeChanges)",
+                    "val invalids = %M(%S, listOf(candidate), rules) { item ->\n" +
+                    "  %T(validationClient, %L, %L, %L, %L, %L)\n" +
+                        "}.single().toMutableList()",
+                    EVALUATE_BATCH_VALIDATION_RULES,
+                    "$schemaName UPDATE validation",
                     updateCtxClass,
-                    byteArraySnapshot("before", fields),
-                    byteArrayPatchSnapshot("requestedPatch", fields),
-                    byteArrayPatchSnapshot("effectivePatch", fields),
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("before", fields, entityClass),
+                    lifecyclePatchSnapshot("requestedPatch", fields, entityClass),
+                    lifecyclePatchSnapshot("effectivePatch", fields, entityClass),
+                    lifecycleValueSnapshot("item", fields, entityClass),
+                    edgeChangesSnapshot("edgeChanges", helperEligibleEdges),
                 )
-                .beginControlFlow("when (val decision = rule.validate(updateCtx))")
-                .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
-                .addStatement("is %T.Invalid -> violations.add(decision.%M())", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
-                .endControlFlow()
-                .endControlFlow()
                 .beginControlFlow("if (validationConfig.updateDerivesFromCreate)")
-                .beginControlFlow("for (rule in validationConfig.createRules)")
                 .addStatement(
-                    "val createCtx = %T(validationClient, %L)",
+                    "invalids += %M(%S, listOf(candidate), validationConfig.createRules) { item ->\n" +
+                        "  %T(validationClient, %L)\n" +
+                        "}.single()",
+                    EVALUATE_BATCH_VALIDATION_RULES,
+                    "$schemaName UPDATE validation",
                     createCtxClass,
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("item", fields, entityClass),
                 )
-                .beginControlFlow("when (val decision = rule.validate(createCtx))")
-                .addStatement("is %T.Valid -> { }", VALIDATION_DECISION)
-                .addStatement("is %T.Invalid -> violations.add(decision.%M())", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
                 .endControlFlow()
-                .endControlFlow()
-                .endControlFlow()
-                .addStatement("return violations")
+                .addStatement("return invalids.map { it.%M() }", TO_VALIDATION_VIOLATION)
                 .build()
             )
             .build()
     }
 
-    private fun buildEvaluateDeleteValidation(
+    private fun buildEvaluateDeleteValidations(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
         fields: List<Field>,
     ): FunSpec {
         val deleteCtxClass = ClassName(packageName, "${schemaName}DeleteValidationContext")
-        return FunSpec.builder("evaluateDeleteValidation")
+        val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
+        return FunSpec.builder("evaluateDeleteValidations")
             .addModifiers(KModifier.INTERNAL)
-            .addParameter("entity", entityClass)
-            .addParameter("candidate", candidateClass)
-            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
+            .addParameter("entities", LIST.parameterizedBy(entityClass))
+            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
+            .returns(LIST.parameterizedBy(violationList))
             .addCode(CodeBlock.builder()
+                .addStatement("require(entities.size == candidates.size) { %S }", "DELETE entity/candidate count mismatch")
+                .addStatement("if (entities.isEmpty()) return emptyList()")
+                .addStatement("val entitySnapshot = entities.toList()")
+                .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement("val rules = validationConfig.deleteRules")
-                .addStatement("if (rules.isEmpty()) return emptyList()")
+                .addStatement("if (rules.isEmpty()) return %T(entitySnapshot.size) { emptyList() }", LIST)
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("return rules.mapNotNull { rule ->")
                 .addStatement(
-                    "  val ctx = %T(validationClient, %L, %L)",
+                    "val invalidsByCandidate = %M(%S, entitySnapshot.indices.toList(), rules) { index ->\n" +
+                        "  %T(validationClient, %L, %L)\n" +
+                        "}",
+                    EVALUATE_BATCH_VALIDATION_RULES,
+                    "$schemaName DELETE validation",
                     deleteCtxClass,
-                    byteArraySnapshot("entity", fields),
-                    byteArraySnapshot("candidate", fields),
+                    lifecycleValueSnapshot("entitySnapshot[index]", fields, entityClass),
+                    lifecycleValueSnapshot("candidateSnapshot[index]", fields, entityClass),
                 )
-                .addStatement("  when (val decision = rule.validate(ctx)) {")
-                .addStatement("    is %T.Valid -> null", VALIDATION_DECISION)
-                .addStatement("    is %T.Invalid -> decision.%M()", VALIDATION_DECISION, TO_VALIDATION_VIOLATION)
-                .addStatement("  }")
-                .addStatement("}")
+                .addStatement(
+                    "return invalidsByCandidate.map { invalids -> invalids.map { it.%M() } }",
+                    TO_VALIDATION_VIOLATION,
+                )
                 .build()
             )
             .build()
     }
+
+    private fun buildEvaluateDeleteValidation(
+        entityClass: ClassName,
+        candidateClass: ClassName,
+    ): FunSpec = FunSpec.builder("evaluateDeleteValidation")
+        .addModifiers(KModifier.INTERNAL)
+        .addParameter("entity", entityClass)
+        .addParameter("candidate", candidateClass)
+        .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
+        .addStatement("return evaluateDeleteValidations(listOf(entity), listOf(candidate)).single()")
+        .build()
 }

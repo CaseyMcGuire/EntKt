@@ -1,19 +1,70 @@
 package entkt.postgres
 
 import entkt.runtime.driver.KotlinxJsonCodec
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.JsonColumnCodec
+import entkt.runtime.driver.JsonColumnMetadata
+import entkt.runtime.driver.JsonMapperIds
 import entkt.schema.FieldType
 import java.lang.reflect.Proxy
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.sql.PreparedStatement
+import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlinx.serialization.Serializable
+
+@Serializable
+private data class SnapshotDocument(val tags: List<String>)
 
 class PostgresValueCodecTest {
 
     private val codec = PostgresValueCodec(KotlinxJsonCodec())
+
+    @Test
+    fun `JSON snapshots use the codec copy contract even when decode is cached`() {
+        val delegate = KotlinxJsonCodec()
+        val sharedDecode = SnapshotDocument(mutableListOf("cached"))
+        var copyCalls = 0
+        val cachingCodec = object : JsonColumnCodec {
+            override val id: String = JsonMapperIds.KOTLINX
+            override fun validate(table: String, column: ColumnMetadata) = delegate.validate(table, column)
+            override fun encode(table: String, column: ColumnMetadata, value: Any): String =
+                delegate.encode(table, column, value)
+            override fun decode(table: String, column: ColumnMetadata, text: String): Any = sharedDecode
+            override fun copyValue(table: String, column: ColumnMetadata, value: Any): Any {
+                copyCalls++
+                return delegate.copyValue(table, column, value)
+            }
+        }
+        val column = ColumnMetadata(
+            name = "document",
+            type = FieldType.JSON,
+            nullable = false,
+            json = JsonColumnMetadata(
+                klass = SnapshotDocument::class,
+                kType = typeOf<SnapshotDocument>(),
+                typeName = SnapshotDocument::class.qualifiedName!!,
+                mapper = JsonMapperIds.KOTLINX,
+                kotlinxSerializer = SnapshotDocument.serializer(),
+            ),
+        )
+        val originalTags = mutableListOf("original")
+        val copied = PostgresValueCodec(cachingCodec).copyJsonValue(
+            "documents",
+            column,
+            SnapshotDocument(originalTags),
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        (copied.tags as MutableList<String>) += "changed"
+        assertEquals(1, copyCalls)
+        assertEquals(listOf("original"), originalTags)
+        assertEquals(listOf("original", "changed"), copied.tags)
+    }
 
     @Test
     fun `integral binds accept exactly representable Number values`() {

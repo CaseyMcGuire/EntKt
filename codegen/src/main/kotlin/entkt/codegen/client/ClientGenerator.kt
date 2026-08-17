@@ -35,6 +35,9 @@ private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "Tra
 private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
 private val TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.result", "transactionExecutionGuardForInternalUse")
+private val BATCH_HOOK = ClassName("entkt.runtime.hook", "BatchHook")
+private val HOOK = ClassName("entkt.runtime.hook", "Hook")
+private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo
@@ -296,9 +299,11 @@ internal class ClientGenerator(
                 // (and at the multi-write equivalents once those land) so a
                 // configured TransactionRequirement is enforced *before*
                 // hooks, privacy, validation, driver reads, or driver writes.
-                // [multiWrite] indicates whether the calling save will issue
-                // more than one driver write — RequiredForMultiWrite only
-                // fires for those; RequiredForAllWrites fires for any write.
+                // [multiWrite] classifies the calling save as a logical
+                // multi-row / multi-write shape. It is independent of how
+                // many driver calls implement that shape (createMany now uses
+                // one set-based insert); RequiredForMultiWrite fires for the
+                // classified shape, RequiredForAllWrites for any write.
                 FunSpec.builder("checkTransactionRequirement")
                     .addModifiers(KModifier.INTERNAL)
                     .addParameter("operation", String::class)
@@ -415,7 +420,8 @@ internal class ClientGenerator(
 
         for (def in hookDefs) {
             val lambdaType = LambdaTypeName.get(parameters = arrayOf(def.paramType), returnType = UNIT)
-            val listType = MUTABLE_LIST.parameterizedBy(lambdaType)
+            val batchHookType = BATCH_HOOK.parameterizedBy(def.paramType)
+            val listType = MUTABLE_LIST.parameterizedBy(batchHookType)
 
             // Internal property: the hook list
             builder.addProperty(
@@ -429,6 +435,20 @@ internal class ClientGenerator(
             builder.addFunction(
                 FunSpec.builder(def.name)
                     .addParameter("hook", lambdaType)
+                    .addStatement("%LHooks.add(%T(hook))", def.name, HOOK)
+                    .build()
+            )
+
+            // Explicitly batch-aware hooks use the same lifecycle name and
+            // enter the same ordered registry as scalar hook lambdas.
+            builder.addFunction(
+                FunSpec.builder(def.name)
+                    .addAnnotation(
+                        AnnotationSpec.builder(JVM_NAME)
+                            .addMember("%S", "${def.name}BatchHook")
+                            .build(),
+                    )
+                    .addParameter("hook", batchHookType)
                     .addStatement("%LHooks.add(hook)", def.name)
                     .build()
             )

@@ -34,6 +34,16 @@ common handling styles without another database call:
   to `Success(null)`; every other state is unchanged. Privacy as
   absence, made explicit.
 
+Materializing collection terminals evaluate LOAD privacy over the complete
+ordered root result. The first explicit batch privacy rule is invoked once with
+that list; each later rule receives the ordered still-unresolved subset after
+earlier `Allow` / `Deny` decisions. An ordinary scalar rule adapts by visiting
+its supplied subset in order.
+`findById()` and `firstOrNull()` use the same evaluator with a singleton when a
+row exists, and do not invoke LOAD rules on absence. One captured
+`PrivacyContext` is shared by the terminal's interceptors, root LOAD phase, and
+all traversal and eager work.
+
 ## Indexed Query Helpers
 
 When an entity declares indexes, the generated repo exposes an `indexes`
@@ -561,6 +571,13 @@ schema-edge path from the root to the denied target, so root denial
 (`Root`) and eager denial stay distinguishable; `visibleOrNull()` maps
 only *root* denial to absence, so adding an eager load can never make a
 visible root look absent.
+
+For each eager query, LOAD privacy receives one ordered batch of the distinct
+targets that remain in at least one parent's requested window. A shared
+many-to-many target is evaluated once, not once per parent. Strict mode reports
+the first denied target after evaluating that batch; `filterVisible()` removes
+every denied target from every group that references it. Nested eager paths
+repeat the contract for each actual nested edge-load invocation.
 
 Each `with{Edge} { ... }` call returns an `EagerLoad` handle. Calling
 `filterVisible()` on it opts that one edge into retaining only visible

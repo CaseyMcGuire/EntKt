@@ -1,9 +1,21 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
+import entkt.integrationtest.ent.ArticleCreatePrivacyRule
+import entkt.integrationtest.ent.ArticleCreateValidationRule
+import entkt.integrationtest.ent.ArticleLoadPrivacyRule
+import entkt.integrationtest.ent.ArticlePolicyScope
+import entkt.integrationtest.ent.ArticleUpdatePrivacyRule
+import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.schema.ArticleMeta
 import entkt.integrationtest.schema.HighlightRect
 import entkt.integrationtest.support.PostgresTestBase
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.mutation.FieldPatch
+import entkt.runtime.validation.ValidationDecision
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -93,5 +105,207 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             .toSet()
         assertTrue(withoutMeta.id in nullMetaIds, "isNull matches the null-metadata row")
         assertTrue(withMeta.id !in nullMetaIds, "isNull excludes the row with metadata")
+    }
+
+    @Test
+    fun `privacy and validation rules receive detached typed JSON snapshots`() {
+        val driver = resetAndDriver()
+        val system = sysClient(driver)
+        val author = system.users.create {
+            name = "A"
+            email = "json-snapshots@example.com"
+        }.saveAndLoad().getOrThrow()
+
+        val firstTags = mutableListOf("first")
+        val secondTags = mutableListOf("second")
+        val seenByPrivacy = mutableListOf<List<String>>()
+        val seenByValidation = mutableListOf<List<String>>()
+        val seenByLoad = mutableListOf<List<String>>()
+
+        val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    create(
+                        ArticleCreatePrivacyRule { context ->
+                            @Suppress("UNCHECKED_CAST")
+                            (context.candidate.metadata!!.tags as MutableList<String>) += "privacy mutation"
+                            PrivacyDecision.Continue
+                        },
+                        ArticleCreatePrivacyRule { context ->
+                            seenByPrivacy += context.candidate.metadata!!.tags.toList()
+                            PrivacyDecision.Allow
+                        },
+                    )
+                    load(
+                        ArticleLoadPrivacyRule { context ->
+                            @Suppress("UNCHECKED_CAST")
+                            (context.entity.metadata!!.tags as MutableList<String>) += "load mutation"
+                            PrivacyDecision.Continue
+                        },
+                        ArticleLoadPrivacyRule { context ->
+                            seenByLoad += context.entity.metadata!!.tags.toList()
+                            PrivacyDecision.Allow
+                        },
+                    )
+                }
+                validation {
+                    create(
+                        ArticleCreateValidationRule { context ->
+                            @Suppress("UNCHECKED_CAST")
+                            (context.candidate.metadata!!.tags as MutableList<String>) += "validation mutation"
+                            ValidationDecision.Valid
+                        },
+                        ArticleCreateValidationRule { context ->
+                            seenByValidation += context.candidate.metadata!!.tags.toList()
+                            ValidationDecision.Valid
+                        },
+                    )
+                }
+            }
+        }
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(author.id)) }
+            policies { articles(policy) }
+        }
+
+        val created = client.articles.createMany(
+            {
+                title = "first"
+                authorId = author.id
+                metadata = ArticleMeta("test", firstTags)
+            },
+            {
+                title = "second"
+                authorId = author.id
+                metadata = ArticleMeta("test", secondTags)
+            },
+        ).getOrThrow()
+
+        val expected = listOf(listOf("first"), listOf("second"))
+        assertEquals(expected, seenByPrivacy, "each privacy rule gets a fresh JSON graph")
+        assertEquals(expected, seenByValidation, "each validation rule gets a fresh JSON graph")
+        assertEquals(expected, seenByLoad, "each LOAD rule gets a fresh JSON graph")
+        assertEquals(listOf("first"), firstTags, "rule mutation cannot reach caller-owned input")
+        assertEquals(listOf("second"), secondTags, "rule mutation cannot reach caller-owned input")
+        assertEquals(expected, created.map { it.metadata!!.tags }, "rule mutation cannot reach returned rows")
+
+        val stored = system.articles.query().all().getOrThrow().sortedBy { it.title }
+        assertEquals(expected, stored.map { it.metadata!!.tags }, "rule mutation cannot reach persisted rows")
+    }
+
+    @Test
+    fun `create preparation detaches caller-owned JSON before lifecycle callbacks`() {
+        val driver = resetAndDriver()
+        val system = sysClient(driver)
+        val author = system.users.create {
+            name = "A"
+            email = "json-create-alias@example.com"
+        }.saveAndLoad().getOrThrow()
+        val callerTags = mutableListOf("original")
+        var seenCandidate: List<String>? = null
+
+        val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    create(
+                        ArticleCreatePrivacyRule {
+                            callerTags += "captured alias mutation"
+                            PrivacyDecision.Continue
+                        },
+                        ArticleCreatePrivacyRule { context ->
+                            seenCandidate = context.candidate.metadata!!.tags.toList()
+                            PrivacyDecision.Allow
+                        },
+                    )
+                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                }
+            }
+        }
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(author.id)) }
+            policies { articles(policy) }
+        }
+
+        val created = client.articles.create {
+            title = "detached create"
+            authorId = author.id
+            metadata = ArticleMeta("test", callerTags)
+        }.saveAndLoad().getOrThrow()
+
+        assertEquals(listOf("original", "captured alias mutation"), callerTags)
+        assertEquals(listOf("original"), seenCandidate)
+        assertEquals(listOf("original"), created.metadata!!.tags)
+        val stored = system.articles.findById(created.id).getOrThrow()!!
+        assertEquals(listOf("original"), stored.metadata!!.tags)
+    }
+
+    @Test
+    fun `update hook and rule snapshots cannot mutate the pending JSON write`() {
+        val driver = resetAndDriver()
+        val system = sysClient(driver)
+        val author = system.users.create {
+            name = "A"
+            email = "json-update-snapshots@example.com"
+        }.saveAndLoad().getOrThrow()
+        val original = system.articles.create {
+            title = "update snapshots"
+            authorId = author.id
+            metadata = ArticleMeta("before", listOf("before"))
+        }.saveAndLoad().getOrThrow()
+
+        val replacementTags = mutableListOf("replacement")
+        val hookBeforeSeen = mutableListOf<List<String>>()
+        val hookPatchSeen = mutableListOf<List<String>>()
+        var ruleCandidateSeen: List<String>? = null
+
+        val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    update(
+                        ArticleUpdatePrivacyRule {
+                            replacementTags += "captured alias mutation"
+                            PrivacyDecision.Continue
+                        },
+                        ArticleUpdatePrivacyRule { context ->
+                            ruleCandidateSeen = context.candidate.metadata!!.tags.toList()
+                            PrivacyDecision.Allow
+                        },
+                    )
+                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                }
+            }
+        }
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(author.id)) }
+            policies { articles(policy) }
+            hooks {
+                articles {
+                    beforeUpdate { context ->
+                        @Suppress("UNCHECKED_CAST")
+                        (context.before.metadata!!.tags as MutableList<String>) += "before mutation"
+                        @Suppress("UNCHECKED_CAST")
+                        (((context.patch.metadata as FieldPatch.Set<ArticleMeta?>).value!!)
+                            .tags as MutableList<String>) += "patch mutation"
+                    }
+                    beforeUpdate { context ->
+                        hookBeforeSeen += context.before.metadata!!.tags.toList()
+                        val patch = context.patch.metadata as FieldPatch.Set<ArticleMeta?>
+                        hookPatchSeen += patch.value!!.tags.toList()
+                    }
+                }
+            }
+        }
+
+        val updated = client.articles.update(original.id) {
+            metadata = ArticleMeta("after", replacementTags)
+        }.saveAndLoad().getOrThrow()
+
+        assertEquals(listOf(listOf("before")), hookBeforeSeen)
+        assertEquals(listOf(listOf("replacement")), hookPatchSeen)
+        assertEquals(listOf("replacement", "captured alias mutation"), replacementTags)
+        assertEquals(listOf("replacement"), ruleCandidateSeen)
+        assertEquals(listOf("replacement"), updated.metadata!!.tags)
+        val stored = system.articles.findById(original.id).getOrThrow()!!
+        assertEquals(listOf("replacement"), stored.metadata!!.tags)
     }
 }

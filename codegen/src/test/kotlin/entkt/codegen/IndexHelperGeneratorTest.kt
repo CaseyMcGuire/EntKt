@@ -230,7 +230,7 @@ class IndexHelperGeneratorTest {
     fun `repo without eligible indexes has no indexes namespace and no file`() {
         val s = IdxNoIndex(); finalize(s)
         val repoOut = repo.generate("Plain", s).toString()
-        assertTrue("val indexes" !in repoOut, repoOut)
+        assertTrue("public val indexes:" !in repoOut, repoOut)
         assertNull(gen.generate("Plain", s), "no eligible index → no Indexes file")
     }
 

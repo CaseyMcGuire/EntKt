@@ -1,8 +1,14 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.Post
+import entkt.integrationtest.ent.PostPolicyScope
+import entkt.integrationtest.ent.PostUpdatePrivacyRule
+import entkt.integrationtest.ent.PostUpdateValidationRule
 import entkt.postgres.PostgresDriver
+import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntTargetAbsentException
@@ -11,6 +17,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
+import entkt.runtime.validation.ValidationDecision
 import org.postgresql.ds.PGSimpleDataSource
 import org.postgresql.util.PSQLException
 import org.testcontainers.junit.jupiter.Container
@@ -19,6 +26,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 import javax.sql.DataSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -93,6 +101,15 @@ class LinkTableM2MPostgresIntegrationTest {
                     while (rs.next()) out.add(rs.getLong(1))
                     out.sorted()
                 }
+            }
+        }
+    }
+
+    private fun assertSetsAreReadOnly(vararg sets: Set<Long>?) {
+        sets.filterNotNull().forEach { set ->
+            @Suppress("UNCHECKED_CAST")
+            assertFailsWith<UnsupportedOperationException> {
+                (set as MutableSet<Long>).clear()
             }
         }
     }
@@ -275,5 +292,99 @@ class LinkTableM2MPostgresIntegrationTest {
             }.save().orRollback()
         }.getOrThrow()
         assertEquals(listOf(tagA.id, tagC.id).sorted(), linkedTagIds(post.id))
+    }
+
+    @Test
+    fun `hook and rule edge snapshots cannot mutate later contexts or junction writes`() {
+        val seedClient = freshClient()
+        val post = seedClient.posts.create { title = "Hello" }.saveAndLoad().getOrThrow()
+        val tagA = seedClient.tags.create { name = "a" }.saveAndLoad().getOrThrow()
+        val tagB = seedClient.tags.create { name = "b" }.saveAndLoad().getOrThrow()
+        val tagC = seedClient.tags.create { name = "c" }.saveAndLoad().getOrThrow()
+        seedClient.withTransaction { tx ->
+            tx.posts.update(post.id) { tags.add(tagC.id) }.save().orRollback()
+        }.getOrThrow()
+
+        val hookSnapshots = mutableListOf<Set<Long>>()
+        val privacySnapshots = mutableListOf<Pair<Set<Long>, Set<Long>>>()
+        val validationSnapshots = mutableListOf<Pair<Set<Long>, Set<Long>>>()
+        val policy = object : EntityPolicy<Post, PostPolicyScope> {
+            override fun configure(scope: PostPolicyScope) = scope.run {
+                privacy {
+                    update(
+                        PostUpdatePrivacyRule { context ->
+                            val changes = context.edgeChanges.tags
+                            assertSetsAreReadOnly(
+                                changes.requestedSet,
+                                changes.requestedAdds,
+                                changes.requestedRemoves,
+                                changes.added,
+                                changes.removed,
+                            )
+                            PrivacyDecision.Continue
+                        },
+                        PostUpdatePrivacyRule { context ->
+                            privacySnapshots += context.edgeChanges.tags.run {
+                                added.toSet() to removed.toSet()
+                            }
+                            PrivacyDecision.Allow
+                        },
+                    )
+                }
+                validation {
+                    update(
+                        PostUpdateValidationRule { context ->
+                            val changes = context.edgeChanges.tags
+                            assertSetsAreReadOnly(
+                                changes.requestedSet,
+                                changes.requestedAdds,
+                                changes.requestedRemoves,
+                                changes.added,
+                                changes.removed,
+                            )
+                            ValidationDecision.Valid
+                        },
+                        PostUpdateValidationRule { context ->
+                            validationSnapshots += context.edgeChanges.tags.run {
+                                added.toSet() to removed.toSet()
+                            }
+                            ValidationDecision.Valid
+                        },
+                    )
+                }
+            }
+        }
+        val client = EntClient(PostgresDriver(dataSource)) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies { posts(policy) }
+            hooks {
+                posts {
+                    beforeUpdate { context ->
+                        val pending = context.pendingEdges.tags
+                        assertSetsAreReadOnly(
+                            pending.requestedSet,
+                            pending.requestedAdds,
+                            pending.requestedRemoves,
+                        )
+                    }
+                    beforeUpdate { context ->
+                        hookSnapshots += checkNotNull(context.pendingEdges.tags.requestedSet).toSet()
+                    }
+                }
+            }
+        }
+
+        client.withTransaction { tx ->
+            tx.posts.update(post.id) {
+                tags.set(listOf(tagA.id, tagB.id))
+            }.save().orRollback()
+        }.getOrThrow()
+
+        val expectedSet = setOf(tagA.id, tagB.id)
+        val expectedDelta = expectedSet to setOf(tagC.id)
+        assertEquals(listOf(expectedSet), hookSnapshots)
+        assertEquals(listOf(expectedDelta), privacySnapshots)
+        assertEquals(listOf(expectedDelta), validationSnapshots)
+        assertEquals(expectedSet.sorted(), linkedTagIds(post.id))
     }
 }

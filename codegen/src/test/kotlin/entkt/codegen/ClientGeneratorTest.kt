@@ -323,6 +323,18 @@ class ClientGeneratorTest {
         assert(output.contains("fun afterDelete(hook: (Car) -> Unit)")) {
             "Should have afterDelete\n$output"
         }
+        assert(output.contains("val beforeCreateHooks: MutableList<BatchHook<CarCreateHookContext>>")) {
+            "Hook registries should store scalar and batch hooks in one ordered list\n$output"
+        }
+        assert(output.contains("beforeCreateHooks.add(Hook(hook))")) {
+            "Scalar hook lambdas should be adapted to Hook\n$output"
+        }
+        assert(output.contains("fun beforeCreate(hook: BatchHook<CarCreateHookContext>)")) {
+            "Should accept an explicitly batch-aware hook under the same lifecycle name\n$output"
+        }
+        assert(output.contains("@JvmName(\"beforeCreateBatchHook\")")) {
+            "The batch overload should not capture Java scalar lambdas\n$output"
+        }
     }
 
     @Test

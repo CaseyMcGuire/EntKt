@@ -15,7 +15,10 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.query.Op
 import entkt.query.OrderField
 import entkt.query.Predicate
+import java.math.BigDecimal
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -105,6 +108,47 @@ class InterceptorEngineTest {
         )
         assertEquals(0, snapCount, "captured shape is frozen at capture time")
         assertEquals(1, liveCount, "fresh scope.shape read reflects the mutation")
+    }
+
+    @Test
+    fun `frozen spec recursively snapshots mutable predicate operands`() {
+        val equalityBytes = byteArrayOf(1, 2)
+        val memberBytes = byteArrayOf(3, 4)
+        val predicate = Predicate.Leaf<Post>("payload", Op.EQ, equalityBytes) and
+            Predicate.Leaf("payload", Op.IN, listOf(memberBytes))
+
+        val frozen = InterceptorEngine.apply(
+            builder = builder(caller = listOf(predicate)),
+            context = rootContext(),
+            entity = "Post",
+            entityInterceptors = emptyList(),
+            globalInterceptors = emptyList(),
+        )
+        equalityBytes[0] = 9
+        memberBytes[0] = 8
+
+        val frozenAnd = frozen.predicates.single() as Predicate.And
+        val frozenEquality = (frozenAnd.left as Predicate.Leaf).value as ByteArray
+        val frozenMembers = (frozenAnd.right as Predicate.Leaf).value as List<*>
+        assertContentEquals(byteArrayOf(1, 2), frozenEquality)
+        assertContentEquals(byteArrayOf(3, 4), frozenMembers.single() as ByteArray)
+    }
+
+    @Test
+    fun `frozen spec detaches mutable Number operands`() {
+        val operand = AtomicInteger(7)
+        val frozen = InterceptorEngine.apply(
+            builder = builder(caller = listOf(Predicate.Leaf<Post>("rank", Op.EQ, operand))),
+            context = rootContext(),
+            entity = "Post",
+            entityInterceptors = emptyList(),
+            globalInterceptors = emptyList(),
+        )
+
+        operand.set(9)
+
+        val frozenValue = (frozen.predicates.single() as Predicate.Leaf).value
+        assertEquals(BigDecimal("7"), frozenValue)
     }
 
     @Test

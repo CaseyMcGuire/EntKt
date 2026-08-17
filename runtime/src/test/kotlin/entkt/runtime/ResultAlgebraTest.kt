@@ -346,6 +346,7 @@ class ResultAlgebraTest {
 
         override fun registerAll(schemas: List<EntitySchema>) = Unit
         override fun register(schema: EntitySchema) = Unit
+        override fun registeredIdColumn(table: String): String = "id"
         override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
             error("unused")
         override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? =

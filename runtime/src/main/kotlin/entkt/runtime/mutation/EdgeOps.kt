@@ -1,5 +1,17 @@
 package entkt.runtime.mutation
 
+import entkt.query.EntktInternal
+import java.util.Collections
+
+/**
+ * Return an encounter-ordered, detached set whose mutator methods fail.
+ * Kotlin's `Set` is only a read-only interface; ordinary `toSet()` results can
+ * still be cast to `MutableSet` on the JVM and changed by application code.
+ */
+@EntktInternal
+public fun <T> immutableSetSnapshotForInternalUse(values: Iterable<T>): Set<T> =
+    Collections.unmodifiableSet(LinkedHashSet<T>().apply { addAll(values) })
+
 /**
  * Read-only snapshot of pending link-table M2M edge operations for one
  * edge. Hooks receive this through the generated per-entity
@@ -104,6 +116,17 @@ public data class EdgeChanges<ID>(
     /** `true` when the save will issue at least one junction-row write. */
     val hasDatabaseEffect: Boolean get() = added.isNotEmpty() || removed.isNotEmpty()
 }
+
+/** Detach every set exposed by one lifecycle-rule edge-change snapshot. */
+@EntktInternal
+public fun <ID> snapshotEdgeChangesForInternalUse(changes: EdgeChanges<ID>): EdgeChanges<ID> =
+    EdgeChanges(
+        requestedSet = changes.requestedSet?.let(::immutableSetSnapshotForInternalUse),
+        requestedAdds = immutableSetSnapshotForInternalUse(changes.requestedAdds),
+        requestedRemoves = immutableSetSnapshotForInternalUse(changes.requestedRemoves),
+        added = immutableSetSnapshotForInternalUse(changes.added),
+        removed = immutableSetSnapshotForInternalUse(changes.removed),
+    )
 
 /**
  * Compute the database-delta [EdgeChanges] for one link-table M2M edge

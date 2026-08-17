@@ -230,28 +230,28 @@ performed for write-side work.
 For `createMany()`, once the entire batch's writes and write-side lifecycle work
 have succeeded, failure to materialize or disclose the requested returned
 entities follows the ordinary `saveAndLoad()` rule. An EntKt-owned transaction
-commits the complete batch and returns a failure carrying `Committed`; a
-caller-owned transaction returns a failure whose state is
-`TransactionPending`, marks the scope rollback-only, and is later reported as
-`NotCommitted` or `OutcomeUnknown` by the transaction boundary. A mutation
-whose persistence cannot be established uses `PersistenceUnknown`.
+attempts commit: a confirmed commit reports the disclosure failure as
+`Committed`, a confirmed rollback reports `NotPersisted`, and an uncertain
+boundary reports `PersistenceUnknown`. A caller-owned transaction returns a
+failure whose state is `TransactionPending`, marks the scope rollback-only, and
+is later reported as `NotCommitted` or `OutcomeUnknown` by the transaction
+boundary.
 
-Return processing follows the public result's input order and is fail-fast. The
-first materialization exception or LOAD denial ends return processing; EntKt
-does not inspect later returned entities solely to aggregate diagnostics and
-never exposes a partial list. A privacy failure identifies that one entity in
-`EntMutationPrivacyDeniedException` with `operation = EntOperation.LOAD`. This
-affects only return processing: every write and write-side lifecycle callback
-has already succeeded, so the complete batch still follows the commit-state
+Returned LOAD privacy is one rule-major batch over the complete result list.
+An exception stops at the callback invocation that throws. If evaluation
+completes with denials, EntKt reports the first denied entity in input order as
+`EntMutationPrivacyDeniedException(operation = EntOperation.LOAD)` and never
+exposes a partial list. Every write and write-side lifecycle callback has
+already succeeded, so the complete batch still follows the transaction-state
 rules above.
 
 This does not add per-input success values, failure indexes, compensation,
 skipping of denied or invalid deletion candidates, or implicit create-conflict
 handling. Those require a separately named future operation with an explicit
-partial-success contract rather than changing either canonical bulk method's
-meaning. The separate Preflighted Bulk Operations RFC may later evaluate all
-privacy and validation decisions before the first write and aggregate their
-diagnostics; that enhancement is not required for database atomicity.
+partial-success or multi-item diagnostic contract rather than changing either
+canonical bulk method's meaning. Canonical bulk privacy and validation already
+run before the first write; they report one operation-level failure rather than
+an outcome per input.
 
 ### Result Construction Authority
 
@@ -1799,14 +1799,14 @@ Before implementation, add or update tests for:
 - `createMany()` has no implicit conflict-skipping or per-input partial-success
   result; any future partial contract uses a separately named operation
 - failure to materialize or disclose `createMany()`'s returned entities after
-  all writes and write-side lifecycle work succeed commits either the entire
-  EntKt-owned batch or none of it, and reports `Committed` or
-  `PersistenceUnknown` as appropriate
-- `createMany()` materializes and applies LOAD privacy to returned entities in
-  input/result order, fails on the first return-processing error or denial,
-  reports that one entity with `operation = EntOperation.LOAD`, and never
-  returns a partial list or evaluates later entities solely to aggregate
-  diagnostics
+  all writes and write-side lifecycle work succeed still resolves at the
+  EntKt-owned transaction boundary: a confirmed commit reports `Committed`, a
+  confirmed rollback reports `NotPersisted`, and an uncertain boundary reports
+  `PersistenceUnknown`
+- `createMany()` batch-evaluates returned LOAD privacy rule-major; callback
+  exceptions stop at the throwing invocation, while a completed denial vector
+  reports the first denied input with `operation = EntOperation.LOAD` and never
+  returns a partial list
 - `deleteMany()` uses one transaction across candidate selection and
   processing, every row deletion, and write-side lifecycle callback; privacy,
   validation, hook, or driver failure leaves no committed subset after a

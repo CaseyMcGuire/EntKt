@@ -52,6 +52,16 @@ internal class PostgresTransactionalDriver(
         root.registerAll(schemas)
     }
 
+    override fun registeredIdColumn(table: String): String {
+        checkOpen()
+        return root.registeredIdColumn(table)
+    }
+
+    override fun <T> copyJsonValue(table: String, column: String, value: T): T {
+        checkOpen()
+        return ops.copyJsonValue(table, column, value)
+    }
+
     override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> {
         checkOpen(); return ops.insert(conn, table, values)
     }
@@ -132,6 +142,15 @@ internal class PostgresTransactionalDriver(
 
     override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int {
         checkOpen(); return ops.deleteMany(conn, table, predicates)
+    }
+
+    override fun deleteManyByIds(
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any> {
+        checkOpen(); return ops.deleteManyByIds(conn, table, idColumn, ids, predicates)
     }
 
     override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {

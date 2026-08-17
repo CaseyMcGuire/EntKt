@@ -223,7 +223,7 @@ private fun emitToManyEagerBlock(
     )
     emitEagerPrivacyCheck(
         body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
-        orderedIteration = "for ((_, entity) in decodedTargets)",
+        orderedTargets = "decodedTargets.map { it.second }",
     )
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
@@ -291,7 +291,7 @@ private fun emitHasOneEagerBlock(
     )
     emitEagerPrivacyCheck(
         body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
-        orderedIteration = "for ((_, entity) in decodedTargets)",
+        orderedTargets = "decodedTargets.map { it.second }",
     )
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
@@ -521,7 +521,7 @@ private fun emitM2MEagerBlock(
     )
     emitEagerPrivacyCheck(
         body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
-        orderedIteration = "for (entity in orderedTargets)",
+        orderedTargets = "orderedTargets",
     )
     body.addStatement(
         "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
@@ -581,15 +581,16 @@ private fun emitEagerSubquerySetup(
  * name of the mutable local holding the loaded entities (or grouped
  * map; when [grouped] is true the variable is a `Map<Any?, List<T>>`).
  *
- * Strict default: the first denied target throws
+ * Every in-window target is evaluated through one positional batch in target-query
+ * order (deduplicated by target ID). Strict default: the first denied target throws
  * `EntPrivacyDeniedException(EagerEdge(eagerPath), listOf(denial))` —
- * exactly one keyed denial, fail-fast, no later eager work run solely
- * for diagnostics. The root terminal's capture boundary stores it in
- * `ReadResult.Failed`. Targets are evaluated in target-query result
- * order (the grouped maps preserve target-row encounter order).
+ * exactly one keyed denial; no later nested or sibling eager work runs solely for
+ * diagnostics. The root terminal's capture boundary stores it in
+ * `ReadResult.Failed`. A scalar rule's batch adapter still visits every target that
+ * reaches that registered rule before the strict projection selects the first denial.
  *
  * With the edge's `filterVisible()` opt-in ([eagerPropName]'s flag),
- * a returned LOAD-deny decision instead omits the target: a denied
+ * a returned LOAD-deny decision instead omits the target by ID: a denied
  * to-one target becomes `EdgeState.Loaded(null)` (the filtered map
  * lookup misses), denied to-many targets are omitted from the loaded
  * list, and no replacement scanning occurs. Only a returned deny
@@ -602,75 +603,53 @@ private fun emitEagerPrivacyCheck(
     loadedVar: String,
     grouped: Boolean,
     eagerPropName: String,
-    orderedIteration: String? = null,
+    orderedTargets: String? = null,
 ) {
     val targetRepoProp = pluralize(targetName.replaceFirstChar { it.lowercase() })
     body.addStatement("val eagerClient = client")
     body.beginControlFlow("if (eagerClient != null && eagerClient.%L.hasLoadPrivacy())", targetRepoProp)
-    body.beginControlFlow("if (%LFilterVisible)", eagerPropName)
     if (grouped) {
-        // Filtered mode mirrors the strict pass's evaluation contract:
-        // each in-window target's rules run exactly ONCE, in the
-        // target query's result order — never once per parent group,
-        // which would re-run rules for shared M2M targets and let
-        // group iteration order decide which thrown rule exception
-        // wins or (for a stateful rule) produce inconsistent
-        // visibility across parents.
         body.addStatement(
-            "val inWindow = %L.values.flatMapTo(mutableSetOf()) { it }",
+            "val inWindowTargetIds = %L.values.flatten().mapTo(mutableSetOf()) { it.id }",
             loadedVar,
         )
-        body.addStatement("val visibleTargets = mutableSetOf<Any?>()")
-        body.beginControlFlow(checkNotNull(orderedIteration) { "grouped filter pass needs orderedIteration" })
-        body.addStatement("if (entity !in inWindow || entity in visibleTargets) continue")
         body.addStatement(
-            "if (eagerClient.%L.loadDenialOrNull(eagerPrivacyContext, entity) == null) visibleTargets.add(entity)",
-            targetRepoProp,
+            "val privacyTargets = %L.filter { it.id in inWindowTargetIds }.distinctBy { it.id }",
+            checkNotNull(orderedTargets) { "grouped privacy pass needs orderedTargets" },
         )
-        body.endControlFlow()
+    } else {
+        body.addStatement("val privacyTargets = %L.distinctBy { it.id }", loadedVar)
+    }
+    body.addStatement(
+        "val privacyDenials = eagerClient.%L.loadDenials(eagerPrivacyContext, privacyTargets)",
+        targetRepoProp,
+    )
+    body.beginControlFlow("if (%LFilterVisible)", eagerPropName)
+    body.addStatement(
+        "val visibleTargetIds = privacyTargets.zip(privacyDenials)\n" +
+            "  .filter { (_, denial) -> denial == null }\n" +
+            "  .mapTo(mutableSetOf()) { (entity, _) -> entity.id }",
+    )
+    if (grouped) {
         body.addStatement(
-            "%L = %L.mapValues { (_, list) -> list.filter { it in visibleTargets } }",
+            "%L = %L.mapValues { (_, list) -> list.filter { it.id in visibleTargetIds } }",
             loadedVar, loadedVar,
         )
     } else {
         body.addStatement(
-            "%L = %L.filter { eagerClient.%L.loadDenialOrNull(eagerPrivacyContext, it) == null }",
-            loadedVar, loadedVar, targetRepoProp,
+            "%L = %L.filter { it.id in visibleTargetIds }",
+            loadedVar, loadedVar,
         )
     }
     body.nextControlFlow("else")
-    if (grouped) {
-        // Strict evaluation follows the target query's RESULT order,
-        // not per-group map order: iterate the row-ordered decoded
-        // list and skip targets sliced out of every parent's window.
-        body.addStatement(
-            "val inWindow = %L.values.flatMapTo(mutableSetOf()) { it }",
-            loadedVar,
-        )
-        body.beginControlFlow(checkNotNull(orderedIteration) { "grouped strict pass needs orderedIteration" })
-        body.addStatement("if (entity !in inWindow) continue")
-        emitEagerDenialThrow(body, targetRepoProp)
-        body.endControlFlow()
-    } else {
-        body.beginControlFlow("for (entity in %L)", loadedVar)
-        emitEagerDenialThrow(body, targetRepoProp)
-        body.endControlFlow()
-    }
-    body.endControlFlow()
-    body.endControlFlow()
-}
-
-/** The strict fail-fast denial throw shared by both eager shapes. */
-private fun emitEagerDenialThrow(body: CodeBlock.Builder, targetRepoProp: String) {
-    body.addStatement(
-        "val denial = eagerClient.%L.loadDenialOrNull(eagerPrivacyContext, entity)",
-        targetRepoProp,
-    )
+    body.addStatement("val denial = privacyDenials.firstOrNull { it != null }")
     body.beginControlFlow("if (denial != null)")
     body.addStatement(
         "throw %T(%T.EagerEdge(eagerDenialPath.map { %T(it.source.simpleName!!, it.edgeName, it.target.simpleName!!) }), listOf(denial))",
         ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN, EAGER_EDGE_STEP,
     )
+    body.endControlFlow()
+    body.endControlFlow()
     body.endControlFlow()
 }
 

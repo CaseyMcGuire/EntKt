@@ -33,6 +33,18 @@ class PrivacyGeneratorTest {
         assert(output.contains("typealias UserDeletePrivacyRule = PrivacyRule<UserDeletePrivacyContext>")) {
             "Should generate delete rule typealias\n$output"
         }
+        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<UserLoadPrivacyContext>")) {
+            "Should generate load batch rule typealias\n$output"
+        }
+        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<UserCreatePrivacyContext>")) {
+            "Should generate create batch rule typealias\n$output"
+        }
+        assert(output.contains("typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<UserUpdatePrivacyContext>")) {
+            "Should generate update batch rule typealias\n$output"
+        }
+        assert(output.contains("typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<UserDeletePrivacyContext>")) {
+            "Should generate delete batch rule typealias\n$output"
+        }
     }
 
     @Test
@@ -141,8 +153,17 @@ class PrivacyGeneratorTest {
         assert(output.contains("class UserPrivacyConfig")) {
             "Should generate PrivacyConfig\n$output"
         }
-        assert(output.contains("val loadRules: MutableList<UserLoadPrivacyRule>")) {
-            "Should have loadRules\n$output"
+        assert(output.contains("val loadRules: MutableList<UserLoadBatchPrivacyRule>")) {
+            "Should store load rules through the shared batch contract\n$output"
+        }
+        assert(output.contains("val createRules: MutableList<UserCreateBatchPrivacyRule>")) {
+            "Should store create rules through the shared batch contract\n$output"
+        }
+        assert(output.contains("val updateRules: MutableList<UserUpdateBatchPrivacyRule>")) {
+            "Should store update rules through the shared batch contract\n$output"
+        }
+        assert(output.contains("val deleteRules: MutableList<UserDeleteBatchPrivacyRule>")) {
+            "Should store delete rules through the shared batch contract\n$output"
         }
         assert(output.contains("var updateDerivesFromCreate: Boolean = false")) {
             "Should have updateDerivesFromCreate flag\n$output"
@@ -166,6 +187,35 @@ class PrivacyGeneratorTest {
         }
         assert(output.contains("fun create(vararg rules: UserCreatePrivacyRule)")) {
             "Should have create method\n$output"
+        }
+        assert(output.contains("fun update(vararg rules: UserUpdatePrivacyRule)")) {
+            "Should have update method\n$output"
+        }
+        assert(output.contains("fun delete(vararg rules: UserDeletePrivacyRule)")) {
+            "Should have delete method\n$output"
+        }
+        assert(output.contains("fun load(rule: UserLoadBatchPrivacyRule)")) {
+            "Should register a single batch load rule under the existing DSL name\n$output"
+        }
+        assert(output.contains("fun create(rule: UserCreateBatchPrivacyRule)")) {
+            "Should register a single batch create rule under the existing DSL name\n$output"
+        }
+        assert(output.contains("fun update(rule: UserUpdateBatchPrivacyRule)")) {
+            "Should register a single batch update rule under the existing DSL name\n$output"
+        }
+        assert(output.contains("fun delete(rule: UserDeleteBatchPrivacyRule)")) {
+            "Should register a single batch delete rule under the existing DSL name\n$output"
+        }
+        listOf("load", "create", "update", "delete").forEach { operation ->
+            assert(output.contains("@JvmName(\"${operation}BatchRule\")")) {
+                "Batch $operation overload should have a distinct Java name\n$output"
+            }
+            assert(output.contains("config.${operation}Rules.addAll(rules)")) {
+                "Scalar $operation overload should append to the shared list\n$output"
+            }
+            assert(output.contains("config.${operation}Rules.add(rule)")) {
+                "Batch $operation overload should append to the shared list\n$output"
+            }
         }
         assert(output.contains("fun updateDerivesFromCreate()")) {
             "Should have updateDerivesFromCreate method\n$output"

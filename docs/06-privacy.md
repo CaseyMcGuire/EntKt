@@ -74,11 +74,13 @@ Typed helpers are exact type checks. For example, `longIdOrNull()` returns
 ### PrivacyContext
 
 `PrivacyContext` bundles the viewer captured for a generated operation.
-Each generated read terminal captures one context and shares it across
-query interceptors, traversal and eager subqueries, and LOAD checks.
-Bulk convenience methods may invoke the provider once per item because
-they delegate to the per-entity create or delete paths; providers should
-be stable for the duration of a request or logical operation.
+One logical operation captures at most one context and shares that exact value
+across every privacy-consuming phase. For a read, that includes interceptors,
+traversal and eager subqueries, and root/eager LOAD checks. For `createMany`,
+CREATE privacy and returned LOAD privacy share one context; `deleteMany`
+shares one across candidate interceptors and DELETE privacy. An empty operation
+or a failure before the first privacy-consuming phase need not call the
+provider.
 
 ```kotlin
 data class PrivacyContext(val viewer: Viewer)
@@ -97,16 +99,63 @@ Each rule returns one of three decisions:
 ### PrivacyRule
 
 A rule is a `fun interface` that takes a typed context and returns a
-decision:
+decision. It is also a batch rule: the default adapter visits contexts
+serially in encounter order.
 
 ```kotlin
-fun interface PrivacyRule<in C> {
+fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
     fun run(ctx: C): PrivacyDecision
+
+    override fun runBatch(contexts: List<C>): List<PrivacyDecision> =
+        contexts.map { run(it) }
 }
 ```
 
 Each operation gets its own context type (see [Operation Contexts](#operation-contexts)
 below), so rules are type-safe for the operation they guard.
+
+### BatchPrivacyRule
+
+Use an explicit batch rule when one callback should inspect all contexts or
+perform one set-based lookup:
+
+```kotlin
+import entkt.runtime.privacy.batchPrivacyRule
+
+interface BatchPrivacyRule<in C> {
+    fun runBatch(contexts: List<C>): List<PrivacyDecision>
+}
+
+fun <C> batchPrivacyRule(
+    block: (List<C>) -> List<PrivacyDecision>,
+): BatchPrivacyRule<C>
+
+val allowReadablePosts = batchPrivacyRule<PostLoadPrivacyContext> { contexts ->
+    val readableIds = loadReadablePostIds(
+        client = contexts.first().client,
+        viewer = contexts.first().privacy.viewer,
+        postIds = contexts.map { it.entity.id },
+    )
+    contexts.map { ctx ->
+        if (ctx.entity.id in readableIds) PrivacyDecision.Allow
+        else PrivacyDecision.Deny("post is not visible")
+    }
+}
+
+privacy {
+    load(allowReadablePosts)
+}
+```
+
+`BatchPrivacyRule<C>.runBatch(contexts)` must return exactly one decision per
+context in the same order. The `batchPrivacyRule { ... }` factory makes the
+list-taking callback explicit; a cardinality mismatch is an operational
+`EntBatchRuleContractException`, not a denial. Scalar and batch rules register
+under the existing `load`, `create`, `update`, and `delete` names in Kotlin and
+share one registration order. Generated batch overloads use JVM names such as
+`loadBatchRule` and `createBatchRule` so Java lambdas remain unambiguous. A
+batch rule receives a singleton list for a scalar operation and is not invoked
+for an empty phase.
 
 **Stock rule — `allowAll`.** The runtime ships `allowAll`, a rule that
 permits any operation on any entity. Because `PrivacyRule` is contravariant
@@ -166,8 +215,11 @@ val client = EntClient(driver) {
 ```
 
 Each entity's `privacy { }` block exposes four methods matching the
-four operations: `load()`, `create()`, `update()`, `delete()`. Each
-takes a `vararg` of rules that are evaluated in order.
+four operations: `load()`, `create()`, `update()`, `delete()`. Each keeps its
+scalar-rule `vararg` overload and also accepts one `BatchPrivacyRule`. Register
+multiple batch rules with repeated calls; there are no parallel `loadBatch` or
+`createBatch` methods in Kotlin. Java calls the explicitly named batch JVM
+overloads such as `loadBatchRule` and `createBatchRule`.
 
 ## Evaluation Semantics
 
@@ -196,6 +248,19 @@ load(
 )
 ```
 
+For a multi-item phase, evaluation is rule-major. The first rule receives all
+active items in encounter order. Items it allows or denies are finalized; only
+items that return `Continue` reach the next rule. Thus a later rule never sees
+an item whose outcome is already known, and unresolved items after the final
+rule are denied fail-closed. For each item, the first non-`Continue` decision
+still wins. A scalar rule uses its adapter to run once per active item, while an
+explicit batch rule is invoked once with that active list. Rules are not run
+concurrently.
+
+This ordering means an exception from a later item in an earlier registered
+rule can surface before a denial that an earlier item would have received from
+a later rule. Rules should not rely on cross-item side-effect ordering.
+
 > **`Viewer.PrivacyBypass(reason)` bypasses all privacy checks** at the framework
 > level -- it is the escape hatch for trusted/internal operations (the required
 > `reason` says why). You do not need (and cannot write) a rule for it. At
@@ -220,6 +285,13 @@ result:
   eagerly loaded entity is denied, unless that edge opts into
   `filterVisible()` (see
   [Queries → Eager Privacy](04-queries.md#eager-privacy-and-filtervisible))
+
+Collection terminals pass the ordered materialized root list to LOAD rules as
+one batch. Each eager query does the same for its ordered, deduplicated targets
+that remain in at least one parent's requested window. Strict loading projects
+the first eager denial after that batch evaluation; `filterVisible()` removes
+every denied target from the relevant parent groups. Nested eager loads repeat
+this contract for each actual nested edge-load invocation.
 
 `.getOrThrow()` throws the stored exception; `.visibleOrNull()` maps a
 singular *root* denial to `Success(null)` for explicit
@@ -385,10 +457,11 @@ data class UserWriteCandidate(
 )
 ```
 
-Each rule receives its own snapshot. Generated `bytes()` values are
-defensively copied, including values inside update patches, so mutating a
-`ByteArray` obtained from one rule context cannot change the pending database
-write or another rule's input.
+Each rule receives its own snapshot. Generated `bytes()` values are copied
+directly, and typed JSON values are round-tripped through the driver's
+configured JSON mapper, including values inside update patches. Mutating a
+`ByteArray` or a mutable collection nested in JSON from one rule context cannot
+change the pending database write or another rule's input.
 
 ## Rule Derivation
 
@@ -458,10 +531,17 @@ Delete operations enforce DELETE privacy independently of LOAD privacy:
 - `deleteById(id)` may delete an entity the viewer cannot load, but only
   when its DELETE rules allow the operation.
 - `deleteMany(predicates)` evaluates DELETE privacy for every matching
-  entity. The operation is atomic: a denial anywhere fails the whole
-  call with `Failed(EntMutationPrivacyDeniedException)` and — because
-  the batch runs in one transaction — leaves no committed subset. No
-  denied candidate is silently skipped.
+  entity as one rule-major batch. A denial anywhere fails the whole call with
+  `Failed(EntMutationPrivacyDeniedException)` before the delete statement, so
+  no denied candidate is silently skipped.
+
+`deleteMany` captures its context before running candidate read interceptors,
+then freezes the complete effective predicate list produced by the caller and
+those interceptors. After DELETE privacy, validation, and `beforeDelete`, the
+write combines the approved IDs with those same predicates. It does not rerun
+interceptors. A row that stops matching before the write is not deleted or
+counted; a row that starts matching after selection was never approved and is
+also not deleted.
 
 For aggregate reads, `rawCount()` deliberately skips LOAD privacy.
 There is no privacy-filtered count terminal — a viewer-scoped count is
@@ -469,9 +549,11 @@ a strict `all()` over predicates that only match visible rows.
 
 ## Limitations
 
-Privacy V1 intentionally keeps enforcement synchronous and row-by-row.
-See [Privacy Limitations](08-privacy-limitations.md) for aggregate read,
-filtering, pagination, and bulk operation limitations.
+Privacy evaluation remains synchronous and does not rewrite arbitrary callback
+queries. A scalar rule that performs one read per item still produces N reads;
+use an explicit batch rule and a set-based query when that matters. See
+[Privacy Limitations](08-privacy-limitations.md) for aggregate read, filtering,
+and pagination limitations.
 
 ## Error Handling
 
@@ -616,6 +698,16 @@ the returned entity. Mapping every `EntMutationPrivacyDeniedException` to a
 normal not-found response without considering `writeState` can cause a caller
 to repeat a write that already happened.
 
+`createMany()` always has this returned-disclosure phase because its success
+value is the entity list. An EntKt-owned transaction attempts commit after a
+returned-LOAD denial or ordinary rule failure; only a confirmed commit reports
+`Committed`. If disclosure work aborts the database transaction, a confirmed
+rollback reports `NotPersisted`, while an uncertain boundary reports
+`PersistenceUnknown`. Inside a caller-owned transaction the failure is
+`TransactionPending` and marks that transaction rollback-only. CREATE privacy
+and returned LOAD privacy use the same context capture, but they remain
+distinct authorization phases.
+
 ### Transactions: uncertainty is not a normal rejection
 
 `TransactionResult.getOrThrow()` deliberately has two failure shapes:
@@ -684,5 +776,6 @@ For each schema with a policy, entkt provides:
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |
 | `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |
+| `{Entity}{Op}BatchPrivacyRule` | Typealiases for explicit batch-rule types |
 | `EntPrivacyReadClient` | Read client in privacy contexts — viewer-scoped reads (schema-set-level) |
 | `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |

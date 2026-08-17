@@ -96,8 +96,8 @@ Things that are **not yet implemented**, roughly in order of severity:
   driver interface.
 
 ### Schema & DDL
-- **Exotic column types.** No JSON/JSONB, arrays, enums (as PG enum types),
-  hstore, or composites.
+- **Exotic column types.** Typed JSON/JSONB is supported; native SQL arrays,
+  enums (as PG enum types), hstore, and composites are not yet implemented.
 
 ### Tooling
 - **No published artifacts.** The plugin and runtime are not yet on any

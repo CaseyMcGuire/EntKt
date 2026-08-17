@@ -26,6 +26,24 @@ internal class PostgresValueCodec(
 ) {
 
     /**
+     * Round-trip one typed JSON value through the configured codec to detach
+     * every mutable node while preserving that codec's exact mapping rules.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> copyJsonValue(table: String, column: ColumnMetadata, value: T): T {
+        if (value == null) return value
+        val meta = column.json
+            ?: error("JSON column '$table.${column.name}' has no serializer metadata")
+        if (!meta.klass.isInstance(value)) {
+            error(
+                "Column '$table.${column.name}' expects JSON of ${meta.typeName}, " +
+                    "got ${value::class.qualifiedName}",
+            )
+        }
+        return jsonCodec.copyValue(table, column, value) as T
+    }
+
+    /**
      * Bind a column value, first validating any native-storage constraint the
      * generic [bind] can't enforce (it sees only [FieldType], not the column's
      * [ColumnStorage]). This keeps a raw `driver.insert/update` with a
@@ -134,6 +152,19 @@ internal class PostgresValueCodec(
         numericDecimal(value, "LONG").longValueExact()
     } catch (e: RuntimeException) {
         throw integralConversionError(value, "LONG", Long.MIN_VALUE, Long.MAX_VALUE, e)
+    }
+
+    /**
+     * Produce the exact value JDBC receives for an integral id column so
+     * insertMany can correlate RETURNING rows with raw Number inputs without
+     * relying on Number.toLong(), whose semantics custom Number types may
+     * define independently from their decimal representation.
+     */
+    fun idCorrelationKey(type: FieldType, value: Any?): Any? = when {
+        value == null -> null
+        type == FieldType.INT -> exactInt(value)
+        type == FieldType.LONG -> exactLong(value)
+        else -> value
     }
 
     /**

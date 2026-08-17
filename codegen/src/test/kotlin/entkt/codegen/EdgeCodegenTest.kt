@@ -1195,7 +1195,7 @@ class EdgeCodegenTest {
         // save body constructs the context and passes it to each hook so
         // the hook can't reach `save()`, `driver`, hook lists, or the
         // private staging/assigned fields on the concrete builder.
-        assert(output.contains("beforeCreateHooks: List<(PetCreateHookContext) -> Unit>")) {
+        assert(output.contains("beforeCreateHooks: List<BatchHook<PetCreateHookContext>>")) {
             "beforeCreateHooks list should be typed against PetCreateHookContext\n$output"
         }
         // create-hook adapter: the CreateHookContext now wraps the private
@@ -1203,11 +1203,11 @@ class EdgeCodegenTest {
         // (`this`). This matches the runtime-enforced contract
         // the update path has had since transaction locking and link-table M2M helpers — a hook
         // attempting `ctx.mutation as PetCreate` throws.
-        assert(output.contains("val createCtx = PetCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)")) {
-            "save() should construct a CreateHookContext wrapping _createMutationView\n$output"
+        assert(output.contains("internal fun beforeCreateHookValueForInternalUse(): PetCreateHookContext = PetCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)")) {
+            "the shared hook accessor should construct a CreateHookContext wrapping _createMutationView\n$output"
         }
-        assert(output.contains("for (hook in beforeCreateHooks) hook(createCtx)")) {
-            "save() should iterate beforeCreate hooks with the context\n$output"
+        assert(output.contains("runBatchHooksForInternalUse(listOf(beforeCreateHookValueForInternalUse()), beforeCreateHooks)")) {
+            "save() should invoke beforeCreate hooks through the batch contract\n$output"
         }
     }
 
@@ -1936,28 +1936,50 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `eager privacy filters or throws per the EagerLoad filterVisible flag`() {
+    fun `eager privacy batches ordered deduped targets and filters by target id`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        // filterVisible(): each in-window target's rules run exactly
-        // once, in target-result order; groups are then filtered by
-        // the computed visible set (shared M2M targets stay
-        // consistent across parents).
+        // The per-parent window is collapsed to target IDs, then the
+        // original target-query order is retained while duplicate IDs
+        // are removed. One positional LOAD batch covers that complete
+        // edge block.
         assert(
             output.contains(
-                "if (eagerPetsFilterVisible) { val inWindow = loadedGroups.values.flatMapTo(mutableSetOf()) { it } " +
-                    "val visibleTargets = mutableSetOf<Any?>() for ((_, entity) in decodedTargets) { " +
-                    "if (entity !in inWindow || entity in visibleTargets) continue " +
-                    "if (eagerClient.pets.loadDenialOrNull(eagerPrivacyContext, entity) == null) visibleTargets.add(entity) } " +
-                    "loadedGroups = loadedGroups.mapValues { (_, list) -> list.filter { it in visibleTargets } } }",
+                "val inWindowTargetIds = loadedGroups.values.flatten().mapTo(mutableSetOf()) { it.id } " +
+                    "val privacyTargets = decodedTargets.map { it.second }.filter { it.id in inWindowTargetIds }.distinctBy { it.id } " +
+                    "val privacyDenials = eagerClient.pets.loadDenials(eagerPrivacyContext, privacyTargets)",
             ),
         ) {
-            "filterVisible eager load should drop denied targets per group\n$output"
+            "Eager LOAD privacy should batch the in-window targets in ordered, ID-deduplicated form\n$output"
         }
-        // Strict (default): a denied eager target throws
-        // EntPrivacyDeniedException carrying the EagerEdge origin path.
+        val batchCalls = Regex(
+            Regex.escape("eagerClient.pets.loadDenials(eagerPrivacyContext, privacyTargets)"),
+        ).findAll(output).count()
+        assert(batchCalls == 1) {
+            "The emitted pets edge block should make exactly one plural LOAD call; found $batchCalls\n$output"
+        }
+
+        // filterVisible derives an ID set from the positional result and
+        // applies it to every parent group. Entity equality is not used:
+        // distinct instances representing the same target stay aligned.
+        assert(
+            output.contains(
+                "if (eagerPetsFilterVisible) { val visibleTargetIds = privacyTargets.zip(privacyDenials) " +
+                    ".filter { (_, denial) -> denial == null } " +
+                    ".mapTo(mutableSetOf()) { (entity, _) -> entity.id } " +
+                    "loadedGroups = loadedGroups.mapValues { (_, list) -> list.filter { it.id in visibleTargetIds } } }",
+            ),
+        ) {
+            "filterVisible eager loading should retain targets by ID from the positional privacy result\n$output"
+        }
+
+        // Strict mode reports the first denied target in batch order and
+        // never evaluates targets again merely to choose a denial.
+        assert(output.contains("else { val denial = privacyDenials.firstOrNull { it != null } if (denial != null) {")) {
+            "Strict eager loading should select the first non-null positional denial\n$output"
+        }
         assert(
             output.contains(
                 "throw EntPrivacyDeniedException(LoadDenialOrigin.EagerEdge(eagerDenialPath.map { " +
@@ -1965,6 +1987,48 @@ class EdgeCodegenTest {
             ),
         ) {
             "Strict eager denial should throw EntPrivacyDeniedException with EagerEdge origin\n$output"
+        }
+        assert(!output.contains("eagerClient.pets.loadDenialOrNull")) {
+            "Eager privacy must not regress to per-target singleton calls\n$output"
+        }
+    }
+
+    @Test
+    fun `every eager edge shape emits exactly one plural LOAD call`() {
+        val (_, names, byName) = createAllSchemas()
+        val generator = QueryGenerator("com.example.ent")
+        val outputs = listOf(
+            "hasMany" to generator.generate("Owner", byName["Owner"]!!, names).toString(),
+            "belongsTo" to generator.generate("Pet", byName["Pet"]!!, names).toString(),
+            "manyToMany" to generator.generate("Team", byName["Team"]!!, names).toString(),
+        ) + run {
+            val parent = HasOneEagerParentSchema()
+            val profile = ProfileSchema()
+            finalize(parent, profile)
+            val hasOneNames = mapOf<EntSchema, String>(parent to "Parent", profile to "Profile")
+            listOf("hasOne" to generator.generate("Parent", parent, hasOneNames).toString())
+        }
+
+        val eagerBatchCall = Regex("eagerClient\\.\\w+\\.loadDenials\\(eagerPrivacyContext, privacyTargets\\)")
+        val eagerSingletonCall = Regex("eagerClient\\.\\w+\\.loadDenialOrNull\\(")
+        for ((shape, source) in outputs) {
+            val batchCalls = eagerBatchCall.findAll(source).count()
+            assert(batchCalls == 1) {
+                "$shape should emit exactly one plural LOAD call for its one eager edge block; found $batchCalls\n$source"
+            }
+            assert(!eagerSingletonCall.containsMatchIn(source)) {
+                "$shape eager privacy should not emit a per-target singleton LOAD call\n$source"
+            }
+        }
+
+        val manyToManySource = outputs.single { it.first == "manyToMany" }.second
+            .replace("\\s+".toRegex(), " ")
+        assert(
+            manyToManySource.contains(
+                "val privacyTargets = orderedTargets.filter { it.id in inWindowTargetIds }.distinctBy { it.id }",
+            ),
+        ) {
+            "M2M eager privacy should preserve target-query order while deduplicating shared target IDs\n$manyToManySource"
         }
     }
 

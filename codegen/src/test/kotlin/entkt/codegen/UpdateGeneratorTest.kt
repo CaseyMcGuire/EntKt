@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import entkt.codegen.mutation.UpdateGenerator
+import entkt.codegen.client.RepoGenerator
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
@@ -171,7 +172,7 @@ class UpdateGeneratorTest {
         // becomes Failed(EntValidationException) via _validationFailed.
         val hookLoop = output.indexOf("for (hook in beforeUpdateHooks)")
         val checkCallSite = output.indexOf(
-            "hook(ctx) } val requiredViolations = _checkRequiredNotNull() " +
+            "runBatchHooksForInternalUse(listOf(ctx), listOf(hook)) } val requiredViolations = _checkRequiredNotNull() " +
                 "if (requiredViolations.isNotEmpty()) return _validationFailed(requiredViolations)",
         )
         val canonicalPatchPos = output.indexOf("val requestedPatch = _buildRequestedPatch()")
@@ -289,7 +290,7 @@ class UpdateGeneratorTest {
         // Failed(EntTargetAbsentException) for missing rows before any
         // hook, privacy, or validation runs.
         val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
-        val hookPos = output.indexOf("for (hook in beforeSaveHooks)")
+        val hookPos = output.indexOf("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")
         assert(loadPos != -1) { "save() should load the current row via driver.byId(...)\n$output" }
         assert(hookPos != -1 && loadPos < hookPos) {
             "Internal current-row load should happen before before-hooks\n$output"
@@ -347,7 +348,7 @@ class UpdateGeneratorTest {
         // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, entity, snapshot, pendingEdges, _mutationView) hook(ctx) }",
+                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val beforeSnapshot = entity val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, beforeSnapshot, snapshot, pendingEdges, _mutationView) runBatchHooksForInternalUse(listOf(ctx), listOf(hook)) }",
             ),
         ) {
             "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
@@ -638,13 +639,13 @@ class UpdateGeneratorTest {
         assert(output.contains("client: EntClient")) {
             "Should take client\n$output"
         }
-        assert(output.contains("beforeSaveHooks: List<(UserMutation) -> Unit>")) {
+        assert(output.contains("beforeSaveHooks: List<BatchHook<UserMutation>>")) {
             "Should take beforeSaveHooks\n$output"
         }
-        assert(output.contains("beforeUpdateHooks: List<(UserUpdateHookContext) -> Unit>")) {
+        assert(output.contains("beforeUpdateHooks: List<BatchHook<UserUpdateHookContext>>")) {
             "beforeUpdate hooks now take a UserUpdateHookContext\n$output"
         }
-        assert(output.contains("afterUpdateHooks: List<(User) -> Unit>")) {
+        assert(output.contains("afterUpdateHooks: List<BatchHook<User>>")) {
             "Should take afterUpdateHooks\n$output"
         }
     }
@@ -712,7 +713,7 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        val hookCall = output.indexOf("for (hook in beforeSaveHooks)")
+        val hookCall = output.indexOf("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")
         val patchCtor = output.indexOf("val requestedPatch")
         assert(hookCall != -1 && patchCtor != -1 && hookCall < patchCtor) {
             "Before hooks should run before requested patch construction\n$output"
@@ -725,7 +726,7 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("for (hook in afterUpdateHooks) hook(updatedEntity)")) {
+        assert(output.contains("runBatchHooksForInternalUse(listOf(updatedEntity), afterUpdateHooks)")) {
             "Should call afterUpdate hooks\n$output"
         }
     }
@@ -1012,8 +1013,35 @@ class UpdateGeneratorTest {
         assert(output.contains("internal fun snapshotOps(): PendingEdgeOps<UUID>")) {
             "snapshotOps() accessor must be internal — replaces inline field reads in _buildPendingEdgeOps\n$output"
         }
+        assert(
+            output.contains(
+                "requestedSet = _requestedSet?.let { immutableSetSnapshotForInternalUse(it) }",
+            ) && output.contains("requestedAdds = immutableSetSnapshotForInternalUse(_adds)") &&
+                output.contains("requestedRemoves = immutableSetSnapshotForInternalUse(_removes)"),
+        ) {
+            "Hook-facing pending edge sets must be detached and JVM-unmodifiable\n$output"
+        }
         assert(output.contains("internal fun validateInvariants()")) {
             "validateInvariants() accessor must be internal — replaces inline checks in _checkLinkTableM2MMixedMode\n$output"
+        }
+    }
+
+    @Test
+    fun `update rule contexts receive fresh immutable edge change snapshots`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = RepoGenerator("com.example.ent")
+            .generate("M2MPost", post, names)
+            .toString()
+            .replace("\\s+".toRegex(), " ")
+
+        val snapshot =
+            "edgeChanges.copy( tags = snapshotEdgeChangesForInternalUse(edgeChanges.tags), )"
+        assert(output.contains("M2MPostUpdatePrivacyContext") && output.contains(snapshot)) {
+            "Every UPDATE privacy context should detach edge-change sets\n$output"
+        }
+        assert(output.contains("M2MPostUpdateValidationContext") &&
+            Regex(Regex.escape(snapshot)).findAll(output).count() >= 2) {
+            "Every UPDATE validation context should detach edge-change sets too\n$output"
         }
     }
 
@@ -1154,7 +1182,7 @@ class UpdateGeneratorTest {
         // hooks means hooks see the snapshot.
         val fromRowIdx = output.indexOf("entity = M2MPost.fromRow(row0)")
         val captureIdx = output.indexOf("val pendingEdges = _buildPendingEdgeOps()")
-        val beforeSaveIdx = output.indexOf("for (hook in beforeSaveHooks) hook(_beforeSaveView)")
+        val beforeSaveIdx = output.indexOf("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")
         assert(fromRowIdx != -1 && captureIdx != -1 && beforeSaveIdx != -1) {
             "Missing one of the pipeline anchors\n$output"
         }
@@ -1183,13 +1211,13 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("for (hook in beforeSaveHooks) hook(_beforeSaveView)")) {
+        assert(output.contains("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")) {
             "beforeSave on update saves must receive _beforeSaveView (shared-only adapter)\n$output"
         }
-        assert(!output.contains("for (hook in beforeSaveHooks) hook(this)")) {
+        assert(!output.contains("runBatchHooksForInternalUse(listOf(this), beforeSaveHooks)")) {
             "Old `hook(this)` shape must be gone — it exposed the concrete-builder cast attack\n$output"
         }
-        assert(!output.contains("for (hook in beforeSaveHooks) hook(_mutationView)")) {
+        assert(!output.contains("runBatchHooksForInternalUse(listOf(_mutationView), beforeSaveHooks)")) {
             "Intermediate `hook(_mutationView)` shape must be gone — it exposed the view cast attack\n$output"
         }
     }
@@ -1204,7 +1232,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("for (hook in beforeSaveHooks) hook(_beforeSaveView)")) {
+        assert(output.contains("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")) {
             "Non-M2M schemas should also pass the shared-only adapter to beforeSave\n$output"
         }
     }
@@ -1244,8 +1272,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The 5-arg form: (client, entity, snapshot, pendingEdges, _mutationView).
-        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, entity, snapshot, pendingEdges, _mutationView)")) {
+        // The 5-arg form: (client, detached before, patch, pendingEdges, mutation).
+        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, beforeSnapshot, snapshot, pendingEdges, _mutationView)")) {
             "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
         }
     }

@@ -22,6 +22,12 @@ private val COMPARABLE_FIELD_TYPES =
 private val GROUPABLE_FIELD_TYPES =
     COMPARABLE_FIELD_TYPES + setOf(FieldType.BOOL, FieldType.UUID, FieldType.ENUM)
 
+// PostgreSQL's extended-query protocol accepts at most 65,535 bind
+// parameters. ID-returning bulk deletes reserve the predicate parameters and
+// split only the ID portion when the complete logical operation exceeds that
+// limit; every statement remains on the caller's connection/transaction.
+private const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
+
 /**
  * The Postgres driver's operation core: every read/write/lock operation as a
  * function of an explicit JDBC [Connection]. Both facades delegate here —
@@ -40,6 +46,16 @@ internal class PostgresOperations(
 
     private fun schemaFor(table: String): EntitySchema =
         registry[table] ?: error("Unregistered table: $table")
+
+    fun <T> copyJsonValue(table: String, column: String, value: T): T {
+        val schema = schemaFor(table)
+        val metadata = schema.columns.firstOrNull { it.name == column }
+            ?: error("Unknown column '$table.$column'")
+        require(metadata.type == FieldType.JSON) {
+            "Column '$table.$column' is not a typed JSON column"
+        }
+        return codec.copyJsonValue(table, metadata, value)
+    }
 
     fun insert(
         conn: Connection,
@@ -498,48 +514,67 @@ internal class PostgresOperations(
                 // clause is only valid against identity columns, so it is
                 // emitted exactly when preallocation saw one.
                 val overriding = if (allocated?.overridingSystemValue == true) "OVERRIDING SYSTEM VALUE " else ""
+                val maxRowsPerStatement = POSTGRES_BIND_PARAMETER_LIMIT / insertCols.size
+                check(maxRowsPerStatement > 0) {
+                    "A row for '$table' requires ${insertCols.size} bind parameters, exceeding " +
+                        "PostgreSQL's $POSTGRES_BIND_PARAMETER_LIMIT-parameter limit"
+                }
                 val singlePlaceholders = "(${insertCols.joinToString(", ") { "?" }})"
-                val allPlaceholders = rows.joinToString(", ") { singlePlaceholders }
                 val colList = insertCols.joinToString(", ") { quote(it) }
-                val sql = "INSERT INTO ${quote(table)} ($colList) ${overriding}VALUES $allPlaceholders RETURNING *"
 
-                conn.prepareStatement(sql).useQuietClose { stmt ->
-                    var idx = 1
-                    rows.forEachIndexed { rowI, row ->
-                        for (col in insertCols) {
-                            val v = if (allocated != null && col == schema.idColumn) {
-                                allocated.ids[rowI]
-                            } else {
-                                row[col]
+                // A logical insertMany may exceed PostgreSQL's bind limit.
+                // Split it into physical statements on this same connection;
+                // inTransaction keeps every chunk atomic, while original
+                // indices and correlation ids preserve the public order.
+                var offset = 0
+                while (offset < rows.size) {
+                    val end = minOf(offset + maxRowsPerStatement, rows.size)
+                    val chunkRows = rows.subList(offset, end)
+                    val chunkIndexedRows = indexedRows.subList(offset, end)
+                    val chunkCorrelationIds = correlationIds?.subList(offset, end)
+                    val allPlaceholders = chunkRows.joinToString(", ") { singlePlaceholders }
+                    val sql =
+                        "INSERT INTO ${quote(table)} ($colList) ${overriding}VALUES $allPlaceholders RETURNING *"
+
+                    conn.prepareStatement(sql).useQuietClose { stmt ->
+                        var idx = 1
+                        chunkRows.forEachIndexed { rowI, row ->
+                            for (col in insertCols) {
+                                val v = if (allocated != null && col == schema.idColumn) {
+                                    allocated.ids[offset + rowI]
+                                } else {
+                                    row[col]
+                                }
+                                codec.bindColumn(stmt, idx++, schema, col, v)
                             }
-                            codec.bindColumn(stmt, idx++, schema, col, v)
                         }
-                    }
-                    stmt.executeQuery().useQuietClose { rs ->
-                        if (correlationIds == null) {
-                            // Only reachable for a single-row group (the
-                            // multi-row no-key case took the per-row
-                            // branch above): one row in, one row out.
-                            for (ir in indexedRows) {
-                                check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
-                                results[ir.index] = codec.decodeRow(rs, schema.table, schema.columns)
-                            }
-                        } else {
-                            val byId = HashMap<Any?, Map<String, Any?>>(rows.size * 2)
-                            while (rs.next()) {
-                                val decoded = codec.decodeRow(rs, schema.table, schema.columns)
-                                byId[idKey(decoded[schema.idColumn])] = decoded
-                            }
-                            check(byId.size == rows.size) {
-                                "INSERT RETURNING produced ${byId.size} distinct ids for ${rows.size} rows"
-                            }
-                            indexedRows.forEachIndexed { rowI, ir ->
-                                results[ir.index] = checkNotNull(byId[idKey(correlationIds[rowI])]) {
-                                    "INSERT RETURNING is missing the row for id ${correlationIds[rowI]}"
+                        stmt.executeQuery().useQuietClose { rs ->
+                            if (chunkCorrelationIds == null) {
+                                // Only reachable for a single-row group (the
+                                // multi-row no-key case took the per-row
+                                // branch above): one row in, one row out.
+                                for (ir in chunkIndexedRows) {
+                                    check(rs.next()) { "INSERT RETURNING produced fewer rows than expected" }
+                                    results[ir.index] = codec.decodeRow(rs, schema.table, schema.columns)
+                                }
+                            } else {
+                                val byId = HashMap<Any?, Map<String, Any?>>(chunkRows.size * 2)
+                                while (rs.next()) {
+                                    val decoded = codec.decodeRow(rs, schema.table, schema.columns)
+                                    byId[idKey(schema, decoded[schema.idColumn])] = decoded
+                                }
+                                check(byId.size == chunkRows.size) {
+                                    "INSERT RETURNING produced ${byId.size} distinct ids for ${chunkRows.size} rows"
+                                }
+                                chunkIndexedRows.forEachIndexed { rowI, ir ->
+                                    results[ir.index] = checkNotNull(byId[idKey(schema, chunkCorrelationIds[rowI])]) {
+                                        "INSERT RETURNING is missing the row for id ${chunkCorrelationIds[rowI]}"
+                                    }
                                 }
                             }
                         }
                     }
+                    offset = end
                 }
             }
         }
@@ -559,7 +594,7 @@ internal class PostgresOperations(
      * trip, so a multi-row insert can bind explicit ids and correlate
      * its RETURNING rows by id. Returns null when the id column has no
      * serial/identity sequence (`nextval` over a null regclass), letting
-     * the caller fall back to positional pairing.
+     * the caller fall back to one-row statements with unambiguous pairing.
      *
      * Also reports whether the id column is `GENERATED ALWAYS AS
      * IDENTITY` — binding explicit values into one requires
@@ -569,7 +604,12 @@ internal class PostgresOperations(
      *
      * `nextval` is non-transactional, so reserved ids are burned on
      * rollback — exactly as serial defaults already behave for failed
-     * inserts.
+     * inserts. Reserving the complete batch first and then binding those ids
+     * explicitly bypasses the normal id default. Another default or trigger
+     * that reads row-local `currval()` / `lastval()` progression can therefore
+     * observe the final reserved value for every row; that sequence-sensitive
+     * shape is outside the optimized insertMany contract documented for
+     * Postgres.
      */
     private fun preallocateSequenceIds(conn: Connection, schema: EntitySchema, n: Int): PreallocatedIds? {
         val quotedTable = "\"" + schema.table.replace("\"", "\"\"") + "\""
@@ -602,7 +642,16 @@ internal class PostgresOperations(
                 while (rs.next()) {
                     val v = rs.getLong(1)
                     if (rs.wasNull()) return null
-                    ids.add(if (schema.idStrategy == IdStrategy.AUTO_INT) v.toInt() else v)
+                    ids.add(
+                        if (schema.idStrategy == IdStrategy.AUTO_INT) {
+                            check(v in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+                                "Preallocated id $v for '${schema.table}.${schema.idColumn}' exceeds the INT range"
+                            }
+                            v.toInt()
+                        } else {
+                            v
+                        },
+                    )
                 }
             }
         }
@@ -610,16 +659,15 @@ internal class PostgresOperations(
     }
 
     /**
-     * Normalize an id value for correlation-map lookups: numeric ids
-     * widen to Long — mirroring [PostgresValueCodec]'s exact integral bind
-     * coercion, which accepts any representable [Number] for INT/LONG columns
-     * — so a bound Byte/Int/BigInteger and a decoded Long compare equal.
-     * Everything else correlates by its own equals.
+     * Normalize an id value for correlation-map lookups through the same exact
+     * conversion used for JDBC binding. This matters for custom [Number]
+     * implementations, whose `toLong()` may disagree with the decimal text
+     * accepted by [PostgresValueCodec]. Non-integral ids retain their own
+     * equality semantics.
      */
-    private fun idKey(v: Any?): Any? = when (v) {
-        is Long -> v
-        is Number -> v.toLong()
-        else -> v
+    private fun idKey(schema: EntitySchema, value: Any?): Any? {
+        val idType = schema.columns.first { it.name == schema.idColumn }.type
+        return codec.idCorrelationKey(idType, value)
     }
 
     fun updateMany(
@@ -681,6 +729,58 @@ internal class PostgresOperations(
             }
             stmt.executeUpdate()
         }
+    }
+
+    fun deleteManyByIds(
+        conn: Connection,
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any> {
+        if (ids.isEmpty()) return emptyList()
+
+        val schema = schemaFor(table)
+        require(idColumn == schema.idColumn) {
+            "deleteManyByIds for '$table' requires its registered ID column " +
+                "'${schema.idColumn}', got '$idColumn'"
+        }
+        val idMetadata = schema.columns.first { it.name == schema.idColumn }
+        val distinctIds = ids.distinct()
+
+        val predicateBuilder = PredicateSqlBuilder(registry)
+        val effectivePredicateSql = predicates.andTogether()?.let {
+            predicateBuilder.lower(it, schema, "t0")
+        }
+        val availableIdParameters = POSTGRES_BIND_PARAMETER_LIMIT - predicateBuilder.params.size
+        require(availableIdParameters > 0) {
+            "Predicates for '$table' use all available PostgreSQL bind parameters"
+        }
+
+        val deletedIds = mutableListOf<Any>()
+        for (chunk in distinctIds.chunked(availableIdParameters)) {
+            val placeholders = chunk.joinToString(", ") { "?" }
+            val sql = buildString {
+                append("DELETE FROM ${quote(table)} AS t0 WHERE t0.${quote(idColumn)} IN ($placeholders)")
+                if (effectivePredicateSql != null) append(" AND (").append(effectivePredicateSql).append(")")
+                append(" RETURNING ${quote(idColumn)}")
+            }
+            conn.prepareStatement(sql).useQuietClose { stmt ->
+                var parameterIndex = 1
+                for (id in chunk) codec.bind(stmt, parameterIndex++, schema.idType, id)
+                for (parameter in predicateBuilder.params) {
+                    codec.bind(stmt, parameterIndex++, parameter.type, parameter.value)
+                }
+                stmt.executeQuery().useQuietClose { rs ->
+                    while (rs.next()) {
+                        deletedIds += checkNotNull(codec.decodeColumn(rs, schema.table, idMetadata)) {
+                            "DELETE from '$table' returned a null ID"
+                        }
+                    }
+                }
+            }
+        }
+        return deletedIds
     }
 
     // ---------- Locking primitives (transaction locking) ----------

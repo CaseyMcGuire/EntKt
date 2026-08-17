@@ -1,5 +1,6 @@
 package entkt.codegen.entity
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -23,7 +24,9 @@ import entkt.schema.Field
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_RULE = ClassName("entkt.runtime.privacy", "PrivacyRule")
+private val BATCH_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "BatchPrivacyRule")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
+private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
@@ -37,7 +40,7 @@ private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
  * - `{Entity}{Op}PrivacyContext` — context classes for each operation
- * - `{Entity}{Op}PrivacyRule` — typealiases for each operation's rule type
+ * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types
  */
 internal class PrivacyGenerator(
     private val packageName: String,
@@ -97,6 +100,10 @@ internal class PrivacyGenerator(
         val createRule = "${schemaName}CreatePrivacyRule"
         val updateRule = "${schemaName}UpdatePrivacyRule"
         val deleteRule = "${schemaName}DeletePrivacyRule"
+        val loadBatchRule = "${schemaName}LoadBatchPrivacyRule"
+        val createBatchRule = "${schemaName}CreateBatchPrivacyRule"
+        val updateBatchRule = "${schemaName}UpdateBatchPrivacyRule"
+        val deleteBatchRule = "${schemaName}DeleteBatchPrivacyRule"
 
         fileBuilder.addTypeAlias(
             TypeAliasSpec.builder(loadRule, PRIVACY_RULE.parameterizedBy(loadCtx)).build(),
@@ -109,6 +116,18 @@ internal class PrivacyGenerator(
         )
         fileBuilder.addTypeAlias(
             TypeAliasSpec.builder(deleteRule, PRIVACY_RULE.parameterizedBy(deleteCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(loadCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(createCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(updateCtx)).build(),
+        )
+        fileBuilder.addTypeAlias(
+            TypeAliasSpec.builder(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(deleteCtx)).build(),
         )
 
         // Operation context data classes
@@ -172,10 +191,10 @@ internal class PrivacyGenerator(
         fileBuilder.addType(
             buildPrivacyConfig(
                 configClass,
-                ClassName(packageName, loadRule),
-                ClassName(packageName, createRule),
-                ClassName(packageName, updateRule),
-                ClassName(packageName, deleteRule),
+                ClassName(packageName, loadBatchRule),
+                ClassName(packageName, createBatchRule),
+                ClassName(packageName, updateBatchRule),
+                ClassName(packageName, deleteBatchRule),
             ),
         )
 
@@ -188,6 +207,10 @@ internal class PrivacyGenerator(
                 ClassName(packageName, createRule),
                 ClassName(packageName, updateRule),
                 ClassName(packageName, deleteRule),
+                ClassName(packageName, loadBatchRule),
+                ClassName(packageName, createBatchRule),
+                ClassName(packageName, updateBatchRule),
+                ClassName(packageName, deleteBatchRule),
             ),
         )
 
@@ -564,6 +587,10 @@ internal class PrivacyGenerator(
         createRuleType: ClassName,
         updateRuleType: ClassName,
         deleteRuleType: ClassName,
+        loadBatchRuleType: ClassName,
+        createBatchRuleType: ClassName,
+        updateBatchRuleType: ClassName,
+        deleteBatchRuleType: ClassName,
     ): TypeSpec {
         return TypeSpec.classBuilder(scopeClass)
             .primaryConstructor(
@@ -585,9 +612,23 @@ internal class PrivacyGenerator(
                     .build(),
             )
             .addFunction(
+                FunSpec.builder("load")
+                    .addAnnotation(jvmName("loadBatchRule"))
+                    .addParameter("rule", loadBatchRuleType)
+                    .addStatement("config.loadRules.add(rule)")
+                    .build(),
+            )
+            .addFunction(
                 FunSpec.builder("create")
                     .addParameter("rules", createRuleType, KModifier.VARARG)
                     .addStatement("config.createRules.addAll(rules)")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("create")
+                    .addAnnotation(jvmName("createBatchRule"))
+                    .addParameter("rule", createBatchRuleType)
+                    .addStatement("config.createRules.add(rule)")
                     .build(),
             )
             .addFunction(
@@ -597,9 +638,23 @@ internal class PrivacyGenerator(
                     .build(),
             )
             .addFunction(
+                FunSpec.builder("update")
+                    .addAnnotation(jvmName("updateBatchRule"))
+                    .addParameter("rule", updateBatchRuleType)
+                    .addStatement("config.updateRules.add(rule)")
+                    .build(),
+            )
+            .addFunction(
                 FunSpec.builder("delete")
                     .addParameter("rules", deleteRuleType, KModifier.VARARG)
                     .addStatement("config.deleteRules.addAll(rules)")
+                    .build(),
+            )
+            .addFunction(
+                FunSpec.builder("delete")
+                    .addAnnotation(jvmName("deleteBatchRule"))
+                    .addParameter("rule", deleteBatchRuleType)
+                    .addStatement("config.deleteRules.add(rule)")
                     .build(),
             )
             .addFunction(
@@ -614,6 +669,10 @@ internal class PrivacyGenerator(
             )
             .build()
     }
+
+    private fun jvmName(name: String): AnnotationSpec = AnnotationSpec.builder(JVM_NAME)
+        .addMember("%S", name)
+        .build()
 
     private fun buildPolicyScope(
         schemaName: String,

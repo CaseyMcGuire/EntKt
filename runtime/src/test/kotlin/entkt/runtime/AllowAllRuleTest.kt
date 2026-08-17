@@ -1,5 +1,6 @@
 package entkt.runtime
 import entkt.runtime.privacy.PrivacyRule
+import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.PrivacyDecision
 
@@ -25,7 +26,12 @@ class AllowAllRuleTest {
         // generated entity. Assigning to the typed aliases here is the test.
         val asLoad: PrivacyRule<FakeLoadCtx> = allowAll
         val asCreate: PrivacyRule<FakeCreateCtx> = allowAll
+        val asBatch: BatchPrivacyRule<FakeLoadCtx> = allowAll
         assertEquals(PrivacyDecision.Allow, asLoad.run(FakeLoadCtx(2)))
         assertEquals(PrivacyDecision.Allow, asCreate.run(FakeCreateCtx("x")))
+        assertEquals(
+            listOf(PrivacyDecision.Allow, PrivacyDecision.Allow),
+            asBatch.runBatch(listOf(FakeLoadCtx(3), FakeLoadCtx(4))),
+        )
     }
 }

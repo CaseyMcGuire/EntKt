@@ -13,7 +13,8 @@ For each schema the generator emits:
   data class for eagerly loaded relationships.
 - **`{Entity}Mutation` interface** — shared interface implemented by both
   Create and Update builders, with `var` properties for all mutable fields.
-  Enables shared validators via `onBeforeSave`.
+  Enables shared `beforeSave` hooks registered through the client lifecycle
+  DSL.
 - **`{Entity}Create` builder** — DSL setters + `.save(): MutationResult<Unit>`
   and `.saveAndLoad(): MutationResult<Entity>`.
   Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
@@ -31,14 +32,21 @@ For each schema the generator emits:
   of strict eager privacy).
 - **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
   `.findById(id): ReadResult<Entity?>`, `.delete(entity)`, `.deleteById(id)`,
-  `.createMany(vararg blocks)`, `.deleteMany(vararg predicates)` — the four
-  mutation terminals return `MutationResult`.
+  `.deleteMany(vararg predicates)`, and, for generated-ID repositories,
+  `.createMany(vararg blocks)` — the mutation terminals return
+  `MutationResult`. Explicit-ID repositories use `.create(id) { }` and do not
+  currently expose a bulk-create signature.
+  There is no generated lifecycle-aware `updateMany()` terminal.
   Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
-  with a `Driver` and an optional configuration lambda for lifecycle hooks.
+  with a `Driver` and an optional lifecycle-configuration lambda.
 - **Hooks DSL classes** — `EntClientConfig`, `EntClientHooks`, and per-entity
   `{Entity}Hooks` classes that provide a structured DSL for registering
   lifecycle hooks at client construction time.
+- **Lifecycle rule types** — generated scalar and batch aliases such as
+  `UserLoadPrivacyRule` / `UserLoadBatchPrivacyRule` and
+  `UserCreateValidationRule` / `UserCreateBatchValidationRule`. Both forms
+  register under the existing operation names.
 
 ## Lifecycle hooks
 
@@ -49,9 +57,9 @@ generated entity/builder types — not raw maps.
 | Hook | Signature | When |
 |------|-----------|------|
 | `beforeSave` | `(UserMutation) -> Unit` | Both create & update, before validation |
-| `beforeCreate` | `(UserCreate) -> Unit` | Create only, after beforeSave |
+| `beforeCreate` | `(UserCreateHookContext) -> Unit` | Create only, after beforeSave |
 | `afterCreate` | `(User) -> Unit` | After successful insert |
-| `beforeUpdate` | `(UserUpdate) -> Unit` | Update only, after beforeSave |
+| `beforeUpdate` | `(UserUpdateHookContext) -> Unit` | Update only, after beforeSave |
 | `afterUpdate` | `(User) -> Unit` | After successful update |
 | `beforeDelete` | `(User) -> Unit` | Before driver delete |
 | `afterDelete` | `(User) -> Unit` | After successful delete |
@@ -61,9 +69,9 @@ val client = EntClient(driver) {
     hooks {
         users {
             beforeSave { it.updatedAt = Instant.now() }
-            beforeCreate { it.createdAt = Instant.now() }
-            beforeUpdate { update ->
-                if (update.name != update.entity.name) println("name changed!")
+            beforeCreate { it.mutation.createdAt = Instant.now() }
+            beforeUpdate { ctx ->
+                println("Updating ${ctx.before.name}")
             }
             afterCreate { user -> println("Created: ${user.name}") }
             beforeDelete { user -> println("Deleting: ${user.name}") }
@@ -79,16 +87,50 @@ val client = EntClient(driver) {
 hook works for both creates and updates. Hooks are declared once and
 automatically apply within transactions — no re-registration needed.
 
-**Bulk operations run hooks and are atomic.** `createMany` drives the same
-per-row create pipeline, and `deleteMany` queries then deletes through the
-shared per-row delete pipeline — all lifecycle hooks fire for every row, and
-the whole batch shares one transaction (the caller's, or an EntKt-owned one).
+Scalar privacy rules, validators, and hooks automatically implement their
+runtime batch contract by visiting values in encounter order. Explicit batch
+callbacks use `batchPrivacyRule`, `batchValidationRule`, and `batchHook`; the
+generated DSL registers them under the same `load` / `create` / `beforeCreate`
+names in Kotlin, not parallel `*Batch` methods. Their generated JVM names use
+`*BatchRule` / `*BatchHook` suffixes so Java lambda overload resolution remains
+unambiguous. Privacy and validation evaluate rule-major, and hooks evaluate
+hook-major.
+
+**Bulk operations are phase-major and transactional.** `createMany` completes
+all before hooks, preparation, CREATE privacy, and validation before one
+logical `Driver.insertMany`; it then hydrates every row, runs `afterCreate`, and
+batch-evaluates returned LOAD privacy. `deleteMany` selects candidates once,
+completes DELETE privacy, validation, and `beforeDelete`, then calls
+`Driver.deleteManyByIds` with the approved IDs and frozen effective predicates;
+`afterDelete` sees only rows actually removed. The whole database operation
+uses the caller's transaction or an EntKt-owned one. Postgres implements both
+logical writes with set-based `INSERT` / `DELETE ... RETURNING` statements
+when input/result correlation permits, with driver-managed fallback or
+chunking kept inside the same transaction.
+
+The driver SPI now requires `registeredIdColumn(table)`. Custom drivers can
+inherit `deleteManyByIds`' correctness fallback (one predicate-based delete per
+distinct ID) or override it with a set-based returning delete. Drivers that
+support typed JSON must also override `copyJsonValue`; decorating and
+transaction-scoped drivers forward that operation.
+
+`createMany`'s returned LOAD phase keeps the mutation result contract: a
+failure after an EntKt-owned insert is `Committed` only after commit is
+confirmed; a confirmed rollback is `NotPersisted`, and an uncertain boundary
+is `PersistenceUnknown`. The same failure in a caller-owned transaction is
+`TransactionPending` and marks that transaction rollback-only.
 
 ## Eager loading
 
 Query builders support eager loading of related entities via `with{Edge}()`
 methods. This avoids N+1 queries by batch-loading edges using `IN` predicates
 after the main query.
+
+LOAD privacy is batch-aware too: the first rule receives the ordered root
+result, and later rules receive only the ordered still-unresolved subset.
+Eager queries apply the same active-subset evaluation to their ordered,
+deduplicated in-window targets. The terminal's single captured privacy context
+is shared across root and eager evaluation.
 
 ```kotlin
 val users = client.users.query {

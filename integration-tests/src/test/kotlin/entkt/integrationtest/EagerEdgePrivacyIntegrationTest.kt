@@ -14,6 +14,7 @@ import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.PostLoadPrivacyRule
 import entkt.integrationtest.ent.PostPolicyScope
 import entkt.integrationtest.ent.Tag
+import entkt.integrationtest.ent.TagLoadPrivacyContext
 import entkt.integrationtest.ent.TagLoadPrivacyRule
 import entkt.integrationtest.ent.TagPolicyScope
 import entkt.integrationtest.ent.User
@@ -25,6 +26,7 @@ import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
+import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
@@ -41,9 +43,10 @@ import kotlin.test.assertTrue
  * ENTIRE root terminal `Failed(EntPrivacyDeniedException(EagerEdge(path),
  * exactly one keyed denial))` — no partial graph, no silent omission.
  * The path names every traversed source type, edge name, and target
- * type (schema names only — no hydrated data); evaluation is fail-fast
- * in eager declaration order; and `visibleOrNull()` never maps an
- * eager denial to root absence.
+ * type (schema names only — no hydrated data). Targets within an edge
+ * are evaluated as a batch; across eager edges, a failing edge prevents
+ * later eager-edge work in declaration order. `visibleOrNull()` never
+ * maps an eager denial to root absence.
  */
 class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
@@ -103,7 +106,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         assertEquals("author hidden", denial.reason)
     }
 
-    // ---- to-many eager denial: exactly one keyed denial, fail-fast ----
+    // ---- to-many eager denial: exactly one keyed denial after batch evaluation ----
 
     @Test
     fun `a to-many eager denial reports exactly the first denied target in traversal order`() {
@@ -144,11 +147,67 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
         assertEquals(listOf(EagerEdgeStep("Post", "tags", "Tag")), origin.path)
         // Exactly ONE denial — the first denied target in traversal
-        // order — even though the second tag is denied too.
+        // order — even though the scalar adapter evaluated and denied
+        // both targets in the batch.
         assertEquals(1, ex.denials.size)
         assertEquals(tagA.id, ex.denials.single().entityKey.value)
-        // Fail-fast: the second tag's rule was never consulted.
-        assertEquals(listOf("a-first"), evaluated)
+        assertEquals(listOf("a-first", "b-second"), evaluated)
+    }
+
+    @Test
+    fun `strict M2M privacy batch is ordered deduplicated and limited to parent windows`() {
+        val invocations = mutableListOf<List<String>>()
+        val driver = resetAndDriver()
+        val client = EntClient(driver) {
+            privacyContext { PrivacyContext(Viewer.User(1L)) }
+            policies {
+                posts(openPosts())
+                tags(object : EntityPolicy<Tag, TagPolicyScope> {
+                    override fun configure(scope: TagPolicyScope) = scope.run {
+                        privacy {
+                            load(batchPrivacyRule<TagLoadPrivacyContext> { contexts ->
+                                invocations += contexts.map { it.entity.name }
+                                contexts.map {
+                                    PrivacyDecision.Deny("tag ${it.entity.name} hidden")
+                                }
+                            })
+                        }
+                    }
+                })
+            }
+        }
+        val firstDeniedId = client.withPrivacyContext(
+            PrivacyContext(Viewer.PrivacyBypass("test")),
+        ) { sys ->
+            val postA = sys.posts.create { title = "a-parent" }.saveAndLoad().getOrThrow()
+            val postB = sys.posts.create { title = "b-parent" }.saveAndLoad().getOrThrow()
+            val outside = sys.tags.create { name = "z-outside-shared" }.saveAndLoad().getOrThrow()
+            val right = sys.tags.create { name = "c-right" }.saveAndLoad().getOrThrow()
+            val left = sys.tags.create { name = "b-left" }.saveAndLoad().getOrThrow()
+            val first = sys.tags.create { name = "a-first-shared" }.saveAndLoad().getOrThrow()
+            for (tag in listOf(first, left, outside)) {
+                sys.postTags.create { postId = postA.id; tagId = tag.id }.save().getOrThrow()
+            }
+            for (tag in listOf(first, right, outside)) {
+                sys.postTags.create { postId = postB.id; tagId = tag.id }.save().getOrThrow()
+            }
+            first.id
+        }
+
+        val result = client.posts.query {
+            orderBy(Post.title.asc())
+            withTags { orderBy(Tag.name.asc()); limit(2) }
+        }.all()
+
+        assertEquals(
+            listOf(listOf("a-first-shared", "b-left", "c-right")),
+            invocations,
+        )
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        assertEquals(1, ex.denials.size)
+        assertEquals(firstDeniedId, ex.denials.single().entityKey.value)
     }
 
     // ---- nested hop path ----

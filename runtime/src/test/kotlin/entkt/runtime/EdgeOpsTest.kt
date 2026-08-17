@@ -2,6 +2,9 @@ package entkt.runtime
 import entkt.runtime.mutation.PendingEdgeOps
 import entkt.runtime.mutation.computeEdgeChanges
 import entkt.runtime.mutation.EdgeChanges
+import entkt.runtime.mutation.immutableSetSnapshotForInternalUse
+import entkt.runtime.mutation.snapshotEdgeChangesForInternalUse
+import entkt.query.EntktInternal
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -11,6 +14,25 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class EdgeOpsTest {
+
+    @OptIn(EntktInternal::class)
+    @Test
+    fun `internal edge snapshots detach and reject JVM mutation`() {
+        val original = linkedSetOf(1L, 2L)
+        val setSnapshot = immutableSetSnapshotForInternalUse(original)
+        val changesSnapshot = snapshotEdgeChangesForInternalUse(
+            EdgeChanges(requestedAdds = original, added = original),
+        )
+
+        original += 3L
+        assertEquals(setOf(1L, 2L), setSnapshot)
+        assertEquals(setOf(1L, 2L), changesSnapshot.requestedAdds)
+        assertEquals(setOf(1L, 2L), changesSnapshot.added)
+        @Suppress("UNCHECKED_CAST")
+        assertFailsWith<UnsupportedOperationException> {
+            (changesSnapshot.added as MutableSet<Long>).clear()
+        }
+    }
 
     // ---------- PendingEdgeOps ----------
 

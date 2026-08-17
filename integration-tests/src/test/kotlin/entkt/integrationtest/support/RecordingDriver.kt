@@ -111,6 +111,16 @@ class RecordingDriver private constructor(
         return delegate.deleteMany(table, predicates)
     }
 
+    override fun deleteManyByIds(
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any> {
+        calls += "deleteManyByIds:$table"
+        return delegate.deleteManyByIds(table, idColumn, ids, predicates)
+    }
+
     override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
         calls += "readRowForUpdate:$table"
         return delegate.readRowForUpdate(table, id)

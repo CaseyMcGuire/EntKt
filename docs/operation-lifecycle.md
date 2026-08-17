@@ -74,8 +74,9 @@ caller cannot use invariant failures to learn about protected data.
 
 - A rejection or failure stops the operation; later stages do not run.
 - Hooks of the same kind run in registration order.
-- Privacy rules run in declaration order. The first `Allow` or `Deny` ends that
-  privacy phase; reaching the end without either denies the operation.
+- Privacy rules run in declaration order. `Allow` or `Deny` finalizes that item;
+  in a batch, later rules receive only still-unresolved items. Reaching the end
+  without either denies each remaining item.
 - All reached entity validators run, and their violations are collected.
 - `afterCreate`, `afterUpdate`, and `afterDelete` mean "after the database
   statement," not "after transaction commit." They still run inside an open
@@ -83,6 +84,10 @@ caller cannot use invariant failures to learn about protected data.
 - A mutation can fail after its write executes, such as in an after hook or
   returned-entity LOAD check. Inspect the exception's `writeState` before
   deciding whether a retry is safe.
+- Multi-item lifecycle phases are callback-major: one registered rule or hook
+  handles every item that reaches it before the next registered callback runs.
+  Ordinary scalar callbacks adapt automatically by visiting those items in
+  encounter order; callbacks are never run concurrently.
 
 ## Reads
 
@@ -106,6 +111,9 @@ Important behavior:
 
 - One terminal uses one viewer context across its interceptors, root LOAD
   privacy, traversal work, and eager loads.
+- Root LOAD privacy evaluates the materialized result as one ordered batch.
+  Each eager query likewise evaluates its ordered, deduplicated, in-window
+  targets as one batch before strict or `filterVisible()` projection.
 - LOAD denial is strict by default and returns a failed result.
 - `visibleOrNull()` converts only a singular root LOAD denial to successful
   absence. It does not hide query, driver, or eager-edge failures.
@@ -206,18 +214,67 @@ Important behavior:
 
 ## Bulk Operations
 
-Generated bulk operations preserve the corresponding per-row lifecycle and
-apply one atomic transaction boundary to the writes.
+Generated bulk operations are phase-major. They retain input or candidate
+encounter order while completing each lifecycle phase for the whole batch
+before moving to the next phase.
 
-- `createMany()` runs each row through the create write lifecycle, then applies
-  returned LOAD privacy to the result list. It returns the complete list in
-  input order or one failure, never a partial list.
-- `deleteMany()` uses read interceptors to select candidates and then runs the
-  delete lifecycle for each selected row. A denied or invalid candidate is not
-  silently skipped.
+On generated-ID repositories, `createMany()` uses this order. Explicit-ID
+repositories currently expose only `create(id) { ... }`, not a bulk-create
+signature:
 
-Returned disclosure can fail after an EntKt-owned create batch has committed.
-As with single-row mutations, inspect `writeState` rather than retrying blindly.
+```mermaid
+flowchart TD
+    blocks["Apply all create blocks"] --> beforeSave["beforeSave — all inputs"]
+    beforeSave --> beforeCreate["beforeCreate — all inputs"]
+    beforeCreate --> fields["Defaults and field validation — all inputs"]
+    fields --> privacy["CREATE privacy — all candidates"]
+    privacy --> validation["CREATE entity validation — all candidates"]
+    validation --> insert["Driver.insertMany — prepared batch"]
+    insert --> hydrate["Hydrate all returned rows in input order"]
+    hydrate --> after["afterCreate — all persisted entities"]
+    after --> load["Returned LOAD privacy — complete result list"]
+    load --> result["MutationResult"]
+```
+
+Every before-hook, privacy rule, and validator finishes before persistence.
+The complete insert and hydration finish before any `afterCreate` hook. The
+terminal returns the complete entity list in input order or one failure, never
+a partial list.
+
+Because `createMany()` returns entities, returned LOAD privacy is part of the
+terminal. In an EntKt-owned transaction, disclosure failure is carried while
+commit is attempted: a confirmed commit yields `writeState = Committed`, a
+confirmed rollback yields `NotPersisted`, and an uncertain transaction boundary
+yields `PersistenceUnknown`. In a caller-owned transaction it is
+`TransactionPending`, marks the transaction rollback-only, and the transaction
+boundary can confirm rollback. Do not retry based only on the failed result;
+inspect `writeState`.
+
+`deleteMany()` uses this order:
+
+```mermaid
+flowchart TD
+    interceptor["Read interceptors"] --> query["Select candidate entities once"]
+    query --> privacy["DELETE privacy — all candidates"]
+    privacy --> validation["DELETE entity validation — all candidates"]
+    validation --> before["beforeDelete — all candidates"]
+    before --> delete["Driver.deleteManyByIds — approved IDs + frozen predicates"]
+    delete --> after["afterDelete — entities actually removed"]
+    after --> result["MutationResult<Int>"]
+```
+
+The write reuses the exact effective caller and interceptor predicates from
+candidate selection and combines them with the approved IDs. Interceptors are
+not rerun. A row that disappears or stops matching before the write is not
+counted and does not reach `afterDelete`; a row that starts matching after
+selection is outside the approved ID set. A denied or invalid candidate fails
+the entire call before deletion rather than being silently skipped.
+
+Both methods use one transaction for their database work (the caller's, or an
+EntKt-owned transaction). This does not make external effects performed by
+hooks transactional. There is deliberately no generated lifecycle-aware
+`updateMany()`; the low-level driver method of that name skips generated hooks,
+privacy, and validation.
 
 ## Learn More
 

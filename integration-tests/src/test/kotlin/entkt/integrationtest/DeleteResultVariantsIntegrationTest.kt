@@ -36,8 +36,9 @@ import kotlin.test.assertTrue
  *       this call's final delete removed the row; Success(false) when
  *       absent before or during the operation.
  *   deleteMany(predicates): MutationResult<Int> — one transaction
- *       across candidate selection and every row's callbacks/deletes;
- *       one failing row leaves no committed subset.
+ *       across candidate selection, phase-major batch callbacks, and
+ *       one logical set-based delete; one failing item leaves no
+ *       committed subset.
  */
 class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
@@ -78,7 +79,11 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         }
     }
 
-    private fun seedArticle(client: EntClient, title: String = "Hello"): Article {
+    private fun seedArticle(
+        client: EntClient,
+        title: String = "Hello",
+        payload: ByteArray? = null,
+    ): Article {
         return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
             val author = sys.users.query().firstOrNull().getOrThrow()
                 ?: sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
@@ -86,6 +91,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
                 this.title = title
                 published = true
                 authorId = author.id
+                this.payload = payload
             }.saveAndLoad().getOrThrow()
         }
     }
@@ -217,6 +223,29 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     @Test
+    fun `deleteMany reasserts a frozen mutable predicate operand`() {
+        val operand = byteArrayOf(1)
+        var beforeDeletes = 0
+        val client = freshClient {
+            hooks {
+                articles {
+                    beforeDelete {
+                        beforeDeletes++
+                        operand[0] = 2
+                    }
+                }
+            }
+        }
+        seedArticle(client, title = "Frozen", payload = byteArrayOf(1))
+
+        val result = client.articles.deleteMany(Article.payload eq operand)
+
+        assertEquals(MutationResult.Success(1), result)
+        assertEquals(1, beforeDeletes)
+        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
+    }
+
+    @Test
     fun `deleteMany whose first candidate fails keeps the typed exception and deletes nothing`() {
         // Every candidate is denied, so the FIRST candidate fails before
         // any delete staged — the typed failure passes through unchanged
@@ -239,13 +268,11 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `deleteMany failing after a staged delete reports the typed failure as cause and deletes nothing`() {
-        // A stateful rule lets the FIRST candidate (whatever the driver's
-        // candidate order) delete, then denies the second — guaranteeing
-        // a staged write precedes the failure without depending on row
-        // order. The staged-then-failed batch is re-reported at the
-        // conversion boundary as NotPersisted (rollback confirmed) with
-        // the typed row failure as the direct cause.
+    fun `deleteMany evaluates every candidate privacy decision before writing`() {
+        // The scalar rule adapts over the ordered batch. Its first decision
+        // allows and its second denies, but phase-major preflight means the
+        // denial is still a direct NotPersisted failure: no candidate has
+        // reached the set-based delete.
         var deleteCalls = 0
         val denySecond = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -266,14 +293,12 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val result = client.articles.deleteMany(Article.published.eq(true))
 
         val failed = assertIs<MutationResult.Failed>(result)
-        val ex = assertIs<entkt.runtime.result.EntUnexpectedMutationException>(failed.exception)
+        val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
-        val cause = assertIs<EntMutationPrivacyDeniedException>(ex.cause)
-        assertEquals(EntOperation.DELETE, cause.operation)
-        assertEquals("second candidate blocked", cause.reason)
+        assertEquals(EntOperation.DELETE, ex.operation)
+        assertEquals("second candidate blocked", ex.reason)
 
-        // Rollback confirmed: the first candidate's staged delete is
-        // undone — no committed subset.
+        // Every candidate remains because the denial preceded persistence.
         assertEquals(3L, client.articles.query().rawCount().getOrThrow())
     }
 }

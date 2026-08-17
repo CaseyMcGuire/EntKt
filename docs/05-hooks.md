@@ -34,6 +34,53 @@ val client = EntClient(driver) {
 | `beforeDelete` | `User` | Before deletion | Cleanup, cascading side effects |
 | `afterDelete` | `User` | After successful delete | Logging, cascading cleanup |
 
+## Scalar and Batch Hooks
+
+The ordinary trailing-lambda form is a scalar hook. It keeps the existing
+one-value callback and automatically adapts when a lifecycle phase contains
+several values:
+
+```kotlin
+interface BatchHook<in T> {
+    fun runBatch(elements: List<T>)
+}
+
+fun interface Hook<in T> : BatchHook<T> {
+    fun run(element: T)
+
+    override fun runBatch(elements: List<T>) {
+        elements.forEach { run(it) }
+    }
+}
+
+fun <T> batchHook(block: (List<T>) -> Unit): BatchHook<T>
+```
+
+Use `batchHook` when one callback should see the whole ordered phase list—for
+example, to share a lookup or one timestamp across all creates:
+
+```kotlin
+import entkt.runtime.hook.batchHook
+
+users {
+    beforeCreate(
+        batchHook<UserCreateHookContext> { contexts ->
+            val now = clock.now()
+            contexts.forEach { it.mutation.createdAt = now }
+        },
+    )
+}
+```
+
+`BatchHook<T>` is an explicit interface with
+`runBatch(elements: List<T>)`. The `batchHook { ... }` factory avoids making a
+lambda ambiguous between one element and a list. Batch and scalar hooks
+register under the same Kotlin lifecycle names and share one registration
+order; there are no `beforeCreateBatch`-style Kotlin methods. Generated batch
+overloads use JVM names such as `beforeCreateBatchHook` so Java lambdas remain
+unambiguous. A batch hook receives a singleton list for a scalar operation and
+is not invoked for an empty phase.
+
 ## The Mutation Interface
 
 `beforeSave` receives a `{Entity}Mutation` interface, which is shared
@@ -266,7 +313,9 @@ client.withTransaction { tx ->
 ## Multiple Hooks
 
 You can register multiple hooks of the same type. They run in
-registration order:
+registration order. For a multi-item phase the order is hook-major: each hook
+handles every item before the next registered hook starts. A scalar hook's
+adapter visits the items in encounter order.
 
 ```kotlin
 users {
@@ -276,16 +325,35 @@ users {
 }
 ```
 
+For hooks `A` and `B` and items 1 and 2, the observable order is
+`A(1), A(2), B(1), B(2)`, not the complete hook chain for item 1 followed by
+item 2. Before-hook mutations made by `A` are visible to `B` and to later
+lifecycle phases. Hooks are not executed concurrently.
+
 ## Bulk Operations and Hooks
 
-Bulk operations (`createMany`, `deleteMany`) **fire lifecycle hooks**
-for every row, and each is atomic: the whole batch shares one
-transaction (the caller's, or an EntKt-owned one when the caller has
-none), so a hook that throws aborts the operation with no committed
-subset.
+Bulk operations (`createMany`, `deleteMany`) fire lifecycle hooks in
+phase-major batches and run their database work in one transaction (the
+caller's, or an EntKt-owned one when the caller has none).
 
 ```kotlin
-// Hooks fire for every row
-client.users.createMany({ name = "Alice" }, { name = "Bob" })  // beforeSave, beforeCreate, afterCreate × 2
-client.users.deleteMany(User.active eq false)                   // beforeDelete, afterDelete per match
+client.users.createMany({ name = "Alice" }, { name = "Bob" })
+// beforeSave(all), beforeCreate(all), insertMany, afterCreate(all)
+
+client.users.deleteMany(User.active eq false)
+// select candidates, beforeDelete(all), ID-scoped delete, afterDelete(actual removals)
 ```
+
+For `createMany`, every before hook finishes before CREATE privacy,
+validation, or the single logical batch insert; every returned row is hydrated
+before `afterCreate` begins. For `deleteMany`, DELETE privacy and validation
+finish before `beforeDelete`; `afterDelete` receives only the preflight
+entities whose IDs the driver reports as actually removed.
+
+An ordinary hook failure rolls back an EntKt-owned batch. In a caller-owned
+transaction it marks the scope rollback-only even if the returned failure is
+ignored. Database rollback cannot undo messages, network calls, or other
+external side effects performed by hook code. `createMany` also has a distinct
+returned-LOAD disclosure phase after `afterCreate`; see
+[Operation Lifecycle](operation-lifecycle.md#bulk-operations) for its commit
+and `writeState` caveat.

@@ -491,10 +491,14 @@ class QueryGeneratorTest {
         assert(output.contains("public fun all(): ReadResult<List<Car>> = try {")) {
             "all() returns ReadResult<List<Car>>\n$output"
         }
-        // Strict all() evaluates every row in the selected window and
-        // aggregates EVERY denied root row into one typed failure...
-        assert(output.contains("val denials = results.mapNotNull { c.cars.loadDenialOrNull(privacy, it) }")) {
-            "all() should collect denials via the read surface's loadDenialOrNull\n$output"
+        // Strict all() submits the selected window to LOAD privacy as
+        // one positional batch, then aggregates every denied root row
+        // into one typed failure.
+        assert(output.contains("val denials = c.cars.loadDenials(privacy, results).filterNotNull()")) {
+            "all() should collect denials through one plural read-surface call\n$output"
+        }
+        assert(!output.contains("results.mapNotNull { c.cars.loadDenialOrNull(privacy, it) }")) {
+            "all() must not regress to per-row LOAD privacy evaluation\n$output"
         }
         assert(
             output.contains(

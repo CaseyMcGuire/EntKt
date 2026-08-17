@@ -9,6 +9,7 @@ import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.AggregateFunction
 
 import entkt.query.OrderField
+import entkt.query.Op
 import entkt.query.Predicate
 
 /**
@@ -16,11 +17,11 @@ import entkt.query.Predicate
  * I/O operation through this interface, so production code, tests, and
  * demos all swap drivers without changing call sites.
  *
- * Drivers are schema-aware but type-agnostic: rows are passed in and
- * out as `Map<String, Any?>` keyed by snake_case column name. Typed
- * conversion happens in the generated `fromRow` / builder code, not in
- * the driver — that keeps drivers from depending on generated entity
- * classes.
+ * Drivers are schema-aware but generated-entity-agnostic: rows are passed in
+ * and out as `Map<String, Any?>` keyed by snake_case column name. Generated
+ * `fromRow` / builder code owns the entity facade, while drivers apply
+ * registered storage codecs such as typed JSON without depending on generated
+ * entity classes.
  *
  * Implementations register every entity's [EntitySchema] up front (the
  * generated `EntClient` calls [registerAll] with the complete set while
@@ -68,6 +69,35 @@ interface Driver {
      * foreign key whose target hasn't been registered yet.
      */
     fun register(schema: EntitySchema)
+
+    /**
+     * Return the registered primary-key column for [table].
+     *
+     * Implementations must reject an unregistered table. This small metadata
+     * lookup lets default driver operations validate an ID-scoped request
+     * without trusting a raw column name supplied by a low-level caller.
+     */
+    fun registeredIdColumn(table: String): String
+
+    /**
+     * Return a detached copy of one typed-JSON [value] using the same mapper
+     * configuration this driver uses for [table].[column]. Generated privacy
+     * and validation contexts call this so mutable JSON graphs cannot alter
+     * the pending database value or a later rule's snapshot.
+     *
+     * `null` must round-trip as `null`; a non-null result must retain the
+     * column's generated Kotlin type. Drivers that support typed JSON must
+     * override this method. The default fails explicitly so a driver cannot
+     * silently claim snapshot isolation while returning an aliased object.
+     */
+    fun <T> copyJsonValue(table: String, column: String, value: T): T =
+        if (value == null) {
+            value
+        } else {
+            throw UnsupportedDriverCapabilityException(
+                "driver ${this::class.simpleName} cannot copy typed JSON values for lifecycle snapshots",
+            )
+        }
 
     /**
      * Whether this driver can bind/decode/render the native storage [codec]
@@ -249,9 +279,10 @@ interface Driver {
     fun delete(table: String, id: Any): Boolean
 
     /**
-     * Insert multiple rows in a single batch. Returns the persisted rows
-     * in the same order as [values], each with its assigned id. Drivers
-     * should use an efficient batch strategy (e.g. multi-row `INSERT`).
+     * Insert multiple rows as one logical batch. Empty input returns an empty
+     * list. Otherwise, returns exactly one persisted row per input in the same
+     * order as [values], each with its assigned id. Drivers should use an
+     * efficient batch strategy (e.g. multi-row `INSERT`).
      *
      * The input-order guarantee is part of the contract: implementations
      * must pair returned rows with inputs unambiguously — by a
@@ -261,8 +292,17 @@ interface Driver {
      * order of insert-returning output.
      *
      * This is a low-level driver method that does not fire lifecycle
-     * hooks. The generated `createMany` repo method delegates to
-     * `create { }.save()` per row so hooks fire for every entity.
+     * callbacks itself. Generated `createMany` evaluates hooks, privacy,
+     * and validation over the complete logical batch before calling this
+     * method once with the prepared rows, then hydrates the correlated
+     * results and runs post-write callbacks. Implementations may use several
+     * physical statements, but a transaction-scoped driver must keep every
+     * statement in its surrounding transaction and must not commit internally.
+     * An ordinary exception from a later statement can therefore leave
+     * earlier statements staged; generated callers mark that transaction
+     * rollback-only rather than treating the complete logical batch as
+     * definitely unpersisted. Cancellation and JVM errors must propagate to
+     * the transaction boundary so it can roll the transaction back.
      */
     fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
 
@@ -282,10 +322,51 @@ interface Driver {
      * together, same as [query]. Returns the number of rows deleted.
      *
      * This is a low-level driver method that does not fire lifecycle
-     * hooks. The generated `deleteMany` repo method queries matching
-     * entities and deletes each through `delete(entity)` so hooks fire.
+     * callbacks. Generated repositories use the ID-returning
+     * [deleteManyByIds] operation after evaluating their lifecycle pipeline;
+     * its correctness-preserving default delegates here once per distinct ID.
      */
     fun deleteMany(table: String, predicates: List<Predicate<*>>): Int
+
+    /**
+     * Delete the distinct rows identified by [ids] that still match every
+     * supplied [predicates], returning the IDs that were actually removed.
+     * Returned order is unspecified. Every returned value must have appeared
+     * in [ids], and no value may be returned more than once.
+     *
+     * [idColumn] must equal [registeredIdColumn] for [table]. An empty [ids]
+     * list performs no write and returns an empty list. The default preserves
+     * correctness by issuing one predicate-based [deleteMany] call per
+     * distinct ID; drivers can override it with a set-based implementation.
+     * All physical statements must remain in the surrounding transaction and
+     * must not commit internally. Generated callers always provide that
+     * transaction; a direct low-level caller that needs all-or-nothing behavior
+     * must likewise invoke this method on a transaction-scoped driver.
+     */
+    fun deleteManyByIds(
+        table: String,
+        idColumn: String,
+        ids: List<Any>,
+        predicates: List<Predicate<*>>,
+    ): List<Any> {
+        if (ids.isEmpty()) return emptyList()
+        val registeredIdColumn = registeredIdColumn(table)
+        require(idColumn == registeredIdColumn) {
+            "deleteManyByIds for '$table' requires its registered ID column " +
+                "'$registeredIdColumn', got '$idColumn'"
+        }
+
+        val deleted = mutableListOf<Any>()
+        for (id in ids.distinct()) {
+            val idPredicate = Predicate.Leaf<Any>(idColumn, Op.EQ, id)
+            val count = deleteMany(table, predicates + idPredicate)
+            check(count in 0..1) {
+                "ID-scoped deleteMany for '$table.$idColumn' affected $count rows for ID '$id'"
+            }
+            if (count == 1) deleted += id
+        }
+        return deleted
+    }
 
     /**
      * Return a [QueryExplanation] describing the SELECT query the
