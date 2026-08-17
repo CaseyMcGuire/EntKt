@@ -4,10 +4,11 @@ import entkt.runtime.hook.Hook;
 import entkt.runtime.privacy.BatchPrivacyRule;
 import entkt.runtime.privacy.PrivacyDecision;
 import entkt.runtime.privacy.PrivacyRule;
+import entkt.runtime.rule.RuleBatch;
+import entkt.runtime.rule.RuleDecisions;
 import entkt.runtime.validation.BatchValidationRule;
 import entkt.runtime.validation.ValidationDecision;
 import entkt.runtime.validation.ValidationRule;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -39,29 +40,51 @@ final class BatchLifecycleJavaCompatibility {
     };
 
     static final BatchPrivacyRule<String> NULL_PRIVACY_DECISION_BATCH =
-            values -> Collections.singletonList(null);
+            batch -> batch.decide(value -> null);
 
     static final BatchValidationRule<String> NULL_VALIDATION_DECISION_BATCH =
-            values -> Collections.singletonList(null);
+            batch -> batch.decide(value -> null);
 
-    static final BatchPrivacyRule<String> NULL_PRIVACY_LIST_BATCH = values -> null;
+    static final BatchPrivacyRule<String> NULL_PRIVACY_RESULT_BATCH = values -> null;
 
-    static final BatchValidationRule<String> NULL_VALIDATION_LIST_BATCH = values -> null;
+    static final BatchValidationRule<String> NULL_VALIDATION_RESULT_BATCH = values -> null;
+
+    static final BatchPrivacyRule<String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
+        @Override
+        public RuleDecisions<PrivacyDecision> runBatch(RuleBatch<String> batch) {
+            return batch.decide(value -> PrivacyDecision.Allow.INSTANCE);
+        }
+    };
+
+    static final BatchValidationRule<String> VALIDATION_BATCH_CLASS = new BatchValidationRule<>() {
+        @Override
+        public RuleDecisions<ValidationDecision> validateBatch(RuleBatch<String> batch) {
+            return batch.decide(value -> ValidationDecision.Valid.INSTANCE);
+        }
+    };
 
     static final Hook<List<Integer>> LIST_HOOK = new Hook<>() {
         @Override
         public void run(List<Integer> value) {}
     };
 
-    static List<PrivacyDecision> runPrivacyBatch(List<String> values) {
-        return PRIVACY_CLASS.runBatch(values);
+    static RuleDecisions<PrivacyDecision> runPrivacyBatch(RuleBatch<String> batch) {
+        return PRIVACY_CLASS.runBatch(batch);
     }
 
-    static List<ValidationDecision> runValidationBatch(List<String> values) {
-        return VALIDATION_CLASS.validateBatch(values);
+    static RuleDecisions<ValidationDecision> runValidationBatch(RuleBatch<String> batch) {
+        return VALIDATION_CLASS.validateBatch(batch);
     }
 
     static void runHookBatch(List<List<Integer>> values) {
         LIST_HOOK.runBatch(values);
+    }
+
+    static void clearRuleBatch(RuleBatch<?> batch) {
+        batch.clear();
+    }
+
+    static void clearRuleDecisions(RuleDecisions<?> decisions) {
+        decisions.clear();
     }
 }

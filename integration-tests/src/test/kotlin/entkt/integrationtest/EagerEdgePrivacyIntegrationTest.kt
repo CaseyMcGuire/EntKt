@@ -167,7 +167,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                         privacy {
                             load(batchPrivacyRule<TagLoadPrivacyContext> { contexts ->
                                 invocations += contexts.map { it.entity.name }
-                                contexts.map {
+                                contexts.decide {
                                     PrivacyDecision.Deny("tag ${it.entity.name} hidden")
                                 }
                             })

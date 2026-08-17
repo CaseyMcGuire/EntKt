@@ -1,6 +1,10 @@
 package entkt.runtime.privacy
 
 import entkt.query.EntktInternal
+import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.RuleDecisions
+import entkt.runtime.rule.decisionsForInternalUse
+import entkt.runtime.rule.ruleBatchForInternalUse
 import entkt.runtime.result.EntBatchRuleContractException
 import java.util.Collections
 import java.util.UUID
@@ -116,12 +120,14 @@ class PrivacyDeniedException(
 /**
  * A privacy rule that can evaluate an ordered batch of operation contexts.
  *
- * Implementations must return exactly one [PrivacyDecision] for each supplied
- * context, in the same order. Generated lifecycle evaluators never invoke a
- * rule with an empty list and validate the returned cardinality.
+ * Implementations return decisions through [RuleBatch.decide] or
+ * [RuleBatch.decideIndexed]. Those operations preserve correlation with the
+ * supplied contexts; callers cannot construct or reorder the result directly.
+ * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
 interface BatchPrivacyRule<in C> {
-    fun runBatch(contexts: List<C>): List<PrivacyDecision>
+    @JvmSuppressWildcards
+    fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision>
 }
 
 /**
@@ -134,21 +140,22 @@ interface BatchPrivacyRule<in C> {
 fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
     fun run(ctx: C): PrivacyDecision
 
-    override fun runBatch(contexts: List<C>): List<PrivacyDecision> =
-        contexts.map { run(it) }
+    @JvmSuppressWildcards
+    override fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision> =
+        batch.decide { run(it) }
 }
 
 /**
  * Construct an explicitly batch-aware privacy rule.
  *
- * The ordinary interface plus named factory keeps list-taking callbacks
+ * The ordinary interface plus named factory keeps batch-taking callbacks
  * explicit at registration sites instead of making a lambda ambiguous between
- * one context and a list of contexts.
+ * one context and a batch of contexts.
  */
 fun <C> batchPrivacyRule(
-    block: (List<C>) -> List<PrivacyDecision>,
+    block: (RuleBatch<C>) -> RuleDecisions<PrivacyDecision>,
 ): BatchPrivacyRule<C> = object : BatchPrivacyRule<C> {
-    override fun runBatch(contexts: List<C>): List<PrivacyDecision> = block(contexts)
+    override fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision> = block(batch)
 }
 
 /**
@@ -177,8 +184,10 @@ fun <I, C> evaluateBatchPrivacyRulesForInternalUse(
         if (activeIndexes.isEmpty()) break
 
         val contexts = immutableList(activeIndexes.map { freshContext(itemSnapshot[it]) })
-        val returnedDecisions: List<PrivacyDecision>? = rule.runBatch(contexts)
-        val ruleDecisions: List<*> = returnedDecisions?.toList()
+        val batch = ruleBatchForInternalUse(contexts)
+        val returnedDecisions: RuleDecisions<PrivacyDecision>? = rule.runBatch(batch)
+        val ruleDecisions: List<*> = returnedDecisions
+            ?.let { batch.decisionsForInternalUse(lifecycle, it) }
             ?: throw EntBatchRuleContractException(lifecycle, contexts.size, actualSize = null)
         if (ruleDecisions.size != contexts.size) {
             throw EntBatchRuleContractException(lifecycle, contexts.size, ruleDecisions.size)

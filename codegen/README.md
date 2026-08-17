@@ -94,7 +94,14 @@ generated DSL registers them under the same `load` / `create` / `beforeCreate`
 names in Kotlin, not parallel `*Batch` methods. Their generated JVM names use
 `*BatchRule` / `*BatchHook` suffixes so Java lambda overload resolution remains
 unambiguous. Privacy and validation evaluate rule-major, and hooks evaluate
-hook-major.
+hook-major. Privacy and validation callbacks receive an immutable `RuleBatch`
+and return read-only decisions through `batch.decide { ... }` or
+`batch.decideIndexed { index, context -> ... }`; this binds the result to its
+originating batch and removes the free positional-list return. Application
+code remains responsible for computing the right decision for each supplied
+context.
+Hooks keep their `List` input because they return `Unit` and have no result to
+correlate.
 
 **Bulk operations are phase-major and transactional.** `createMany` completes
 all before hooks, preparation, CREATE privacy, and validation before one

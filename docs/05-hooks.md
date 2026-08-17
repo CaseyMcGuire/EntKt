@@ -79,7 +79,9 @@ register under the same Kotlin lifecycle names and share one registration
 order; there are no `beforeCreateBatch`-style Kotlin methods. Generated batch
 overloads use JVM names such as `beforeCreateBatchHook` so Java lambdas remain
 unambiguous. A batch hook receives a singleton list for a scalar operation and
-is not invoked for an empty phase.
+is not invoked for an empty phase. Hooks intentionally keep this read-only
+`List` input instead of the privacy/validation `RuleBatch`: hooks return `Unit`,
+so there is no per-item result whose correlation must be protected.
 
 ## The Mutation Interface
 

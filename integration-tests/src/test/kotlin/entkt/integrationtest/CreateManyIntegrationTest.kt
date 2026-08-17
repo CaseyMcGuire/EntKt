@@ -233,19 +233,19 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         assertEquals(0, recording.callCount("insertMany:users"))
                         createPrivacy = contexts.first().privacy
                         events += "createPrivacy:${contexts.joinToString { it.candidate.name }}"
-                        contexts.map { PrivacyDecision.Allow }
+                        contexts.decide { PrivacyDecision.Allow }
                     })
                     load(batchPrivacyRule<UserLoadPrivacyContext> { contexts ->
                         loadPrivacy = contexts.first().privacy
                         events += "loadPrivacy:${contexts.joinToString { it.entity.name }}"
-                        contexts.map { PrivacyDecision.Allow }
+                        contexts.decide { PrivacyDecision.Allow }
                     })
                 }
                 validation {
                     create(batchValidationRule<UserCreateValidationContext> { contexts ->
                         assertEquals(0, recording.callCount("insertMany:users"))
                         events += "validation:${contexts.joinToString { it.candidate.name }}"
-                        contexts.map { ValidationDecision.Valid }
+                        contexts.decide { ValidationDecision.Valid }
                     })
                 }
             }
@@ -741,7 +741,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 validation {
                     create(batchValidationRule<UserCreateValidationContext> { contexts ->
                         validatedNames += contexts.map { it.candidate.name }
-                        contexts.map { context ->
+                        contexts.decide { context ->
                             if (context.candidate.name == "B") {
                                 ValidationDecision.Invalid("B is invalid", field = "name")
                             } else {
@@ -792,7 +792,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 privacy {
                     create(batchPrivacyRule<UserCreatePrivacyContext> { contexts ->
                         privacyBatches += contexts.map { it.candidate.name }
-                        contexts.map { context ->
+                        contexts.decide { context ->
                             if (context.candidate.name == "B") {
                                 PrivacyDecision.Deny("B cannot be created")
                             } else {
@@ -804,7 +804,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 validation {
                     create(batchValidationRule<UserCreateValidationContext> { contexts ->
                         validationCalls++
-                        contexts.map { ValidationDecision.Valid }
+                        contexts.decide { ValidationDecision.Valid }
                     })
                 }
             }
@@ -897,7 +897,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         contexts.first().client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
                         }.rawExists().getOrThrow()
-                        contexts.map { PrivacyDecision.Allow }
+                        contexts.decide { PrivacyDecision.Allow }
                     })
                 }
             }
@@ -931,7 +931,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         contexts.first().client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
                         }.rawExists()
-                        contexts.map { PrivacyDecision.Deny("LOAD dependency unavailable") }
+                        contexts.decide { PrivacyDecision.Deny("LOAD dependency unavailable") }
                     })
                 }
             }

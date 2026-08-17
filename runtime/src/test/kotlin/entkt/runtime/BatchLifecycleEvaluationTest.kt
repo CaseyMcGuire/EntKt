@@ -25,7 +25,7 @@ class BatchLifecycleEvaluationTest {
         val rules = listOf(
             batchPrivacyRule<Int> { contexts ->
                 invocations += contexts
-                contexts.map {
+                contexts.decide {
                     when (it) {
                         1 -> PrivacyDecision.Allow
                         3 -> PrivacyDecision.Deny("three")
@@ -35,7 +35,7 @@ class BatchLifecycleEvaluationTest {
             },
             batchPrivacyRule<Int> { contexts ->
                 invocations += contexts
-                contexts.map { PrivacyDecision.Deny("remaining $it") }
+                contexts.decide { PrivacyDecision.Deny("remaining $it") }
             },
         )
 
@@ -65,11 +65,11 @@ class BatchLifecycleEvaluationTest {
         val rules = listOf(
             batchPrivacyRule<Int> { contexts ->
                 seen += contexts
-                contexts.map { PrivacyDecision.Continue }
+                contexts.decide { PrivacyDecision.Continue }
             },
             batchPrivacyRule<Int> { contexts ->
                 seen += contexts
-                contexts.map { PrivacyDecision.Allow }
+                contexts.decide { PrivacyDecision.Allow }
             },
         )
 
@@ -86,13 +86,13 @@ class BatchLifecycleEvaluationTest {
             items = listOf(7, 7),
             rules = listOf(
                 batchPrivacyRule<Int> { contexts ->
-                    contexts.mapIndexed { index, _ ->
+                    contexts.decideIndexed { index, _ ->
                         if (index == 0) PrivacyDecision.Allow else PrivacyDecision.Deny("second")
                     }
                 },
                 batchPrivacyRule<Int> { contexts ->
                     laterCalls++
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 },
             ),
             freshContext = { it },
@@ -103,16 +103,47 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
+    fun `privacy decideIndexed uses the current active batch index`() {
+        val laterBatches = mutableListOf<List<String>>()
+        val decisions = evaluateBatchPrivacyRulesForInternalUse(
+            lifecycle = "Widget LOAD privacy",
+            items = listOf("same", "resolved", "same"),
+            rules = listOf(
+                batchPrivacyRule<String> { batch ->
+                    batch.decide {
+                        if (it == "resolved") PrivacyDecision.Allow else PrivacyDecision.Continue
+                    }
+                },
+                batchPrivacyRule<String> { batch ->
+                    laterBatches += batch
+                    batch.decideIndexed { index, _ -> PrivacyDecision.Deny("active-$index") }
+                },
+            ),
+            freshContext = { it },
+        )
+
+        assertEquals(listOf(listOf("same", "same")), laterBatches)
+        assertEquals(
+            listOf(
+                PrivacyDecision.Deny("active-0"),
+                PrivacyDecision.Allow,
+                PrivacyDecision.Deny("active-1"),
+            ),
+            decisions,
+        )
+    }
+
+    @Test
     fun `validation evaluation is rule-major and preserves violation order per item`() {
         val invocations = mutableListOf<List<String>>()
         val rules = listOf(
             batchValidationRule<String> { contexts ->
                 invocations += contexts
-                contexts.map { ValidationDecision.Invalid("first $it") }
+                contexts.decide { ValidationDecision.Invalid("first $it") }
             },
             batchValidationRule<String> { contexts ->
                 invocations += contexts
-                contexts.map {
+                contexts.decide {
                     if (it == "a") ValidationDecision.Valid else ValidationDecision.Invalid("second $it")
                 }
             },
@@ -137,11 +168,11 @@ class BatchLifecycleEvaluationTest {
         val rules = listOf(
             batchValidationRule<Int> { contexts ->
                 seen += contexts
-                contexts.map { ValidationDecision.Valid }
+                contexts.decide { ValidationDecision.Valid }
             },
             batchValidationRule<Int> { contexts ->
                 seen += contexts
-                contexts.map { ValidationDecision.Valid }
+                contexts.decide { ValidationDecision.Valid }
             },
         )
 
@@ -180,13 +211,13 @@ class BatchLifecycleEvaluationTest {
         var validationCalls = 0
         var hookCalls = 0
 
-        val privacy = batchPrivacyRule<Int> {
+        val privacy = batchPrivacyRule<Int> { batch ->
             privacyCalls++
-            emptyList()
+            batch.decide { PrivacyDecision.Allow }
         }
-        val validation = batchValidationRule<Int> {
+        val validation = batchValidationRule<Int> { batch ->
             validationCalls++
-            emptyList()
+            batch.decide { ValidationDecision.Valid }
         }
         val hook = batchHook<Int> { hookCalls++ }
 
@@ -206,43 +237,37 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
-    fun `privacy and validation evaluators reject wrong decision counts`() {
+    fun `privacy and validation evaluators reject decisions from another batch`() {
+        var priorPrivacyDecisions: entkt.runtime.rule.RuleDecisions<PrivacyDecision>? = null
+        val privacyDelegate = batchPrivacyRule<Int> { batch ->
+            priorPrivacyDecisions ?: batch.decide { PrivacyDecision.Allow }.also {
+                priorPrivacyDecisions = it
+            }
+        }
+        val privacy = batchPrivacyRule<Int> { batch ->
+            privacyDelegate.runBatch(batch).mapDecisions { it }
+        }
+        evaluateBatchPrivacyRulesForInternalUse("Widget LOAD privacy", listOf(1), listOf(privacy)) { it }
         val privacyException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchPrivacyRulesForInternalUse(
-                "Widget LOAD privacy",
-                listOf(1, 2),
-                listOf(batchPrivacyRule<Int> { listOf(PrivacyDecision.Allow) }),
-            ) { it }
+            evaluateBatchPrivacyRulesForInternalUse("Widget LOAD privacy", listOf(2), listOf(privacy)) { it }
         }
-        assertEquals("Widget LOAD privacy", privacyException.lifecycle)
-        assertEquals(2, privacyException.expectedSize)
-        assertEquals(1, privacyException.actualSize)
+        assertEquals(true, privacyException.foreignBatchResult)
 
-        val longPrivacyException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchPrivacyRulesForInternalUse(
-                "Widget DELETE privacy",
-                listOf(1),
-                listOf(
-                    batchPrivacyRule<Int> {
-                        listOf(PrivacyDecision.Allow, PrivacyDecision.Allow)
-                    },
-                ),
-            ) { it }
+        var priorValidationDecisions: entkt.runtime.rule.RuleDecisions<ValidationDecision>? = null
+        val validation = batchValidationRule<Int> { batch ->
+            priorValidationDecisions ?: batch.decide { ValidationDecision.Valid }.also {
+                priorValidationDecisions = it
+            }
         }
-        assertEquals("Widget DELETE privacy", longPrivacyException.lifecycle)
-        assertEquals(1, longPrivacyException.expectedSize)
-        assertEquals(2, longPrivacyException.actualSize)
-
+        evaluateBatchValidationRulesForInternalUse("Widget CREATE validation", listOf(1), listOf(validation)) { it }
         val validationException = assertFailsWith<EntBatchRuleContractException> {
             evaluateBatchValidationRulesForInternalUse(
                 "Widget CREATE validation",
-                listOf(1),
-                listOf(batchValidationRule<Int> { emptyList() }),
+                listOf(2),
+                listOf(validation),
             ) { it }
         }
-        assertEquals("Widget CREATE validation", validationException.lifecycle)
-        assertEquals(1, validationException.expectedSize)
-        assertEquals(0, validationException.actualSize)
+        assertEquals(true, validationException.foreignBatchResult)
     }
 
     @Test
@@ -271,12 +296,12 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
-    fun `privacy and validation evaluators reject null Java decision lists`() {
+    fun `privacy and validation evaluators reject null Java decision results`() {
         val privacyException = assertFailsWith<EntBatchRuleContractException> {
             evaluateBatchPrivacyRulesForInternalUse(
                 "Widget LOAD privacy",
                 listOf("widget"),
-                listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_LIST_BATCH),
+                listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_RESULT_BATCH),
             ) { it }
         }
         assertEquals(null, privacyException.actualSize)
@@ -290,7 +315,7 @@ class BatchLifecycleEvaluationTest {
             evaluateBatchValidationRulesForInternalUse(
                 "Widget CREATE validation",
                 listOf("widget"),
-                listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_LIST_BATCH),
+                listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_RESULT_BATCH),
             ) { it }
         }
         assertEquals(null, validationException.actualSize)
@@ -313,7 +338,7 @@ class BatchLifecycleEvaluationTest {
                     batchPrivacyRule<Int> { throw failure },
                     batchPrivacyRule<Int> { contexts ->
                         laterCalls++
-                        contexts.map { PrivacyDecision.Allow }
+                        contexts.decide { PrivacyDecision.Allow }
                     },
                 ),
                 freshContext = { it },
@@ -325,20 +350,20 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
-    fun `callback lists are immutable even when cast`() {
+    fun `callback batches are immutable even when cast`() {
         val privacy = batchPrivacyRule<Int> { contexts ->
-            assertFailsWith<UnsupportedOperationException> {
+            assertFailsWith<ClassCastException> {
                 @Suppress("UNCHECKED_CAST")
-                (contexts as MutableList<Int>).clear()
+                (contexts as Any as MutableList<Int>).clear()
             }
-            contexts.map { PrivacyDecision.Allow }
+            contexts.decide { PrivacyDecision.Allow }
         }
         val validation = batchValidationRule<Int> { contexts ->
-            assertFailsWith<UnsupportedOperationException> {
+            assertFailsWith<ClassCastException> {
                 @Suppress("UNCHECKED_CAST")
-                (contexts as MutableList<Int>).clear()
+                (contexts as Any as MutableList<Int>).clear()
             }
-            contexts.map { ValidationDecision.Valid }
+            contexts.decide { ValidationDecision.Valid }
         }
         val hook = batchHook<Int> { elements ->
             assertFailsWith<UnsupportedOperationException> {

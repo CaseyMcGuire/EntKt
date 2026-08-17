@@ -13,6 +13,7 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 | `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, scalar/batch privacy rules and evaluators, `allowAll`, `EntityPolicy` |
 | `entkt.runtime.validation` | Scalar/batch validation rules and evaluators |
 | `entkt.runtime.hook` | Scalar/batch lifecycle hook contracts and factories |
+| `entkt.runtime.rule` | Immutable `RuleBatch` inputs and read-only, same-batch `RuleDecisions` outputs for privacy and validation |
 | `entkt.runtime.query` | interceptors (`QueryInterceptor`, `InterceptScope`, `InterceptorEngine`, `ReadOperation`, …), `QueryPlan`/`QueryExplanation`, aggregate types, `ExcludeDeleted` |
 | `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
 | `entkt.runtime.result` | `ReadResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |

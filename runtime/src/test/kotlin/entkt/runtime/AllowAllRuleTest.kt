@@ -1,9 +1,10 @@
 package entkt.runtime
-import entkt.runtime.privacy.PrivacyRule
-import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.privacy.allowAll
-import entkt.runtime.privacy.PrivacyDecision
 
+import entkt.runtime.privacy.BatchPrivacyRule
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyRule
+import entkt.runtime.privacy.allowAll
+import entkt.runtime.rule.RuleBatch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -29,9 +30,10 @@ class AllowAllRuleTest {
         val asBatch: BatchPrivacyRule<FakeLoadCtx> = allowAll
         assertEquals(PrivacyDecision.Allow, asLoad.run(FakeLoadCtx(2)))
         assertEquals(PrivacyDecision.Allow, asCreate.run(FakeCreateCtx("x")))
+        val batch = RuleBatch.from(listOf(FakeLoadCtx(3), FakeLoadCtx(4)))
         assertEquals(
-            listOf(PrivacyDecision.Allow, PrivacyDecision.Allow),
-            asBatch.runBatch(listOf(FakeLoadCtx(3), FakeLoadCtx(4))),
+            listOf<PrivacyDecision>(PrivacyDecision.Allow, PrivacyDecision.Allow),
+            asBatch.runBatch(batch),
         )
     }
 }

@@ -17,21 +17,26 @@ abstract class EntException(
 ) : RuntimeException(message, cause)
 
 /**
- * A batch privacy or validation rule violated its positional result contract.
+ * A batch privacy or validation rule violated its correlated-result contract.
  * [lifecycle] is the framework-supplied lifecycle description used for
  * diagnostics; [expectedSize] is the number of contexts supplied to the rule,
  * and [actualSize] is the number of decisions it returned, or null when a Java
- * or unchecked implementation returned no list at all. A non-null
- * [invalidDecisionIndex] means the cardinality was correct but that position
- * contained no valid decision despite Kotlin's non-null element type.
+ * or unchecked implementation returned a null result. A non-null
+ * [invalidDecisionIndex] identifies a position that contained no valid
+ * decision despite Kotlin's non-null element type.
+ * [foreignBatchResult] means the rule returned decisions created by a
+ * different invocation's `RuleBatch`.
  */
 class EntBatchRuleContractException(
     val lifecycle: String,
     val expectedSize: Int,
     val actualSize: Int?,
     val invalidDecisionIndex: Int? = null,
+    val foreignBatchResult: Boolean = false,
 ) : EntException(
     when {
+        foreignBatchResult ->
+            "Batch rule contract violation for $lifecycle: decisions belong to a different rule batch"
         actualSize == null ->
             "Batch rule contract violation for $lifecycle: expected $expectedSize decisions but received null"
         invalidDecisionIndex == null ->
@@ -39,7 +44,24 @@ class EntBatchRuleContractException(
         else ->
             "Batch rule contract violation for $lifecycle: invalid decision at index $invalidDecisionIndex"
     },
-)
+) {
+    init {
+        require(lifecycle.isNotBlank()) { "lifecycle must not be blank" }
+        require(expectedSize >= 0) { "expectedSize must not be negative" }
+        require(actualSize == null || actualSize >= 0) { "actualSize must not be negative" }
+        require(
+            when {
+                foreignBatchResult -> actualSize != null && invalidDecisionIndex == null
+                actualSize == null -> invalidDecisionIndex == null
+                invalidDecisionIndex != null ->
+                    actualSize == expectedSize && invalidDecisionIndex in 0 until expectedSize
+                else -> actualSize != expectedSize
+            },
+        ) {
+            "batch-rule contract diagnostics describe contradictory states"
+        }
+    }
+}
 
 /**
  * Marker for framework-classified privacy denials. Implemented by both

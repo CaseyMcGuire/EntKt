@@ -109,7 +109,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                         privacy {
                             load(batchPrivacyRule<TagLoadPrivacyContext> { contexts ->
                                 invocations += contexts.map { it.entity.name }
-                                contexts.map {
+                                contexts.decide {
                                     if (it.entity.name == "a-denied-shared") {
                                         PrivacyDecision.Deny("tag hidden")
                                     } else {

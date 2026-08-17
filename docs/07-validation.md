@@ -81,8 +81,8 @@ serially in encounter order:
 fun interface ValidationRule<in C> : BatchValidationRule<C> {
     fun validate(ctx: C): ValidationDecision
 
-    override fun validateBatch(contexts: List<C>): List<ValidationDecision> =
-        contexts.map { validate(it) }
+    override fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision> =
+        batch.decide { validate(it) }
 }
 ```
 
@@ -96,21 +96,23 @@ phase list, commonly to replace per-item reads with one set-based lookup:
 
 ```kotlin
 import entkt.runtime.validation.batchValidationRule
+import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.RuleDecisions
 
 interface BatchValidationRule<in C> {
-    fun validateBatch(contexts: List<C>): List<ValidationDecision>
+    fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision>
 }
 
 fun <C> batchValidationRule(
-    block: (List<C>) -> List<ValidationDecision>,
+    block: (RuleBatch<C>) -> RuleDecisions<ValidationDecision>,
 ): BatchValidationRule<C>
 
-val uniqueSlugs = batchValidationRule<PostCreateValidationContext> { contexts ->
+val uniqueSlugs = batchValidationRule<PostCreateValidationContext> { batch ->
     val existingSlugs = loadExistingSlugs(
-        contexts.first().client,
-        contexts.map { it.candidate.slug },
+        batch.first().client,
+        batch.map { it.candidate.slug },
     )
-    contexts.map { ctx ->
+    batch.decide { ctx ->
         if (ctx.candidate.slug in existingSlugs) {
             ValidationDecision.Invalid("slug already taken", field = "slug")
         } else {
@@ -124,17 +126,35 @@ validation {
 }
 ```
 
-`BatchValidationRule<C>.validateBatch(contexts)` must return exactly one
-decision per context in the same order. The explicit factory keeps a
-list-taking lambda distinct from a scalar one. A cardinality mismatch is an
-operational `EntBatchRuleContractException`, not an invalid decision. A Java
-or unchecked validator that returns a null list or null/invalid decision
-receives the same contract error. Scalar
+`RuleBatch` is an immutable, read-only `List`, so a validator can inspect,
+group, or sort its contexts while preparing a set-based read. It must build its
+result with `batch.decide { ... }` or
+`batch.decideIndexed { index, ctx -> ... }`. Those methods return read-only
+`RuleDecisions` tied to that exact batch and invoke the decision block in
+encounter order. This works for ID-less CREATE candidates and preserves
+distinct decisions for duplicate or equal contexts; `decideIndexed` supplies
+the index within the current callback batch.
+
+This removes the error-prone API that accepted an arbitrary positional list;
+it does not prove that application code computed the semantically correct
+decision. Use the context supplied to the `decide` block rather than consuming
+a separately reordered decision iterator. `RuleDecisions` is readable as a
+`List`, and `RuleBatch.from(contexts)` creates a copied batch for direct unit
+tests. A rule decorator must transform delegated decisions with
+`result.mapDecisions { ... }`; that operation preserves the delegated result's
+batch identity, so a stale cached result remains rejectable. Do not copy a
+delegated decision list back through the current batch. Decisions from a test
+batch remain bound to it.
+
+Returning decisions created by another batch is an operational
+`EntBatchRuleContractException`, not an invalid decision. Java or unchecked
+code that returns `null` instead of `RuleDecisions`, or returns a null/invalid
+decision, receives the same contract error. Scalar
 and batch validators use the same `create`, `update`, and `delete` registration
 names in Kotlin and one shared registration order. Generated batch overloads
 use JVM names such as `createBatchRule` so Java lambdas remain unambiguous. A
-batch validator receives a singleton list for a scalar mutation and is not
-invoked for an empty phase.
+batch validator receives a singleton `RuleBatch` for a scalar mutation and is
+not invoked for an empty phase.
 
 ### EntValidationException
 

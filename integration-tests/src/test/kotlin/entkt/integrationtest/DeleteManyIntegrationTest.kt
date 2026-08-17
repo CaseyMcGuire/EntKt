@@ -228,7 +228,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -267,7 +267,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                     contexts.forEach { assertSame(capturedPrivacy, it.privacy) }
                     driver.probe.events +=
                         "privacy:${contexts.joinToString { it.entity.name }}"
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
             validation {
@@ -275,7 +275,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                     assertEquals(0, driver.probe.deleteManyByIdsCalls)
                     driver.probe.events +=
                         "validation:${contexts.joinToString { it.entity.name }}"
-                    contexts.map { ValidationDecision.Valid }
+                    contexts.decide { ValidationDecision.Valid }
                 })
             }
         }
@@ -360,13 +360,13 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
                     privacyCalls++
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
             validation {
                 delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
                     validationCalls++
-                    contexts.map { ValidationDecision.Valid }
+                    contexts.decide { ValidationDecision.Valid }
                 })
             }
         }
@@ -418,7 +418,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
                     privacyBatches += contexts.map { it.entity.name }
-                    contexts.map { context ->
+                    contexts.decide { context ->
                         when (context.entity.name) {
                             "B", "C" -> PrivacyDecision.Deny("${context.entity.name} blocked")
                             else -> PrivacyDecision.Allow
@@ -429,7 +429,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             validation {
                 delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
                     validationCalls++
-                    contexts.map { ValidationDecision.Invalid("should not run") }
+                    contexts.decide { ValidationDecision.Invalid("should not run") }
                 })
             }
         }
@@ -468,7 +468,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
                     deleteBatches += contexts.map { it.entity.name }
-                    contexts.map { context ->
+                    contexts.decide { context ->
                         when (context.entity.name) {
                             "A" -> PrivacyDecision.Allow
                             "B" -> PrivacyDecision.Deny("B blocked")
@@ -478,7 +478,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                 })
                 create(batchPrivacyRule<UserCreatePrivacyContext> { contexts ->
                     derivedCreateBatches += contexts.map { it.candidate.name }
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
                 deleteDerivesFromCreate()
             }
@@ -513,13 +513,13 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
                     privacyBatches += contexts.map { it.entity.name }
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
             validation {
                 delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
                     validationBatches += contexts.map { it.entity.name }
-                    contexts.map { context ->
+                    contexts.decide { context ->
                         if (context.entity.name == "A") ValidationDecision.Valid
                         else ValidationDecision.Invalid("${context.entity.name} invalid", field = "name")
                     }
@@ -559,7 +559,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -603,7 +603,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -639,7 +639,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -664,7 +664,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -715,7 +715,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -752,7 +752,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }
@@ -789,7 +789,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.map { PrivacyDecision.Allow }
+                    contexts.decide { PrivacyDecision.Allow }
                 })
             }
         }

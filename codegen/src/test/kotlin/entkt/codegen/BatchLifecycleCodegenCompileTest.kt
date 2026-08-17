@@ -89,14 +89,14 @@ class BatchLifecycleCodegenCompileTest {
                 private val scalarLoads = arrayOf(scalarLoad)
                 private val batchLoad: CarLoadBatchPrivacyRule =
                     batchPrivacyRule<CarLoadPrivacyContext> { contexts ->
-                        contexts.map { PrivacyDecision.Allow }
+                        contexts.decide { PrivacyDecision.Allow }
                     }
 
                 private val scalarCreate = CarCreateValidationRule { ValidationDecision.Valid }
                 private val scalarCreates = arrayOf(scalarCreate)
                 private val batchCreate: CarCreateBatchValidationRule =
                     batchValidationRule<CarCreateValidationContext> { contexts ->
-                        contexts.map { ValidationDecision.Valid }
+                        contexts.decide { ValidationDecision.Valid }
                     }
 
                 private object MixedPolicy : EntityPolicy<Car, CarPolicyScope> {
@@ -106,7 +106,7 @@ class BatchLifecycleCodegenCompileTest {
                             load(CarLoadPrivacyRule { PrivacyDecision.Continue })
                             load(*scalarLoads)
                             load(batchPrivacyRule { contexts ->
-                                contexts.map { PrivacyDecision.Allow }
+                                contexts.decide { PrivacyDecision.Allow }
                             })
                             load(batchLoad)
                             load(scalarLoad)
@@ -115,7 +115,7 @@ class BatchLifecycleCodegenCompileTest {
                             create(CarCreateValidationRule { ValidationDecision.Valid })
                             create(*scalarCreates)
                             create(batchValidationRule { contexts ->
-                                contexts.map { ValidationDecision.Valid }
+                                contexts.decide { ValidationDecision.Valid }
                             })
                             create(batchCreate)
                             create(scalarCreate)
@@ -222,6 +222,8 @@ class BatchLifecycleCodegenCompileTest {
             import entkt.runtime.privacy.PrivacyContext
             import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.batchPrivacyRule
+            import entkt.runtime.rule.RuleBatch
+            import entkt.runtime.rule.RuleDecisions
             import entkt.runtime.result.EntBatchRuleContractException
             import entkt.runtime.result.EntPrivacyDeniedException
             import entkt.runtime.result.LoadDenialOrigin
@@ -239,7 +241,7 @@ class BatchLifecycleCodegenCompileTest {
                 }
 
                 private fun loadPolicy(
-                    block: (List<WidgetLoadPrivacyContext>) -> List<PrivacyDecision>,
+                    block: (RuleBatch<WidgetLoadPrivacyContext>) -> RuleDecisions<PrivacyDecision>,
                 ): EntityPolicy<Widget, WidgetPolicyScope> =
                     object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {
@@ -255,7 +257,7 @@ class BatchLifecycleCodegenCompileTest {
                             privacy {
                                 load(batchPrivacyRule<WidgetLoadPrivacyContext> { contexts ->
                                     batchIds += contexts.map { it.entity.id }
-                                    contexts.map { PrivacyDecision.Allow }
+                                    contexts.decide { PrivacyDecision.Allow }
                                 })
                             }
                         }
@@ -270,7 +272,7 @@ class BatchLifecycleCodegenCompileTest {
                     val mixedResult = EntClient(rowDriver(30, 10, 40, 20)) {
                         policies {
                             widgets(loadPolicy { contexts ->
-                                contexts.map { ctx ->
+                                contexts.decide { ctx ->
                                     when (ctx.entity.id) {
                                         10 -> PrivacyDecision.Deny("deny-10")
                                         20 -> PrivacyDecision.Deny("deny-20")
@@ -317,7 +319,7 @@ class BatchLifecycleCodegenCompileTest {
                             privacy {
                                 load(batchPrivacyRule<WidgetLoadPrivacyContext> { contexts ->
                                     emptyBatchCalls += 1
-                                    contexts.map { PrivacyDecision.Allow }
+                                    contexts.decide { PrivacyDecision.Allow }
                                 })
                             }
                         }
@@ -348,7 +350,7 @@ class BatchLifecycleCodegenCompileTest {
                     val singletonBatches = mutableListOf<List<Int>>()
                     val singletonPolicy = loadPolicy { contexts ->
                         singletonBatches += contexts.map { it.entity.id }
-                        contexts.map { PrivacyDecision.Allow }
+                        contexts.decide { PrivacyDecision.Allow }
                     }
                     val found = EntClient(rowDriver(41)) {
                         policies { widgets(singletonPolicy) }
@@ -371,27 +373,32 @@ class BatchLifecycleCodegenCompileTest {
                     check(noFirst == null)
                     check(singletonBatches.size == presentCallbackCount)
 
-                    val malformedPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
+                    var priorDecisions: RuleDecisions<PrivacyDecision>? = null
+                    val foreignDecisionsPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {
                             privacy {
-                                load(batchPrivacyRule<WidgetLoadPrivacyContext> {
-                                    listOf(PrivacyDecision.Allow)
+                                load(batchPrivacyRule<WidgetLoadPrivacyContext> { contexts ->
+                                    priorDecisions ?: contexts.decide { PrivacyDecision.Allow }
+                                        .also { priorDecisions = it }
                                 })
                             }
                         }
                     }
-                    val malformed = EntClient(rowDriver(4, 7, 9)) {
-                        policies { widgets(malformedPolicy) }
-                    }.widgets.query().all()
-                    val failure = malformed as? ReadResult.Failed
-                        ?: error("expected ReadResult.Failed, got ${'$'}malformed")
+                    val foreignClient = EntClient(rowDriver(4, 7, 9)) {
+                        policies { widgets(foreignDecisionsPolicy) }
+                    }
+                    foreignClient.widgets.query().all().getOrThrow()
+                    val foreign = foreignClient.widgets.query().all()
+                    val failure = foreign as? ReadResult.Failed
+                        ?: error("expected ReadResult.Failed, got ${'$'}foreign")
                     val contract = failure.exception as? EntBatchRuleContractException
                         ?: error("expected EntBatchRuleContractException, got ${'$'}{failure.exception}")
+                    check(contract.foreignBatchResult)
 
                     return "${'$'}{batchIds.size}:${'$'}{batchIds.single().size}:" +
                         "${'$'}{batchIds.single().first()}:${'$'}{batchIds.single().last()}|" +
                         "${'$'}{scalarIds.joinToString(",")}|${'$'}emptyBatchCalls|" +
-                        "${'$'}{contract.expectedSize}:${'$'}{contract.actualSize}|" +
+                        "${'$'}{contract.expectedSize}:${'$'}{contract.actualSize}:${'$'}{contract.foreignBatchResult}|" +
                         "${'$'}{mixedDenials.size}:${'$'}{mixedDenials.first().entityKey.value}:" +
                         "${'$'}{mixedDenials.last().entityKey.value}|${'$'}bypassBatchCalls:" +
                         "${'$'}{bypassIds.size}|${'$'}{singletonBatches.joinToString(";") { it.single().toString() }}"
@@ -409,7 +416,7 @@ class BatchLifecycleCodegenCompileTest {
 
         val probeClass = result.classLoader.loadClass("com.example.app.BatchLifecycleRuntimeProbe")
         assertEquals(
-            "1:100:100:1|8,5,6|0|3:1|2:10:20|0:2|41;42",
+            "1:100:100:1|8,5,6|0|3:3:true|2:10:20|0:2|41;42",
             probeClass.getMethod("run").invoke(null),
         )
     }

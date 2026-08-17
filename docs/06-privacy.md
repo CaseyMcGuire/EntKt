@@ -106,8 +106,8 @@ serially in encounter order.
 fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
     fun run(ctx: C): PrivacyDecision
 
-    override fun runBatch(contexts: List<C>): List<PrivacyDecision> =
-        contexts.map { run(it) }
+    override fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision> =
+        batch.decide { run(it) }
 }
 ```
 
@@ -121,22 +121,24 @@ perform one set-based lookup:
 
 ```kotlin
 import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.RuleDecisions
 
 interface BatchPrivacyRule<in C> {
-    fun runBatch(contexts: List<C>): List<PrivacyDecision>
+    fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision>
 }
 
 fun <C> batchPrivacyRule(
-    block: (List<C>) -> List<PrivacyDecision>,
+    block: (RuleBatch<C>) -> RuleDecisions<PrivacyDecision>,
 ): BatchPrivacyRule<C>
 
-val allowReadablePosts = batchPrivacyRule<PostLoadPrivacyContext> { contexts ->
+val allowReadablePosts = batchPrivacyRule<PostLoadPrivacyContext> { batch ->
     val readableIds = loadReadablePostIds(
-        client = contexts.first().client,
-        viewer = contexts.first().privacy.viewer,
-        postIds = contexts.map { it.entity.id },
+        client = batch.first().client,
+        viewer = batch.first().privacy.viewer,
+        postIds = batch.map { it.entity.id },
     )
-    contexts.map { ctx ->
+    batch.decide { ctx ->
         if (ctx.entity.id in readableIds) PrivacyDecision.Allow
         else PrivacyDecision.Deny("post is not visible")
     }
@@ -147,17 +149,36 @@ privacy {
 }
 ```
 
-`BatchPrivacyRule<C>.runBatch(contexts)` must return exactly one decision per
-context in the same order. The `batchPrivacyRule { ... }` factory makes the
-list-taking callback explicit; a cardinality mismatch is an operational
-`EntBatchRuleContractException`, not a denial. A Java or unchecked rule that
-returns a null list or null/invalid decision receives the same contract error.
-Scalar and batch rules register
+`RuleBatch` is an immutable, read-only `List`, so a rule can inspect, group, or
+sort its contexts while preparing a set-based read. It must build its result
+with `batch.decide { ... }` or `batch.decideIndexed { index, ctx -> ... }`.
+Those methods return read-only `RuleDecisions` tied to that exact batch and
+invoke the decision block in encounter order. This works for ID-less CREATE
+contexts and preserves distinct decisions for duplicate or equal contexts;
+`decideIndexed` exposes a stable index within the current callback batch when
+the context value alone is not a sufficient key. Later privacy rules receive
+only still-unresolved items, so that index is not operation-global.
+
+This removes the error-prone API that accepted an arbitrary positional list;
+it does not prove that application code computed the semantically correct
+decision. Use the context supplied to the `decide` block rather than consuming
+a separately reordered decision iterator. `RuleDecisions` is readable as a
+`List`, and `RuleBatch.from(contexts)` creates a copied batch for direct unit
+tests. A rule decorator must transform delegated decisions with
+`result.mapDecisions { ... }`; that operation preserves the delegated result's
+batch identity, so a stale cached result remains rejectable. Do not copy a
+delegated decision list back through the current batch. Decisions from a test
+batch remain bound to it.
+
+Returning decisions created by another batch is an operational
+`EntBatchRuleContractException`, not a denial. Java or unchecked code that
+returns `null` instead of `RuleDecisions`, or returns a null/invalid decision,
+receives the same contract error. Scalar and batch rules register
 under the existing `load`, `create`, `update`, and `delete` names in Kotlin and
 share one registration order. Generated batch overloads use JVM names such as
 `loadBatchRule` and `createBatchRule` so Java lambdas remain unambiguous. A
-batch rule receives a singleton list for a scalar operation and is not invoked
-for an empty phase.
+batch rule receives a singleton `RuleBatch` for a scalar operation and is not
+invoked for an empty phase.
 
 **Stock rule — `allowAll`.** The runtime ships `allowAll`, a rule that
 permits any operation on any entity. Because `PrivacyRule` is contravariant

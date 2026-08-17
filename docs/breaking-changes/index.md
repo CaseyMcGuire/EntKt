@@ -30,6 +30,25 @@ above it.
 
 ## Unreleased
 
+- **Build batch-rule results through their originating `RuleBatch`** (`runtime`)
+  `BatchPrivacyRule` and `BatchValidationRule` now receive an immutable
+  `RuleBatch<C>` and return read-only, batch-bound `RuleDecisions<D>`. Rules can
+  no longer directly return a reordered or wrong-sized positional list, and
+  the decision block receives each original context explicitly. This works for
+  ID-less creates and duplicate inputs. It remains application code's
+  responsibility to compute the right decision for that context. Batch hooks
+  remain `List`-based because they return `Unit` and require no result
+  correlation.
+  _Migration:_ change direct batch-rule implementations and factory lambdas
+  from `contexts.map { decision }` to `batch.decide { decision }`. Use
+  `batch.decideIndexed { index, context -> decision }` when equal contexts need
+  distinct handling. `RuleBatch.from(contexts)` and the read-only list view of
+  `RuleDecisions` support direct rule tests. Decorators must use
+  `result.mapDecisions { ... }` so provenance survives transformation. Do not
+  cache or reuse a `RuleDecisions` wrapper across invocations; foreign-batch
+  results and malformed Java/unchecked null results fail with
+  `EntBatchRuleContractException`.
+
 - **Make lifecycle callbacks batch-aware and bulk execution phase-major** (`runtime`, `codegen`, `postgres`)
   Scalar `PrivacyRule`, `ValidationRule`, and hook call sites keep their
   existing syntax and adapt over ordered batches automatically; optimized

@@ -1,6 +1,10 @@
 package entkt.runtime.validation
 
 import entkt.query.EntktInternal
+import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.RuleDecisions
+import entkt.runtime.rule.decisionsForInternalUse
+import entkt.runtime.rule.ruleBatchForInternalUse
 import entkt.runtime.result.EntBatchRuleContractException
 import java.util.Collections
 
@@ -27,12 +31,14 @@ sealed interface ValidationDecision {
 /**
  * A validation rule that can evaluate an ordered batch of operation contexts.
  *
- * Implementations must return exactly one [ValidationDecision] for each
- * supplied context, in the same order. Generated lifecycle evaluators never
- * invoke a rule with an empty list and validate the returned cardinality.
+ * Implementations return decisions through [RuleBatch.decide] or
+ * [RuleBatch.decideIndexed]. Those operations preserve correlation with the
+ * supplied contexts; callers cannot construct or reorder the result directly.
+ * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
 interface BatchValidationRule<in C> {
-    fun validateBatch(contexts: List<C>): List<ValidationDecision>
+    @JvmSuppressWildcards
+    fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision>
 }
 
 /**
@@ -45,15 +51,16 @@ interface BatchValidationRule<in C> {
 fun interface ValidationRule<in C> : BatchValidationRule<C> {
     fun validate(ctx: C): ValidationDecision
 
-    override fun validateBatch(contexts: List<C>): List<ValidationDecision> =
-        contexts.map { validate(it) }
+    @JvmSuppressWildcards
+    override fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision> =
+        batch.decide { validate(it) }
 }
 
 /** Construct an explicitly batch-aware validation rule. */
 fun <C> batchValidationRule(
-    block: (List<C>) -> List<ValidationDecision>,
+    block: (RuleBatch<C>) -> RuleDecisions<ValidationDecision>,
 ): BatchValidationRule<C> = object : BatchValidationRule<C> {
-    override fun validateBatch(contexts: List<C>): List<ValidationDecision> = block(contexts)
+    override fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision> = block(batch)
 }
 
 /**
@@ -74,8 +81,10 @@ fun <I, C> evaluateBatchValidationRulesForInternalUse(
     val violations = List(itemSnapshot.size) { mutableListOf<ValidationDecision.Invalid>() }
     for (rule in ruleSnapshot) {
         val contexts = immutableList(itemSnapshot.map(freshContext))
-        val returnedDecisions: List<ValidationDecision>? = rule.validateBatch(contexts)
-        val ruleDecisions: List<*> = returnedDecisions?.toList()
+        val batch = ruleBatchForInternalUse(contexts)
+        val returnedDecisions: RuleDecisions<ValidationDecision>? = rule.validateBatch(batch)
+        val ruleDecisions: List<*> = returnedDecisions
+            ?.let { batch.decisionsForInternalUse(lifecycle, it) }
             ?: throw EntBatchRuleContractException(lifecycle, contexts.size, actualSize = null)
         if (ruleDecisions.size != contexts.size) {
             throw EntBatchRuleContractException(lifecycle, contexts.size, ruleDecisions.size)
