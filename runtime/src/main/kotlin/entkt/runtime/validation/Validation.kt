@@ -74,7 +74,9 @@ fun <I, C> evaluateBatchValidationRulesForInternalUse(
     val violations = List(itemSnapshot.size) { mutableListOf<ValidationDecision.Invalid>() }
     for (rule in ruleSnapshot) {
         val contexts = immutableList(itemSnapshot.map(freshContext))
-        val ruleDecisions: List<*> = rule.validateBatch(contexts).toList()
+        val returnedDecisions: List<ValidationDecision>? = rule.validateBatch(contexts)
+        val ruleDecisions: List<*> = returnedDecisions?.toList()
+            ?: throw EntBatchRuleContractException(lifecycle, contexts.size, actualSize = null)
         if (ruleDecisions.size != contexts.size) {
             throw EntBatchRuleContractException(lifecycle, contexts.size, ruleDecisions.size)
         }

@@ -38,11 +38,15 @@ final class BatchLifecycleJavaCompatibility {
         }
     };
 
-    static final BatchPrivacyRule<String> NULL_PRIVACY_BATCH =
+    static final BatchPrivacyRule<String> NULL_PRIVACY_DECISION_BATCH =
             values -> Collections.singletonList(null);
 
-    static final BatchValidationRule<String> NULL_VALIDATION_BATCH =
+    static final BatchValidationRule<String> NULL_VALIDATION_DECISION_BATCH =
             values -> Collections.singletonList(null);
+
+    static final BatchPrivacyRule<String> NULL_PRIVACY_LIST_BATCH = values -> null;
+
+    static final BatchValidationRule<String> NULL_VALIDATION_LIST_BATCH = values -> null;
 
     static final Hook<List<Integer>> LIST_HOOK = new Hook<>() {
         @Override

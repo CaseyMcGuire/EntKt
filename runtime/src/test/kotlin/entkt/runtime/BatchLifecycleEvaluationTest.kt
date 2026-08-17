@@ -251,7 +251,7 @@ class BatchLifecycleEvaluationTest {
             evaluateBatchPrivacyRulesForInternalUse(
                 "Widget LOAD privacy",
                 listOf("widget"),
-                listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_BATCH),
+                listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_DECISION_BATCH),
             ) { it }
         }
         assertEquals(0, privacyException.invalidDecisionIndex)
@@ -262,12 +262,43 @@ class BatchLifecycleEvaluationTest {
             evaluateBatchValidationRulesForInternalUse(
                 "Widget CREATE validation",
                 listOf("widget"),
-                listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_BATCH),
+                listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_DECISION_BATCH),
             ) { it }
         }
         assertEquals(0, validationException.invalidDecisionIndex)
         assertEquals(1, validationException.expectedSize)
         assertEquals(1, validationException.actualSize)
+    }
+
+    @Test
+    fun `privacy and validation evaluators reject null Java decision lists`() {
+        val privacyException = assertFailsWith<EntBatchRuleContractException> {
+            evaluateBatchPrivacyRulesForInternalUse(
+                "Widget LOAD privacy",
+                listOf("widget"),
+                listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_LIST_BATCH),
+            ) { it }
+        }
+        assertEquals(null, privacyException.actualSize)
+        assertEquals(null, privacyException.invalidDecisionIndex)
+        assertEquals(
+            "Batch rule contract violation for Widget LOAD privacy: expected 1 decisions but received null",
+            privacyException.message,
+        )
+
+        val validationException = assertFailsWith<EntBatchRuleContractException> {
+            evaluateBatchValidationRulesForInternalUse(
+                "Widget CREATE validation",
+                listOf("widget"),
+                listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_LIST_BATCH),
+            ) { it }
+        }
+        assertEquals(null, validationException.actualSize)
+        assertEquals(null, validationException.invalidDecisionIndex)
+        assertEquals(
+            "Batch rule contract violation for Widget CREATE validation: expected 1 decisions but received null",
+            validationException.message,
+        )
     }
 
     @Test

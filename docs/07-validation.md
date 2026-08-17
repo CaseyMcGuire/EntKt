@@ -127,7 +127,9 @@ validation {
 `BatchValidationRule<C>.validateBatch(contexts)` must return exactly one
 decision per context in the same order. The explicit factory keeps a
 list-taking lambda distinct from a scalar one. A cardinality mismatch is an
-operational `EntBatchRuleContractException`, not an invalid decision. Scalar
+operational `EntBatchRuleContractException`, not an invalid decision. A Java
+or unchecked validator that returns a null list or null/invalid decision
+receives the same contract error. Scalar
 and batch validators use the same `create`, `update`, and `delete` registration
 names in Kotlin and one shared registration order. Generated batch overloads
 use JVM names such as `createBatchRule` so Java lambdas remain unambiguous. A

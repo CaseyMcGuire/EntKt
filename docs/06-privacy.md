@@ -150,7 +150,9 @@ privacy {
 `BatchPrivacyRule<C>.runBatch(contexts)` must return exactly one decision per
 context in the same order. The `batchPrivacyRule { ... }` factory makes the
 list-taking callback explicit; a cardinality mismatch is an operational
-`EntBatchRuleContractException`, not a denial. Scalar and batch rules register
+`EntBatchRuleContractException`, not a denial. A Java or unchecked rule that
+returns a null list or null/invalid decision receives the same contract error.
+Scalar and batch rules register
 under the existing `load`, `create`, `update`, and `delete` names in Kotlin and
 share one registration order. Generated batch overloads use JVM names such as
 `loadBatchRule` and `createBatchRule` so Java lambdas remain unambiguous. A

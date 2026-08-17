@@ -177,7 +177,9 @@ fun <I, C> evaluateBatchPrivacyRulesForInternalUse(
         if (activeIndexes.isEmpty()) break
 
         val contexts = immutableList(activeIndexes.map { freshContext(itemSnapshot[it]) })
-        val ruleDecisions: List<*> = rule.runBatch(contexts).toList()
+        val returnedDecisions: List<PrivacyDecision>? = rule.runBatch(contexts)
+        val ruleDecisions: List<*> = returnedDecisions?.toList()
+            ?: throw EntBatchRuleContractException(lifecycle, contexts.size, actualSize = null)
         if (ruleDecisions.size != contexts.size) {
             throw EntBatchRuleContractException(lifecycle, contexts.size, ruleDecisions.size)
         }

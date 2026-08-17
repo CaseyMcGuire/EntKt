@@ -464,14 +464,16 @@ Entity IDs are not correlation keys:
 - duplicate caller input must not collapse decisions; and
 - correlation must work for every configured ID strategy.
 
-If a callback returns the wrong number of decisions, EntKt raises
+If a callback returns the wrong number of decisions, no list, or an invalid
+decision element, EntKt raises
 `EntBatchRuleContractException` carrying:
 
 ```kotlin
 public class EntBatchRuleContractException(
     public val lifecycle: String,
     public val expectedSize: Int,
-    public val actualSize: Int,
+    public val actualSize: Int?,
+    public val invalidDecisionIndex: Int? = null,
 ) : EntException(...)
 ```
 
@@ -1250,7 +1252,10 @@ Set-based queries are the intended optimization.
 - Scalar hooks visit batch inputs in encounter order.
 - Batch callbacks are not invoked for empty input.
 - Batch callbacks receive singleton lists for scalar operations.
-- A short or long decision list produces `EntBatchRuleContractException`.
+- A short, long, or null decision list produces
+  `EntBatchRuleContractException`.
+- A null or otherwise invalid decision element produces the same contract
+  exception with its positional index.
 - Duplicate entity IDs do not corrupt positional correlation.
 - Every registered privacy or validation rule receives fresh defensive
   snapshots.
