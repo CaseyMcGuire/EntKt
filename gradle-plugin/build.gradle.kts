@@ -46,6 +46,20 @@ gradlePlugin {
     }
 }
 
+publishing {
+    publications.withType<MavenPublication>().configureEach {
+        pom {
+            licenses {
+                license {
+                    name.set("Apache License, Version 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                    distribution.set("repo")
+                }
+            }
+        }
+    }
+}
+
 // Embed the plugin version so the plugin can auto-add codegen dependencies
 // at the matching version without hardcoding.
 tasks.named<ProcessResources>("processResources") {

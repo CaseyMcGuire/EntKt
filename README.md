@@ -1,4 +1,4 @@
-# entkt
+# EntKt
 
 A Kotlin entity framework. Declare your entities in a Kotlin DSL, run code
 generation, and get typed data classes, query builders, and repositories
@@ -81,7 +81,7 @@ Boot REST API example backed by Postgres.
 | [`:runtime`](runtime/README.md) | `Driver` interface, `EntitySchema`, query `Predicate` hierarchy |
 | [`:codegen`](codegen/README.md) | KotlinPoet-based generator: entity classes, create/update/query builders, repos, `EntClient` |
 | [`:migrations`](migrations/README.md) | Driver-agnostic schema diffing and migration planning |
-| [`:gradle-plugin`](gradle-plugin/README.md) | `entkt` Gradle plugin registering `generateEntkt` task |
+| [`:gradle-plugin`](gradle-plugin/README.md) | EntKt Gradle plugin registering `generateEntkt` task |
 | [`:postgres`](postgres/README.md) | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
 | [`:example-spring`](example-spring/README.md) | Spring Boot REST API example with Postgres, Flyway-applied SQL migrations, lifecycle hooks, and friendship management |
 
