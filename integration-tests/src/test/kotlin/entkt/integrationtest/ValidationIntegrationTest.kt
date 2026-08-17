@@ -38,40 +38,40 @@ import kotlin.test.assertTrue
 
 // ---- Validation rules ----
 
-private val RejectUnpublishedTitle = ArticleCreateValidationRule { ctx ->
-    if (ctx.candidate.title.startsWith("DRAFT:") && ctx.candidate.published) {
+private val RejectUnpublishedTitle = ArticleCreateValidationRule { _, item ->
+    if (item.candidate.title.startsWith("DRAFT:") && item.candidate.published) {
         ValidationDecision.Invalid("articles with DRAFT: prefix cannot be published", field = "title")
     } else {
         ValidationDecision.Valid
     }
 }
 
-private val RequireMinTitleLength = ArticleCreateValidationRule { ctx ->
-    if (ctx.candidate.title.length < 3) {
+private val RequireMinTitleLength = ArticleCreateValidationRule { _, item ->
+    if (item.candidate.title.length < 3) {
         ValidationDecision.Invalid("title must be at least 3 characters", field = "title")
     } else {
         ValidationDecision.Valid
     }
 }
 
-private val RejectUnpublishedCreate = ArticleCreateValidationRule { ctx ->
-    if (!ctx.candidate.published) {
+private val RejectUnpublishedCreate = ArticleCreateValidationRule { _, item ->
+    if (!item.candidate.published) {
         ValidationDecision.Invalid("articles must be published on create", field = "published")
     } else {
         ValidationDecision.Valid
     }
 }
 
-private val PreventUnpublish = ArticleUpdateValidationRule { ctx ->
-    if (ctx.before.published && !ctx.candidate.published) {
+private val PreventUnpublish = ArticleUpdateValidationRule { _, item ->
+    if (item.before.published && !item.candidate.published) {
         ValidationDecision.Invalid("cannot unpublish a published article")
     } else {
         ValidationDecision.Valid
     }
 }
 
-private val CannotDeletePublished = ArticleDeleteValidationRule { ctx ->
-    if (ctx.entity.published) {
+private val CannotDeletePublished = ArticleDeleteValidationRule { _, item ->
+    if (item.entity.published) {
         ValidationDecision.Invalid("cannot delete a published article")
     } else {
         ValidationDecision.Valid
@@ -80,76 +80,76 @@ private val CannotDeletePublished = ArticleDeleteValidationRule { ctx ->
 
 // ---- Privacy rules for combined tests ----
 
-private val AllowAllLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allow }
-private val AllowAllUserLoads = UserLoadPrivacyRule { PrivacyDecision.Allow }
-private val RequireAuthForCreate = ArticleCreatePrivacyRule { ctx ->
-    if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+private val AllowAllLoads = ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
+private val AllowAllUserLoads = UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
+private val RequireAuthForCreate = ArticleCreatePrivacyRule { context, _ ->
+    if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
     else PrivacyDecision.Allow
 }
 
 private fun firstPayloadByte(patch: FieldPatch<ByteArray?>): Byte? =
     (patch as? FieldPatch.Set)?.value?.firstOrNull()
 
-private val MutateLoadPayloadSnapshot = ArticleLoadPrivacyRule { ctx ->
-    ctx.entity.payload?.set(0, 99)
+private val MutateLoadPayloadSnapshot = ArticleLoadPrivacyRule { _, item ->
+    item.entity.payload?.set(0, 99)
     PrivacyDecision.Continue
 }
 
-private val AllowIfLoadPayloadSnapshotIsStable = ArticleLoadPrivacyRule { ctx ->
-    if (ctx.entity.payload?.firstOrNull() != 99.toByte()) PrivacyDecision.Allow
+private val AllowIfLoadPayloadSnapshotIsStable = ArticleLoadPrivacyRule { _, item ->
+    if (item.entity.payload?.firstOrNull() != 99.toByte()) PrivacyDecision.Allow
     else PrivacyDecision.Deny("LOAD payload snapshot leaked across rules")
 }
 
-private val MutateCreatePayloadPrivacySnapshot = ArticleCreatePrivacyRule { ctx ->
-    ctx.candidate.payload?.set(0, 99)
+private val MutateCreatePayloadPrivacySnapshot = ArticleCreatePrivacyRule { _, item ->
+    item.candidate.payload?.set(0, 99)
     PrivacyDecision.Continue
 }
 
-private val AllowIfCreatePayloadPrivacySnapshotIsStable = ArticleCreatePrivacyRule { ctx ->
-    if (ctx.candidate.payload?.firstOrNull() == 1.toByte()) PrivacyDecision.Allow
+private val AllowIfCreatePayloadPrivacySnapshotIsStable = ArticleCreatePrivacyRule { _, item ->
+    if (item.candidate.payload?.firstOrNull() == 1.toByte()) PrivacyDecision.Allow
     else PrivacyDecision.Deny("CREATE payload snapshot leaked across rules")
 }
 
-private val MutateUpdatePayloadPrivacySnapshot = ArticleUpdatePrivacyRule { ctx ->
-    ctx.before.payload?.set(0, 99)
-    ctx.candidate.payload?.set(0, 99)
-    (ctx.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
-    (ctx.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
+private val MutateUpdatePayloadPrivacySnapshot = ArticleUpdatePrivacyRule { _, item ->
+    item.before.payload?.set(0, 99)
+    item.candidate.payload?.set(0, 99)
+    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
+    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
     PrivacyDecision.Continue
 }
 
-private val AllowIfUpdatePayloadPrivacySnapshotIsStable = ArticleUpdatePrivacyRule { ctx ->
-    val stable = ctx.before.payload?.firstOrNull() == 1.toByte() &&
-        ctx.candidate.payload?.firstOrNull() == 2.toByte() &&
-        firstPayloadByte(ctx.requestedPatch.payload) == 2.toByte() &&
-        firstPayloadByte(ctx.effectivePatch.payload) == 2.toByte()
+private val AllowIfUpdatePayloadPrivacySnapshotIsStable = ArticleUpdatePrivacyRule { _, item ->
+    val stable = item.before.payload?.firstOrNull() == 1.toByte() &&
+        item.candidate.payload?.firstOrNull() == 2.toByte() &&
+        firstPayloadByte(item.requestedPatch.payload) == 2.toByte() &&
+        firstPayloadByte(item.effectivePatch.payload) == 2.toByte()
     if (stable) PrivacyDecision.Allow
     else PrivacyDecision.Deny("UPDATE payload snapshot leaked across rules")
 }
 
-private val MutateCreatePayloadValidationSnapshot = ArticleCreateValidationRule { ctx ->
-    ctx.candidate.payload?.set(0, 99)
+private val MutateCreatePayloadValidationSnapshot = ArticleCreateValidationRule { _, item ->
+    item.candidate.payload?.set(0, 99)
     ValidationDecision.Valid
 }
 
-private val ValidateCreatePayloadSnapshotIsStable = ArticleCreateValidationRule { ctx ->
-    if (ctx.candidate.payload?.firstOrNull() == 1.toByte()) ValidationDecision.Valid
+private val ValidateCreatePayloadSnapshotIsStable = ArticleCreateValidationRule { _, item ->
+    if (item.candidate.payload?.firstOrNull() == 1.toByte()) ValidationDecision.Valid
     else ValidationDecision.Invalid("CREATE payload snapshot leaked across rules")
 }
 
-private val MutateUpdatePayloadValidationSnapshot = ArticleUpdateValidationRule { ctx ->
-    ctx.before.payload?.set(0, 99)
-    ctx.candidate.payload?.set(0, 99)
-    (ctx.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
-    (ctx.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
+private val MutateUpdatePayloadValidationSnapshot = ArticleUpdateValidationRule { _, item ->
+    item.before.payload?.set(0, 99)
+    item.candidate.payload?.set(0, 99)
+    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
+    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
     ValidationDecision.Valid
 }
 
-private val ValidateUpdatePayloadSnapshotIsStable = ArticleUpdateValidationRule { ctx ->
-    val stable = ctx.before.payload?.firstOrNull() == 1.toByte() &&
-        ctx.candidate.payload?.firstOrNull() == 2.toByte() &&
-        firstPayloadByte(ctx.requestedPatch.payload) == 2.toByte() &&
-        firstPayloadByte(ctx.effectivePatch.payload) == 2.toByte()
+private val ValidateUpdatePayloadSnapshotIsStable = ArticleUpdateValidationRule { _, item ->
+    val stable = item.before.payload?.firstOrNull() == 1.toByte() &&
+        item.candidate.payload?.firstOrNull() == 2.toByte() &&
+        firstPayloadByte(item.requestedPatch.payload) == 2.toByte() &&
+        firstPayloadByte(item.effectivePatch.payload) == 2.toByte()
     if (stable) ValidationDecision.Valid
     else ValidationDecision.Invalid("UPDATE payload snapshot leaked across rules")
 }

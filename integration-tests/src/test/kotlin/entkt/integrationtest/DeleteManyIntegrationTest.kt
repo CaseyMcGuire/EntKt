@@ -1,10 +1,12 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.EntPrivacyReadClient
+import entkt.integrationtest.ent.EntValidationReadClient
 import entkt.integrationtest.ent.User
-import entkt.integrationtest.ent.UserCreatePrivacyContext
-import entkt.integrationtest.ent.UserDeletePrivacyContext
-import entkt.integrationtest.ent.UserDeleteValidationContext
+import entkt.integrationtest.ent.UserCreatePrivacyItem
+import entkt.integrationtest.ent.UserDeletePrivacyItem
+import entkt.integrationtest.ent.UserDeleteValidationItem
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.query.OrderField
@@ -227,8 +229,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var afterDeleteCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -262,20 +264,20 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var interceptorCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { context, batch ->
                     assertEquals(0, driver.probe.deleteManyByIdsCalls)
-                    contexts.forEach { assertSame(capturedPrivacy, it.privacy) }
+                    assertSame(capturedPrivacy, context.privacy)
                     driver.probe.events +=
-                        "privacy:${contexts.joinToString { it.entity.name }}"
-                    contexts.decide { PrivacyDecision.Allow }
+                        "privacy:${batch.joinToString { it.entity.name }}"
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
             validation {
-                delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
+                delete(batchValidationRule<EntValidationReadClient, UserDeleteValidationItem> { _, batch ->
                     assertEquals(0, driver.probe.deleteManyByIdsCalls)
                     driver.probe.events +=
-                        "validation:${contexts.joinToString { it.entity.name }}"
-                    contexts.decide { ValidationDecision.Valid }
+                        "validation:${batch.joinToString { it.entity.name }}"
+                    batch.decideEach { ValidationDecision.Valid }
                 })
             }
         }
@@ -358,15 +360,15 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var hookCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
                     privacyCalls++
-                    contexts.decide { PrivacyDecision.Allow }
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
             validation {
-                delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
+                delete(batchValidationRule<EntValidationReadClient, UserDeleteValidationItem> { _, batch ->
                     validationCalls++
-                    contexts.decide { ValidationDecision.Valid }
+                    batch.decideEach { ValidationDecision.Valid }
                 })
             }
         }
@@ -416,20 +418,20 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var beforeDeleteCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    privacyBatches += contexts.map { it.entity.name }
-                    contexts.decide { context ->
-                        when (context.entity.name) {
-                            "B", "C" -> PrivacyDecision.Deny("${context.entity.name} blocked")
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    privacyBatches += batch.map { it.entity.name }
+                    batch.decideEach { item ->
+                        when (item.entity.name) {
+                            "B", "C" -> PrivacyDecision.Deny("${item.entity.name} blocked")
                             else -> PrivacyDecision.Allow
                         }
                     }
                 })
             }
             validation {
-                delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
+                delete(batchValidationRule<EntValidationReadClient, UserDeleteValidationItem> { _, batch ->
                     validationCalls++
-                    contexts.decide { ValidationDecision.Invalid("should not run") }
+                    batch.decideEach { ValidationDecision.Invalid("should not run") }
                 })
             }
         }
@@ -466,19 +468,19 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val derivedCreateBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    deleteBatches += contexts.map { it.entity.name }
-                    contexts.decide { context ->
-                        when (context.entity.name) {
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    deleteBatches += batch.map { it.entity.name }
+                    batch.decideEach { item ->
+                        when (item.entity.name) {
                             "A" -> PrivacyDecision.Allow
                             "B" -> PrivacyDecision.Deny("B blocked")
                             else -> PrivacyDecision.Continue
                         }
                     }
                 })
-                create(batchPrivacyRule<UserCreatePrivacyContext> { contexts ->
-                    derivedCreateBatches += contexts.map { it.candidate.name }
-                    contexts.decide { PrivacyDecision.Allow }
+                create(batchPrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem> { _, batch ->
+                    derivedCreateBatches += batch.map { it.candidate.name }
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
                 deleteDerivesFromCreate()
             }
@@ -511,17 +513,17 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var beforeDeleteCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    privacyBatches += contexts.map { it.entity.name }
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    privacyBatches += batch.map { it.entity.name }
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
             validation {
-                delete(batchValidationRule<UserDeleteValidationContext> { contexts ->
-                    validationBatches += contexts.map { it.entity.name }
-                    contexts.decide { context ->
-                        if (context.entity.name == "A") ValidationDecision.Valid
-                        else ValidationDecision.Invalid("${context.entity.name} invalid", field = "name")
+                delete(batchValidationRule<EntValidationReadClient, UserDeleteValidationItem> { _, batch ->
+                    validationBatches += batch.map { it.entity.name }
+                    batch.decideEach { item ->
+                        if (item.entity.name == "A") ValidationDecision.Valid
+                        else ValidationDecision.Invalid("${item.entity.name} invalid", field = "name")
                     }
                 })
             }
@@ -558,8 +560,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val afterBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -602,8 +604,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val driver = FallbackThenFailDriver(storage, failure)
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -638,8 +640,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val driver = FallbackThenFailDriver(storage, failure)
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -663,8 +665,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val thrown = IllegalStateException("afterDelete failed")
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -714,8 +716,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val afterBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -751,8 +753,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val afterBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }
@@ -788,8 +790,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val threshold = AtomicLong(2L)
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<UserDeletePrivacyContext> { contexts ->
-                    contexts.decide { PrivacyDecision.Allow }
+                delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { _, batch ->
+                    batch.decideEach { PrivacyDecision.Allow }
                 })
             }
         }

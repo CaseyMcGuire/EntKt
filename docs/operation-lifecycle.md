@@ -88,6 +88,9 @@ caller cannot use invariant failures to learn about protected data.
   handles every item that reaches it before the next registered callback runs.
   Ordinary scalar callbacks adapt automatically by visiting those items in
   encounter order; callbacks are never run concurrently.
+- Privacy and validation pass phase-wide state separately from generated
+  item values. Every rule in a phase sees the same shared rule context, while
+  each reached rule receives fresh defensive item snapshots.
 
 ## Reads
 

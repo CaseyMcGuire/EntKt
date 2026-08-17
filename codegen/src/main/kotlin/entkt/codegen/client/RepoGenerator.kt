@@ -56,6 +56,8 @@ private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateCons
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_RULE_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyRuleContext")
+private val VALIDATION_RULE_CONTEXT = ClassName("entkt.runtime.validation", "ValidationRuleContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
 private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
@@ -106,8 +108,7 @@ internal class RepoGenerator(
         val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
         val privacyConfigClass = ClassName(packageName, "${schemaName}PrivacyConfig")
         val validationConfigClass = ClassName(packageName, "${schemaName}ValidationConfig")
-        val loadCtxClass = ClassName(packageName, "${schemaName}LoadPrivacyContext")
-        val deleteCtxClass = ClassName(packageName, "${schemaName}DeletePrivacyContext")
+        val loadItemClass = ClassName(packageName, "${schemaName}LoadPrivacyItem")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
@@ -285,7 +286,7 @@ internal class RepoGenerator(
             .addFunction(buildHasPrivacy("hasCreatePrivacy"))
             .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             .addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            .addFunction(buildLoadDenials(schemaName, entityClass, loadCtxClass, fields))
+            .addFunction(buildLoadDenials(schemaName, entityClass, loadItemClass, fields))
             .addFunction(buildLoadDenialOrNull(entityClass))
             .addFunction(buildCreateDenialReasons(schemaName, candidateClass, fields))
             .addFunction(buildCreateDenialReasonOrNull(candidateClass))
@@ -941,7 +942,7 @@ internal class RepoGenerator(
     private fun buildLoadDenials(
         schemaName: String,
         entityClass: ClassName,
-        loadCtxClass: ClassName,
+        loadItemClass: ClassName,
         fields: List<Field>,
     ): FunSpec {
         // Overrides `${Entity}ReadSurface` (public, was internal): the
@@ -969,13 +970,14 @@ internal class RepoGenerator(
                 )
                 .addStatement("val rules = privacyConfig.loadRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
-                    "val decisions = %M(%S, entitySnapshot, rules) { item ->\n" +
-                        "  %T(privacy, privacyClient, %L)\n" +
+                    "val decisions = %M(%S, entitySnapshot, rules, ruleContext) { item ->\n" +
+                        "  %T(%L)\n" +
                         "}",
                     EVALUATE_BATCH_PRIVACY_RULES,
                     "$schemaName LOAD privacy",
-                    loadCtxClass,
+                    loadItemClass,
                     lifecycleValueSnapshot("item", fields, entityClass),
                 )
                 .beginControlFlow("return entitySnapshot.mapIndexed { index, entity ->")
@@ -1023,7 +1025,7 @@ internal class RepoGenerator(
         fields: List<Field>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
-        val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
+        val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
         return FunSpec.builder("createDenialReasons")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
@@ -1039,13 +1041,14 @@ internal class RepoGenerator(
                 )
                 .addStatement("val rules = privacyConfig.createRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
-                    "val decisions = %M(%S, candidateSnapshot, rules) { item ->\n" +
-                        "  %T(privacy, privacyClient, %L)\n" +
+                    "val decisions = %M(%S, candidateSnapshot, rules, ruleContext) { item ->\n" +
+                        "  %T(%L)\n" +
                         "}",
                     EVALUATE_BATCH_PRIVACY_RULES,
                     "$schemaName CREATE privacy",
-                    createCtxClass,
+                    createItemClass,
                     lifecycleValueSnapshot("item", fields, entityClass),
                 )
                 .beginControlFlow("return decisions.map { decision ->")
@@ -1104,8 +1107,8 @@ internal class RepoGenerator(
         fields: List<Field>,
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec {
-        val updateCtxClass = ClassName(packageName, "${schemaName}UpdatePrivacyContext")
-        val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
+        val updateItemClass = ClassName(packageName, "${schemaName}UpdatePrivacyItem")
+        val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         return FunSpec.builder("updateDenialReasonOrNull")
@@ -1121,13 +1124,14 @@ internal class RepoGenerator(
                 .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
-                    "var decision = %M(%S, listOf(candidate), rules) { item ->\n" +
-                    "  %T(privacy, privacyClient, %L, %L, %L, %L, %L)\n" +
+                    "var decision = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
+                    "  %T(%L, %L, %L, %L, %L)\n" +
                         "}.single()",
                     EVALUATE_BATCH_PRIVACY_RULES,
                     "$schemaName UPDATE privacy",
-                    updateCtxClass,
+                    updateItemClass,
                     lifecycleValueSnapshot("before", fields, entityClass),
                     lifecyclePatchSnapshot("requestedPatch", fields, entityClass),
                     lifecyclePatchSnapshot("effectivePatch", fields, entityClass),
@@ -1139,12 +1143,12 @@ internal class RepoGenerator(
                     PRIVACY_DECISION,
                 )
                 .addStatement(
-                    "decision = %M(%S, listOf(candidate), privacyConfig.createRules) { item ->\n" +
-                        "  %T(privacy, privacyClient, %L)\n" +
+                    "decision = %M(%S, listOf(candidate), privacyConfig.createRules, ruleContext) { item ->\n" +
+                        "  %T(%L)\n" +
                         "}.single()",
                     EVALUATE_BATCH_PRIVACY_RULES,
                     "$schemaName UPDATE privacy",
-                    createCtxClass,
+                    createItemClass,
                     lifecycleValueSnapshot("item", fields, entityClass),
                 )
                 .endControlFlow()
@@ -1164,8 +1168,8 @@ internal class RepoGenerator(
         candidateClass: ClassName,
         fields: List<Field>,
     ): FunSpec {
-        val deleteCtxClass = ClassName(packageName, "${schemaName}DeletePrivacyContext")
-        val createCtxClass = ClassName(packageName, "${schemaName}CreatePrivacyContext")
+        val deleteItemClass = ClassName(packageName, "${schemaName}DeletePrivacyItem")
+        val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
         return FunSpec.builder("deleteDenialReasons")
             .addModifiers(KModifier.INTERNAL)
             .addParameter("privacy", PRIVACY_CONTEXT)
@@ -1185,13 +1189,14 @@ internal class RepoGenerator(
                 .addStatement("val indexes = entitySnapshot.indices.toList()")
                 .addStatement("val rules = privacyConfig.deleteRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
-                    "val decisions = %M(%S, indexes, rules) { index ->\n" +
-                        "  %T(privacy, privacyClient, %L, %L)\n" +
+                    "val decisions = %M(%S, indexes, rules, ruleContext) { index ->\n" +
+                        "  %T(%L, %L)\n" +
                         "}.toMutableList()",
                     EVALUATE_BATCH_PRIVACY_RULES,
                     "$schemaName DELETE privacy",
-                    deleteCtxClass,
+                    deleteItemClass,
                     lifecycleValueSnapshot("entitySnapshot[index]", fields, entityClass),
                     lifecycleValueSnapshot("candidateSnapshot[index]", fields, entityClass),
                 )
@@ -1201,12 +1206,12 @@ internal class RepoGenerator(
                 )
                 .beginControlFlow("if (unresolvedIndexes.isNotEmpty() && privacyConfig.deleteDerivesFromCreate)")
                 .addStatement(
-                    "val derived = %M(%S, unresolvedIndexes, privacyConfig.createRules) { index ->\n" +
-                        "  %T(privacy, privacyClient, %L)\n" +
+                    "val derived = %M(%S, unresolvedIndexes, privacyConfig.createRules, ruleContext) { index ->\n" +
+                        "  %T(%L)\n" +
                         "}",
                     EVALUATE_BATCH_PRIVACY_RULES,
                     "$schemaName DELETE privacy",
-                    createCtxClass,
+                    createItemClass,
                     lifecycleValueSnapshot("candidateSnapshot[index]", fields, entityClass),
                 )
                 .addStatement(
@@ -1835,7 +1840,7 @@ internal class RepoGenerator(
         fields: List<Field>,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
-        val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
+        val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
         return FunSpec.builder("evaluateCreateValidations")
             .addModifiers(KModifier.INTERNAL)
@@ -1847,13 +1852,14 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.createRules")
                 .addStatement("if (rules.isEmpty()) return %T(candidateSnapshot.size) { emptyList() }", LIST)
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
+                .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
-                    "val invalidsByCandidate = %M(%S, candidateSnapshot, rules) { item ->\n" +
-                        "  %T(validationClient, %L)\n" +
+                    "val invalidsByCandidate = %M(%S, candidateSnapshot, rules, ruleContext) { item ->\n" +
+                        "  %T(%L)\n" +
                         "}",
                     EVALUATE_BATCH_VALIDATION_RULES,
                     "$schemaName CREATE validation",
-                    createCtxClass,
+                    createItemClass,
                     lifecycleValueSnapshot("item", fields, entityClass),
                 )
                 .addStatement(
@@ -1880,8 +1886,8 @@ internal class RepoGenerator(
         fields: List<Field>,
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): FunSpec {
-        val updateCtxClass = ClassName(packageName, "${schemaName}UpdateValidationContext")
-        val createCtxClass = ClassName(packageName, "${schemaName}CreateValidationContext")
+        val updateItemClass = ClassName(packageName, "${schemaName}UpdateValidationItem")
+        val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         return FunSpec.builder("evaluateUpdateValidation")
@@ -1896,13 +1902,14 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
+                .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
-                    "val invalids = %M(%S, listOf(candidate), rules) { item ->\n" +
-                    "  %T(validationClient, %L, %L, %L, %L, %L)\n" +
+                    "val invalids = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
+                    "  %T(%L, %L, %L, %L, %L)\n" +
                         "}.single().toMutableList()",
                     EVALUATE_BATCH_VALIDATION_RULES,
                     "$schemaName UPDATE validation",
-                    updateCtxClass,
+                    updateItemClass,
                     lifecycleValueSnapshot("before", fields, entityClass),
                     lifecyclePatchSnapshot("requestedPatch", fields, entityClass),
                     lifecyclePatchSnapshot("effectivePatch", fields, entityClass),
@@ -1911,12 +1918,12 @@ internal class RepoGenerator(
                 )
                 .beginControlFlow("if (validationConfig.updateDerivesFromCreate)")
                 .addStatement(
-                    "invalids += %M(%S, listOf(candidate), validationConfig.createRules) { item ->\n" +
-                        "  %T(validationClient, %L)\n" +
+                    "invalids += %M(%S, listOf(candidate), validationConfig.createRules, ruleContext) { item ->\n" +
+                        "  %T(%L)\n" +
                         "}.single()",
                     EVALUATE_BATCH_VALIDATION_RULES,
                     "$schemaName UPDATE validation",
-                    createCtxClass,
+                    createItemClass,
                     lifecycleValueSnapshot("item", fields, entityClass),
                 )
                 .endControlFlow()
@@ -1932,7 +1939,7 @@ internal class RepoGenerator(
         candidateClass: ClassName,
         fields: List<Field>,
     ): FunSpec {
-        val deleteCtxClass = ClassName(packageName, "${schemaName}DeleteValidationContext")
+        val deleteItemClass = ClassName(packageName, "${schemaName}DeleteValidationItem")
         val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
         return FunSpec.builder("evaluateDeleteValidations")
             .addModifiers(KModifier.INTERNAL)
@@ -1947,13 +1954,14 @@ internal class RepoGenerator(
                 .addStatement("val rules = validationConfig.deleteRules")
                 .addStatement("if (rules.isEmpty()) return %T(entitySnapshot.size) { emptyList() }", LIST)
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
+                .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
-                    "val invalidsByCandidate = %M(%S, entitySnapshot.indices.toList(), rules) { index ->\n" +
-                        "  %T(validationClient, %L, %L)\n" +
+                    "val invalidsByCandidate = %M(%S, entitySnapshot.indices.toList(), rules, ruleContext) { index ->\n" +
+                        "  %T(%L, %L)\n" +
                         "}",
                     EVALUATE_BATCH_VALIDATION_RULES,
                     "$schemaName DELETE validation",
-                    deleteCtxClass,
+                    deleteItemClass,
                     lifecycleValueSnapshot("entitySnapshot[index]", fields, entityClass),
                     lifecycleValueSnapshot("candidateSnapshot[index]", fields, entityClass),
                 )

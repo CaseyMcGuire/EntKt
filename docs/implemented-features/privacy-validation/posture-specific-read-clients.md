@@ -16,6 +16,13 @@ context); both call one private `readClientImpl(context)` builder.
 At implementation time, repos, queries, and the runtime raw-terminal gate were
 unchanged, so this type split did not change read results.
 
+**Follow-up 2026-08-16 — shared rule contexts and item-only inputs.** Privacy
+and validation callbacks now receive the posture-specific client once through
+`PrivacyRuleContext` / `ValidationRuleContext`; generated `*PrivacyItem` and
+`*ValidationItem` values contain only per-item state. The body below records
+the original combined-context API. See the current [Privacy](../../06-privacy.md)
+and [Validation](../../07-validation.md) guides for the live surface.
+
 **Follow-up 2026-08-14 — raw reads unified across postures.** The runtime
 raw-terminal gate was subsequently removed. `rawCount`, `rawExists`, and raw
 aggregates are now explicit storage-level reads on both concrete client types:
@@ -39,7 +46,7 @@ helper accepts both postures), the updated
 concrete pins, plus new tests driving eager loads, traversals, and
 index helpers through both posture clients — bypassed on the
 validation side, viewer-scoped on the privacy side). See
-[Validation → Operation Contexts](../../07-validation.md#operation-contexts)
+[Validation → Validators That Query](../../07-validation.md#validators-that-query)
 and [Privacy → Operation Contexts](../../06-privacy.md#operation-contexts)
 for the user-facing documentation, and the
 [breaking-changes entry](../../breaking-changes/index.md) for caller

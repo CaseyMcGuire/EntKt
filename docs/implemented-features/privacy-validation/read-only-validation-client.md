@@ -7,8 +7,12 @@ client; generated queries and index stages accept the `EntReadRuntime`
 contract; the no-writes guarantee is pinned by compile-fail tests
 (`codegen`'s `ValidationReadClientCompileTest`) and the runtime
 semantics by `integration-tests`' `ValidationReadClientIntegrationTest`.
-See [Validation → Operation Contexts](../../07-validation.md#operation-contexts)
+See [Validation → Validators That Query](../../07-validation.md#validators-that-query)
 for the user-facing documentation.
+
+The 2026-08 batch-rule redesign subsequently moved the read client into the
+shared `ValidationRuleContext` and renamed generated per-entity callback
+values to `*ValidationItem`. The body below remains a historical design record.
 
 Superseded naming: the follow-up
 [read-only-privacy-client](../../implemented-features/privacy-validation/read-only-privacy-client.md)

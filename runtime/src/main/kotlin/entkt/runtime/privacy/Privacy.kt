@@ -6,7 +6,6 @@ import entkt.runtime.rule.RuleDecisions
 import entkt.runtime.rule.decisionsForInternalUse
 import entkt.runtime.rule.ruleBatchForInternalUse
 import entkt.runtime.result.EntBatchRuleContractException
-import java.util.Collections
 import java.util.UUID
 
 /**
@@ -83,6 +82,19 @@ fun PrivacyContext.uuidIdOrNull(): UUID? =
     viewer.uuidIdOrNull()
 
 /**
+ * State shared by every item and reached rule in one privacy evaluation phase.
+ *
+ * Generated lifecycle item types contain only per-item state. The operation's
+ * captured [privacy] context and privacy-capable [client] live here so scalar
+ * and batch rules receive the same item shape. The framework passes the exact
+ * same instance to every reached rule in that phase.
+ */
+class PrivacyRuleContext<out Client>(
+    val privacy: PrivacyContext,
+    val client: Client,
+)
+
+/**
  * The kind of operation being privacy-checked.
  */
 enum class PrivacyOperation {
@@ -118,31 +130,41 @@ class PrivacyDeniedException(
 ) : RuntimeException("$operation denied on $entity: $reason")
 
 /**
- * A privacy rule that can evaluate an ordered batch of operation contexts.
+ * A privacy rule that can evaluate an ordered batch of operation items.
  *
- * Implementations return decisions through [RuleBatch.decide] or
- * [RuleBatch.decideIndexed]. Those operations preserve correlation with the
- * supplied contexts; callers cannot construct or reorder the result directly.
+ * Implementations return decisions through [RuleBatch.decideEach] or
+ * [RuleBatch.decideEachIndexed]. Those operations preserve correlation with
+ * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
-interface BatchPrivacyRule<in C> {
+interface BatchPrivacyRule<in Client, in Item> {
     @JvmSuppressWildcards
-    fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision>
+    fun runBatch(
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<PrivacyDecision>
 }
 
 /**
- * A scalar privacy rule that evaluates one operation context.
+ * A scalar privacy rule that evaluates one operation item.
  *
  * Scalar rules are also [BatchPrivacyRule]s: the default adapter evaluates
- * contexts serially in encounter order. Rules are evaluated in registration
+ * items serially in encounter order. Rules are evaluated in registration
  * order; the first non-[PrivacyDecision.Continue] result wins for each item.
  */
-fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
-    fun run(ctx: C): PrivacyDecision
+fun interface PrivacyRule<in Client, in Item> : BatchPrivacyRule<Client, Item> {
+    @JvmSuppressWildcards
+    fun run(
+        context: PrivacyRuleContext<Client>,
+        item: Item,
+    ): PrivacyDecision
 
     @JvmSuppressWildcards
-    override fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision> =
-        batch.decide { run(it) }
+    override fun runBatch(
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<PrivacyDecision> =
+        batch.decideEach { run(context, it) }
 }
 
 /**
@@ -150,28 +172,35 @@ fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
  *
  * The ordinary interface plus named factory keeps batch-taking callbacks
  * explicit at registration sites instead of making a lambda ambiguous between
- * one context and a batch of contexts.
+ * one item and a batch of items.
  */
-fun <C> batchPrivacyRule(
-    block: (RuleBatch<C>) -> RuleDecisions<PrivacyDecision>,
-): BatchPrivacyRule<C> = object : BatchPrivacyRule<C> {
-    override fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision> = block(batch)
+fun <Client, Item> batchPrivacyRule(
+    block: (
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ) -> RuleDecisions<PrivacyDecision>,
+): BatchPrivacyRule<Client, Item> = object : BatchPrivacyRule<Client, Item> {
+    override fun runBatch(
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<PrivacyDecision> = block(context, batch)
 }
 
 /**
  * Evaluate ordered privacy rules across [items], retaining positional
  * correlation while removing finalized items from later rule invocations.
  *
- * [freshContext] is invoked afresh for every item that reaches every rule.
+ * [freshItem] is invoked afresh for every item that reaches every rule.
  * Unresolved items remain [PrivacyDecision.Continue] so generated operations
  * can apply their operation-specific fail-closed denial.
  */
 @EntktInternal
-fun <I, C> evaluateBatchPrivacyRulesForInternalUse(
+fun <I, Client, Item> evaluateBatchPrivacyRulesForInternalUse(
     lifecycle: String,
     items: List<I>,
-    rules: List<BatchPrivacyRule<C>>,
-    freshContext: (I) -> C,
+    rules: List<BatchPrivacyRule<Client, Item>>,
+    context: PrivacyRuleContext<Client>,
+    freshItem: (I) -> Item,
 ): List<PrivacyDecision> {
     if (items.isEmpty()) return emptyList()
 
@@ -183,14 +212,14 @@ fun <I, C> evaluateBatchPrivacyRulesForInternalUse(
     for (rule in ruleSnapshot) {
         if (activeIndexes.isEmpty()) break
 
-        val contexts = immutableList(activeIndexes.map { freshContext(itemSnapshot[it]) })
-        val batch = ruleBatchForInternalUse(contexts)
-        val returnedDecisions: RuleDecisions<PrivacyDecision>? = rule.runBatch(batch)
+        val ruleItems = activeIndexes.map { freshItem(itemSnapshot[it]) }
+        val batch = ruleBatchForInternalUse(ruleItems)
+        val returnedDecisions: RuleDecisions<PrivacyDecision>? = rule.runBatch(context, batch)
         val ruleDecisions: List<*> = returnedDecisions
             ?.let { batch.decisionsForInternalUse(lifecycle, it) }
-            ?: throw EntBatchRuleContractException(lifecycle, contexts.size, actualSize = null)
-        if (ruleDecisions.size != contexts.size) {
-            throw EntBatchRuleContractException(lifecycle, contexts.size, ruleDecisions.size)
+            ?: throw EntBatchRuleContractException(lifecycle, ruleItems.size, actualSize = null)
+        if (ruleDecisions.size != ruleItems.size) {
+            throw EntBatchRuleContractException(lifecycle, ruleItems.size, ruleDecisions.size)
         }
 
         val remainingIndexes = ArrayList<Int>(activeIndexes.size)
@@ -204,7 +233,7 @@ fun <I, C> evaluateBatchPrivacyRulesForInternalUse(
                 }
                 else -> throw EntBatchRuleContractException(
                     lifecycle = lifecycle,
-                    expectedSize = contexts.size,
+                    expectedSize = ruleItems.size,
                     actualSize = ruleDecisions.size,
                     invalidDecisionIndex = position,
                 )
@@ -216,20 +245,17 @@ fun <I, C> evaluateBatchPrivacyRulesForInternalUse(
     return decisions.toList()
 }
 
-private fun <T> immutableList(elements: List<T>): List<T> =
-    Collections.unmodifiableList(ArrayList(elements))
-
 /**
  * A stock rule that allows any operation on any entity. Because [PrivacyRule]
- * is contravariant in its context, this single value satisfies every typed rule
- * slot — `load(allowAll)`, `create(allowAll)`, `update(allowAll)`,
- * `delete(allowAll)` — on any schema, so a public or trusted entity doesn't need
- * a per-type "allow everything" rule.
+ * is contravariant in both client and item, this single value satisfies every
+ * typed rule slot — `load(allowAll)`, `create(allowAll)`, `update(allowAll)`,
+ * `delete(allowAll)` — on any schema, so a public or trusted entity doesn't
+ * need a per-type "allow everything" rule.
  *
  * Under fail-closed privacy this is the explicit opt-in to "no restriction" for
  * an operation; use it deliberately.
  */
-val allowAll: PrivacyRule<Any?> = PrivacyRule { PrivacyDecision.Allow }
+val allowAll: PrivacyRule<Any?, Any?> = PrivacyRule { _, _ -> PrivacyDecision.Allow }
 
 /**
  * An entity-scoped policy that configures rules for entity operations

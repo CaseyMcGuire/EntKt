@@ -427,7 +427,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 private val DenyAllUserLoads = object : EntityPolicy<User, UserPolicyScope> {
     override fun configure(scope: UserPolicyScope) = scope.run {
         privacy {
-            load(UserLoadPrivacyRule { PrivacyDecision.Deny("no user loads") })
+            load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("no user loads") })
         }
     }
 }
@@ -447,8 +447,8 @@ private val AllowAllArticleLoads = object : EntityPolicy<Article, ArticlePolicyS
 private val PublishedOnlyArticleLoads = object : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy {
-            load(ArticleLoadPrivacyRule { ctx ->
-                if (ctx.entity.published) PrivacyDecision.Allow else PrivacyDecision.Continue
+            load(ArticleLoadPrivacyRule { _, item ->
+                if (item.entity.published) PrivacyDecision.Allow else PrivacyDecision.Continue
             })
         }
     }

@@ -3,13 +3,15 @@ package entkt.integrationtest
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.EntPrivacyReadClient
+import entkt.integrationtest.ent.EntValidationReadClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserCreate
 import entkt.integrationtest.ent.UserCreateHookContext
-import entkt.integrationtest.ent.UserCreatePrivacyContext
+import entkt.integrationtest.ent.UserCreatePrivacyItem
 import entkt.integrationtest.ent.UserCreatePrivacyRule
-import entkt.integrationtest.ent.UserCreateValidationContext
-import entkt.integrationtest.ent.UserLoadPrivacyContext
+import entkt.integrationtest.ent.UserCreateValidationItem
+import entkt.integrationtest.ent.UserLoadPrivacyItem
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserMutation
 import entkt.integrationtest.ent.UserPolicyScope
@@ -124,7 +126,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
@@ -132,11 +134,11 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     private fun createButNoLoad(hiddenName: String) = object : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
             privacy {
-                load(UserLoadPrivacyRule { ctx ->
-                    if (ctx.entity.name == hiddenName) PrivacyDecision.Deny("$hiddenName is sealed")
+                load(UserLoadPrivacyRule { _, item ->
+                    if (item.entity.name == hiddenName) PrivacyDecision.Deny("$hiddenName is sealed")
                     else PrivacyDecision.Allow
                 })
-                create(UserCreatePrivacyRule { PrivacyDecision.Allow })
+                create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
             }
         }
     }
@@ -229,23 +231,23 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(batchPrivacyRule<UserCreatePrivacyContext> { contexts ->
+                    create(batchPrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem> { context, batch ->
                         assertEquals(0, recording.callCount("insertMany:users"))
-                        createPrivacy = contexts.first().privacy
-                        events += "createPrivacy:${contexts.joinToString { it.candidate.name }}"
-                        contexts.decide { PrivacyDecision.Allow }
+                        createPrivacy = context.privacy
+                        events += "createPrivacy:${batch.joinToString { it.candidate.name }}"
+                        batch.decideEach { PrivacyDecision.Allow }
                     })
-                    load(batchPrivacyRule<UserLoadPrivacyContext> { contexts ->
-                        loadPrivacy = contexts.first().privacy
-                        events += "loadPrivacy:${contexts.joinToString { it.entity.name }}"
-                        contexts.decide { PrivacyDecision.Allow }
+                    load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { context, batch ->
+                        loadPrivacy = context.privacy
+                        events += "loadPrivacy:${batch.joinToString { it.entity.name }}"
+                        batch.decideEach { PrivacyDecision.Allow }
                     })
                 }
                 validation {
-                    create(batchValidationRule<UserCreateValidationContext> { contexts ->
+                    create(batchValidationRule<EntValidationReadClient, UserCreateValidationItem> { _, batch ->
                         assertEquals(0, recording.callCount("insertMany:users"))
-                        events += "validation:${contexts.joinToString { it.candidate.name }}"
-                        contexts.decide { ValidationDecision.Valid }
+                        events += "validation:${batch.joinToString { it.candidate.name }}"
+                        batch.decideEach { ValidationDecision.Valid }
                     })
                 }
             }
@@ -737,12 +739,12 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
-                privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+                privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
                 validation {
-                    create(batchValidationRule<UserCreateValidationContext> { contexts ->
-                        validatedNames += contexts.map { it.candidate.name }
-                        contexts.decide { context ->
-                            if (context.candidate.name == "B") {
+                    create(batchValidationRule<EntValidationReadClient, UserCreateValidationItem> { _, batch ->
+                        validatedNames += batch.map { it.candidate.name }
+                        batch.decideEach { item ->
+                            if (item.candidate.name == "B") {
                                 ValidationDecision.Invalid("B is invalid", field = "name")
                             } else {
                                 ValidationDecision.Valid
@@ -790,10 +792,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(batchPrivacyRule<UserCreatePrivacyContext> { contexts ->
-                        privacyBatches += contexts.map { it.candidate.name }
-                        contexts.decide { context ->
-                            if (context.candidate.name == "B") {
+                    create(batchPrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem> { _, batch ->
+                        privacyBatches += batch.map { it.candidate.name }
+                        batch.decideEach { item ->
+                            if (item.candidate.name == "B") {
                                 PrivacyDecision.Deny("B cannot be created")
                             } else {
                                 PrivacyDecision.Allow
@@ -802,9 +804,9 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                     })
                 }
                 validation {
-                    create(batchValidationRule<UserCreateValidationContext> { contexts ->
+                    create(batchValidationRule<EntValidationReadClient, UserCreateValidationItem> { _, batch ->
                         validationCalls++
-                        contexts.decide { ValidationDecision.Valid }
+                        batch.decideEach { ValidationDecision.Valid }
                     })
                 }
             }
@@ -868,8 +870,8 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(UserCreatePrivacyRule { PrivacyDecision.Allow })
-                    load(batchPrivacyRule<UserLoadPrivacyContext> { throw thrown })
+                    create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
+                    load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { _, _ -> throw thrown })
                 }
             }
         }
@@ -892,12 +894,12 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(UserCreatePrivacyRule { PrivacyDecision.Allow })
-                    load(batchPrivacyRule<UserLoadPrivacyContext> { contexts ->
-                        contexts.first().client.users.query {
+                    create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
+                    load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { context, batch ->
+                        context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
                         }.rawExists().getOrThrow()
-                        contexts.decide { PrivacyDecision.Allow }
+                        batch.decideEach { PrivacyDecision.Allow }
                     })
                 }
             }
@@ -923,15 +925,15 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(UserCreatePrivacyRule { PrivacyDecision.Allow })
-                    load(batchPrivacyRule<UserLoadPrivacyContext> { contexts ->
+                    create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
+                    load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { context, batch ->
                         // Deliberately inspect-and-handle the read failure rather
                         // than throwing it. PostgreSQL still marks the transaction
                         // aborted, so the owned boundary confirms rollback.
-                        contexts.first().client.users.query {
+                        context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
                         }.rawExists()
-                        contexts.decide { PrivacyDecision.Deny("LOAD dependency unavailable") }
+                        batch.decideEach { PrivacyDecision.Deny("LOAD dependency unavailable") }
                     })
                 }
             }

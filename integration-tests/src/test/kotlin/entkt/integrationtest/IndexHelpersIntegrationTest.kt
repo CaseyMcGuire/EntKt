@@ -53,13 +53,13 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
 
     private val denyAllArticles = object : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("hidden") }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("hidden") }) }
         }
     }
 
     private val denyAllUsers = object : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("hidden") }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("hidden") }) }
         }
     }
 

@@ -2,15 +2,17 @@ package example.spring.posts
 
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
-import example.ent.PostCreatePrivacyContext
+import example.ent.EntPrivacyReadClient
+import example.ent.PostCreatePrivacyItem
 import example.ent.PostCreatePrivacyRule
-import example.ent.PostDeletePrivacyContext
+import example.ent.PostDeletePrivacyItem
 import example.ent.PostDeletePrivacyRule
-import example.ent.PostLoadPrivacyContext
+import example.ent.PostLoadPrivacyItem
 import example.ent.PostLoadPrivacyRule
 import example.ent.PostPolicyScope
-import example.ent.PostUpdatePrivacyContext
+import example.ent.PostUpdatePrivacyItem
 import example.ent.PostUpdatePrivacyRule
 import example.ent.Post
 
@@ -27,43 +29,58 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 
 /** Published posts are visible to everyone. */
 class AllowPublishedPosts : PostLoadPrivacyRule {
-    override fun run(ctx: PostLoadPrivacyContext): PrivacyDecision =
-        if (ctx.entity.published) PrivacyDecision.Allow
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: PostLoadPrivacyItem,
+    ): PrivacyDecision =
+        if (item.entity.published) PrivacyDecision.Allow
         else PrivacyDecision.Continue
 }
 
 /** Unpublished posts are visible to their author. */
 class AllowAuthorLoad : PostLoadPrivacyRule {
-    override fun run(ctx: PostLoadPrivacyContext): PrivacyDecision {
-        val viewer = ctx.privacy.viewer as? Viewer.User ?: return PrivacyDecision.Continue
-        return if (viewer.id == ctx.entity.authorId) PrivacyDecision.Allow
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: PostLoadPrivacyItem,
+    ): PrivacyDecision {
+        val viewer = context.privacy.viewer as? Viewer.User ?: return PrivacyDecision.Continue
+        return if (viewer.id == item.entity.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     }
 }
 
 /** Any authenticated user can create posts; anonymous callers are denied. */
 class RequireAuthToCreate : PostCreatePrivacyRule {
-    override fun run(ctx: PostCreatePrivacyContext): PrivacyDecision =
-        if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: PostCreatePrivacyItem,
+    ): PrivacyDecision =
+        if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
         else PrivacyDecision.Allow
 }
 
 /** Only the author can update their post. */
 class AllowAuthorUpdate : PostUpdatePrivacyRule {
-    override fun run(ctx: PostUpdatePrivacyContext): PrivacyDecision {
-        val viewer = ctx.privacy.viewer as? Viewer.User
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: PostUpdatePrivacyItem,
+    ): PrivacyDecision {
+        val viewer = context.privacy.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
-        return if (viewer.id == ctx.before.authorId) PrivacyDecision.Allow
+        return if (viewer.id == item.before.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Deny("only the author can update this post")
     }
 }
 
 /** Only the author can delete their post. */
 class AllowAuthorDelete : PostDeletePrivacyRule {
-    override fun run(ctx: PostDeletePrivacyContext): PrivacyDecision {
-        val viewer = ctx.privacy.viewer as? Viewer.User
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: PostDeletePrivacyItem,
+    ): PrivacyDecision {
+        val viewer = context.privacy.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
-        return if (viewer.id == ctx.entity.authorId) PrivacyDecision.Allow
+        return if (viewer.id == item.entity.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Deny("only the author can delete this post")
     }
 }

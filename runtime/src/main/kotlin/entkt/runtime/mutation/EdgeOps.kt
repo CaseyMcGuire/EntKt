@@ -21,7 +21,7 @@ public fun <T> immutableSetSnapshotForInternalUse(values: Iterable<T>): Set<T> =
  *
  * Captured **before** the current junction rows are read, so the
  * post-junction-read computed delta is not on this type — it lives on
- * [EdgeChanges], which privacy and validation contexts receive.
+ * [EdgeChanges], which update privacy and validation items receive.
  *
  * - [requestedSet]: non-null only when the caller invoked `set(ids)`.
  *   The deduplicated final intended set from the latest `set` call.
@@ -72,8 +72,8 @@ public data class PendingEdgeOps<ID>(
  * The full view of one link-table M2M edge's changes for one save:
  * the caller's intent (the literal call log, identical to
  * the [PendingEdgeOps] surface seen in before hooks) plus the computed
- * database delta. Privacy and validation contexts receive this through
- * the generated per-entity `${Entity}EdgeChangesView` sidecar.
+ * database delta. Update privacy and validation items receive this through the
+ * generated per-entity `${Entity}EdgeChangesView` sidecar.
  *
  * - [requestedSet] / [requestedAdds] / [requestedRemoves]: caller
  *   intent. Same semantics, dedup rules, and disjoint-by-construction

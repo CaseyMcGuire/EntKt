@@ -46,13 +46,13 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
@@ -210,7 +210,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     private object DeniedUsers : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("user is hidden") }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("user is hidden") }) }
         }
     }
 

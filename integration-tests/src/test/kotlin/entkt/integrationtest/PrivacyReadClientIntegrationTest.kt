@@ -34,12 +34,12 @@ import kotlin.test.assertTrue
 // ---- Privacy rules exercising the read-only privacy client ----
 
 /** Users readable by authenticated viewers only (fail-closed otherwise). */
-private val AllowUserLoadsForAuthenticated = UserLoadPrivacyRule { ctx ->
-    if (ctx.privacy.viewer is Viewer.User) PrivacyDecision.Allow else PrivacyDecision.Continue
+private val AllowUserLoadsForAuthenticated = UserLoadPrivacyRule { context, _ ->
+    if (context.privacy.viewer is Viewer.User) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
-private val AllowAllUserCreates = UserCreatePrivacyRule { PrivacyDecision.Allow }
-private val AllowAllArticleLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allow }
+private val AllowAllUserCreates = UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow }
+private val AllowAllArticleLoads = ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
 
 /**
  * Graph-reading load rule on the throwing projection. The explicit
@@ -51,15 +51,15 @@ private val AllowAllArticleLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allo
  * `getOrThrow`), which the outer root terminal then captures as its
  * own `ReadResult.Failed` — not the row.
  */
-private val AllowIfAuthorReadable = ArticleLoadPrivacyRule { ctx ->
-    val client: EntPrivacyReadClient = ctx.client
-    if (client.users.findById(ctx.entity.authorId).getOrThrow() != null) PrivacyDecision.Allow
+private val AllowIfAuthorReadable = ArticleLoadPrivacyRule { context, item ->
+    val client: EntPrivacyReadClient = context.client
+    if (client.users.findById(item.entity.authorId).getOrThrow() != null) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
 
 /** Same invariant on the filtering projection: root denial collapses to null. */
-private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { ctx ->
-    if (ctx.client.users.findById(ctx.entity.authorId).visibleOrNull().getOrThrow() != null) {
+private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { context, item ->
+    if (context.client.users.findById(item.entity.authorId).visibleOrNull().getOrThrow() != null) {
         PrivacyDecision.Allow
     } else {
         PrivacyDecision.Continue
@@ -67,8 +67,8 @@ private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { ctx ->
 }
 
 /** Create rule that reads the graph — the transaction-scoping probe. */
-private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
-    if (ctx.client.users.findById(ctx.candidate.authorId).getOrThrow() != null) PrivacyDecision.Allow
+private val AuthorRowMustExist = ArticleCreatePrivacyRule { context, item ->
+    if (context.client.users.findById(item.candidate.authorId).getOrThrow() != null) PrivacyDecision.Allow
     else PrivacyDecision.Deny("author row not found")
 }
 
@@ -82,10 +82,10 @@ private val AuthorRowMustExist = ArticleCreatePrivacyRule { ctx ->
  * cannot re-enter this rule; the traversal's group source rows are
  * structural and never materialize.)
  */
-private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ctx ->
-    val memberships = ctx.client.memberships.query { withUser() }.all().getOrThrow()
-    val traversedMember = ctx.client.groups.query { }.queryUsers().firstOrNull().getOrThrow()
-    val indexedMember = ctx.client.users.indexes.email("alice@test.com").find().getOrThrow()
+private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { context, _ ->
+    val memberships = context.client.memberships.query { withUser() }.all().getOrThrow()
+    val traversedMember = context.client.groups.query { }.queryUsers().firstOrNull().getOrThrow()
+    val indexedMember = context.client.users.indexes.email("alice@test.com").find().getOrThrow()
     if (memberships.any { it.edges.user.requireLoaded() != null } && traversedMember != null && indexedMember != null) {
         PrivacyDecision.Allow
     } else {
@@ -98,8 +98,8 @@ private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { ct
  * raw terminal does not materialize users or evaluate their LOAD
  * policy, which also avoids recursively entering user LOAD rules.
  */
-private val RawUserExistsRule = ArticleLoadPrivacyRule { ctx ->
-    if (ctx.client.users.query { }.rawExists().getOrThrow()) PrivacyDecision.Allow
+private val RawUserExistsRule = ArticleLoadPrivacyRule { context, _ ->
+    if (context.client.users.query { }.rawExists().getOrThrow()) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
 
@@ -149,7 +149,7 @@ private object RawUserExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyS
 
 // ---- Predicate-inference limitation pin ----
 
-private val AllowAllMembershipLoads = MembershipLoadPrivacyRule { PrivacyDecision.Allow }
+private val AllowAllMembershipLoads = MembershipLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
 
 /**
  * Documented-limitation pin (Privacy Limitations → Predicate-Based
@@ -160,8 +160,8 @@ private val AllowAllMembershipLoads = MembershipLoadPrivacyRule { PrivacyDecisio
  * future change (e.g. edge-derived LOAD privacy) flips this
  * deliberately, not by accident.
  */
-private val SecretMemberEmailUnlocksArticles = ArticleLoadPrivacyRule { ctx ->
-    val secretMembership = ctx.client.memberships.query {
+private val SecretMemberEmailUnlocksArticles = ArticleLoadPrivacyRule { context, _ ->
+    val secretMembership = context.client.memberships.query {
         where(Membership.user.has { where(User.email.eq("alice@test.com")) })
     }.firstOrNull().getOrThrow()
     if (secretMembership != null) PrivacyDecision.Allow else PrivacyDecision.Continue
@@ -347,8 +347,8 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `raw aggregates are available inside privacy rules`() {
         val captured = mutableListOf<ReadResult<String?>>()
-        val storageAggregateRule = ArticleLoadPrivacyRule { ctx ->
-            captured.add(ctx.client.users.query { }.rawMin(User.email))
+        val storageAggregateRule = ArticleLoadPrivacyRule { context, _ ->
+            captured.add(context.client.users.query { }.rawMin(User.email))
             PrivacyDecision.Allow
         }
         val storageAggregatePolicy = object : EntityPolicy<Article, ArticlePolicyScope> {

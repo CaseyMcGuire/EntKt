@@ -20,60 +20,52 @@ class PrivacyGeneratorTest {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<UserLoadPrivacyContext>")) {
+        assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem>")) {
             "Should generate load rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<UserCreatePrivacyContext>")) {
+        assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem>")) {
             "Should generate create rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdatePrivacyRule = PrivacyRule<UserUpdatePrivacyContext>")) {
+        assert(output.contains("typealias UserUpdatePrivacyRule = PrivacyRule<EntPrivacyReadClient, UserUpdatePrivacyItem>")) {
             "Should generate update rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeletePrivacyRule = PrivacyRule<UserDeletePrivacyContext>")) {
+        assert(output.contains("typealias UserDeletePrivacyRule = PrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem>")) {
             "Should generate delete rule typealias\n$output"
         }
-        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<UserLoadPrivacyContext>")) {
+        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem>")) {
             "Should generate load batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<UserCreatePrivacyContext>")) {
+        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem>")) {
             "Should generate create batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<UserUpdatePrivacyContext>")) {
+        assert(output.contains("typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserUpdatePrivacyItem>")) {
             "Should generate update batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<UserDeletePrivacyContext>")) {
+        assert(output.contains("typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem>")) {
             "Should generate delete batch rule typealias\n$output"
         }
     }
 
     @Test
-    fun `generates load context with privacy, client, and entity`() {
+    fun `generates load item with only the entity`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserLoadPrivacyContext")) {
-            "Should generate load context\n$output"
+        assert(output.contains("data class UserLoadPrivacyItem")) {
+            "Should generate load item\n$output"
         }
-        assert(output.contains("val privacy: PrivacyContext")) {
-            "Load context should have privacy\n$output"
+        val constructor = constructorOf(output, "UserLoadPrivacyItem")
+        assert(constructor.contains("val entity: User")) {
+            "Load item should have entity\n$output"
         }
-        assert(output.contains("val client: EntPrivacyReadClient")) {
-            "Load context should expose the privacy-posture read client\n$output"
+        assert(!constructor.contains("privacy")) {
+            "Load item must not duplicate shared privacy state\n$output"
         }
-        assert(output.contains("val entity: User")) {
-            "Load context should have entity\n$output"
-        }
-        // All four contexts (load/create/update/delete) live in this file
-        // and each exposes the privacy-posture client — nothing here may
-        // fall back to the shared interface or the validation posture.
-        val ruleClientDecls = Regex("val client: EntPrivacyReadClient").findAll(output).count()
-        assert(ruleClientDecls == 4) {
-            "All four privacy contexts should expose EntPrivacyReadClient; found $ruleClientDecls\n$output"
-        }
-        assert(!output.contains("val client: EntReadClient")) {
-            "No privacy context may expose the interface-typed client\n$output"
+        assert(!constructor.contains("client")) {
+            "Load item must not duplicate the shared client\n$output"
         }
         // Hook contexts are the deliberate exception: hooks may have side
         // effects, so they keep the full client.
@@ -83,41 +75,68 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `generates create context with privacy, client, and candidate`() {
+    fun `generates create item with only the candidate`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserCreatePrivacyContext")) {
-            "Should generate create context\n$output"
+        assert(output.contains("data class UserCreatePrivacyItem")) {
+            "Should generate create item\n$output"
         }
-        assert(output.contains("val candidate: UserWriteCandidate")) {
-            "Create context should have candidate\n$output"
+        val constructor = constructorOf(output, "UserCreatePrivacyItem")
+        assert(constructor.contains("val candidate: UserWriteCandidate")) {
+            "Create item should have candidate\n$output"
+        }
+        assert(!constructor.contains("privacy") && !constructor.contains("client")) {
+            "Create item must contain only per-item state\n$output"
         }
     }
 
     @Test
-    fun `generates update context with privacy, client, before entity, and candidate`() {
+    fun `generates update item with operation-specific per-item state`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserUpdatePrivacyContext")) {
-            "Should generate update context\n$output"
+        assert(output.contains("data class UserUpdatePrivacyItem")) {
+            "Should generate update item\n$output"
         }
-        assert(output.contains("val before: User")) {
-            "Update context should have before entity\n$output"
+        val constructor = constructorOf(output, "UserUpdatePrivacyItem")
+        assert(constructor.contains("val before: User")) {
+            "Update item should have before entity\n$output"
+        }
+        assert(constructor.contains("val requestedPatch: UserUpdatePatch")) {
+            "Update item should have the requested patch\n$output"
+        }
+        assert(constructor.contains("val effectivePatch: UserUpdatePatch")) {
+            "Update item should have the effective patch\n$output"
+        }
+        assert(constructor.contains("val candidate: UserWriteCandidate")) {
+            "Update item should have the candidate\n$output"
+        }
+        assert(!constructor.contains("privacy") && !constructor.contains("client")) {
+            "Update item must not duplicate shared state\n$output"
         }
     }
 
     @Test
-    fun `generates delete context with privacy, client, entity, and candidate`() {
+    fun `generates delete item with entity and candidate only`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserDeletePrivacyContext")) {
-            "Should generate delete context\n$output"
+        assert(output.contains("data class UserDeletePrivacyItem")) {
+            "Should generate delete item\n$output"
+        }
+        val constructor = constructorOf(output, "UserDeletePrivacyItem")
+        assert(constructor.contains("val entity: User")) {
+            "Delete item should have entity\n$output"
+        }
+        assert(constructor.contains("val candidate: UserWriteCandidate")) {
+            "Delete item should have candidate\n$output"
+        }
+        assert(!constructor.contains("privacy") && !constructor.contains("client")) {
+            "Delete item must not duplicate shared state\n$output"
         }
     }
 
@@ -350,7 +369,7 @@ class PrivacyGeneratorTest {
         }
     }
 
-    // ---------- link-table M2M helpers EdgeChangesView sidecar on UpdatePrivacyContext ----------
+    // ---------- link-table M2M helpers EdgeChangesView sidecar on UpdatePrivacyItem ----------
 
     @Test
     fun `emits empty EdgeChangesView for schemas without helper-eligible edges`() {
@@ -388,26 +407,34 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `UpdatePrivacyContext gains an edgeChanges sidecar field`() {
+    fun `UpdatePrivacyItem gains an edgeChanges sidecar field`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("edgeChanges: UserEdgeChangesView")) {
-            "UpdatePrivacyContext should expose `edgeChanges: UserEdgeChangesView`\n$output"
+            "UpdatePrivacyItem should expose `edgeChanges: UserEdgeChangesView`\n$output"
         }
         assert(output.contains("public val edgeChanges: UserEdgeChangesView")) {
-            "UpdatePrivacyContext.edgeChanges should be a public val\n$output"
+            "UpdatePrivacyItem.edgeChanges should be a public val\n$output"
         }
     }
 
     @Test
-    fun `UpdatePrivacyContext for M2M-capable schema is typed against the per-entity view`() {
+    fun `UpdatePrivacyItem for M2M-capable schema is typed against the per-entity view`() {
         val output = makeLinkM2MOutput()
         assert(output.contains("edgeChanges: PrivM2MPostEdgeChangesView")) {
-            "PrivM2MPostUpdatePrivacyContext should expose `edgeChanges: PrivM2MPostEdgeChangesView`\n$output"
+            "PrivM2MPostUpdatePrivacyItem should expose `edgeChanges: PrivM2MPostEdgeChangesView`\n$output"
         }
+    }
+
+    private fun constructorOf(output: String, className: String): String {
+        val classStart = output.indexOf("data class $className")
+        check(classStart >= 0) { "Missing $className in generated output" }
+        val constructorEnd = output.indexOf("\n)", classStart)
+        check(constructorEnd >= 0) { "Missing constructor end for $className" }
+        return output.substring(classStart, constructorEnd)
     }
 }
 

@@ -49,7 +49,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     private object DenyLoadAllowWrite : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
             privacy {
-                load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("can't read") })
+                load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("can't read") })
                 create(allowAll)
                 update(allowAll)
             }
@@ -244,8 +244,8 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         val denyCreate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
-                    create(ArticleCreatePrivacyRule { PrivacyDecision.Deny("auth required") })
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
+                    create(ArticleCreatePrivacyRule { _, _ -> PrivacyDecision.Deny("auth required") })
                 }
             }
         }

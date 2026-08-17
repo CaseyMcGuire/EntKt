@@ -19,23 +19,24 @@ class ValidationGeneratorTest {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("typealias UserCreateValidationRule = ValidationRule<UserCreateValidationContext>")) {
+        assert(output.contains("typealias UserCreateValidationRule = ValidationRule<EntValidationReadClient, UserCreateValidationItem>")) {
             "Should generate create rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdateValidationRule = ValidationRule<UserUpdateValidationContext>")) {
+        assert(output.contains("typealias UserUpdateValidationRule = ValidationRule<EntValidationReadClient, UserUpdateValidationItem>")) {
             "Should generate update rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeleteValidationRule = ValidationRule<UserDeleteValidationContext>")) {
+        assert(output.contains("typealias UserDeleteValidationRule = ValidationRule<EntValidationReadClient, UserDeleteValidationItem>")) {
             "Should generate delete rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<UserCreateValidationContext>")) {
+        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<EntValidationReadClient, UserCreateValidationItem>")) {
             "Should generate create batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdateBatchValidationRule = BatchValidationRule<UserUpdateValidationContext>")) {
+        assert(output.contains("typealias UserUpdateBatchValidationRule = BatchValidationRule<EntValidationReadClient, UserUpdateValidationItem>")) {
             "Should generate update batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeleteBatchValidationRule = BatchValidationRule<UserDeleteValidationContext>")) {
+        assert(output.contains("typealias UserDeleteBatchValidationRule = BatchValidationRule<EntValidationReadClient, UserDeleteValidationItem>")) {
             "Should generate delete batch rule typealias\n$output"
         }
     }
@@ -49,67 +50,74 @@ class ValidationGeneratorTest {
         assert(!output.contains("LoadValidationRule")) {
             "Should not generate load validation rule\n$output"
         }
-        assert(!output.contains("LoadValidationContext")) {
-            "Should not generate load validation context\n$output"
+        assert(!output.contains("LoadValidationItem")) {
+            "Should not generate load validation item\n$output"
         }
     }
 
     @Test
-    fun `generates create context with client and candidate but no privacy`() {
+    fun `generates create item with only the candidate`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserCreateValidationContext")) {
-            "Should generate create context\n$output"
+        assert(output.contains("data class UserCreateValidationItem")) {
+            "Should generate create item\n$output"
         }
-        assert(output.contains("val client: EntValidationReadClient")) {
-            "Create context should expose the validation-posture read client\n$output"
+        val constructor = constructorOf(output, "UserCreateValidationItem")
+        assert(constructor.contains("val candidate: UserWriteCandidate")) {
+            "Create item should have candidate\n$output"
         }
-        // All three contexts (create/update/delete) live in this file and
-        // each exposes the validation-posture client — nothing here may
-        // fall back to the shared interface or the privacy posture.
-        val clientDecls = Regex("val client: EntValidationReadClient").findAll(output).count()
-        assert(clientDecls == 3) {
-            "All three validation contexts should expose EntValidationReadClient; found $clientDecls\n$output"
-        }
-        assert(!output.contains("val client: EntReadClient")) {
-            "No validation context may expose the interface-typed client\n$output"
-        }
-        assert(output.contains("val candidate: UserWriteCandidate")) {
-            "Create context should have candidate\n$output"
-        }
-        // Validation contexts must NOT have privacy
-        assert(!output.contains("UserCreateValidationContext") || !contextContainsPrivacy(output, "UserCreateValidationContext")) {
-            "Create context should not have privacy\n$output"
+        assert(!constructor.contains("privacy") && !constructor.contains("client")) {
+            "Create item must contain only per-item state\n$output"
         }
     }
 
     @Test
-    fun `generates update context with client, before, and candidate`() {
+    fun `generates update item with operation-specific per-item state`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserUpdateValidationContext")) {
-            "Should generate update context\n$output"
+        assert(output.contains("data class UserUpdateValidationItem")) {
+            "Should generate update item\n$output"
         }
-        assert(output.contains("val before: User")) {
-            "Update context should have before entity\n$output"
+        val constructor = constructorOf(output, "UserUpdateValidationItem")
+        assert(constructor.contains("val before: User")) {
+            "Update item should have before entity\n$output"
+        }
+        assert(constructor.contains("val requestedPatch: UserUpdatePatch")) {
+            "Update item should have the requested patch\n$output"
+        }
+        assert(constructor.contains("val effectivePatch: UserUpdatePatch")) {
+            "Update item should have the effective patch\n$output"
+        }
+        assert(constructor.contains("val candidate: UserWriteCandidate")) {
+            "Update item should have candidate\n$output"
+        }
+        assert(!constructor.contains("privacy") && !constructor.contains("client")) {
+            "Update item must not duplicate shared state\n$output"
         }
     }
 
     @Test
-    fun `generates delete context with client, entity, and candidate`() {
+    fun `generates delete item with entity and candidate only`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserDeleteValidationContext")) {
-            "Should generate delete context\n$output"
+        assert(output.contains("data class UserDeleteValidationItem")) {
+            "Should generate delete item\n$output"
         }
-        assert(output.contains("val entity: User")) {
-            "Delete context should have entity\n$output"
+        val constructor = constructorOf(output, "UserDeleteValidationItem")
+        assert(constructor.contains("val entity: User")) {
+            "Delete item should have entity\n$output"
+        }
+        assert(constructor.contains("val candidate: UserWriteCandidate")) {
+            "Delete item should have candidate\n$output"
+        }
+        assert(!constructor.contains("privacy") && !constructor.contains("client")) {
+            "Delete item must not duplicate shared state\n$output"
         }
     }
 
@@ -227,10 +235,10 @@ class ValidationGeneratorTest {
         }
     }
 
-    // ---------- link-table M2M helpers edgeChanges sidecar on UpdateValidationContext ----------
+    // ---------- link-table M2M helpers edgeChanges sidecar on UpdateValidationItem ----------
 
     @Test
-    fun `UpdateValidationContext references edgeChanges sidecar of the per-entity view type`() {
+    fun `UpdateValidationItem references edgeChanges sidecar of the per-entity view type`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -241,23 +249,18 @@ class ValidationGeneratorTest {
         // independently invoked, so the sibling-file reference compiles
         // when the full ent package is generated.
         assert(output.contains("edgeChanges: UserEdgeChangesView")) {
-            "UpdateValidationContext should expose `edgeChanges: UserEdgeChangesView`\n$output"
+            "UpdateValidationItem should expose `edgeChanges: UserEdgeChangesView`\n$output"
         }
         assert(output.contains("public val edgeChanges: UserEdgeChangesView")) {
-            "UpdateValidationContext.edgeChanges should be a public val\n$output"
+            "UpdateValidationItem.edgeChanges should be a public val\n$output"
         }
     }
 
-    /**
-     * Checks whether the specific context class declaration contains "privacy"
-     * in its constructor parameters.
-     */
-    private fun contextContainsPrivacy(output: String, className: String): Boolean {
+    private fun constructorOf(output: String, className: String): String {
         val classStart = output.indexOf("data class $className")
-        if (classStart == -1) return false
-        val parenEnd = output.indexOf(")", classStart)
-        if (parenEnd == -1) return false
-        val ctorBlock = output.substring(classStart, parenEnd)
-        return ctorBlock.contains("privacy")
+        check(classStart >= 0) { "Missing $className in generated output" }
+        val constructorEnd = output.indexOf("\n)", classStart)
+        check(constructorEnd >= 0) { "Missing constructor end for $className" }
+        return output.substring(classStart, constructorEnd)
     }
 }

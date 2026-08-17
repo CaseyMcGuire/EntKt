@@ -35,19 +35,19 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
 
     private object AllowAll : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
     private val denyArticles = object : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("hidden") }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("hidden") }) }
         }
     }
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
@@ -94,7 +94,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
         val countingDeny = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule {
+                    load(ArticleLoadPrivacyRule { _, _ ->
                         ruleEvaluations++
                         PrivacyDecision.Deny("hidden")
                     })

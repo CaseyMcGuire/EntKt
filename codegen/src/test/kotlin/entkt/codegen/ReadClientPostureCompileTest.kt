@@ -88,7 +88,7 @@ class ReadClientPostureCompileTest {
 
                 fun requiresPrivacyReader(client: EntPrivacyReadClient) = Unit
 
-                val rule = CarCreateValidationRule { ctx ->
+                val rule = CarCreateValidationRule { ctx, _ ->
                     requiresPrivacyReader(ctx.client)
                     ValidationDecision.Valid
                 }
@@ -113,7 +113,7 @@ class ReadClientPostureCompileTest {
 
                 fun requiresValidationReader(client: EntValidationReadClient) = Unit
 
-                val rule = CarLoadPrivacyRule { ctx ->
+                val rule = CarLoadPrivacyRule { ctx, _ ->
                     requiresValidationReader(ctx.client)
                     PrivacyDecision.Continue
                 }
@@ -145,11 +145,11 @@ class ReadClientPostureCompileTest {
                 fun anyCarExists(client: EntReadClient): Boolean =
                     client.cars.query { }.rawExists().getOrThrow()
 
-                val validation = CarCreateValidationRule { ctx ->
+                val validation = CarCreateValidationRule { ctx, _ ->
                     anyCarExists(ctx.client)
                     ValidationDecision.Valid
                 }
-                val privacy = CarLoadPrivacyRule { ctx ->
+                val privacy = CarLoadPrivacyRule { ctx, _ ->
                     anyCarExists(ctx.client)
                     PrivacyDecision.Continue
                 }

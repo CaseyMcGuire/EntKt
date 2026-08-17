@@ -61,7 +61,7 @@ class PrivacyReadClientCompileTest {
         import entkt.runtime.result.visibleOrNull
         import java.util.UUID
 
-        val rule = $ruleType { ctx ->
+        val rule = $ruleType { ctx, _ ->
             $body
             PrivacyDecision.Continue
         }
@@ -141,20 +141,20 @@ class PrivacyReadClientCompileTest {
                 import com.example.ent.EntReadClient
                 import entkt.runtime.privacy.PrivacyDecision
 
-                val load = CarLoadPrivacyRule { ctx ->
+                val load = CarLoadPrivacyRule { ctx, _ ->
                     val t: EntPrivacyReadClient = ctx.client
                     val iface: EntReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
-                val create = CarCreatePrivacyRule { ctx ->
+                val create = CarCreatePrivacyRule { ctx, _ ->
                     val t: EntPrivacyReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
-                val update = CarUpdatePrivacyRule { ctx ->
+                val update = CarUpdatePrivacyRule { ctx, _ ->
                     val t: EntPrivacyReadClient = ctx.client
                     PrivacyDecision.Continue
                 }
-                val delete = CarDeletePrivacyRule { ctx ->
+                val delete = CarDeletePrivacyRule { ctx, _ ->
                     val t: EntPrivacyReadClient = ctx.client
                     PrivacyDecision.Continue
                 }

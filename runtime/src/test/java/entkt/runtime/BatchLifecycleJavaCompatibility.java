@@ -2,13 +2,17 @@ package entkt.runtime;
 
 import entkt.runtime.hook.Hook;
 import entkt.runtime.privacy.BatchPrivacyRule;
+import entkt.runtime.privacy.PrivacyContext;
 import entkt.runtime.privacy.PrivacyDecision;
 import entkt.runtime.privacy.PrivacyRule;
+import entkt.runtime.privacy.PrivacyRuleContext;
+import entkt.runtime.privacy.Viewer;
 import entkt.runtime.rule.RuleBatch;
 import entkt.runtime.rule.RuleDecisions;
 import entkt.runtime.validation.BatchValidationRule;
 import entkt.runtime.validation.ValidationDecision;
 import entkt.runtime.validation.ValidationRule;
+import entkt.runtime.validation.ValidationRuleContext;
 import java.util.List;
 
 /**
@@ -19,47 +23,62 @@ import java.util.List;
 final class BatchLifecycleJavaCompatibility {
     private BatchLifecycleJavaCompatibility() {}
 
-    static final PrivacyRule<String> PRIVACY_LAMBDA =
-            value -> PrivacyDecision.Allow.INSTANCE;
+    static final PrivacyRuleContext<Object> PRIVACY_CONTEXT =
+            new PrivacyRuleContext<>(
+                    new PrivacyContext(Viewer.Anonymous.INSTANCE),
+                    new Object());
 
-    static final PrivacyRule<String> PRIVACY_CLASS = new PrivacyRule<>() {
+    static final ValidationRuleContext<Object> VALIDATION_CONTEXT =
+            new ValidationRuleContext<>(new Object());
+
+    static final PrivacyRule<Object, String> PRIVACY_LAMBDA =
+            (context, value) -> PrivacyDecision.Allow.INSTANCE;
+
+    static final PrivacyRule<Object, String> PRIVACY_CLASS = new PrivacyRule<>() {
         @Override
-        public PrivacyDecision run(String value) {
+        public PrivacyDecision run(PrivacyRuleContext<Object> context, String value) {
             return PrivacyDecision.Allow.INSTANCE;
         }
     };
 
-    static final ValidationRule<String> VALIDATION_LAMBDA =
-            value -> ValidationDecision.Valid.INSTANCE;
+    static final ValidationRule<Object, String> VALIDATION_LAMBDA =
+            (context, value) -> ValidationDecision.Valid.INSTANCE;
 
-    static final ValidationRule<String> VALIDATION_CLASS = new ValidationRule<>() {
+    static final ValidationRule<Object, String> VALIDATION_CLASS = new ValidationRule<>() {
         @Override
-        public ValidationDecision validate(String value) {
+        public ValidationDecision validate(ValidationRuleContext<Object> context, String value) {
             return ValidationDecision.Valid.INSTANCE;
         }
     };
 
-    static final BatchPrivacyRule<String> NULL_PRIVACY_DECISION_BATCH =
-            batch -> batch.decide(value -> null);
+    static final BatchPrivacyRule<Object, String> NULL_PRIVACY_DECISION_BATCH =
+            (context, batch) -> batch.decideEach(value -> null);
 
-    static final BatchValidationRule<String> NULL_VALIDATION_DECISION_BATCH =
-            batch -> batch.decide(value -> null);
+    static final BatchValidationRule<Object, String> NULL_VALIDATION_DECISION_BATCH =
+            (context, batch) -> batch.decideEach(value -> null);
 
-    static final BatchPrivacyRule<String> NULL_PRIVACY_RESULT_BATCH = values -> null;
+    static final BatchPrivacyRule<Object, String> NULL_PRIVACY_RESULT_BATCH =
+            (context, values) -> null;
 
-    static final BatchValidationRule<String> NULL_VALIDATION_RESULT_BATCH = values -> null;
+    static final BatchValidationRule<Object, String> NULL_VALIDATION_RESULT_BATCH =
+            (context, values) -> null;
 
-    static final BatchPrivacyRule<String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
+    static final BatchPrivacyRule<Object, String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
         @Override
-        public RuleDecisions<PrivacyDecision> runBatch(RuleBatch<String> batch) {
-            return batch.decide(value -> PrivacyDecision.Allow.INSTANCE);
+        public RuleDecisions<PrivacyDecision> runBatch(
+                PrivacyRuleContext<Object> context,
+                RuleBatch<String> batch) {
+            return batch.decideEach(value -> PrivacyDecision.Allow.INSTANCE);
         }
     };
 
-    static final BatchValidationRule<String> VALIDATION_BATCH_CLASS = new BatchValidationRule<>() {
+    static final BatchValidationRule<Object, String> VALIDATION_BATCH_CLASS =
+            new BatchValidationRule<>() {
         @Override
-        public RuleDecisions<ValidationDecision> validateBatch(RuleBatch<String> batch) {
-            return batch.decide(value -> ValidationDecision.Valid.INSTANCE);
+        public RuleDecisions<ValidationDecision> validateBatch(
+                ValidationRuleContext<Object> context,
+                RuleBatch<String> batch) {
+            return batch.decideEach(value -> ValidationDecision.Valid.INSTANCE);
         }
     };
 
@@ -69,11 +88,11 @@ final class BatchLifecycleJavaCompatibility {
     };
 
     static RuleDecisions<PrivacyDecision> runPrivacyBatch(RuleBatch<String> batch) {
-        return PRIVACY_CLASS.runBatch(batch);
+        return PRIVACY_CLASS.runBatch(PRIVACY_CONTEXT, batch);
     }
 
     static RuleDecisions<ValidationDecision> runValidationBatch(RuleBatch<String> batch) {
-        return VALIDATION_CLASS.validateBatch(batch);
+        return VALIDATION_CLASS.validateBatch(VALIDATION_CONTEXT, batch);
     }
 
     static void runHookBatch(List<List<Integer>> values) {

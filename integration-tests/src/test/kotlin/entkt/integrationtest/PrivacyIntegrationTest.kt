@@ -51,26 +51,26 @@ object ArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     }
 }
 
-private val AllowPublished = ArticleLoadPrivacyRule { ctx ->
-    if (ctx.entity.published) PrivacyDecision.Allow else PrivacyDecision.Continue
+private val AllowPublished = ArticleLoadPrivacyRule { _, item ->
+    if (item.entity.published) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
-private val AllowAuthorLoad = ArticleLoadPrivacyRule { ctx ->
-    val viewer = ctx.privacy.viewer as? Viewer.User ?: return@ArticleLoadPrivacyRule PrivacyDecision.Continue
-    if (viewer.id == ctx.entity.authorId) PrivacyDecision.Allow else PrivacyDecision.Continue
+private val AllowAuthorLoad = ArticleLoadPrivacyRule { context, item ->
+    val viewer = context.privacy.viewer as? Viewer.User ?: return@ArticleLoadPrivacyRule PrivacyDecision.Continue
+    if (viewer.id == item.entity.authorId) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
-private val RequireAuth = ArticleCreatePrivacyRule { ctx ->
+private val RequireAuth = ArticleCreatePrivacyRule { context, _ ->
     // Fail-closed: an authenticated viewer must be explicitly allowed, not left
     // to fall through (which would now deny).
-    if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+    if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
     else PrivacyDecision.Allow
 }
 
-private val OwnerCanDelete = ArticleDeletePrivacyRule { ctx ->
-    val viewer = ctx.privacy.viewer as? Viewer.User
+private val OwnerCanDelete = ArticleDeletePrivacyRule { context, item ->
+    val viewer = context.privacy.viewer as? Viewer.User
         ?: return@ArticleDeletePrivacyRule PrivacyDecision.Deny("authentication required")
-    if (viewer.id == ctx.entity.authorId) PrivacyDecision.Allow
+    if (viewer.id == item.entity.authorId) PrivacyDecision.Allow
     else PrivacyDecision.Deny("only the author can delete")
 }
 
@@ -93,10 +93,10 @@ object RestrictiveUserPolicy : EntityPolicy<User, UserPolicyScope> {
 }
 
 /** Only the author can update their article. */
-private val OwnerCanUpdate = ArticleUpdatePrivacyRule { ctx ->
-    val viewer = ctx.privacy.viewer as? Viewer.User
+private val OwnerCanUpdate = ArticleUpdatePrivacyRule { context, item ->
+    val viewer = context.privacy.viewer as? Viewer.User
         ?: return@ArticleUpdatePrivacyRule PrivacyDecision.Deny("authentication required")
-    if (viewer.id == ctx.before.authorId) PrivacyDecision.Allow
+    if (viewer.id == item.before.authorId) PrivacyDecision.Allow
     else PrivacyDecision.Deny("only the author can update")
 }
 
@@ -124,9 +124,9 @@ object ArticlePolicyWithDerived : EntityPolicy<Article, ArticlePolicyScope> {
     }
 }
 
-private val AllowSelfOnly = UserLoadPrivacyRule { ctx ->
-    val viewer = ctx.privacy.viewer as? Viewer.User ?: return@UserLoadPrivacyRule PrivacyDecision.Continue
-    if (viewer.id == ctx.entity.id) PrivacyDecision.Allow else PrivacyDecision.Continue
+private val AllowSelfOnly = UserLoadPrivacyRule { context, item ->
+    val viewer = context.privacy.viewer as? Viewer.User ?: return@UserLoadPrivacyRule PrivacyDecision.Continue
+    if (viewer.id == item.entity.id) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
 // ---- Tests ----

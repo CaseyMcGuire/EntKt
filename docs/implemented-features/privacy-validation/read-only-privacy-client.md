@@ -17,6 +17,11 @@ viewer, and the raw-terminal gate below). See
 [Privacy → Operation Contexts](../../06-privacy.md#operation-contexts)
 for the user-facing documentation.
 
+The 2026-08 batch-rule redesign subsequently moved the read client and viewer
+context into the shared `PrivacyRuleContext` and renamed generated per-entity
+callback values to `*PrivacyItem`. The body below remains a historical design
+record.
+
 **Superseded 2026-07-29 — the one-concrete-client decision.** The
 raw-terminal gate below meant one concrete type described instances
 with meaningfully different behavior, so the follow-up

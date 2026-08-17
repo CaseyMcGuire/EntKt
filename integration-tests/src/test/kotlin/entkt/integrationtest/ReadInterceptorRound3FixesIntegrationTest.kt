@@ -95,8 +95,8 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 users(object : entkt.runtime.privacy.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
                         privacy {
-                            load(entkt.integrationtest.ent.UserLoadPrivacyRule { ctx ->
-                                loadContexts += ctx.privacy
+                            load(entkt.integrationtest.ent.UserLoadPrivacyRule { context, _ ->
+                                loadContexts += context.privacy
                                 entkt.runtime.privacy.PrivacyDecision.Allow
                             })
                         }
@@ -105,8 +105,8 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { ctx ->
-                                loadContexts += ctx.privacy
+                            load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { context, _ ->
+                                loadContexts += context.privacy
                                 entkt.runtime.privacy.PrivacyDecision.Allow
                             })
                         }
@@ -470,12 +470,12 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             policies {
                 articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
-                        privacy { load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { entkt.runtime.privacy.PrivacyDecision.Allow }) }
+                        privacy { load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { _, _ -> entkt.runtime.privacy.PrivacyDecision.Allow }) }
                     }
                 })
                 users(object : entkt.runtime.privacy.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
-                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.privacy.PrivacyDecision.Deny("user is hidden") }) }
+                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { _, _ -> entkt.runtime.privacy.PrivacyDecision.Deny("user is hidden") }) }
                     }
                 })
             }
@@ -513,8 +513,8 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 articles(object : entkt.runtime.privacy.EntityPolicy<Article, entkt.integrationtest.ent.ArticlePolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { ctx ->
-                                if (ctx.entity.published) entkt.runtime.privacy.PrivacyDecision.Allow
+                            load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { _, item ->
+                                if (item.entity.published) entkt.runtime.privacy.PrivacyDecision.Allow
                                 else entkt.runtime.privacy.PrivacyDecision.Deny("draft")
                             })
                         }
@@ -522,7 +522,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 })
                 users(object : entkt.runtime.privacy.EntityPolicy<User, entkt.integrationtest.ent.UserPolicyScope> {
                     override fun configure(scope: entkt.integrationtest.ent.UserPolicyScope) = scope.run {
-                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { entkt.runtime.privacy.PrivacyDecision.Allow }) }
+                        privacy { load(entkt.integrationtest.ent.UserLoadPrivacyRule { _, _ -> entkt.runtime.privacy.PrivacyDecision.Allow }) }
                     }
                 })
             }

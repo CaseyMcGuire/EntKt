@@ -26,17 +26,17 @@ private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "Tra
 private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
 
 /**
- * Emits the read-only client surface generated validation and privacy
+ * Emits the read-only client surface shared validation and privacy rule
  * contexts expose to rule code: the `EntReadClient` interface, the
  * posture-specific `EntValidationReadClient` and `EntPrivacyReadClient`
  * wrappers, the shared internal `EntReadClientImpl`, and one
  * `${Entity}ReadRepo` per schema.
  *
  * The privacy posture is visible in the wrapper type, not hidden
- * instance state: validation contexts carry `EntValidationReadClient`
+ * instance state: validation rule contexts carry `EntValidationReadClient`
  * (fixed `PrivacyBypass("validation read")` context, so invariant
  * checks are not blocked by LOAD privacy and raw terminals work);
- * privacy contexts carry `EntPrivacyReadClient` (the caller's own
+ * privacy rule contexts carry `EntPrivacyReadClient` (the caller's own
  * context, so materializing authorization reads see only what the
  * viewer sees; raw terminals remain explicit storage-level reads that
  * skip LOAD privacy). Both wrappers delegate `EntReadClient` to one
@@ -100,7 +100,7 @@ internal class ReadClientGenerator(
         fileBuilder.addType(
             buildPostureWrapper(
                 name = "EntValidationReadClient",
-                kdoc = "Read client handed to generated validation contexts. Reads bypass\n" +
+                kdoc = "Read client handed to validation rules through `ValidationRuleContext`. Reads bypass\n" +
                     "LOAD privacy (fixed `PrivacyBypass(\"validation read\")` context), so\n" +
                     "invariant checks observe all rows and raw terminals (`rawCount`,\n" +
                     "`rawExists`, raw aggregates) are available. Same driver instance as\n" +
@@ -114,7 +114,7 @@ internal class ReadClientGenerator(
         fileBuilder.addType(
             buildPostureWrapper(
                 name = "EntPrivacyReadClient",
-                kdoc = "Read client handed to generated privacy-rule contexts. Reads are\n" +
+                kdoc = "Read client handed to privacy rules through `PrivacyRuleContext`. Reads are\n" +
                     "viewer-scoped when they materialize rows: returned entities are\n" +
                     "evaluated under the caller's LOAD privacy. Raw terminals (`rawCount`,\n" +
                     "`rawExists`, raw aggregates) are explicit storage-level reads that\n" +
@@ -228,8 +228,8 @@ internal class ReadClientGenerator(
     private fun buildClientInterface(sorted: List<SchemaInput>): TypeSpec {
         val builder = TypeSpec.interfaceBuilder("EntReadClient")
             .addKdoc(
-                "Shared read-only repository surface exposed in generated validation\n" +
-                    "and privacy contexts. Implemented by [EntValidationReadClient]\n" +
+                "Shared read-only repository surface exposed in validation and privacy\n" +
+                    "rule contexts. Implemented by [EntValidationReadClient]\n" +
                     "(privacy-bypassing reads, for validators) and [EntPrivacyReadClient]\n" +
                     "(viewer-scoped reads, for privacy rules). A helper accepting this\n" +
                     "interface promises to work correctly under either posture. Raw\n" +

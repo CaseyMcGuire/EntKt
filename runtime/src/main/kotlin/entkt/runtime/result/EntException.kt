@@ -19,7 +19,7 @@ abstract class EntException(
 /**
  * A batch privacy or validation rule violated its correlated-result contract.
  * [lifecycle] is the framework-supplied lifecycle description used for
- * diagnostics; [expectedSize] is the number of contexts supplied to the rule,
+ * diagnostics; [expectedSize] is the number of items supplied to the rule,
  * and [actualSize] is the number of decisions it returned, or null when a Java
  * or unchecked implementation returned a null result. A non-null
  * [invalidDecisionIndex] identifies a position that contained no valid

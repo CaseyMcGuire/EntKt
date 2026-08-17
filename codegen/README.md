@@ -94,12 +94,17 @@ generated DSL registers them under the same `load` / `create` / `beforeCreate`
 names in Kotlin, not parallel `*Batch` methods. Their generated JVM names use
 `*BatchRule` / `*BatchHook` suffixes so Java lambda overload resolution remains
 unambiguous. Privacy and validation evaluate rule-major, and hooks evaluate
-hook-major. Privacy and validation callbacks receive an immutable `RuleBatch`
-and return read-only decisions through `batch.decide { ... }` or
-`batch.decideIndexed { index, context -> ... }`; this binds the result to its
+hook-major. Privacy and validation callbacks receive phase-wide state
+separately from an immutable `RuleBatch` of item-only generated values. Scalar
+callbacks use `{ context, item -> ... }`; batch callbacks use
+`{ context, batch -> ... }`. The shared context holds the captured read client
+and, for privacy, the viewer context, while each item holds only
+entity/candidate/patch state. Batch rules return read-only decisions through
+`batch.decideEach { ... }` or
+`batch.decideEachIndexed { index, item -> ... }`; this binds the result to its
 originating batch and removes the free positional-list return. Application
 code remains responsible for computing the right decision for each supplied
-context.
+item.
 Hooks keep their `List` input because they return `Unit` and have no result to
 correlate.
 

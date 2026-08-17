@@ -312,8 +312,8 @@ class LinkTableM2MPostgresIntegrationTest {
             override fun configure(scope: PostPolicyScope) = scope.run {
                 privacy {
                     update(
-                        PostUpdatePrivacyRule { context ->
-                            val changes = context.edgeChanges.tags
+                        PostUpdatePrivacyRule { _, item ->
+                            val changes = item.edgeChanges.tags
                             assertSetsAreReadOnly(
                                 changes.requestedSet,
                                 changes.requestedAdds,
@@ -323,8 +323,8 @@ class LinkTableM2MPostgresIntegrationTest {
                             )
                             PrivacyDecision.Continue
                         },
-                        PostUpdatePrivacyRule { context ->
-                            privacySnapshots += context.edgeChanges.tags.run {
+                        PostUpdatePrivacyRule { _, item ->
+                            privacySnapshots += item.edgeChanges.tags.run {
                                 added.toSet() to removed.toSet()
                             }
                             PrivacyDecision.Allow
@@ -333,8 +333,8 @@ class LinkTableM2MPostgresIntegrationTest {
                 }
                 validation {
                     update(
-                        PostUpdateValidationRule { context ->
-                            val changes = context.edgeChanges.tags
+                        PostUpdateValidationRule { _, item ->
+                            val changes = item.edgeChanges.tags
                             assertSetsAreReadOnly(
                                 changes.requestedSet,
                                 changes.requestedAdds,
@@ -344,8 +344,8 @@ class LinkTableM2MPostgresIntegrationTest {
                             )
                             ValidationDecision.Valid
                         },
-                        PostUpdateValidationRule { context ->
-                            validationSnapshots += context.edgeChanges.tags.run {
+                        PostUpdateValidationRule { _, item ->
+                            validationSnapshots += item.edgeChanges.tags.run {
                                 added.toSet() to removed.toSet()
                             }
                             ValidationDecision.Valid

@@ -82,8 +82,8 @@ interface Driver {
     /**
      * Return a detached copy of one typed-JSON [value] using the same mapper
      * configuration this driver uses for [table].[column]. Generated privacy
-     * and validation contexts call this so mutable JSON graphs cannot alter
-     * the pending database value or a later rule's snapshot.
+     * and validation item snapshotting calls this so mutable JSON graphs cannot
+     * alter the pending database value or a later rule's snapshot.
      *
      * `null` must round-trip as `null`; a non-null result must retain the
      * column's generated Kotlin type. Drivers that support typed JSON must

@@ -30,20 +30,30 @@ above it.
 
 ## Unreleased
 
-- **Build batch-rule results through their originating `RuleBatch`** (`runtime`)
-  `BatchPrivacyRule` and `BatchValidationRule` now receive an immutable
-  `RuleBatch<C>` and return read-only, batch-bound `RuleDecisions<D>`. Rules can
-  no longer directly return a reordered or wrong-sized positional list, and
-  the decision block receives each original context explicitly. This works for
-  ID-less creates and duplicate inputs. It remains application code's
-  responsibility to compute the right decision for that context. Batch hooks
-  remain `List`-based because they return `Unit` and require no result
-  correlation.
-  _Migration:_ change direct batch-rule implementations and factory lambdas
-  from `contexts.map { decision }` to `batch.decide { decision }`. Use
-  `batch.decideIndexed { index, context -> decision }` when equal contexts need
-  distinct handling. `RuleBatch.from(contexts)` and the read-only list view of
-  `RuleDecisions` support direct rule tests. Decorators must use
+- **Separate shared rule state from item state and correlate batch decisions explicitly** (`runtime`, `codegen`)
+  Privacy and validation callbacks now receive phase-wide state separately
+  from an item-only generated value. Scalar rules take `(context, item)` and
+  batch rules take `(context, batch)`, so the captured read client and privacy
+  viewer are no longer repeated in every item. `BatchPrivacyRule` and
+  `BatchValidationRule` receive an immutable `RuleBatch<Item>` and return
+  read-only, batch-bound `RuleDecisions<D>`. Rules cannot directly construct a
+  free positional result, and the decision block receives each original item
+  explicitly. This works for ID-less creates and duplicate inputs. Batch hooks
+  remain `List`-based because they return `Unit` and their phase-specific shared
+  capabilities are not uniform.
+  _Migration:_ change scalar callbacks from `{ itemContext -> ... }` to
+  `{ context, item -> ... }`; read `context.client` and, for privacy,
+  `context.privacy`, while entity/candidate/patch fields move to `item`.
+  Generated operation types are renamed from `*PrivacyContext` and
+  `*ValidationContext` to `*PrivacyItem` and `*ValidationItem`. Change batch
+  callbacks from `{ contexts -> ... }` to `{ context, batch -> ... }` and build
+  results with `batch.decideEach { item -> decision }`. Use
+  `batch.decideEachIndexed { index, item -> decision }` when equal items need
+  distinct handling. `PrivacyRule`, `ValidationRule`, and their batch
+  counterparts now take separate `Client` and `Item` type parameters. No
+  deprecated callback or `decide` aliases are retained. `RuleBatch.from(items)`
+  and the read-only list view of `RuleDecisions` support direct decision tests
+  when paired with the rule's matching shared context. Decorators must use
   `result.mapDecisions { ... }` so provenance survives transformation. Do not
   cache or reuse a `RuleDecisions` wrapper across invocations; foreign-batch
   results and malformed Java/unchecked null results fail with
@@ -71,8 +81,8 @@ above it.
   override the new default `copyJsonValue(...)` lifecycle-snapshot operation;
   its non-null default fails explicitly. No generated lifecycle-aware
   `updateMany()` was added.
-  _Migration:_ scalar callback and policy registrations need no change. Audit
-  code that depends on row-major cross-item callback order or on earlier
+  _Migration:_ after applying the callback-shape migration above, audit code
+  that depends on row-major cross-item callback order or on earlier
   `createMany` rows being visible to later pre-write callbacks; use scalar
   terminals in an explicit transaction when that ordering is required. Use the
   explicit batch factories for set-based callback reads. Custom drivers must

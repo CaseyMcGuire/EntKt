@@ -22,7 +22,6 @@ import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_RULE = ClassName("entkt.runtime.privacy", "PrivacyRule")
 private val BATCH_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "BatchPrivacyRule")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
@@ -39,7 +38,7 @@ private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
  * - `{Entity}PrivacyScope` — DSL scope for declaring rules per operation
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
- * - `{Entity}{Op}PrivacyContext` — context classes for each operation
+ * - `{Entity}{Op}PrivacyItem` — per-item snapshots for each operation
  * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types
  */
 internal class PrivacyGenerator(
@@ -89,11 +88,13 @@ internal class PrivacyGenerator(
 
         val fileBuilder = FileSpec.builder(packageName, "${schemaName}Privacy")
 
-        // Operation context class names
-        val loadCtx = ClassName(packageName, "${schemaName}LoadPrivacyContext")
-        val createCtx = ClassName(packageName, "${schemaName}CreatePrivacyContext")
-        val updateCtx = ClassName(packageName, "${schemaName}UpdatePrivacyContext")
-        val deleteCtx = ClassName(packageName, "${schemaName}DeletePrivacyContext")
+        // Operation item class names. The runtime PrivacyRuleContext holds
+        // privacy/client state once for the whole evaluation phase; these generated
+        // values contain only state that varies per item.
+        val loadItem = ClassName(packageName, "${schemaName}LoadPrivacyItem")
+        val createItem = ClassName(packageName, "${schemaName}CreatePrivacyItem")
+        val updateItem = ClassName(packageName, "${schemaName}UpdatePrivacyItem")
+        val deleteItem = ClassName(packageName, "${schemaName}DeletePrivacyItem")
 
         // Rule typealiases
         val loadRule = "${schemaName}LoadPrivacyRule"
@@ -106,40 +107,39 @@ internal class PrivacyGenerator(
         val deleteBatchRule = "${schemaName}DeleteBatchPrivacyRule"
 
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(loadRule, PRIVACY_RULE.parameterizedBy(loadCtx)).build(),
+            TypeAliasSpec.builder(loadRule, PRIVACY_RULE.parameterizedBy(readClientClass, loadItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(createRule, PRIVACY_RULE.parameterizedBy(createCtx)).build(),
+            TypeAliasSpec.builder(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(updateRule, PRIVACY_RULE.parameterizedBy(updateCtx)).build(),
+            TypeAliasSpec.builder(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(deleteRule, PRIVACY_RULE.parameterizedBy(deleteCtx)).build(),
+            TypeAliasSpec.builder(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(loadCtx)).build(),
+            TypeAliasSpec.builder(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, loadItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(createCtx)).build(),
+            TypeAliasSpec.builder(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(updateCtx)).build(),
+            TypeAliasSpec.builder(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateItem)).build(),
         )
         fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(deleteCtx)).build(),
+            TypeAliasSpec.builder(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem)).build(),
         )
 
-        // Operation context data classes
-        fileBuilder.addType(buildLoadContext(schemaName, entityClass, readClientClass, loadCtx))
-        fileBuilder.addType(buildCreateContext(schemaName, readClientClass, candidateClass, createCtx))
+        // Operation item data classes
+        fileBuilder.addType(buildLoadItem(entityClass, loadItem))
+        fileBuilder.addType(buildCreateItem(candidateClass, createItem))
         fileBuilder.addType(
-            buildUpdateContext(
-                schemaName, entityClass, readClientClass, candidateClass, patchClass,
-                edgeChangesViewClass, updateCtx,
+            buildUpdateItem(
+                entityClass, candidateClass, patchClass, edgeChangesViewClass, updateItem,
             ),
         )
-        fileBuilder.addType(buildDeleteContext(schemaName, entityClass, readClientClass, candidateClass, deleteCtx))
+        fileBuilder.addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
 
         // WriteCandidate
         fileBuilder.addType(buildWriteCandidate(schemaName, candidateClass, fields, edgeFks))
@@ -160,7 +160,7 @@ internal class PrivacyGenerator(
         // edge — the privacy/validation sidecar that surfaces both
         // caller intent and computed database delta. Same empty-class
         // fallback for schemas without helper-eligible edges so the
-        // privacy/validation context shape is uniform.
+        // privacy/validation item shape is uniform.
         fileBuilder.addType(buildEdgeChangesViewAggregator(edgeChangesViewClass, helperEligibleEdges))
 
         // UpdateHookContext (received by beforeUpdate hooks)
@@ -220,58 +220,42 @@ internal class PrivacyGenerator(
         return fileBuilder.build()
     }
 
-    private fun buildLoadContext(
-        schemaName: String,
+    private fun buildLoadItem(
         entityClass: ClassName,
-        clientClass: ClassName,
-        ctxClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
+        itemClass: ClassName,
+    ): TypeSpec = TypeSpec.classBuilder(itemClass)
         .addModifiers(KModifier.DATA)
         .primaryConstructor(
             FunSpec.constructorBuilder()
-                .addParameter("privacy", PRIVACY_CONTEXT)
-                .addParameter("client", clientClass)
                 .addParameter("entity", entityClass)
                 .build(),
         )
-        .addProperty(PropertySpec.builder("privacy", PRIVACY_CONTEXT).initializer("privacy").build())
-        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("entity", entityClass).initializer("entity").build())
         .build()
 
-    private fun buildCreateContext(
-        schemaName: String,
-        clientClass: ClassName,
+    private fun buildCreateItem(
         candidateClass: ClassName,
-        ctxClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
+        itemClass: ClassName,
+    ): TypeSpec = TypeSpec.classBuilder(itemClass)
         .addModifiers(KModifier.DATA)
         .primaryConstructor(
             FunSpec.constructorBuilder()
-                .addParameter("privacy", PRIVACY_CONTEXT)
-                .addParameter("client", clientClass)
                 .addParameter("candidate", candidateClass)
                 .build(),
         )
-        .addProperty(PropertySpec.builder("privacy", PRIVACY_CONTEXT).initializer("privacy").build())
-        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
         .build()
 
-    private fun buildUpdateContext(
-        schemaName: String,
+    private fun buildUpdateItem(
         entityClass: ClassName,
-        clientClass: ClassName,
         candidateClass: ClassName,
         patchClass: ClassName,
         edgeChangesViewClass: ClassName,
-        ctxClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
+        itemClass: ClassName,
+    ): TypeSpec = TypeSpec.classBuilder(itemClass)
         .addModifiers(KModifier.DATA)
         .primaryConstructor(
             FunSpec.constructorBuilder()
-                .addParameter("privacy", PRIVACY_CONTEXT)
-                .addParameter("client", clientClass)
                 .addParameter("before", entityClass)
                 .addParameter("requestedPatch", patchClass)
                 .addParameter("effectivePatch", patchClass)
@@ -279,8 +263,6 @@ internal class PrivacyGenerator(
                 .addParameter("edgeChanges", edgeChangesViewClass)
                 .build(),
         )
-        .addProperty(PropertySpec.builder("privacy", PRIVACY_CONTEXT).initializer("privacy").build())
-        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
         .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
         .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
@@ -288,24 +270,18 @@ internal class PrivacyGenerator(
         .addProperty(PropertySpec.builder("edgeChanges", edgeChangesViewClass).initializer("edgeChanges").build())
         .build()
 
-    private fun buildDeleteContext(
-        schemaName: String,
+    private fun buildDeleteItem(
         entityClass: ClassName,
-        clientClass: ClassName,
         candidateClass: ClassName,
-        ctxClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
+        itemClass: ClassName,
+    ): TypeSpec = TypeSpec.classBuilder(itemClass)
         .addModifiers(KModifier.DATA)
         .primaryConstructor(
             FunSpec.constructorBuilder()
-                .addParameter("privacy", PRIVACY_CONTEXT)
-                .addParameter("client", clientClass)
                 .addParameter("entity", entityClass)
                 .addParameter("candidate", candidateClass)
                 .build(),
         )
-        .addProperty(PropertySpec.builder("privacy", PRIVACY_CONTEXT).initializer("privacy").build())
-        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
         .addProperty(PropertySpec.builder("entity", entityClass).initializer("entity").build())
         .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
         .build()
@@ -500,11 +476,11 @@ internal class PrivacyGenerator(
 
     /**
      * Per-entity aggregator of computed `EdgeChanges<TargetIdType>`
-     * surfaced on update privacy and validation contexts. Mirrors
+     * surfaced on update privacy and validation items. Mirrors
      * [buildPendingEdgeOpsAggregator]'s shape but
      * carries the full [EdgeChanges] (caller intent + computed
      * `added`/`removed` deltas) per edge. Empty class for schemas with
-     * zero helper-eligible M2M edges so the context shape is uniform.
+     * zero helper-eligible M2M edges so the item shape is uniform.
      */
     private fun buildEdgeChangesViewAggregator(
         aggregatorClass: ClassName,

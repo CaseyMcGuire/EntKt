@@ -4,6 +4,7 @@ import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.EntPrivacyReadClient
 import entkt.integrationtest.ent.Group
 import entkt.integrationtest.ent.GroupLoadPrivacyRule
 import entkt.integrationtest.ent.GroupPolicyScope
@@ -14,7 +15,7 @@ import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.PostLoadPrivacyRule
 import entkt.integrationtest.ent.PostPolicyScope
 import entkt.integrationtest.ent.Tag
-import entkt.integrationtest.ent.TagLoadPrivacyContext
+import entkt.integrationtest.ent.TagLoadPrivacyItem
 import entkt.integrationtest.ent.TagLoadPrivacyRule
 import entkt.integrationtest.ent.TagPolicyScope
 import entkt.integrationtest.ent.User
@@ -79,7 +80,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 notes(openNotes())
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
-                        privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("author hidden") }) }
+                        privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("author hidden") }) }
                     }
                 })
             }
@@ -119,9 +120,9 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(TagLoadPrivacyRule { ctx ->
-                                evaluated.add(ctx.entity.name)
-                                PrivacyDecision.Deny("tag ${ctx.entity.name} hidden")
+                            load(TagLoadPrivacyRule { _, item ->
+                                evaluated.add(item.entity.name)
+                                PrivacyDecision.Deny("tag ${item.entity.name} hidden")
                             })
                         }
                     }
@@ -165,9 +166,9 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<TagLoadPrivacyContext> { contexts ->
-                                invocations += contexts.map { it.entity.name }
-                                contexts.decide {
+                            load(batchPrivacyRule<EntPrivacyReadClient, TagLoadPrivacyItem> { _, batch ->
+                                invocations += batch.map { it.entity.name }
+                                batch.decideEach {
                                     PrivacyDecision.Deny("tag ${it.entity.name} hidden")
                                 }
                             })
@@ -222,8 +223,8 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 posts(object : EntityPolicy<Post, PostPolicyScope> {
                     override fun configure(scope: PostPolicyScope) = scope.run {
                         privacy {
-                            load(PostLoadPrivacyRule { ctx ->
-                                if (ctx.entity.title == "P2-hidden") PrivacyDecision.Deny("post hidden")
+                            load(PostLoadPrivacyRule { _, item ->
+                                if (item.entity.title == "P2-hidden") PrivacyDecision.Deny("post hidden")
                                 else PrivacyDecision.Allow
                             })
                         }
@@ -273,13 +274,13 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 users(openUsers())
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
-                        privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("article hidden") }) }
+                        privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("article hidden") }) }
                     }
                 })
                 groups(object : EntityPolicy<Group, GroupPolicyScope> {
                     override fun configure(scope: GroupPolicyScope) = scope.run {
                         privacy {
-                            load(GroupLoadPrivacyRule {
+                            load(GroupLoadPrivacyRule { _, _ ->
                                 groupRuleEvaluations++
                                 PrivacyDecision.Deny("group hidden")
                             })
@@ -324,12 +325,12 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             policies {
                 notes(object : EntityPolicy<Note, NotePolicyScope> {
                     override fun configure(scope: NotePolicyScope) = scope.run {
-                        privacy { load(NoteLoadPrivacyRule { PrivacyDecision.Deny("note hidden") }) }
+                        privacy { load(NoteLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("note hidden") }) }
                     }
                 })
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
-                        privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("author hidden") }) }
+                        privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("author hidden") }) }
                     }
                 })
             }
@@ -359,7 +360,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 notes(openNotes())
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
-                        privacy { load(UserLoadPrivacyRule { PrivacyDecision.Deny("author hidden") }) }
+                        privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("author hidden") }) }
                     }
                 })
             }

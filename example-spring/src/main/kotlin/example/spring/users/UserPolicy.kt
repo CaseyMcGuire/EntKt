@@ -2,13 +2,15 @@ package example.spring.users
 
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
+import example.ent.EntPrivacyReadClient
 import example.ent.User
-import example.ent.UserDeletePrivacyContext
+import example.ent.UserDeletePrivacyItem
 import example.ent.UserDeletePrivacyRule
 import example.ent.UserPolicyScope
-import example.ent.UserUpdatePrivacyContext
+import example.ent.UserUpdatePrivacyItem
 import example.ent.UserUpdatePrivacyRule
 
 object UserPolicy : EntityPolicy<User, UserPolicyScope> {
@@ -26,20 +28,26 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
 
 /** Only the user themselves can update their profile. */
 class AllowSelfUpdate : UserUpdatePrivacyRule {
-    override fun run(ctx: UserUpdatePrivacyContext): PrivacyDecision {
-        val viewer = ctx.privacy.viewer as? Viewer.User
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: UserUpdatePrivacyItem,
+    ): PrivacyDecision {
+        val viewer = context.privacy.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
-        return if (viewer.id == ctx.before.id) PrivacyDecision.Allow
+        return if (viewer.id == item.before.id) PrivacyDecision.Allow
         else PrivacyDecision.Deny("can only update your own profile")
     }
 }
 
 /** Only the user themselves can delete their account. */
 class AllowSelfDelete : UserDeletePrivacyRule {
-    override fun run(ctx: UserDeletePrivacyContext): PrivacyDecision {
-        val viewer = ctx.privacy.viewer as? Viewer.User
+    override fun run(
+        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        item: UserDeletePrivacyItem,
+    ): PrivacyDecision {
+        val viewer = context.privacy.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
-        return if (viewer.id == ctx.entity.id) PrivacyDecision.Allow
+        return if (viewer.id == item.entity.id) PrivacyDecision.Allow
         else PrivacyDecision.Deny("can only delete your own account")
     }
 }

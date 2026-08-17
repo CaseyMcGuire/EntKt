@@ -21,7 +21,7 @@ class RepoGeneratorTest {
     private val generator = RepoGenerator("com.example.ent")
 
     @Test
-    fun `rule evaluators construct a fresh snapshot context for every rule`() {
+    fun `rule evaluators share context and construct a fresh item snapshot for every rule`() {
         val schema = RepoBytesRecord()
         finalize(schema)
         val output = generator.generate("RepoBytesRecord", schema).toString()
@@ -29,31 +29,43 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord CREATE privacy\", candidateSnapshot, rules) { item -> RepoBytesRecordCreatePrivacyContext",
+                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord CREATE privacy\", candidateSnapshot, rules, ruleContext) { item -> RepoBytesRecordCreatePrivacyItem",
             ),
         ) {
-            "create privacy should delegate through the batch evaluator with a fresh-context factory\n$output"
+            "create privacy should delegate through the batch evaluator with a fresh-item factory\n$output"
         }
         assert(
             output.contains(
-                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord CREATE validation\", candidateSnapshot, rules) { item -> RepoBytesRecordCreateValidationContext",
+                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord CREATE validation\", candidateSnapshot, rules, ruleContext) { item -> RepoBytesRecordCreateValidationItem",
             ),
         ) {
-            "create validation should delegate through the batch evaluator with a fresh-context factory\n$output"
+            "create validation should delegate through the batch evaluator with a fresh-item factory\n$output"
         }
         assert(
             output.contains(
-                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord UPDATE privacy\", listOf(candidate), rules) { item -> RepoBytesRecordUpdatePrivacyContext",
+                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord UPDATE privacy\", listOf(candidate), rules, ruleContext) { item -> RepoBytesRecordUpdatePrivacyItem",
             ),
         ) {
-            "update privacy should delegate through the batch evaluator with a fresh-context factory\n$output"
+            "update privacy should delegate through the batch evaluator with a fresh-item factory\n$output"
         }
         assert(
             output.contains(
-                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord UPDATE validation\", listOf(candidate), rules) { item -> RepoBytesRecordUpdateValidationContext",
+                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord UPDATE validation\", listOf(candidate), rules, ruleContext) { item -> RepoBytesRecordUpdateValidationItem",
             ),
         ) {
-            "update validation should delegate through the batch evaluator with a fresh-context factory\n$output"
+            "update validation should delegate through the batch evaluator with a fresh-item factory\n$output"
+        }
+        val privacyContexts = Regex(
+            Regex.escape("val ruleContext = PrivacyRuleContext(privacy, privacyClient)"),
+        ).findAll(output).count()
+        assert(privacyContexts == 4) {
+            "Each privacy lifecycle helper should construct shared state exactly once; found $privacyContexts\n$output"
+        }
+        val validationContexts = Regex(
+            Regex.escape("val ruleContext = ValidationRuleContext(validationClient)"),
+        ).findAll(output).count()
+        assert(validationContexts == 3) {
+            "Each validation lifecycle helper should construct shared state exactly once; found $validationContexts\n$output"
         }
         assert(output.contains("item.copy( payload = item.payload.copyOf(), thumbnail = item.thumbnail?.copyOf(), )")) {
             "rule candidates should not alias database-bound byte arrays\n$output"
@@ -777,7 +789,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "val decisions = evaluateBatchPrivacyRulesForInternalUse(\"Car LOAD privacy\", entitySnapshot, rules) { item -> CarLoadPrivacyContext(privacy, privacyClient, item) }",
+                "val decisions = evaluateBatchPrivacyRulesForInternalUse(\"Car LOAD privacy\", entitySnapshot, rules, ruleContext) { item -> CarLoadPrivacyItem(item) }",
             ),
         ) {
             "Plural LOAD evaluation should submit the complete ordered snapshot to the batch engine\n$output"
@@ -889,7 +901,7 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "if (decision is PrivacyDecision.Continue && privacyConfig.updateDerivesFromCreate) { decision = evaluateBatchPrivacyRulesForInternalUse(\"Car UPDATE privacy\", listOf(candidate), privacyConfig.createRules)",
+                "if (decision is PrivacyDecision.Continue && privacyConfig.updateDerivesFromCreate) { decision = evaluateBatchPrivacyRulesForInternalUse(\"Car UPDATE privacy\", listOf(candidate), privacyConfig.createRules, ruleContext)",
             ),
         ) {
             "derived CREATE privacy should run only after UPDATE remains Continue and retain the UPDATE lifecycle label\n$output"
@@ -899,7 +911,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "evaluateBatchPrivacyRulesForInternalUse(\"Car DELETE privacy\", unresolvedIndexes, privacyConfig.createRules)",
+                "evaluateBatchPrivacyRulesForInternalUse(\"Car DELETE privacy\", unresolvedIndexes, privacyConfig.createRules, ruleContext)",
             ),
         ) {
             "derived CREATE privacy should batch only unresolved DELETE candidates under the DELETE label\n$output"
@@ -921,10 +933,10 @@ class RepoGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         val updateAt = output.indexOf(
-            "val invalids = evaluateBatchValidationRulesForInternalUse(\"Car UPDATE validation\", listOf(candidate), rules)",
+            "val invalids = evaluateBatchValidationRulesForInternalUse(\"Car UPDATE validation\", listOf(candidate), rules, ruleContext)",
         )
         val derivedAt = output.indexOf(
-            "invalids += evaluateBatchValidationRulesForInternalUse(\"Car UPDATE validation\", listOf(candidate), validationConfig.createRules)",
+            "invalids += evaluateBatchValidationRulesForInternalUse(\"Car UPDATE validation\", listOf(candidate), validationConfig.createRules, ruleContext)",
         )
         assert(updateAt >= 0 && derivedAt > updateAt) {
             "UPDATE invalids should precede and then combine with derived CREATE invalids under the UPDATE lifecycle label\n$output"
@@ -1146,7 +1158,7 @@ class RepoGeneratorTest {
             "updateDenialReasonOrNull should accept edgeChanges: CarEdgeChangesView\n$output"
         }
         assert(output.contains(
-            "CarUpdatePrivacyContext(privacy, privacyClient, before, requestedPatch, effectivePatch, item, edgeChanges)",
+            "CarUpdatePrivacyItem(before, requestedPatch, effectivePatch, item, edgeChanges)",
         )) {
             "Constructor call should thread edgeChanges through as the final positional arg\n$output"
         }
@@ -1163,9 +1175,9 @@ class RepoGeneratorTest {
             "evaluateUpdateValidation should accept edgeChanges: CarEdgeChangesView\n$output"
         }
         assert(output.contains(
-            "CarUpdateValidationContext(validationClient, before, requestedPatch, effectivePatch, item, edgeChanges)",
+            "CarUpdateValidationItem(before, requestedPatch, effectivePatch, item, edgeChanges)",
         )) {
-            "Validation context constructor call should thread edgeChanges through\n$output"
+            "Validation item constructor call should thread edgeChanges through\n$output"
         }
     }
 

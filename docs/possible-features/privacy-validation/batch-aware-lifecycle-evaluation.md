@@ -12,10 +12,11 @@ argument.
 
 One source-compatibility consequence is intentional: `registeredIdColumn` is a
 new abstract `Driver` method. Existing custom driver implementations must add
-it even when they inherit the default `deleteManyByIds` implementation. Scalar
-rule, validator, hook, and generated-DSL call sites remain source-compatible.
-Explicit batch-rule implementations use the final `RuleBatch` /
-`RuleDecisions` contract described below instead of returning a free
+it even when they inherit the default `deleteManyByIds` implementation.
+Privacy and validation callbacks also use the shared-context/item signatures
+described below: shared viewer/client state is passed once, while generated
+item types contain only per-item state. Explicit batch-rule implementations
+return a `RuleDecisions` value through `decideEach` rather than a free
 positional list.
 
 The motivation below describes the pre-implementation baseline.
@@ -34,14 +35,14 @@ creating parallel singular and batch registration APIs.
 The central type relationship is:
 
 ```kotlin
-public sealed interface RuleBatch<out C> : List<C> {
-    public fun <D> decide(block: (C) -> D): RuleDecisions<D>
-    public fun <D> decideIndexed(
-        block: (index: Int, context: C) -> D,
+public sealed interface RuleBatch<out Item> : List<Item> {
+    public fun <D> decideEach(block: (Item) -> D): RuleDecisions<D>
+    public fun <D> decideEachIndexed(
+        block: (index: Int, item: Item) -> D,
     ): RuleDecisions<D>
 
     public companion object {
-        public fun <C> from(contexts: List<C>): RuleBatch<C>
+        public fun <Item> from(items: List<Item>): RuleBatch<Item>
     }
 }
 
@@ -51,32 +52,42 @@ public sealed interface RuleDecisions<out D> : List<D> {
     ): RuleDecisions<R>
 }
 
-public interface BatchValidationRule<in C> {
+public class ValidationRuleContext<out Client>(
+    public val client: Client,
+)
+
+public interface BatchValidationRule<in Client, in Item> {
     public fun validateBatch(
-        batch: RuleBatch<C>,
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
     ): RuleDecisions<ValidationDecision>
 }
 
-public fun interface ValidationRule<in C> : BatchValidationRule<C> {
-    public fun validate(ctx: C): ValidationDecision
+public fun interface ValidationRule<in Client, in Item> :
+    BatchValidationRule<Client, Item> {
+
+    public fun validate(
+        context: ValidationRuleContext<Client>,
+        item: Item,
+    ): ValidationDecision
 
     override fun validateBatch(
-        batch: RuleBatch<C>,
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
     ): RuleDecisions<ValidationDecision> =
-        batch.decide { validate(it) }
+        batch.decideEach { validate(context, it) }
 }
 ```
 
 A scalar rule is therefore already a valid batch rule. Its default
 implementation evaluates each item in order. An explicitly batch-aware rule can
-instead inspect all items, issue set-based reads, and use `batch.decide` to
-build one decision per supplied context. The returned `RuleDecisions` is
+instead inspect all items, issue set-based reads, and use `batch.decideEach` to
+build exactly one decision per supplied item. The returned `RuleDecisions` is
 read-only and bound to that exact input batch. This eliminates direct arbitrary
 positional-list returns; application code remains responsible for computing
-the right decision for the context supplied to the decision block.
+the right decision for the item supplied to the decision block.
 
-The same scalar-adapts-to-batch registration model applies to privacy and
-hooks. Privacy uses `RuleBatch` and `RuleDecisions`. Hooks still receive a
+Privacy uses the same shared-context/item relationship. Hooks still receive a
 read-only `List` because they return `Unit` and have no output to correlate.
 Generated policy and hook DSLs keep one method per lifecycle phase (`load`,
 `create`, `beforeCreate`, and so on). They do not add `loadBatch`,
@@ -122,12 +133,12 @@ The callback invocation count is not itself necessarily expensive. The N+1
 appears when a rule, validator, or hook performs a database query:
 
 ```kotlin
-PrivacyRule<PostLoadPrivacyContext> { ctx ->
-    val membership = ctx.client.projectMemberships
+PrivacyRule<EntPrivacyReadClient, PostLoadPrivacyItem> { context, item ->
+    val membership = context.client.projectMemberships
         .query {
             where(
-                ProjectMembership.projectId eq ctx.entity.projectId,
-                ProjectMembership.userId eq ctx.privacy.userIdOrNull(),
+                ProjectMembership.projectId eq item.entity.projectId,
+                ProjectMembership.userId eq context.privacy.userIdOrNull(),
             )
         }
         .firstOrNull()
@@ -208,14 +219,14 @@ not split lifecycle callback invocation.
 Privacy and validation share two sealed runtime types:
 
 ```kotlin
-public sealed interface RuleBatch<out C> : List<C> {
-    public fun <D> decide(block: (C) -> D): RuleDecisions<D>
-    public fun <D> decideIndexed(
-        block: (index: Int, context: C) -> D,
+public sealed interface RuleBatch<out Item> : List<Item> {
+    public fun <D> decideEach(block: (Item) -> D): RuleDecisions<D>
+    public fun <D> decideEachIndexed(
+        block: (index: Int, item: Item) -> D,
     ): RuleDecisions<D>
 
     public companion object {
-        public fun <C> from(contexts: List<C>): RuleBatch<C>
+        public fun <Item> from(items: List<Item>): RuleBatch<Item>
     }
 }
 
@@ -227,16 +238,17 @@ public sealed interface RuleDecisions<out D> : List<D> {
 ```
 
 `RuleBatch` is an immutable, read-only `List`, so rules can inspect, group, or
-sort contexts while preparing a set-based lookup. They return decisions only
-through `decide` or `decideIndexed`; both evaluate against the original batch
-order and produce a read-only result bound to that batch. `decideIndexed`
+sort items while preparing a set-based lookup. They return decisions only
+through `decideEach` or `decideEachIndexed`; both evaluate against the original
+batch order and produce a read-only result bound to that batch.
+`decideEachIndexed`
 exposes a stable index within the current callback invocation when duplicate or
-equal contexts need distinct handling. Later privacy rules can receive a
+equal items need distinct handling. Later privacy rules can receive a
 filtered batch, so the index is not operation-global. Neither API depends on
 entity IDs, so it also works for CREATE candidates whose IDs have not been
 generated.
 
-`RuleBatch.from(contexts)` copies a list for direct tests and rule composition.
+`RuleBatch.from(items)` copies a list for direct tests and rule composition.
 `RuleDecisions` exposes ordinary read-only list inspection, equality, and
 folding without exposing arbitrary construction. Decorators transform a
 delegated result with `mapDecisions`, which preserves its original batch token;
@@ -246,44 +258,65 @@ is still foreign to every framework-created callback batch.
 
 The contract prevents direct short, long, or independently reordered list
 returns. It cannot prove that a rule's own lookup or iterator associated the
-semantically correct value with the context passed to `decide`; that remains
+semantically correct value with the item passed to `decideEach`; that remains
 application responsibility.
 
 ### Privacy
 
-Keep the existing scalar `PrivacyRule` name and `run` method. Add a broader
-batch contract and make the scalar contract extend it:
+Shared rule state is represented once, separately from generated per-item
+values:
 
 ```kotlin
-public interface BatchPrivacyRule<in C> {
+public class PrivacyRuleContext<out Client>(
+    public val privacy: PrivacyContext,
+    public val client: Client,
+)
+
+public interface BatchPrivacyRule<in Client, in Item> {
     public fun runBatch(
-        batch: RuleBatch<C>,
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision>
 }
 
-public fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
-    public fun run(ctx: C): PrivacyDecision
+public fun interface PrivacyRule<in Client, in Item> :
+    BatchPrivacyRule<Client, Item> {
+
+    public fun run(
+        context: PrivacyRuleContext<Client>,
+        item: Item,
+    ): PrivacyDecision
 
     override fun runBatch(
-        batch: RuleBatch<C>,
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision> =
-        batch.decide { run(it) }
+        batch.decideEach { run(context, it) }
 }
+```
+
+The same generated item type is used for scalar and batch callbacks. Shared
+viewer/client state is never repeated in those items. For example:
+
+```kotlin
+public data class PostLoadPrivacyItem(
+    public val entity: Post,
+)
 ```
 
 The batch method is deliberately named `runBatch` rather than overloading
 `run`. Besides making the invocation shape explicit to implementers, the
 distinct JVM name avoids an accidental-override collision for a generic rule
-whose `C` is itself a `List<*>`. The generated lifecycle contexts are not list
+whose `Item` is itself a `List<*>`. The generated lifecycle items are not list
 types, but the public runtime interface should remain safe for every legal type
 argument and for Java callers.
 
-`PrivacyRule` remains a `fun interface`, preserving ordinary scalar rule
-construction:
+`PrivacyRule` remains a `fun interface`, preserving concise scalar rule
+construction while making the two inputs explicit:
 
 ```kotlin
-val allowOwner = PrivacyRule<PostLoadPrivacyContext> { ctx ->
-    if (ctx.entity.ownerId == ctx.privacy.userIdOrNull()) {
+val allowOwner: PostLoadPrivacyRule = PrivacyRule { context, item ->
+    if (item.entity.ownerId == context.privacy.userIdOrNull()) {
         PrivacyDecision.Allow
     } else {
         PrivacyDecision.Continue
@@ -296,37 +329,41 @@ EntKt provides a factory so batch construction is explicit and cannot make a
 lambda ambiguously mean either one context or a list:
 
 ```kotlin
-public fun <C> batchPrivacyRule(
-    block: (RuleBatch<C>) -> RuleDecisions<PrivacyDecision>,
-): BatchPrivacyRule<C>
+public fun <Client, Item> batchPrivacyRule(
+    block: (
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ) -> RuleDecisions<PrivacyDecision>,
+): BatchPrivacyRule<Client, Item>
 ```
 
 Example:
 
 ```kotlin
-val allowProjectMembers = batchPrivacyRule<PostLoadPrivacyContext> { batch ->
-    val projectIds = batch.map { it.entity.projectId }.distinct()
-    val userId = batch.first().privacy.userIdOrNull()
+val allowProjectMembers: PostLoadBatchPrivacyRule =
+    batchPrivacyRule { context, batch ->
+        val projectIds = batch.map { it.entity.projectId }.distinct()
+        val userId = context.privacy.userIdOrNull()
 
-    val visibleProjectIds = batch.first().client.projectMemberships
-        .query {
-            where(
-                ProjectMembership.projectId.inList(projectIds),
-                ProjectMembership.userId eq userId,
-            )
-        }
-        .all()
-        .getOrThrow()
-        .mapTo(mutableSetOf()) { it.projectId }
+        val visibleProjectIds = context.client.projectMemberships
+            .query {
+                where(
+                    ProjectMembership.projectId.inList(projectIds),
+                    ProjectMembership.userId eq userId,
+                )
+            }
+            .all()
+            .getOrThrow()
+            .mapTo(mutableSetOf()) { it.projectId }
 
-    batch.decide { ctx ->
-        if (ctx.entity.projectId in visibleProjectIds) {
-            PrivacyDecision.Allow
-        } else {
-            PrivacyDecision.Deny("not a project member")
+        batch.decideEach { item ->
+            if (item.entity.projectId in visibleProjectIds) {
+                PrivacyDecision.Allow
+            } else {
+                PrivacyDecision.Deny("not a project member")
+            }
         }
     }
-}
 ```
 
 The example is a design sketch; generated predicate spelling continues to
@@ -338,24 +375,38 @@ Validation uses the same relationship while preserving its existing
 `validate` method and decision type:
 
 ```kotlin
-public interface BatchValidationRule<in C> {
+public class ValidationRuleContext<out Client>(
+    public val client: Client,
+)
+
+public interface BatchValidationRule<in Client, in Item> {
     public fun validateBatch(
-        batch: RuleBatch<C>,
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
     ): RuleDecisions<ValidationDecision>
 }
 
-public fun interface ValidationRule<in C> : BatchValidationRule<C> {
-    public fun validate(ctx: C): ValidationDecision
+public fun interface ValidationRule<in Client, in Item> :
+    BatchValidationRule<Client, Item> {
+
+    public fun validate(
+        context: ValidationRuleContext<Client>,
+        item: Item,
+    ): ValidationDecision
 
     override fun validateBatch(
-        batch: RuleBatch<C>,
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
     ): RuleDecisions<ValidationDecision> =
-        batch.decide { validate(it) }
+        batch.decideEach { validate(context, it) }
 }
 
-public fun <C> batchValidationRule(
-    block: (RuleBatch<C>) -> RuleDecisions<ValidationDecision>,
-): BatchValidationRule<C>
+public fun <Client, Item> batchValidationRule(
+    block: (
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ) -> RuleDecisions<ValidationDecision>,
+): BatchValidationRule<Client, Item>
 ```
 
 Validation returns `ValidationDecision`, not `PrivacyDecision`. Every reached
@@ -448,11 +499,11 @@ The same shape is generated for write privacy and validation. Existing scalar
 calls—including `load(*scalarRuleArray)`—keep the exact overload they use
 today. An optimized callback is constructed with the explicit batch factory and
 goes through the single-rule batch overload. Both overloads append to the same
-`MutableList<BatchPrivacyRule<Context>>` or
-`MutableList<BatchValidationRule<Context>>` registry.
+`MutableList<BatchPrivacyRule<Client, Item>>` or
+`MutableList<BatchValidationRule<Client, Item>>` registry.
 
-Generating both `vararg PrivacyRule<C>` and
-`vararg BatchPrivacyRule<C>` was considered and rejected: it makes zero-argument
+Generating both `vararg PrivacyRule<Client, Item>` and
+`vararg BatchPrivacyRule<Client, Item>` was considered and rejected: it makes zero-argument
 calls ambiguous, complicates lambda overload resolution, and widening the
 existing scalar vararg would break spread calls because Kotlin arrays are
 invariant. The scalar-vararg plus single-batch overload avoids all three
@@ -468,9 +519,11 @@ Generated compile tests must pin all of these forms:
 
 ```kotlin
 load(allowAll)
-load(PostLoadPrivacyRule { ctx -> /* scalar */ PrivacyDecision.Allow })
+load(PostLoadPrivacyRule { _, _ -> /* scalar */ PrivacyDecision.Allow })
 load(*scalarRuleArray)
-load(batchPrivacyRule { batch -> batch.decide { PrivacyDecision.Allow } })
+load(batchPrivacyRule { _, batch ->
+    batch.decideEach { PrivacyDecision.Allow }
+})
 
 beforeCreate { ctx -> /* scalar */ }
 beforeCreate(batchHook { contexts -> /* batch */ })
@@ -483,12 +536,15 @@ they do not occupy separate phase lists.
 Generated operation-specific aliases should expose both forms:
 
 ```kotlin
-typealias PostLoadPrivacyRule = PrivacyRule<PostLoadPrivacyContext>
-typealias PostLoadBatchPrivacyRule = BatchPrivacyRule<PostLoadPrivacyContext>
+typealias PostLoadPrivacyRule =
+    PrivacyRule<EntPrivacyReadClient, PostLoadPrivacyItem>
+typealias PostLoadBatchPrivacyRule =
+    BatchPrivacyRule<EntPrivacyReadClient, PostLoadPrivacyItem>
 
-typealias PostCreateValidationRule = ValidationRule<PostCreateValidationContext>
+typealias PostCreateValidationRule =
+    ValidationRule<EntValidationReadClient, PostCreateValidationItem>
 typealias PostCreateBatchValidationRule =
-    BatchValidationRule<PostCreateValidationContext>
+    BatchValidationRule<EntValidationReadClient, PostCreateValidationItem>
 ```
 
 Hooks do not gain generated aliases in this RFC because the current hook API
@@ -527,24 +583,24 @@ driver returns them, and that every lifecycle phase within that logical
 operation uses the same captured order.
 
 When an operation needs stable error attribution after filtering an active
-privacy set, generated internal item records retain the original operation
-index. The public callback continues to receive its existing typed context,
-not a new wrapper type.
+privacy set, generated internal records retain the original operation index.
+The public callback receives an item-only generated type; shared privacy and
+client state is supplied separately through the rule context.
 
 ### Correlated rule results
 
 Privacy and validation results are bound to the exact `RuleBatch` supplied to
 the callback. Rules cannot construct `RuleDecisions` from an arbitrary list;
-they call
-`batch.decide { ... }` or `batch.decideIndexed { index, context -> ... }`.
-Both methods invoke the decision block exactly once per context in encounter
-order, even when the rule sorted or grouped contexts while preparing its
-lookup. The rule must use the supplied context when selecting its decision;
+they call `batch.decideEach { ... }` or
+`batch.decideEachIndexed { index, item -> ... }`.
+Both methods invoke the decision block exactly once per item in encounter
+order, even when the rule sorted or grouped items while preparing its
+lookup. The rule must use the supplied item when selecting its decision;
 batch provenance cannot validate application-level lookup semantics.
 
 Entity IDs are not correlation keys:
 
-- CREATE contexts may not have an ID yet;
+- CREATE items may not have an ID yet;
 - duplicate caller input must not collapse decisions; and
 - correlation must work for every configured ID strategy.
 
@@ -552,8 +608,8 @@ The originating-batch check prevents cached decisions from a previous
 invocation from being reused accidentally. EntKt raises
 `EntBatchRuleContractException` when a rule returns decisions from another
 batch. Java or unchecked code receives the same failure if it returns `null`
-instead of `RuleDecisions`, or if a `decide` callback returns a null or invalid
-decision element:
+instead of `RuleDecisions`, or if a `decideEach` callback returns a null or
+invalid decision element:
 
 ```kotlin
 public class EntBatchRuleContractException(
@@ -579,7 +635,7 @@ mutation.
 
 ### Fresh rule snapshots
 
-Privacy and validation give each rule a fresh immutable context snapshot.
+Privacy and validation give each rule fresh immutable item snapshots.
 `ByteArray` values are copied directly, while typed JSON values are detached by
 `Driver.copyJsonValue()` through the driver's configured mapper so nested
 mutable collections and arrays do not alias pending writes. Batch evaluation
@@ -587,22 +643,20 @@ preserves that guarantee:
 
 - the framework constructs a fresh ordered `RuleBatch` for each registered
   rule;
-- contexts within one batch are distinct per item; and
-- every context in one invocation shares the same operation-scoped privacy or
-  validation read client, and privacy contexts share the exact captured viewer
-  value; and
+- item snapshots within one batch are distinct per item;
+- one `PrivacyRuleContext` or `ValidationRuleContext` carries the phase-shared
+  read client, and privacy context carries the exact captured viewer value; and
 - application mutation of one rule's snapshot cannot change persistence or a
   later rule's inputs.
 
-Update edge-change contexts also rebuild every `Set` as a detached,
+Update edge-change items also rebuild every `Set` as a detached,
 JVM-unmodifiable value. Hook-facing pending-edge sets are unmodifiable as well;
 Kotlin's read-only `Set` interface alone is insufficient because a JVM caller
 can otherwise cast an ordinary `toSet()` result back to `MutableSet`.
 
-The non-empty guarantee means an optimized rule may use `batch.first()` to
-obtain those shared values, as in the privacy example above. It must still read
-each item's entity, candidate, patch, or edge changes from that item's own
-context.
+Rules read shared privacy/client state directly from their rule context. They
+read each entity, candidate, patch, or edge-change value from the corresponding
+generated item. No callback needs `batch.first()` to recover shared metadata.
 
 Hooks are intentionally different. Before-hooks mutate the pending builders,
 and later hooks see the effects of earlier hooks according to the documented
@@ -632,11 +686,12 @@ hooks, interceptors, and database constraints still run.
 For a list of input items, the engine evaluates:
 
 ```text
+privacyRuleContext = one phase-shared PrivacyRuleContext
 active = every item, in encounter order
 
 for each registered rule, in registration order:
     batch = fresh RuleBatch for active items
-    decisions = rule.runBatch(batch)
+    decisions = rule.runBatch(privacyRuleContext, batch)
     require decisions originated from batch
 
     for each active item and corresponding decision:
@@ -685,9 +740,10 @@ Batch evaluation does not turn privacy into filtering. Explicit
 Every reached validation rule runs for every applicable item:
 
 ```text
+validationRuleContext = one phase-shared ValidationRuleContext
 for each registered validation rule, in registration order:
     batch = fresh RuleBatch for every item
-    decisions = rule.validateBatch(batch)
+    decisions = rule.validateBatch(validationRuleContext, batch)
     require decisions originated from batch
     append every Invalid decision to that item's violations
 ```
@@ -1189,7 +1245,7 @@ Implementation added an entry to `docs/breaking-changes/index.md` covering:
    retain per-row delete calls.
 10. Applications implementing optimized rules use the new batch interfaces and
     must create their batch-bound result through the supplied `RuleBatch`'s
-    `decide` or `decideIndexed` method. Batch hooks remain `List`-based.
+    `decideEach` or `decideEachIndexed` method. Batch hooks remain `List`-based.
 11. Custom `Driver` implementations must implement the new abstract
    `registeredIdColumn(table)` metadata lookup. They may inherit the correct but
    per-ID `deleteManyByIds()` default or override it with a set-based returning
@@ -1198,12 +1254,21 @@ Implementation added an entry to `docs/breaking-changes/index.md` covering:
     `copyJsonValue(table, column, value)` snapshot operation. The non-null
     default fails explicitly; a valid implementation returns a detached value
     through the same mapper configuration used for storage.
+13. Scalar privacy and validation callbacks now receive two arguments:
+    phase-shared `PrivacyRuleContext` / `ValidationRuleContext` and one
+    generated item. Shared clients and privacy state no longer appear on every
+    generated item.
+14. Batch privacy and validation callbacks receive the same shared context plus
+    `RuleBatch<Item>`. Rule interfaces therefore gain separate `Client` and
+    `Item` type parameters, generated `*Item` types replace the former combined
+    callback contexts, and `decide` / `decideIndexed` are replaced by
+    `decideEach` / `decideEachIndexed` without aliases.
 
-Ordinary scalar rule classes remain source-compatible because their interfaces
-gain default batch implementations. Existing scalar policy and hook DSL syntax
-remains source-compatible and is pinned by compile tests. This compatibility
-statement does not apply to `Driver` implementations because
-`registeredIdColumn` is abstract.
+Hook DSL syntax remains source-compatible. Privacy and validation rule bodies
+require the callback migration above; EntKt is pre-stable, so the old callback
+signatures and decision-builder names are removed rather than deprecated. The
+driver compatibility statement likewise does not apply to custom Driver
+implementations because `registeredIdColumn` is abstract.
 
 Applications that rely on exact row-major bulk-hook interleaving should replace
 the bulk call with an explicit scalar loop inside `withTransaction`.
@@ -1297,14 +1362,16 @@ Set-based queries are the intended optimization.
 ## Implementation Outline
 
 1. Add the batch privacy, validation, and hook contracts plus explicit batch
-   factories to runtime. Privacy and validation use sealed `RuleBatch` and
-   `RuleDecisions` provenance types; hooks remain `List`-based. A public copied
-   `RuleBatch.from` factory and read-only decision list make rules directly
-   testable without exposing arbitrary result construction.
+   factories to runtime. Privacy and validation use immutable shared rule
+   contexts alongside sealed `RuleBatch` and `RuleDecisions` provenance types;
+   hooks remain `List`-based. A public copied `RuleBatch.from` factory and
+   read-only decision list support direct rule tests without exposing arbitrary
+   result construction.
 2. Add shared evaluators that verify result provenance and retain original item
    indexes internally.
-3. Change generated privacy and validation registries to store batch-capable
-   rule types while preserving scalar registration overloads.
+3. Generate item-only privacy and validation types, and change registries to
+   store batch-capable rules parameterized by the shared client and item type
+   while preserving scalar registration overloads.
 4. Change generated hook registries to store ordered batch-capable hooks while
    preserving ordinary hook lambdas.
 5. Extend each generated internal read surface with a correlated batch LOAD
@@ -1329,11 +1396,12 @@ Set-based queries are the intended optimization.
 
 ### API and code generation
 
-- Existing scalar `PrivacyRule` and `ValidationRule` implementations compile
-  unchanged.
+- Scalar privacy and validation callbacks receive `context, item`; batch
+  callbacks receive `context, batch`, and both forms use the same generated
+  item type.
 - Existing scalar hook trailing lambdas compile unchanged.
-- Existing scalar privacy and validation vararg calls, including spread arrays,
-  compile unchanged.
+- Scalar privacy and validation registration names and vararg/spread behavior
+  remain unchanged after migrating callback signatures.
 - Explicit batch factories resolve to the single-rule batch overload rather
   than a scalar rule.
 - Batch rules register under the existing `load`, `create`, `update`, and
@@ -1341,7 +1409,7 @@ Set-based queries are the intended optimization.
 - Batch hooks register under the existing hook names.
 - Scalar and batch registrations share one stable registration order.
 - Generated operation-specific scalar and batch aliases have collision-free
-  names.
+  names, including every new generated `*Item` declaration.
 
 ### Shared contracts
 
@@ -1350,15 +1418,15 @@ Set-based queries are the intended optimization.
 - Batch callbacks are not invoked for empty input.
 - Batch rules receive singleton `RuleBatch` values for scalar operations;
   batch hooks receive singleton lists.
-- Rule decisions can be constructed only through the supplied batch's `decide`
-  and `decideIndexed` methods.
+- Rule decisions can be constructed only through the supplied batch's
+  `decideEach` and `decideEachIndexed` methods.
 - Decisions created by a different batch produce
   `EntBatchRuleContractException`.
 - A Java or unchecked rule returning null instead of `RuleDecisions` produces
   the same exception.
 - A null or otherwise invalid decision element produces the same contract
   exception with its positional index.
-- ID-less CREATE contexts and duplicate or equal inputs retain distinct,
+- ID-less CREATE items and duplicate or equal inputs retain distinct,
   original-order correlation.
 - Every registered privacy or validation rule receives fresh defensive
   snapshots.

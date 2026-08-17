@@ -23,8 +23,11 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 }
 
 class RequireBodyForPublished : PostCreateValidationRule {
-    override fun validate(ctx: PostCreateValidationContext): ValidationDecision =
-        if (ctx.candidate.published && ctx.candidate.body.isNullOrBlank()) {
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: PostCreateValidationItem,
+    ): ValidationDecision =
+        if (item.candidate.published && item.candidate.body.isNullOrBlank()) {
             ValidationDecision.Invalid("published posts must have a body", field = "body")
         } else {
             ValidationDecision.Valid
@@ -32,8 +35,11 @@ class RequireBodyForPublished : PostCreateValidationRule {
 }
 
 class CannotDeletePublishedPost : PostDeleteValidationRule {
-    override fun validate(ctx: PostDeleteValidationContext): ValidationDecision =
-        if (ctx.entity.published) {
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: PostDeleteValidationItem,
+    ): ValidationDecision =
+        if (item.entity.published) {
             ValidationDecision.Invalid("cannot delete a published post")
         } else {
             ValidationDecision.Valid
@@ -73,21 +79,33 @@ identifier for i18n or programmatic error handling. Both are optional.
 
 ### ValidationRule
 
-A rule is a `fun interface` that takes a typed context and returns a
-decision. It automatically adapts to batch evaluation by visiting contexts
-serially in encounter order:
+A rule receives phase-shared context separately from one generated item.
+It automatically adapts to batch evaluation by visiting items serially in
+encounter order:
 
 ```kotlin
-fun interface ValidationRule<in C> : BatchValidationRule<C> {
-    fun validate(ctx: C): ValidationDecision
+class ValidationRuleContext<out Client>(
+    val client: Client,
+)
 
-    override fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision> =
-        batch.decide { validate(it) }
+fun interface ValidationRule<in Client, in Item> :
+    BatchValidationRule<Client, Item> {
+
+    fun validate(
+        context: ValidationRuleContext<Client>,
+        item: Item,
+    ): ValidationDecision
+
+    override fun validateBatch(
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<ValidationDecision> =
+        batch.decideEach { validate(context, it) }
 }
 ```
 
-Each operation gets its own context type, so rules are type-safe for
-the operation they guard.
+Each operation gets its own item type, shared by scalar and batch validators,
+so rules are type-safe for the operation they guard.
 
 ### BatchValidationRule
 
@@ -99,27 +117,34 @@ import entkt.runtime.validation.batchValidationRule
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 
-interface BatchValidationRule<in C> {
-    fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision>
+interface BatchValidationRule<in Client, in Item> {
+    fun validateBatch(
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<ValidationDecision>
 }
 
-fun <C> batchValidationRule(
-    block: (RuleBatch<C>) -> RuleDecisions<ValidationDecision>,
-): BatchValidationRule<C>
+fun <Client, Item> batchValidationRule(
+    block: (
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ) -> RuleDecisions<ValidationDecision>,
+): BatchValidationRule<Client, Item>
 
-val uniqueSlugs = batchValidationRule<PostCreateValidationContext> { batch ->
-    val existingSlugs = loadExistingSlugs(
-        batch.first().client,
-        batch.map { it.candidate.slug },
-    )
-    batch.decide { ctx ->
-        if (ctx.candidate.slug in existingSlugs) {
-            ValidationDecision.Invalid("slug already taken", field = "slug")
-        } else {
-            ValidationDecision.Valid
+val uniqueSlugs: PostCreateBatchValidationRule =
+    batchValidationRule { context, batch ->
+        val existingSlugs = loadExistingSlugs(
+            context.client,
+            batch.map { it.candidate.slug },
+        )
+        batch.decideEach { item ->
+            if (item.candidate.slug in existingSlugs) {
+                ValidationDecision.Invalid("slug already taken", field = "slug")
+            } else {
+                ValidationDecision.Valid
+            }
         }
     }
-}
 
 validation {
     create(uniqueSlugs)
@@ -127,20 +152,21 @@ validation {
 ```
 
 `RuleBatch` is an immutable, read-only `List`, so a validator can inspect,
-group, or sort its contexts while preparing a set-based read. It must build its
-result with `batch.decide { ... }` or
-`batch.decideIndexed { index, ctx -> ... }`. Those methods return read-only
+group, or sort its items while preparing a set-based read. It must build its
+result with `batch.decideEach { ... }` or
+`batch.decideEachIndexed { index, item -> ... }`. Those methods return read-only
 `RuleDecisions` tied to that exact batch and invoke the decision block in
 encounter order. This works for ID-less CREATE candidates and preserves
-distinct decisions for duplicate or equal contexts; `decideIndexed` supplies
+distinct decisions for duplicate or equal items; `decideEachIndexed` supplies
 the index within the current callback batch.
 
 This removes the error-prone API that accepted an arbitrary positional list;
 it does not prove that application code computed the semantically correct
-decision. Use the context supplied to the `decide` block rather than consuming
+decision. Use the item supplied to the `decideEach` block rather than consuming
 a separately reordered decision iterator. `RuleDecisions` is readable as a
-`List`, and `RuleBatch.from(contexts)` creates a copied batch for direct unit
-tests. A rule decorator must transform delegated decisions with
+`List`, and `RuleBatch.from(items)` creates a copied batch for direct decision
+tests. A complete generated-rule test must also supply the matching shared
+context and read client. A rule decorator must transform delegated decisions with
 `result.mapDecisions { ... }`; that operation preserves the delegated result's
 batch identity, so a stale cached result remains rejectable. Do not copy a
 delegated decision list back through the current batch. Decisions from a test
@@ -222,28 +248,27 @@ Register multiple batch rules with repeated calls. There are no
 `createBatch`-style methods. There is no `load` validation — validation guards
 writes, not reads.
 
-## Operation Contexts
+## Operation Items
 
-Each operation's rules receive a typed context. Contexts include a
-read-only `EntValidationReadClient` so validators can query the
-database (e.g. uniqueness checks, referential integrity) — and only
-query it. The write surface does not exist on that type, so a
-validator that tries to create, update, or delete does not compile.
+Every validator receives a shared `ValidationRuleContext` containing the
+read-only `EntValidationReadClient`. Generated items contain only values that
+differ per candidate. The write surface does not exist on the shared client,
+so a validator that tries to create, update, or delete does not compile. One
+phase constructs one rule context and passes that exact instance to every
+validator; each validator still receives fresh defensive item snapshots.
 
-### CreateValidationContext
+### CreateValidationItem
 
 ```kotlin
-data class PostCreateValidationContext(
-    val client: EntValidationReadClient,
+data class PostCreateValidationItem(
     val candidate: PostWriteCandidate,
 )
 ```
 
-### UpdateValidationContext
+### UpdateValidationItem
 
 ```kotlin
-data class PostUpdateValidationContext(
-    val client: EntValidationReadClient,
+data class PostUpdateValidationItem(
     val before: Post,                    // current state of the entity (loaded by save())
     val requestedPatch: PostUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: PostUpdatePatch, // after framework update defaults
@@ -261,10 +286,10 @@ should read `candidate`.
 receive — one `EdgeChanges<TargetIdType>` per helper-eligible `throughLink`
 M2M edge, carrying both caller intent (`requestedSet?` / `requestedAdds` /
 `requestedRemoves`) and the computed database delta (`added` / `removed`).
-See [Privacy → UpdatePrivacyContext](06-privacy.md#updateprivacycontext)
+See [Privacy → UpdatePrivacyItem](06-privacy.md#updateprivacyitem)
 for the field semantics. A typical validator pattern: reject `remove` calls
 that name unknown / forbidden target ids by inspecting
-`ctx.edgeChanges.tags.requestedRemoves` — the literal call log surfaces
+`item.edgeChanges.tags.requestedRemoves` — the literal call log surfaces
 the id even when the database effect is a no-op.
 
 By the time validation runs, the post-hook required-not-null check has
@@ -274,35 +299,34 @@ reaching entity validation. Validators can treat
 `FieldPatch.Set(value)` for required fields as having a non-null value
 and `FieldPatch.Unset` as "not in this update".
 
-### DeleteValidationContext
+### DeleteValidationItem
 
 ```kotlin
-data class PostDeleteValidationContext(
-    val client: EntValidationReadClient,
+data class PostDeleteValidationItem(
     val entity: Post,
     val candidate: PostWriteCandidate,
 )
 ```
 
-Contexts do **not** include `PrivacyContext`. Privacy has already been
+Validation rule contexts do **not** include `PrivacyContext`. Privacy has already been
 enforced by the time validators run — validators are viewer-agnostic.
 If a rule cares about who is performing the operation, it belongs in
 privacy, not validation.
 
-The `EntValidationReadClient` in validation contexts is read-only and its
+The `EntValidationReadClient` in `ValidationRuleContext` is read-only and its
 reads bypass LOAD privacy, allowing invariant checks such as uniqueness and
 referential integrity to inspect all relevant rows. Read interceptors still
 apply, and validation performed inside `withTransaction` sees earlier writes
 from the same transaction.
 
-Privacy-rule contexts expose `EntPrivacyReadClient` instead, whose reads use
+`PrivacyRuleContext` exposes `EntPrivacyReadClient` instead, whose reads use
 the caller's privacy context. Both concrete types implement the shared
 `EntReadClient` interface: helpers that work correctly under either posture
 can accept `EntReadClient`. Raw terminals have the same storage-level behavior
 under both postures: they skip LOAD privacy and entity materialization. Helpers
 that rely on privacy-bypassed *materialization* should accept
 `EntValidationReadClient` so they cannot be handed a viewer-scoped reader.
-See [Privacy → Operation Contexts](06-privacy.md#operation-contexts).
+See [Privacy → Operation Items](06-privacy.md#operation-items).
 
 ### WriteCandidate
 
@@ -324,14 +348,14 @@ data class PostWriteCandidate(
 Each validator receives its own snapshot. Generated `bytes()` values are copied
 directly, and typed JSON values are round-tripped through the driver's
 configured JSON mapper, including values inside update patches. Mutating a
-`ByteArray` or a mutable collection nested in JSON from one validator context
+`ByteArray` or a mutable collection nested in JSON from one validation item
 cannot change the pending database write or another validator's input.
 
 ## Evaluation Semantics
 
 All rules for an operation run unconditionally. In a multi-item phase,
-evaluation is rule-major: rule one receives every context in encounter order,
-then rule two receives every context. `Invalid` decisions are retained by
+evaluation is rule-major: rule one receives every item in encounter order,
+then rule two receives every item. `Invalid` decisions are retained by
 original item position and appended in rule registration order. A scalar rule's
 default adapter is invoked once per item; an explicit batch rule is invoked
 once with the list. Rules are not run concurrently.
@@ -425,9 +449,12 @@ of truth; the validator improves the error message.
 
 ```kotlin
 class UniqueSlug : PostCreateValidationRule {
-    override fun validate(ctx: PostCreateValidationContext): ValidationDecision {
-        val exists = ctx.client.posts.query {
-            where(Post.slug eq ctx.candidate.slug)
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: PostCreateValidationItem,
+    ): ValidationDecision {
+        val exists = context.client.posts.query {
+            where(Post.slug eq item.candidate.slug)
         }.rawExists().getOrThrow()
         return if (exists) ValidationDecision.Invalid("slug already taken")
         else ValidationDecision.Valid
@@ -435,8 +462,11 @@ class UniqueSlug : PostCreateValidationRule {
 }
 
 class AuthorExists : PostCreateValidationRule {
-    override fun validate(ctx: PostCreateValidationContext): ValidationDecision {
-        val author = ctx.client.users.findById(ctx.candidate.authorId).getOrThrow()
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: PostCreateValidationItem,
+    ): ValidationDecision {
+        val author = context.client.users.findById(item.candidate.authorId).getOrThrow()
         return if (author == null) ValidationDecision.Invalid("author does not exist")
         else ValidationDecision.Valid
     }
@@ -451,8 +481,11 @@ Index helpers work too — they are query sugar and equally read-only:
 
 ```kotlin
 class UniqueEmail : UserCreateValidationRule {
-    override fun validate(ctx: UserCreateValidationContext): ValidationDecision =
-        if (ctx.client.users.indexes.email(ctx.candidate.email).find().getOrThrow() != null) {
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: UserCreateValidationItem,
+    ): ValidationDecision =
+        if (context.client.users.indexes.email(item.candidate.email).find().getOrThrow() != null) {
             ValidationDecision.Invalid("email already taken", field = "email")
         } else {
             ValidationDecision.Valid
@@ -492,7 +525,7 @@ validation {
     // NOT safe to derive — create uniqueness check would reject
     // unchanged slugs on update. Write an explicit update rule.
     create(UniqueSlugOnCreate())
-    update(UniqueSlugOnUpdate())  // excludes ctx.before.id
+    update(UniqueSlugOnUpdate())  // excludes item.before.id
 }
 ```
 
@@ -518,19 +551,20 @@ For each schema, entkt provides:
 | `{Entity}CreateBatchValidationRule` | Typealias for batch create validation rules |
 | `{Entity}UpdateBatchValidationRule` | Typealias for batch update validation rules |
 | `{Entity}DeleteBatchValidationRule` | Typealias for batch delete validation rules |
-| `{Entity}CreateValidationContext` | Context for create validators |
-| `{Entity}UpdateValidationContext` | Context for update validators |
-| `{Entity}DeleteValidationContext` | Context for delete validators |
+| `ValidationRuleContext<Client>` | Shared validation read client for one evaluation phase |
+| `{Entity}CreateValidationItem` | Per-candidate input for create validators |
+| `{Entity}UpdateValidationItem` | Per-entity input for update validators |
+| `{Entity}DeleteValidationItem` | Per-entity input for delete validators |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
 | `{Entity}ReadRepo` | Read-only repo exposed to validators (`findById`, `query { }`, index helpers) |
-| `EntValidationReadClient` | Read client in validation contexts — privacy-bypassing reads (schema-set-level) |
+| `EntValidationReadClient` | Read client in `ValidationRuleContext` — privacy-bypassing reads (schema-set-level) |
 | `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |
 
 The `{Entity}PolicyScope` gains a `validation { }` method alongside
 the existing `privacy { }` method. The `{Entity}WriteCandidate` is
-shared between privacy and validation contexts.
+shared between privacy and validation items.
 
-Validation contexts expose the read-only `EntValidationReadClient`.
+`ValidationRuleContext` exposes the read-only `EntValidationReadClient`.
 Validators can use its `findById`, `query { ... }`, and indexed
 query helpers, but cannot create, update, or delete entities.
 
@@ -549,8 +583,11 @@ query helpers, but cannot create, update, or delete entities.
 
 ```kotlin
 class StartBeforeEnd : EventCreateValidationRule {
-    override fun validate(ctx: EventCreateValidationContext): ValidationDecision =
-        if (ctx.candidate.startTime >= ctx.candidate.endTime) {
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: EventCreateValidationItem,
+    ): ValidationDecision =
+        if (item.candidate.startTime >= item.candidate.endTime) {
             ValidationDecision.Invalid("start time must be before end time")
         } else {
             ValidationDecision.Valid
@@ -568,9 +605,12 @@ class ValidStatusTransition : OrderUpdateValidationRule {
         Status.SHIPPED to setOf(Status.DELIVERED),
     )
 
-    override fun validate(ctx: OrderUpdateValidationContext): ValidationDecision {
-        val from = ctx.before.status
-        val to = ctx.candidate.status
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: OrderUpdateValidationItem,
+    ): ValidationDecision {
+        val from = item.before.status
+        val to = item.candidate.status
         if (from == to) return ValidationDecision.Valid
         val valid = allowed[from] ?: emptySet()
         return if (to in valid) ValidationDecision.Valid
@@ -583,9 +623,12 @@ class ValidStatusTransition : OrderUpdateValidationRule {
 
 ```kotlin
 class CannotDeleteWithOpenInvoices : UserDeleteValidationRule {
-    override fun validate(ctx: UserDeleteValidationContext): ValidationDecision {
-        val openCount = ctx.client.invoices.query {
-            where(Invoice.userId eq ctx.entity.id and (Invoice.status eq Status.OPEN))
+    override fun validate(
+        context: ValidationRuleContext<EntValidationReadClient>,
+        item: UserDeleteValidationItem,
+    ): ValidationDecision {
+        val openCount = context.client.invoices.query {
+            where(Invoice.userId eq item.entity.id and (Invoice.status eq Status.OPEN))
         }.rawCount().getOrThrow()
         return if (openCount > 0) {
             ValidationDecision.Invalid("user has $openCount open invoice(s)")

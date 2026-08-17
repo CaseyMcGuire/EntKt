@@ -8,26 +8,28 @@ import java.util.Collections
  * validation rule.
  *
  * The container copies its input list; it does not by itself make arbitrary
- * context objects transitively immutable. Generated lifecycle contexts are
+ * item objects transitively immutable. Generated lifecycle items are
  * separately constructed as defensive snapshots. This behaves as a read-only
  * [List] for query preparation. Decisions must be
- * returned through [decide] or [decideIndexed]. Those methods invoke the
+ * returned through [decideEach] or [decideEachIndexed]. Those methods invoke the
  * decision block in this batch's encounter order and bind the resulting value
  * to this batch. The rule remains responsible for returning the right decision
- * for the context supplied to its block.
+ * for the item supplied to its block.
  */
-sealed interface RuleBatch<out C> : List<C> {
-    /** Build one correlated decision for every context in original order. */
-    fun <D> decide(block: (C) -> D): RuleDecisions<D>
+sealed interface RuleBatch<out Item> : List<Item> {
+    /** Build one correlated decision for every item in original order. */
+    fun <Decision> decideEach(block: (Item) -> Decision): RuleDecisions<Decision>
 
     /**
-     * Build one correlated decision for every context in original order while
+     * Build one correlated decision for every item in original order while
      * exposing its stable index within this callback invocation. Privacy rules
      * later in a chain can receive a filtered batch, so this is not an index
      * into the original logical operation. The index supports duplicate or
-     * otherwise equal contexts without making an entity ID the correlation key.
+     * otherwise equal items without making an entity ID the correlation key.
      */
-    fun <D> decideIndexed(block: (index: Int, context: C) -> D): RuleDecisions<D>
+    fun <Decision> decideEachIndexed(
+        block: (index: Int, item: Item) -> Decision,
+    ): RuleDecisions<Decision>
 
     companion object {
         /**
@@ -38,8 +40,8 @@ sealed interface RuleBatch<out C> : List<C> {
          * from this batch are rejected if returned for a different batch.
          */
         @JvmStatic
-        fun <C> from(contexts: List<C>): RuleBatch<C> =
-            RuleBatchImplementations.create(contexts)
+        fun <Item> from(items: List<Item>): RuleBatch<Item> =
+            RuleBatchImplementations.create(items)
     }
 }
 
@@ -49,8 +51,8 @@ sealed interface RuleBatch<out C> : List<C> {
  * Callers may inspect and compare decisions, which keeps batch rules directly
  * testable and allows decorators to transform a delegated result through the
  * provenance-preserving [mapDecisions] operation. Rule implementations cannot
- * construct this type from an arbitrary list; use [RuleBatch.decide] or
- * [RuleBatch.decideIndexed].
+ * construct this type from an arbitrary list; use [RuleBatch.decideEach] or
+ * [RuleBatch.decideEachIndexed].
  */
 sealed interface RuleDecisions<out D> : List<D> {
     /**
@@ -63,15 +65,15 @@ sealed interface RuleDecisions<out D> : List<D> {
 
 /** JVM-hidden implementations and their provenance check. */
 private object RuleBatchImplementations {
-    fun <C> create(contexts: List<C>): RuleBatch<C> = DefaultRuleBatch(contexts)
+    fun <Item> create(items: List<Item>): RuleBatch<Item> = DefaultRuleBatch(items)
 
-    fun <C, D> decisions(
-        batch: RuleBatch<C>,
+    fun <Item, Decision> decisions(
+        batch: RuleBatch<Item>,
         lifecycle: String,
-        result: RuleDecisions<D>,
-    ): List<D> {
-        val concreteBatch = batch as DefaultRuleBatch<C>
-        val concrete = result as DefaultRuleDecisions<D>
+        result: RuleDecisions<Decision>,
+    ): List<Decision> {
+        val concreteBatch = batch as DefaultRuleBatch<Item>
+        val concrete = result as DefaultRuleDecisions<Decision>
         if (concrete.batchIdentity !== concreteBatch.batchIdentity) {
             throw EntBatchRuleContractException(
                 lifecycle = lifecycle,
@@ -83,28 +85,32 @@ private object RuleBatchImplementations {
         return concrete
     }
 
-    private class DefaultRuleBatch<out C>(
-        contexts: List<C>,
-    ) : AbstractList<C>(), RuleBatch<C> {
-        private val contexts: List<C> =
-            Collections.unmodifiableList(ArrayList(contexts))
+    private class DefaultRuleBatch<out Item>(
+        items: List<Item>,
+    ) : AbstractList<Item>(), RuleBatch<Item> {
+        private val items: List<Item> =
+            Collections.unmodifiableList(ArrayList(items))
         val batchIdentity: Any = Any()
 
         override val size: Int
-            get() = contexts.size
+            get() = items.size
 
-        override fun get(index: Int): C = contexts[index]
+        override fun get(index: Int): Item = items[index]
 
-        override fun <D> decide(block: (C) -> D): RuleDecisions<D> =
+        override fun <Decision> decideEach(
+            block: (Item) -> Decision,
+        ): RuleDecisions<Decision> =
             DefaultRuleDecisions(
                 batchIdentity = batchIdentity,
-                values = contexts.map(block),
+                values = items.map(block),
             )
 
-        override fun <D> decideIndexed(block: (index: Int, context: C) -> D): RuleDecisions<D> =
+        override fun <Decision> decideEachIndexed(
+            block: (index: Int, item: Item) -> Decision,
+        ): RuleDecisions<Decision> =
             DefaultRuleDecisions(
                 batchIdentity = batchIdentity,
-                values = contexts.mapIndexed(block),
+                values = items.mapIndexed(block),
             )
     }
 
@@ -130,14 +136,14 @@ private object RuleBatchImplementations {
 
 /** Create the private implementation supplied to one framework callback. */
 @JvmSynthetic
-internal fun <C> ruleBatchForInternalUse(contexts: List<C>): RuleBatch<C> =
-    RuleBatch.from(contexts)
+internal fun <Item> ruleBatchForInternalUse(items: List<Item>): RuleBatch<Item> =
+    RuleBatch.from(items)
 
 /** Extract and validate a batch-bound result at the framework callback boundary. */
 @JvmSynthetic
-internal fun <C, D> RuleBatch<C>.decisionsForInternalUse(
+internal fun <Item, Decision> RuleBatch<Item>.decisionsForInternalUse(
     lifecycle: String,
-    result: RuleDecisions<D>,
-): List<D> {
+    result: RuleDecisions<Decision>,
+): List<Decision> {
     return RuleBatchImplementations.decisions(this, lifecycle, result)
 }

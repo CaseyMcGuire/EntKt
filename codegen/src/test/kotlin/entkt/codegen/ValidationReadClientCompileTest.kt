@@ -61,7 +61,7 @@ class ValidationReadClientCompileTest {
         import entkt.runtime.validation.ValidationDecision
         import java.util.UUID
 
-        val rule = CarCreateValidationRule { ctx ->
+        val rule = CarCreateValidationRule { ctx, _ ->
             $body
             ValidationDecision.Valid
         }

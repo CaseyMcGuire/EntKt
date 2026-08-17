@@ -4,8 +4,11 @@ import entkt.runtime.hook.BatchHook
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.batchHook
 import entkt.runtime.privacy.BatchPrivacyRule
+import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRule
+import entkt.runtime.privacy.PrivacyRuleContext
+import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
@@ -15,14 +18,22 @@ import entkt.runtime.result.EntMutationException
 import entkt.runtime.validation.BatchValidationRule
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.ValidationRule
+import entkt.runtime.validation.ValidationRuleContext
 import entkt.runtime.validation.batchValidationRule
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 
 class BatchLifecycleContractsTest {
+
+    private val privacyContext = PrivacyRuleContext(
+        privacy = PrivacyContext(Viewer.Anonymous),
+        client = "privacy-client",
+    )
+    private val validationContext = ValidationRuleContext(client = "validation-client")
 
     private fun <C, D> decisionsFor(
         contexts: List<C>,
@@ -31,19 +42,25 @@ class BatchLifecycleContractsTest {
 
     private class RecordingPrivacyRule(
         private val visited: MutableList<Int>,
-    ) : PrivacyRule<Int> {
-        override fun run(ctx: Int): PrivacyDecision {
-            visited += ctx
-            return if (ctx % 2 == 0) PrivacyDecision.Allow else PrivacyDecision.Continue
+    ) : PrivacyRule<String, Int> {
+        override fun run(
+            context: PrivacyRuleContext<String>,
+            item: Int,
+        ): PrivacyDecision {
+            visited += item
+            return if (item % 2 == 0) PrivacyDecision.Allow else PrivacyDecision.Continue
         }
     }
 
     private class RecordingValidationRule(
         private val visited: MutableList<String>,
-    ) : ValidationRule<String> {
-        override fun validate(ctx: String): ValidationDecision {
-            visited += ctx
-            return if (ctx.isBlank()) {
+    ) : ValidationRule<String, String> {
+        override fun validate(
+            context: ValidationRuleContext<String>,
+            item: String,
+        ): ValidationDecision {
+            visited += item
+            return if (item.isBlank()) {
                 ValidationDecision.Invalid("blank")
             } else {
                 ValidationDecision.Valid
@@ -55,7 +72,7 @@ class BatchLifecycleContractsTest {
     fun `existing scalar privacy rule classes inherit ordered batch adaptation`() {
         val visited = mutableListOf<Int>()
         val scalar = RecordingPrivacyRule(visited)
-        val batch: BatchPrivacyRule<Int> = scalar
+        val batch: BatchPrivacyRule<String, Int> = scalar
 
         assertEquals(
             listOf(
@@ -63,7 +80,7 @@ class BatchLifecycleContractsTest {
                 PrivacyDecision.Allow,
                 PrivacyDecision.Continue,
             ),
-            decisionsFor(listOf(1, 2, 3), batch::runBatch),
+            decisionsFor(listOf(1, 2, 3)) { batch.runBatch(privacyContext, it) },
         )
         assertEquals(listOf(1, 2, 3), visited)
     }
@@ -71,12 +88,13 @@ class BatchLifecycleContractsTest {
     @Test
     fun `batch privacy factory receives the complete ordered list once`() {
         var calls = 0
-        val rule = batchPrivacyRule<Int> { contexts ->
+        val rule = batchPrivacyRule<String, Int> { context, batch ->
             calls++
-            contexts.decide { PrivacyDecision.Deny("denied $it") }
+            assertEquals("privacy-client", context.client)
+            batch.decideEach { PrivacyDecision.Deny("denied $it") }
         }
 
-        val decisions = decisionsFor(listOf(3, 1, 2), rule::runBatch)
+        val decisions = decisionsFor(listOf(3, 1, 2)) { rule.runBatch(privacyContext, it) }
 
         assertEquals(1, calls)
         assertEquals(
@@ -86,19 +104,21 @@ class BatchLifecycleContractsTest {
     }
 
     @Test
-    fun `scalar contracts support list-valued contexts without JVM signature collisions`() {
-        val privacy = PrivacyRule<List<Int>> { PrivacyDecision.Deny(it.joinToString()) }
-        val validation = ValidationRule<List<Int>> { ValidationDecision.Valid }
+    fun `scalar contracts support list-valued items without JVM signature collisions`() {
+        val privacy = PrivacyRule<String, List<Int>> { _, item ->
+            PrivacyDecision.Deny(item.joinToString())
+        }
+        val validation = ValidationRule<String, List<Int>> { _, _ -> ValidationDecision.Valid }
         val visited = mutableListOf<List<Int>>()
         val hook = Hook<List<Int>> { visited += it }
 
         assertEquals(
             listOf(PrivacyDecision.Deny("1, 2")),
-            decisionsFor(listOf(listOf(1, 2)), privacy::runBatch),
+            decisionsFor(listOf(listOf(1, 2))) { privacy.runBatch(privacyContext, it) },
         )
         assertEquals(
             listOf(ValidationDecision.Valid),
-            decisionsFor(listOf(listOf(3, 4)), validation::validateBatch),
+            decisionsFor(listOf(listOf(3, 4))) { validation.validateBatch(validationContext, it) },
         )
         hook.runBatch(listOf(listOf(5, 6)))
         assertEquals(listOf(listOf(5, 6)), visited)
@@ -106,26 +126,28 @@ class BatchLifecycleContractsTest {
 
     @Test
     fun `batch contracts preserve contravariant assignment`() {
-        val privacyForAny = batchPrivacyRule<Any?> { contexts ->
-            contexts.decide { PrivacyDecision.Allow }
+        val privacyForAny = batchPrivacyRule<Any?, Any?> { _, batch ->
+            batch.decideEach { PrivacyDecision.Allow }
         }
-        val validationForAny = batchValidationRule<Any?> { contexts ->
-            contexts.decide { ValidationDecision.Valid }
+        val validationForAny = batchValidationRule<Any?, Any?> { _, batch ->
+            batch.decideEach { ValidationDecision.Valid }
         }
         val hookValues = mutableListOf<Any?>()
         val hookForAny = batchHook<Any?> { hookValues.addAll(it) }
 
-        val privacyForStrings: BatchPrivacyRule<String> = privacyForAny
-        val validationForStrings: BatchValidationRule<String> = validationForAny
+        val privacyForStrings: BatchPrivacyRule<String, String> = privacyForAny
+        val validationForStrings: BatchValidationRule<String, String> = validationForAny
         val hookForStrings: BatchHook<String> = hookForAny
 
         assertEquals(
             listOf(PrivacyDecision.Allow),
-            decisionsFor(listOf("value"), privacyForStrings::runBatch),
+            decisionsFor(listOf("value")) { privacyForStrings.runBatch(privacyContext, it) },
         )
         assertEquals(
             listOf(ValidationDecision.Valid),
-            decisionsFor(listOf("value"), validationForStrings::validateBatch),
+            decisionsFor(listOf("value")) {
+                validationForStrings.validateBatch(validationContext, it)
+            },
         )
         hookForStrings.runBatch(listOf("value"))
         assertEquals(listOf<Any?>("value"), hookValues)
@@ -135,11 +157,11 @@ class BatchLifecycleContractsTest {
     fun `existing scalar validation rule classes inherit ordered batch adaptation`() {
         val visited = mutableListOf<String>()
         val scalar = RecordingValidationRule(visited)
-        val batch: BatchValidationRule<String> = scalar
+        val batch: BatchValidationRule<String, String> = scalar
 
         assertEquals(
             listOf(ValidationDecision.Valid, ValidationDecision.Invalid("blank")),
-            decisionsFor(listOf("value", ""), batch::validateBatch),
+            decisionsFor(listOf("value", "")) { batch.validateBatch(validationContext, it) },
         )
         assertEquals(listOf("value", ""), visited)
     }
@@ -147,16 +169,42 @@ class BatchLifecycleContractsTest {
     @Test
     fun `batch validation factory receives the complete ordered list once`() {
         var calls = 0
-        val rule = batchValidationRule<Int> { contexts ->
+        val rule = batchValidationRule<String, Int> { context, batch ->
             calls++
-            contexts.decide { ValidationDecision.Valid }
+            assertEquals("validation-client", context.client)
+            batch.decideEach { ValidationDecision.Valid }
         }
 
         assertEquals(
             listOf(ValidationDecision.Valid, ValidationDecision.Valid),
-            decisionsFor(listOf(8, 5), rule::validateBatch),
+            decisionsFor(listOf(8, 5)) { rule.validateBatch(validationContext, it) },
         )
         assertEquals(1, calls)
+    }
+
+    @Test
+    fun `batch rules can be tested directly with an empty item batch`() {
+        var seenPrivacyContext: PrivacyRuleContext<String>? = null
+        val privacy = batchPrivacyRule<String, Int> { context, batch ->
+            seenPrivacyContext = context
+            batch.decideEach { PrivacyDecision.Allow }
+        }
+        var seenValidationContext: ValidationRuleContext<String>? = null
+        val validation = batchValidationRule<String, Int> { context, batch ->
+            seenValidationContext = context
+            batch.decideEach { ValidationDecision.Valid }
+        }
+
+        assertEquals(
+            emptyList(),
+            decisionsFor(emptyList<Int>()) { privacy.runBatch(privacyContext, it) },
+        )
+        assertEquals(
+            emptyList(),
+            decisionsFor(emptyList<Int>()) { validation.validateBatch(validationContext, it) },
+        )
+        assertSame(privacyContext, seenPrivacyContext)
+        assertSame(validationContext, seenValidationContext)
     }
 
     @Test
@@ -165,7 +213,10 @@ class BatchLifecycleContractsTest {
         val batch = RuleBatch.from(contexts)
         contexts.clear()
 
-        val decisions = BatchLifecycleJavaCompatibility.PRIVACY_BATCH_CLASS.runBatch(batch)
+        val decisions = BatchLifecycleJavaCompatibility.PRIVACY_BATCH_CLASS.runBatch(
+            BatchLifecycleJavaCompatibility.PRIVACY_CONTEXT,
+            batch,
+        )
         val decorated = decisions.mapDecisions { decision ->
             if (decision == PrivacyDecision.Allow) PrivacyDecision.Continue else decision
         }
@@ -192,12 +243,14 @@ class BatchLifecycleContractsTest {
         assertEquals(
             listOf<PrivacyDecision>(PrivacyDecision.Allow),
             BatchLifecycleJavaCompatibility.PRIVACY_BATCH_CLASS.runBatch(
+                BatchLifecycleJavaCompatibility.PRIVACY_CONTEXT,
                 RuleBatch.from(listOf("value")),
             ),
         )
         assertEquals(
             listOf<ValidationDecision>(ValidationDecision.Valid),
             BatchLifecycleJavaCompatibility.VALIDATION_BATCH_CLASS.validateBatch(
+                BatchLifecycleJavaCompatibility.VALIDATION_CONTEXT,
                 RuleBatch.from(listOf("value")),
             ),
         )

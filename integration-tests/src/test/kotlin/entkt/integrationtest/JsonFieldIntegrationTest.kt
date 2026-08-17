@@ -126,37 +126,37 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
                     create(
-                        ArticleCreatePrivacyRule { context ->
+                        ArticleCreatePrivacyRule { _, item ->
                             @Suppress("UNCHECKED_CAST")
-                            (context.candidate.metadata!!.tags as MutableList<String>) += "privacy mutation"
+                            (item.candidate.metadata!!.tags as MutableList<String>) += "privacy mutation"
                             PrivacyDecision.Continue
                         },
-                        ArticleCreatePrivacyRule { context ->
-                            seenByPrivacy += context.candidate.metadata!!.tags.toList()
+                        ArticleCreatePrivacyRule { _, item ->
+                            seenByPrivacy += item.candidate.metadata!!.tags.toList()
                             PrivacyDecision.Allow
                         },
                     )
                     load(
-                        ArticleLoadPrivacyRule { context ->
+                        ArticleLoadPrivacyRule { _, item ->
                             @Suppress("UNCHECKED_CAST")
-                            (context.entity.metadata!!.tags as MutableList<String>) += "load mutation"
+                            (item.entity.metadata!!.tags as MutableList<String>) += "load mutation"
                             PrivacyDecision.Continue
                         },
-                        ArticleLoadPrivacyRule { context ->
-                            seenByLoad += context.entity.metadata!!.tags.toList()
+                        ArticleLoadPrivacyRule { _, item ->
+                            seenByLoad += item.entity.metadata!!.tags.toList()
                             PrivacyDecision.Allow
                         },
                     )
                 }
                 validation {
                     create(
-                        ArticleCreateValidationRule { context ->
+                        ArticleCreateValidationRule { _, item ->
                             @Suppress("UNCHECKED_CAST")
-                            (context.candidate.metadata!!.tags as MutableList<String>) += "validation mutation"
+                            (item.candidate.metadata!!.tags as MutableList<String>) += "validation mutation"
                             ValidationDecision.Valid
                         },
-                        ArticleCreateValidationRule { context ->
-                            seenByValidation += context.candidate.metadata!!.tags.toList()
+                        ArticleCreateValidationRule { _, item ->
+                            seenByValidation += item.candidate.metadata!!.tags.toList()
                             ValidationDecision.Valid
                         },
                     )
@@ -208,16 +208,16 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
                     create(
-                        ArticleCreatePrivacyRule {
+                        ArticleCreatePrivacyRule { _, _ ->
                             callerTags += "captured alias mutation"
                             PrivacyDecision.Continue
                         },
-                        ArticleCreatePrivacyRule { context ->
-                            seenCandidate = context.candidate.metadata!!.tags.toList()
+                        ArticleCreatePrivacyRule { _, item ->
+                            seenCandidate = item.candidate.metadata!!.tags.toList()
                             PrivacyDecision.Allow
                         },
                     )
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
                 }
             }
         }
@@ -262,16 +262,16 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
                     update(
-                        ArticleUpdatePrivacyRule {
+                        ArticleUpdatePrivacyRule { _, _ ->
                             replacementTags += "captured alias mutation"
                             PrivacyDecision.Continue
                         },
-                        ArticleUpdatePrivacyRule { context ->
-                            ruleCandidateSeen = context.candidate.metadata!!.tags.toList()
+                        ArticleUpdatePrivacyRule { _, item ->
+                            ruleCandidateSeen = item.candidate.metadata!!.tags.toList()
                             PrivacyDecision.Allow
                         },
                     )
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
                 }
             }
         }

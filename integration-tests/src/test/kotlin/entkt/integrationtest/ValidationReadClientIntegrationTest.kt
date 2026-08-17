@@ -42,16 +42,16 @@ import kotlin.test.assertTrue
  * client's bypass posture and answers as `ReadResult` like every read
  * terminal.
  */
-private val UniqueEmailViaQuery = UserCreateValidationRule { ctx ->
-    val client: EntValidationReadClient = ctx.client
-    val taken = client.users.query { where(User.email.eq(ctx.candidate.email)) }.rawExists().getOrThrow()
+private val UniqueEmailViaQuery = UserCreateValidationRule { context, item ->
+    val client: EntValidationReadClient = context.client
+    val taken = client.users.query { where(User.email.eq(item.candidate.email)) }.rawExists().getOrThrow()
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
     else ValidationDecision.Valid
 }
 
 /** Same invariant through the staged index helpers (unique `find()` terminal). */
-private val UniqueEmailViaIndex = UserCreateValidationRule { ctx ->
-    if (ctx.client.users.indexes.email(ctx.candidate.email).find().getOrThrow() != null) {
+private val UniqueEmailViaIndex = UserCreateValidationRule { context, item ->
+    if (context.client.users.indexes.email(item.candidate.email).find().getOrThrow() != null) {
         ValidationDecision.Invalid("email already taken", field = "email")
     } else {
         ValidationDecision.Valid
@@ -59,8 +59,8 @@ private val UniqueEmailViaIndex = UserCreateValidationRule { ctx ->
 }
 
 /** Existence check via findById on a *different* entity's repo. */
-private val AuthorMustExist = ArticleCreateValidationRule { ctx ->
-    if (ctx.client.users.findById(ctx.candidate.authorId).getOrThrow() == null) {
+private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
+    if (context.client.users.findById(item.candidate.authorId).getOrThrow() == null) {
         ValidationDecision.Invalid("author does not exist", field = "authorId")
     } else {
         ValidationDecision.Valid
@@ -73,12 +73,12 @@ private val AuthorMustExist = ArticleCreateValidationRule { ctx ->
  * fixed bypass context, so author rows LOAD privacy hides from the
  * caller are still visible to the invariant check.
  */
-private val AuthorReachableViaEdges = ArticleCreateValidationRule { ctx ->
-    val prior = ctx.client.articles.query {
-        where(Article.authorId eq ctx.candidate.authorId)
+private val AuthorReachableViaEdges = ArticleCreateValidationRule { context, item ->
+    val prior = context.client.articles.query {
+        where(Article.authorId eq item.candidate.authorId)
         withAuthor()
     }.all().getOrThrow()
-    val traversed = ctx.client.articles.query { where(Article.authorId eq ctx.candidate.authorId) }
+    val traversed = context.client.articles.query { where(Article.authorId eq item.candidate.authorId) }
         .queryAuthor().all().getOrThrow()
     if (prior.all { it.edges.author.requireLoaded() != null } && (prior.isEmpty() || traversed.isNotEmpty())) {
         ValidationDecision.Valid
@@ -89,10 +89,10 @@ private val AuthorReachableViaEdges = ArticleCreateValidationRule { ctx ->
 
 // ---- Privacy rules ----
 
-private val AllowAllUserLoads = UserLoadPrivacyRule { PrivacyDecision.Allow }
-private val DenyAllUserLoads = UserLoadPrivacyRule { PrivacyDecision.Deny("users are locked down") }
-private val AllowAllArticleLoads = ArticleLoadPrivacyRule { PrivacyDecision.Allow }
-private val AllowAllArticleCreates = ArticleCreatePrivacyRule { PrivacyDecision.Allow }
+private val AllowAllUserLoads = UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
+private val DenyAllUserLoads = UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("users are locked down") }
+private val AllowAllArticleLoads = ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
+private val AllowAllArticleCreates = ArticleCreatePrivacyRule { _, _ -> PrivacyDecision.Allow }
 
 // ---- Policies ----
 

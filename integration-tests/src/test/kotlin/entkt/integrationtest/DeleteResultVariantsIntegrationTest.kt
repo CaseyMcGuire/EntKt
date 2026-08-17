@@ -44,22 +44,22 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
     private val denyDelete = object : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
             privacy {
-                load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
-                delete(ArticleDeletePrivacyRule { PrivacyDecision.Deny("delete denied") })
+                load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
+                delete(ArticleDeletePrivacyRule { _, _ -> PrivacyDecision.Deny("delete denied") })
             }
         }
     }
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
@@ -277,8 +277,8 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val denySecond = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
-                    delete(ArticleDeletePrivacyRule {
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
+                    delete(ArticleDeletePrivacyRule { _, _ ->
                         if (deleteCalls++ == 0) PrivacyDecision.Allow
                         else PrivacyDecision.Deny("second candidate blocked")
                     })

@@ -12,18 +12,18 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
         privacy {
             load(
                 // Users can see their own profile
-                PrivacyRule { ctx ->
-                    val v = ctx.privacy.userOrNull()
+                PrivacyRule { context, item ->
+                    val v = context.privacy.userOrNull()
                         ?: return@PrivacyRule PrivacyDecision.Continue
-                    if (v.id == ctx.entity.id) PrivacyDecision.Allow
+                    if (v.id == item.entity.id) PrivacyDecision.Allow
                     else PrivacyDecision.Continue
                 },
             )
             create(
-                PrivacyRule { ctx ->
+                PrivacyRule { context, _ ->
                     // Privacy is fail-closed, so authenticated callers must be
                     // explicitly allowed — a fallthrough Continue would deny.
-                    if (ctx.privacy.viewer is Viewer.Anonymous)
+                    if (context.privacy.viewer is Viewer.Anonymous)
                         PrivacyDecision.Deny("only system can create users")
                     else PrivacyDecision.Allow
                 },
@@ -60,12 +60,12 @@ sealed interface Viewer {
 runtime helpers instead of handwritten casts:
 
 ```kotlin
-ctx.privacy.userOrNull()      // Viewer.User?
-ctx.privacy.userIdOrNull()    // Any?
-ctx.privacy.longIdOrNull()    // Long?
-ctx.privacy.intIdOrNull()     // Int?
-ctx.privacy.stringIdOrNull()  // String?
-ctx.privacy.uuidIdOrNull()    // UUID?
+context.privacy.userOrNull()      // Viewer.User?
+context.privacy.userIdOrNull()    // Any?
+context.privacy.longIdOrNull()    // Long?
+context.privacy.intIdOrNull()     // Int?
+context.privacy.stringIdOrNull()  // String?
+context.privacy.uuidIdOrNull()    // UUID?
 ```
 
 Typed helpers are exact type checks. For example, `longIdOrNull()` returns
@@ -98,25 +98,39 @@ Each rule returns one of three decisions:
 
 ### PrivacyRule
 
-A rule is a `fun interface` that takes a typed context and returns a
-decision. It is also a batch rule: the default adapter visits contexts
-serially in encounter order.
+A rule receives phase-shared context separately from one generated item.
+It is also a batch rule: the default adapter visits items serially in encounter
+order.
 
 ```kotlin
-fun interface PrivacyRule<in C> : BatchPrivacyRule<C> {
-    fun run(ctx: C): PrivacyDecision
+class PrivacyRuleContext<out Client>(
+    val privacy: PrivacyContext,
+    val client: Client,
+)
 
-    override fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision> =
-        batch.decide { run(it) }
+fun interface PrivacyRule<in Client, in Item> :
+    BatchPrivacyRule<Client, Item> {
+
+    fun run(
+        context: PrivacyRuleContext<Client>,
+        item: Item,
+    ): PrivacyDecision
+
+    override fun runBatch(
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<PrivacyDecision> =
+        batch.decideEach { run(context, it) }
 }
 ```
 
-Each operation gets its own context type (see [Operation Contexts](#operation-contexts)
-below), so rules are type-safe for the operation they guard.
+Each operation gets its own item type (see [Operation Items](#operation-items)
+below), so rules are type-safe for the operation they guard. The same item type
+is used by scalar and batch rules.
 
 ### BatchPrivacyRule
 
-Use an explicit batch rule when one callback should inspect all contexts or
+Use an explicit batch rule when one callback should inspect all items or
 perform one set-based lookup:
 
 ```kotlin
@@ -124,25 +138,32 @@ import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 
-interface BatchPrivacyRule<in C> {
-    fun runBatch(batch: RuleBatch<C>): RuleDecisions<PrivacyDecision>
+interface BatchPrivacyRule<in Client, in Item> {
+    fun runBatch(
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<PrivacyDecision>
 }
 
-fun <C> batchPrivacyRule(
-    block: (RuleBatch<C>) -> RuleDecisions<PrivacyDecision>,
-): BatchPrivacyRule<C>
+fun <Client, Item> batchPrivacyRule(
+    block: (
+        context: PrivacyRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ) -> RuleDecisions<PrivacyDecision>,
+): BatchPrivacyRule<Client, Item>
 
-val allowReadablePosts = batchPrivacyRule<PostLoadPrivacyContext> { batch ->
-    val readableIds = loadReadablePostIds(
-        client = batch.first().client,
-        viewer = batch.first().privacy.viewer,
-        postIds = batch.map { it.entity.id },
-    )
-    batch.decide { ctx ->
-        if (ctx.entity.id in readableIds) PrivacyDecision.Allow
-        else PrivacyDecision.Deny("post is not visible")
+val allowReadablePosts: PostLoadBatchPrivacyRule =
+    batchPrivacyRule { context, batch ->
+        val readableIds = loadReadablePostIds(
+            client = context.client,
+            viewer = context.privacy.viewer,
+            postIds = batch.map { it.entity.id },
+        )
+        batch.decideEach { item ->
+            if (item.entity.id in readableIds) PrivacyDecision.Allow
+            else PrivacyDecision.Deny("post is not visible")
+        }
     }
-}
 
 privacy {
     load(allowReadablePosts)
@@ -150,21 +171,23 @@ privacy {
 ```
 
 `RuleBatch` is an immutable, read-only `List`, so a rule can inspect, group, or
-sort its contexts while preparing a set-based read. It must build its result
-with `batch.decide { ... }` or `batch.decideIndexed { index, ctx -> ... }`.
+sort its items while preparing a set-based read. It must build its result with
+`batch.decideEach { ... }` or
+`batch.decideEachIndexed { index, item -> ... }`.
 Those methods return read-only `RuleDecisions` tied to that exact batch and
 invoke the decision block in encounter order. This works for ID-less CREATE
-contexts and preserves distinct decisions for duplicate or equal contexts;
-`decideIndexed` exposes a stable index within the current callback batch when
-the context value alone is not a sufficient key. Later privacy rules receive
+items and preserves distinct decisions for duplicate or equal items;
+`decideEachIndexed` exposes a stable index within the current callback batch when
+the item value alone is not a sufficient key. Later privacy rules receive
 only still-unresolved items, so that index is not operation-global.
 
 This removes the error-prone API that accepted an arbitrary positional list;
 it does not prove that application code computed the semantically correct
-decision. Use the context supplied to the `decide` block rather than consuming
+decision. Use the item supplied to the `decideEach` block rather than consuming
 a separately reordered decision iterator. `RuleDecisions` is readable as a
-`List`, and `RuleBatch.from(contexts)` creates a copied batch for direct unit
-tests. A rule decorator must transform delegated decisions with
+`List`, and `RuleBatch.from(items)` creates a copied batch for direct decision
+tests. A complete generated-rule test must also supply the matching shared
+context and read client. A rule decorator must transform delegated decisions with
 `result.mapDecisions { ... }`; that operation preserves the delegated result's
 batch identity, so a stale cached result remains rejectable. Do not copy a
 delegated decision list back through the current batch. Decisions from a test
@@ -182,11 +205,12 @@ invoked for an empty phase.
 
 **Stock rule — `allowAll`.** The runtime ships `allowAll`, a rule that
 permits any operation on any entity. Because `PrivacyRule` is contravariant
-in its context, the single value works in every slot on every schema, so a
-public or trusted entity doesn't need its own allow-everything rule:
+in its client and item types, the single value works in every slot on every
+schema, so a public or trusted entity doesn't need its own allow-everything
+rule:
 
 ```kotlin
-import entkt.runtime.allowAll
+import entkt.runtime.privacy.allowAll
 
 privacy {
     load(allowAll)     // anyone can read
@@ -262,9 +286,10 @@ you opt into access explicitly.
 ```kotlin
 load(
     // Users can see their own profile
-    PrivacyRule { ctx ->
-        val v = ctx.privacy.userOrNull() ?: return@PrivacyRule PrivacyDecision.Continue
-        if (v.id == ctx.entity.id) PrivacyDecision.Allow
+    PrivacyRule { context, item ->
+        val v = context.privacy.userOrNull()
+            ?: return@PrivacyRule PrivacyDecision.Continue
+        if (v.id == item.entity.id) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     },
     // Fallthrough: denied (implicit)
@@ -330,8 +355,8 @@ denies one class of viewer and explicitly allows the rest:
 
 ```kotlin
 create(
-    PrivacyRule { ctx ->
-        if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("login required")
+    PrivacyRule { context, _ ->
+        if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("login required")
         else PrivacyDecision.Allow   // explicit Allow — a Continue here would deny
     },
 )
@@ -343,7 +368,8 @@ returns `MutationResult.Failed(EntMutationPrivacyDeniedException)` with
 
 ## Operation Contexts
 
-Each operation's rules receive a typed context. The `client` is an
+Every privacy rule receives one shared `PrivacyRuleContext` parameter in
+addition to its item or item batch. Its `client` is an
 `EntPrivacyReadClient`: a read-only client fixed to the **caller's**
 privacy context — rules can query the graph to decide (ownership
 walks, parent-visibility checks), and every row those reads
@@ -358,7 +384,7 @@ row its viewer cannot see gets the denial
 (`findById` returns `Failed(EntPrivacyDeniedException)`; chaining
 `.visibleOrNull()` collapses that root denial to `Success(null)`),
 never the row. This is deliberately the opposite posture from
-validation contexts, whose `EntValidationReadClient` reads are
+validation rule contexts, whose `EntValidationReadClient` reads are
 privacy-bypass-scoped — invariant checks can materialize every row,
 while authorization reads materialize only viewer-visible rows. Both
 concrete types implement the shared `EntReadClient` interface, so a
@@ -385,32 +411,33 @@ could not load directly. When that matters, load the related row explicitly
 with `findById` or `firstOrNull` so its LOAD policy runs. See
 [Privacy Limitations → Predicate-Based Inference](08-privacy-limitations.md#predicate-based-inference).
 
-### LoadPrivacyContext
+## Operation Items
+
+Shared `privacy` and `client` values live on `PrivacyRuleContext`; generated
+operation items contain only values that differ per entity or candidate. One
+phase constructs one rule context and passes that exact instance to every
+reached rule; each rule still receives fresh defensive item snapshots.
+
+### LoadPrivacyItem
 
 ```kotlin
-data class UserLoadPrivacyContext(
-    val privacy: PrivacyContext,
-    val client: EntPrivacyReadClient,
+data class UserLoadPrivacyItem(
     val entity: User,       // the entity being loaded
 )
 ```
 
-### CreatePrivacyContext
+### CreatePrivacyItem
 
 ```kotlin
-data class UserCreatePrivacyContext(
-    val privacy: PrivacyContext,
-    val client: EntPrivacyReadClient,
+data class UserCreatePrivacyItem(
     val candidate: UserWriteCandidate,  // the values being written
 )
 ```
 
-### UpdatePrivacyContext
+### UpdatePrivacyItem
 
 ```kotlin
-data class UserUpdatePrivacyContext(
-    val privacy: PrivacyContext,
-    val client: EntPrivacyReadClient,
+data class UserUpdatePrivacyItem(
     val before: User,                   // current state of the entity (loaded by save())
     val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
@@ -433,7 +460,7 @@ construction since the mutator rejects same-id mixed-direction at the
 call site) and the computed database delta `added` / `removed` (after
 diffing intent against the current junction rows). Schemas without
 helper-eligible M2M edges still get an empty `${Entity}EdgeChangesView`
-so the context shape is uniform. Rule patterns:
+so the item shape is uniform. Rule patterns:
 
 - *Authorize the database effect:* read `edgeChanges.tags.added` and
   `edgeChanges.tags.removed` — the actual junction row inserts and deletes
@@ -452,12 +479,10 @@ save with `MutationResult.Failed(EntValidationException)` before privacy
 fires. Rules can treat `FieldPatch.Set(value)` for required fields as
 having a non-null value and `FieldPatch.Unset` as "not in this update".
 
-### DeletePrivacyContext
+### DeletePrivacyItem
 
 ```kotlin
-data class UserDeletePrivacyContext(
-    val privacy: PrivacyContext,
-    val client: EntPrivacyReadClient,
+data class UserDeletePrivacyItem(
     val entity: User,                   // the entity being deleted
     val candidate: UserWriteCandidate,  // snapshot of its writable fields
 )
@@ -483,7 +508,7 @@ data class UserWriteCandidate(
 Each rule receives its own snapshot. Generated `bytes()` values are copied
 directly, and typed JSON values are round-tripped through the driver's
 configured JSON mapper, including values inside update patches. Mutating a
-`ByteArray` or a mutable collection nested in JSON from one rule context cannot
+`ByteArray` or a mutable collection nested in JSON from one rule item cannot
 change the pending database write or another rule's input.
 
 ## Rule Derivation
@@ -501,7 +526,7 @@ privacy {
 
 When derivation is active, the operation's own rules are evaluated
 first. If all return `Continue`, the create rules are evaluated as a
-fallback (using a `CreatePrivacyContext` built from the candidate). If
+fallback (using a `CreatePrivacyItem` built from the candidate). If
 the create rules also fail to `Allow`, the operation is denied
 (fail-closed).
 
@@ -792,13 +817,14 @@ For each schema with a policy, entkt provides:
 | Public type | Purpose |
 |-------------|---------|
 | `{Entity}WriteCandidate` | Snapshot of writable fields for write rules |
-| `{Entity}LoadPrivacyContext` | Context for LOAD rules |
-| `{Entity}CreatePrivacyContext` | Context for CREATE rules |
-| `{Entity}UpdatePrivacyContext` | Context for UPDATE rules |
-| `{Entity}DeletePrivacyContext` | Context for DELETE rules |
+| `PrivacyRuleContext<Client>` | Shared captured privacy and viewer-scoped read client |
+| `{Entity}LoadPrivacyItem` | Per-entity input for LOAD rules |
+| `{Entity}CreatePrivacyItem` | Per-candidate input for CREATE rules |
+| `{Entity}UpdatePrivacyItem` | Per-entity input for UPDATE rules |
+| `{Entity}DeletePrivacyItem` | Per-entity input for DELETE rules |
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |
 | `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |
 | `{Entity}{Op}BatchPrivacyRule` | Typealiases for explicit batch-rule types |
-| `EntPrivacyReadClient` | Read client in privacy contexts — viewer-scoped reads (schema-set-level) |
+| `EntPrivacyReadClient` | Read client in `PrivacyRuleContext` — viewer-scoped reads (schema-set-level) |
 | `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |

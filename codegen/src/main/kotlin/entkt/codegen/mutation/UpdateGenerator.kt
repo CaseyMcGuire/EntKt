@@ -1040,7 +1040,7 @@ internal class UpdateGenerator(
      * Build `_buildEdgeChanges()`, the private method
      * that reads current junction rows for each helper-eligible edge
      * with pending ops and computes the per-entity `${Schema}EdgeChangesView`
-     * sidecar surfaced through update privacy and validation contexts.
+     * sidecar surfaced through update privacy and validation items.
      *
      * Per-edge logic:
      *  - When the edge has no pending ops, skip the junction read and

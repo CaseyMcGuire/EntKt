@@ -45,13 +45,13 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
     private object AllowAll : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
     private object OpenUser : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
-            privacy { load(UserLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
@@ -105,8 +105,8 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("no disclosure") })
-                    create(ArticleCreatePrivacyRule { PrivacyDecision.Allow })
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("no disclosure") })
+                    create(ArticleCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
                 }
             }
         }
@@ -145,8 +145,8 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `saveAndLoad returns Failed(EntValidationException) when a rule rejects the candidate`() {
-        val rejectUnpublished = ArticleCreateValidationRule { ctx ->
-            if (!ctx.candidate.published) {
+        val rejectUnpublished = ArticleCreateValidationRule { _, item ->
+            if (!item.candidate.published) {
                 ValidationDecision.Invalid("must be published", field = "published")
             } else {
                 ValidationDecision.Valid
@@ -154,7 +154,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
-                privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+                privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
                 validation { create(rejectUnpublished) }
             }
         }
@@ -196,14 +196,14 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `save returns Failed(EntMutationPrivacyDeniedException) when CREATE privacy denies`() {
-        val requireAuth = ArticleCreatePrivacyRule { ctx ->
-            if (ctx.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+        val requireAuth = ArticleCreatePrivacyRule { context, _ ->
+            if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
             else PrivacyDecision.Allow
         }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
                     create(requireAuth)
                 }
             }
@@ -233,11 +233,11 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `getOrThrow throws the exact stored EntMutationPrivacyDeniedException`() {
-        val deny = ArticleCreatePrivacyRule { PrivacyDecision.Deny("nope") }
+        val deny = ArticleCreatePrivacyRule { _, _ -> PrivacyDecision.Deny("nope") }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { PrivacyDecision.Allow })
+                    load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
                     create(deny)
                 }
             }

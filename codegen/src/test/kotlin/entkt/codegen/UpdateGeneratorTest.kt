@@ -1027,7 +1027,7 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update rule contexts receive fresh immutable edge change snapshots`() {
+    fun `update rule items receive fresh immutable edge change snapshots`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = RepoGenerator("com.example.ent")
             .generate("M2MPost", post, names)
@@ -1036,12 +1036,12 @@ class UpdateGeneratorTest {
 
         val snapshot =
             "edgeChanges.copy( tags = snapshotEdgeChangesForInternalUse(edgeChanges.tags), )"
-        assert(output.contains("M2MPostUpdatePrivacyContext") && output.contains(snapshot)) {
-            "Every UPDATE privacy context should detach edge-change sets\n$output"
+        assert(output.contains("M2MPostUpdatePrivacyItem") && output.contains(snapshot)) {
+            "Every UPDATE privacy item should detach edge-change sets\n$output"
         }
-        assert(output.contains("M2MPostUpdateValidationContext") &&
+        assert(output.contains("M2MPostUpdateValidationItem") &&
             Regex(Regex.escape(snapshot)).findAll(output).count() >= 2) {
-            "Every UPDATE validation context should detach edge-change sets too\n$output"
+            "Every UPDATE validation item should detach edge-change sets too\n$output"
         }
     }
 

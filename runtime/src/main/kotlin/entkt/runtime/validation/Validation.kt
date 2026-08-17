@@ -6,7 +6,18 @@ import entkt.runtime.rule.RuleDecisions
 import entkt.runtime.rule.decisionsForInternalUse
 import entkt.runtime.rule.ruleBatchForInternalUse
 import entkt.runtime.result.EntBatchRuleContractException
-import java.util.Collections
+
+/**
+ * State shared by every item and rule in one validation evaluation phase.
+ *
+ * Generated lifecycle item types contain only per-item state. The
+ * validation-capable [client] lives here so scalar and batch rules receive the
+ * same item shape. The framework passes the exact same instance to every rule
+ * in that phase.
+ */
+class ValidationRuleContext<out Client>(
+    val client: Client,
+)
 
 /**
  * The result of evaluating a single validation rule.
@@ -29,38 +40,54 @@ sealed interface ValidationDecision {
 }
 
 /**
- * A validation rule that can evaluate an ordered batch of operation contexts.
+ * A validation rule that can evaluate an ordered batch of operation items.
  *
- * Implementations return decisions through [RuleBatch.decide] or
- * [RuleBatch.decideIndexed]. Those operations preserve correlation with the
- * supplied contexts; callers cannot construct or reorder the result directly.
+ * Implementations return decisions through [RuleBatch.decideEach] or
+ * [RuleBatch.decideEachIndexed]. Those operations preserve correlation with
+ * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
-interface BatchValidationRule<in C> {
+interface BatchValidationRule<in Client, in Item> {
     @JvmSuppressWildcards
-    fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision>
+    fun validateBatch(
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<ValidationDecision>
 }
 
 /**
- * A scalar validation rule that evaluates one operation context.
+ * A scalar validation rule that evaluates one operation item.
  *
  * Scalar rules are also [BatchValidationRule]s: the default adapter evaluates
- * contexts serially in encounter order. All reached rules run —
+ * items serially in encounter order. All reached rules run —
  * [ValidationDecision.Invalid] results are collected, not short-circuited.
  */
-fun interface ValidationRule<in C> : BatchValidationRule<C> {
-    fun validate(ctx: C): ValidationDecision
+fun interface ValidationRule<in Client, in Item> : BatchValidationRule<Client, Item> {
+    @JvmSuppressWildcards
+    fun validate(
+        context: ValidationRuleContext<Client>,
+        item: Item,
+    ): ValidationDecision
 
     @JvmSuppressWildcards
-    override fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision> =
-        batch.decide { validate(it) }
+    override fun validateBatch(
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<ValidationDecision> =
+        batch.decideEach { validate(context, it) }
 }
 
 /** Construct an explicitly batch-aware validation rule. */
-fun <C> batchValidationRule(
-    block: (RuleBatch<C>) -> RuleDecisions<ValidationDecision>,
-): BatchValidationRule<C> = object : BatchValidationRule<C> {
-    override fun validateBatch(batch: RuleBatch<C>): RuleDecisions<ValidationDecision> = block(batch)
+fun <Client, Item> batchValidationRule(
+    block: (
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ) -> RuleDecisions<ValidationDecision>,
+): BatchValidationRule<Client, Item> = object : BatchValidationRule<Client, Item> {
+    override fun validateBatch(
+        context: ValidationRuleContext<Client>,
+        batch: RuleBatch<Item>,
+    ): RuleDecisions<ValidationDecision> = block(context, batch)
 }
 
 /**
@@ -68,11 +95,12 @@ fun <C> batchValidationRule(
  * decisions by original item index and rule registration order.
  */
 @EntktInternal
-fun <I, C> evaluateBatchValidationRulesForInternalUse(
+fun <I, Client, Item> evaluateBatchValidationRulesForInternalUse(
     lifecycle: String,
     items: List<I>,
-    rules: List<BatchValidationRule<C>>,
-    freshContext: (I) -> C,
+    rules: List<BatchValidationRule<Client, Item>>,
+    context: ValidationRuleContext<Client>,
+    freshItem: (I) -> Item,
 ): List<List<ValidationDecision.Invalid>> {
     if (items.isEmpty()) return emptyList()
 
@@ -80,14 +108,14 @@ fun <I, C> evaluateBatchValidationRulesForInternalUse(
     val ruleSnapshot = rules.toList()
     val violations = List(itemSnapshot.size) { mutableListOf<ValidationDecision.Invalid>() }
     for (rule in ruleSnapshot) {
-        val contexts = immutableList(itemSnapshot.map(freshContext))
-        val batch = ruleBatchForInternalUse(contexts)
-        val returnedDecisions: RuleDecisions<ValidationDecision>? = rule.validateBatch(batch)
+        val ruleItems = itemSnapshot.map(freshItem)
+        val batch = ruleBatchForInternalUse(ruleItems)
+        val returnedDecisions: RuleDecisions<ValidationDecision>? = rule.validateBatch(context, batch)
         val ruleDecisions: List<*> = returnedDecisions
             ?.let { batch.decisionsForInternalUse(lifecycle, it) }
-            ?: throw EntBatchRuleContractException(lifecycle, contexts.size, actualSize = null)
-        if (ruleDecisions.size != contexts.size) {
-            throw EntBatchRuleContractException(lifecycle, contexts.size, ruleDecisions.size)
+            ?: throw EntBatchRuleContractException(lifecycle, ruleItems.size, actualSize = null)
+        if (ruleDecisions.size != ruleItems.size) {
+            throw EntBatchRuleContractException(lifecycle, ruleItems.size, ruleDecisions.size)
         }
 
         ruleDecisions.forEachIndexed { index, decision ->
@@ -96,7 +124,7 @@ fun <I, C> evaluateBatchValidationRulesForInternalUse(
                 is ValidationDecision.Invalid -> violations[index] += decision
                 else -> throw EntBatchRuleContractException(
                     lifecycle = lifecycle,
-                    expectedSize = contexts.size,
+                    expectedSize = ruleItems.size,
                     actualSize = ruleDecisions.size,
                     invalidDecisionIndex = index,
                 )
@@ -106,9 +134,6 @@ fun <I, C> evaluateBatchValidationRulesForInternalUse(
 
     return violations.map { it.toList() }
 }
-
-private fun <T> immutableList(elements: List<T>): List<T> =
-    Collections.unmodifiableList(ArrayList(elements))
 
 /**
  * Legacy standalone representation of one or more invalid validation

@@ -44,8 +44,8 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     private fun pinPolicy(allowedTitle: String) = object : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
             privacy {
-                load(ArticleLoadPrivacyRule { ctx ->
-                    if (ctx.entity.title == allowedTitle) PrivacyDecision.Allow
+                load(ArticleLoadPrivacyRule { _, item ->
+                    if (item.entity.title == allowedTitle) PrivacyDecision.Allow
                     else PrivacyDecision.Deny("not '$allowedTitle'")
                 })
             }
@@ -60,7 +60,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     private val denyAllArticles = object : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("hidden") }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("hidden") }) }
         }
     }
 
@@ -175,8 +175,8 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val explodingPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { ctx ->
-                        when (ctx.entity.title) {
+                    load(ArticleLoadPrivacyRule { _, item ->
+                        when (item.entity.title) {
                             "Second" -> throw boom
                             else -> PrivacyDecision.Deny("hidden")
                         }
@@ -235,8 +235,8 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val recordingDenyPolicy = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
-                    load(ArticleLoadPrivacyRule { ctx ->
-                        evaluated.add(ctx.entity.id)
+                    load(ArticleLoadPrivacyRule { _, item ->
+                        evaluated.add(item.entity.id)
                         PrivacyDecision.Deny("hidden")
                     })
                 }

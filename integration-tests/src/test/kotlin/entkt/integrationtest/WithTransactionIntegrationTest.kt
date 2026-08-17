@@ -46,13 +46,13 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Allow }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
         }
     }
 
     private val denyLoadArticles = object : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
-            privacy { load(ArticleLoadPrivacyRule { PrivacyDecision.Deny("hidden") }) }
+            privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("hidden") }) }
         }
     }
 
@@ -61,8 +61,8 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
             // CREATE is fail-closed too: the User(1L)-viewer tests write
             // users inside the transaction, so both rules must allow.
             privacy {
-                load(UserLoadPrivacyRule { PrivacyDecision.Allow })
-                create(entkt.integrationtest.ent.UserCreatePrivacyRule { PrivacyDecision.Allow })
+                load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow })
+                create(entkt.integrationtest.ent.UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
             }
         }
     }

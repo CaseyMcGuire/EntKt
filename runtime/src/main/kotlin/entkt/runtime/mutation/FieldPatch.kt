@@ -9,8 +9,8 @@ package entkt.runtime.mutation
  * an explicit clear, distinct from `Unset`.
  *
  * Generated update builders lower their dirty state into a per-entity
- * patch type whose fields are `FieldPatch<T>`. Privacy and validation
- * contexts expose the requested patch (caller/hook intent) and the
+ * patch type whose fields are `FieldPatch<T>`. Update privacy and validation
+ * items expose the requested patch (caller/hook intent) and the
  * effective patch (after framework update defaults). The driver write
  * set is the effective patch's `Set` entries only.
  */
