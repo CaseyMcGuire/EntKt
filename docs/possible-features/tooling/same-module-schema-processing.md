@@ -39,7 +39,7 @@ incremental processing.
 ```kotlin
 plugins {
     kotlin("jvm")
-    id("entkt")
+    id("io.entkt")
 }
 
 dependencies {

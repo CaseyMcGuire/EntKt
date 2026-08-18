@@ -70,13 +70,13 @@ Your committed Flyway migration directory is the authoritative baseline
 
 ### Setup
 
-Apply the `entkt.flyway` plugin (it auto-applies the base `entkt`
+Apply the `io.entkt.flyway` plugin (it auto-applies the base `io.entkt`
 plugin). It registers `generateFlywayMigration` and
 `validateFlywayMigrations` tasks:
 
 ```kotlin
 plugins {
-    id("entkt.flyway")
+    id("io.entkt.flyway")
 }
 
 entkt {

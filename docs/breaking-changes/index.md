@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **Namespace the Gradle plugin IDs under `io.entkt`** (`gradle-plugin`)
+  The public plugin IDs now align with the verified Maven group and project
+  domain: `entkt` is now `io.entkt`, and `entkt.flyway` is now
+  `io.entkt.flyway`. Extension names, task names, dependency coordinates, and
+  Kotlin packages are unchanged.
+  _Migration:_ replace `id("entkt")` with `id("io.entkt")` and
+  `id("entkt.flyway")` with `id("io.entkt.flyway")`.
+
 - **Separate shared rule state from item state and correlate batch decisions explicitly** (`runtime`, `codegen`)
   Privacy and validation callbacks now receive phase-wide state separately
   from an item-only generated value. Scalar rules take `(context, item)` and

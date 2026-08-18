@@ -17,7 +17,7 @@ generation into your build automatically.
 
 ### Using the Gradle plugin
 
-The plugin ID is `"entkt"`:
+The plugin ID is `"io.entkt"`:
 
 ```kotlin
 // settings.gradle.kts
@@ -32,7 +32,7 @@ pluginManagement {
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("entkt") version "0.1.0-SNAPSHOT"
+    id("io.entkt") version "0.1.0-SNAPSHOT"
 }
 
 repositories {
@@ -72,7 +72,7 @@ A typical project structure:
 ```
 my-project/
   schema/                # EntSchema classes + entkt:schema dependency
-  app/                   # applies id("entkt"), schemas(project(":schema"))
+  app/                   # applies id("io.entkt"), schemas(project(":schema"))
 ```
 
 The plugin registers the following tasks:

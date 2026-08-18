@@ -7,8 +7,8 @@ into your build.
 
 | Plugin ID | Extension | Purpose |
 |-----------|-----------|---------|
-| `entkt` | `entkt { }` | Schema codegen + validation |
-| `entkt.flyway` | `entktFlyway { }` | Flyway migration generation + drift detection |
+| `io.entkt` | `entkt { }` | Schema codegen + validation |
+| `io.entkt.flyway` | `entktFlyway { }` | Flyway migration generation + drift detection |
 
 ## Setup
 
@@ -25,8 +25,8 @@ pluginManagement {
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("entkt") version "0.1.0-SNAPSHOT"
-    id("entkt.flyway") version "0.1.0-SNAPSHOT" // optional
+    id("io.entkt") version "0.1.0-SNAPSHOT"
+    id("io.entkt.flyway") version "0.1.0-SNAPSHOT" // optional
 }
 
 repositories {
@@ -48,7 +48,7 @@ dependencies {
     // Codegen + migration tooling (runs in a separate JVM)
     entktCodegen("io.entkt:codegen:0.1.0-SNAPSHOT")
     entktCodegen("io.entkt:postgres:0.1.0-SNAPSHOT")
-    entktCodegen("io.entkt:flyway:0.1.0-SNAPSHOT") // only if using entkt.flyway
+    entktCodegen("io.entkt:flyway:0.1.0-SNAPSHOT") // only if using io.entkt.flyway
 
     // Runtime dependencies for your application
     implementation("io.entkt:runtime:0.1.0-SNAPSHOT")
@@ -64,7 +64,7 @@ circular dependency (`compileKotlin` -> `generateEntkt` -> `compileKotlin`).
 
 ## Tasks
 
-### Base plugin (`entkt`)
+### Base plugin (`io.entkt`)
 
 - **`generateEntkt`** -- Scans the `schemas` classpath for `EntSchema`
   objects, generates entity classes into `build/generated/entkt/`, adds
@@ -75,7 +75,7 @@ circular dependency (`compileKotlin` -> `generateEntkt` -> `compileKotlin`).
 - **`explainEntSchemas`** -- Prints the resolved relational shape of all
   schemas. Supports `-Pformat=text|json` and `-Pfilter=<table>`.
 
-### Flyway plugin (`entkt.flyway`)
+### Flyway plugin (`io.entkt.flyway`)
 
 - **`generateFlywayMigration`** -- Diffs a shadow database against your
   schemas and writes the next Flyway migration file. Supports
@@ -84,7 +84,7 @@ circular dependency (`compileKotlin` -> `generateEntkt` -> `compileKotlin`).
   committed Flyway migrations and your entkt schemas. Exits non-zero if
   drift is detected.
 
-The flyway plugin auto-applies the base `entkt` plugin, so you don't
+The flyway plugin auto-applies the base `io.entkt` plugin, so you don't
 need to apply both explicitly.
 
 See [migrations docs](../docs/09-migrations.md) for the full workflow.

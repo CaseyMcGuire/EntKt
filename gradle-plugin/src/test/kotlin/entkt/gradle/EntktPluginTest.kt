@@ -88,7 +88,7 @@ class EntktPluginTest {
                     """
                     plugins {
                         kotlin("jvm") version "$kotlinVersion"
-                        id("entkt")
+                        id("io.entkt")
                     }
                     repositories { mavenCentral() }
 
@@ -288,7 +288,7 @@ class EntktPluginTest {
                     """
                     plugins {
                         kotlin("jvm") version "$kotlinVersion"
-                        id("entkt")
+                        id("io.entkt")
                     }
                     repositories { mavenCentral() }
 

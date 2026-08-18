@@ -36,11 +36,11 @@ java {
 gradlePlugin {
     plugins {
         create("entkt") {
-            id = "entkt"
+            id = "io.entkt"
             implementationClass = "entkt.gradle.EntktPlugin"
         }
         create("entkt-flyway") {
-            id = "entkt.flyway"
+            id = "io.entkt.flyway"
             implementationClass = "entkt.gradle.EntktFlywayPlugin"
         }
     }
