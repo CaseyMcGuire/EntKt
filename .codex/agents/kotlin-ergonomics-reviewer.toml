@@ -1,4 +1,4 @@
-can name = "kotlin_ergonomics_reviewer"
+name = "kotlin_ergonomics_reviewer"
 description = "Read-only reviewer for Kotlin API clarity, type-system behavior, DSL consistency, and generated call-site ergonomics."
 sandbox_mode = "read-only"
 developer_instructions = """
