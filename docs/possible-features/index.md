@@ -35,7 +35,7 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 
 ## Query APIs
 
-- [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
+- [SQL-Shaped Query Core](query/sql-shaped-query-core.md)
 - [Explicit Query Authority And Cost](query/explicit-query-authority-and-cost.md)
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
 - [Privacy-Aware Visible Pagination](query/privacy-aware-visible-pagination.md)

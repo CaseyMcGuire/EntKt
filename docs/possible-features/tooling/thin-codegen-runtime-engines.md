@@ -48,8 +48,8 @@ Generated code continues to own:
 Runtime code owns:
 
 - query-spec freezing and interceptor execution
-- row-terminal execution and result capture
-- eager graph planning and execution
+- relational-plan compilation, row-terminal execution, and result capture
+- nested relationship projection and graph decoding
 - privacy and validation batch evaluation
 - mutation phase orchestration
 - transaction/write-state propagation
@@ -68,11 +68,15 @@ internal object UserRuntimeModel : RuntimeEntityModel<User, UserId> {
 }
 
 public fun all(): ReadResult<List<User>> =
-    readEngine.all(UserRuntimeModel, frozenSpec(), eagerPlan())
+    readEngine.all(UserRuntimeModel, compiledSelect())
 ```
 
-The exact interfaces are internal. Application code still sees generated
-`UserQuery`, `UserRepo`, and typed results.
+The exact interfaces are internal. `compiledSelect()` is illustrative of the
+single relational plan defined by
+[SQL-Shaped Query Core](../query/sql-shaped-query-core.md), including requested
+relationships; it is not a root plan plus a separate eager executor.
+Application code still sees generated `UserQuery`, `UserRepo`, and typed
+results.
 
 Mutation builders similarly produce an immutable typed mutation description
 consumed by a runtime lifecycle engine. Hooks retain generated typed views;
@@ -146,7 +150,7 @@ than arbitrary copies of generated execution algorithms.
 
 ## Related Features
 
-- [Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md)
+- [SQL-Shaped Query Core](../query/sql-shaped-query-core.md)
 - [Structured Mutation Pipeline](../mutation/structured-mutation-pipeline.md)
 - [Modular Driver SPI](modular-driver-spi.md)
 - [Codegen Plugin Hooks](codegen-plugin-hooks.md)

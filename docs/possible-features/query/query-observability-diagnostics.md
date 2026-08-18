@@ -67,6 +67,13 @@ This RFC should not introduce another explain surface or redefine the base query
 plan model. Future diagnostics should enrich the existing explain output and add
 runtime tracing for actual executions.
 
+The eager-query examples and estimates below describe the current
+multi-statement implementation. The accepted
+[SQL-Shaped Query Core](sql-shaped-query-core.md) changes ordinary
+`with{Edge}` queries to one nested relational statement. After that cutover,
+diagnostics should describe the nested plan and its one statement; separate
+loader operations and callback-issued queries retain independent trace entries.
+
 Baseline explain output can already describe the post-interceptor root query
 shape:
 

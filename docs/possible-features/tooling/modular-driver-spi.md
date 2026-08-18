@@ -78,6 +78,11 @@ whole schema graph rather than one connection session.
 Prefer structured internal commands over long parameter lists of table names,
 column strings, and erased maps:
 
+The accepted [SQL-Shaped Query Core](../query/sql-shaped-query-core.md) owns the
+relational statement boundary and supersedes the narrow illustrative command
+below. The eventual command must represent aliases, joins, subqueries,
+projections, grouping, and nested relationship projections in one statement.
+
 ```kotlin
 data class SelectCommand(
     val entity: EntitySchema,
@@ -102,7 +107,6 @@ Optional capabilities can be expressed through interfaces or extension lookup:
 ```kotlin
 interface AggregateExecutor
 interface QueryExplainExecutor
-interface PerParentWindowExecutor
 interface JsonStorageAdapter
 interface NativeTypeAdapter
 interface RelationshipLockExecutor
@@ -153,7 +157,7 @@ schema graph when a client is created:
 
 - native column codecs
 - typed JSON support
-- required locking or eager-window capabilities
+- required locking or nested-relational-projection capabilities
 - identifier length and dialect constraints
 - migration/introspection features when tooling requests them
 
@@ -168,8 +172,8 @@ method. Still, migrate in narrow steps:
 1. Introduce `DriverCapabilities` and make legacy booleans delegate to it.
 2. Introduce structured select and mutation commands behind adapters.
 3. Separate transaction-only locking operations.
-4. Move optional aggregate, explanation, and eager-window features into focused
-   contracts.
+4. Move optional aggregate, explanation, and driver-specific relational
+   features into focused contracts.
 5. Update the PostgreSQL driver and a minimal conformance fixture.
 6. Remove legacy shims after generated code no longer calls them.
 
@@ -211,5 +215,5 @@ Optional capability suites run only when the driver declares support.
 
 - [Driver Capability Matrix](driver-capability-matrix.md)
 - [Coroutine And R2DBC Driver Track](coroutine-r2dbc-driver.md)
-- [Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md)
+- [SQL-Shaped Query Core](../query/sql-shaped-query-core.md)
 - [Thin Codegen And Runtime Execution Engines](thin-codegen-runtime-engines.md)

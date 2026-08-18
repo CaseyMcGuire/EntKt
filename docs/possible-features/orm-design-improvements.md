@@ -20,13 +20,14 @@ and semantic boundaries rather than adding more scalar types.
 
 ## Candidate Directions
 
-### 1. Set-Based Eager Graph Loading
+### 1. SQL-Shaped Query Execution
 
-Replace recursive per-parent nested loading with a breadth-first graph
-executor. Push finite per-parent windows into the database and keep query count
-bounded by requested eager paths rather than parent count.
+Make an ordinary EntKt query represent at most one relational statement,
+including requested `with{Edge}` relationships. Compile to-one, to-many, and
+many-to-many edges as root-preserving nested relational projections rather than
+silently coordinating follow-up reads.
 
-Detailed note: [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md).
+Detailed note: [SQL-Shaped Query Core](query/sql-shaped-query-core.md).
 
 ### 2. Query-Time Visibility Predicates
 
@@ -124,8 +125,9 @@ Some directions should be designed together:
 
 - Query-time visibility should precede privacy-correct projection, counts, and
   public cursor pagination.
-- The set-based eager loader should use the modular driver capability model for
-  native versus emulated per-parent windows.
+- The SQL-shaped query core should use the modular driver capability model and
+  reject unsupported one-statement nested projections before statement
+  submission rather than falling back to hidden reads.
 - Runtime execution engines make it easier to implement eager loading and
   mutation phases once rather than in every generated repository.
 - `afterCommit` semantics depend on explicit transaction ownership and nested
