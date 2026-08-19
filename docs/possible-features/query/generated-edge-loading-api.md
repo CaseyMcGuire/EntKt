@@ -5,9 +5,11 @@
 Accepted public API direction as of 2026-08-19. This is not implemented.
 
 This RFC owns the generated API used to select entity edges for loading. It
-does not own the execution algorithm. The accepted
-[Set-Based Eager Graph Loader](set-based-eager-graph-loader.md) RFC defines how
-an immutable edge-load plan is executed.
+does not own the execution algorithm. The initial API cutover deliberately
+preserves the current eager-loading executor and its observable behavior. The
+accepted [Set-Based Eager Graph Loader](set-based-eager-graph-loader.md) RFC is
+a separate follow-up that may optimize the same selected graph without another
+public API migration.
 
 The
 [Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md)
@@ -200,8 +202,10 @@ the target side of that edge.
 
 ### Edge-load plan
 
-The immutable internal topology captured from all edge-load selections before
-execution. This is executor input, not a public application result type.
+The internal topology represented by all edge-load selections. The API
+cutover may continue storing that topology in the current generated query
+state. A later executor may capture it as an immutable runtime plan; that
+representation is not part of the public application API.
 
 ### Edge-load handle
 
@@ -321,8 +325,8 @@ client.users.query {
 
 The order of these calls records the requested graph but does not define
 physical query order, failure precedence, or attachment order. Those contracts
-belong to the executor RFC. The accepted executor currently uses deterministic
-schema-declaration depth-first order.
+belong to the executor. The API-only cutover preserves the current
+deterministic schema-declaration depth-first behavior.
 
 ## `EdgeLoad` Handle
 
@@ -428,7 +432,9 @@ The public API builds a mutable query configuration. At terminal entry, the
 framework captures the edge-load topology consumed by the executor. Mutating a
 query after a terminal begins must not change that in-flight execution.
 
-The executor RFC owns the more precise timing for defensive snapshots,
+The API cutover must preserve the current terminal-entry behavior. The
+set-based executor RFC owns any later change to the internal plan
+representation and the more precise timing for defensive snapshots,
 interceptor execution, and nested target operands.
 
 ## Terminal Compatibility
@@ -570,23 +576,25 @@ Every `load{Name}` call tells the caller that EntKt will perform relationship
 materialization work in addition to selecting root rows. It intentionally does
 not expose that work as a SQL strategy selector.
 
-Under the accepted set-based executor:
+The initial `load{Name}` cutover preserves the current executor exactly:
 
 - root rows are selected first;
-- configured edges execute set-at-a-time and depth-first;
-- nested edge paths do not execute once per populated parent group;
+- first-level configured edges already batch their current parents;
+- configured edges execute depth-first in schema-declaration order;
+- nested edge paths may still execute once per populated parent group;
 - many-to-many loading may require a junction read plus target reads;
-- large parent sets may require driver-owned chunks;
-- per-parent windows may use native storage support or a documented fallback.
+- per-parent windows are currently applied by the existing eager-loading path.
 
 Consequently, `loadPosts()` does not mean “one post query,” and several
 `load{Name}` calls do not create a reliable arithmetic formula for physical
 statement count. The API exposes the requested relationship graph. Explain and
 observability surfaces expose the chosen execution plan.
 
-Future executors may optimize the same graph differently if they preserve the
-result, privacy, interceptor, ordering, failure, and explain contracts owned by
-their RFCs. Such an optimization does not require renaming `load{Name}`.
+The set-based executor is a separate follow-up. It may eliminate nested
+per-parent query multiplication, add driver-owned chunking, and push
+per-parent windows into storage if it preserves the contracts owned by that
+RFC. Those optimizations do not require renaming `load{Name}` or another
+application migration.
 
 ## Generated Member Collisions
 
@@ -671,17 +679,18 @@ should ship together so application code migrates once.
 1. Emit `load{Name}` target-query receiver methods.
 2. Replace `EagerLoad` with `EdgeLoad` and preserve `filterVisible()`.
 3. Track selected edges explicitly and reject duplicate selection.
-4. Add the edge-load-plan snapshot consumed by the executor.
-5. Validate terminal and traversal compatibility before I/O.
+4. Validate terminal and traversal compatibility before I/O.
 
-### Phase 3: Executor handoff
+### Phase 3: Preserve the current executor
 
-1. Make the generated query produce the immutable topology required by the
-   set-based executor RFC.
-2. Keep application edge names in privacy-denial paths, interceptor context,
+1. Feed the renamed selection state into the existing generated eager-loading
+   path.
+2. Keep current query counts, callback batching, privacy, interceptor,
+   ordering, failure, and attachment behavior unchanged.
+3. Keep application edge names in privacy-denial paths, interceptor context,
    explain output, and diagnostics.
-3. Remove the public API's dependency on per-edge generated execution bodies
-   where the executor RFC replaces them.
+4. Do not introduce the immutable set-based runtime plan or new driver
+   capabilities as part of this API change.
 
 ### Phase 4: Migration and documentation
 
@@ -740,13 +749,14 @@ edges generate `with{Name}` while others generate `load{Name}`.
 
 ### Integration with execution
 
-- the same public graph produces the immutable topology expected by the
-  set-based executor;
-- nested loading does not reintroduce per-parent query multiplication;
-- M2M, chunking, per-parent windows, callback ordering, and failure precedence
-  satisfy the executor RFC;
-- call order does not accidentally override the executor's documented
-  deterministic order.
+- the renamed public graph reaches the same current generated execution path;
+- current root/direct/M2M/nested query counts remain unchanged;
+- current per-parent windows, callback ordering, failure precedence, privacy,
+  and attachment behavior remain unchanged;
+- the existing nested per-parent query-multiplication limitation remains
+  documented until the set-based executor RFC is implemented;
+- call order does not accidentally override the current deterministic
+  schema-declaration order.
 
 ### Collisions and migration
 
@@ -800,7 +810,8 @@ Examples should include:
     loads.
 11. `load{Name}` signals relationship materialization, not a fixed SQL strategy
     or statement count.
-12. Execution remains owned by the set-based executor RFC.
+12. The API cutover preserves the current executor. Set-based execution is a
+    separate optimization owned by its own RFC.
 13. Old `with{Name}` and `EagerLoad` aliases are not retained.
 
 ## Related RFCs
