@@ -26,8 +26,8 @@ class Person : EntSchema(
     tableName = "people",
     clientName = "people",
 ) {
-    val displayName = string("display_name")
-    val sentRequests = hasMany<Friendship>("sent_requests")
+    val displayName by string("display_name")
+    val sentRequests by hasMany<Friendship>("sent_requests")
 }
 ```
 
@@ -58,8 +58,8 @@ The contract is:
 |---|---|
 | Entity and entity-prefixed type names | Concrete schema class name |
 | Client repository/configuration property | Required `clientName` |
-| Scalar field API | Kotlin field declaration property |
-| Edge API | Kotlin edge declaration property |
+| Scalar field API | Delegated Kotlin field property |
+| Edge API | Delegated Kotlin edge property |
 | Fixed ID API | Reserved framework name `id` |
 | Tables, columns, indexes, constraints, edge lookup keys | Explicit storage strings |
 
@@ -93,6 +93,20 @@ Storage-derived codegen instead produces names based on `legacy_display_txt`
 and `sent_requests`. Renaming a database identifier can then break application
 source even when the domain API was intended to remain stable.
 
+Retrofitting semantic meaning onto an ordinary `=` property also hides that
+the property name is consumed by the schema DSL. The accepted declaration
+form therefore uses Kotlin property delegation:
+
+```kotlin
+val publicLabel by string("legacy_display_txt")
+val outgoing by hasMany<Friendship>("sent_requests")
+```
+
+The `by` keyword tells the reader and compiler that the builder participates in
+the property's behavior. Kotlin passes the property metadata to the delegate,
+so EntKt receives `publicLabel` and `outgoing` directly without a repeated API
+name string or a reflective scan after construction.
+
 ### Inflection is an avoidable source of ambiguity
 
 The current client generator lowercases an entity name and runs it through a
@@ -121,11 +135,11 @@ property name is a small cost for deterministic generated APIs.
 A schema can contain several edges to the same target:
 
 ```kotlin
-val manager = belongsTo<User>("manager")
-val mentor = belongsTo<User>("mentor")
+val manager by belongsTo<User>("manager")
+val mentor by belongsTo<User>("mentor")
 
-val authoredPosts = hasMany<Post>("authored_posts")
-val reviewedPosts = hasMany<Post>("reviewed_posts")
+val authoredPosts by hasMany<Post>("authored_posts")
+val reviewedPosts by hasMany<Post>("reviewed_posts")
 ```
 
 The semantic role belongs to the declaration. Names such as `loadUser`,
@@ -135,6 +149,7 @@ relationships reliably.
 ## Goals
 
 - Make generated Kotlin naming explicit and locally readable from the schema.
+- Make declaration-name participation visible through Kotlin's `by` syntax.
 - Remove all singularization and pluralization from codegen.
 - Make schema class, client property, field, and edge names independent from
   storage identifiers.
@@ -155,6 +170,7 @@ relationships reliably.
 - Do not derive `clientName` from the class name or table name.
 - Do not preserve old inferred names as deprecated aliases.
 - Do not define edge-loading execution strategy.
+- Do not add a repeated `apiName` / `clientName` string to fields or edges.
 - Do not make index declaration-property names public APIs when no generated
   public surface corresponds to the index itself.
 
@@ -193,14 +209,14 @@ hooks.userAccounts { /* ... */ }
 
 The generator does not transform it.
 
-### Declaration name
+### Delegated declaration name
 
-The name of a qualifying Kotlin `val` whose backing field contains a registered
-schema builder:
+The name of a qualifying Kotlin delegated `val` bound to a registered schema
+builder:
 
 ```kotlin
-val primaryAuthor = belongsTo<User>("primary_author")
-//  ^^^^^^^^^^^^^ declaration name
+val primaryAuthor by belongsTo<User>("primary_author")
+//  ^^^^^^^^^^^^^    declaration name
 ```
 
 The declaration name is `primaryAuthor`.
@@ -210,8 +226,8 @@ The declaration name is `primaryAuthor`.
 An explicit string passed to a schema builder:
 
 ```kotlin
-val primaryAuthor = belongsTo<User>("primary_author")
-//                                        ^^^^^^^^^^^^^^^ storage name
+val primaryAuthor by belongsTo<User>("primary_author")
+//                                           ^^^^^^^^^^^^^^^ storage name
 ```
 
 Storage names participate in tables, columns, indexes, constraints, edge
@@ -316,15 +332,15 @@ class NewsItem : EntSchema("news_items", clientName = "news")
 Table names must never be used as an implicit fallback. Coincidental equality
 between a table and client name carries no additional meaning.
 
-### Field declarations name field APIs
+### Delegated field declarations name field APIs
 
-Every registered scalar field builder must resolve to exactly one qualifying
-Kotlin declaration property. That declaration names all generated field APIs:
+Every registered scalar field builder must bind to exactly one qualifying
+Kotlin delegated property. That declaration names all generated field APIs:
 
 ```kotlin
 class Article : EntSchema("articles", clientName = "articles") {
-    val publicTitle = string("legacy_title_txt")
-    val publishedAt = time("published_timestamp")
+    val publicTitle by string("legacy_title_txt")
+    val publishedAt by time("published_timestamp")
 }
 ```
 
@@ -350,15 +366,15 @@ diagnostic paths.
 
 The storage string remains the physical column name and driver metadata key.
 
-### Edge declarations name edge APIs
+### Delegated edge declarations name edge APIs
 
-Every registered edge builder must likewise resolve to exactly one qualifying
-Kotlin declaration property:
+Every registered edge builder must likewise bind to exactly one qualifying
+Kotlin delegated property:
 
 ```kotlin
 class Article : EntSchema("articles", clientName = "articles") {
-    val writer = belongsTo<User>("author")
-    val relatedStories = hasMany<Article>("related_stories")
+    val writer by belongsTo<User>("author")
+    val relatedStories by hasMany<Article>("related_stories")
 }
 ```
 
@@ -407,8 +423,8 @@ Current prefix index helpers are generated from the participating field API
 names, which means they use field declaration names under this RFC:
 
 ```kotlin
-val authorKey = long("author_id")
-val createdAt = time("created_at")
+val authorKey by long("author_id")
+val createdAt by time("created_at")
 val authorTimeline = index("idx_article_author_created", authorKey, createdAt)
 ```
 
@@ -464,9 +480,9 @@ Every client property above is emitted exactly as supplied.
 Similarly:
 
 ```kotlin
-val people = hasMany<Person>("person_links")
-val sheep = hasMany<Sheep>("flock_members")
-val news = hasMany<Article>("news_items")
+val people by hasMany<Person>("person_links")
+val sheep by hasMany<Sheep>("flock_members")
+val news by hasMany<Article>("news_items")
 ```
 
 generate `queryPeople`, `querySheep`, and `queryNews` exactly. Their target
@@ -481,11 +497,11 @@ Changing only a Kotlin declaration is an API change and does not rename
 storage:
 
 ```diff
-- val displayName = string("display_name")
-+ val publicName = string("display_name")
+- val displayName by string("display_name")
++ val publicName by string("display_name")
 
-- val sentRequests = hasMany<Friendship>("sent_requests")
-+ val outgoingRequests = hasMany<Friendship>("sent_requests")
+- val sentRequests by hasMany<Friendship>("sent_requests")
++ val outgoingRequests by hasMany<Friendship>("sent_requests")
 ```
 
 The generated API changes; the database identifiers do not.
@@ -494,12 +510,12 @@ Changing only storage metadata is a storage/migration change and does not
 rename generated Kotlin APIs:
 
 ```diff
-  val displayName = string(
+  val displayName by string(
 -     "display_name",
 +     "legacy_display_txt",
   )
 
-  val sentRequests = hasMany<Friendship>(
+  val sentRequests by hasMany<Friendship>(
 -     "sent_requests",
 +     "outgoing_friend_requests",
   )
@@ -524,7 +540,7 @@ unchanged.
 For an implicit `belongsTo`, storage and API synthesis remain separate:
 
 ```kotlin
-val primaryAuthor = belongsTo<User>("primary_author")
+val primaryAuthor by belongsTo<User>("primary_author")
 ```
 
 produces:
@@ -538,7 +554,7 @@ Default FK column: primary_author_id
 The `Id` API suffix is mechanical. The default FK column continues to derive
 from explicit edge storage metadata unless another schema API overrides it.
 
-## Declaration Capture
+## Delegated Declaration Binding
 
 ### Eligible V1 declarations
 
@@ -546,27 +562,37 @@ V1 accepts a field or edge declaration name only from a property that is:
 
 - a public Kotlin `val`;
 - declared directly on the concrete schema or supported mixin class;
-- backed by a JVM field;
-- identity-equal to one registered builder instance;
-- not mutable, delegated, inherited, or computed;
+- delegated directly to one registered EntKt builder with `by`;
+- bound exactly once through EntKt's delegate protocol;
+- not mutable, inherited, computed, or delegated through another wrapper such
+  as `lazy`;
 - a supported lower-camel Kotlin identifier for generated APIs.
 
 Canonical declarations qualify:
 
 ```kotlin
-val title = string("article_title")
-val author = belongsTo<User>("article_author")
-val comments = hasMany<Comment>("article_comments")
+val title by string("article_title")
+val author by belongsTo<User>("article_author")
+val comments by hasMany<Comment>("article_comments")
 ```
 
 The following do not:
 
 ```kotlin
-private val title = string("article_title")
-var comments = hasMany<Comment>("article_comments")
+val title = string("article_title")
+private val author by belongsTo<User>("article_author")
+var comments by hasMany<Comment>("article_comments")
 val tags by lazy { manyToMany<Tag>("article_tags") }
 val owner get() = belongsTo<User>("article_owner")
 ```
+
+The ordinary `=` form constructs and registers a builder but does not bind a
+generated declaration name. Finalization rejects an unbound registered builder
+and suggests replacing `=` with `by`.
+
+EntKt builders intentionally do not implement `setValue`, so a delegated `var`
+does not compile. A non-public binding is rejected because a private schema
+handle should not silently create a public generated member.
 
 ### Mixins
 
@@ -575,8 +601,8 @@ public stable `val` is its generated declaration name:
 
 ```kotlin
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt = time("created_at")
-    val updatedAt = time("updated_at")
+    val createdAt by time("created_at")
+    val updatedAt by time("updated_at")
 }
 
 class Article : EntSchema("articles", clientName = "articles") {
@@ -587,23 +613,57 @@ class Article : EntSchema("articles", clientName = "articles") {
 The generated entity fields are `createdAt` and `updatedAt`; the inclusion
 property `timestamps` does not prefix or rename them.
 
-Implementation must retain included mixin instances for side-effect-free
-declaration capture. Nested mixins follow the same rule. Two included mixins
-that contribute the same generated name fail collision validation.
+Binding occurs while each mixin instance is constructed, so an init-only
+`include(::Timestamps)` remains supported and EntKt does not need a later
+reflective scan of retained mixin instances. Nested mixins follow the same
+rule. Two included mixins that contribute the same generated name fail
+collision validation.
 
-### Side-effect-free capture
+### Kotlin delegate protocol
 
-Finalization reads Java backing fields rather than invoking property getters.
-Calling a computed getter can register a fresh declaration as a side effect.
+Kotlin calls `provideDelegate` while constructing a delegated property and
+passes its `KProperty` metadata. EntKt uses that compiler-provided interaction
+to bind the builder to the property name.
 
-Conceptually, finalization resolves:
+Conceptually, each supported builder provides type-preserving operators like:
 
-```text
-FieldBuilder instance -> declaration property name
-EdgeBuilder instance  -> declaration property name
+```kotlin
+operator fun provideDelegate(
+    thisRef: EntSchema,
+    property: KProperty<*>,
+): ThisBuilder {
+    bindDeclaration(owner = thisRef, name = property.name)
+    return this
+}
+
+operator fun getValue(
+    thisRef: EntSchema,
+    property: KProperty<*>,
+): ThisBuilder = this
 ```
 
-Resolved metadata carries both identities:
+The actual operator may share an internal abstraction and must also support an
+`EntMixin` receiver. Its return type remains the concrete field or edge builder
+type. Consequently, modifier chaining, typed handles, `index(...)`,
+`.field(handle)`, `Target::inverseEdge`, and `throughLink` / `throughEntity`
+property references retain their existing static types.
+
+Binding happens after the complete builder expression has been evaluated:
+
+```kotlin
+val author by belongsTo<User>("author")
+    .field(authorId)
+    .nullable()
+```
+
+No schema-wide property reflection, backing-field access, getter invocation,
+annotation processor, compiler plugin, or repeated API-name string is needed.
+
+### Resolved metadata
+
+Delegate binding records declaration identity on the builder before
+finalization. Finalization folds it into resolved metadata alongside storage
+identity:
 
 ```kotlin
 data class Field(
@@ -622,22 +682,25 @@ data class Edge(
 Exact model spelling may differ, but declaration names must be non-null before
 codegen consumes finalized schemas.
 
-### Exactly one declaration
+### Exactly one binding
 
-Every registered field or edge builder maps to exactly one eligible property.
+Every registered field or edge builder binds to exactly one eligible property.
 
-Aliases are rejected:
+Attempting to reuse a builder as two delegates is rejected at the second
+binding:
 
 ```kotlin
-val title = string("title")
-val headline = title
+private val sharedTitle = string("title")
+val title by sharedTitle
+val headline by sharedTitle // rejected: already bound to title
 ```
 
-Codegen must not choose one based on reflection order. The diagnostic names
-both properties and tells the author to keep one canonical declaration.
+The diagnostic names both properties and tells the author to keep one canonical
+binding. There is no reflection-order choice.
 
-An orphaned builder is also rejected. Programmatic registration without one
-eligible property cannot produce a stable public API name.
+An unbound builder is rejected during schema finalization. Programmatic
+registration without one eligible delegated property cannot produce a stable
+public API name.
 
 ## Validation And Collisions
 
@@ -645,9 +708,10 @@ Validation happens before source emission. Reject at least:
 
 - a missing or invalid entity class simple name;
 - a missing, invalid, or duplicate `clientName`;
-- a field or edge builder with no eligible declaration property;
-- two properties aliasing one builder;
-- a private, mutable, delegated, inherited, or computed-only declaration;
+- a registered field or edge builder with no delegated binding;
+- a builder bound as a delegate more than once;
+- an ordinary `=` field/edge declaration;
+- a private, mutable, inherited, computed, or wrapper-delegated declaration;
 - an unsupported or reserved Kotlin identifier;
 - a field, FK, edge, fixed framework member, generated function, or JVM
   signature collision;
@@ -682,9 +746,9 @@ items, index helpers, and configuration/read-client surfaces.
 Typed relationship linkage remains handle-based:
 
 ```kotlin
-val posts = hasMany<Post>("user_posts")
+val posts by hasMany<Post>("user_posts")
 
-val author = belongsTo<User>("post_author")
+val author by belongsTo<User>("post_author")
     .inverse(User::posts)
 ```
 
@@ -695,7 +759,7 @@ metadata may carry storage edge names for driver lookup. Generated API uses
 Many-to-many linkage follows the same separation:
 
 ```kotlin
-val tags = manyToMany<Tag>("article_tags")
+val tags by manyToMany<Tag>("article_tags")
     .throughLink<ArticleTag>(ArticleTag::article, ArticleTag::tag)
 ```
 
@@ -735,6 +799,16 @@ Every schema declaration must add `clientName`:
 + class User : EntSchema(tableName = "users", clientName = "users")
 ```
 
+Every generated field and edge declaration also migrates from assignment to
+delegation:
+
+```diff
+- val displayName = string("display_name")
+- val posts = hasMany<Post>("user_posts")
++ val displayName by string("display_name")
++ val posts by hasMany<Post>("user_posts")
+```
+
 For schemas whose declaration and storage names normalize to the same Kotlin
 identifier, field and edge generated source remains mostly unchanged. Client
 names remain unchanged only when the new explicit value matches the old
@@ -743,8 +817,8 @@ pluralizer output.
 Divergent declarations intentionally rename generated source:
 
 ```kotlin
-val publicLabel = string("legacy_display_txt")
-val outgoing = hasMany<Friendship>("sent_requests")
+val publicLabel by string("legacy_display_txt")
+val outgoing by hasMany<Friendship>("sent_requests")
 ```
 
 ```diff
@@ -766,19 +840,23 @@ and increase collision surfaces.
 3. Make production `SchemaInput` derive the entity name from the concrete
    schema class and carry the explicit client name; remove caller-controlled
    entity-name overrides from the public path.
-4. Generalize side-effect-free declaration capture to every registered field
-   and edge builder, including supported mixin field declarations.
-5. Require non-null declaration names during schema/codegen validation; remove
+4. Add type-preserving `provideDelegate` / `getValue` support to every field
+   and edge builder, including custom `FieldBuilder` subclasses and mixin
+   fields. Bind and validate the declaration name during property construction.
+5. Remove the reflective post-construction declaration-name scan and its alias
+   fallback. Require every registered field and edge builder to have exactly
+   one delegated binding by finalization.
+6. Require non-null declaration names during schema/codegen validation; remove
    storage-derived fallbacks.
-6. Centralize resolved schema, field, and edge names so generators cannot
+7. Centralize resolved schema, field, and edge names so generators cannot
    accidentally select storage identity for public source.
-7. Replace public-name uses of `field.name`, `edge.name`, `toCamelCase(...)`,
+8. Replace public-name uses of `field.name`, `edge.name`, `toCamelCase(...)`,
    and `toPascalCase(...)` with declaration identity. Preserve storage names in
    metadata, migrations, predicate lowering, joins, and drivers.
-8. Expand generated-member collision manifests before emitting newly reachable
+9. Expand generated-member collision manifests before emitting newly reachable
    declaration-derived names.
-9. Migrate all schemas, generated fixtures, examples, and public documentation
-   to explicit client names and declaration-derived fields/edges.
+10. Migrate all schemas, generated fixtures, examples, and public documentation
+    to explicit client names and delegated field/edge declarations.
 
 Do not opportunistically rename database objects while implementing this RFC.
 
@@ -787,7 +865,9 @@ Do not opportunistically rename database objects while implementing this RFC.
 - Every schema has one explicit, valid, unique `clientName`.
 - Every generated client/configuration property uses it exactly.
 - Production entity type names come only from schema class names.
-- Every registered field and edge has exactly one captured declaration name.
+- Every registered field and edge is bound through `by` exactly once.
+- Ordinary `=` field/edge declarations fail with an actionable diagnostic.
+- Delegate access preserves each builder's complete static type.
 - Every public generated field and edge identifier uses declaration identity.
 - Storage/runtime/migration metadata continues to use explicit storage names.
 - Codegen performs no English inflection, target-derived naming, or
@@ -796,7 +876,7 @@ Do not opportunistically rename database objects while implementing this RFC.
 - Renaming only storage changes storage metadata but not Kotlin source.
 - Renaming only `clientName` changes client/configuration properties but not
   entity types or storage.
-- Invalid capture and collisions fail before source emission with actionable
+- Invalid binding and collisions fail before source emission with actionable
   diagnostics.
 - Direct production codegen entry points cannot bypass validation.
 
@@ -814,17 +894,23 @@ Do not opportunistically rename database objects while implementing this RFC.
 - no pluralizer helper or generated-name use remains;
 - low-level production generation cannot override the schema class name.
 
-### Declaration capture
+### Delegate binding
 
-- direct public stable field and edge `val`s capture their names;
+- direct public field and edge `val x by builder(...)` declarations bind their
+  names during construction;
 - storage and declaration names may differ;
-- private, mutable, delegated, inherited, and computed declarations reject;
-- aliased builders reject with every eligible property name;
-- capture does not invoke getters or register extra declarations;
-- mixin field declarations capture from the mixin without a host-property
+- ordinary `=`, private, mutable, inherited, computed, and wrapper-delegated
+  declarations reject;
+- binding one builder to a second property rejects with both property names;
+- binding does not scan properties, invoke getters, or register extra
+  declarations;
+- mixin field declarations bind in the mixin without a host-property
   prefix;
+- init-only and nested mixin inclusion remains supported;
 - nested mixin and host/mixin collisions reject deterministically;
-- field and edge capture coexist without identity confusion.
+- field and edge binding coexist without identity confusion;
+- field modifiers, explicit FK handles, indexes, inverse references, and M2M
+  through references retain their concrete types.
 
 ### Generated names
 
@@ -832,11 +918,11 @@ Use a schema containing at least:
 
 ```kotlin
 class Article : EntSchema("legacy_article_tbl", clientName = "stories") {
-    val publicTitle = string("legacy_title_txt")
-    val primaryAuthor = belongsTo<User>("primary_author")
-    val authoredPosts = hasMany<Post>("written_posts")
-    val reviewedPosts = hasMany<Post>("reviewed_posts")
-    val people = manyToMany<Person>("person_links")
+    val publicTitle by string("legacy_title_txt")
+    val primaryAuthor by belongsTo<User>("primary_author")
+    val authoredPosts by hasMany<Post>("written_posts")
+    val reviewedPosts by hasMany<Post>("reviewed_posts")
+    val people by manyToMany<Person>("person_links")
 }
 ```
 
@@ -886,7 +972,9 @@ and getting-started documentation to state:
 
 - schema classes name entity-prefixed generated types;
 - `clientName` is required and emitted exactly;
-- field and edge property names are generated-API commitments;
+- `by` marks field and edge property names as generated-API commitments;
+- ordinary `=` constructs an unbound builder and is not a valid generated
+  field/edge declaration;
 - storage strings are storage/runtime/migration metadata;
 - EntKt never pluralizes or singularizes generated names;
 - schema authors must name edges so `query{Name}`, `load{Name}`, and
@@ -902,14 +990,16 @@ declaration/storage mismatch so the separation is visible.
 2. Schema class names exclusively determine entity-prefixed generated types.
 3. Every schema explicitly declares a required `clientName`; there is no
    inferred default.
-4. Field and edge Kotlin properties, not storage strings, name generated APIs.
+4. Delegated field and edge Kotlin properties, not storage strings, name
+   generated APIs.
 5. Target entity types never determine relationship API names.
 6. Fixed framework `id` naming and mechanical API affixes are not inflection.
 7. Index and constraint strings remain storage names; prefix helpers use field
    declaration names.
-8. V1 captures only direct public stable backing-field `val` declarations on
-   supported schema/mixin classes.
-9. Every registered field and edge has exactly one declaration name.
+8. V1 binds only direct public stable `val x by EntKtBuilder(...)`
+   declarations on supported schema/mixin classes.
+9. Every registered field and edge has exactly one delegated binding and one
+   declaration name.
 10. Class, client, declaration, and storage renames have independent effects.
 11. Old inferred aliases are not retained.
 12. Edge-loading syntax and execution remain separate concerns; any generated
