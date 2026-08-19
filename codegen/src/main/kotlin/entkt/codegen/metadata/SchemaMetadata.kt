@@ -7,6 +7,7 @@ import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import entkt.codegen.columnName
 import entkt.runtime.driver.JsonMapperIds
+import entkt.codegen.apiName
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -151,13 +152,13 @@ internal fun columnMetadataFor(
         val f = belongsTo.field ?: continue
         val backingField = fieldsByName[f]
             ?: error(
-                "Edge '${edge.name}' references .field(\"$f\") but no field " +
+                "Edge '${edge.apiName}' (storage '${edge.name}') references .field(\"$f\") but no field " +
                     "with that name exists on the schema",
             )
         val targetIdType = edge.target.id().type
         if (backingField.type != targetIdType) {
             error(
-                "Edge '${edge.name}' references .field(\"$f\") of type " +
+                "Edge '${edge.apiName}' (storage '${edge.name}') references .field(\"$f\") of type " +
                     "${backingField.type} but target entity's id type is $targetIdType",
             )
         }
@@ -174,7 +175,7 @@ internal fun columnMetadataFor(
             // preventative future-proofing in case a numeric
             // `.updateDefault(...)` modifier is added later.
             error(
-                "Edge '${edge.name}' references .field(\"$f\") which carries " +
+                "Edge '${edge.apiName}' (storage '${edge.name}') references .field(\"$f\") which carries " +
                     "an updateDefault — update defaults are not allowed on " +
                     "field-backed FK columns. Express the intent as a " +
                     "beforeUpdate or afterUpdate hook on the owner entity instead.",
@@ -182,12 +183,14 @@ internal fun columnMetadataFor(
         }
         val existing = explicitFieldEdges.put(
             f,
-            ExplicitFieldEdge(edge.name, edge.target.tableName, belongsTo.onDelete, belongsTo.required, belongsTo.unique),
+            ExplicitFieldEdge(edge.name, edge.apiName, edge.target.tableName, belongsTo.onDelete, belongsTo.required, belongsTo.unique),
         )
         if (existing != null) {
             error(
-                "Field '$f' is used as the backing field for both edge '${existing.edgeName}' " +
-                    "and edge '${edge.name}' — each backing field can only be used by one edge",
+                "Field '$f' is used as the backing field for both edge " +
+                    "'${existing.edgeApiName}' (storage '${existing.edgeName}') and edge " +
+                    "'${edge.apiName}' (storage '${edge.name}') — each backing field can only " +
+                    "be used by one edge",
             )
         }
     }
@@ -208,27 +211,28 @@ internal fun columnMetadataFor(
             if (edgeRef != null) {
                 if (edgeRef.required && fieldNullable) {
                     error(
-                        "Edge '${edgeRef.edgeName}' is required but .field(\"${field.name}\") " +
+                        "Edge '${edgeRef.edgeApiName}' (storage '${edgeRef.edgeName}') is required but its backing field '${field.apiName}' (column '${field.name}') " +
                             "is nullable — a required edge needs a non-nullable backing field",
                     )
                 }
                 if (!edgeRef.required && !fieldNullable) {
                     error(
-                        "Edge '${edgeRef.edgeName}' is nullable but .field(\"${field.name}\") " +
+                        "Edge '${edgeRef.edgeApiName}' (storage '${edgeRef.edgeName}') is nullable but its backing field '${field.apiName}' (column '${field.name}') " +
                             "is non-null — a nullable edge needs a nullable backing field " +
                             "(add .nullable() to the field declaration)",
                     )
                 }
                 if (field.unique && !edgeRef.unique) {
                     error(
-                        "Edge '${edgeRef.edgeName}' is not .unique() but .field(\"${field.name}\") " +
+                        "Edge '${edgeRef.edgeApiName}' (storage '${edgeRef.edgeName}') is not .unique() but its backing field '${field.apiName}' (column '${field.name}') " +
                             "has a unique constraint — add .unique() to the edge or remove " +
                             ".unique() from the field",
                     )
                 }
                 if (edgeRef.onDelete == OnDelete.SET_NULL && !fieldNullable) {
                     error(
-                        "ON DELETE SET_NULL on edge with .field(\"${field.name}\") requires " +
+                        "ON DELETE SET_NULL on an edge backed by field '${field.apiName}' " +
+                            "(column '${field.name}') requires " +
                             "the backing field to be nullable",
                     )
                 }
@@ -279,7 +283,10 @@ internal fun columnMetadataFor(
  * and whether the edge declared `.unique()`.
  */
 private data class ExplicitFieldEdge(
+    /** Storage edge name. */
     val edgeName: String,
+    /** Kotlin declaration name of the same edge. */
+    val edgeApiName: String,
     val targetTable: String,
     val onDelete: OnDelete?,
     val required: Boolean,
@@ -346,26 +353,28 @@ internal fun resolveEdgeJoin(
             // matching BelongsTo edge to learn its column name.
             val inverse = findInverseEdge(edge, source)
                 ?: error(
-                    "Edge '${edge.name}' is a ${edge.kind::class.simpleName} edge but no " +
+                    "Edge '${edge.apiName}' (storage '${edge.name}') is a ${edge.kind::class.simpleName} edge but no " +
                         "inverse belongsTo edge was found on the target schema. " +
                         "The target must declare a belongsTo(...) edge pointing back at the source.",
                 )
             val inverseBt = inverse.kind as? EdgeKind.BelongsTo
                 ?: error(
-                    "Edge '${edge.name}' resolved to inverse '${inverse.name}' " +
+                    "Edge '${edge.apiName}' (storage '${edge.name}') resolved to inverse " +
+                        "'${inverse.apiName}' (storage '${inverse.name}') " +
                         "but it is not a belongsTo edge",
                 )
             if (edge.kind is EdgeKind.HasOne && !inverseBt.unique) {
                 error(
-                    "hasOne edge '${edge.name}' requires its inverse belongsTo " +
-                        "edge '${inverse.name}' to declare .unique()",
+                    "hasOne edge '${edge.apiName}' (storage '${edge.name}') requires its " +
+                        "inverse belongsTo edge '${inverse.apiName}' (storage " +
+                        "'${inverse.name}') to declare .unique()",
                 )
             }
             if (edge.kind is EdgeKind.HasMany && inverseBt.unique) {
                 error(
-                    "hasMany edge '${edge.name}' found inverse belongsTo " +
-                        "edge '${inverse.name}' with .unique() — use hasOne " +
-                        "instead of hasMany for one-to-one relationships",
+                    "hasMany edge '${edge.apiName}' (storage '${edge.name}') found inverse " +
+                        "belongsTo edge '${inverse.apiName}' (storage '${inverse.name}') with " +
+                        ".unique() — use hasOne instead of hasMany for one-to-one relationships",
                 )
             }
             val inverseFieldName = inverseBt.field
@@ -403,7 +412,8 @@ internal fun resolveM2MEdgeJoin(
         ?: error(
             "M2M sourceEdge \"${through.sourceEdge}\" does not match any belongsTo edge " +
                 "on junction $junctionName targeting ${schemaNames[source] ?: "source"}. " +
-                "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
+                "Available belongsTo edges: " +
+                "${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { "${it.apiName} (storage ${it.name})" }}.",
         )
     val sourceBt = sourceEdge.kind as EdgeKind.BelongsTo
     val sourceFieldName = sourceBt.field
@@ -417,12 +427,14 @@ internal fun resolveM2MEdgeJoin(
         ?: error(
             "M2M targetEdge \"${through.targetEdge}\" does not match any belongsTo edge " +
                 "on junction $junctionName targeting ${schemaNames[edge.target] ?: "target"}. " +
-                "Available belongsTo edges: ${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { it.name }}.",
+                "Available belongsTo edges: " +
+                "${junctionEdges.filter { it.kind is EdgeKind.BelongsTo }.map { "${it.apiName} (storage ${it.name})" }}.",
         )
     if (sourceEdge === targetEdge) {
         error(
-            "M2M edge \"${edge.name}\": sourceEdge and targetEdge resolved to the same " +
-                "junction edge \"${sourceEdge.name}\" on $junctionName — the two refs must be distinct.",
+            "M2M edge \"${edge.apiName}\" (storage \"${edge.name}\"): sourceEdge and targetEdge " +
+                "resolved to the same junction edge \"${sourceEdge.apiName}\" (storage " +
+                "\"${sourceEdge.name}\") on $junctionName — the two refs must be distinct.",
         )
     }
     val targetBt = targetEdge.kind as EdgeKind.BelongsTo

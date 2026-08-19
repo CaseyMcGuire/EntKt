@@ -5,7 +5,6 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
-import entkt.codegen.pluralize
 
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
@@ -40,8 +39,8 @@ private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOr
  * `Failed(EntQueryRejectedException)`; any other exception is stored
  * directly.
  */
-internal fun buildAll(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
-    val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+internal fun buildAll(schemaName: String, clientName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+    val repoPropName = clientName
     val listType = List::class.asClassName().parameterizedBy(entityClass)
     val resultType = READ_RESULT.parameterizedBy(listType)
     return FunSpec.builder("all")
@@ -111,8 +110,8 @@ internal fun buildRowShapedExplain(
  * that authoritative absence is a successful null payload while
  * denial and operational failure remain distinguishable.
  */
-internal fun buildFirstOrNull(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
-    val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+internal fun buildFirstOrNull(schemaName: String, clientName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
+    val repoPropName = clientName
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
     val happy = CodeBlock.builder()
         .add("  val c = requireClient()\n")

@@ -16,46 +16,70 @@ private fun finalize(vararg schemas: EntSchema) {
 }
 
 // M2M test schemas for through.target identity validation
-private class M2mGroupSchema : EntSchema("groups") {
+private class M2mGroupSchema : EntSchema("groups", clientName = "m2mGroupSchemas") {
     override fun id() = EntId.int()
-    val name = string("name")
-    val members = manyToMany<M2mPersonSchema>("members")
+    val name by string("name")
+    val members by manyToMany<M2mPersonSchema>("members")
         .throughEntity<M2mMembershipSchema>(M2mMembershipSchema::group, M2mMembershipSchema::person)
 }
 
-private class M2mPersonSchema : EntSchema("persons") {
+private class M2mPersonSchema : EntSchema("persons", clientName = "m2mPersonSchemas") {
     override fun id() = EntId.int()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class M2mMembershipSchema : EntSchema("memberships") {
+private class M2mMembershipSchema : EntSchema("memberships", clientName = "m2mMembershipSchemas") {
     override fun id() = EntId.int()
-    val groupId = int("group_id")
-    val personId = int("person_id")
-    val group = belongsTo<M2mGroupSchema>("group").field(groupId)
-    val person = belongsTo<M2mPersonSchema>("person").field(personId)
+    val groupId by int("group_id")
+    val personId by int("person_id")
+    val group by belongsTo<M2mGroupSchema>("group").field(groupId)
+    val person by belongsTo<M2mPersonSchema>("person").field(personId)
 }
 
-// Derived-name collision test schemas: raw names stay unique, but the
-// derived artifact file / client property collides.
-private class ArtifactBaseSchema : EntSchema("artifact_bases") {
+// Derived-name collision fixtures. Entity names come from the class, so
+// each class is literally named after the collision it provokes:
+// `Account` + `AccountCreate` collide on the generated AccountCreate.kt
+// file, and `Post` + `PostLoadBatchPrivacyRule` collide on a generated
+// top-level alias.
+private class Account : EntSchema("artifact_bases", clientName = "accounts") {
     override fun id() = EntId.int()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class ArtifactSuffixedSchema : EntSchema("artifact_suffixed") {
+private class AccountCreate : EntSchema("artifact_suffixed", clientName = "accountCreates") {
     override fun id() = EntId.int()
-    val note = string("note")
+    val note by string("note")
 }
 
-private class BoxSchema : EntSchema("boxes_one") {
+private class Post : EntSchema("collide_posts", clientName = "collidePosts") {
     override fun id() = EntId.int()
-    val label = string("label")
+    val name by string("name")
 }
 
-private class BoxeSchema : EntSchema("boxes_two") {
+private class PostLoadBatchPrivacyRule : EntSchema("collide_aliases", clientName = "collideAliases") {
     override fun id() = EntId.int()
-    val label = string("label")
+    val note by string("note")
+}
+
+private class Box : EntSchema("boxes_one", clientName = "boxes") {
+    override fun id() = EntId.int()
+    val label by string("label")
+}
+
+private class Boxe : EntSchema("boxes_two", clientName = "boxes") {
+    override fun id() = EntId.int()
+    val label by string("label")
+}
+
+// Reserved generated client capability type names.
+private class EntTransactionClient : EntSchema("reserved_txn", clientName = "reservedTxns") {
+    override fun id() = EntId.int()
+    val label by string("label")
+}
+
+private class EntClientScope : EntSchema("reserved_scope", clientName = "reservedScopes") {
+    override fun id() = EntId.int()
+    val label by string("label")
 }
 
 class EntGeneratorTest {
@@ -68,8 +92,8 @@ class EntGeneratorTest {
         val user = User()
         finalize(car, user)
         val schemas = listOf(
-            SchemaInput("Car", car),
-            SchemaInput("User", user),
+            SchemaInput(car),
+            SchemaInput(user),
         )
         val files = generator.generate(schemas)
 
@@ -98,14 +122,14 @@ class EntGeneratorTest {
 
     @Test
     fun `schema name colliding with a derived artifact name is rejected`() {
-        val base = ArtifactBaseSchema()
-        val suffixed = ArtifactSuffixedSchema()
+        val base = Account()
+        val suffixed = AccountCreate()
         finalize(base, suffixed)
         val error = assertFailsWith<IllegalStateException> {
             generator.generate(
                 listOf(
-                    SchemaInput("Account", base),
-                    SchemaInput("AccountCreate", suffixed),
+                    SchemaInput(base),
+                    SchemaInput(suffixed),
                 ),
             )
         }
@@ -114,15 +138,15 @@ class EntGeneratorTest {
 
     @Test
     fun `schema name colliding with a generated batch rule alias is rejected`() {
-        val post = ArtifactBaseSchema()
-        val aliasNamedEntity = ArtifactSuffixedSchema()
+        val post = Post()
+        val aliasNamedEntity = PostLoadBatchPrivacyRule()
         finalize(post, aliasNamedEntity)
 
         val error = assertFailsWith<IllegalStateException> {
             generator.generate(
                 listOf(
-                    SchemaInput("Post", post),
-                    SchemaInput("PostLoadBatchPrivacyRule", aliasNamedEntity),
+                    SchemaInput(post),
+                    SchemaInput(aliasNamedEntity),
                 ),
             )
         }
@@ -134,30 +158,72 @@ class EntGeneratorTest {
     }
 
     @Test
-    fun `schemas deriving the same pluralized client property are rejected`() {
-        val box = BoxSchema()
-        val boxe = BoxeSchema()
+    fun `the inspector and the generator agree on clientName errors`() {
+        // The inspector must never report a schema as valid that
+        // generation then rejects. Asserting agreement — rather than
+        // asserting each side separately — is what keeps a future check
+        // from being added to one entry point only.
+        for (inputs in listOf(
+            listOf(SchemaInput(DupClientA()), SchemaInput(DupClientB())),
+            listOf(SchemaInput(ReservedClientName())),
+        )) {
+            inputs.forEach { finalize(it.schema) }
+            val inspectorErrors = SchemaInspector.validate(inputs).errors
+            val generatorError = assertFailsWith<IllegalStateException> {
+                EntGenerator("com.example.ent").generate(inputs)
+            }.message!!
+
+            assertTrue(
+                inspectorErrors.isNotEmpty(),
+                "inspector reported valid but generation failed with: $generatorError",
+            )
+            // Same diagnostic text on both paths.
+            assertTrue(
+                inspectorErrors.any { it in generatorError },
+                "inspector and generator disagree.\ninspector: $inspectorErrors\ngenerator: $generatorError",
+            )
+        }
+    }
+
+    @Test
+    fun `clientName colliding with a fixed client member is rejected`() {
+        // `driver` is a real property on the generated EntClient, so a
+        // schema claiming it would emit a second declaration of that name.
+        val schema = ReservedClientName()
+        finalize(schema)
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(listOf(SchemaInput(schema)))
+        }
+        assertContains(error.message!!, "collides with a fixed member of the generated client")
+        assertContains(error.message!!, "'driver'")
+        assertContains(error.message!!, "ReservedClientName")
+    }
+
+    @Test
+    fun `schemas declaring the same clientName are rejected`() {
+        val box = Box()
+        val boxe = Boxe()
         finalize(box, boxe)
         val error = assertFailsWith<IllegalStateException> {
             generator.generate(
                 listOf(
-                    SchemaInput("Box", box),
-                    SchemaInput("Boxe", boxe),
+                    SchemaInput(box),
+                    SchemaInput(boxe),
                 ),
             )
         }
-        assertContains(error.message!!, "'boxes'")
+        assertContains(error.message!!, "clientName = 'boxes'")
         assertContains(error.message!!, "'Box'")
         assertContains(error.message!!, "'Boxe'")
     }
 
     @Test
     fun `schema named EntTransactionClient is rejected as a reserved client type`() {
-        val schema = BoxSchema()
+        val schema = EntTransactionClient()
         finalize(schema)
 
         val error = assertFailsWith<IllegalStateException> {
-            generator.generate(listOf(SchemaInput("EntTransactionClient", schema)))
+            generator.generate(listOf(SchemaInput(schema)))
         }
 
         assertContains(error.message!!, "reserved generated client capability type")
@@ -165,11 +231,11 @@ class EntGeneratorTest {
 
     @Test
     fun `schema named EntClientScope is rejected as a reserved client type`() {
-        val schema = BoxSchema()
+        val schema = EntClientScope()
         finalize(schema)
 
         val error = assertFailsWith<IllegalStateException> {
-            generator.generate(listOf(SchemaInput("EntClientScope", schema)))
+            generator.generate(listOf(SchemaInput(schema)))
         }
 
         assertContains(error.message!!, "reserved generated client capability type")
@@ -181,8 +247,8 @@ class EntGeneratorTest {
         val user = User()
         finalize(car, user)
         val schemas = listOf(
-            SchemaInput("Car", car),
-            SchemaInput("User", user),
+            SchemaInput(car),
+            SchemaInput(user),
         )
         val files = generator.generate(schemas)
 
@@ -197,8 +263,8 @@ class EntGeneratorTest {
         val user = User()
         finalize(car, user)
         val schemas = listOf(
-            SchemaInput("Car", car),
-            SchemaInput("User", user),
+            SchemaInput(car),
+            SchemaInput(user),
         )
         val outputDir = Files.createTempDirectory("entkt-test")
         try {
@@ -229,21 +295,21 @@ class EntGeneratorTest {
 
     @Test
     fun `ensureFinalized rejects duplicate index names across schemas`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
             val byEmail = index("idx_email", email)
         }
-        class Orgs : EntSchema("orgs") {
+        class Orgs : EntSchema("orgs", clientName = "orgses") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
             val byEmail = index("idx_email", email)
         }
         val users = Users()
         val orgs = Orgs()
         val schemas = listOf(
-            SchemaInput("Users", users),
-            SchemaInput("Orgs", orgs),
+            SchemaInput(users),
+            SchemaInput(orgs),
         )
         val err = assertFailsWith<IllegalStateException> {
             ensureFinalized(schemas)
@@ -254,20 +320,20 @@ class EntGeneratorTest {
 
     @Test
     fun `ensureFinalized rejects index name colliding with table name`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
         }
-        class Orgs : EntSchema("orgs") {
+        class Orgs : EntSchema("orgs", clientName = "orgses") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
             val byEmail = index("users", email)
         }
         val users = Users()
         val orgs = Orgs()
         val schemas = listOf(
-            SchemaInput("Users", users),
-            SchemaInput("Orgs", orgs),
+            SchemaInput(users),
+            SchemaInput(orgs),
         )
         val err = assertFailsWith<IllegalStateException> {
             ensureFinalized(schemas)
@@ -278,21 +344,21 @@ class EntGeneratorTest {
 
     @Test
     fun `ensureFinalized rejects index name colliding with synthesized unique index`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val email = string("email").unique()
+            val email by string("email").unique()
         }
-        class Orgs : EntSchema("orgs") {
+        class Orgs : EntSchema("orgs", clientName = "orgses") {
             override fun id() = EntId.int()
-            val name = string("name")
+            val name by string("name")
             // This explicit name matches the synthesized idx_users_email_unique
             val byName = index("idx_users_email_unique", name)
         }
         val users = Users()
         val orgs = Orgs()
         val schemas = listOf(
-            SchemaInput("Users", users),
-            SchemaInput("Orgs", orgs),
+            SchemaInput(users),
+            SchemaInput(orgs),
         )
         val err = assertFailsWith<IllegalStateException> {
             ensureFinalized(schemas)
@@ -314,9 +380,9 @@ class EntGeneratorTest {
         // but the schema set contains membership2 — identity mismatch.
         val membership2 = M2mMembershipSchema()
         val schemas = listOf(
-            SchemaInput("M2mGroup", group),
-            SchemaInput("M2mPerson", person),
-            SchemaInput("M2mMembership", membership2),
+            SchemaInput(group),
+            SchemaInput(person),
+            SchemaInput(membership2),
         )
         val err = assertFailsWith<IllegalStateException> {
             ensureFinalized(schemas)
@@ -324,4 +390,21 @@ class EntGeneratorTest {
         assertContains(err.message!!, "junction schema instance")
         assertContains(err.message!!, "memberships")
     }
+}
+
+// `driver` is a fixed member of the generated client.
+private class ReservedClientName : EntSchema("reserved_client", clientName = "driver") {
+    override fun id() = EntId.int()
+    val label by string("label")
+}
+
+// Two schemas claiming the same client property.
+private class DupClientA : EntSchema("dup_client_a", clientName = "records") {
+    override fun id() = EntId.int()
+    val label by string("label")
+}
+
+private class DupClientB : EntSchema("dup_client_b", clientName = "records") {
+    override fun id() = EntId.int()
+    val label by string("label")
 }

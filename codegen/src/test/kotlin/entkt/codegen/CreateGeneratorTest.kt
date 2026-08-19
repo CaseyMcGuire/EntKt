@@ -8,32 +8,33 @@ import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
-class Session : EntSchema("sessions") {
+class Session : EntSchema("sessions", clientName = "sessions") {
     override fun id() = EntId.string()
-    val token = string("token")
+    val token by string("token")
 }
 
-class Event : EntSchema("events") {
+class Event : EntSchema("events", clientName = "events") {
     override fun id() = EntId.int()
-    val title = string("title")
-    val createdAt = time("created_at").defaultNow().immutable()
+    val title by string("title")
+    val createdAt by time("created_at").defaultNow().immutable()
 }
 
 enum class Status { LOW, MEDIUM, HIGH }
 enum class OtherStatus { PENDING, ACCEPTED }
 
-class DefaultedEnumEntity : EntSchema("defaulted_enum_entities") {
+class DefaultedEnumEntity : EntSchema("defaulted_enum_entities", clientName = "defaultedEnumEntities") {
     override fun id() = EntId.int()
-    val priority = enum<Status>("priority").default(Status.LOW)
+    val priority by enum<Status>("priority").default(Status.LOW)
 }
 
-class ValidatedEntity : EntSchema("validated_entities") {
+class ValidatedEntity : EntSchema("validated_entities", clientName = "validatedEntities") {
     override fun id() = EntId.int()
-    val name = string("name").minLength(3).maxLength(100).notEmpty()
-    val age = int("age").positive()
-    val nickname = string("nickname").nullable().match(Regex("^[a-z]+$"))
-    val code = string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
+    val name by string("name").minLength(3).maxLength(100).notEmpty()
+    val age by int("age").positive()
+    val nickname by string("nickname").nullable().match(Regex("^[a-z]+$"))
+    val code by string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
 }
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -81,12 +82,12 @@ class CreateGeneratorTest {
         // it does not throw.
         assert(
             output.contains(
-                """val model = this.model ?: return _validationFailed(listOf(ValidationViolation("model is required", field = "model")))""",
+                """val _entktValueModel = this.model ?: return _validationFailed(listOf(ValidationViolation("model is required", field = "model")))""",
             ),
         ) { "Should return validation Failed when model is missing\n$output" }
         assert(
             output.contains(
-                """val year = this.year ?: return _validationFailed(listOf(ValidationViolation("year is required", field = "year")))""",
+                """val _entktValueYear = this.year ?: return _validationFailed(listOf(ValidationViolation("year is required", field = "year")))""",
             ),
         ) { "Should return validation Failed when year is missing\n$output" }
     }
@@ -187,7 +188,7 @@ class CreateGeneratorTest {
 
         // User.active has .default(true). The constructor param is non-null,
         // so save() must coalesce to the default rather than passing this.active.
-        assert(output.contains("active = this.active ?: true")) {
+        assert(output.contains("val _entktValueActive = this.active ?: true")) {
             "Should coalesce to default literal for active\n$output"
         }
         assert(!output.contains(""""active is required"""")) {
@@ -216,10 +217,10 @@ class CreateGeneratorTest {
         val output = generator.generate("ValidatedEntity", schema).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("name.length > 100")) {
+        assert(output.contains("_entktValueName.length > 100")) {
             "Should emit maxLength check\n$output"
         }
-        assert(output.contains("name.isEmpty()")) {
+        assert(output.contains("_entktValueName.isEmpty()")) {
             "Should emit notEmpty check\n$output"
         }
         // A failed validator returns MutationResult.Failed carrying a
@@ -227,7 +228,7 @@ class CreateGeneratorTest {
         // rule's message and the field name — it does not throw.
         assert(
             output.contains(
-                """if (name.length < 3) return _validationFailed(listOf(ValidationViolation("value must be at least 3 characters", field = "name")))""",
+                """if (_entktValueName.length < 3) return _validationFailed(listOf(ValidationViolation("value must be at least 3 characters", field = "name")))""",
             ),
         ) {
             "minLength failure should return validation Failed with message + field\n$output"
@@ -243,7 +244,7 @@ class CreateGeneratorTest {
 
         assert(
             output.contains(
-                """if (age <= 0) return _validationFailed(listOf(ValidationViolation("value must be positive", field = "age")))""",
+                """if (_entktValueAge <= 0) return _validationFailed(listOf(ValidationViolation("value must be positive", field = "age")))""",
             ),
         ) {
             "positive failure should return validation Failed with message + field\n$output"
@@ -257,10 +258,10 @@ class CreateGeneratorTest {
         val output = generator.generate("ValidatedEntity", schema).toString()
 
         // nickname is optional, so validation should be wrapped
-        assert(output.contains("if (nickname != null)")) {
+        assert(output.contains("if (_entktValueNickname != null)")) {
             "Should null-guard optional field validation\n$output"
         }
-        assert(output.contains("Regex(") && output.contains(".matches(nickname)")) {
+        assert(output.contains("Regex(") && output.contains(".matches(_entktValueNickname)")) {
             "Should emit match check for optional field\n$output"
         }
     }
@@ -297,7 +298,7 @@ class CreateGeneratorTest {
         finalize(ticket)
         val output = generator.generate("Ticket", ticket).toString()
 
-        assert(output.contains("\"priority\" to priority.name")) {
+        assert(output.contains("\"priority\" to _entktValuePriority.name")) {
             "Should convert typed enum to .name in the row map\n$output"
         }
     }
@@ -308,7 +309,7 @@ class CreateGeneratorTest {
         finalize(ticket)
         val output = generator.generate("Ticket", ticket).toString()
 
-        assert(output.contains("\"category\" to category.name")) {
+        assert(output.contains("\"category\" to _entktValueCategory.name")) {
             "Second typed enum should also use .name in the row map\n$output"
         }
     }
@@ -329,9 +330,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `typed enum default rejects constant from wrong enum class`() {
-        val wrongDefault = object : EntSchema("wrong_defaults") {
+        val wrongDefault = object : EntSchema("wrong_defaults", clientName = "wrongDefaults") {
             override fun id() = EntId.int()
-            val priority = enum<Status>("priority").default(OtherStatus.PENDING)
+            val priority by enum<Status>("priority").default(OtherStatus.PENDING)
         }
         finalize(wrongDefault)
         assertFailsWith<IllegalArgumentException> {
@@ -346,7 +347,7 @@ class CreateGeneratorTest {
         val output = generator.generate("ValidatedEntity", schema).toString()
 
         val bindingPos = output.indexOf("name is required")
-        val validationPos = output.indexOf("name.length < 3")
+        val validationPos = output.indexOf("_entktValueName.length < 3")
         val rowMapPos = output.indexOf("val values: Map<String, Any?>")
         assert(bindingPos < validationPos && validationPos < rowMapPos) {
             "Validation should appear after binding and before row map\n$output"
@@ -375,7 +376,7 @@ class CreateGeneratorTest {
 
         // nickname uses Regex("^[a-z]+$") with no options — should not have setOf()
         val regexLines = output.lines().filter { it.contains("Regex(") }
-        val nicknameRegex = regexLines.find { it.contains("nickname") }
+        val nicknameRegex = regexLines.find { it.contains("_entktValueNickname") }
         assert(nicknameRegex != null && !nicknameRegex.contains("setOf")) {
             "Should emit plain Regex() for pattern without options\n$output"
         }
@@ -408,9 +409,9 @@ class CreateGeneratorTest {
 
     @Test
     fun `nullable field with default uses the default when omitted`() {
-        val schema = object : EntSchema("nullable_defaults") {
+        val schema = object : EntSchema("nullable_defaults", clientName = "nullableDefaults") {
             override fun id() = EntId.int()
-            val nickname = string("nickname").nullable().default("anonymous")
+            val nickname by string("nickname").nullable().default("anonymous")
         }
         finalize(schema)
         val output = generator.generate("NullableDefault", schema).toString()
@@ -432,9 +433,9 @@ class CreateGeneratorTest {
         // like "hello $name" would compile and silently reference
         // whatever `name` is in scope. KotlinPoet's %S handles dollar
         // signs by escaping them with `${'$'}` or backslash.
-        val schema = object : EntSchema("dollar_defaults") {
+        val schema = object : EntSchema("dollar_defaults", clientName = "dollarDefaults") {
             override fun id() = EntId.int()
-            val label = string("label").default("price is \$10")
+            val label by string("label").default("price is \$10")
         }
         finalize(schema)
         val output = generator.generate("DollarDefault", schema).toString()
@@ -462,9 +463,9 @@ class CreateGeneratorTest {
         // the output uses one of those representations and does NOT
         // contain an unterminated `"line one` literal that would only
         // appear if a raw newline broke a single-quoted string.
-        val schema = object : EntSchema("newline_defaults") {
+        val schema = object : EntSchema("newline_defaults", clientName = "newlineDefaults") {
             override fun id() = EntId.int()
-            val label = string("label").default("line one\nline two")
+            val label by string("label").default("line one\nline two")
         }
         finalize(schema)
         val output = generator.generate("NewlineDefault", schema).toString()
@@ -774,14 +775,14 @@ class CreateGeneratorTest {
         //
         // Defined via an inline local schema with an immutable
         // field-backed FK so the test owns its fixtures.
-        class ImmFkParent : EntSchema("imm_parents") {
+        class ImmFkParent : EntSchema("imm_parents", clientName = "immFkParents") {
             override fun id() = EntId.long()
         }
-        class ImmFkChild : EntSchema("imm_children") {
+        class ImmFkChild : EntSchema("imm_children", clientName = "immFkChilds") {
             override fun id() = EntId.long()
-            val name = string("name")
-            val ownerId = long("owner_id").immutable()
-            val owner = belongsTo<ImmFkParent>("owner").field(ownerId)
+            val name by string("name")
+            val ownerId by long("owner_id").immutable()
+            val owner by belongsTo<ImmFkParent>("owner").field(ownerId)
         }
         val parent = ImmFkParent()
         val child = ImmFkChild()
@@ -818,34 +819,29 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `mutable create snapshot locals avoid field-backed FK names`() {
-        class SnapshotParent : EntSchema("snapshot_parents") {
-            override fun id() = EntId.uuid()
+    fun `field-backed FK names cannot collide with generated snapshot locals`() {
+        // The generator detaches mutable create payloads into locals named
+        // `_entktPrepared{Field}` and appends `_` when a field-backed FK
+        // property already claims that name.
+        //
+        // Under the declaration-name contract that collision is
+        // unreachable: declaration names must be lower-camel identifiers,
+        // so the framework's `_` prefix is reserved and the schema is
+        // rejected at binding — long before codegen picks a local name.
+        // The generator's suffix logic stays as defence in depth for
+        // future generated-vs-generated collisions.
+        val err = assertFailsWith<IllegalArgumentException> {
+            object : EntSchema("snapshot_children", clientName = "snapshotChildren") {
+                override fun id() = EntId.long()
+                val payload by bytes("payload")
+                val _entktPreparedPayload by uuid("owner_id")
+            }
         }
-        class SnapshotChild : EntSchema("snapshot_children") {
-            override fun id() = EntId.long()
-            val payload = bytes("payload")
-            val _entktPreparedPayload = uuid("owner_id")
-            val owner = belongsTo<SnapshotParent>("owner").field(_entktPreparedPayload)
-        }
-        val parent = SnapshotParent()
-        val child = SnapshotChild()
-        finalize(parent, child)
-        val output = generator.generate(
-            "SnapshotChild",
-            child,
-            mapOf(parent to "SnapshotParent", child to "SnapshotChild"),
-        ).toString()
-
-        assert(output.contains("val _entktPreparedPayload_ = payload.copyOf()")) {
-            "prepared mutable local should move past the field-backed FK collision\n$output"
-        }
-        assert(output.contains("\"payload\" to _entktPreparedPayload_")) {
-            "driver values should use the collision-free detached local\n$output"
-        }
-        assert(output.contains("payload = _entktPreparedPayload_")) {
-            "candidate should use the same collision-free detached local\n$output"
-        }
+        assertTrue(
+            err.message!!.contains("not a valid generated API name") &&
+                err.message!!.contains("_entktPreparedPayload"),
+            "expected an identifier diagnostic, got: ${err.message}",
+        )
     }
 
     @Test

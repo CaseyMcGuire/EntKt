@@ -1,5 +1,6 @@
 package entkt.codegen.metadata
 
+import entkt.codegen.apiName
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -47,7 +48,8 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     edge.ref?.let { refName ->
         return targetEdges.firstOrNull { it.name == refName && it.target === source && isValidInverse(it) }
             ?: error(
-                "Edge '${edge.name}' declares .inverse(\"$refName\") but no edge named " +
+                "Edge '${edge.apiName}' (storage '${edge.name}') declares .inverse(\"$refName\") " +
+                "but no edge named " +
                     "'$refName' pointing back at the source schema was found on the target"
             )
     }
@@ -55,10 +57,10 @@ internal fun findInverseEdge(edge: Edge, source: EntSchema): Edge? {
     // Rule 2: target has an edge whose ref names us.
     val refMatches = targetEdges.filter { it.target === source && it.ref == edge.name && isValidInverse(it) }
     if (refMatches.size > 1) {
-        val names = refMatches.joinToString(", ") { "'${it.name}'" }
+        val names = refMatches.joinToString(", ") { "'${it.apiName}' (storage '${it.name}')" }
         error(
-            "Edge '${edge.name}' has ${refMatches.size} inverse edges ($names) that " +
-                "declare .inverse(\"${edge.name}\") — this is ambiguous. Use distinct " +
+            "Edge '${edge.apiName}' (storage '${edge.name}') has ${refMatches.size} inverse edges ($names) that " +
+                "declare an inverse to '${edge.apiName}' — this is ambiguous. Use distinct " +
                 ".inverse() values or remove duplicates"
         )
     }

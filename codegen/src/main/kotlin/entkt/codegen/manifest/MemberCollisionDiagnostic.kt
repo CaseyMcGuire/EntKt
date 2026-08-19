@@ -65,6 +65,7 @@ internal fun formatMemberCollisionDiagnostic(collision: MemberCollision): String
  */
 private fun kindDescriptor(kind: GeneratedMemberKind): String = when (kind) {
     GeneratedMemberKind.PROPERTY -> "property"
+    GeneratedMemberKind.MUTABLE_PROPERTY -> "property"
     GeneratedMemberKind.FUNCTION -> "method"
     GeneratedMemberKind.NESTED_TYPE -> "nested type"
     GeneratedMemberKind.CONSTRUCTOR_PARAMETER -> "constructor parameter"

@@ -12,11 +12,11 @@ import entkt.schema.EntSchema
  * Paired with `User.groups` on the existing [User] schema for
  * inverse-direction coverage.
  */
-class Group : EntSchema("groups") {
+class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.long()
 
-    val name = string("name")
+    val name by string("name")
 
-    val users = manyToMany<User>("users")
+    val users by manyToMany<User>("users")
         .throughEntity<Membership>(Membership::group, Membership::user)
 }

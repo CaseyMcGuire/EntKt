@@ -8,37 +8,46 @@ import kotlin.test.assertTrue
 
 private enum class Tier { FREE, PRO }
 
-private class ViewerUser : EntSchema("viewer_users") {
+private class ViewerUser : EntSchema("viewer_users", clientName = "viewerUsers") {
     override fun id() = EntId.long()
-    val name = string("name")
-    val secret = string("secret").sensitive()
-    val tier = enum<Tier>("tier")
-    val bio = text("bio").nullable()
-    val posts = hasMany<ViewerPost>("posts")
+    val name by string("name")
+    val secret by string("secret").sensitive()
+    val tier by enum<Tier>("tier")
+    val bio by text("bio").nullable()
+    val posts by hasMany<ViewerPost>("posts")
 }
 
-private class ViewerPost : EntSchema("viewer_posts") {
+/**
+ * Deliberately long entity name. The generated repository property and
+ * adapter names derive from the class, so exercising the long-name
+ * formatting path needs a real class rather than a caller-supplied
+ * override.
+ */
+private class ConversationAsset : EntSchema("conversation_assets", clientName = "conversationAssets") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val author = belongsTo<ViewerUser>("author").inverse(ViewerUser::posts)
+    val name by string("name")
+}
+
+private class ViewerPost : EntSchema("viewer_posts", clientName = "viewerPosts") {
+    override fun id() = EntId.long()
+    val title by string("title")
+    val author by belongsTo<ViewerUser>("author").inverse(ViewerUser::posts)
 }
 
 class ViewerCodegenTest {
 
     private fun gen(
         viewer: Boolean,
-        userName: String = "ViewerUser",
+        extra: EntSchema? = null,
         normalizeWhitespace: Boolean = true,
     ): Map<String, String> {
         val user = ViewerUser()
         val post = ViewerPost()
-        val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(
-            user::class to user, post::class to post,
-        )
-        user.finalize(registry)
-        post.finalize(registry)
+        val all = listOfNotNull<EntSchema>(user, post, extra)
+        val registry = all.associateBy { it::class }
+        all.forEach { it.finalize(registry) }
         return EntGenerator("com.example.ent", viewer = viewer)
-            .generate(listOf(SchemaInput(userName, user), SchemaInput("ViewerPost", post)))
+            .generate(all.map { SchemaInput(it) })
             .associate {
                 val source = it.toString()
                 it.name to if (normalizeWhitespace) source.replace("\\s+".toRegex(), " ") else source
@@ -119,7 +128,7 @@ class ViewerCodegenTest {
     fun `long repository names keep return null on one logical line`() {
         val adapter = gen(
             viewer = true,
-            userName = "ConversationAsset",
+            extra = ConversationAsset(),
             normalizeWhitespace = false,
         ).getValue("ConversationAssetViewerEntity")
 
@@ -131,12 +140,12 @@ class ViewerCodegenTest {
     fun `edges emit fk and filter link metadata by kind`() {
         val user = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue(
-            """EntViewerEdge(name = "posts", targetRouteName = "viewerPost", cardinality = "to-many", localFkColumn = null, targetFilterColumn = "author_id")""" in user,
+            """EntViewerEdge(name = "posts", targetRouteName = "viewerPosts", cardinality = "to-many", localFkColumn = null, targetFilterColumn = "author_id")""" in user,
             user,
         )
         val post = gen(viewer = true).getValue("ViewerPostViewerEntity")
         assertTrue(
-            """EntViewerEdge(name = "author", targetRouteName = "viewerUser", cardinality = "to-one", localFkColumn = "author_id", targetFilterColumn = null)""" in post,
+            """EntViewerEdge(name = "author", targetRouteName = "viewerUsers", cardinality = "to-one", localFkColumn = "author_id", targetFilterColumn = null)""" in post,
             post,
         )
     }

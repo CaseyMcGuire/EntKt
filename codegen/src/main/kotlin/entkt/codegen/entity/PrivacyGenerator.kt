@@ -1,5 +1,6 @@
 package entkt.codegen.entity
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
@@ -18,7 +19,6 @@ import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
@@ -296,7 +296,7 @@ internal class PrivacyGenerator(
         val props = mutableListOf<PropertySpec>()
 
         for (field in fields) {
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             val typeName = field.resolvedTypeName().copy(nullable = field.nullable)
             ctor.addParameter(propName, typeName)
             props.add(PropertySpec.builder(propName, typeName).initializer(propName).build())
@@ -395,7 +395,7 @@ internal class PrivacyGenerator(
 
         for (field in fields) {
             if (field.immutable) continue
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             val valueType = field.resolvedTypeName().copy(nullable = field.nullable)
             val patchType = FIELD_PATCH.parameterizedBy(valueType)
             ctor.addParameter(

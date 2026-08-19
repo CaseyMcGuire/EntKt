@@ -16,10 +16,10 @@ import kotlin.test.assertTrue
 // migration path only sees the jsonb SQL type, never the serializer.
 private data class Other(val count: Int)
 
-private class JsonDoc : EntSchema("json_docs") {
+private class JsonDoc : EntSchema("json_docs", clientName = "jsonDocs") {
     override fun id() = EntId.long()
-    val title = text("title")
-    val metadata = json("metadata", Meta::class).nullable()
+    val title by text("title")
+    val metadata by json("metadata", Meta::class).nullable()
 }
 
 class JsonDdlTest {
@@ -30,7 +30,7 @@ class JsonDdlTest {
 
     private fun normalized(vararg schemas: EntSchema): NormalizedSchema =
         NormalizedSchema.fromEntitySchemas(
-            buildEntitySchemas(schemas.map { SchemaInput(it::class.simpleName ?: "S", it) }),
+            buildEntitySchemas(schemas.map { SchemaInput(it) }),
             typeMapper,
         )
 
@@ -53,13 +53,13 @@ class JsonDdlTest {
     fun `changing only the Kotlin JSON class produces no migration`() {
         // Migrations diff only DB facts (jsonb + nullability), never the Kotlin
         // class or serializer — so swapping the JSON type yields no ops.
-        class DocA : EntSchema("json_docs") {
+        class DocA : EntSchema("json_docs", clientName = "docAs") {
             override fun id() = EntId.long()
-            val metadata = json("metadata", Meta::class).nullable()
+            val metadata by json("metadata", Meta::class).nullable()
         }
-        class DocB : EntSchema("json_docs") {
+        class DocB : EntSchema("json_docs", clientName = "docBs") {
             override fun id() = EntId.long()
-            val metadata = json("metadata", Other::class).nullable()
+            val metadata by json("metadata", Other::class).nullable()
         }
         val result = differ.diff(normalized(DocA()), normalized(DocB()))
         assertTrue(result.ops.isEmpty(), result.ops.toString())

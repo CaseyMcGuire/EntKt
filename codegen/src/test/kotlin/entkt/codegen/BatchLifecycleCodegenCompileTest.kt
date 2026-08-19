@@ -13,15 +13,15 @@ import kotlin.test.assertEquals
 /** Compile-time coverage for mixed scalar and batch lifecycle registration. */
 class BatchLifecycleCodegenCompileTest {
 
-    private class HookSchema : EntSchema("hooks") {
+    private class HookSchema : EntSchema("hooks", clientName = "hookSchemas") {
         override fun id() = EntId.long()
     }
 
-    private class BatchHookSchema : EntSchema("batch_hooks") {
+    private class BatchHookSchema : EntSchema("batch_hooks", clientName = "batchHookSchemas") {
         override fun id() = EntId.long()
     }
 
-    private class WidgetSchema : EntSchema("widgets") {
+    private class Widget : EntSchema("widgets", clientName = "widgets") {
         override fun id() = EntId.int()
     }
 
@@ -35,7 +35,7 @@ class BatchLifecycleCodegenCompileTest {
         car.finalize(registry)
         user.finalize(registry)
         return EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Car", car), SchemaInput("User", user)))
+            .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
     }
 
@@ -160,8 +160,8 @@ class BatchLifecycleCodegenCompileTest {
         val generated = EntGenerator("com.example.ent")
             .generate(
                 listOf(
-                    SchemaInput("Hook", hook),
-                    SchemaInput("BatchHook", batchHook),
+                    SchemaInput(hook),
+                    SchemaInput(batchHook),
                 ),
             )
             .toCompileTestSources()
@@ -177,10 +177,10 @@ class BatchLifecycleCodegenCompileTest {
 
     @Test
     fun `entity named List does not shadow generated collection constructors`() {
-        val widget = WidgetSchema()
+        val widget = Widget()
         widget.finalize(mapOf(widget::class to widget))
         val generated = EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Widget", widget)))
+            .generate(listOf(SchemaInput(widget)))
             .toCompileTestSources() + SourceFile.kotlin(
             "List.kt",
             """
@@ -201,9 +201,9 @@ class BatchLifecycleCodegenCompileTest {
 
     @Test
     fun `generated all batches LOAD privacy in row order and captures malformed cardinality`() {
-        val widget = WidgetSchema()
+        val widget = Widget()
         val generated = EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Widget", widget)))
+            .generate(listOf(SchemaInput(widget)))
             .toCompileTestSources()
         val probe = SourceFile.kotlin(
             "BatchLifecycleRuntimeProbe.kt",

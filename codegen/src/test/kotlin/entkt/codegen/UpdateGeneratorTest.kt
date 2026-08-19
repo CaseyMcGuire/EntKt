@@ -7,10 +7,10 @@ import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test
 
-private class UpdateDefaultEntity : EntSchema("update_default_entities") {
+private class UpdateDefaultEntity : EntSchema("update_default_entities", clientName = "updateDefaultEntities") {
     override fun id() = EntId.int()
-    val name = string("name")
-    val updatedAt = time("updated_at").updateDefaultNow()
+    val name by string("name")
+    val updatedAt by time("updated_at").updateDefaultNow()
 }
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -2107,19 +2107,19 @@ class UpdateGeneratorTest {
 
 // ---------- link-table M2M helpers test schemas (CLIENT_UUID junction) ----------
 
-private class UuidJunctionPost : EntSchema("uuid_junction_posts") {
+private class UuidJunctionPost : EntSchema("uuid_junction_posts", clientName = "uuidJunctionPosts") {
     override fun id() = EntId.long()
-    val tags = manyToMany<UuidJunctionTag>("tags")
+    val tags by manyToMany<UuidJunctionTag>("tags")
         .throughLink<UuidJunctionPostTag>(UuidJunctionPostTag::post, UuidJunctionPostTag::tag)
 }
-private class UuidJunctionTag : EntSchema("uuid_junction_tags") {
+private class UuidJunctionTag : EntSchema("uuid_junction_tags", clientName = "uuidJunctionTags") {
     override fun id() = EntId.long()
 }
-private class UuidJunctionPostTag : EntSchema("uuid_junction_post_tags") {
+private class UuidJunctionPostTag : EntSchema("uuid_junction_post_tags", clientName = "uuidJunctionPostTags") {
     // CLIENT_UUID junction id: caller (or codegen) mints UUID client-side.
     override fun id() = EntId.uuid()
-    val post = belongsTo<UuidJunctionPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag = belongsTo<UuidJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val post by belongsTo<UuidJunctionPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<UuidJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_uuid_junction_post_tags_pair", post.fk, tag.fk).unique()
 }
 private data class ClientUuidJunctionSchemas(
@@ -2146,20 +2146,20 @@ private fun makeClientUuidJunctionSchemas(): ClientUuidJunctionSchemas {
 // ---------- link-table M2M helpers test schemas ----------
 
 // helper-eligible throughLink (Long-id source, UUID-id target)
-private class M2MPost : EntSchema("m2m_posts") {
+private class M2MPost : EntSchema("m2m_posts", clientName = "m2MPosts") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val tags = manyToMany<M2MTag>("tags")
+    val title by string("title")
+    val tags by manyToMany<M2MTag>("tags")
         .throughLink<M2MPostTag>(M2MPostTag::post, M2MPostTag::tag)
 }
-private class M2MTag : EntSchema("m2m_tags") {
+private class M2MTag : EntSchema("m2m_tags", clientName = "m2MTags") {
     override fun id() = EntId.uuid()
-    val name = string("name")
+    val name by string("name")
 }
-private class M2MPostTag : EntSchema("m2m_post_tags") {
+private class M2MPostTag : EntSchema("m2m_post_tags", clientName = "m2MPostTags") {
     override fun id() = EntId.long()
-    val post = belongsTo<M2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag = belongsTo<M2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val post by belongsTo<M2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<M2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_post_tags_pair", post.fk, tag.fk).unique()
 }
 
@@ -2181,19 +2181,19 @@ private fun makeLinkM2MSchemas(): LinkSchemas {
 }
 
 // throughEntity (must NOT get mutator codegen)
-private class M2MTeam : EntSchema("m2m_teams") {
+private class M2MTeam : EntSchema("m2m_teams", clientName = "m2MTeams") {
     override fun id() = EntId.long()
-    val members = manyToMany<M2MMember>("members")
+    val members by manyToMany<M2MMember>("members")
         .throughEntity<M2MTeamMembership>(M2MTeamMembership::team, M2MTeamMembership::member)
 }
-private class M2MMember : EntSchema("m2m_members") {
+private class M2MMember : EntSchema("m2m_members", clientName = "m2MMembers") {
     override fun id() = EntId.long()
 }
-private class M2MTeamMembership : EntSchema("m2m_memberships") {
+private class M2MTeamMembership : EntSchema("m2m_memberships", clientName = "m2MTeamMemberships") {
     override fun id() = EntId.long()
-    val joinedAt = time("joined_at")
-    val team = belongsTo<M2MTeam>("team")
-    val member = belongsTo<M2MMember>("member")
+    val joinedAt by time("joined_at")
+    val team by belongsTo<M2MTeam>("team")
+    val member by belongsTo<M2MMember>("member")
 }
 private data class EntitySchemas(
     val team: M2MTeam,
@@ -2215,26 +2215,26 @@ private fun makeEntityM2MSchemas(): EntitySchemas {
 // Two helper-eligible throughLink edges on one source — same target type,
 // different property names. Mutator naming follows the source edge so
 // the two don't collide.
-private class M2MDoc : EntSchema("m2m_docs") {
+private class M2MDoc : EntSchema("m2m_docs", clientName = "m2MDocs") {
     override fun id() = EntId.long()
-    val tags = manyToMany<M2MLabel>("tags")
+    val tags by manyToMany<M2MLabel>("tags")
         .throughLink<M2MDocTag>(M2MDocTag::doc, M2MDocTag::tag)
-    val labels = manyToMany<M2MLabel>("labels")
+    val labels by manyToMany<M2MLabel>("labels")
         .throughLink<M2MDocLabel>(M2MDocLabel::doc, M2MDocLabel::label)
 }
-private class M2MLabel : EntSchema("m2m_labels") {
+private class M2MLabel : EntSchema("m2m_labels", clientName = "m2MLabels") {
     override fun id() = EntId.long()
 }
-private class M2MDocTag : EntSchema("m2m_doc_tags") {
+private class M2MDocTag : EntSchema("m2m_doc_tags", clientName = "m2MDocTags") {
     override fun id() = EntId.long()
-    val doc = belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag = belongsTo<M2MLabel>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val doc by belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<M2MLabel>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_doc_tags_pair", doc.fk, tag.fk).unique()
 }
-private class M2MDocLabel : EntSchema("m2m_doc_labels") {
+private class M2MDocLabel : EntSchema("m2m_doc_labels", clientName = "m2MDocLabels") {
     override fun id() = EntId.long()
-    val doc = belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val label = belongsTo<M2MLabel>("label").onDelete(entkt.schema.OnDelete.CASCADE)
+    val doc by belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val label by belongsTo<M2MLabel>("label").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_doc_labels_pair", doc.fk, label.fk).unique()
 }
 private data class MultiEdgeSchemas(
@@ -2266,20 +2266,20 @@ private fun makeMultiEdgeSchemas(): MultiEdgeSchemas {
 // it lets the UpdateGenerator unit test exercise the canonical-lock de-dup:
 // both edges resolve to one canonical key, so save() must take exactly one
 // relationship lock whose guard ORs both mutators.
-private class DupJunctionDoc : EntSchema("dup_junction_docs") {
+private class DupJunctionDoc : EntSchema("dup_junction_docs", clientName = "dupJunctionDocs") {
     override fun id() = EntId.long()
-    val tags = manyToMany<DupJunctionTag>("tags")
+    val tags by manyToMany<DupJunctionTag>("tags")
         .throughLink<DupJunctionDocTag>(DupJunctionDocTag::doc, DupJunctionDocTag::tag)
-    val moreTags = manyToMany<DupJunctionTag>("more_tags")
+    val moreTags by manyToMany<DupJunctionTag>("more_tags")
         .throughLink<DupJunctionDocTag>(DupJunctionDocTag::doc, DupJunctionDocTag::tag)
 }
-private class DupJunctionTag : EntSchema("dup_junction_tags") {
+private class DupJunctionTag : EntSchema("dup_junction_tags", clientName = "dupJunctionTags") {
     override fun id() = EntId.long()
 }
-private class DupJunctionDocTag : EntSchema("dup_junction_doc_tags") {
+private class DupJunctionDocTag : EntSchema("dup_junction_doc_tags", clientName = "dupJunctionDocTags") {
     override fun id() = EntId.long()
-    val doc = belongsTo<DupJunctionDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag = belongsTo<DupJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val doc by belongsTo<DupJunctionDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<DupJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_dup_junction_doc_tags_pair", doc.fk, tag.fk).unique()
 }
 private data class DupJunctionSchemas(

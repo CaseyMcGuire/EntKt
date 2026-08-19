@@ -3,6 +3,7 @@ package entkt.codegen
 import entkt.codegen.manifest.formatMemberCollisionDiagnostic
 import entkt.codegen.manifest.runMemberCollisionCheck
 import entkt.codegen.metadata.columnMetadataFor
+import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.findInverseEdge
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.indexableColumnMap
@@ -20,73 +21,6 @@ import entkt.schema.OnDelete
  * relational shape of a schema graph without requiring a live database
  * or running codegen.
  */
-/**
- * declaration-name capture diagnostic pass. Walk every `belongsTo(...).field(handle)`
- * on [input]'s schema, look up the backing field by column name,
- * and return a diagnostic string for each backing field whose
- * `declarationName` is null. Shared between
- * [SchemaInspector.validate] (which appends the strings to its
- * errors list) and [EntGenerator.generate] (which throws if the
- * list is non-empty so direct codegen callers can't bypass the
- * check).
- *
- * Lenient about upstream resolution failures: if `fields()` or
- * `edges()` throws (typically because earlier per-schema
- * validation already errored), this pass returns an empty list
- * to avoid drowning the root-cause diagnostic.
- */
-/**
- * declaration-name capture duplicate-alias diagnostic. Returns one error per
- * [entkt.schema.DeclarationAlias] the capture pass recorded on
- * [input]'s schema — each one names a field whose backing
- * builder is referenced from two or more direct public `val`
- * properties (`val a = uuid("x"); val b = a`). Aliasing is
- * always a schema-author bug: the schema has two valid
- * declaration names for the same handle, so codegen can't
- * deterministically pick one without surprising callers.
- */
-internal fun findDuplicateDeclarationAliases(input: SchemaInput): List<String> {
-    return input.schema.declarationAliases().map { alias ->
-        "Schema '${input.name}': field '${alias.fieldColumn}' is referenced from " +
-            alias.properties.size + " direct public vals (${alias.properties.joinToString(", ") { "'$it'" }}). " +
-            "declaration-name capture requires exactly one direct val per FieldBuilder so codegen has a single " +
-            "deterministic declaration name to follow. Remove the aliasing val(s)."
-    }
-}
-
-internal fun findFieldBackedFkDeclarationErrors(input: SchemaInput): List<String> {
-    val fieldsByName: Map<String, entkt.schema.Field> = try {
-        input.schema.fields().associateBy { it.name }
-    } catch (e: Exception) {
-        return emptyList()
-    }
-    val edges: List<entkt.schema.Edge> = try {
-        input.schema.edges()
-    } catch (e: Exception) {
-        return emptyList()
-    }
-    val errors = mutableListOf<String>()
-    for (edge in edges) {
-        val belongsTo = edge.kind as? entkt.schema.EdgeKind.BelongsTo ?: continue
-        val backingColumn = belongsTo.field ?: continue
-        val backingField = fieldsByName[backingColumn] ?: continue
-        if (backingField.declarationName == null) {
-            errors.add(
-                "Schema '${input.name}': field-backed edge '${edge.name}' references " +
-                    "backing field '$backingColumn' whose declaration name could not be " +
-                    "captured. V1 only captures direct public `val` properties on the " +
-                    "concrete schema class. Restructure the backing field as a public " +
-                    "val (not a computed getter, delegated property, mixin re-export, " +
-                    "var, inherited property, or programmatically-registered field) — " +
-                    "or, if the FK doesn't need a custom API name, drop the " +
-                    "`.field(handle)` to use the implicit FK form (`${edge.name}_id` " +
-                    "column, `${toCamelCase(edge.name)}Id` property).",
-            )
-        }
-    }
-    return errors
-}
-
 object SchemaInspector {
 
     /**
@@ -125,6 +59,11 @@ object SchemaInspector {
         for (collision in runMemberCollisionCheck(inputs, schemaNames)) {
             errors.add(formatMemberCollisionDiagnostic(collision))
         }
+
+        // Cross-schema client-property checks, shared with
+        // [EntGenerator.generate] so this inspector cannot call a schema
+        // valid that generation rejects.
+        errors.addAll(findClientNameErrors(inputs))
 
         return if (errors.isEmpty()) {
             ValidationResult(valid = true, errors = emptyList())
@@ -242,24 +181,6 @@ object SchemaInspector {
         } catch (e: Exception) {
             errors.add(e.message ?: e.toString())
         }
-
-        // declaration-name capture: a `belongsTo(...).field(handle)` whose backing
-        // field has no captured Kotlin val name on the concrete
-        // schema (computed getter, delegated, inherited, mixin-
-        // backed, var, or registered programmatically) can't have
-        // its FK API name derived from a Kotlin declaration.
-        // Codegen's EdgeFk.kt would fall back to
-        // `toCamelCase(column)` for such cases, but that's a
-        // silent ambiguity: the schema author wrote
-        // `.field(someHandle)` and reasonably expects the FK API
-        // to reflect that handle's name. Shared with
-        // [EntGenerator.generate] via [findFieldBackedFkDeclarationErrors]
-        // so direct codegen callers can't bypass the check.
-        errors.addAll(findFieldBackedFkDeclarationErrors(input))
-        // declaration-name capture: a FieldBuilder referenced from multiple direct
-        // public vals (`val a = uuid("x"); val b = a`) has no
-        // single canonical declaration name; reject the schema.
-        errors.addAll(findDuplicateDeclarationAliases(input))
     }
 
     /**
@@ -343,6 +264,7 @@ object SchemaInspector {
             val resolved = columnByName[field.name]
             ExplainedField(
                 name = field.name,
+                apiName = field.apiName,
                 type = field.type,
                 nullable = resolved?.nullable ?: field.nullable,
                 unique = resolved?.unique ?: field.unique,
@@ -359,6 +281,7 @@ object SchemaInspector {
 
         return ExplainedSchema(
             schemaName = name,
+            clientName = schema.clientName,
             tableName = schema.tableName,
             id = id,
             fields = fields,
@@ -390,11 +313,15 @@ object SchemaInspector {
                 ?: if (nullable) OnDelete.SET_NULL else OnDelete.RESTRICT
             ExplainedForeignKey(
                 column = fkColumn,
+                propertyName = computeEdgeFks(schema, schemaNames)
+                    .firstOrNull { it.edgeName == edge.name }?.propertyName
+                    ?: "${edge.apiName}Id",
                 targetTable = edge.target.tableName,
                 targetColumn = "id",
                 nullable = nullable,
                 onDelete = effectiveOnDelete.name,
                 sourceEdge = edge.name,
+                sourceEdgeApiName = edge.apiName,
             )
         }
     }
@@ -411,10 +338,12 @@ object SchemaInspector {
                     val inverse = tryFindInverseName(edge, schema)
                     ExplainedEdge(
                         name = edge.name,
+                        apiName = edge.apiName,
                         kind = "belongsTo",
                         targetSchema = targetName,
                         fkColumn = fkColumn,
                         inverse = inverse,
+                        inverseApiName = tryFindInverseApiName(edge, schema),
                         comment = edge.comment,
                     )
                 }
@@ -422,9 +351,11 @@ object SchemaInspector {
                     val inverse = tryFindInverseName(edge, schema)
                     ExplainedEdge(
                         name = edge.name,
+                        apiName = edge.apiName,
                         kind = "hasMany",
                         targetSchema = targetName,
                         inverse = inverse,
+                        inverseApiName = tryFindInverseApiName(edge, schema),
                         comment = edge.comment,
                     )
                 }
@@ -432,9 +363,11 @@ object SchemaInspector {
                     val inverse = tryFindInverseName(edge, schema)
                     ExplainedEdge(
                         name = edge.name,
+                        apiName = edge.apiName,
                         kind = "hasOne",
                         targetSchema = targetName,
                         inverse = inverse,
+                        inverseApiName = tryFindInverseApiName(edge, schema),
                         comment = edge.comment,
                     )
                 }
@@ -450,12 +383,15 @@ object SchemaInspector {
                     }
                     ExplainedEdge(
                         name = edge.name,
+                        apiName = edge.apiName,
                         kind = "manyToMany",
                         targetSchema = targetName,
                         through = ExplainedThrough(
                             junctionTable = junctionTable,
                             sourceEdge = through.sourceEdge,
+                            sourceEdgeApiName = junctionEdgeApiName(through.junction, through.sourceEdge),
                             targetEdge = through.targetEdge,
+                            targetEdgeApiName = junctionEdgeApiName(through.junction, through.targetEdge),
                             writeHelpers = writeHelpers,
                         ),
                         comment = edge.comment,
@@ -485,6 +421,26 @@ object SchemaInspector {
             null
         }
     }
+
+    private fun tryFindInverseApiName(edge: entkt.schema.Edge, source: EntSchema): String? {
+        return try {
+            findInverseEdge(edge, source)?.apiName
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Declaration name of a junction edge identified by its storage
+     * name. Falls back to the storage name if the junction edge cannot
+     * be resolved, so explain never fails on a half-valid graph.
+     */
+    private fun junctionEdgeApiName(junction: EntSchema, storageName: String): String =
+        try {
+            junction.edges().firstOrNull { it.name == storageName }?.apiName ?: storageName
+        } catch (_: Exception) {
+            storageName
+        }
 
     private fun buildIndexes(
         schema: EntSchema,
@@ -530,6 +486,7 @@ object SchemaInspector {
     private fun renderSchemaText(schema: ExplainedSchema): String {
         val sb = StringBuilder()
         sb.appendLine("Schema: ${schema.schemaName}")
+        sb.appendLine("Client: ${schema.clientName}")
         sb.appendLine("Table: ${schema.tableName}")
         sb.appendLine("Id: ${schema.id.type} (${schema.id.strategy})")
 
@@ -544,9 +501,9 @@ object SchemaInspector {
                     if (field.unique) add("unique")
                     if (field.default != null) add("DEFAULT ${field.default}")
                 }.joinToString(", ")
-                listOf(field.name, field.type.name, attrs)
+                listOf(field.apiName, field.name, field.type.name, attrs)
             }
-            sb.append(renderTable(listOf("Name", "Type", "Attributes"), rows))
+            sb.append(renderTable(listOf("API", "Column", "Type", "Attributes"), rows))
         }
 
         if (schema.foreignKeys.isNotEmpty()) {
@@ -572,20 +529,25 @@ object SchemaInspector {
                     if (edge.fkColumn != null) append("fk=${edge.fkColumn}")
                     if (edge.inverse != null) {
                         if (isNotEmpty()) append(", ")
-                        append("inverse=${edge.inverse}")
+                        val api = edge.inverseApiName
+                        if (api != null && api != edge.inverse) {
+                            append("inverse=$api (storage ${edge.inverse})")
+                        } else {
+                            append("inverse=${edge.inverse}")
+                        }
                     }
                     if (edge.through != null) {
                         val t = edge.through
                         if (isNotEmpty()) append(", ")
-                        append("through=${t.junctionTable}(${t.sourceEdge}, ${t.targetEdge})")
+                        append("through=${t.junctionTable}(${t.sourceEdgeApiName}, ${t.targetEdgeApiName})")
                         if (t.writeHelpers != null) {
                             append(", helpers=[${t.writeHelpers.joinToString(", ")}]")
                         }
                     }
                 }
-                listOf(edge.name, edge.kind, edge.targetSchema, detail)
+                listOf(edge.apiName, edge.name, edge.kind, edge.targetSchema, detail)
             }
-            sb.append(renderTable(listOf("Name", "Kind", "Target", "Details"), rows))
+            sb.append(renderTable(listOf("API", "Storage", "Kind", "Target", "Details"), rows))
         }
 
         if (schema.indexes.isNotEmpty()) {
@@ -660,6 +622,7 @@ object SchemaInspector {
     private fun renderSchemaJson(sb: StringBuilder, schema: ExplainedSchema, indent: String) {
         sb.appendLine("$indent{")
         sb.appendLine("$indent  \"schemaName\": ${jsonString(schema.schemaName)},")
+        sb.appendLine("$indent  \"clientName\": ${jsonString(schema.clientName)},")
         sb.appendLine("$indent  \"tableName\": ${jsonString(schema.tableName)},")
         sb.appendLine("$indent  \"id\": { \"type\": ${jsonString(schema.id.type.name)}, \"strategy\": ${jsonString(schema.id.strategy)} },")
 
@@ -667,7 +630,7 @@ object SchemaInspector {
         sb.appendLine("$indent  \"fields\": [")
         for ((i, f) in schema.fields.withIndex()) {
             val comma = if (i < schema.fields.lastIndex) "," else ""
-            sb.append("$indent    { \"name\": ${jsonString(f.name)}, \"type\": ${jsonString(f.type.name)}, \"nullable\": ${f.nullable}")
+            sb.append("$indent    { \"name\": ${jsonString(f.name)}, \"apiName\": ${jsonString(f.apiName)}, \"type\": ${jsonString(f.type.name)}, \"nullable\": ${f.nullable}")
             if (f.unique) sb.append(", \"unique\": true")
             if (f.immutable) sb.append(", \"immutable\": true")
             if (f.sensitive) sb.append(", \"sensitive\": true")
@@ -681,7 +644,7 @@ object SchemaInspector {
         sb.appendLine("$indent  \"foreignKeys\": [")
         for ((i, fk) in schema.foreignKeys.withIndex()) {
             val comma = if (i < schema.foreignKeys.lastIndex) "," else ""
-            sb.appendLine("$indent    { \"column\": ${jsonString(fk.column)}, \"targetTable\": ${jsonString(fk.targetTable)}, \"targetColumn\": ${jsonString(fk.targetColumn)}, \"nullable\": ${fk.nullable}, \"onDelete\": ${jsonString(fk.onDelete)}, \"sourceEdge\": ${jsonString(fk.sourceEdge)} }$comma")
+            sb.appendLine("$indent    { \"column\": ${jsonString(fk.column)}, \"targetTable\": ${jsonString(fk.targetTable)}, \"targetColumn\": ${jsonString(fk.targetColumn)}, \"nullable\": ${fk.nullable}, \"onDelete\": ${jsonString(fk.onDelete)}, \"propertyName\": ${jsonString(fk.propertyName)}, \"sourceEdge\": ${jsonString(fk.sourceEdge)}, \"sourceEdgeApiName\": ${jsonString(fk.sourceEdgeApiName)} }$comma")
         }
         sb.appendLine("$indent  ],")
 
@@ -689,11 +652,12 @@ object SchemaInspector {
         sb.appendLine("$indent  \"edges\": [")
         for ((i, e) in schema.edges.withIndex()) {
             val comma = if (i < schema.edges.lastIndex) "," else ""
-            sb.append("$indent    { \"name\": ${jsonString(e.name)}, \"kind\": ${jsonString(e.kind)}, \"targetSchema\": ${jsonString(e.targetSchema)}")
+            sb.append("$indent    { \"name\": ${jsonString(e.name)}, \"apiName\": ${jsonString(e.apiName)}, \"kind\": ${jsonString(e.kind)}, \"targetSchema\": ${jsonString(e.targetSchema)}")
             if (e.fkColumn != null) sb.append(", \"fkColumn\": ${jsonString(e.fkColumn)}")
             if (e.inverse != null) sb.append(", \"inverse\": ${jsonString(e.inverse)}")
+            if (e.inverseApiName != null) sb.append(", \"inverseApiName\": ${jsonString(e.inverseApiName)}")
             if (e.through != null) {
-                sb.append(", \"through\": { \"junctionTable\": ${jsonString(e.through.junctionTable)}, \"sourceEdge\": ${jsonString(e.through.sourceEdge)}, \"targetEdge\": ${jsonString(e.through.targetEdge)}")
+                sb.append(", \"through\": { \"junctionTable\": ${jsonString(e.through.junctionTable)}, \"sourceEdge\": ${jsonString(e.through.sourceEdge)}, \"sourceEdgeApiName\": ${jsonString(e.through.sourceEdgeApiName)}, \"targetEdge\": ${jsonString(e.through.targetEdge)}, \"targetEdgeApiName\": ${jsonString(e.through.targetEdgeApiName)}")
                 if (e.through.writeHelpers != null) {
                     val helpers = e.through.writeHelpers.joinToString(", ") { jsonString(it) }
                     sb.append(", \"writeHelpers\": [$helpers]")

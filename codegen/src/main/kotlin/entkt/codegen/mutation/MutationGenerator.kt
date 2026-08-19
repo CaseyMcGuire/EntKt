@@ -1,5 +1,6 @@
 package entkt.codegen.mutation
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -10,7 +11,6 @@ import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 
 /**
@@ -109,7 +109,7 @@ internal class MutationGenerator(
 
         for (field in mutableFields) {
             val typeName = field.resolvedTypeName().copy(nullable = true)
-            val prop = PropertySpec.builder(toCamelCase(field.name), typeName)
+            val prop = PropertySpec.builder(field.apiName, typeName)
                 .mutable(true)
             val comment = field.comment
             if (comment != null) prop.addKdoc("%L", comment)
@@ -134,7 +134,7 @@ internal class MutationGenerator(
             .addSuperinterface(ClassName(packageName, interfaceName))
         for (field in immutableFields) {
             val typeName = field.resolvedTypeName().copy(nullable = true)
-            val prop = PropertySpec.builder(toCamelCase(field.name), typeName)
+            val prop = PropertySpec.builder(field.apiName, typeName)
                 .mutable(true)
             val comment = field.comment
             if (comment != null) prop.addKdoc("%L", comment)
@@ -155,7 +155,7 @@ internal class MutationGenerator(
         val updateView = TypeSpec.interfaceBuilder(updateViewName)
             .addSuperinterface(ClassName(packageName, interfaceName))
         for (field in mutableFields) {
-            updateView.addFunction(unsetSpec(toCamelCase(field.name)))
+            updateView.addFunction(unsetSpec(field.apiName))
         }
         for (fk in mutableEdgeFks) {
             updateView.addFunction(unsetSpec(fk.propertyName))

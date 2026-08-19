@@ -11,13 +11,13 @@ import kotlin.test.assertTrue
 // references `X.serializer()`), not a schema-DSL one.
 private data class Meta(val nickname: String?, val tags: List<String>)
 
-private class JsonSchema : EntSchema("docs") {
+private class JsonSchema : EntSchema("docs", clientName = "jsonSchemas") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val metadata = json("metadata", Meta::class).nullable()
-    val required = json<Meta>("required")
-    val items = json<List<Meta>>("items")
-    val labels = json<Map<String, Meta?>>("labels").nullable()
+    val title by string("title")
+    val metadata by json("metadata", Meta::class).nullable()
+    val required by json<Meta>("required")
+    val items by json<List<Meta>>("items")
+    val labels by json<Map<String, Meta?>>("labels").nullable()
 }
 
 class JsonFieldTest {
@@ -65,9 +65,9 @@ class JsonFieldTest {
     @Test
     fun `the KClass overload rejects classes with type parameters`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("bad") {
+            object : EntSchema("bad", clientName = "bad") {
                 override fun id() = EntId.long()
-                val m = json("m", List::class)
+                val m by json("m", List::class)
             }
         }
         assertTrue("type parameters" in (err.message ?: ""), "got: ${err.message}")
@@ -77,9 +77,9 @@ class JsonFieldTest {
     @Test
     fun `a star projection is rejected at registration`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("bad") {
+            object : EntSchema("bad", clientName = "bad") {
                 override fun id() = EntId.long()
-                val m = json<List<*>>("m")
+                val m by json<List<*>>("m")
             }
         }
         assertTrue("star projection" in (err.message ?: ""), "got: ${err.message}")
@@ -88,9 +88,9 @@ class JsonFieldTest {
     @Test
     fun `a variance projection is rejected at registration`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("bad") {
+            object : EntSchema("bad", clientName = "bad") {
                 override fun id() = EntId.long()
-                val m = json<List<out Meta>>("m")
+                val m by json<List<out Meta>>("m")
             }
         }
         assertTrue("projection" in (err.message ?: ""), "got: ${err.message}")
@@ -98,9 +98,9 @@ class JsonFieldTest {
 
     @Test
     fun `a json column in an index is rejected at build`() {
-        val s = object : EntSchema("idx") {
+        val s = object : EntSchema("idx", clientName = "idx") {
             override fun id() = EntId.long()
-            val m = json("m", Meta::class).nullable()
+            val m by json("m", Meta::class).nullable()
             val i = index("idx_m", m)
         }
         finalize(s)
@@ -112,9 +112,9 @@ class JsonFieldTest {
 
     @Test
     fun `a unique index over a json column is rejected at build`() {
-        val s = object : EntSchema("uidx") {
+        val s = object : EntSchema("uidx", clientName = "uidx") {
             override fun id() = EntId.long()
-            val m = json("m", Meta::class).nullable()
+            val m by json("m", Meta::class).nullable()
             val i = index("idx_m", m).unique()
         }
         finalize(s)
@@ -124,9 +124,9 @@ class JsonFieldTest {
 
     @Test
     fun `unique on a json field is rejected at build`() {
-        val s = object : EntSchema("u") {
+        val s = object : EntSchema("u", clientName = "u") {
             override fun id() = EntId.long()
-            val m = json("m", Meta::class).unique()
+            val m by json("m", Meta::class).unique()
         }
         finalize(s)
         // build() runs in fields(); the JSON .unique() rejection fires there.

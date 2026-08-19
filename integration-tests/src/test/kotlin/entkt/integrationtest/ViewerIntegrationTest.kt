@@ -55,9 +55,9 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val schema = get(viewer, "/_ent/schema")
         assertEquals(200, schema.status)
         assertTrue("articles" in schema.body, "table names render on the index")
-        assertTrue("/_ent/schema/article" in schema.body, "index drills down per entity")
+        assertTrue("/_ent/schema/articles" in schema.body, "index drills down per entity")
 
-        val detail = get(viewer, "/_ent/schema/article")
+        val detail = get(viewer, "/_ent/schema/articles")
         assertEquals(200, detail.status)
         assertTrue("rects" in detail.body, "json columns appear in the schema detail")
         assertTrue("List&lt;HighlightRect&gt;" in detail.body, "ent type shows the full Kotlin type")
@@ -74,12 +74,12 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val (sys, plain) = fresh()
         seed(sys)
         val visible = viewer(plain, bypass())
-        val list = get(visible, "/_ent/entities/article")
+        val list = get(visible, "/_ent/entities/articles")
         assertEquals(200, list.status)
         assertTrue("First" in list.body && "Second" in list.body)
 
         val anonymous = viewer(plain, PrivacyContext(Viewer.Anonymous))
-        val hidden = get(anonymous, "/_ent/entities/article")
+        val hidden = get(anonymous, "/_ent/entities/articles")
         assertEquals(200, hidden.status)
         assertFalse("First" in hidden.body, "fail-closed privacy must hide rows from Anonymous")
         assertTrue("No visible rows" in hidden.body)
@@ -92,15 +92,15 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val article = sys.articles.query { }.all().getOrThrow().first { it.title == "First" }
 
         val visible = viewer(plain, bypass())
-        val detail = get(visible, "/_ent/entities/article/${article.id}")
+        val detail = get(visible, "/_ent/entities/articles/${article.id}")
         assertEquals(200, detail.status)
         assertTrue("First" in detail.body)
-        assertTrue("/_ent/entities/user/${article.authorId}" in detail.body, "belongsTo links to the author detail")
+        assertTrue("/_ent/entities/users/${article.authorId}" in detail.body, "belongsTo links to the author detail")
 
         val anonymous = viewer(plain, PrivacyContext(Viewer.Anonymous))
-        assertEquals(404, get(anonymous, "/_ent/entities/article/${article.id}").status)
-        assertEquals(404, get(visible, "/_ent/entities/article/999999").status, "missing row is the same 404")
-        assertEquals(404, get(visible, "/_ent/entities/article/not-a-number").status, "unparseable id is the same 404")
+        assertEquals(404, get(anonymous, "/_ent/entities/articles/${article.id}").status)
+        assertEquals(404, get(visible, "/_ent/entities/articles/999999").status, "missing row is the same 404")
+        assertEquals(404, get(visible, "/_ent/entities/articles/not-a-number").status, "unparseable id is the same 404")
     }
 
     @Test
@@ -108,13 +108,13 @@ class ViewerIntegrationTest : PostgresTestBase() {
         val (sys, plain) = fresh()
         seed(sys)
         val viewer = viewer(plain, bypass())
-        val filtered = get(viewer, "/_ent/entities/article", "f" to "title:eq:First")
+        val filtered = get(viewer, "/_ent/entities/articles", "f" to "title:eq:First")
         assertTrue("First" in filtered.body)
         assertFalse(">Second<" in filtered.body, "eq filter excludes the other row")
 
-        assertEquals(400, get(viewer, "/_ent/entities/article", "f" to "title:zap:x").status)
-        assertEquals(400, get(viewer, "/_ent/entities/article", "f" to "nope:eq:x").status)
-        assertEquals(400, get(viewer, "/_ent/entities/article", "f" to "rects:eq:x").status, "json columns are display-only")
+        assertEquals(400, get(viewer, "/_ent/entities/articles", "f" to "title:zap:x").status)
+        assertEquals(400, get(viewer, "/_ent/entities/articles", "f" to "nope:eq:x").status)
+        assertEquals(400, get(viewer, "/_ent/entities/articles", "f" to "rects:eq:x").status, "json columns are display-only")
     }
 
     @Test
@@ -124,30 +124,30 @@ class ViewerIntegrationTest : PostgresTestBase() {
         repeat(5) { i -> sys.articles.create { title = "t$i"; authorId = author.id }.save().getOrThrow() }
 
         val viewer = viewer(plain, bypass())
-        val page1 = get(viewer, "/_ent/entities/article", "size" to "2")
+        val page1 = get(viewer, "/_ent/entities/articles", "size" to "2")
         assertEquals(200, page1.status)
         // The list endpoint is a strict all() over an exact SQL window:
         // when every windowed row is visible there is no privacy banner,
         // and next-page existence is exact (limit = size + 1 probe).
         assertFalse("Row-level privacy applies" in page1.body, "no banner when nothing was denied")
         assertTrue("Next" in page1.body)
-        val page2 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "2")
+        val page2 = get(viewer, "/_ent/entities/articles", "size" to "2", "page" to "2")
         assertTrue("t2" in page2.body && "t3" in page2.body, "windows are disjoint and in order")
         assertFalse("t1<" in page2.body.substringAfter("tbody"), "no duplicated rows across pages")
 
         // Last page: exactly one row left, so Next is NOT offered.
-        val page3 = get(viewer, "/_ent/entities/article", "size" to "2", "page" to "3")
+        val page3 = get(viewer, "/_ent/entities/articles", "size" to "2", "page" to "3")
         assertTrue("t4" in page3.body)
         assertFalse("Next &gt;" in page3.body, "exact hasNext hides the link on the last page")
 
         // The old visible-scan cap is gone with the visible* family:
         // a large size is simply coerced into the page-size bounds.
-        val bigPage = get(viewer, "/_ent/entities/article", "size" to "100")
+        val bigPage = get(viewer, "/_ent/entities/articles", "size" to "100")
         assertEquals(200, bigPage.status)
         assertTrue("t0" in bigPage.body && "t4" in bigPage.body)
 
         // Depth stays bounded: a crafted deep page is a deterministic 400.
-        val tooDeep = get(viewer, "/_ent/entities/article", "size" to "200", "page" to "999999")
+        val tooDeep = get(viewer, "/_ent/entities/articles", "size" to "200", "page" to "999999")
         assertEquals(400, tooDeep.status)
         assertTrue("depth limit" in tooDeep.body, tooDeep.body)
     }
@@ -160,15 +160,15 @@ class ViewerIntegrationTest : PostgresTestBase() {
         }.saveAndLoad().getOrThrow()
 
         val viewer = viewer(plain, bypass())
-        val detail = get(viewer, "/_ent/entities/user/${author.id}")
+        val detail = get(viewer, "/_ent/entities/users/${author.id}")
         assertEquals(200, detail.status)
         assertTrue("***" in detail.body, "sensitive cell renders redacted")
         assertFalse("super-secret-token" in detail.body, "the value must never reach HTML")
 
-        val list = get(viewer, "/_ent/entities/user")
+        val list = get(viewer, "/_ent/entities/users")
         assertFalse("super-secret-token" in list.body)
-        assertEquals(400, get(viewer, "/_ent/entities/user", "f" to "api_token:eq:x").status)
-        assertEquals(400, get(viewer, "/_ent/entities/user", "order" to "api_token").status)
+        assertEquals(400, get(viewer, "/_ent/entities/users", "f" to "api_token:eq:x").status)
+        assertEquals(400, get(viewer, "/_ent/entities/users", "order" to "api_token").status)
     }
 
     @Test
@@ -180,9 +180,9 @@ class ViewerIntegrationTest : PostgresTestBase() {
             privacyContext { bypass() }
             redaction { extra("users", "email") }
         }
-        val list = get(viewer, "/_ent/entities/user")
+        val list = get(viewer, "/_ent/entities/users")
         assertFalse("redact-me@example.com" in list.body, "extra-redacted value must not render")
-        assertEquals(400, get(viewer, "/_ent/entities/user", "f" to "email:eq:x").status)
+        assertEquals(400, get(viewer, "/_ent/entities/users", "f" to "email:eq:x").status)
     }
 
     @Test
@@ -195,7 +195,7 @@ class ViewerIntegrationTest : PostgresTestBase() {
         // page WITH the banner — and next stays offered rather than
         // becoming a visible-count oracle.
         val anonymous = viewer(plain, PrivacyContext(Viewer.Anonymous))
-        val denied = get(anonymous, "/_ent/entities/user")
+        val denied = get(anonymous, "/_ent/entities/users")
         assertEquals(200, denied.status)
         assertTrue("Row-level privacy applies" in denied.body, "denied pages carry the privacy banner")
         assertFalse("m2m@example.com" in denied.body, "denied rows never render")
@@ -203,17 +203,17 @@ class ViewerIntegrationTest : PostgresTestBase() {
 
         // An empty table under the same denying viewer is a plain empty
         // page: nothing was denied, so no banner.
-        val emptyList = get(anonymous, "/_ent/entities/article")
+        val emptyList = get(anonymous, "/_ent/entities/articles")
         assertEquals(200, emptyList.status)
         assertFalse("Row-level privacy applies" in emptyList.body, "no banner when nothing was denied")
         assertTrue("No visible rows" in emptyList.body)
 
         // A visible viewer sees the row and no banner.
         val visible = viewer(plain, bypass())
-        val list = get(visible, "/_ent/entities/user")
+        val list = get(visible, "/_ent/entities/users")
         assertFalse("Row-level privacy applies" in list.body)
 
-        val detail = get(visible, "/_ent/entities/user/${user.id}")
+        val detail = get(visible, "/_ent/entities/users/${user.id}")
         assertTrue("no generated traversal link in V1" in detail.body, "M2M edges render disabled through generated adapters")
     }
 }

@@ -35,7 +35,7 @@ Detailed notes:
 
 - [Generated Edge Loading API](query/generated-edge-loading-api.md)
 - [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
-- [Schema Declaration Names As Generated API](schema/schema-declaration-api-names.md)
+- [Schema Declaration Names As Generated API](../implemented-features/schema/schema-declaration-api-names.md)
 
 ### 2. Query-Time Visibility Predicates
 

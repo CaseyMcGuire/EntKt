@@ -15,79 +15,79 @@ import kotlin.test.assertTrue
 // ── Relationship pattern schemas (file-level for cross-class references) ──
 
 // O2O Two Types
-private class O2oUser : EntSchema("o2o_users") {
+private class O2oUser : EntSchema("o2o_users", clientName = "o2oUsers") {
     override fun id() = EntId.uuid()
-    val profile = hasOne<O2oProfile>("profile")
+    val profile by hasOne<O2oProfile>("profile")
 }
 
-private class O2oProfile : EntSchema("o2o_profiles") {
+private class O2oProfile : EntSchema("o2o_profiles", clientName = "o2oProfiles") {
     override fun id() = EntId.uuid()
-    val user = belongsTo<O2oUser>("user")
+    val user by belongsTo<O2oUser>("user")
         .inverse(O2oUser::profile)
         .unique()
 }
 
 // O2M Two Types
-private class O2mUser : EntSchema("o2m_users") {
+private class O2mUser : EntSchema("o2m_users", clientName = "o2mUsers") {
     override fun id() = EntId.long()
-    val posts = hasMany<O2mPost>("posts")
+    val posts by hasMany<O2mPost>("posts")
 }
 
-private class O2mPost : EntSchema("o2m_posts") {
+private class O2mPost : EntSchema("o2m_posts", clientName = "o2mPosts") {
     override fun id() = EntId.long()
-    val author = belongsTo<O2mUser>("author")
+    val author by belongsTo<O2mUser>("author")
         .inverse(O2mUser::posts)
 }
 
 // M2M Two Types
-private class M2mUser : EntSchema("m2m_users") {
+private class M2mUser : EntSchema("m2m_users", clientName = "m2mUsers") {
     override fun id() = EntId.long()
-    val groups = manyToMany<M2mGroup>("groups")
+    val groups by manyToMany<M2mGroup>("groups")
         .throughEntity<M2mUserGroup>(M2mUserGroup::user, M2mUserGroup::group)
 }
 
-private class M2mGroup : EntSchema("m2m_groups") {
+private class M2mGroup : EntSchema("m2m_groups", clientName = "m2mGroups") {
     override fun id() = EntId.long()
 }
 
-private class M2mUserGroup : EntSchema("m2m_user_groups") {
+private class M2mUserGroup : EntSchema("m2m_user_groups", clientName = "m2mUserGroups") {
     override fun id() = EntId.long()
-    val user = belongsTo<M2mUser>("user")
-    val group = belongsTo<M2mGroup>("group")
+    val user by belongsTo<M2mUser>("user")
+    val group by belongsTo<M2mGroup>("group")
     val byUserGroup = index("idx_m2m_user_groups_user_group", user.fk, group.fk).unique()
 }
 
 // M2M Same Type
-private class M2mPerson : EntSchema("m2m_people") {
+private class M2mPerson : EntSchema("m2m_people", clientName = "m2mPersons") {
     override fun id() = EntId.long()
-    val friends = manyToMany<M2mPerson>("friends")
+    val friends by manyToMany<M2mPerson>("friends")
         .throughEntity<M2mFriendship>(M2mFriendship::user, M2mFriendship::friend)
 }
 
-private class M2mFriendship : EntSchema("m2m_friendships") {
+private class M2mFriendship : EntSchema("m2m_friendships", clientName = "m2mFriendships") {
     override fun id() = EntId.long()
-    val user = belongsTo<M2mPerson>("user")
-    val friend = belongsTo<M2mPerson>("friend")
+    val user by belongsTo<M2mPerson>("user")
+    val friend by belongsTo<M2mPerson>("friend")
     val byFriendPair = index("idx_m2m_friendships_user_friend", user.fk, friend.fk).unique()
 }
 
 // M2M Bidirectional
-private class M2mBiUser : EntSchema("m2m_bi_users") {
+private class M2mBiUser : EntSchema("m2m_bi_users", clientName = "m2mBiUsers") {
     override fun id() = EntId.long()
-    val groups = manyToMany<M2mBiGroup>("groups")
+    val groups by manyToMany<M2mBiGroup>("groups")
         .throughEntity<M2mBiMembership>(M2mBiMembership::user, M2mBiMembership::group)
 }
 
-private class M2mBiGroup : EntSchema("m2m_bi_groups") {
+private class M2mBiGroup : EntSchema("m2m_bi_groups", clientName = "m2mBiGroups") {
     override fun id() = EntId.long()
-    val users = manyToMany<M2mBiUser>("users")
+    val users by manyToMany<M2mBiUser>("users")
         .throughEntity<M2mBiMembership>(M2mBiMembership::group, M2mBiMembership::user)
 }
 
-private class M2mBiMembership : EntSchema("m2m_bi_memberships") {
+private class M2mBiMembership : EntSchema("m2m_bi_memberships", clientName = "m2mBiMemberships") {
     override fun id() = EntId.long()
-    val user = belongsTo<M2mBiUser>("user")
-    val group = belongsTo<M2mBiGroup>("group")
+    val user by belongsTo<M2mBiUser>("user")
+    val group by belongsTo<M2mBiGroup>("group")
 }
 
 /**
@@ -106,7 +106,7 @@ class PostgresDdlTest {
 
     /** Build EntitySchemas from EntSchema declarations, normalize, and render all DDL. */
     private fun renderDdl(vararg schemas: EntSchema): List<String> {
-        val inputs = schemas.map { SchemaInput(it::class.simpleName!!, it) }
+        val inputs = schemas.map { SchemaInput(it) }
         val entitySchemas = buildEntitySchemas(inputs)
         val normalized = NormalizedSchema.fromEntitySchemas(entitySchemas, typeMapper)
         return entitySchemas.flatMap { es ->
@@ -124,10 +124,10 @@ class PostgresDdlTest {
 
     @Test
     fun `basic table with auto-increment int id`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val name = string("name")
-            val bio = text("bio").nullable()
+            val name by string("name")
+            val bio by text("bio").nullable()
         }
 
         val ddl = renderDdl(Users())
@@ -147,9 +147,9 @@ class PostgresDdlTest {
 
     @Test
     fun `bigserial id for AUTO_LONG strategy`() {
-        class Events : EntSchema("events") {
+        class Events : EntSchema("events", clientName = "eventses") {
             override fun id() = EntId.long()
-            val name = string("name")
+            val name by string("name")
         }
 
         val ddl = renderDdl(Events())
@@ -168,9 +168,9 @@ class PostgresDdlTest {
 
     @Test
     fun `uuid id for CLIENT_UUID strategy`() {
-        class Tokens : EntSchema("tokens") {
+        class Tokens : EntSchema("tokens", clientName = "tokenses") {
             override fun id() = EntId.uuid()
-            val value = string("value")
+            val value by string("value")
         }
 
         val ddl = renderDdl(Tokens())
@@ -189,19 +189,19 @@ class PostgresDdlTest {
 
     @Test
     fun `all field types map to correct SQL types`() {
-        class AllTypes : EntSchema("all_types") {
+        class AllTypes : EntSchema("all_types", clientName = "allTypeses") {
             override fun id() = EntId.int()
-            val a_string = string("a_string")
-            val a_text = text("a_text")
-            val a_bool = bool("a_bool")
-            val an_int = int("an_int")
-            val a_long = long("a_long")
-            val a_float = float("a_float")
-            val a_double = double("a_double")
-            val a_time = time("a_time")
-            val a_uuid = uuid("a_uuid")
-            val some_bytes = bytes("some_bytes")
-            val an_enum = enum<Priority>("an_enum")
+            val aString by string("a_string")
+            val aText by text("a_text")
+            val aBool by bool("a_bool")
+            val anInt by int("an_int")
+            val aLong by long("a_long")
+            val aFloat by float("a_float")
+            val aDouble by double("a_double")
+            val aTime by time("a_time")
+            val aUuid by uuid("a_uuid")
+            val someBytes by bytes("some_bytes")
+            val anEnum by enum<Priority>("an_enum")
         }
 
         val ddl = renderDdl(AllTypes())
@@ -230,16 +230,16 @@ class PostgresDdlTest {
 
     @Test
     fun `column defaults are emitted in CREATE TABLE`() {
-        class Defaults : EntSchema("defaults") {
+        class Defaults : EntSchema("defaults", clientName = "defaultses") {
             override fun id() = EntId.int()
-            val statusStr = string("status_str").default("active")
-            val isActive = bool("is_active").default(true)
-            val count = int("count").default(5)
-            val big = long("big").default(100L)
-            val ratio = double("ratio").default(1.5)
-            val priority = enum<Priority>("priority").default(Priority.MEDIUM)
-            val createdAt = time("created_at").defaultNow()
-            val note = string("note").default("n/a").nullable()
+            val statusStr by string("status_str").default("active")
+            val isActive by bool("is_active").default(true)
+            val count by int("count").default(5)
+            val big by long("big").default(100L)
+            val ratio by double("ratio").default(1.5)
+            val priority by enum<Priority>("priority").default(Priority.MEDIUM)
+            val createdAt by time("created_at").defaultNow()
+            val note by string("note").default("n/a").nullable()
         }
 
         val ddl = renderDdl(Defaults())
@@ -265,9 +265,9 @@ class PostgresDdlTest {
 
     @Test
     fun `string default with embedded single quote is escaped`() {
-        class Quotes : EntSchema("quotes") {
+        class Quotes : EntSchema("quotes", clientName = "quoteses") {
             override fun id() = EntId.int()
-            val label = string("label").default("O'Brien")
+            val label by string("label").default("O'Brien")
         }
 
         val ddl = renderDdl(Quotes())
@@ -335,9 +335,9 @@ class PostgresDdlTest {
 
     @Test
     fun `unique column generates a unique index`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val email = string("email").unique()
+            val email by string("email").unique()
         }
 
         val ddl = renderDdl(Users())
@@ -357,13 +357,13 @@ class PostgresDdlTest {
 
     @Test
     fun `nullable foreign key with default ON DELETE SET NULL`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
         }
-        class Posts : EntSchema("posts") {
+        class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.int()
-            val title = string("title")
-            val author = belongsTo<Users>("author").nullable()
+            val title by string("title")
+            val author by belongsTo<Users>("author").nullable()
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -389,12 +389,12 @@ class PostgresDdlTest {
 
     @Test
     fun `required foreign key with default ON DELETE RESTRICT`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
         }
-        class Posts : EntSchema("posts") {
+        class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.int()
-            val author = belongsTo<Users>("author")
+            val author by belongsTo<Users>("author")
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -419,12 +419,12 @@ class PostgresDdlTest {
 
     @Test
     fun `foreign key with explicit CASCADE`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
         }
-        class Posts : EntSchema("posts") {
+        class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.int()
-            val author = belongsTo<Users>("author").onDelete(OnDelete.CASCADE)
+            val author by belongsTo<Users>("author").onDelete(OnDelete.CASCADE)
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -449,10 +449,10 @@ class PostgresDdlTest {
 
     @Test
     fun `composite index`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val firstName = string("first_name")
-            val lastName = string("last_name")
+            val firstName by string("first_name")
+            val lastName by string("last_name")
             val byName = index("idx_users_name", firstName, lastName)
         }
 
@@ -474,10 +474,10 @@ class PostgresDdlTest {
 
     @Test
     fun `unique composite index`() {
-        class UserRoles : EntSchema("user_roles") {
+        class UserRoles : EntSchema("user_roles", clientName = "userRoleses") {
             override fun id() = EntId.int()
-            val userId = int("user_id")
-            val role = string("role")
+            val userId by int("user_id")
+            val role by string("role")
             val byUserRole = index("idx_user_roles_unique", userId, role).unique()
         }
 
@@ -499,10 +499,10 @@ class PostgresDdlTest {
 
     @Test
     fun `partial index with WHERE clause`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
-            val email = string("email")
-            val active = bool("active")
+            val email by string("email")
+            val active by bool("active")
             val byEmailActive = index("idx_users_email_active", email).unique().where("active = true")
         }
 
@@ -524,11 +524,11 @@ class PostgresDdlTest {
 
     @Test
     fun `unique column plus composite index on same table`() {
-        class Posts : EntSchema("posts") {
+        class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.long()
-            val slug = string("slug").unique()
-            val authorId = int("author_id")
-            val createdAt = time("created_at")
+            val slug by string("slug").unique()
+            val authorId by int("author_id")
+            val createdAt by time("created_at")
             val byAuthorDate = index("idx_posts_author_date", authorId, createdAt)
         }
 
@@ -552,16 +552,16 @@ class PostgresDdlTest {
 
     @Test
     fun `junction table with two foreign keys`() {
-        class Users : EntSchema("users") {
+        class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
         }
-        class Groups : EntSchema("groups") {
+        class Groups : EntSchema("groups", clientName = "groupses") {
             override fun id() = EntId.int()
         }
-        class UserGroups : EntSchema("user_groups") {
+        class UserGroups : EntSchema("user_groups", clientName = "userGroupses") {
             override fun id() = EntId.int()
-            val user = belongsTo<Users>("user").onDelete(OnDelete.CASCADE)
-            val group = belongsTo<Groups>("group").onDelete(OnDelete.CASCADE)
+            val user by belongsTo<Users>("user").onDelete(OnDelete.CASCADE)
+            val group by belongsTo<Groups>("group").onDelete(OnDelete.CASCADE)
             val byUserGroup = index("idx_user_groups_unique", user.fk, group.fk).unique()
         }
 
@@ -620,10 +620,10 @@ class PostgresDdlTest {
 
     @Test
     fun `O2O same type - self-referencing unique FK`() {
-        class Employee : EntSchema("employees") {
+        class Employee : EntSchema("employees", clientName = "employees") {
             override fun id() = EntId.long()
-            val mentee = hasOne<Employee>("mentee")
-            val mentor = belongsTo<Employee>("mentor")
+            val mentee by hasOne<Employee>("mentee")
+            val mentor by belongsTo<Employee>("mentor")
                 .inverse(Employee::mentee)
                 .unique()
                 .nullable()
@@ -669,10 +669,10 @@ class PostgresDdlTest {
 
     @Test
     fun `O2M same type - self-referencing tree`() {
-        class Category : EntSchema("categories") {
+        class Category : EntSchema("categories", clientName = "categories") {
             override fun id() = EntId.long()
-            val children = hasMany<Category>("children")
-            val parent = belongsTo<Category>("parent")
+            val children by hasMany<Category>("children")
+            val parent by belongsTo<Category>("parent")
                 .inverse(Category::children)
                 .nullable()
         }

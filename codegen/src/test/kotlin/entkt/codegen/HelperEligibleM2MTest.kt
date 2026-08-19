@@ -12,69 +12,69 @@ import kotlin.test.assertTrue
 
 // ---------- Helper-eligible throughLink schemas ----------
 
-private class HePost : EntSchema("he_posts") {
+private class HePost : EntSchema("he_posts", clientName = "hePosts") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val tags = manyToMany<HeTag>("tags")
+    val title by string("title")
+    val tags by manyToMany<HeTag>("tags")
         .throughLink<HePostTag>(HePostTag::post, HePostTag::tag)
 }
 
-private class HeTag : EntSchema("he_tags") {
+private class HeTag : EntSchema("he_tags", clientName = "heTags") {
     override fun id() = EntId.uuid()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class HePostTag : EntSchema("he_post_tags") {
+private class HePostTag : EntSchema("he_post_tags", clientName = "hePostTags") {
     override fun id() = EntId.long()
-    val post = belongsTo<HePost>("post").onDelete(OnDelete.CASCADE)
-    val tag = belongsTo<HeTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<HePost>("post").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<HeTag>("tag").onDelete(OnDelete.CASCADE)
     val pair = index("idx_he_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
 // ---------- throughEntity schema (must NOT be helper-eligible) ----------
 
-private class HeTeam : EntSchema("he_teams") {
+private class HeTeam : EntSchema("he_teams", clientName = "heTeams") {
     override fun id() = EntId.long()
-    val members = manyToMany<HeMember>("members")
+    val members by manyToMany<HeMember>("members")
         .throughEntity<HeMembership>(HeMembership::team, HeMembership::member)
 }
 
-private class HeMember : EntSchema("he_members") {
+private class HeMember : EntSchema("he_members", clientName = "heMembers") {
     override fun id() = EntId.long()
 }
 
-private class HeMembership : EntSchema("he_memberships") {
+private class HeMembership : EntSchema("he_memberships", clientName = "heMemberships") {
     override fun id() = EntId.long()
-    val joinedAt = time("joined_at")
-    val team = belongsTo<HeTeam>("team")
-    val member = belongsTo<HeMember>("member")
+    val joinedAt by time("joined_at")
+    val team by belongsTo<HeTeam>("team")
+    val member by belongsTo<HeMember>("member")
 }
 
 // ---------- Two helper-eligible throughLink edges on one source ----------
 
-private class HeDoc : EntSchema("he_docs") {
+private class HeDoc : EntSchema("he_docs", clientName = "heDocs") {
     override fun id() = EntId.long()
-    val tags = manyToMany<HeLabel>("tags")
+    val tags by manyToMany<HeLabel>("tags")
         .throughLink<HeDocTag>(HeDocTag::doc, HeDocTag::tag)
-    val labels = manyToMany<HeLabel>("labels")
+    val labels by manyToMany<HeLabel>("labels")
         .throughLink<HeDocLabel>(HeDocLabel::doc, HeDocLabel::label)
 }
 
-private class HeLabel : EntSchema("he_labels") {
+private class HeLabel : EntSchema("he_labels", clientName = "heLabels") {
     override fun id() = EntId.long()
 }
 
-private class HeDocTag : EntSchema("he_doc_tags") {
+private class HeDocTag : EntSchema("he_doc_tags", clientName = "heDocTags") {
     override fun id() = EntId.long()
-    val doc = belongsTo<HeDoc>("doc").onDelete(OnDelete.CASCADE)
-    val tag = belongsTo<HeLabel>("tag").onDelete(OnDelete.CASCADE)
+    val doc by belongsTo<HeDoc>("doc").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<HeLabel>("tag").onDelete(OnDelete.CASCADE)
     val pair = index("idx_he_doc_tags_doc_tag", doc.fk, tag.fk).unique()
 }
 
-private class HeDocLabel : EntSchema("he_doc_labels") {
+private class HeDocLabel : EntSchema("he_doc_labels", clientName = "heDocLabels") {
     override fun id() = EntId.long()
-    val doc = belongsTo<HeDoc>("doc").onDelete(OnDelete.CASCADE)
-    val label = belongsTo<HeLabel>("label").onDelete(OnDelete.CASCADE)
+    val doc by belongsTo<HeDoc>("doc").onDelete(OnDelete.CASCADE)
+    val label by belongsTo<HeLabel>("label").onDelete(OnDelete.CASCADE)
     val pair = index("idx_he_doc_labels_doc_label", doc.fk, label.fk).unique()
 }
 
@@ -164,13 +164,11 @@ class HelperEligibleM2MTest {
     }
 
     @Test
-    fun `snake_case edge names become camelCase properties and PascalCase mutator class names`() {
-        // Edge names from the schema DSL are typically snake_case
-        // (`manyToMany<Tag>("primary_tags")`). The codebase elsewhere
-        // applies toCamelCase / toPascalCase before splicing into
-        // generated Kotlin identifiers; the mutator should follow the
-        // same convention rather than leaking `primary_tags` /
-        // `Primary_tagsEdgeMutator`.
+    fun `M2M mutator names come from the edge declaration, not its storage name`() {
+        // The storage name is snake_case (`manyToMany<Tag>("primary_tags")`)
+        // and the declaration is `tags`. The generated mutator follows the
+        // declaration; the storage name stays the metadata lookup key.
+        // Nothing converts `primary_tags` into a Kotlin identifier.
         val post = SnakePost()
         val label = SnakeLabel()
         val pl = SnakePostLabel()
@@ -178,30 +176,30 @@ class HelperEligibleM2MTest {
         val names = mapOf<EntSchema, String>(post to "SnakePost", label to "SnakeLabel", pl to "SnakePostLabel")
 
         val eligible = helperEligibleM2MEdges(post, names).single()
-        assertEquals("primary_tags", eligible.edgeName, "edgeName is the raw schema name (for metadata lookup)")
+        assertEquals("primary_tags", eligible.edgeName, "edgeName is the storage name (for metadata lookup)")
         assertEquals(
-            "primaryTags", eligible.mutatorPropertyName,
-            "mutatorPropertyName must be camelCase for idiomatic Kotlin DSL",
+            "tags", eligible.mutatorPropertyName,
+            "mutatorPropertyName is the edge's Kotlin declaration name",
         )
         assertEquals(
-            "PrimaryTagsEdgeMutator", eligible.mutatorClassSimpleName,
-            "mutatorClassSimpleName must be PascalCase for idiomatic Kotlin",
+            "TagsEdgeMutator", eligible.mutatorClassSimpleName,
+            "mutator class is the declaration name's generated stem",
         )
     }
 }
 
 // snake_case edge name fixture for the case-conversion test above.
-private class SnakePost : EntSchema("snake_posts") {
+private class SnakePost : EntSchema("snake_posts", clientName = "snakePosts") {
     override fun id() = EntId.long()
-    val tags = manyToMany<SnakeLabel>("primary_tags")
+    val tags by manyToMany<SnakeLabel>("primary_tags")
         .throughLink<SnakePostLabel>(SnakePostLabel::post, SnakePostLabel::label)
 }
-private class SnakeLabel : EntSchema("snake_labels") {
+private class SnakeLabel : EntSchema("snake_labels", clientName = "snakeLabels") {
     override fun id() = EntId.long()
 }
-private class SnakePostLabel : EntSchema("snake_post_labels") {
+private class SnakePostLabel : EntSchema("snake_post_labels", clientName = "snakePostLabels") {
     override fun id() = EntId.long()
-    val post = belongsTo<SnakePost>("post").onDelete(OnDelete.CASCADE)
-    val label = belongsTo<SnakeLabel>("label").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<SnakePost>("post").onDelete(OnDelete.CASCADE)
+    val label by belongsTo<SnakeLabel>("label").onDelete(OnDelete.CASCADE)
     val pair = index("idx_snake_post_labels_pair", post.fk, label.fk).unique()
 }

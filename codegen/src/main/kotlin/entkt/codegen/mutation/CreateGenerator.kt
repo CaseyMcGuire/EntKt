@@ -1,5 +1,6 @@
 package entkt.codegen.mutation
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
@@ -25,8 +26,6 @@ import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.stagingFieldName
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.pluralize
-import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
@@ -400,7 +399,7 @@ internal class CreateGenerator(
             .addFunction(buildBeforeCreateHookValueForInternalUseFunction(createHookCtxClass))
             .addFunction(buildConfigureForCreateManyForInternalUseFunction(schemaName))
             .addFunction(buildPrepareForInternalUseFunction(schemaName, schema, allFields, edgeFks))
-            .addFunction(buildExecuteSaveFunction(schemaName))
+            .addFunction(buildExecuteSaveFunction(schemaName, schema.clientName))
             .addFunction(buildSaveFunction(schemaName))
             .addFunction(buildSaveAndLoadFunction(schemaName))
             .addFunction(buildValidationFailedHelper(schemaName, "CREATE"))
@@ -443,7 +442,7 @@ internal class CreateGenerator(
         val adapter = TypeSpec.anonymousClassBuilder()
             .addSuperinterface(mutationClass)
         for (field in mutableFields) {
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             val typeName = field.resolvedTypeName().copy(nullable = true)
             adapter.addProperty(buildAdapterForwarderProperty(createClassName, propName, typeName))
         }
@@ -490,7 +489,7 @@ internal class CreateGenerator(
         // `var ... = null` properties — the forwarder reads /
         // writes through them.
         for (field in allFields) {
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             val typeName = field.resolvedTypeName().copy(nullable = true)
             adapter.addProperty(buildAdapterForwarderProperty(createClassName, propName, typeName))
         }
@@ -633,7 +632,7 @@ internal class CreateGenerator(
 
     private fun buildProperty(field: Field): PropertySpec {
         val typeName = field.resolvedTypeName().copy(nullable = true)
-        val builder = PropertySpec.builder(toCamelCase(field.name), typeName)
+        val builder = PropertySpec.builder(field.apiName, typeName)
             .addModifiers(KModifier.OVERRIDE)
             .mutable(true)
             .initializer("null")
@@ -661,7 +660,7 @@ internal class CreateGenerator(
                         .addStatement(
                             "return %L ?: throw IllegalStateException(%S)",
                             stagingName,
-                            "${fk.edgeName} is required",
+                            "${fk.propertyName} is required",
                         )
                         .build(),
                 )
@@ -675,7 +674,7 @@ internal class CreateGenerator(
                         )
                         .addStatement(
                             "requireNotNull(value) { %S }",
-                            "${fk.edgeName} is required",
+                            "${fk.propertyName} is required",
                         )
                         .addStatement("%L = value", stagingName)
                         .build(),
@@ -774,9 +773,10 @@ internal class CreateGenerator(
      */
     private fun buildExecuteSaveFunction(
         schemaName: String,
+        clientName: String,
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val repoPropName = clientName
         val builder = FunSpec.builder("executeSaveForInternalUse")
             .addModifiers(KModifier.INTERNAL)
             // `internal` alone is no guard: generated and application
@@ -850,8 +850,8 @@ internal class CreateGenerator(
         builder.addStatement("val values = prepared.values")
         builder.addStatement("val candidate = prepared.candidate")
 
-        emitCreatePrivacy(builder, schemaName)
-        emitCreateValidation(builder, schemaName)
+        emitCreatePrivacy(builder, schemaName, clientName)
+        emitCreateValidation(builder, schemaName, clientName)
 
         // ---- Persist. The insert is the only write statement on the
         // create path; an exception here routes through driver
@@ -994,33 +994,35 @@ internal class CreateGenerator(
         // across required + validator rules is left as a future
         // improvement.
         for (field in allFields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val required = !field.nullable && field.default == null
             when {
                 required -> builder.addStatement(
                     "val %L = this.%L ?: return·_validationFailed(listOf(%T(%S, field = %S)))",
-                    prop,
+                    preparationLocal(prop),
                     prop,
                     MUTATION_VALIDATION_VIOLATION,
-                    "${field.name} is required",
-                    field.name,
+                    "$prop is required",
+                    prop,
                 )
                 field.default != null -> builder.addStatement(
                     "val %L = this.%L ?: %L",
-                    prop,
+                    preparationLocal(prop),
                     prop,
                     defaultCodeBlock(field),
                 )
-                else -> builder.addStatement("val %L = this.%L", prop, prop)
+                else -> builder.addStatement("val %L = this.%L", preparationLocal(prop), prop)
             }
         }
 
         // ---- Field-level validation. ----
         for (field in allFields) {
             if (field.validators.isEmpty()) continue
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val nullable = field.nullable
-            emitFieldValidation(builder, schemaName, prop, field.name, field.validators, nullable)
+            emitFieldValidation(
+                builder, schemaName, preparationLocal(prop), prop, field.validators, nullable,
+            )
         }
 
         for (fk in edgeFks) {
@@ -1030,7 +1032,7 @@ internal class CreateGenerator(
                 // via the public non-null getter.
                 fk.required && fk.default != null -> builder.addStatement(
                     "val %L = this.%L ?: %L",
-                    fk.propertyName,
+                    preparationLocal(fk.propertyName),
                     stagingFieldName(fk.propertyName),
                     fkDefaultCodeBlock(fk),
                 )
@@ -1039,7 +1041,7 @@ internal class CreateGenerator(
                 // — including `null` — suppresses the default.
                 !fk.required && fk.default != null -> builder.addStatement(
                     "val %L = if (this.%L) this.%L else %L",
-                    fk.propertyName,
+                    preparationLocal(fk.propertyName),
                     assignedFieldName(fk.propertyName),
                     fk.propertyName,
                     fkDefaultCodeBlock(fk),
@@ -1052,14 +1054,16 @@ internal class CreateGenerator(
                 // usage error.
                 fk.required -> builder.addStatement(
                     "val %L = this.%L ?: return·_validationFailed(listOf(%T(%S, field = %S)))",
-                    fk.propertyName,
+                    preparationLocal(fk.propertyName),
                     stagingFieldName(fk.propertyName),
                     MUTATION_VALIDATION_VIOLATION,
-                    "${fk.edgeName} is required",
-                    fk.columnName,
+                    "${fk.propertyName} is required",
+                    fk.propertyName,
                 )
                 // Nullable + no default: pass through, may be null.
-                else -> builder.addStatement("val %L = this.%L", fk.propertyName, fk.propertyName)
+                else -> builder.addStatement(
+                    "val %L = this.%L", preparationLocal(fk.propertyName), fk.propertyName,
+                )
             }
             // Field-level validators carried from the backing field of
             // a field-backed edge run on the resolved FK value, the
@@ -1068,8 +1072,8 @@ internal class CreateGenerator(
                 emitFieldValidation(
                     builder,
                     schemaName = schemaName,
-                    prop = fk.propertyName,
-                    fieldName = fk.columnName,
+                    prop = preparationLocal(fk.propertyName),
+                    fieldName = fk.propertyName,
                     validators = fk.validators,
                     nullable = !fk.required,
                 )
@@ -1084,18 +1088,20 @@ internal class CreateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         for (field in allFields) {
             if (field.type != FieldType.BYTES && field.type != FieldType.JSON) continue
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val prepared = preparedValueNames.getValue(field)
             if (field.type == FieldType.BYTES) {
                 val nullableAccess = if (field.nullable) "?" else ""
-                builder.addStatement("val %L = %L$nullableAccess.copyOf()", prepared, prop)
+                builder.addStatement(
+                    "val %L = %L$nullableAccess.copyOf()", prepared, preparationLocal(prop),
+                )
             } else {
                 builder.addStatement(
                     "val %L = driver.copyJsonValue(%T.TABLE, %S, %L)",
                     prepared,
                     entityClass,
                     field.columnName,
-                    prop,
+                    preparationLocal(prop),
                 )
             }
         }
@@ -1111,32 +1117,32 @@ internal class CreateGenerator(
         }
 
         for (field in allFields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val preparedProp = preparedValueNames.getValue(field)
             val col = field.columnName
             if (field.type == FieldType.ENUM) {
                 val nullable = field.nullable
                 if (nullable) {
-                    rowBuilder.add("  %S to %L?.name,\n", col, prop)
+                    rowBuilder.add("  %S to %L?.name,\n", col, preparationLocal(prop))
                 } else {
-                    rowBuilder.add("  %S to %L.name,\n", col, prop)
+                    rowBuilder.add("  %S to %L.name,\n", col, preparationLocal(prop))
                 }
             } else if (field.type == FieldType.PGVECTOR) {
                 // Validate the vector's dimension at save() build time, with a
                 // field-named error (the driver re-checks defensively at bind).
                 val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
-                    ?: error("pgvector field '${field.name}' missing dimensions metadata")
+                    ?: error("pgvector field '${field.apiName}' missing dimensions metadata")
                 val opt = if (field.nullable) "?" else ""
                 rowBuilder.add(
                     "  %S to %L$opt.also { require(it.dimensions == %L) { %S } },\n",
-                    col, prop, dims, "${field.name} expects vector($dims)",
+                    col, preparationLocal(prop), dims, "$prop expects vector($dims)",
                 )
             } else {
                 rowBuilder.add("  %S to %L,\n", col, preparedProp)
             }
         }
         for (fk in edgeFks) {
-            rowBuilder.add("  %S to %L,\n", fk.columnName, fk.propertyName)
+            rowBuilder.add("  %S to %L,\n", fk.columnName, preparationLocal(fk.propertyName))
         }
         rowBuilder.add(")\n")
 
@@ -1158,10 +1164,10 @@ internal class CreateGenerator(
                 CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
             field.type == FieldType.ENUM -> {
                 require(value is Enum<*>) {
-                    "Typed enum field '${field.name}' must use an enum constant as its default, not a String"
+                    "Typed enum field '${field.apiName}' must use an enum constant as its default, not a String"
                 }
                 require(value::class == field.enumClass) {
-                    "Typed enum field '${field.name}' default must be a ${field.enumClass!!.simpleName} constant, got ${value::class.simpleName}"
+                    "Typed enum field '${field.apiName}' default must be a ${field.enumClass!!.simpleName} constant, got ${value::class.simpleName}"
                 }
                 val enumType = field.resolvedTypeName()
                 CodeBlock.of("%T.%L", enumType, value.name)
@@ -1190,28 +1196,45 @@ internal class CreateGenerator(
         val args = mutableListOf<String>()
         val preparedValueNames = preparedCreateValueNames(allFields, edgeFks)
         for (field in allFields) {
-            args.add("${toCamelCase(field.name)} = ${preparedValueNames.getValue(field)}")
+            args.add("${field.apiName} = ${preparedValueNames.getValue(field)}")
         }
         for (fk in edgeFks) {
-            args.add("${fk.propertyName} = ${fk.propertyName}")
+            args.add("${fk.propertyName} = ${preparationLocal(fk.propertyName)}")
         }
         return args
     }
+
+    /**
+     * Name for a local bound in the create-preparation body.
+     *
+     * Preparation locals must not be named after the field's API name:
+     * the same function also binds fixed locals (`candidate`, `values`,
+     * `entity`, `row`, …), so a schema declaring `val values by
+     * string("values_col")` would emit two `val values` declarations and
+     * generate uncompilable source.
+     *
+     * The framework's `_` prefix is reserved — declaration names must be
+     * lower-camel identifiers — so a prefixed local can never collide
+     * with a field, an FK, or a future fixed local that follows the same
+     * convention.
+     */
+    private fun preparationLocal(apiName: String): String =
+        "_entktValue${apiName.replaceFirstChar { it.uppercaseChar() }}"
 
     private fun preparedCreateValueNames(
         allFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): Map<Field, String> {
         val usedNames = buildSet {
-            allFields.forEach { add(toCamelCase(it.name)) }
+            allFields.forEach { add(it.apiName) }
             edgeFks.forEach { add(it.propertyName) }
         }
             .toMutableSet()
 
         return allFields.associateWith { field ->
-            val property = toCamelCase(field.name)
+            val property = field.apiName
             if (field.type != FieldType.BYTES && field.type != FieldType.JSON) {
-                property
+                preparationLocal(property)
             } else {
                 var generated = "_entktPrepared${property.replaceFirstChar { it.uppercaseChar() }}"
                 while (!usedNames.add(generated)) generated += "_"
@@ -1232,8 +1255,9 @@ internal class CreateGenerator(
     private fun emitCreateValidation(
         builder: FunSpec.Builder,
         schemaName: String,
+        clientName: String,
     ) {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val repoPropName = clientName
         builder.addStatement("val violations = client.%L.evaluateCreateValidation(candidate)", repoPropName)
         builder.addStatement("if (violations.isNotEmpty()) return·_validationFailed(violations)")
     }
@@ -1250,8 +1274,9 @@ internal class CreateGenerator(
     private fun emitCreatePrivacy(
         builder: FunSpec.Builder,
         schemaName: String,
+        clientName: String,
     ) {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val repoPropName = clientName
         builder.addStatement("val privacy = client.currentPrivacyContext()")
         builder.addStatement(
             "val denialReason = client.%L.createDenialReasonOrNull(privacy, candidate)",

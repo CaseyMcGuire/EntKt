@@ -48,6 +48,9 @@ internal class QueryGenerator(
         val className = "${schemaName}Query"
         val queryClass = resolved.queryClass
         val entityClass = resolved.entityClass
+        // The generated client property for this schema, declared on the
+        // schema and emitted verbatim — never derived from schemaName.
+        val clientName = schema.clientName
         // Typed convenience names for this entity's predicate/order-field
         // scopes. Used everywhere the generated query stores or accepts
         // its own predicate / order field.
@@ -264,14 +267,14 @@ internal class QueryGenerator(
             // returns its `results` parameter unchanged.
             .addFunction(buildLoadEdges(resolved))
             .addFunction(buildRequireClient(schemaName))
-            .addFunction(buildRunReadInterceptors(schemaName, entityClass))
+            .addFunction(buildRunReadInterceptors(schemaName, clientName, entityClass))
             .addFunction(buildRunEdgePredicateInterceptors(resolved))
             .addFunction(buildSnapshotForTraversal(queryClass, clientClass))
             .addFunction(buildSeedEdgeTraversal())
             .addFunction(buildSeedEagerDenialBasePath())
             .addFunction(buildSetDeferredSourceStep(entityClass))
-            .addFunction(buildAll(schemaName, entityClass, hasEdges))
-            .addFunction(buildFirstOrNull(schemaName, entityClass, hasEdges))
+            .addFunction(buildAll(schemaName, clientName, entityClass, hasEdges))
+            .addFunction(buildFirstOrNull(schemaName, clientName, entityClass, hasEdges))
             .addFunction(buildRawCount(schemaName, entityClass))
             .addFunctions(buildAggregateTerminals(schemaName, entityClass))
             .addFunction(buildRawExists(schemaName, entityClass))

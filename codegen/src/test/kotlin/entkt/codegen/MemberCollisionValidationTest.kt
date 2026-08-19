@@ -4,6 +4,7 @@ import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -20,7 +21,7 @@ import kotlin.test.fail
 class MemberCollisionValidationTest {
 
     private fun validate(vararg schemas: Pair<String, EntSchema>): List<String> {
-        val inputs = schemas.map { SchemaInput(it.first, it.second) }
+        val inputs = schemas.map { SchemaInput(it.second) }
         val result = SchemaInspector.validate(inputs)
         return result.errors
     }
@@ -53,10 +54,10 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'unset_name' collides with the unset method generated for field 'name'`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val name = string("name")
-            val unsetName = bool("unset_name")
+            val name by string("name")
+            val unsetName by bool("unset_name")
         }
 
         val errors = validate("S" to S())
@@ -72,9 +73,9 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'copy' collides with the data-class synthesized copy()`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val copy = string("copy")
+            val copy by string("copy")
         }
 
         val errors = validate("S" to S())
@@ -92,11 +93,11 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'component1' collides with the data-class synthesized component1()`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val component1 = string("component1")
+            val component1 by string("component1")
             // Some filler to ensure constructor arity reaches >= 1.
-            val title = string("title")
+            val title by string("title")
         }
 
         val errors = validate("S" to S())
@@ -111,9 +112,9 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'edges' collides with the fixed entity 'edges' accessor`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val edges = string("edges")
+            val edges by string("edges")
         }
 
         val errors = validate("S" to S())
@@ -125,9 +126,9 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'save_and_load' collides with the fixed builder saveAndLoad on Create and Update`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val saveAndLoad = bool("save_and_load")
+            val saveAndLoad by bool("save_and_load")
         }
 
         val errors = validate("S" to S())
@@ -148,9 +149,9 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'from_row' collides with the companion 'fromRow' decoder`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val fromRow = string("from_row")
+            val fromRow by string("from_row")
         }
 
         val errors = validate("S" to S())
@@ -168,10 +169,10 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `diagnostic includes schema name, artifact, member name, and both contributing sources`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val name = string("name")
-            val unsetName = bool("unset_name")
+            val name by string("name")
+            val unsetName by bool("unset_name")
         }
 
         val errors = validate("S" to S())
@@ -180,8 +181,9 @@ class MemberCollisionValidationTest {
         assertTrue("SUpdateMutationView" in diag, "Diagnostic should name the artifact: $diag")
         assertTrue("'unsetName'" in diag, "Diagnostic should name the member: $diag")
         assertTrue(
-            "field 'unset_name'" in diag,
-            "Diagnostic should reference the user-declared field: $diag",
+            "field 'unsetName'" in diag,
+            "Diagnostic should name the *declaration*, since renaming it is the fix " +
+                "(the storage column 'unset_name' is not what the author changes): $diag",
         )
         assertTrue(
             "unset method for field 'name'" in diag,
@@ -200,9 +202,9 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `field 'pending_edges' collides with the fixed UpdateMutationView pendingEdges member`() {
-        class S : EntSchema("s") {
+        class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
-            val pendingEdges = string("pending_edges")
+            val pendingEdges by string("pending_edges")
         }
 
         val errors = validate("S" to S())
@@ -241,83 +243,111 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `edge ref collides with implicit FK column ref on the companion`() {
-        class Author : EntSchema("authors") {
-            override fun id() = EntId.long()
-        }
-        class Reader : EntSchema("readers") {
-            override fun id() = EntId.long()
-        }
-        class Post : EntSchema("posts") {
-            override fun id() = EntId.long()
-            // Implicit FK: column 'author_id', companion column ref 'authorId'.
-            val author = belongsTo<Author>("author")
-            // Edge name 'author_id' (snake_case-valid) →
-            // companion edge ref `toCamelCase('author_id')` = 'authorId'.
-            // Same artifact, same name → collision.
-            val readers = hasMany<Reader>("author_id")
-        }
-
-        val errors = validate("Author" to Author(), "Reader" to Reader(), "Post" to Post())
-        assertCollision(errors, "Post.Companion", "authorId")
+        val errors = validate(
+            "CompanionAuthor" to CompanionAuthor(),
+            "CompanionReader" to CompanionReader(),
+            "CompanionPost" to CompanionPost(),
+        )
+        assertCollision(errors, "CompanionPost.Companion", "authorId")
     }
 
     // ──────────────────────────────────────────────────────────────
-    // create-hook adapter manifest coverage: the private hook-facing adapter
-    // properties (`_beforeSaveView`, `_createMutationView` on
-    // Create; `_mutationView`, `_beforeSaveView`,
-    // `_capturedPendingEdges` on Update) are reachable as
-    // collision targets via declaration-name capture declaration-name capture.
-    // Schema column names can't start with `_` (snake_case
-    // regex), but Kotlin val names can, and declaration-name capture picks up the
-    // val name verbatim — so `val _beforeSaveView = uuid("x");
-    // val rel = belongsTo<X>("rel").field(_beforeSaveView)`
-    // produces a generated FK property named `_beforeSaveView`
-    // that collides with the private adapter.
+    // The generated hook-facing adapter properties (`_beforeSaveView`,
+    // `_createMutationView` on Create; `_mutationView`,
+    // `_capturedPendingEdges` on Update) all use a leading `_`.
+    //
+    // Under the declaration-name contract a schema can no longer reach
+    // them: declaration names must be lower-camel identifiers, so `_` is
+    // reserved for the framework and this whole class of collision is
+    // structurally unreachable rather than merely detected. The
+    // manifest still carries these members so a *future generated*
+    // member colliding with them is caught.
+    //
+    // See `docs/implemented-features/schema/schema-declaration-api-names.md`.
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `field-backed FK named '_beforeSaveView' collides with the Create adapter`() {
-        class T : EntSchema("targets_a") {
-            override fun id() = EntId.long()
+    fun `declaration names cannot claim the framework's reserved underscore prefix`() {
+        // One object expression per reserved name: a declaration name is
+        // a compile-time property name, so this cannot be table-driven.
+        val cases = listOf<Pair<String, () -> Unit>>(
+            "_beforeSaveView" to {
+                object : EntSchema("reserved_a", clientName = "reservedAs") {
+                    override fun id() = EntId.long()
+                    val _beforeSaveView by long("backing_col")
+                }
+                Unit
+            },
+            "_createMutationView" to {
+                object : EntSchema("reserved_b", clientName = "reservedBs") {
+                    override fun id() = EntId.long()
+                    val _createMutationView by long("backing_col")
+                }
+                Unit
+            },
+            "_mutationView" to {
+                object : EntSchema("reserved_c", clientName = "reservedCs") {
+                    override fun id() = EntId.long()
+                    val _mutationView by long("backing_col")
+                }
+                Unit
+            },
+            "_capturedPendingEdges" to {
+                object : EntSchema("reserved_d", clientName = "reservedDs") {
+                    override fun id() = EntId.long()
+                    val _capturedPendingEdges by long("backing_col")
+                }
+                Unit
+            },
+        )
+        for ((name, build) in cases) {
+            val err = assertFailsWith<IllegalArgumentException>("expected reject for '$name'", build)
+            assertTrue(
+                err.message!!.contains("not a valid generated API name") &&
+                    err.message!!.contains("'$name'"),
+                "expected an identifier diagnostic naming '$name', got: ${err.message}",
+            )
         }
-        class S : EntSchema("schemas_a") {
-            override fun id() = EntId.long()
-            val _beforeSaveView = long("backing_col")
-            val rel = belongsTo<T>("rel").field(_beforeSaveView)
-        }
-
-        val errors = validate("T" to T(), "S" to S())
-        assertCollision(errors, "SCreate", "_beforeSaveView")
     }
 
     @Test
-    fun `field-backed FK named '_createMutationView' collides with the Create adapter`() {
-        class T : EntSchema("targets_b") {
-            override fun id() = EntId.long()
-        }
-        class S : EntSchema("schemas_b") {
-            override fun id() = EntId.long()
-            val _createMutationView = long("backing_col")
-            val rel = belongsTo<T>("rel").field(_createMutationView)
-        }
-
-        val errors = validate("T" to T(), "S" to S())
-        assertCollision(errors, "SCreate", "_createMutationView")
+    fun `edge declared 'copy' collides with the Edges data-class member`() {
+        val errors = validate(
+            "EdgesCopyOwner" to EdgesCopyOwner(),
+            "EdgesCopyTarget" to EdgesCopyTarget(),
+        )
+        assertCollision(errors, "EdgesCopyOwner.Edges", "copy")
     }
 
     @Test
-    fun `field-backed FK named '_mutationView' collides with the Update adapter`() {
-        class T : EntSchema("targets_c") {
-            override fun id() = EntId.long()
-        }
-        class S : EntSchema("schemas_c") {
-            override fun id() = EntId.long()
-            val _mutationView = long("backing_col")
-            val rel = belongsTo<T>("rel").field(_mutationView)
-        }
+    fun `edge whose eager backing collides with a fixed query member is rejected`() {
+        val errors = validate(
+            "QueryClashOwner" to QueryClashOwner(),
+            "QueryClashTarget" to QueryClashTarget(),
+        )
+        assertCollision(errors, "QueryClashOwnerQuery", "eagerDenialBasePath")
+    }
 
-        val errors = validate("T" to T(), "S" to S())
-        assertCollision(errors, "SUpdate", "_mutationView")
+    @Test
+    fun `mutable properties differing only by an is-prefix collide on the JVM setter`() {
+        // Kotlin maps `var isActive` to `setActive(...)` and `var active`
+        // to the same signature, so generated mutation surfaces holding
+        // both hit a platform declaration clash. Source names differ, so
+        // only JVM-signature modelling catches it.
+        val errors = validate("IsPrefix" to IsPrefix())
+        assertCollision(errors, "IsPrefixMutation", "setActive(…)")
+    }
+
+    @Test
+    fun `read-only properties differing only by an is-prefix do not collide`() {
+        // The getters are `getActive()` and `isActive()` — distinct. Only
+        // settable members share a signature, so an entity-only pair must
+        // not be rejected.
+        val errors = validate("IsPrefixImmutable" to IsPrefixImmutable())
+        assertTrue(
+            errors.none { "setActive" in it },
+            "immutable is-prefix pair must not report a setter collision: $errors",
+        )
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -328,18 +358,81 @@ class MemberCollisionValidationTest {
 
     @Test
     fun `clean schema with scalars + FK + edges produces no collisions`() {
-        class Author : EntSchema("authors") {
+        class Author : EntSchema("authors", clientName = "authors") {
             override fun id() = EntId.long()
-            val name = string("name")
+            val name by string("name")
         }
-        class Post : EntSchema("posts") {
+        class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
-            val title = string("title")
-            val createdAt = time("created_at").immutable()
-            val author = belongsTo<Author>("author")
+            val title by string("title")
+            val createdAt by time("created_at").immutable()
+            val author by belongsTo<Author>("author")
         }
 
         val errors = validate("Author" to Author(), "Post" to Post())
         assertEquals(emptyList(), errors)
     }
+}
+
+// Companion-ref collision fixtures. `CompanionPost.author` is a
+// belongsTo, so its implicit FK companion ref is `authorId`; the
+// hasMany edge is *declared* `authorId`, so its companion edge ref is
+// `authorId` too. Same artifact, same member name.
+//
+// These live at file level because the hasMany/belongsTo pair is
+// mutually recursive, which local classes cannot express.
+private class CompanionAuthor : EntSchema("companion_authors", clientName = "companionAuthors") {
+    override fun id() = EntId.long()
+}
+
+private class CompanionPost : EntSchema("companion_posts", clientName = "companionPosts") {
+    override fun id() = EntId.long()
+    val author by belongsTo<CompanionAuthor>("author")
+    val authorId by hasMany<CompanionReader>("post_readers")
+}
+
+private class CompanionReader : EntSchema("companion_readers", clientName = "companionReaders") {
+    override fun id() = EntId.long()
+    val post by belongsTo<CompanionPost>("post_readers")
+}
+
+// Edges-class collision fixtures. Edge members are the schema author's
+// Kotlin declarations, so an edge named after a data-class synthesized
+// member reaches `${Entity}Edges` and breaks generated source.
+private class EdgesCopyTarget : EntSchema("edges_copy_targets", clientName = "edgesCopyTargets") {
+    override fun id() = EntId.long()
+    val owner by belongsTo<EdgesCopyOwner>("owner")
+}
+
+private class EdgesCopyOwner : EntSchema("edges_copy_owners", clientName = "edgesCopyOwners") {
+    override fun id() = EntId.long()
+    // `copy` is synthesized on the Edges data class.
+    val copy by hasMany<EdgesCopyTarget>("owner")
+}
+
+// Query-artifact collision fixture. `eager{Stem}` is a private backing
+// property on the generated query class, so an edge declared
+// `denialBasePath` generates `eagerDenialBasePath` and collides with
+// the fixed private property of that name.
+private class QueryClashTarget : EntSchema("query_clash_targets", clientName = "queryClashTargets") {
+    override fun id() = EntId.long()
+    val owner by belongsTo<QueryClashOwner>("owner")
+}
+
+private class QueryClashOwner : EntSchema("query_clash_owners", clientName = "queryClashOwners") {
+    override fun id() = EntId.long()
+    val denialBasePath by hasMany<QueryClashTarget>("owner")
+}
+
+private class IsPrefix : EntSchema("is_prefix", clientName = "isPrefixes") {
+    override fun id() = EntId.long()
+    val active by bool("active")
+    val isActive by bool("is_active")
+}
+
+// Same pair, but immutable — create-only, never settable after create,
+// so the update surfaces never declare them as `var`.
+private class IsPrefixImmutable : EntSchema("is_prefix_imm", clientName = "isPrefixImmutables") {
+    override fun id() = EntId.long()
+    val label by string("label")
 }

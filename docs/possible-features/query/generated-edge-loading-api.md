@@ -10,7 +10,7 @@ does not own the execution algorithm. The accepted
 an immutable edge-load plan is executed.
 
 The
-[Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md)
+[Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md)
 RFC defines where every `{Name}` in this document comes from.
 
 ## Summary
@@ -805,7 +805,7 @@ Examples should include:
 
 ## Related RFCs
 
-- [Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md)
+- [Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md)
 - [Set-Based Eager Graph Loader](set-based-eager-graph-loader.md)
 - [Explicit Query Authority And Cost](explicit-query-authority-and-cost.md)
 - [Query Observability Diagnostics](query-observability-diagnostics.md)

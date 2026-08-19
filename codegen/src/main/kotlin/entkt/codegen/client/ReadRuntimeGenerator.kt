@@ -9,7 +9,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.SchemaInput
-import entkt.codegen.pluralize
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
@@ -141,7 +140,7 @@ internal class ReadRuntimeGenerator(
             )
 
         for (input in sorted) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             builder.addProperty(
                 PropertySpec.builder(propName, ClassName(packageName, "${input.name}ReadSurface"))
                     .addModifiers(KModifier.ABSTRACT)

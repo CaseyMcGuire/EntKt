@@ -64,18 +64,18 @@ class EntktPluginTest {
 
                 data class PetMeta(val tags: List<String>)
 
-                class Owner : EntSchema("owners") {
+                class Owner : EntSchema("owners", clientName = "owners") {
                     override fun id() = EntId.int()
-                    val name = string("name")
+                    val name by string("name")
                 }
 
-                class Pet : EntSchema("pets") {
+                class Pet : EntSchema("pets", clientName = "pets") {
                     override fun id() = EntId.int()
-                    val name = string("name")
-                    val age = int("age").nullable()
-                    val meta = json<PetMeta>("meta").nullable()
+                    val name by string("name")
+                    val age by int("age").nullable()
+                    val meta by json<PetMeta>("meta").nullable()
 
-                    val owner = belongsTo<Owner>("owner").nullable()
+                    val owner by belongsTo<Owner>("owner").nullable()
                 }
                 """.trimIndent()
             )
@@ -273,10 +273,10 @@ class EntktPluginTest {
 
                 data class PetMeta(val tags: List<String>)
 
-                class Pet : EntSchema("pets") {
+                class Pet : EntSchema("pets", clientName = "pets") {
                     override fun id() = EntId.int()
-                    val name = string("name")
-                    val meta = json<PetMeta>("meta").nullable()
+                    val name by string("name")
+                    val meta by json<PetMeta>("meta").nullable()
                 }
                 """.trimIndent()
             )

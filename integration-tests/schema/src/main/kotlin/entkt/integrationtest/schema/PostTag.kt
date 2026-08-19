@@ -17,11 +17,11 @@ import entkt.schema.OnDelete
  *      that side's source FK (post_id for `Post.tags`, tag_id for
  *      `Tag.posts`).
  */
-class PostTag : EntSchema("post_tags") {
+class PostTag : EntSchema("post_tags", clientName = "postTags") {
     override fun id() = EntId.long()
 
-    val post = belongsTo<Post>("post").onDelete(OnDelete.CASCADE)
-    val tag = belongsTo<Tag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<Post>("post").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<Tag>("tag").onDelete(OnDelete.CASCADE)
 
     // Unique pair index — the conflict target for idempotent insertIgnore and
     // the leading-column index for the `Post.tags` orientation (leads post_id).

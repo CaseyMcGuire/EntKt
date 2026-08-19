@@ -28,10 +28,88 @@ import entkt.schema.OnDelete
 import java.nio.file.Path
 import kotlin.reflect.KClass
 
+/**
+ * One schema handed to codegen.
+ *
+ * [name] is derived from the concrete schema class and cannot be
+ * overridden by the caller: the class name is the single authority for
+ * entity and entity-prefixed generated type names (`User`, `UserQuery`,
+ * `UserRepo`, …). A second caller-supplied name could disagree with the
+ * class and silently produce artifacts that no schema declares.
+ *
+ * The generated *client* property comes from [EntSchema.clientName], and
+ * storage identity from `tableName` — three independent names, none
+ * derived from the others.
+ *
+ * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ */
 data class SchemaInput(
-    val name: String,
     val schema: EntSchema,
+) {
+    val name: String = schema::class.simpleName
+        ?: error(
+            "Anonymous schema classes cannot be generated: an entity name comes from the " +
+                "concrete schema class, and an anonymous object has none. Declare the schema " +
+                "as a named class.",
+        )
+
+    /** The generated client/configuration property name for this schema. */
+    val clientName: String get() = schema.clientName
+}
+
+/**
+ * Members the generated clients always declare, public and private
+ * alike. A schema whose `clientName` matches one of these would emit a
+ * second declaration of that name on `EntClient`, so the name is
+ * reserved.
+ *
+ * Hand-maintained mirror of `ClientGenerator`, like the fixed-member
+ * lists in the generated-member manifest.
+ */
+private val FIXED_CLIENT_MEMBERS: Set<String> = setOf(
+    "SCHEMAS", "asPrivacyReadClientForInternalUse", "asValidationReadClientForInternalUse",
+    "bypassPrivacy_DANGEROUS", "checkTransactionRequirement", "config",
+    "currentPrivacyContext", "defaultRelationshipLocking", "defaultUpdateConsistency",
+    "delegate", "driver", "entityInterceptors", "global", "hookClientScopeForInternalUse",
+    "hooks", "hooksConfig", "interceptors", "interceptorsConfig", "policies",
+    "policiesConfig", "privacyContext", "privacyContextProvider",
+    "privacyContextProviderConfig", "readClientImpl", "recordTransactionMutationFailure",
+    "replaceTransactionMutationFailure", "transactionCoordinator",
+    "transactionExecutionGuard", "transactionExecutionToken", "transactionRequirement",
+    "withPrivacyContext", "withTransaction",
 )
+
+/**
+ * Every problem with a schema's declared `clientName`, as one diagnostic
+ * per problem.
+ *
+ * These are cross-schema and cross-artifact checks, so they cannot live
+ * in the per-schema generated-member manifest. Both codegen entry points
+ * run them — [EntGenerator.generate] by throwing, [SchemaInspector.validate]
+ * by collecting — so validation never reports a schema as valid that
+ * generation would reject.
+ */
+internal fun findClientNameErrors(schemas: List<SchemaInput>): List<String> = buildList {
+    // `clientName` is emitted verbatim as a property on the generated
+    // clients, so it can collide with a fixed member there.
+    for (input in schemas.filter { it.clientName in FIXED_CLIENT_MEMBERS }) {
+        add(
+            "schema '${input.name}' declares clientName = '${input.clientName}', which collides " +
+                "with a fixed member of the generated client. Choose another clientName.",
+        )
+    }
+
+    // Two schemas declaring the same one would emit conflicting
+    // declarations on every client artifact. Distinct schema class names
+    // do not help: the client property is explicit and independent of
+    // the class.
+    for ((prop, group) in schemas.groupBy { it.clientName }.filterValues { it.size > 1 }) {
+        add(
+            "schemas ${group.joinToString(", ") { "'${it.name}'" }} all declare " +
+                "clientName = '$prop'",
+        )
+    }
+}
 
 /**
  * Finalize all schemas in the list if they haven't been finalized yet,
@@ -94,7 +172,8 @@ private fun validateEdgeTargetIdentity(schemas: List<SchemaInput>) {
         for (edge in input.schema.edges()) {
             if (edge.target !in instanceSet) {
                 error(
-                    "Edge '${edge.name}' on schema '${input.name}' resolved to a target " +
+                    "Edge '${edge.apiName}' (storage '${edge.name}') on schema '${input.name}' " +
+                        "resolved to a target " +
                         "instance not in the current schema set — this typically means a " +
                         "pre-finalized schema was mixed with freshly-constructed peers. " +
                         "Pass all schemas unfinalized and let ensureFinalized() resolve them together.",
@@ -103,7 +182,8 @@ private fun validateEdgeTargetIdentity(schemas: List<SchemaInput>) {
             val m2m = edge.kind as? EdgeKind.ManyToMany
             if (m2m != null && m2m.through.junction !in instanceSet) {
                 error(
-                    "Edge '${edge.name}' on schema '${input.name}' has a ManyToMany junction " +
+                    "Edge '${edge.apiName}' (storage '${edge.name}') on schema '${input.name}' " +
+                        "has a ManyToMany junction " +
                         "schema instance (table '${m2m.through.junction.tableName}') not in the " +
                         "current schema set — this typically means a pre-finalized schema was " +
                         "mixed with a freshly-constructed junction. Pass all schemas unfinalized " +
@@ -225,7 +305,10 @@ private fun validateM2MOrientation(
 ) {
     data class M2MDecl(
         val declaringSchema: String,
+        /** Storage edge name — part of the canonical relationship key. */
         val edgeName: String,
+        /** Kotlin declaration name, for the diagnostics below. */
+        val edgeApiName: String,
         val junctionName: String,
         val sourceEdge: String,
         val targetEdge: String,
@@ -242,7 +325,7 @@ private fun validateM2MOrientation(
             val through = m2m.through
             val junctionName = schemaNames[through.junction]
                 ?: error(
-                    "M2M edge '${edge.name}' on schema '${input.name}' references junction " +
+                    "M2M edge '${edge.apiName}' (storage '${edge.name}') on schema '${input.name}' references junction " +
                         "${through.junction.tableName} which is not in the current schema set",
                 )
             val mode = when (through) {
@@ -252,6 +335,7 @@ private fun validateM2MOrientation(
             declarations += M2MDecl(
                 declaringSchema = input.name,
                 edgeName = edge.name,
+                edgeApiName = edge.apiName,
                 junctionName = junctionName,
                 sourceEdge = through.sourceEdge,
                 targetEdge = through.targetEdge,
@@ -267,7 +351,8 @@ private fun validateM2MOrientation(
         val modes = group.map { it.mode }.toSet()
         if (modes.size > 1) {
             val descriptions = group.joinToString(", ") {
-                "${it.mode} on '${it.declaringSchema}.${it.edgeName}' (${it.sourceEdge}, ${it.targetEdge})"
+                "${it.mode} on '${it.declaringSchema}.${it.edgeApiName}' " +
+                    "(storage '${it.edgeName}'; junction edges ${it.sourceEdge}, ${it.targetEdge})"
             }
             error(
                 "Mixed M2M write models for the same canonical relationship over junction " +
@@ -289,7 +374,7 @@ private fun validateM2MOrientation(
         for ((orientation, sameOrientation) in byOrientation) {
             if (sameOrientation.size < 2) continue
             val descriptions = sameOrientation.joinToString(", ") {
-                "'${it.declaringSchema}.${it.edgeName}'"
+                "'${it.declaringSchema}.${it.edgeApiName}' (storage '${it.edgeName}')"
             }
             error(
                 "Same-orientation alias M2M declarations on junction '${group[0].junctionName}' " +
@@ -355,10 +440,11 @@ private fun validateThroughLinkJunctions(
             val junction = through.junction
             val junctionName = schemaNames[junction]
                 ?: error(
-                    "throughLink edge '${input.name}.${edge.name}' references junction " +
+                    "throughLink edge '${input.name}.${edge.apiName}' (storage '${edge.name}') references junction " +
                         "${junction.tableName} which is not in the current schema set",
                 )
-            val ctx = "throughLink edge '${input.name}.${edge.name}' (junction '$junctionName')"
+            val ctx = "throughLink edge '${input.name}.${edge.apiName}' " +
+                "(storage '${edge.name}', junction '$junctionName')"
 
             val junctionEdges = junction.edges()
             val sourceJunctionEdge = junctionEdges.firstOrNull { it.name == through.sourceEdge }
@@ -371,14 +457,14 @@ private fun validateThroughLinkJunctions(
             // Rule 2: non-null junction FKs.
             if (!sourceBt.required) {
                 error(
-                    "$ctx: source junction edge '${sourceJunctionEdge.name}' is nullable; " +
+                    "$ctx: source junction edge '${sourceJunctionEdge.apiName}' (storage '${sourceJunctionEdge.name}') is nullable; " +
                         "throughLink requires both junction belongsTo edges to be non-null. " +
                         "Drop `.nullable()` on the junction, or model this relationship as throughEntity.",
                 )
             }
             if (!targetBt.required) {
                 error(
-                    "$ctx: target junction edge '${targetJunctionEdge.name}' is nullable; " +
+                    "$ctx: target junction edge '${targetJunctionEdge.apiName}' (storage '${targetJunctionEdge.name}') is nullable; " +
                         "throughLink requires both junction belongsTo edges to be non-null. " +
                         "Drop `.nullable()` on the junction, or model this relationship as throughEntity.",
                 )
@@ -387,7 +473,7 @@ private fun validateThroughLinkJunctions(
             // Rule 4: OnDelete.CASCADE explicit.
             if (sourceBt.onDelete != OnDelete.CASCADE) {
                 error(
-                    "$ctx: source junction edge '${sourceJunctionEdge.name}' has onDelete=" +
+                    "$ctx: source junction edge '${sourceJunctionEdge.apiName}' (storage '${sourceJunctionEdge.name}') has onDelete=" +
                         "${sourceBt.onDelete}; throughLink requires explicit OnDelete.CASCADE on " +
                         "both junction belongsTo edges. Add `.onDelete(OnDelete.CASCADE)` or " +
                         "model this relationship as throughEntity.",
@@ -395,7 +481,7 @@ private fun validateThroughLinkJunctions(
             }
             if (targetBt.onDelete != OnDelete.CASCADE) {
                 error(
-                    "$ctx: target junction edge '${targetJunctionEdge.name}' has onDelete=" +
+                    "$ctx: target junction edge '${targetJunctionEdge.apiName}' (storage '${targetJunctionEdge.name}') has onDelete=" +
                         "${targetBt.onDelete}; throughLink requires explicit OnDelete.CASCADE on " +
                         "both junction belongsTo edges. Add `.onDelete(OnDelete.CASCADE)` or " +
                         "model this relationship as throughEntity.",
@@ -408,7 +494,7 @@ private fun validateThroughLinkJunctions(
             // helper semantics like repeated `tags.add(...)` calls.
             if (sourceBt.unique) {
                 error(
-                    "$ctx: source junction edge '${sourceJunctionEdge.name}' is `.unique()`; this " +
+                    "$ctx: source junction edge '${sourceJunctionEdge.apiName}' (storage '${sourceJunctionEdge.name}') is `.unique()`; this " +
                         "constrains each ${schemaNames[sourceJunctionEdge.target] ?: sourceJunctionEdge.target.tableName} " +
                         "to at most one junction row, turning the relationship into 1:1 and breaking " +
                         "M2M helper semantics. Drop `.unique()` (the composite unique pair " +
@@ -418,7 +504,7 @@ private fun validateThroughLinkJunctions(
             }
             if (targetBt.unique) {
                 error(
-                    "$ctx: target junction edge '${targetJunctionEdge.name}' is `.unique()`; this " +
+                    "$ctx: target junction edge '${targetJunctionEdge.apiName}' (storage '${targetJunctionEdge.name}') is `.unique()`; this " +
                         "constrains each ${schemaNames[targetJunctionEdge.target] ?: targetJunctionEdge.target.tableName} " +
                         "to at most one junction row, turning the relationship into 1:1 and breaking " +
                         "M2M helper semantics. Drop `.unique()` (the composite unique pair " +
@@ -446,7 +532,7 @@ private fun validateThroughLinkJunctions(
                 val names = extraBelongsTo.joinToString(", ") {
                     val bt = it.kind as EdgeKind.BelongsTo
                     val col = bt.field ?: "${it.name}_id"
-                    "'${it.name}' (FK column '$col' → ${schemaNames[it.target] ?: it.target.tableName})"
+                    "'${it.apiName}' (storage '${it.name}', FK column '$col' → ${schemaNames[it.target] ?: it.target.tableName})"
                 }
                 error(
                     "$ctx: junction declares extra belongsTo edge(s) beyond the named " +
@@ -463,7 +549,7 @@ private fun validateThroughLinkJunctions(
             // FKs, so any leftover scalar here is genuine payload.
             val payload = scalarFields(junction)
             if (payload.isNotEmpty()) {
-                val names = payload.joinToString(", ") { "'${it.name}'" }
+                val names = payload.joinToString(", ") { "'${it.apiName}' (column '${it.name}')" }
                 error(
                     "$ctx: junction carries payload field(s) $names besides the id and the two " +
                         "FK columns; throughLink helpers bypass the junction repo, so payload " +
@@ -478,7 +564,7 @@ private fun validateThroughLinkJunctions(
                 val backing = fieldsByName[fkCol] ?: continue // synthesized FK has no backing Field, nothing to check
                 if (backing.validators.isNotEmpty()) {
                     error(
-                        "$ctx: $label FK backing field '${backing.name}' carries " +
+                        "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') carries " +
                             "${backing.validators.size} validator(s); throughLink helpers bypass " +
                             "junction CREATE validation, so the validator would silently not run. " +
                             "Move the field to a throughEntity junction or drop the validator.",
@@ -486,28 +572,28 @@ private fun validateThroughLinkJunctions(
                 }
                 if (backing.sensitive) {
                     error(
-                        "$ctx: $label FK backing field '${backing.name}' is `.sensitive()`; " +
+                        "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') is `.sensitive()`; " +
                             "throughLink helpers bypass junction toString redaction, so the " +
                             "modifier would silently not apply. Drop it or use throughEntity.",
                     )
                 }
                 if (backing.default != null) {
                     error(
-                        "$ctx: $label FK backing field '${backing.name}' has a `.default(...)`; " +
+                        "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') has a `.default(...)`; " +
                             "throughLink helpers insert junction rows directly through the driver " +
                             "and never apply field defaults. Drop the default or use throughEntity.",
                     )
                 }
                 if (backing.updateDefault != null) {
                     error(
-                        "$ctx: $label FK backing field '${backing.name}' has an " +
+                        "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') has an " +
                             "`.updateDefault(...)`; throughLink helpers do not update junction " +
                             "rows after insert, so the marker is inert. Drop it or use throughEntity.",
                     )
                 }
                 if (backing.immutable) {
                     error(
-                        "$ctx: $label FK backing field '${backing.name}' is `.immutable()`; " +
+                        "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') is `.immutable()`; " +
                             "throughLink helpers never update junction rows, so the marker adds " +
                             "no enforcement on this path. Drop it or use throughEntity.",
                     )
@@ -675,38 +761,19 @@ class EntGenerator(
             )
         }
 
-        // declaration-name capture: reject schemas whose belongsTo(...).field(handle)
-        // backing has no captured Kotlin val name. SchemaInspector
-        // runs the same check, but direct callers of
-        // EntGenerator.generate(...) (no inspector pass) must not
-        // silently fall through to computeEdgeFks's
-        // toCamelCase(column) fallback.
-        val rfc06Errors = schemas.flatMap { findFieldBackedFkDeclarationErrors(it) } +
-            schemas.flatMap { findDuplicateDeclarationAliases(it) }
-        if (rfc06Errors.isNotEmpty()) {
+        // Shared with [SchemaInspector.validate] via
+        // [findClientNameErrors] so the inspector cannot report a schema
+        // as valid that generation then rejects.
+        val clientNameErrors = findClientNameErrors(schemas)
+        if (clientNameErrors.isNotEmpty()) {
             error(
-                "Field-backed FK declaration capture failed:\n" +
-                    rfc06Errors.joinToString("\n") { "  - $it" },
+                "Generated client property errors detected:\n" +
+                    clientNameErrors.joinToString("\n") { "  - $it" },
             )
         }
-
-        // Raw schema names are unique (validateUniqueNamesAndTables), but
-        // distinct raw names can still derive the same generated client
-        // property after pluralization (Box/Boxe -> boxes), which would
-        // emit conflicting declarations on every client artifact.
-        val propertyCollisions = schemas
-            .groupBy { pluralize(it.name.replaceFirstChar { c -> c.lowercase() }) }
-            .filterValues { it.size > 1 }
-        if (propertyCollisions.isNotEmpty()) {
-            error(
-                "Generated client property collisions detected:\n" +
-                    propertyCollisions.entries.joinToString("\n") { (prop, group) ->
-                        "  - schemas ${group.joinToString(", ") { "'${it.name}'" }} " +
-                            "all derive the client property '$prop'"
-                    },
-            )
-        }
-        val perSchema = schemas.flatMap { (name, schema) ->
+        val perSchema = schemas.flatMap { input ->
+            val name = input.name
+            val schema = input.schema
             buildList {
                 add(entityGenerator.generate(name, schema, schemaNames))
                 add(mutationGenerator.generate(name, schema, schemaNames))

@@ -119,7 +119,7 @@ That creates a few recurring problems:
 - Keep SQL column and table naming explicit in schema declarations.
 - Use Kotlin declaration names for generated APIs while keeping SQL names
   explicit, as specified by
-  [Schema Declaration Names As Generated API](schema-declaration-api-names.md).
+  [Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md).
 - Reject obvious schema mismatches earlier.
 - Use plain property declarations as the schema model for fields,
   edges, and indexes.

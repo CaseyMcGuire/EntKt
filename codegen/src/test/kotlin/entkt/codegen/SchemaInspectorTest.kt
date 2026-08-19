@@ -21,108 +21,108 @@ private enum class InspPriority {
 
 // ── Test schemas ────────────────────────────────────────────────────
 
-private class InspAuthor : EntSchema("authors") {
+private class InspAuthor : EntSchema("authors", clientName = "inspAuthors") {
     override fun id() = EntId.long()
-    val name = string("name")
-    val email = string("email").unique()
-    val posts = hasMany<InspPost>("posts")
+    val name by string("name")
+    val email by string("email").unique()
+    val posts by hasMany<InspPost>("posts")
     val byEmail = index("idx_authors_email", email)
 }
 
-private class InspPost : EntSchema("posts") {
+private class InspPost : EntSchema("posts", clientName = "inspPosts") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val published = bool("published").default(false)
-    val author = belongsTo<InspAuthor>("author").inverse(InspAuthor::posts)
+    val title by string("title")
+    val published by bool("published").default(false)
+    val author by belongsTo<InspAuthor>("author").inverse(InspAuthor::posts)
 }
 
-private class InspProfile : EntSchema("profiles") {
+private class InspProfile : EntSchema("profiles", clientName = "inspProfiles") {
     override fun id() = EntId.uuid()
-    val bio = text("bio").nullable()
-    val user = belongsTo<InspProfileUser>("user")
+    val bio by text("bio").nullable()
+    val user by belongsTo<InspProfileUser>("user")
         .inverse(InspProfileUser::profile).unique()
 }
 
-private class InspProfileUser : EntSchema("profile_users") {
+private class InspProfileUser : EntSchema("profile_users", clientName = "inspProfileUsers") {
     override fun id() = EntId.uuid()
-    val name = string("name")
-    val profile = hasOne<InspProfile>("profile")
+    val name by string("name")
+    val profile by hasOne<InspProfile>("profile")
 }
 
-private class InspTag : EntSchema("tags") {
+private class InspTag : EntSchema("tags", clientName = "inspTags") {
     override fun id() = EntId.int()
-    val label = string("label")
-    val articles = manyToMany<InspArticle>("articles")
+    val label by string("label")
+    val articles by manyToMany<InspArticle>("articles")
         .throughEntity<InspArticleTag>(InspArticleTag::tag, InspArticleTag::article)
 }
 
-private class InspArticle : EntSchema("articles") {
+private class InspArticle : EntSchema("articles", clientName = "inspArticles") {
     override fun id() = EntId.int()
-    val title = string("title")
+    val title by string("title")
 }
 
-private class InspArticleTag : EntSchema("article_tags") {
+private class InspArticleTag : EntSchema("article_tags", clientName = "inspArticleTags") {
     override fun id() = EntId.int()
-    val articleId = int("article_id")
-    val tagId = int("tag_id")
-    val article = belongsTo<InspArticle>("article").field(articleId)
-    val tag = belongsTo<InspTag>("tag").field(tagId)
+    val articleId by int("article_id")
+    val tagId by int("tag_id")
+    val article by belongsTo<InspArticle>("article").field(articleId)
+    val tag by belongsTo<InspTag>("tag").field(tagId)
 }
 
 // Pair-swapped throughLink fixtures: both declared sides are writable.
-private class InspLinkPost : EntSchema("link_posts") {
+private class InspLinkPost : EntSchema("link_posts", clientName = "inspLinkPosts") {
     override fun id() = EntId.long()
-    val tags = manyToMany<InspLinkTag>("tags")
+    val tags by manyToMany<InspLinkTag>("tags")
         .throughLink<InspLinkPostTag>(InspLinkPostTag::post, InspLinkPostTag::tag)
 }
-private class InspLinkTag : EntSchema("link_tags") {
+private class InspLinkTag : EntSchema("link_tags", clientName = "inspLinkTags") {
     override fun id() = EntId.long()
-    val posts = manyToMany<InspLinkPost>("posts")
+    val posts by manyToMany<InspLinkPost>("posts")
         .throughLink<InspLinkPostTag>(InspLinkPostTag::tag, InspLinkPostTag::post)
 }
-private class InspLinkPostTag : EntSchema("link_post_tags") {
+private class InspLinkPostTag : EntSchema("link_post_tags", clientName = "inspLinkPostTags") {
     override fun id() = EntId.long()
-    val post = belongsTo<InspLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag = belongsTo<InspLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<InspLinkPost>("post").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<InspLinkTag>("tag").onDelete(OnDelete.CASCADE)
     val byPost = index("idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
     val byTag = index("idx_link_post_tags_tag_post", tag.fk, post.fk)
 }
 
 private class InspTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt = time("created_at").defaultNow().immutable()
-    val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
+    val createdAt by time("created_at").defaultNow().immutable()
+    val updatedAt by time("updated_at").defaultNow().updateDefaultNow()
 }
 
-private class InspEvent : EntSchema("events") {
+private class InspEvent : EntSchema("events", clientName = "inspEvents") {
     override fun id() = EntId.long()
     val timestamps = include(::InspTimestamps)
-    val name = string("name")
-    val deletedAt = time("deleted_at").nullable()
+    val name by string("name")
+    val deletedAt by time("deleted_at").nullable()
     val byCreatedAt = index("idx_events_created_at", timestamps.createdAt)
     val byDeletedAt = index("idx_events_deleted_at", deletedAt).where("deleted_at IS NULL")
 }
 
 // Schema pair for testing edge-driven uniqueness on reused FK fields
-private class InspAccountHolder : EntSchema("account_holders") {
+private class InspAccountHolder : EntSchema("account_holders", clientName = "inspAccountHolders") {
     override fun id() = EntId.int()
-    val account = hasOne<InspAccount>("account")
+    val account by hasOne<InspAccount>("account")
 }
 
-private class InspAccount : EntSchema("accounts") {
+private class InspAccount : EntSchema("accounts", clientName = "inspAccounts") {
     override fun id() = EntId.int()
-    val holderId = int("holder_id") // field itself is NOT .unique()
-    val holder = belongsTo<InspAccountHolder>("holder")
+    val holderId by int("holder_id") // field itself is NOT .unique()
+    val holder by belongsTo<InspAccountHolder>("holder")
         .inverse(InspAccountHolder::account).unique().field(holderId)
 }
 
-private class InspCascadeParent : EntSchema("cascade_parents") {
+private class InspCascadeParent : EntSchema("cascade_parents", clientName = "inspCascadeParents") {
     override fun id() = EntId.int()
-    val children = hasMany<InspCascadeChild>("children")
+    val children by hasMany<InspCascadeChild>("children")
 }
 
-private class InspCascadeChild : EntSchema("cascade_children") {
+private class InspCascadeChild : EntSchema("cascade_children", clientName = "inspCascadeChilds") {
     override fun id() = EntId.int()
-    val parent = belongsTo<InspCascadeParent>("parent")
+    val parent by belongsTo<InspCascadeParent>("parent")
         .inverse(InspCascadeParent::children)
         .onDelete(OnDelete.CASCADE)
 }
@@ -132,7 +132,7 @@ private class InspCascadeChild : EntSchema("cascade_children") {
 class SchemaInspectorTest {
 
     private fun inputs(vararg schemas: EntSchema): List<SchemaInput> =
-        schemas.map { SchemaInput(it::class.simpleName!!.removePrefix("Insp"), it) }
+        schemas.map { SchemaInput(it) }
 
     // ── validate ────────────────────────────────────────────────────
 
@@ -145,11 +145,11 @@ class SchemaInspectorTest {
 
     @Test
     fun `validate catches duplicate table names`() {
-        class DupA : EntSchema("shared") { override fun id() = EntId.int() }
-        class DupB : EntSchema("shared") { override fun id() = EntId.int() }
+        class DupA : EntSchema("shared", clientName = "dupAs") { override fun id() = EntId.int() }
+        class DupB : EntSchema("shared", clientName = "dupBs") { override fun id() = EntId.int() }
         val result = SchemaInspector.validate(listOf(
-            SchemaInput("DupA", DupA()),
-            SchemaInput("DupB", DupB()),
+            SchemaInput(DupA()),
+            SchemaInput(DupB()),
         ))
         assertFalse(result.valid)
         assertContains(result.errors.first(), "shared")
@@ -158,14 +158,14 @@ class SchemaInspectorTest {
     @Test
     fun `validate catches unresolved inverse`() {
         // hasMany with no matching belongsTo on target
-        class Orphan : EntSchema("orphans") { override fun id() = EntId.int() }
-        class Parent : EntSchema("parents") {
+        class Orphan : EntSchema("orphans", clientName = "orphans") { override fun id() = EntId.int() }
+        class Parent : EntSchema("parents", clientName = "parents") {
             override fun id() = EntId.int()
-            val orphans = hasMany<Orphan>("orphans")
+            val orphans by hasMany<Orphan>("orphans")
         }
         val result = SchemaInspector.validate(listOf(
-            SchemaInput("Parent", Parent()),
-            SchemaInput("Orphan", Orphan()),
+            SchemaInput(Parent()),
+            SchemaInput(Orphan()),
         ))
         assertFalse(result.valid)
         assertContains(result.errors.first(), "inverse")
@@ -174,17 +174,17 @@ class SchemaInspectorTest {
     @Test
     fun `validate collects multiple errors`() {
         // Two separate schemas each with an unresolved hasMany inverse.
-        class TargetA : EntSchema("target_a") { override fun id() = EntId.int() }
-        class TargetB : EntSchema("target_b") { override fun id() = EntId.int() }
-        class BadParent : EntSchema("bad_parents") {
+        class TargetA : EntSchema("target_a", clientName = "targetAs") { override fun id() = EntId.int() }
+        class TargetB : EntSchema("target_b", clientName = "targetBs") { override fun id() = EntId.int() }
+        class BadParent : EntSchema("bad_parents", clientName = "badParents") {
             override fun id() = EntId.int()
-            val a = hasMany<TargetA>("a_things")
-            val b = hasMany<TargetB>("b_things")
+            val a by hasMany<TargetA>("a_things")
+            val b by hasMany<TargetB>("b_things")
         }
         val result = SchemaInspector.validate(listOf(
-            SchemaInput("BadParent", BadParent()),
-            SchemaInput("TargetA", TargetA()),
-            SchemaInput("TargetB", TargetB()),
+            SchemaInput(BadParent()),
+            SchemaInput(TargetA()),
+            SchemaInput(TargetB()),
         ))
         assertFalse(result.valid)
         assertTrue(result.errors.size >= 2, "expected multiple errors but got: ${result.errors}")
@@ -197,8 +197,9 @@ class SchemaInspectorTest {
         // name again.
         class LongTable : EntSchema(
             "this_table_name_is_deliberately_far_too_long_to_survive_the_postgres_identifier_limit",
+            clientName = "longTables",
         ) { override fun id() = EntId.int() }
-        val result = SchemaInspector.validate(listOf(SchemaInput("LongTable", LongTable())))
+        val result = SchemaInspector.validate(listOf(SchemaInput(LongTable())))
         assertFalse(result.valid)
         assertContains(result.errors.first(), "truncates")
         assertContains(result.errors.first(), "table name")
@@ -206,13 +207,13 @@ class SchemaInspectorTest {
 
     @Test
     fun `validate rejects column names PostgreSQL would truncate`() {
-        class LongColumn : EntSchema("long_columns") {
+        class LongColumn : EntSchema("long_columns", clientName = "longColumns") {
             override fun id() = EntId.int()
-            val f = string(
+            val f by string(
                 "this_column_name_is_deliberately_far_too_long_to_survive_the_postgres_identifier_limit",
             )
         }
-        val result = SchemaInspector.validate(listOf(SchemaInput("LongColumn", LongColumn())))
+        val result = SchemaInspector.validate(listOf(SchemaInput(LongColumn())))
         assertFalse(result.valid)
         assertContains(result.errors.first(), "truncates")
         assertContains(result.errors.first(), "column name")
@@ -223,15 +224,15 @@ class SchemaInspectorTest {
         // hasMany with no matching belongsTo — validate catches this,
         // and explain should refuse to render rather than showing a
         // misleading "resolved" shape.
-        class Orphan : EntSchema("orphans") { override fun id() = EntId.int() }
-        class Parent : EntSchema("parents") {
+        class Orphan : EntSchema("orphans", clientName = "orphans") { override fun id() = EntId.int() }
+        class Parent : EntSchema("parents", clientName = "parents") {
             override fun id() = EntId.int()
-            val orphans = hasMany<Orphan>("orphans")
+            val orphans by hasMany<Orphan>("orphans")
         }
         val err = assertFailsWith<IllegalStateException> {
             SchemaInspector.explain(listOf(
-                SchemaInput("Parent", Parent()),
-                SchemaInput("Orphan", Orphan()),
+                SchemaInput(Parent()),
+                SchemaInput(Orphan()),
             ))
         }
         assertContains(err.message!!, "Schema validation failed")
@@ -243,7 +244,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain captures id type and strategy`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val author = graph.schemas.first { it.schemaName == "Author" }
+        val author = graph.schemas.first { it.schemaName == "InspAuthor" }
         assertEquals(FieldType.LONG, author.id.type)
         assertEquals("AUTO_LONG", author.id.strategy)
     }
@@ -251,7 +252,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain captures UUID id strategy`() {
         val graph = SchemaInspector.explain(inputs(InspProfileUser(), InspProfile()))
-        val profile = graph.schemas.first { it.schemaName == "Profile" }
+        val profile = graph.schemas.first { it.schemaName == "InspProfile" }
         assertEquals(FieldType.UUID, profile.id.type)
         assertEquals("CLIENT_UUID", profile.id.strategy)
     }
@@ -261,7 +262,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain lists fields with types and modifiers`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val post = graph.schemas.first { it.schemaName == "Post" }
+        val post = graph.schemas.first { it.schemaName == "InspPost" }
 
         assertEquals(2, post.fields.size)
         val title = post.fields[0]
@@ -279,7 +280,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain reports unique fields`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val author = graph.schemas.first { it.schemaName == "Author" }
+        val author = graph.schemas.first { it.schemaName == "InspAuthor" }
         val email = author.fields.first { it.name == "email" }
         assertTrue(email.unique)
     }
@@ -287,18 +288,18 @@ class SchemaInspectorTest {
     @Test
     fun `explain reports nullable fields`() {
         val graph = SchemaInspector.explain(inputs(InspProfileUser(), InspProfile()))
-        val profile = graph.schemas.first { it.schemaName == "Profile" }
+        val profile = graph.schemas.first { it.schemaName == "InspProfile" }
         val bio = profile.fields.first { it.name == "bio" }
         assertTrue(bio.nullable)
     }
 
     @Test
     fun `explain uses enum constant name for defaults, not toString`() {
-        class Task : EntSchema("tasks") {
+        class Task : EntSchema("tasks", clientName = "tasks") {
             override fun id() = EntId.int()
-            val priority = enum<InspPriority>("priority").default(InspPriority.LOW)
+            val priority by enum<InspPriority>("priority").default(InspPriority.LOW)
         }
-        val graph = SchemaInspector.explain(listOf(SchemaInput("Task", Task())))
+        val graph = SchemaInspector.explain(listOf(SchemaInput(Task())))
         val field = graph.schemas[0].fields.first { it.name == "priority" }
         assertEquals("LOW", field.default) // not "low!!"
     }
@@ -307,7 +308,7 @@ class SchemaInspectorTest {
     fun `explain carries edge-driven uniqueness onto reused FK field`() {
         // holder_id field is NOT declared .unique(), but the edge adds .unique()
         val graph = SchemaInspector.explain(inputs(InspAccountHolder(), InspAccount()))
-        val account = graph.schemas.first { it.schemaName == "Account" }
+        val account = graph.schemas.first { it.schemaName == "InspAccount" }
         val holderId = account.fields.first { it.name == "holder_id" }
         assertTrue(holderId.unique, "edge .unique() should be reflected on the backing field")
     }
@@ -317,7 +318,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain lists synthesized FK on belongsTo`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val post = graph.schemas.first { it.schemaName == "Post" }
+        val post = graph.schemas.first { it.schemaName == "InspPost" }
 
         assertEquals(1, post.foreignKeys.size)
         val fk = post.foreignKeys[0]
@@ -334,7 +335,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(
             InspTag(), InspArticle(), InspArticleTag(),
         ))
-        val junction = graph.schemas.first { it.schemaName == "ArticleTag" }
+        val junction = graph.schemas.first { it.schemaName == "InspArticleTag" }
 
         assertEquals(2, junction.foreignKeys.size)
         val articleFk = junction.foreignKeys.first { it.sourceEdge == "article" }
@@ -346,21 +347,21 @@ class SchemaInspectorTest {
     @Test
     fun `explain shows onDelete CASCADE`() {
         val graph = SchemaInspector.explain(inputs(InspCascadeParent(), InspCascadeChild()))
-        val child = graph.schemas.first { it.schemaName == "CascadeChild" }
+        val child = graph.schemas.first { it.schemaName == "InspCascadeChild" }
         val fk = child.foreignKeys[0]
         assertEquals("CASCADE", fk.onDelete)
     }
 
     @Test
     fun `explain shows nullable FK for optional belongsTo`() {
-        class Target : EntSchema("targets") { override fun id() = EntId.int() }
-        class Source : EntSchema("sources") {
+        class Target : EntSchema("targets", clientName = "targets") { override fun id() = EntId.int() }
+        class Source : EntSchema("sources", clientName = "sources") {
             override fun id() = EntId.int()
-            val target = belongsTo<Target>("target").nullable()
+            val target by belongsTo<Target>("target").nullable()
         }
         val graph = SchemaInspector.explain(listOf(
-            SchemaInput("Target", Target()),
-            SchemaInput("Source", Source()),
+            SchemaInput(Target()),
+            SchemaInput(Source()),
         ))
         val source = graph.schemas.first { it.schemaName == "Source" }
         val fk = source.foreignKeys[0]
@@ -373,10 +374,10 @@ class SchemaInspectorTest {
     @Test
     fun `explain captures belongsTo edge with FK and inverse`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val post = graph.schemas.first { it.schemaName == "Post" }
+        val post = graph.schemas.first { it.schemaName == "InspPost" }
         val authorEdge = post.edges.first { it.name == "author" }
         assertEquals("belongsTo", authorEdge.kind)
-        assertEquals("Author", authorEdge.targetSchema)
+        assertEquals("InspAuthor", authorEdge.targetSchema)
         assertEquals("author_id", authorEdge.fkColumn)
         assertEquals("posts", authorEdge.inverse)
         assertNull(authorEdge.through)
@@ -385,10 +386,10 @@ class SchemaInspectorTest {
     @Test
     fun `explain captures hasMany edge with inverse`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val author = graph.schemas.first { it.schemaName == "Author" }
+        val author = graph.schemas.first { it.schemaName == "InspAuthor" }
         val postsEdge = author.edges.first { it.name == "posts" }
         assertEquals("hasMany", postsEdge.kind)
-        assertEquals("Post", postsEdge.targetSchema)
+        assertEquals("InspPost", postsEdge.targetSchema)
         assertNull(postsEdge.fkColumn)
         assertEquals("author", postsEdge.inverse)
     }
@@ -396,10 +397,10 @@ class SchemaInspectorTest {
     @Test
     fun `explain captures hasOne edge`() {
         val graph = SchemaInspector.explain(inputs(InspProfileUser(), InspProfile()))
-        val user = graph.schemas.first { it.schemaName == "ProfileUser" }
+        val user = graph.schemas.first { it.schemaName == "InspProfileUser" }
         val profileEdge = user.edges.first { it.name == "profile" }
         assertEquals("hasOne", profileEdge.kind)
-        assertEquals("Profile", profileEdge.targetSchema)
+        assertEquals("InspProfile", profileEdge.targetSchema)
     }
 
     @Test
@@ -407,10 +408,10 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(
             InspTag(), InspArticle(), InspArticleTag(),
         ))
-        val tag = graph.schemas.first { it.schemaName == "Tag" }
+        val tag = graph.schemas.first { it.schemaName == "InspTag" }
         val articlesEdge = tag.edges.first { it.name == "articles" }
         assertEquals("manyToMany", articlesEdge.kind)
-        assertEquals("Article", articlesEdge.targetSchema)
+        assertEquals("InspArticle", articlesEdge.targetSchema)
 
         val through = articlesEdge.through!!
         assertEquals("article_tags", through.junctionTable)
@@ -425,7 +426,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(
             InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
         ))
-        val post = graph.schemas.first { it.schemaName == "LinkPost" }
+        val post = graph.schemas.first { it.schemaName == "InspLinkPost" }
         val tagsEdge = post.edges.first { it.name == "tags" }
         assertEquals(listOf("add", "remove", "set"), tagsEdge.through!!.writeHelpers)
     }
@@ -435,7 +436,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(
             InspLinkPost(), InspLinkTag(), InspLinkPostTag(),
         ))
-        val tag = graph.schemas.first { it.schemaName == "LinkTag" }
+        val tag = graph.schemas.first { it.schemaName == "InspLinkTag" }
         val postsEdge = tag.edges.first { it.name == "posts" }
         assertEquals("manyToMany", postsEdge.kind)
         assertEquals(listOf("add", "remove", "set"), postsEdge.through!!.writeHelpers)
@@ -448,7 +449,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(
             InspTag(), InspArticle(), InspArticleTag(),
         ))
-        val article = graph.schemas.first { it.schemaName == "Article" }
+        val article = graph.schemas.first { it.schemaName == "InspArticle" }
         assertNull(article.edges.firstOrNull { it.name == "tags_articles" })
     }
 
@@ -457,7 +458,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain lists explicit and synthesized indexes`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val author = graph.schemas.first { it.schemaName == "Author" }
+        val author = graph.schemas.first { it.schemaName == "InspAuthor" }
 
         assertEquals(2, author.indexes.size)
 
@@ -477,7 +478,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain includes synthesized unique index for unique edge FK`() {
         val graph = SchemaInspector.explain(inputs(InspProfileUser(), InspProfile()))
-        val profile = graph.schemas.first { it.schemaName == "Profile" }
+        val profile = graph.schemas.first { it.schemaName == "InspProfile" }
 
         val synthIdx = profile.indexes.first { it.name == "idx_profiles_user_id_unique" }
         assertEquals(listOf("user_id"), synthIdx.columns)
@@ -487,7 +488,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain shows partial index with WHERE clause`() {
         val graph = SchemaInspector.explain(inputs(InspEvent()))
-        val event = graph.schemas.first { it.schemaName == "Event" }
+        val event = graph.schemas.first { it.schemaName == "InspEvent" }
 
         val partialIdx = event.indexes.first { it.name == "idx_events_deleted_at" }
         assertEquals(listOf("deleted_at"), partialIdx.columns)
@@ -499,7 +500,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain includes mixin fields`() {
         val graph = SchemaInspector.explain(inputs(InspEvent()))
-        val event = graph.schemas.first { it.schemaName == "Event" }
+        val event = graph.schemas.first { it.schemaName == "InspEvent" }
 
         val fieldNames = event.fields.map { it.name }
         assertContains(fieldNames, "created_at")
@@ -515,7 +516,7 @@ class SchemaInspectorTest {
     @Test
     fun `explain indexes can reference mixin fields`() {
         val graph = SchemaInspector.explain(inputs(InspEvent()))
-        val event = graph.schemas.first { it.schemaName == "Event" }
+        val event = graph.schemas.first { it.schemaName == "InspEvent" }
 
         val idx = event.indexes.first { it.name == "idx_events_created_at" }
         assertEquals(listOf("created_at"), idx.columns)
@@ -526,8 +527,8 @@ class SchemaInspectorTest {
     @Test
     fun `explain preserves input order`() {
         val graph = SchemaInspector.explain(inputs(InspPost(), InspAuthor()))
-        assertEquals("Post", graph.schemas[0].schemaName)
-        assertEquals("Author", graph.schemas[1].schemaName)
+        assertEquals("InspPost", graph.schemas[0].schemaName)
+        assertEquals("InspAuthor", graph.schemas[1].schemaName)
     }
 
     // ── renderText ──────────────────────────────────────────────────
@@ -538,7 +539,7 @@ class SchemaInspectorTest {
         val text = SchemaInspector.renderText(graph)
 
         // Header row
-        assertContains(text, "Schema: Author")
+        assertContains(text, "Schema: InspAuthor")
         assertContains(text, "Table: authors")
         assertContains(text, "Id: LONG (AUTO_LONG)")
 
@@ -553,10 +554,10 @@ class SchemaInspectorTest {
         // Edges table
         assertContains(text, "Edges:")
         assertContains(text, "| hasMany")
-        assertContains(text, "| Post")
+        assertContains(text, "| InspPost")
 
         // Foreign Keys table on Post
-        assertContains(text, "Schema: Post")
+        assertContains(text, "Schema: InspPost")
         assertContains(text, "Foreign Keys:")
         assertContains(text, "| author_id")
         assertContains(text, "authors.id")
@@ -571,8 +572,8 @@ class SchemaInspectorTest {
 
     @Test
     fun `renderText omits empty sections`() {
-        class Bare : EntSchema("bare") { override fun id() = EntId.int() }
-        val graph = SchemaInspector.explain(listOf(SchemaInput("Bare", Bare())))
+        class Bare : EntSchema("bare", clientName = "bares") { override fun id() = EntId.int() }
+        val graph = SchemaInspector.explain(listOf(SchemaInput(Bare())))
         val text = SchemaInspector.renderText(graph)
 
         assertContains(text, "Schema: Bare")
@@ -602,7 +603,7 @@ class SchemaInspectorTest {
         val json = SchemaInspector.renderJson(graph)
 
         assertContains(json, "\"schemas\":")
-        assertContains(json, "\"schemaName\": \"Author\"")
+        assertContains(json, "\"schemaName\": \"InspAuthor\"")
         assertContains(json, "\"tableName\": \"authors\"")
         assertContains(json, "\"strategy\": \"AUTO_LONG\"")
         assertContains(json, "\"fields\":")
@@ -651,8 +652,8 @@ class SchemaInspectorTest {
 
     @Test
     fun `renderJson empty schema has empty arrays`() {
-        class Bare : EntSchema("bare") { override fun id() = EntId.int() }
-        val graph = SchemaInspector.explain(listOf(SchemaInput("Bare", Bare())))
+        class Bare : EntSchema("bare", clientName = "bares") { override fun id() = EntId.int() }
+        val graph = SchemaInspector.explain(listOf(SchemaInput(Bare())))
         val json = SchemaInspector.renderJson(graph)
 
         assertContains(json, "\"fields\": [")
@@ -666,9 +667,9 @@ class SchemaInspectorTest {
     @Test
     fun `filter by schema name`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
-        val filtered = SchemaInspector.filter(graph, "Author")
+        val filtered = SchemaInspector.filter(graph, "InspAuthor")
         assertEquals(1, filtered.schemas.size)
-        assertEquals("Author", filtered.schemas[0].schemaName)
+        assertEquals("InspAuthor", filtered.schemas[0].schemaName)
     }
 
     @Test
@@ -676,7 +677,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
         val filtered = SchemaInspector.filter(graph, "posts")
         assertEquals(1, filtered.schemas.size)
-        assertEquals("Post", filtered.schemas[0].schemaName)
+        assertEquals("InspPost", filtered.schemas[0].schemaName)
     }
 
     @Test
@@ -684,7 +685,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
         val filtered = SchemaInspector.filter(graph, "author")
         assertEquals(1, filtered.schemas.size)
-        assertEquals("Author", filtered.schemas[0].schemaName)
+        assertEquals("InspAuthor", filtered.schemas[0].schemaName)
     }
 
     @Test
@@ -692,7 +693,7 @@ class SchemaInspectorTest {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
         val filtered = SchemaInspector.filter(graph, "ost")
         assertEquals(1, filtered.schemas.size)
-        assertEquals("Post", filtered.schemas[0].schemaName)
+        assertEquals("InspPost", filtered.schemas[0].schemaName)
     }
 
     @Test
@@ -709,4 +710,49 @@ class SchemaInspectorTest {
         val filtered = SchemaInspector.filter(graph, "nonexistent")
         assertTrue(filtered.schemas.isEmpty())
     }
+
+    @Test
+    fun `explain distinguishes declaration, client, and storage identities`() {
+        // Every name diverges, so any surface that collapsed two of the
+        // three identities would show the wrong string here.
+        val graph = SchemaInspector.explain(inputs(DivergentUser(), DivergentDoc()))
+        val doc = graph.schemas.first { it.schemaName == "DivergentDoc" }
+
+        assertEquals("DivergentDoc", doc.schemaName)
+        assertEquals("stories", doc.clientName)
+        assertEquals("legacy_doc_tbl", doc.tableName)
+
+        val title = doc.fields.first { it.apiName == "publicTitle" }
+        assertEquals("legacy_title_txt", title.name)
+
+        val edge = doc.edges.first { it.apiName == "writer" }
+        assertEquals("legacy_author", edge.name)
+
+        val fk = doc.foreignKeys.first { it.sourceEdgeApiName == "writer" }
+        assertEquals("legacy_author", fk.sourceEdge)
+        assertEquals("writerId", fk.propertyName)
+        assertEquals("legacy_author_id", fk.column)
+
+        // Both identities reach the rendered output.
+        val text = SchemaInspector.renderText(graph)
+        assertContains(text, "Client: stories")
+        assertContains(text, "publicTitle")
+        assertContains(text, "legacy_title_txt")
+
+        val json = SchemaInspector.renderJson(graph)
+        assertContains(json, "\"clientName\": \"stories\"")
+        assertContains(json, "\"apiName\": \"publicTitle\"")
+        assertContains(json, "\"name\": \"legacy_title_txt\"")
+    }
+}
+
+private class DivergentUser : EntSchema("legacy_user_tbl", clientName = "people") {
+    override fun id() = EntId.long()
+    val displayName by string("legacy_name_txt")
+}
+
+private class DivergentDoc : EntSchema("legacy_doc_tbl", clientName = "stories") {
+    override fun id() = EntId.long()
+    val publicTitle by string("legacy_title_txt")
+    val writer by belongsTo<DivergentUser>("legacy_author")
 }

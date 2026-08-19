@@ -1,6 +1,7 @@
 package entkt.schema
 
 import kotlin.reflect.KClass
+import kotlin.reflect.KProperty
 import kotlin.reflect.KProperty1
 
 /**
@@ -45,6 +46,51 @@ abstract class EdgeBuilderBase {
     internal var frozen: Boolean = false
     internal var declarationOwner: EntSchema? = null
 
+    /**
+     * Kotlin `val` name of the schema property this builder is
+     * delegated to — the name every generated edge API uses
+     * (`Article.writer`, `article.edges.writer`, `queryWriter()`, and
+     * the implicit FK API `writerId`).
+     *
+     * Set by each subclass's `provideDelegate` while the property is
+     * constructed. Null for a builder registered but never bound
+     * (`val x = belongsTo<T>(...)`), which schema finalization rejects.
+     *
+     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     */
+    internal var declarationName: String? = null
+
+    /**
+     * Always null in V1 — mixins contribute fields and indexes but not
+     * edges. Present so finalization can apply one rule to both builder
+     * kinds.
+     */
+    internal var declarationMixinClass: kotlin.reflect.KClass<*>? = null
+
+    /** True when this builder was bound inside an [EntMixin]. */
+    internal val declarationFromMixin: Boolean get() = declarationMixinClass != null
+
+    /**
+     * Shared binding step for the concrete builders' `provideDelegate`
+     * operators. Each subclass declares its own operator pair rather
+     * than inheriting one, because [EdgeBuilderBase] has no self-type —
+     * returning the concrete type is what keeps `.field(...)`,
+     * `.inverse(...)`, `.throughLink(...)`, and `.fk` resolvable on a
+     * delegated property.
+     */
+    protected fun bindDeclaration(property: KProperty<*>, thisRef: Any?) {
+        declarationName = bindDeclarationName(
+            property = property,
+            kind = "Edge",
+            storageName = edgeName,
+            owner = declarationOwner,
+            existing = declarationName,
+            thisRef = thisRef,
+            mixinAllowed = false,
+            onMixinBinding = { declarationMixinClass = it },
+        )
+    }
+
     protected fun checkNotFrozen() {
         check(!frozen) { "Edge '$edgeName' cannot be modified after schema finalization" }
     }
@@ -75,7 +121,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
      * Use this to reference the FK in `index(...)` declarations:
      *
      * ```kotlin
-     * val author = belongsTo<User>("author")
+     * val author by belongsTo<User>("author")
      * val byAuthor = index(author.fk)
      * ```
      */
@@ -116,6 +162,13 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
     fun inverse(prop: KProperty1<Target, HasOneHandle<*>>): BelongsToBuilder<Target> = apply {
         checkNotFrozen(); inverseRef = prop
     }
+
+    operator fun provideDelegate(thisRef: Any?, property: KProperty<*>): BelongsToBuilder<Target> {
+        bindDeclaration(property, thisRef)
+        return this
+    }
+
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): BelongsToBuilder<Target> = this
 
     override fun resolve(registry: Map<KClass<out EntSchema>, EntSchema>, owner: KClass<out EntSchema>) {
         resolvedTarget = registry[targetClass]
@@ -184,6 +237,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
             ),
             ref = resolvedRef,
             comment = comment,
+            declarationName = declarationName,
         )
     }
 }
@@ -196,6 +250,13 @@ class HasManyBuilder<Target : EntSchema> internal constructor(
     private var resolvedTarget: EntSchema? = null
 
     fun comment(text: String): HasManyBuilder<Target> = apply { checkNotFrozen(); comment = text }
+
+    operator fun provideDelegate(thisRef: Any?, property: KProperty<*>): HasManyBuilder<Target> {
+        bindDeclaration(property, thisRef)
+        return this
+    }
+
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): HasManyBuilder<Target> = this
 
     override fun resolve(registry: Map<KClass<out EntSchema>, EntSchema>, owner: KClass<out EntSchema>) {
         resolvedTarget = registry[targetClass]
@@ -210,6 +271,7 @@ class HasManyBuilder<Target : EntSchema> internal constructor(
             target = target,
             kind = EdgeKind.HasMany,
             comment = comment,
+            declarationName = declarationName,
         )
     }
 }
@@ -222,6 +284,13 @@ class HasOneBuilder<Target : EntSchema> internal constructor(
     private var resolvedTarget: EntSchema? = null
 
     fun comment(text: String): HasOneBuilder<Target> = apply { checkNotFrozen(); comment = text }
+
+    operator fun provideDelegate(thisRef: Any?, property: KProperty<*>): HasOneBuilder<Target> {
+        bindDeclaration(property, thisRef)
+        return this
+    }
+
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): HasOneBuilder<Target> = this
 
     override fun resolve(registry: Map<KClass<out EntSchema>, EntSchema>, owner: KClass<out EntSchema>) {
         resolvedTarget = registry[targetClass]
@@ -236,6 +305,7 @@ class HasOneBuilder<Target : EntSchema> internal constructor(
             target = target,
             kind = EdgeKind.HasOne,
             comment = comment,
+            declarationName = declarationName,
         )
     }
 }
@@ -308,6 +378,13 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
     }
 
     fun comment(text: String): ManyToManyBuilder<Target> = apply { checkNotFrozen(); comment = text }
+
+    operator fun provideDelegate(thisRef: Any?, property: KProperty<*>): ManyToManyBuilder<Target> {
+        bindDeclaration(property, thisRef)
+        return this
+    }
+
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): ManyToManyBuilder<Target> = this
 
     override fun resolve(registry: Map<KClass<out EntSchema>, EntSchema>, owner: KClass<out EntSchema>) {
         resolvedTarget = registry[targetClass]
@@ -388,6 +465,7 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
             target = target,
             kind = EdgeKind.ManyToMany(t),
             comment = comment,
+            declarationName = declarationName,
         )
     }
 }

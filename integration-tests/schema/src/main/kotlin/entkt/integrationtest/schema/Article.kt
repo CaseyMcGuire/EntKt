@@ -21,20 +21,20 @@ data class HighlightRect(
     val h: Double,
 )
 
-class Article : EntSchema("articles") {
+class Article : EntSchema("articles", clientName = "articles") {
     override fun id() = EntId.long()
 
-    val title = string("title")
-    val notes = string("notes").nullable()
-    val published = bool("published").default(false)
-    val payload = bytes("payload").nullable()
-    val metadata = json("metadata", ArticleMeta::class).nullable()
+    val title by string("title")
+    val notes by string("notes").nullable()
+    val published by bool("published").default(false)
+    val payload by bytes("payload").nullable()
+    val metadata by json("metadata", ArticleMeta::class).nullable()
     // Generic JSON shape: the full List<HighlightRect> type is captured, so
     // the generated property is typed and elements round-trip through the
     // element serializer (no wrapper class).
-    val rects = json<List<HighlightRect>>("rects").nullable()
+    val rects by json<List<HighlightRect>>("rects").nullable()
 
-    val author = belongsTo<User>("author").inverse(User::articles)
+    val author by belongsTo<User>("author").inverse(User::articles)
 
     // Exercises indexed query helpers: a composite over the implicit FK
     // (author_id → authorId) plus a comparable text column (title → range

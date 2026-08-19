@@ -246,7 +246,7 @@ class PrivacyGeneratorTest {
 
     @Test
     fun `id-only schema emits constructible WriteCandidate class`() {
-        val idOnly = object : EntSchema("empties") {
+        val idOnly = object : EntSchema("empties", clientName = "empties") {
             override fun id() = EntId.int()
         }
         finalize(idOnly)
@@ -440,20 +440,20 @@ class PrivacyGeneratorTest {
 
 // ---------- link-table M2M helpers test schemas (PrivacyGeneratorTest) ----------
 
-private class PrivM2MPost : EntSchema("m2m_priv_posts") {
+private class PrivM2MPost : EntSchema("m2m_priv_posts", clientName = "privM2MPosts") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val tags = manyToMany<PrivM2MTag>("tags")
+    val title by string("title")
+    val tags by manyToMany<PrivM2MTag>("tags")
         .throughLink<PrivM2MPostTagJunction>(PrivM2MPostTagJunction::post, PrivM2MPostTagJunction::tag)
 }
-private class PrivM2MTag : EntSchema("m2m_priv_tags") {
+private class PrivM2MTag : EntSchema("m2m_priv_tags", clientName = "privM2MTags") {
     override fun id() = EntId.uuid()
-    val name = string("name")
+    val name by string("name")
 }
-private class PrivM2MPostTagJunction : EntSchema("m2m_priv_post_tags") {
+private class PrivM2MPostTagJunction : EntSchema("m2m_priv_post_tags", clientName = "privM2MPostTagJunctions") {
     override fun id() = EntId.long()
-    val post = belongsTo<PrivM2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag = belongsTo<PrivM2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val post by belongsTo<PrivM2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<PrivM2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_priv_post_tags_pair", post.fk, tag.fk).unique()
 }
 

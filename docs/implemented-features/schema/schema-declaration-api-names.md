@@ -2,15 +2,15 @@
 
 ## Status
 
-Accepted design direction as of 2026-08-18. This is not implemented.
+Implemented as of 2026-08-19. Accepted as a design direction 2026-08-18.
 
 This RFC generalizes the declaration-name intent described by the implemented
-[Field-Backed FK Declaration Names](../../implemented-features/edge-mutation/06-field-backed-fk-declaration-names.md)
+[Field-Backed FK Declaration Names](../edge-mutation/06-field-backed-fk-declaration-names.md)
 and
-[To-One FK Mutation And Nullability](../../implemented-features/edge-mutation/02-to-one-assignment-nullability.md)
-RFCs. Those RFCs capture Kotlin declaration names for a narrow FK surface,
-while the current generator still derives ordinary field and edge APIs from
-storage strings and client properties from an English pluralizer.
+[To-One FK Mutation And Nullability](../edge-mutation/02-to-one-assignment-nullability.md)
+RFCs. Those RFCs captured Kotlin declaration names for a narrow FK surface,
+while the generator still derived ordinary field and edge APIs from storage
+strings and client properties from an English pluralizer.
 
 Where those documents describe storage-derived public names or fallback
 behavior, this RFC supersedes that naming contract.
@@ -657,7 +657,32 @@ val author by belongsTo<User>("author")
 ```
 
 No schema-wide property reflection, backing-field access, getter invocation,
-annotation processor, compiler plugin, or repeated API-name string is needed.
+annotation processor, compiler plugin, or repeated API-name string is needed
+**to bind a name**.
+
+#### Amendment: validation still reflects, deliberately
+
+*Binding* is reflection-free as described. *Validation* is not, and the
+implementation keeps one reflective pass on purpose.
+
+`by lazy { string("col") }` never runs the builder, so nothing registers and
+there is no unbound builder for finalization to reject — the column simply
+disappears from the schema, the entity, and the migration, with no
+diagnostic. That is the worst possible outcome for a naming contract whose
+premise is that declarations are explicit, so the rejection this RFC promises
+for wrapper delegates has to come from somewhere.
+
+The implementation therefore walks the concrete schema class's declared
+properties at finalization, and each mixin's at `include(...)`, looking for
+builder-typed properties that never bound. The pass reads declared return
+types only — it never invokes a getter, so inspecting a computed getter
+cannot register a field as a side effect. It also supplies the
+"declared directly on the concrete class" check, which binding alone cannot
+express: a delegated property on a superclass binds indistinguishably from
+one declared locally.
+
+What this RFC removed is the reflective *name-capture* scan and its
+storage-derived fallback. Names now come only from `provideDelegate`.
 
 ### Resolved metadata
 
@@ -770,7 +795,7 @@ names remain storage metadata.
 
 Edge-loading API and execution are separate designs. This RFC owns the
 generated name. The accepted
-[Generated Edge Loading API](../query/generated-edge-loading-api.md) RFC owns
+[Generated Edge Loading API](../../possible-features/query/generated-edge-loading-api.md) RFC owns
 the method shape and adopts `load{Name}`.
 
 The public API uses the exact edge declaration name:
@@ -844,7 +869,8 @@ and increase collision surfaces.
 4. Add type-preserving `provideDelegate` / `getValue` support to every field
    and edge builder, including custom `FieldBuilder` subclasses and mixin
    fields. Bind and validate the declaration name during property construction.
-5. Remove the reflective post-construction declaration-name scan and its alias
+5. Remove the reflective post-construction declaration-name *capture* scan and
+   its alias
    fallback. Require every registered field and edge builder to have exactly
    one delegated binding by finalization.
 6. Require non-null declaration names during schema/codegen validation; remove
@@ -1008,9 +1034,9 @@ declaration/storage mismatch so the separation is visible.
 
 ## Related RFCs
 
-- [Typed Schema Handles](typed-schema-handles.md)
-- [Field-Backed FK Declaration Names](../../implemented-features/edge-mutation/06-field-backed-fk-declaration-names.md)
-- [Generated Member Name Collisions](../../implemented-features/edge-mutation/07-generated-member-name-collisions.md)
-- [To-One FK Mutation And Nullability](../../implemented-features/edge-mutation/02-to-one-assignment-nullability.md)
-- [Generated Edge Loading API](../query/generated-edge-loading-api.md)
-- [Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md)
+- [Typed Schema Handles](../../possible-features/schema/typed-schema-handles.md)
+- [Field-Backed FK Declaration Names](../edge-mutation/06-field-backed-fk-declaration-names.md)
+- [Generated Member Name Collisions](../edge-mutation/07-generated-member-name-collisions.md)
+- [To-One FK Mutation And Nullability](../edge-mutation/02-to-one-assignment-nullability.md)
+- [Generated Edge Loading API](../../possible-features/query/generated-edge-loading-api.md)
+- [Set-Based Eager Graph Loader](../../possible-features/query/set-based-eager-graph-loader.md)

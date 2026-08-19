@@ -56,10 +56,10 @@ unchanged.
 Given:
 
 ```kotlin
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
-    val authorId = long("author_id")
-    val createdAt = time("created_at")
+    val authorId by long("author_id")
+    val createdAt by time("created_at")
     val byAuthorCreated = index("idx_posts_author_created", authorId, createdAt)
 }
 ```

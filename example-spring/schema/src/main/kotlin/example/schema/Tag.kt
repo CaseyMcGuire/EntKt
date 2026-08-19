@@ -8,11 +8,11 @@ enum class TagCategory { TOPIC, LANGUAGE, AUDIENCE }
 /**
  * A tag with an enum category. Tags are independent — no edges.
  */
-class Tag : EntSchema("tags") {
+class Tag : EntSchema("tags", clientName = "tags") {
     override fun id() = EntId.int()
-    val name = string("name").unique()
-    val category = enum<TagCategory>("category")
+    val name by string("name").unique()
+    val category by enum<TagCategory>("category")
 
-    val posts = manyToMany<Post>("posts")
+    val posts by manyToMany<Post>("posts")
         .throughEntity<PostTag>(PostTag::tag, PostTag::post)
 }

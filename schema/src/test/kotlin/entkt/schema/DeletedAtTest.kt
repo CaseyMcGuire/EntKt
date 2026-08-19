@@ -5,16 +5,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /** Schema fixture that includes the canonical [DeletedAt] mixin. */
-private class DeletableMemo : EntSchema("memos") {
+private class DeletableMemo : EntSchema("memos", clientName = "deletableMemos") {
     override fun id() = EntId.long()
     val softDelete = include(::DeletedAt)
-    val body = text("body")
+    val body by text("body")
 }
 
 /** Schema fixture without the mixin, for negative checks. */
-private class PlainMemo : EntSchema("plain_memos") {
+private class PlainMemo : EntSchema("plain_memos", clientName = "plainMemos") {
     override fun id() = EntId.long()
-    val body = text("body")
+    val body by text("body")
 }
 
 class DeletedAtTest {

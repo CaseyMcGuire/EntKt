@@ -15,9 +15,9 @@ import entkt.schema.EntSchema
  * to the same `User` target — comparing the two pins both
  * non-null and nullable forwarder shapes.
  */
-class Reminder : EntSchema("reminders") {
+class Reminder : EntSchema("reminders", clientName = "reminders") {
     override fun id() = EntId.long()
 
-    val body = string("body")
-    val assignee = belongsTo<User>("assignee").nullable()
+    val body by string("body")
+    val assignee by belongsTo<User>("assignee").nullable()
 }

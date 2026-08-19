@@ -12,14 +12,14 @@ private fun finalize(vararg schemas: EntSchema) {
 
 // A 1:1 pair — the shared Car/User fixtures only cover hasMany /
 // belongsTo, and hasOne emits a distinct eager-load block.
-private class OneOwner : EntSchema("one_owners") {
+private class OneOwner : EntSchema("one_owners", clientName = "oneOwners") {
     override fun id() = entkt.schema.EntId.long()
-    val badge = hasOne<OneBadge>("badge")
+    val badge by hasOne<OneBadge>("badge")
 }
 
-private class OneBadge : EntSchema("one_badges") {
+private class OneBadge : EntSchema("one_badges", clientName = "oneBadges") {
     override fun id() = entkt.schema.EntId.long()
-    val owner = belongsTo<OneOwner>("owner").inverse(OneOwner::badge).unique()
+    val owner by belongsTo<OneOwner>("owner").inverse(OneOwner::badge).unique()
 }
 
 class QueryGeneratorTest {

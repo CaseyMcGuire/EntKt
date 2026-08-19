@@ -20,31 +20,31 @@ import kotlin.test.assertTrue
 // compilation) carries it as a real class.
 data class PlainRect(val x: Int, val y: Int)
 
-private class RectBoard : EntSchema("rect_boards") {
+private class RectBoard : EntSchema("rect_boards", clientName = "rectBoards") {
     override fun id() = EntId.long()
-    val rects = json<List<PlainRect>>("rects")
+    val rects by json<List<PlainRect>>("rects")
 }
 
-private class BareBoard : EntSchema("bare_boards") {
+private class BareBoard : EntSchema("bare_boards", clientName = "bareBoards") {
     override fun id() = EntId.long()
-    val title = string("title")
+    val title by string("title")
 }
 
-private class BuiltinArrayBoard : EntSchema("builtin_array_boards") {
+private class BuiltinArrayBoard : EntSchema("builtin_array_boards", clientName = "builtinArrayBoards") {
     override fun id() = EntId.long()
-    val booleans = json<BooleanArray>("booleans")
-    val bytes = json<ByteArray>("bytes")
-    val chars = json<CharArray>("chars")
-    val counts = json<IntArray>("counts")
-    val doubles = json<DoubleArray>("doubles")
-    val floats = json<FloatArray>("floats")
-    val longs = json<LongArray>("longs")
-    val shorts = json<ShortArray>("shorts")
-    val unsignedBytes = json<UByteArray>("unsigned_bytes")
-    val unsignedCounts = json<UIntArray>("unsigned_counts")
-    val unsignedLongs = json<ULongArray>("unsigned_longs")
-    val unsignedShorts = json<UShortArray>("unsigned_shorts")
-    val labels = json<Array<String?>>("labels")
+    val booleans by json<BooleanArray>("booleans")
+    val bytes by json<ByteArray>("bytes")
+    val chars by json<CharArray>("chars")
+    val counts by json<IntArray>("counts")
+    val doubles by json<DoubleArray>("doubles")
+    val floats by json<FloatArray>("floats")
+    val longs by json<LongArray>("longs")
+    val shorts by json<ShortArray>("shorts")
+    val unsignedBytes by json<UByteArray>("unsigned_bytes")
+    val unsignedCounts by json<UIntArray>("unsigned_counts")
+    val unsignedLongs by json<ULongArray>("unsigned_longs")
+    val unsignedShorts by json<UShortArray>("unsigned_shorts")
+    val labels by json<Array<String?>>("labels")
 }
 
 /**
@@ -65,14 +65,13 @@ private class BuiltinArrayBoard : EntSchema("builtin_array_boards") {
 class JsonCompileFailTest {
 
     private fun generatedSources(
-        name: String,
         schema: EntSchema,
         jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
     ): List<SourceFile> {
         val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema)
         schema.finalize(registry)
         return EntGenerator("com.example.ent", jsonMapper)
-            .generate(listOf(SchemaInput(name, schema)))
+            .generate(listOf(SchemaInput(schema)))
             .toCompileTestSources()
     }
 
@@ -96,7 +95,7 @@ class JsonCompileFailTest {
     fun `control - generated code without a json field compiles`() {
         // Proves the harness itself is sound (classpath, targets, codegen
         // output) so the failing test below can't pass vacuously.
-        val result = compile(generatedSources("BareBoard", BareBoard()))
+        val result = compile(generatedSources(BareBoard()))
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -106,7 +105,7 @@ class JsonCompileFailTest {
 
     @Test
     fun `generated code for built-in arrays compiles`() {
-        val result = compile(generatedSources("BuiltinArrayBoard", BuiltinArrayBoard()))
+        val result = compile(generatedSources(BuiltinArrayBoard()))
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -116,7 +115,7 @@ class JsonCompileFailTest {
 
     @Test
     fun `a json type argument without kotlinx serialization support fails to compile`() {
-        val result = compile(generatedSources("RectBoard", RectBoard()))
+        val result = compile(generatedSources(RectBoard()))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -136,7 +135,7 @@ class JsonCompileFailTest {
         // no serializer symbols are referenced and PlainRect needs neither
         // @Serializable nor the serialization compiler plugin.
         val result = compile(
-            generatedSources("RectBoard", RectBoard(), jsonMapper = entkt.runtime.driver.JsonMapperIds.JACKSON),
+            generatedSources(RectBoard(), jsonMapper = entkt.runtime.driver.JsonMapperIds.JACKSON),
         )
         assertEquals(
             KotlinCompilation.ExitCode.OK,

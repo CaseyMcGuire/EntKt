@@ -185,7 +185,7 @@ class ResultConstructionAuthorityCompileTest {
         car.finalize(registry)
         user.finalize(registry)
         val sources = EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Car", car), SchemaInput("User", user)))
+            .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
         val result = KotlinCompilation().apply {
             this.sources = sources

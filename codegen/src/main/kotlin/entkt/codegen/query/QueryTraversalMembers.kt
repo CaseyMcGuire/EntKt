@@ -1,5 +1,7 @@
 package entkt.codegen.query
 
+import entkt.codegen.apiName
+import entkt.codegen.generatedStem
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
@@ -8,7 +10,6 @@ import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.UNIT
-import entkt.codegen.toPascalCase
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val TRAVERSAL_SOURCE_SHAPE = ClassName("entkt.query", "TraversalSourceShape")
@@ -185,7 +186,7 @@ internal fun buildM2MTraversal(
     val sourceEntityClass = ClassName(packageName, sourceName)
     val targetEntityClass = re.targetClass
     val targetQueryClass = re.targetQueryClass
-    val methodName = "query${toPascalCase(re.name)}"
+    val methodName = re.queryMethodName
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
 
     return FunSpec.builder(methodName)
@@ -215,7 +216,7 @@ internal fun buildM2MTraversal(
         // Cross-class write through the @EntktInternal seeder.
         .addStatement(
             "target.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-            sourceEntityClass, re.name, edgeStepClass, sourceEntityClass, re.name, targetEntityClass,
+            sourceEntityClass, re.publicName, edgeStepClass, sourceEntityClass, re.publicName, targetEntityClass,
         )
         // Snapshot source state at queryX() time into a fresh
         // source-Query instance so the deferred lambda is
@@ -242,6 +243,9 @@ internal fun buildM2MTraversal(
         .addCode(
             deferredShapedSourceStep(
                 bridgeType = "HasM2MEdgeFromShape",
+                // Storage name: the driver resolves this against
+                // `EntitySchema.edges`, which is keyed by storage edge
+                // name. Only the seeding above is caller-facing.
                 edgeName = re.name,
                 selectedColumn = re.join?.sourceColumn ?: "id",
                 targetEntityClass = targetEntityClass,
@@ -281,7 +285,7 @@ internal fun buildTraversal(
     val sourceEntityClass = ClassName(packageName, sourceName)
     val targetEntityClass = re.targetClass
     val targetQueryClass = re.targetQueryClass
-    val methodName = "query${toPascalCase(re.name)}"
+    val methodName = re.queryMethodName
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
 
     return FunSpec.builder(methodName)
@@ -311,7 +315,7 @@ internal fun buildTraversal(
         // Cross-class write through the @EntktInternal seeder.
         .addStatement(
             "target.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-            sourceEntityClass, re.name, edgeStepClass, sourceEntityClass, re.name, targetEntityClass,
+            sourceEntityClass, re.publicName, edgeStepClass, sourceEntityClass, re.publicName, targetEntityClass,
         )
         // Snapshot source state at queryX() time into a fresh
         // source-Query instance so the deferred lambda is

@@ -29,7 +29,7 @@ class ReadClientGeneratorTest {
         car.finalize(registry)
         user.finalize(registry)
         return EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Car", car), SchemaInput("User", user)))
+            .generate(listOf(SchemaInput(car), SchemaInput(user)))
     }
 
     private fun readClientOutput(): String =

@@ -149,7 +149,7 @@ private fun tryLoadSchema(
         schemaFailures.add("${clazz.simpleName}: construction failed: ${e.cause?.message ?: e.message}")
         return null
     }
-    return SchemaInput(clazz.simpleName, instance)
+    return SchemaInput(instance)
 }
 
 /**

@@ -1,5 +1,6 @@
 package entkt.codegen.entity
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -24,7 +25,6 @@ import entkt.codegen.metadata.kotlinxJsonSerializerOptIns
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.toCamelCase
 import entkt.runtime.driver.JsonMapperIds
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
@@ -82,7 +82,7 @@ internal class EntityGenerator(
         val edgeDescriptors = schema.edges().mapNotNull { edge ->
             val targetName = schemaNames[edge.target] ?: return@mapNotNull null
             val targetClass = ClassName(packageName, targetName)
-            EdgeDescriptor(edge.name, targetClass, edge.kind is EdgeKind.BelongsTo || edge.kind is EdgeKind.HasOne, edge.comment)
+            EdgeDescriptor(edge.apiName, targetClass, edge.kind is EdgeKind.BelongsTo || edge.kind is EdgeKind.HasOne, edge.comment)
         }
         val edgesClass = if (edgeDescriptors.isNotEmpty()) buildEdgesClass(edgeDescriptors) else null
         val edgesClassName = entityClass.nestedClass("Edges")
@@ -176,7 +176,7 @@ internal class EntityGenerator(
             .add("  id = row[%S] as %T,\n", "id", idType)
 
         for (field in allFields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val col = field.columnName
             val nullable = field.nullable
             if (field.type == FieldType.ENUM) {
@@ -242,7 +242,7 @@ internal class EntityGenerator(
             val typeName = field.resolvedTypeName().let {
                 if (field.nullable) it.copy(nullable = true) else it
             }
-            val param = ParameterSpec.builder(toCamelCase(field.name), typeName)
+            val param = ParameterSpec.builder(field.apiName, typeName)
             if (field.nullable) {
                 param.defaultValue("null")
             }
@@ -280,7 +280,7 @@ internal class EntityGenerator(
         val typeName = field.resolvedTypeName().let {
             if (field.nullable) it.copy(nullable = true) else it
         }
-        val propertyName = toCamelCase(field.name)
+        val propertyName = field.apiName
         val builder = PropertySpec.builder(propertyName, typeName)
             .initializer(propertyName)
         val comment = field.comment
@@ -316,7 +316,7 @@ internal class EntityGenerator(
         val parts = mutableListOf<String>()
         parts.add("id=\$id")
         for (field in allFields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             parts.add(if (field.sensitive) "$prop=***" else "$prop=\$$prop")
         }
         for (fk in edgeFks) {
@@ -351,7 +351,7 @@ internal class EntityGenerator(
             .addStatement("if (other !is %T) return false", entityClass)
             .addStatement("if (id != other.id) return false")
         for (field in fields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             if (field.type == FieldType.BYTES) {
                 body.addStatement("if (!(%L contentEquals other.%L)) return false", prop, prop)
             } else {
@@ -382,7 +382,7 @@ internal class EntityGenerator(
         val body = CodeBlock.builder()
             .addStatement("var result = id.hashCode()")
         for (field in fields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val expr = when {
                 field.type == FieldType.BYTES && field.nullable -> "($prop?.contentHashCode() ?: 0)"
                 field.type == FieldType.BYTES -> "$prop.contentHashCode()"
@@ -425,7 +425,7 @@ internal class EntityGenerator(
     }
 
     private fun buildFieldColumnRef(field: Field, entityClass: ClassName): PropertySpec {
-        val propertyName = toCamelCase(field.name)
+        val propertyName = field.apiName
         val nullable = field.nullable
         if (field.type == FieldType.ENUM) {
             // EnumColumn carries a `fromName` decoder so it can be an aggregate
@@ -473,7 +473,7 @@ internal class EntityGenerator(
         val targetQuery = ClassName(packageName, "${targetName}Query")
         // EdgeRef now carries three type args: Source, Target, Q.
         val edgeRefType = EDGE_REF.parameterizedBy(sourceEntity, targetEntity, targetQuery)
-        val propertyName = toCamelCase(edge.name)
+        val propertyName = edge.apiName
         // EdgeRef.has { block } only accumulates predicates off the
         // query — it never calls the driver — so we hand it NoopDriver
         // and bail loudly if something tries to run a terminal op
@@ -493,7 +493,8 @@ internal class EntityGenerator(
  * inner data class on the entity.
  */
 internal data class EdgeDescriptor(
-    val name: String,
+    /** The edge's Kotlin declaration name — the generated member name. */
+    val apiName: String,
     val targetClass: ClassName,
     val toOne: Boolean,
     val comment: String? = null,
@@ -512,7 +513,7 @@ private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
     val properties = mutableListOf<PropertySpec>()
 
     for (edge in edges) {
-        val propName = toCamelCase(edge.name)
+        val propName = edge.apiName
         val propType = if (edge.toOne) {
             EDGE_STATE.parameterizedBy(edge.targetClass.copy(nullable = true))
         } else {

@@ -10,10 +10,10 @@ private fun finalize(vararg schemas: EntSchema) {
     schemas.forEach { it.finalize(registry) }
 }
 
-private class RepoBytesRecord : EntSchema("repo_bytes_records") {
+private class RepoBytesRecord : EntSchema("repo_bytes_records", clientName = "repoBytesRecords") {
     override fun id() = entkt.schema.EntId.long()
-    val payload = bytes("payload")
-    val thumbnail = bytes("thumbnail").nullable()
+    val payload by bytes("payload")
+    val thumbnail by bytes("thumbnail").nullable()
 }
 
 class RepoGeneratorTest {

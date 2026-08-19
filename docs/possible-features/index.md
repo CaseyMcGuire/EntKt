@@ -48,7 +48,6 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 
 ## Model Behavior
 
-- [Schema Declaration Names As Generated API](schema/schema-declaration-api-names.md)
 - [Typed Schema Handles](schema/typed-schema-handles.md)
 - [Optimistic Locking](schema/optimistic-locking.md)
 - [Edge Groups](schema/edge-groups.md)

@@ -12,11 +12,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-private class Attachment : EntSchema("attachments") {
+private class Attachment : EntSchema("attachments", clientName = "attachments") {
     override fun id() = EntId.long()
-    val payload = bytes("payload")
-    val thumb = bytes("thumb").nullable()
-    val label = string("label")
+    val payload by bytes("payload")
+    val thumb by bytes("thumb").nullable()
+    val label by string("label")
 }
 
 /**
@@ -32,7 +32,7 @@ class BytesEqualityCompileTest {
         val schema = Attachment()
         schema.finalize(mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema))
         val sources = EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Attachment", schema)))
+            .generate(listOf(SchemaInput(schema)))
             .toCompileTestSources()
         return KotlinCompilation().apply {
             this.sources = sources

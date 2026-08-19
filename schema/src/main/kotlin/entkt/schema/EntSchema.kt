@@ -1,12 +1,13 @@
 package entkt.schema
 
 import kotlin.reflect.KClass
-import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.KType
 import kotlin.reflect.KVariance
 import kotlin.reflect.KVisibility
 import kotlin.reflect.full.createType
 import kotlin.reflect.full.declaredMemberProperties
+import kotlin.reflect.full.isSubclassOf
+import kotlin.reflect.full.memberProperties
 import kotlin.reflect.jvm.javaField
 import kotlin.reflect.typeOf
 
@@ -16,43 +17,35 @@ import kotlin.reflect.typeOf
  * plain Kotlin properties that self-register with the owning schema.
  *
  * ```kotlin
- * class User : EntSchema("users") {
+ * class User : EntSchema("users", clientName = "users") {
  *     override fun id() = EntId.long()
- *     val name = string("name").minLength(1).maxLength(64)
- *     val posts = hasMany<Post>("posts")
+ *     val name by string("name").minLength(1).maxLength(64)
+ *     val posts by hasMany<Post>("posts")
  * }
  * ```
  *
- * @param tableName the physical SQL table name
- */
-/**
- * One field whose backing `FieldBuilder` is referenced from more
- * than one direct public `val` property on the concrete schema
- * class. Recorded by [EntSchema.captureDeclarationNames] during
- * finalize; surfaced as a `validateEntSchemas` diagnostic via the
- * codegen-side alias-rejection helper. Per declaration-name capture,
- * `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`.
+ * [tableName] and [clientName] are independent, explicit metadata: the
+ * table name is a storage identifier, the client name is a generated
+ * Kotlin API identifier. Neither is derived from the other, and neither
+ * is derived from the schema class name. Renaming one does not rename
+ * the other. See
+ * `docs/implemented-features/schema/schema-declaration-api-names.md`.
  *
- * Public so codegen modules can consume the accessor; treat as
- * read-only diagnostic metadata, not as part of the schema's
- * write-time DSL.
+ * @param tableName the physical SQL table name (lowercase snake_case)
+ * @param clientName the exact generated client/configuration property
+ *   name for this schema — `clientName = "users"` produces
+ *   `client.users`, `privacy.users { }`, `validation.users { }`, and
+ *   `hooks.users { }`. It must be a lower-camel Kotlin identifier and
+ *   unique across the generated schema set. entkt emits it verbatim: it
+ *   is never pluralized, singularized, or otherwise transformed, so an
+ *   irregular or intentionally singular term (`people`, `news`, `audit`)
+ *   is spelled out here rather than inferred.
  */
-data class DeclarationAlias(
-    /** Column name of the shared backing field. */
-    val fieldColumn: String,
-    /**
-     * Every direct public `val` property on the schema class that
-     * references the same builder instance, in declaration order.
-     * Always length ≥ 2 (no entry is recorded when only one
-     * property references a given builder).
-     */
-    val properties: List<String>,
-)
-
-abstract class EntSchema(val tableName: String) {
+abstract class EntSchema(val tableName: String, val clientName: String) {
 
     init {
         validateName(tableName, "Table")
+        validateApiName(clientName, "Client name")
     }
 
     @PublishedApi
@@ -63,24 +56,6 @@ abstract class EntSchema(val tableName: String) {
 
     @PublishedApi
     internal val _indexes: MutableList<IndexBuilder> = mutableListOf()
-
-    /**
-     * declaration-name capture alias tracking. Populated by [captureDeclarationNames]
-     * during [finalize]. Each entry names a field whose backing
-     * `FieldBuilder` is referenced from more than one direct
-     * public `val` on the concrete schema class
-     * (`val a = uuid("x"); val b = a`). Codegen-side validation
-     * rejects schemas with any entries here.
-     */
-    @PublishedApi
-    internal val _declarationAliases: MutableList<DeclarationAlias> = mutableListOf()
-
-    /**
-     * Read-only view of [_declarationAliases], for codegen-side
-     * diagnostics that need to surface duplicate-alias errors.
-     * Empty list before finalize.
-     */
-    fun declarationAliases(): List<DeclarationAlias> = _declarationAliases.toList()
 
     private var _finalized = false
 
@@ -103,14 +78,26 @@ abstract class EntSchema(val tableName: String) {
     companion object {
         private val VALID_NAME = Regex("^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
 
+        // Generated Kotlin API identifiers: client names, and field and
+        // edge declaration names bound through `by`.
+        // Deliberately a separate vocabulary from VALID_NAME: that one
+        // governs *storage* strings, which are snake_case. A generated
+        // API name is a lower-camel Kotlin identifier, so `user_accounts`
+        // is a valid table name and an invalid client name, while
+        // `userAccounts` is the reverse.
+        private val VALID_API_NAME = Regex("^[a-z][A-Za-z0-9]*$")
+
         // Kotlin "hard" keywords — names the parser cannot accept as
-        // identifiers without backtick-escaping. Codegen uses raw
-        // identifier emission (`%L`) for fields/properties/params,
-        // so a schema field named `class` would generate
-        // `val class = this.class` and fail to compile. Rejecting
-        // here at schema-validation time is louder than discovering
-        // the failure several layers downstream in user-visible
-        // generated code. List sourced from Kotlin's grammar
+        // identifiers without backtick-escaping. These constrain
+        // *generated API names* only (see validateApiName): a
+        // declaration named `class` would emit `val class = ...` and
+        // fail to compile.
+        //
+        // Storage names are exempt. They reach generated source only as
+        // string literals and reach SQL only as quoted identifiers, so
+        // `string("class")` and `hasMany<Item>("object")` are valid —
+        // the Kotlin API those produce comes from the declaration, not
+        // the storage string. List sourced from Kotlin's grammar
         // (KotlinSpec section "Hard keywords").
         private val KOTLIN_HARD_KEYWORDS: Set<String> = setOf(
             "as", "break", "class", "continue", "do", "else", "false",
@@ -125,10 +112,29 @@ abstract class EntSchema(val tableName: String) {
                 "$kind name '$name' is not valid — names must be lowercase snake_case " +
                     "(letters, digits, single underscores; no leading/trailing/consecutive underscores)"
             }
+        }
+
+        /**
+         * Validate a name that becomes a generated Kotlin identifier
+         * verbatim, as opposed to [validateName], which validates a
+         * storage string.
+         *
+         * Rejecting here is louder than discovering the failure in
+         * user-visible generated source: entkt performs no inflection
+         * or normalization on these names, so whatever is supplied is
+         * exactly what codegen emits.
+         */
+        @PublishedApi internal fun validateApiName(name: String, kind: String) {
+            require(VALID_API_NAME.matches(name)) {
+                "$kind '$name' is not a valid generated API name — it must be a lower-camel " +
+                    "Kotlin identifier (a lowercase letter followed by letters and digits; no " +
+                    "underscores, leading uppercase, or other punctuation). entkt emits this " +
+                    "name verbatim and never transforms it."
+            }
             require(name !in KOTLIN_HARD_KEYWORDS) {
-                "$kind name '$name' is a Kotlin reserved keyword — codegen emits this " +
-                    "identifier without backtick-escaping, so the generated code would fail to " +
-                    "compile. Rename the $kind."
+                "$kind '$name' is a Kotlin reserved keyword — codegen emits this identifier " +
+                    "without backtick-escaping, so the generated code would fail to compile. " +
+                    "Choose a different $kind."
             }
         }
     }
@@ -427,7 +433,67 @@ abstract class EntSchema(val tableName: String) {
 
     protected fun <M : EntMixin> include(factory: (EntMixin.Scope) -> M): M {
         checkNotFinalized()
-        return factory(EntMixin.Scope(this))
+        val mixin = factory(EntMixin.Scope(this))
+        validateMixinBindings(mixin)
+        return mixin
+    }
+
+    /**
+     * Apply the same binding rules to a mixin's own declarations that
+     * [validateDeclarationBindings] applies to the schema's.
+     *
+     * This has to run here rather than at finalization: entkt does not
+     * retain mixin instances, and a `by lazy` declaration never
+     * registers a builder at all, so by finalize time there is nothing
+     * left to notice. Checking while the instance is in hand is what
+     * makes the RFC's wrapper-delegate rejection real for mixins instead
+     * of silently dropping the column.
+     *
+     * Scoped by [FieldBuilder.declarationMixinClass] so a nested
+     * `include(...)` is validated against its own class, not its host's.
+     */
+    private fun validateMixinBindings(mixin: EntMixin) {
+        val mixinClass: KClass<*> = mixin::class
+        val mixinName = mixinClass.simpleName ?: "<anonymous mixin>"
+
+        val declaredHere: Set<String> = mixinClass.declaredMemberProperties
+            .asSequence()
+            .filter { it.visibility == KVisibility.PUBLIC }
+            .map { it.name }
+            .toSet()
+
+        val boundHere: Set<String> = _fields
+            .asSequence()
+            .filter { it.declarationMixinClass == mixinClass }
+            .mapNotNull { it.declarationName }
+            .toSet()
+
+        // A builder-typed property that never bound: `by lazy { ... }`,
+        // a computed getter, or an ordinary `=`.
+        for (prop in mixinClass.declaredMemberProperties) {
+            if (prop.visibility != KVisibility.PUBLIC) continue
+            val returnType = prop.returnType.classifier as? KClass<*> ?: continue
+            if (!isDeclarationType(returnType)) continue
+            if (prop.name in boundHere) continue
+            error(
+                "Mixin '$mixinName': property '${prop.name}' holds a schema builder but never " +
+                    "bound a declaration name. Declare it directly with `by` — for example " +
+                    "`val ${prop.name} by time(\"...\")`. A wrapper delegate such as " +
+                    "`by lazy { ... }` or a computed getter (`get() = ...`) does not register a " +
+                    "declaration, and would silently drop the column.",
+            )
+        }
+
+        // A declaration that bound through this mixin but is declared on
+        // a superclass of it — V1 binds only direct declarations.
+        for (name in boundHere) {
+            if (name in declaredHere) continue
+            error(
+                "Mixin '$mixinName': declaration '$name' is not declared on '$mixinName' " +
+                    "itself. V1 binds only declarations on the concrete mixin class — move the " +
+                    "declaration onto '$mixinName'.",
+            )
+        }
     }
 
     @PublishedApi internal fun <M : EntMixin> includeForMixin(factory: (EntMixin.Scope) -> M): M =
@@ -446,9 +512,7 @@ abstract class EntSchema(val tableName: String) {
         for (edge in _edges) {
             edge.resolve(registry, this::class)
         }
-        // declaration-name capture: capture the Kotlin `val` name for each FieldBuilder.
-        // Runs BEFORE freezing so we can write to FieldBuilder.declarationName.
-        captureDeclarationNames()
+        validateDeclarationBindings()
         // Freeze all builders so mutations after finalization are rejected
         for (field in _fields) { field.frozen = true }
         for (edge in _edges) { edge.frozen = true }
@@ -457,122 +521,175 @@ abstract class EntSchema(val tableName: String) {
     }
 
     /**
-     * Walk the concrete schema class's direct public `val`
-     * properties and set [FieldBuilder.declarationName] on each
-     * one whose backing-field value is identity-equal to a
-     * `FieldBuilder` already in [_fields]. Per declaration-name capture
-     * (`docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`).
+     * Reject every declaration shape that cannot produce a stable
+     * generated API name.
      *
-     * **Reads the Java backing field, not the getter.** Calling
-     * `KProperty.getter.call(...)` on a computed-getter property
-     * like `val x get() = string("...")` would invoke `string(...)`
-     * again, creating a throw-away `FieldBuilder` *and* registering
-     * a fresh `Field` on this schema as a side effect via the
-     * protected DSL helpers. Reading `javaField.get(this)` directly
-     * is side-effect-free: it returns the value stored in the
-     * property's backing JVM field, or — for computed getters and
-     * delegated properties, which have no backing field —
-     * `KProperty.javaField` is null and the property is skipped
-     * entirely without ever invoking its getter.
+     * Binding itself happens in each builder's `provideDelegate` during
+     * construction, so by the time this runs each builder either carries
+     * a declaration name or never bound. Two things still need checking:
      *
-     * Properties this pass deliberately does NOT capture:
+     *  1. **Registered but unbound** — `val x = string("col")` builds and
+     *     registers a real field that names nothing. Walking [_fields] and
+     *     [_edges] catches it, including programmatic registration with no
+     *     property at all.
      *
-     *  - non-public visibility (`private`, `protected`, `internal`)
-     *  - properties inherited from a superclass — capture uses
-     *    [declaredMemberProperties], which returns only the
-     *    concrete schema class's own properties (matches the
-     *    "direct public val property on the concrete schema class"
-     *    scope rule)
-     *  - `var` properties — capture filters out
-     *    [KMutableProperty1] instances so `var x = string("x")`
-     *    isn't treated as a stable handle declaration
-     *  - computed getters (`javaField == null`)
-     *  - delegated (`by lazy`, `by SomeDelegate`) — also
-     *    `javaField == null` for the property itself
-     *  - mixin-backed re-exports — the host schema's property holds
-     *    an `EntMixin` instance (not a `FieldBuilder`), so the
-     *    identity match against [_fields] never succeeds
+     *  2. **Declared but never registered** — `val x by lazy { string("col") }`
+     *     never runs the builder during construction, so the field is
+     *     absent from [_fields] entirely and (1) cannot see it. Walking the
+     *     class's *declared properties* and looking for builder-typed ones
+     *     that never bound catches it. This reads declared return types
+     *     only; it never invokes a getter, so a computed getter cannot
+     *     register a field as a side effect of being inspected.
      *
-     * Aliased properties (`val a = uuid("x"); val b = a`) are
-     * flagged as duplicates by [findDuplicateDeclarationAliases]
-     * (called from the codegen-side validator). The capture pass
-     * still records the *first* property name on the builder so
-     * downstream codegen has a deterministic value to fall back
-     * on if the diagnostic is suppressed — but the schema is
-     * rejected before codegen ever runs.
+     * The same property walk detects a declaration inherited from a
+     * superclass: it bound (so (1) passes) but has no property on the
+     * concrete class. Mixin-contributed fields look identical from the
+     * host's perspective, which is why binding records
+     * [FieldBuilder.declarationMixinClass] to tell them apart.
+     *
+     * This pass only sees the schema class. A mixin's own declarations
+     * are checked by [validateMixinBindings] while the mixin instance is
+     * still in hand — entkt does not retain mixin instances after
+     * `include(...)` returns, so by finalize time a `by lazy` inside a
+     * mixin would have left nothing to notice.
+     *
+     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
      */
-    private fun captureDeclarationNames() {
-        // Build an identity-keyed map of registered builders so the
-        // capture pass is O(properties), not O(properties × fields).
-        // Identity-keyed because two `string("x")` calls produce
-        // distinct builder instances even though they share `fieldName`.
-        val byIdentity: MutableMap<FieldBuilder<*, *>, FieldBuilder<*, *>> =
-            java.util.IdentityHashMap<FieldBuilder<*, *>, FieldBuilder<*, *>>().also { map ->
-                for (b in _fields) map[b] = b
-            }
-        // Track every (builder → list of property names) match so
-        // duplicates can surface as a single coherent diagnostic.
-        // Identity-keyed for the same reason as `byIdentity`.
-        val propsByBuilder: MutableMap<FieldBuilder<*, *>, MutableList<String>> =
-            java.util.IdentityHashMap()
+    /**
+     * True when a property's declared type can only have come from a
+     * schema builder, so a property of that type which never bound is a
+     * dropped declaration rather than an unrelated member.
+     *
+     * Checking the concrete builder classes alone is not enough: the
+     * builders' public supertypes are the *handle* interfaces, and
+     * `val x: FieldHandle<String> by lazy { string("col") }` declares a
+     * field whose property type mentions no builder at all.
+     *
+     * [IndexableColumn] is included even though `belongsTo(...).fk`
+     * legitimately yields one that is not a declaration. That case is
+     * separated by value rather than by type — see [holdsFkColumnHandle].
+     */
+    private fun isDeclarationType(type: KClass<*>): Boolean =
+        type.isSubclassOf(FieldBuilder::class) ||
+            type.isSubclassOf(EdgeBuilderBase::class) ||
+            type == FieldHandle::class ||
+            type == IndexableColumn::class ||
+            type == BelongsToHandle::class ||
+            type == HasManyHandle::class ||
+            type == HasOneHandle::class ||
+            type == ManyToManyHandle::class
 
-        val schemaClass: KClass<out EntSchema> = this::class
-        // `declaredMemberProperties` returns only properties
-        // declared in this class, NOT inherited ones. The
-        // V1 scope is "direct public val property on the concrete
-        // schema class" — inherited properties (e.g. from an
-        // abstract intermediate base) are explicitly out of scope.
-        for (prop in schemaClass.declaredMemberProperties) {
-            // Only public.
-            if (prop.visibility != KVisibility.PUBLIC) continue
-
-            // Drop `var` properties. KProperty1 is the read-only
-            // base; KMutableProperty1 represents `var`. V1
-            // captures only stable `val` handles.
-            if (prop is KMutableProperty1<*, *>) continue
-
-            // `javaField` is null for computed getters and
-            // delegated properties; both are excluded from V1.
-            val javaField = prop.javaField ?: continue
-
-            // The Java field is in the concrete class; reading it
-            // requires bypassing Java visibility (KProperty's
-            // `javaField` honors Java access modifiers, and Kotlin
-            // backing fields for public `val`s are usually private
-            // at the JVM level).
+    /**
+     * True when [prop] holds an FK column handle (`belongsTo(...).fk`),
+     * which is an [IndexableColumn] but not a declaration — it exists to
+     * be passed to `index(...)`.
+     *
+     * Distinguishing it by *value* rather than by type is what lets the
+     * unbound-declaration check cover `val x: IndexableColumn by lazy {
+     * string("col") }` — which silently drops a column — while still
+     * accepting `val ownerFk = writer.fk`.
+     *
+     * Reads the Java backing field, never a getter, so inspecting a
+     * property cannot register a declaration as a side effect. A
+     * delegated or computed property has no backing field, so it returns
+     * false and stays subject to the unbound check — which is exactly
+     * the `by lazy` case.
+     */
+    private fun holdsFkColumnHandle(prop: kotlin.reflect.KProperty1<*, *>): Boolean {
+        val javaField = prop.javaField ?: return false
+        return try {
             javaField.isAccessible = true
-            val value: Any? = javaField.get(this)
-            if (value !is FieldBuilder<*, *>) continue
+            @Suppress("UNCHECKED_CAST")
+            (javaField.get(this) as? IndexableColumn) is FkColumn
+        } catch (_: Exception) {
+            false
+        }
+    }
 
-            // Identity match: only annotate builders that are
-            // actually registered with this schema. A FieldBuilder
-            // constructed but never registered (or one owned by
-            // another schema) is silently skipped.
-            val registered = byIdentity[value] ?: continue
+    private fun validateDeclarationBindings() {
+        val schemaName = this::class.simpleName ?: "<anonymous>"
 
-            // Capture the first property name we see (declaration
-            // order) so downstream codegen has a deterministic
-            // value; aliased properties produce an explicit
-            // diagnostic via [_declarationAliases] below.
-            if (registered.declarationName == null) {
-                registered.declarationName = prop.name
-            }
-            // Record EVERY direct val pointing at this builder.
-            // Aliases (`val a = uuid("x"); val b = a`) end up here
-            // with both names; the codegen-side validator surfaces
-            // the duplicate.
-            propsByBuilder.getOrPut(registered) { mutableListOf() }.add(prop.name)
+        // (1) Registered builders that never bound to a property.
+        val unbound = buildList {
+            for (f in _fields) if (f.declarationName == null) add("field '${f.fieldName}'")
+            for (e in _edges) if (e.declarationName == null) add("edge '${e.edgeName}'")
+        }
+        if (unbound.isNotEmpty()) {
+            error(
+                "Schema '$schemaName': ${unbound.joinToString(", ")} " +
+                    (if (unbound.size == 1) "is" else "are") +
+                    " registered but not bound to a Kotlin property, so no generated API name " +
+                    "exists. Declare with `by` instead of `=` — for example " +
+                    "`val myField by string(\"my_field\")`.",
+            )
         }
 
-        // After the walk, every builder referenced by 2+ direct
-        // vals becomes a DeclarationAlias entry. Single-property
-        // builders are the normal case and don't get recorded.
-        for ((builder, props) in propsByBuilder) {
-            if (props.size > 1) {
-                _declarationAliases.add(
-                    DeclarationAlias(fieldColumn = builder.fieldName, properties = props.toList()),
+        // Declaration names must be unique per schema. Kotlin already
+        // guarantees this within one class, but a mixin contributes into
+        // the host's namespace, so a host field and a mixin field — or
+        // two included mixins — can still collide.
+        val byDeclaration = mutableMapOf<String, String>()
+        fun claim(name: String, what: String) {
+            val existing = byDeclaration.put(name, what)
+            if (existing != null) {
+                error(
+                    "Schema '$schemaName': declaration name '$name' is claimed by both " +
+                        "$existing and $what. Generated members would collide — rename one " +
+                        "declaration (a mixin contributes its fields into the including " +
+                        "schema's namespace).",
                 )
             }
+        }
+        for (f in _fields) claim(f.declarationName!!, "field '${f.fieldName}'")
+        for (e in _edges) claim(e.declarationName!!, "edge '${e.edgeName}'")
+
+        // (2) Builder-typed properties on the concrete class that never
+        // bound, and bound declarations with no property on this class.
+        val declaredHere: Set<String> = this::class.declaredMemberProperties
+            .asSequence()
+            .filter { it.visibility == KVisibility.PUBLIC }
+            .map { it.name }
+            .toSet()
+
+        // Only a declaration bound *on this class* accounts for a
+        // property of the same name. A mixin contributes into the host's
+        // namespace, so without this filter a mixin field named `title`
+        // would vouch for an unbound host `val title`, and the host's
+        // column would vanish silently.
+        val boundOnSchema: Set<String> = buildSet {
+            for (f in _fields) if (!f.declarationFromMixin) f.declarationName?.let { add(it) }
+            for (e in _edges) if (!e.declarationFromMixin) e.declarationName?.let { add(it) }
+        }
+
+        // `memberProperties`, not `declaredMemberProperties`: an unbound
+        // declaration on an abstract schema base class is just as
+        // invisible to the author, and is otherwise never inspected.
+        for (prop in this::class.memberProperties) {
+            if (prop.visibility != KVisibility.PUBLIC) continue
+            val returnType = prop.returnType.classifier as? KClass<*> ?: continue
+            if (!isDeclarationType(returnType)) continue
+            if (prop.name in boundOnSchema) continue
+            @Suppress("UNCHECKED_CAST")
+            if (holdsFkColumnHandle(prop as kotlin.reflect.KProperty1<Any, *>)) continue
+            error(
+                "Schema '$schemaName': property '${prop.name}' holds a schema builder but never " +
+                    "bound a declaration name. Declare it directly with `by` — for example " +
+                    "`val ${prop.name} by string(\"...\")`. A wrapper delegate such as " +
+                    "`by lazy { ... }` or a computed getter (`get() = ...`) does not register " +
+                    "a declaration, and would silently drop the column.",
+            )
+        }
+
+        for ((name, what) in byDeclaration) {
+            val fromMixin = _fields.any { it.declarationName == name && it.declarationFromMixin } ||
+                _edges.any { it.declarationName == name && it.declarationFromMixin }
+            if (fromMixin || name in declaredHere) continue
+            error(
+                "Schema '$schemaName': $what is bound to declaration '$name', which is not " +
+                    "declared on '$schemaName' itself. V1 binds only declarations on the " +
+                    "concrete schema class or an included mixin — move the declaration onto " +
+                    "'$schemaName', or contribute it through a mixin.",
+            )
         }
     }
 

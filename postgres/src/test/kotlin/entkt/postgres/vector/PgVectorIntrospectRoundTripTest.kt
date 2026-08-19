@@ -19,15 +19,15 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-private class RtArticle : EntSchema("rt_articles") {
+private class RtArticle : EntSchema("rt_articles", clientName = "rtArticles") {
     override fun id() = EntId.long()
-    val embedding = postgresVector("embedding", 3).nullable()
+    val embedding by postgresVector("embedding", 3).nullable()
     val hnsw = postgresVectorIndex("idx_rt_articles_hnsw", embedding).hnsw(VectorMetric.Cosine)
 }
 
-private class RtIvf : EntSchema("rt_ivf") {
+private class RtIvf : EntSchema("rt_ivf", clientName = "rtIvfs") {
     override fun id() = EntId.long()
-    val embedding = postgresVector("embedding", 3).nullable()
+    val embedding by postgresVector("embedding", 3).nullable()
     val ivf = postgresVectorIndex("idx_rt_ivf", embedding).ivfflat(VectorMetric.L2, lists = 100)
 }
 
@@ -60,7 +60,7 @@ class PgVectorIntrospectRoundTripTest {
 
     private fun desiredSchema(vararg schemas: EntSchema): NormalizedSchema =
         NormalizedSchema.fromEntitySchemas(
-            buildEntitySchemas(schemas.map { SchemaInput(it::class.simpleName ?: "S", it) }),
+            buildEntitySchemas(schemas.map { SchemaInput(it) }),
             typeMapper,
         )
 
@@ -76,7 +76,7 @@ class PgVectorIntrospectRoundTripTest {
             }
         }
         val runtimeSchemas = buildEntitySchemas(
-            listOf(SchemaInput("RtArticle", RtArticle()), SchemaInput("RtIvf", RtIvf())),
+            listOf(SchemaInput(RtArticle()), SchemaInput(RtIvf())),
         )
         val driver = PostgresDriver(dataSource, autoDdl = true)
         runtimeSchemas.forEach { driver.register(it) }

@@ -13,27 +13,16 @@ data class Field(
     val validators: List<Validator> = emptyList(),
     val comment: String? = null,
     /**
-     * Kotlin `val` name of the schema property that produced this
-     * field's backing builder. Populated by `EntSchema.finalize()`'s
-     * declaration-name capture pass (declaration-name capture,
-     * `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`)
-     * by walking the schema class's direct `val` properties via
-     * `KProperty.javaField` (no getter invocation, so computed
-     * getters / delegated properties are skipped without side
-     * effects).
+     * Kotlin `val` name of the delegated schema property that declared
+     * this field — the name every generated field API uses. [name] stays
+     * the storage column; the two are independent.
      *
-     * Null when:
-     * - no direct property on the concrete schema class references
-     *   this field's builder (computed getter, delegated, inherited,
-     *   mixin-backed declaration site, programmatic registration)
-     * - the schema hasn't been finalized yet
+     * Bound by the field builder's `provideDelegate` during schema
+     * construction. Nullable only before finalization: `finalize()`
+     * rejects any registered builder that never bound, so codegen never
+     * sees a null here.
      *
-     * Codegen reads this only for **field-backed FK** edges
-     * (`belongsTo(...).field(handle)`) to derive the generated FK
-     * API name from the Kotlin val rather than from
-     * `toCamelCase(column)`. Plain scalar fields keep their existing
-     * `toCamelCase(name)`-derived property name regardless of
-     * declarationName.
+     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
      */
     val declarationName: String? = null,
     /**

@@ -14,10 +14,10 @@ private fun finalizeVec(vararg schemas: EntSchema) {
     schemas.forEach { it.finalize(registry) }
 }
 
-private class VecArticle : EntSchema("articles") {
+private class VecArticle : EntSchema("articles", clientName = "vecArticles") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val embedding = postgresVector("embedding", dimensions = 1536).nullable()
+    val title by string("title")
+    val embedding by postgresVector("embedding", dimensions = 1536).nullable()
     val embHnsw = postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.Cosine)
 }
 
@@ -27,26 +27,26 @@ class PgVectorCodegenTest {
         val s = VecArticle()
         finalizeVec(s)
         return EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Article", s)))
+            .generate(listOf(SchemaInput(s)))
             .associate { it.name to it.toString().replace("\\s+".toRegex(), " ") }
     }
 
     @Test
     fun `entity exposes a PgVector property and imports the value type`() {
-        val entity = gen().getValue("Article")
+        val entity = gen().getValue("VecArticle")
         assertTrue("embedding: PgVector?" in entity, entity)
         assertTrue("import entkt.postgres.vector.PgVector" in entity, entity)
     }
 
     @Test
     fun `fromRow decodes the vector via a direct cast (driver owns decode)`() {
-        val entity = gen().getValue("Article")
+        val entity = gen().getValue("VecArticle")
         assertTrue("""embedding = row["embedding"] as PgVector?""" in entity, entity)
     }
 
     @Test
     fun `SCHEMA literal carries ColumnStorage Native for the vector column`() {
-        val entity = gen().getValue("Article")
+        val entity = gen().getValue("VecArticle")
         // kotlinpoet renders Int literals with digit-group underscores (1536 -> 1_536).
         assertTrue(
             """storage = ColumnStorage.Native(dialect = "postgres", typeName = "vector", sqlType = "vector(1536)", codec = "postgres.vector", requiredExtension = "vector", dimensions = 1_536)""" in entity,
@@ -56,23 +56,23 @@ class PgVectorCodegenTest {
 
     @Test
     fun `SCHEMA literal carries the vector index metadata (using + opclasses)`() {
-        val entity = gen().getValue("Article")
+        val entity = gen().getValue("VecArticle")
         assertTrue("""using = "hnsw"""" in entity, entity)
         assertTrue("""opclasses = listOf("vector_cosine_ops")""" in entity, entity)
     }
 
     @Test
     fun `create write-map validates the vector dimension`() {
-        val create = gen().getValue("ArticleCreate")
+        val create = gen().getValue("VecArticleCreate")
         assertTrue(
-            """"embedding" to embedding?.also { require(it.dimensions == 1_536) { "embedding expects vector(1536)" } }""" in create,
+            """"embedding" to _entktValueEmbedding?.also { require(it.dimensions == 1_536) { "embedding expects vector(1536)" } }""" in create,
             create,
         )
     }
 
     @Test
     fun `update write-map validates the vector dimension`() {
-        val update = gen().getValue("ArticleUpdate")
+        val update = gen().getValue("VecArticleUpdate")
         assertTrue("require(vec.dimensions == 1_536)" in update, update)
         assertTrue("""values["embedding"] = it.value?.also""" in update, update)
     }

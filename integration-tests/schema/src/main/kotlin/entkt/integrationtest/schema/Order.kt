@@ -11,13 +11,13 @@ enum class OrderStatus { PENDING, SHIPPED, DELIVERED }
  * (price + nullable discount), an enum group key (status), a nullable string
  * group key (region), and a time column for min/max.
  */
-class Order : EntSchema("orders") {
+class Order : EntSchema("orders", clientName = "orders") {
     override fun id() = EntId.long()
 
-    val quantity = int("quantity")
-    val price = double("price")
-    val discount = double("discount").nullable()
-    val status = enum<OrderStatus>("status")
-    val region = string("region").nullable()
-    val placedAt = time("placed_at")
+    val quantity by int("quantity")
+    val price by double("price")
+    val discount by double("discount").nullable()
+    val status by enum<OrderStatus>("status")
+    val region by string("region").nullable()
+    val placedAt by time("placed_at")
 }

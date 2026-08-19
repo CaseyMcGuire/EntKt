@@ -1,5 +1,7 @@
 package entkt.codegen.query
 
+import entkt.codegen.apiName
+import entkt.codegen.generatedStem
 import com.squareup.kotlinpoet.ClassName
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.EdgeJoin
@@ -7,8 +9,6 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.findInverseEdge
 import entkt.codegen.metadata.resolveEdgeJoin
 import entkt.codegen.metadata.resolveM2MEdgeJoin
-import entkt.codegen.toCamelCase
-import entkt.codegen.toPascalCase
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -64,12 +64,21 @@ internal class ResolvedQueryEdge(
     val edge: Edge,
     /** The target schema's generated name from `schemaNames`. */
     val targetName: String,
+    /**
+     * The target schema's declared client property. Eager loading
+     * reaches the target's repo through `client.<targetClientName>`;
+     * it is declared on the target schema, never derived from
+     * [targetName].
+     */
+    val targetClientName: String,
     val targetClass: ClassName,
     val targetQueryClass: ClassName,
     /** Backing property holding the eager sub-query: `eagerX`. */
     val eagerPropName: String,
     /** Eager-load DSL entry point: `withX`. */
     val withMethodName: String,
+    /** Edge-traversal entry point: `queryX`. */
+    val queryMethodName: String,
     /** Generated `Edges` property the eager result lands on. */
     val edgePropName: String,
     /**
@@ -88,7 +97,22 @@ internal class ResolvedQueryEdge(
      */
     val inverse: Edge?,
 ) {
+    /**
+     * The edge's **storage** identifier. This is the edge-lookup key in
+     * driver metadata and the value carried by the companion `EdgeRef`,
+     * so predicate dispatch (`Predicate.HasEdgeWith.edge`) matches on
+     * it. Never emit it into a caller-facing path.
+     */
     val name: String get() = edge.name
+
+    /**
+     * The edge's Kotlin declaration name, for caller-facing paths:
+     * interceptor context (`InterceptorContext.edgeName`) and
+     * eager-denial origins (`LoadDenialOrigin.EagerEdge`). A caller who
+     * wrote `queryCurator()` must not be told about `legacy_owner`.
+     */
+    val publicName: String get() = edge.apiName
+
     val isManyToMany: Boolean get() = edge.kind is EdgeKind.ManyToMany
 }
 
@@ -124,11 +148,13 @@ internal fun resolveQuerySchema(
         ResolvedQueryEdge(
             edge = edge,
             targetName = targetName,
+            targetClientName = edge.target.clientName,
             targetClass = ClassName(packageName, targetName),
             targetQueryClass = ClassName(packageName, "${targetName}Query"),
-            eagerPropName = "eager${toPascalCase(edge.name)}",
-            withMethodName = "with${toPascalCase(edge.name)}",
-            edgePropName = toCamelCase(edge.name),
+            eagerPropName = "eager${edge.apiName.generatedStem()}",
+            withMethodName = "with${edge.apiName.generatedStem()}",
+            queryMethodName = "query${edge.apiName.generatedStem()}",
+            edgePropName = edge.apiName,
             join = join,
             inverse = inverse,
         )

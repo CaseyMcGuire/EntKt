@@ -12,8 +12,6 @@ import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.metadata.EdgeJoin
-import entkt.codegen.pluralize
-import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -185,7 +183,7 @@ private fun emitToManyEagerBlock(
     val targetClass = re.targetClass
     body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
     body.addStatement("val sourceIds = entities.map { it.id }")
-    emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
+    emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
     // Run target interceptors with EAGER_LOAD. The IN
     // predicate that ties target rows back to the source ids
     // goes in via extraStructural so it's tagged STRUCTURAL,
@@ -222,7 +220,7 @@ private fun emitToManyEagerBlock(
         "var loadedGroups = grouped.mapValues { (_, pairs) -> pairs.drop(perGroupOffset).take(perGroupLimit).map { it.second } }",
     )
     emitEagerPrivacyCheck(
-        body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
+        body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "decodedTargets.map { it.second }",
     )
     body.addStatement(
@@ -250,7 +248,7 @@ private fun emitHasOneEagerBlock(
     val targetClass = re.targetClass
     body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
     body.addStatement("val sourceIds = entities.map { it.id }")
-    emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
+    emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
     body.addStatement(
         "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
@@ -290,7 +288,7 @@ private fun emitHasOneEagerBlock(
         "var loadedGroups = grouped.mapValues { (_, pairs) -> pairs.drop(perGroupOffset).take(perGroupLimit).map { it.second } }",
     )
     emitEagerPrivacyCheck(
-        body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
+        body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "decodedTargets.map { it.second }",
     )
     body.addStatement(
@@ -335,7 +333,14 @@ private fun emitToOneEagerBlock(
     val targetClass = re.targetClass
     // Find the FK property name on the source entity
     val fk = resolved.edgeFks.find { it.columnName == join.sourceColumn }
-    val fkPropName = fk?.propertyName ?: toCamelCase(join.sourceColumn)
+    // Every FK surface on this schema is resolved up front, and its
+    // property name is declaration-derived — there is no column-derived
+    // fallback to fall back to.
+    val fkPropName = fk?.propertyName
+        ?: error(
+            "Eager join references source column '${join.sourceColumn}', which resolves to no " +
+                "FK surface on '${resolved.schemaName}'.",
+        )
     // A required FK is a non-null property, so the safe-call below would be
     // redundant (and Kotlin warns). Unknown → treat as nullable (safe).
     val fkRequired = fk?.required ?: false
@@ -360,7 +365,7 @@ private fun emitToOneEagerBlock(
     body.addStatement("val perParentLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
     body.addStatement("val targetInWindow = perParentOffset == 0 && perParentLimit > 0")
     body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
-    emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
+    emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
     // Fetch every matching target in one `IN (...)` pass. The
     // caller's bounds are per parent, not over this batched result,
     // so they're applied below rather than passed to the driver —
@@ -390,7 +395,7 @@ private fun emitToOneEagerBlock(
         "var loaded = targetRows.map { %T.fromRow(it) }",
         targetClass,
     )
-    emitEagerPrivacyCheck(body, re.targetName, "loaded", grouped = false, eagerPropName = re.eagerPropName)
+    emitEagerPrivacyCheck(body, re.targetClientName, "loaded", grouped = false, eagerPropName = re.eagerPropName)
     body.addStatement("loaded = subQuery.loadEdges(loaded, eagerPrivacyContext)")
     body.addStatement("val targetMap = loaded.associateBy { it.id }")
     if (fkRequired) {
@@ -439,7 +444,7 @@ private fun emitM2MEagerBlock(
         "val targetIds = junctionRows.map { it[%S] }.distinct()",
         join.junctionTargetColumn,
     )
-    emitEagerSubquerySetup(body, re.name, sourceClass, targetClass)
+    emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
     // Fetch all matching targets — limit/offset are applied per group below.
     //
     // The interceptor pass is unconditional, including when the
@@ -520,7 +525,7 @@ private fun emitM2MEagerBlock(
         "var loadedGroups = grouped.mapValues { (_, list) -> list.drop(perGroupOffset).take(perGroupLimit) }",
     )
     emitEagerPrivacyCheck(
-        body, re.targetName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
+        body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "orderedTargets",
     )
     body.addStatement(
@@ -599,13 +604,12 @@ private fun emitEagerSubquerySetup(
  */
 private fun emitEagerPrivacyCheck(
     body: CodeBlock.Builder,
-    targetName: String,
+    targetRepoProp: String,
     loadedVar: String,
     grouped: Boolean,
     eagerPropName: String,
     orderedTargets: String? = null,
 ) {
-    val targetRepoProp = pluralize(targetName.replaceFirstChar { it.lowercase() })
     body.addStatement("val eagerClient = client")
     body.beginControlFlow("if (eagerClient != null && eagerClient.%L.hasLoadPrivacy())", targetRepoProp)
     if (grouped) {
@@ -693,7 +697,7 @@ internal fun buildEagerExplainBlock(
     // Cross-class write goes through the @EntktInternal seeder.
     body.addStatement(
         "subQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-        sourceClass, info.name, edgeStepClass, sourceClass, info.name, info.targetClass,
+        sourceClass, info.publicName, edgeStepClass, sourceClass, info.publicName, info.targetClass,
     )
 
     // A rejected eager sub-explain becomes a rejected entry
@@ -714,7 +718,7 @@ internal fun buildEagerExplainBlock(
             "val junctionExplain = driver.explainQuery(%S, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), emptyList(), null, null)",
             join.junctionTable, PREDICATE, Any::class.asClassName(), join.junctionSourceColumn, OP, QUERY_EXPLANATION,
         )
-        body.add("edges[%S] = try {\n", info.name)
+        body.add("edges[%S] = try {\n", info.publicName)
         body.add(
             "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
             READ_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
@@ -737,7 +741,7 @@ internal fun buildEagerExplainBlock(
         // Direct edge: single query with IN on the join column.
         // hasMany/hasOne: IN on targetColumn (FK on target side).
         // belongsTo: IN on targetColumn ("id" on target side).
-        body.add("edges[%S] = try {\n", info.name)
+        body.add("edges[%S] = try {\n", info.publicName)
         body.add(
             "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
             READ_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,

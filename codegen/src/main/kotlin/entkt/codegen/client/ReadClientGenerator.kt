@@ -12,7 +12,6 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.SchemaInput
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.pluralize
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 
@@ -242,7 +241,7 @@ internal class ReadClientGenerator(
                     "no-writes guarantee.",
             )
         for (input in sorted) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             builder.addProperty(
                 PropertySpec.builder(propName, ClassName(packageName, "${input.name}ReadRepo"))
                     .addModifiers(KModifier.ABSTRACT)
@@ -310,7 +309,7 @@ internal class ReadClientGenerator(
                 TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
             )
         for (input in sorted) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             ctor.addParameter("${propName}Host", ClassName(packageName, "${input.name}ReadSurface"))
         }
         builder.primaryConstructor(ctor.build())
@@ -353,7 +352,7 @@ internal class ReadClientGenerator(
                 .build()
         )
         for (input in sorted) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             val repoClass = ClassName(packageName, "${input.name}ReadRepo")
             builder.addProperty(
                 // One override satisfies both supertypes: EntReadClient's
@@ -369,7 +368,7 @@ internal class ReadClientGenerator(
 
         val init = CodeBlock.builder()
         for (input in sorted) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             init.addStatement("%L.runtime = this", propName)
         }
         builder.addInitializerBlock(init.build())

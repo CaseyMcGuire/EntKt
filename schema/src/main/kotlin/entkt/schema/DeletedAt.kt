@@ -7,9 +7,9 @@ package entkt.schema
  * This is the schema half of the soft-delete convention
  * (see `docs/possible-features/schema/soft-delete.md`):
  *
- *   class Post : EntSchema("posts") {
+ *   class Post : EntSchema("posts", clientName = "posts") {
  *       val softDelete = include(::DeletedAt)
- *       val title = string("title")
+ *       val title by string("title")
  *   }
  *
  * `deletedAt` is a normal nullable timestamp field — it appears on
@@ -28,5 +28,5 @@ package entkt.schema
  * rows for admin review") are hot enough to need one.
  */
 class DeletedAt(scope: EntMixin.Scope) : EntMixin(scope) {
-    val deletedAt = time("deleted_at").nullable()
+    val deletedAt by time("deleted_at").nullable()
 }

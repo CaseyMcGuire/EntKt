@@ -55,6 +55,14 @@ internal data class GeneratedMember(
  */
 internal enum class GeneratedMemberKind {
     PROPERTY,
+
+    /**
+     * A `var` on a generated mutation surface. Tracked apart from
+     * [PROPERTY] because a settable property also occupies a JVM
+     * *setter* signature, and two source-distinct names can map onto one
+     * — see [jvmSetterName].
+     */
+    MUTABLE_PROPERTY,
     FUNCTION,
     NESTED_TYPE,
     CONSTRUCTOR_PARAMETER,
@@ -121,8 +129,7 @@ internal class GeneratedMemberManifest(val schema: String) {
      * tests depend on this).
      */
     fun findCollisions(): List<MemberCollision> {
-        val groups = entries.groupBy { it.artifact to it.name }
-        return groups
+        val byName = entries.groupBy { it.artifact to it.name }
             .filter { (_, members) -> members.size > 1 }
             .map { (key, members) ->
                 MemberCollision(
@@ -132,6 +139,27 @@ internal class GeneratedMemberManifest(val schema: String) {
                     sources = members,
                 )
             }
+
+        // Source-distinct names can still collide on the JVM. Kotlin maps
+        // `var isActive` to `setActive(...)` and `var active` to the same
+        // signature, so a schema declaring both compiles to a platform
+        // declaration clash inside generated source. Only settable
+        // members are affected: the getters (`isActive()` / `getActive()`)
+        // stay distinct.
+        val bySetter = entries
+            .filter { it.kind == GeneratedMemberKind.MUTABLE_PROPERTY }
+            .groupBy { it.artifact to jvmSetterName(it.name) }
+            .filter { (_, members) -> members.map { it.name }.distinct().size > 1 }
+            .map { (key, members) ->
+                MemberCollision(
+                    schema = schema,
+                    artifact = key.first,
+                    name = "${key.second}(…)",
+                    sources = members,
+                )
+            }
+
+        return (byName + bySetter)
             .sortedWith(compareBy({ it.artifact }, { it.name }))
     }
 
@@ -203,4 +231,25 @@ internal fun runMemberCollisionCheck(
         collisions.addAll(manifest.findCollisions())
     }
     return collisions
+}
+
+/**
+ * The JVM setter name Kotlin generates for a property.
+ *
+ * A property whose name begins with `is` followed by a non-lowercase
+ * character keeps that name as its getter and drops the prefix for its
+ * setter, so `isActive` sets through `setActive`. Every other name gets
+ * the usual `set` + capitalized form. The rule is independent of the
+ * property's type — `var isActive: String` clashes with
+ * `var active: String` exactly as the Boolean pair does.
+ */
+internal fun jvmSetterName(propertyName: String): String {
+    val usesIsPrefix = propertyName.length > 2 &&
+        propertyName.startsWith("is") &&
+        !propertyName[2].isLowerCase()
+    return if (usesIsPrefix) {
+        "set" + propertyName.substring(2)
+    } else {
+        "set" + propertyName.replaceFirstChar { it.uppercaseChar() }
+    }
 }

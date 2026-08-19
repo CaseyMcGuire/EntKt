@@ -20,14 +20,14 @@ For the schema DSL reference (modifiers, syntax), see [Schema](02-schema.md#edge
 A one-to-many relationship is always declared from both sides:
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
-    val posts = hasMany<Post>("posts")     // "one" side — no column added to users table
+    val posts by hasMany<Post>("posts")     // "one" side — no column added to users table
 }
 
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
-    val author = belongsTo<User>("author")  // "many" side — adds author_id column to posts table
+    val author by belongsTo<User>("author")  // "many" side — adds author_id column to posts table
         .inverse(User::posts)               // links this edge to User.posts
                                             // required-by-default — author_id is NOT NULL
 }
@@ -47,10 +47,10 @@ The FK column name defaults to `{edge_name}_id` — so `belongsTo<User>("author"
 creates `author_id`. Override it with `.field()`:
 
 ```kotlin
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
-    val writerId = long("writer_id")
-    val author = belongsTo<User>("author").inverse(User::posts).field(writerId)
+    val writerId by long("writer_id")
+    val author by belongsTo<User>("author").inverse(User::posts).field(writerId)
 }
 ```
 
@@ -112,21 +112,21 @@ comparison):
   [Link-table M2M mutators](#link-table-m2m-mutators) below).
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
-    val groups = manyToMany<Group>("groups")
+    val groups by manyToMany<Group>("groups")
         .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
-class Group : EntSchema("groups") {
+class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.long()
-    val name = string("name")
+    val name by string("name")
 }
 
-class UserGroup : EntSchema("user_groups") {
+class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     override fun id() = EntId.long()
-    val user = belongsTo<User>("user")
-    val group = belongsTo<Group>("group")
+    val user by belongsTo<User>("user")
+    val group by belongsTo<Group>("group")
 }
 ```
 
@@ -253,16 +253,16 @@ the junction has two edges to the same schema. Use `sourceEdge` and
 `targetEdge` to tell entkt which junction edge corresponds to which side:
 
 ```kotlin
-class Person : EntSchema("people") {
+class Person : EntSchema("people", clientName = "persons") {
     override fun id() = EntId.long()
-    val friends = manyToMany<Person>("friends")
+    val friends by manyToMany<Person>("friends")
         .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
-class Friendship : EntSchema("friendships") {
+class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.long()
-    val user = belongsTo<Person>("user")
-    val friend = belongsTo<Person>("friend")
+    val user by belongsTo<Person>("user")
+    val friend by belongsTo<Person>("friend")
 }
 ```
 
@@ -275,17 +275,17 @@ tell entkt which junction FK is the source and which is the target.
 edges to the same target type for different purposes:
 
 ```kotlin
-class Project : EntSchema("projects") {
+class Project : EntSchema("projects", clientName = "projects") {
     override fun id() = EntId.long()
-    val assignees = manyToMany<Pet>("assignees")
+    val assignees by manyToMany<Pet>("assignees")
         .throughEntity<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
 }
 
-class ProjectAssignment : EntSchema("project_assignments") {
+class ProjectAssignment : EntSchema("project_assignments", clientName = "projectAssignments") {
     override fun id() = EntId.long()
-    val project = belongsTo<Project>("project")
-    val assignee = belongsTo<Pet>("assignee")
-    val reviewer = belongsTo<Pet>("reviewer").nullable()   // different role, same target type
+    val project by belongsTo<Project>("project")
+    val assignee by belongsTo<Pet>("assignee")
+    val reviewer by belongsTo<Pet>("reviewer").nullable()   // different role, same target type
 }
 ```
 

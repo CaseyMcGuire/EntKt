@@ -1,5 +1,6 @@
 package entkt.codegen.mutation
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
@@ -26,7 +27,6 @@ import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.stagingFieldName
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
@@ -274,7 +274,7 @@ internal class UpdateGenerator(
                     builder.addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
                 }
             }
-            .addFunction(buildExecuteSaveFunction(schemaName, allFields, edgeFks, allEdgeFks, helperEligibleEdges))
+            .addFunction(buildExecuteSaveFunction(schemaName, schema.clientName, allFields, edgeFks, allEdgeFks, helperEligibleEdges))
             .addFunction(buildSaveWrapperFunction())
             .addFunction(buildSaveAndLoadWrapperFunction(schemaName))
             .addFunction(buildValidationFailedHelper(schemaName, "UPDATE"))
@@ -300,7 +300,7 @@ internal class UpdateGenerator(
     }
 
     private fun buildProperty(field: Field): PropertySpec {
-        val prop = toCamelCase(field.name)
+        val prop = field.apiName
         val typeName = field.resolvedTypeName().copy(nullable = true)
         val builder = PropertySpec.builder(prop, typeName)
             .addModifiers(KModifier.OVERRIDE)
@@ -368,7 +368,7 @@ internal class UpdateGenerator(
                         .addStatement(
                             "return %L ?: throw IllegalStateException(%S)",
                             stagingName,
-                            "${fk.edgeName} is required",
+                            "${fk.propertyName} is required",
                         )
                         .build(),
                 )
@@ -382,7 +382,7 @@ internal class UpdateGenerator(
                         )
                         .addStatement(
                             "requireNotNull(value) { %S }",
-                            "${fk.edgeName} is required",
+                            "${fk.propertyName} is required",
                         )
                         .addStatement("%L = value", stagingName)
                         .addStatement("dirtyFields.add(%S)", fk.propertyName)
@@ -457,7 +457,7 @@ internal class UpdateGenerator(
             .addSuperinterface(updateMutationViewClass)
         // Forward each Mutation field/FK property to the outer builder.
         for (field in mutableFields) {
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             val typeName = field.resolvedTypeName().copy(nullable = true)
             adapter.addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
         }
@@ -468,7 +468,7 @@ internal class UpdateGenerator(
         }
         // unset{Field}() overrides — the whole point of the view.
         for (field in mutableFields) {
-            adapter.addFunction(buildAdapterUnsetFunction(updateClassName, toCamelCase(field.name)))
+            adapter.addFunction(buildAdapterUnsetFunction(updateClassName, field.apiName))
         }
         for (fk in edgeFks) {
             adapter.addFunction(buildAdapterUnsetFunction(updateClassName, fk.propertyName))
@@ -531,7 +531,7 @@ internal class UpdateGenerator(
         val adapter = TypeSpec.anonymousClassBuilder()
             .addSuperinterface(mutationClass)
         for (field in mutableFields) {
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             val typeName = field.resolvedTypeName().copy(nullable = true)
             adapter.addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
         }
@@ -606,7 +606,7 @@ internal class UpdateGenerator(
         val code = CodeBlock.builder()
         code.add("val snapshot = %T(\n", patchClass)
         for (field in mutableFields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             if (field.nullable) {
                 // Nullable: Set(this.foo) — Set(null) is an explicit clear.
                 code.add(
@@ -676,11 +676,11 @@ internal class UpdateGenerator(
             .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
         for (field in mutableFields) {
             if (field.nullable) continue
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             builder.addStatement(
                 "if (%S in dirtyFields && this.%L == null) return·listOf(%T(%S, field = %S))",
                 prop, prop,
-                MUTATION_VALIDATION_VIOLATION, "${field.name} is required", field.name,
+                MUTATION_VALIDATION_VIOLATION, "$prop is required", prop,
             )
         }
         for (fk in edgeFks) {
@@ -692,7 +692,7 @@ internal class UpdateGenerator(
             builder.addStatement(
                 "if (%S in dirtyFields && this.%L == null) return·listOf(%T(%S, field = %S))",
                 fk.propertyName, stagingName,
-                MUTATION_VALIDATION_VIOLATION, "${fk.edgeName} is required", fk.columnName,
+                MUTATION_VALIDATION_VIOLATION, "${fk.propertyName} is required", fk.propertyName,
             )
         }
         builder.addStatement("return emptyList()")
@@ -760,13 +760,13 @@ internal class UpdateGenerator(
         val listOfId = LIST.parameterizedBy(idType)
         val mutableListOfId = MUTABLE_LIST.parameterizedBy(idType)
         val pendingEdgeOpsParamed = PENDING_EDGE_OPS.parameterizedBy(idType)
-        val mixedModeMessage = "edge '${edge.edgeName}': cannot mix replacement (set) and " +
+        val mixedModeMessage = "edge '${edge.mutatorPropertyName}': cannot mix replacement (set) and " +
             "delta (add/remove) operations in one mutation"
-        val sameIdAddAfterRemoveMessage = "edge '${edge.edgeName}': cannot add(id) after " +
+        val sameIdAddAfterRemoveMessage = "edge '${edge.mutatorPropertyName}': cannot add(id) after " +
             "remove(id) for the same id in one mutation"
-        val sameIdRemoveAfterAddMessage = "edge '${edge.edgeName}': cannot remove(id) after " +
+        val sameIdRemoveAfterAddMessage = "edge '${edge.mutatorPropertyName}': cannot remove(id) after " +
             "add(id) for the same id in one mutation"
-        val sameIdOverlapMessage = "edge '${edge.edgeName}': delta add/remove sets overlap on " +
+        val sameIdOverlapMessage = "edge '${edge.mutatorPropertyName}': delta add/remove sets overlap on " +
             "one or more ids — `add(x)` and `remove(x)` for the same x must not coexist"
 
         return TypeSpec.classBuilder(edge.mutatorClassSimpleName)
@@ -781,7 +781,7 @@ internal class UpdateGenerator(
                     "codegen uses the `internal` accessor methods (`hasOps`,\n" +
                     "`snapshotOps`, `validateInvariants`) instead of reaching into the\n" +
                     "raw lists.",
-                edge.edgeName,
+                edge.mutatorPropertyName,
             )
             .primaryConstructor(
                 FunSpec.constructorBuilder()
@@ -1165,6 +1165,7 @@ internal class UpdateGenerator(
      */
     private fun buildExecuteSaveFunction(
         schemaName: String,
+        clientName: String,
         allFields: List<Field>,
         // Mutable-only — the update builder's writable surface. Used
         // everywhere except candidate construction.
@@ -1177,7 +1178,7 @@ internal class UpdateGenerator(
         // capability + defense-in-depth mixed-mode) before the
         // owner-row read, plus the junction write phase.
         helperEligibleEdges: List<HelperEligibleM2M>,
-    ): FunSpec = UpdateSaveEmitter(packageName, schemaName, allFields, edgeFks, allEdgeFks, helperEligibleEdges).build()
+    ): FunSpec = UpdateSaveEmitter(packageName, schemaName, clientName, allFields, edgeFks, allEdgeFks, helperEligibleEdges).build()
 
     /**
      * `save(): MutationResult<Unit>` — acknowledgement-only projection

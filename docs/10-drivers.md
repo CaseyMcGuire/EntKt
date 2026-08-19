@@ -256,14 +256,14 @@ already exist, which is impossible to arrange for mutually-referencing
 entities:
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
-    val pinnedPost = belongsTo<Post>("pinned_post").nullable()
+    val pinnedPost by belongsTo<Post>("pinned_post").nullable()
 }
 
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
-    val author = belongsTo<User>("author")
+    val author by belongsTo<User>("author")
 }
 ```
 

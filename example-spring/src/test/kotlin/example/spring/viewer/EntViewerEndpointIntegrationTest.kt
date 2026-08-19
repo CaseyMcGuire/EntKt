@@ -72,14 +72,14 @@ class EntViewerEndpointIntegrationTest {
         assertTrue("EntKt Viewer" in home)
         assertTrue("Post" in home)
 
-        mockMvc.get("/_ent/entities/user") { header("X-User-Id", userId.toString()) }
+        mockMvc.get("/_ent/entities/users") { header("X-User-Id", userId.toString()) }
             .andExpect { status { isOk() } }
     }
 
     @Test
     fun `writes and unknown entities are refused`() {
         val userId = createUser("viewer-admin2")
-        mockMvc.post("/_ent/entities/user") { header("X-User-Id", userId.toString()) }
+        mockMvc.post("/_ent/entities/users") { header("X-User-Id", userId.toString()) }
             .andExpect { status { isMethodNotAllowed() } }
         mockMvc.get("/_ent/entities/ghost") { header("X-User-Id", userId.toString()) }
             .andExpect { status { isNotFound() } }

@@ -1,5 +1,6 @@
 package entkt.codegen.mutation
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -12,8 +13,6 @@ import entkt.codegen.columnName
 import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
-import entkt.codegen.pluralize
-import entkt.codegen.toCamelCase
 import entkt.schema.Field
 import entkt.schema.FieldType
 import entkt.schema.UpdateDefault
@@ -54,6 +53,7 @@ private val UUID_CLASS = ClassName("java.util", "UUID")
 internal class UpdateSaveEmitter(
     private val packageName: String,
     private val schemaName: String,
+    private val clientName: String,
     private val allFields: List<Field>,
     private val edgeFks: List<EdgeFk>,
     private val allEdgeFks: List<EdgeFk>,
@@ -63,7 +63,7 @@ internal class UpdateSaveEmitter(
     private val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
     private val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
-    private val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+    private val repoPropName = clientName
     private val mutableFields = allFields.filter { !it.immutable }
 
     private val builder = FunSpec.builder("executeSave")
@@ -495,7 +495,7 @@ internal class UpdateSaveEmitter(
         // ---- Build the database write set from the effective patch. ----
         builder.addStatement("val values = mutableMapOf<String, Any?>()")
         for (field in mutableFields) {
-            val prop = toCamelCase(field.name)
+            val prop = field.apiName
             val col = field.columnName
             // .name for enums needs a null-aware call when the enum is nullable.
             if (field.type == FieldType.ENUM && field.nullable) {
@@ -512,11 +512,11 @@ internal class UpdateSaveEmitter(
                 // Validate the vector dimension on update (field-named; the
                 // driver re-checks defensively at bind).
                 val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
-                    ?: error("pgvector field '${field.name}' missing dimensions metadata")
+                    ?: error("pgvector field '${field.apiName}' missing dimensions metadata")
                 val opt = if (field.nullable) "?" else ""
                 builder.addCode(
                     "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value$opt.also { vec -> require(vec.dimensions == %L) { %S } } }\n",
-                    prop, FIELD_PATCH, col, dims, "${field.name} expects vector($dims)",
+                    prop, FIELD_PATCH, col, dims, "${field.apiName} expects vector($dims)",
                 )
             } else {
                 builder.addCode(
@@ -868,7 +868,7 @@ private fun emitEffectivePatchConstruction(
     val code = CodeBlock.builder()
     code.add("val effectivePatch = %T(\n", patchClass)
     for (field in mutableFields) {
-        val prop = toCamelCase(field.name)
+        val prop = field.apiName
         if (field.updateDefault != null) {
             code.add(
                 "  %L = if (requestedPatch.%L is %T.Set) requestedPatch.%L else %T.Set(%L),\n",
@@ -892,18 +892,18 @@ private fun emitEffectivePatchConstruction(
  * don't validate null on nullable fields).
  */
 private fun emitPatchEntryValidation(builder: FunSpec.Builder, schemaName: String, field: Field) {
-    val prop = toCamelCase(field.name)
+    val prop = field.apiName
     val localName = "${prop}_eff"
     builder.addStatement("val %L = effectivePatch.%L", localName, prop)
     builder.beginControlFlow("if (%L is %T.Set)", localName, FIELD_PATCH)
     if (field.nullable) {
         builder.addStatement("val %L_v = %L.value", prop, localName)
         builder.beginControlFlow("if (%L_v != null)", prop)
-        emitFieldValidation(builder, schemaName, "${prop}_v", field.name, field.validators, nullable = false)
+        emitFieldValidation(builder, schemaName, "${prop}_v", prop, field.validators, nullable = false)
         builder.endControlFlow()
     } else {
         builder.addStatement("val %L_v = %L.value", prop, localName)
-        emitFieldValidation(builder, schemaName, "${prop}_v", field.name, field.validators, nullable = false)
+        emitFieldValidation(builder, schemaName, "${prop}_v", prop, field.validators, nullable = false)
     }
     builder.endControlFlow()
 }
@@ -922,11 +922,11 @@ private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, schemaName: Str
     if (!fk.required) {
         builder.addStatement("val %L_v = %L.value", prop, localName)
         builder.beginControlFlow("if (%L_v != null)", prop)
-        emitFieldValidation(builder, schemaName, "${prop}_v", fk.columnName, fk.validators, nullable = false)
+        emitFieldValidation(builder, schemaName, "${prop}_v", fk.propertyName, fk.validators, nullable = false)
         builder.endControlFlow()
     } else {
         builder.addStatement("val %L_v = %L.value", prop, localName)
-        emitFieldValidation(builder, schemaName, "${prop}_v", fk.columnName, fk.validators, nullable = false)
+        emitFieldValidation(builder, schemaName, "${prop}_v", fk.propertyName, fk.validators, nullable = false)
     }
     builder.endControlFlow()
 }
@@ -946,7 +946,7 @@ private fun emitCandidateConstruction(
     val code = CodeBlock.builder()
     code.add("val candidate = %T(\n", candidateClass)
     for (field in allFields) {
-        val prop = toCamelCase(field.name)
+        val prop = field.apiName
         if (field.immutable) {
             code.add("  %L = entity.%L,\n", prop, prop)
         } else {
@@ -976,7 +976,7 @@ private fun updateDefaultCodeBlock(field: Field): CodeBlock {
     return when (field.updateDefault!!) {
         is UpdateDefault.Now -> {
             require(field.type == FieldType.TIME) {
-                "Field '${field.name}' has UpdateDefault.Now but type is ${field.type} — updateDefault is only valid on TIME fields"
+                "Field '${field.apiName}' has UpdateDefault.Now but type is ${field.type} — updateDefault is only valid on TIME fields"
             }
             CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
         }

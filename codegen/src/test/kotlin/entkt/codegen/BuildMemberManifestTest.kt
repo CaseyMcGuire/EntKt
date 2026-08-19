@@ -18,22 +18,22 @@ import kotlin.test.assertTrue
 class BuildMemberManifestTest {
 
     /** Minimal schema with one mutable scalar field. */
-    private class Notebook : EntSchema("notebooks") {
+    private class Notebook : EntSchema("notebooks", clientName = "notebooks") {
         override fun id() = EntId.long()
-        val title = string("title")
+        val title by string("title")
     }
 
     /** Schema with mutable + immutable scalars + an FK. */
-    private class Article : EntSchema("articles") {
+    private class Article : EntSchema("articles", clientName = "articles") {
         override fun id() = EntId.long()
-        val createdAt = time("created_at").immutable()
-        val title = string("title")
-        val author = belongsTo<Author>("author")
+        val createdAt by time("created_at").immutable()
+        val title by string("title")
+        val author by belongsTo<Author>("author")
     }
 
-    private class Author : EntSchema("authors") {
+    private class Author : EntSchema("authors", clientName = "authors") {
         override fun id() = EntId.long()
-        val name = string("name")
+        val name by string("name")
     }
 
     private fun finalized(vararg schemas: EntSchema): Map<EntSchema, String> {

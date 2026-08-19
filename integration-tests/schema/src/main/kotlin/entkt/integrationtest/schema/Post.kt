@@ -11,11 +11,11 @@ import entkt.schema.EntSchema
  * junction id). Its symmetric reverse `Tag.posts` is declared on [Tag]
  * (symmetric link-table writes) — both orientations are writable.
  */
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val title = string("title")
+    val title by string("title")
 
-    val tags = manyToMany<Tag>("tags")
+    val tags by manyToMany<Tag>("tags")
         .throughLink<PostTag>(PostTag::post, PostTag::tag)
 }

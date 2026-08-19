@@ -1,6 +1,6 @@
 package entkt.codegen.metadata
 
-import entkt.codegen.toCamelCase
+import entkt.codegen.apiName
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.Field
@@ -14,11 +14,18 @@ import entkt.schema.Validator
  * (`edge_name_id` / `edgeNameId`). For field-backed edges
  * (`belongsTo(...).field(handle)`) the column comes from the
  * user-declared field, and the property is the camelCased column name.
- * True declaration-name capture (using the Kotlin `val` name when it
+ * The generated FK API name (the Kotlin `val` name when the edge
  * diverges from the column name) is still deferred.
  */
 data class EdgeFk(
+    /** Storage edge name — the driver's edge-lookup key. */
     val edgeName: String,
+    /**
+     * The edge's Kotlin declaration name, for caller-facing text. The
+     * FK's own API name is [propertyName]; this is the relationship the
+     * caller wrote, e.g. `curator` for the FK `curatorId`.
+     */
+    val edgeApiName: String,
     val propertyName: String,
     val columnName: String,
     val targetName: String,
@@ -101,7 +108,7 @@ internal fun assignedFieldName(propertyName: String): String = "_${propertyName}
  */
 internal fun fkPropertyKdoc(fk: EdgeFk): String {
     val baseline = """
-        |Resolved FK for the `${fk.edgeName}` relationship → `${fk.targetTable}` row.
+        |Resolved FK for the `${fk.edgeApiName}` relationship → `${fk.targetTable}` row.
         |
         |This is an id-only surface: target rows are not auto-loaded, and target LOAD
         |privacy is not evaluated when the value is read or written. Relationship-write
@@ -132,23 +139,20 @@ fun computeEdgeFks(
             val backingColumn = belongsTo.field
             if (backingColumn != null) {
                 val backingField = fieldsByName[backingColumn]
-                // declaration-name capture: derive the generated FK API name from the
-                // backing field's Kotlin val name when capture
-                // populated it, falling back to toCamelCase(column)
-                // for backing fields whose declaration site can't
-                // be captured (computed getter / delegated /
-                // inherited / mixin-backed / pre-finalize). The
-                // fallback preserves today's behavior for those
-                // cases so no schema breaks silently — but the
-                // diagnostic refuses to compile when a
-                // belongsTo(...).field(handle) backing has null
-                // declarationName, so the fallback path is only
-                // ever reached for non-field-backed edges or for
-                // schemas the diagnostic rejects up-front.
-                val fkPropertyName = backingField?.declarationName
-                    ?: toCamelCase(backingColumn)
+                // A field-backed FK takes its generated API name from the
+                // backing field's Kotlin declaration, never from the
+                // column. There is no fallback: finalization guarantees
+                // every registered field carries a declaration name, so a
+                // missing backing field here means the edge references a
+                // column no field declares.
+                val fkPropertyName = backingField?.apiName
+                    ?: error(
+                        "Edge '${edge.apiName}' (storage '${edge.name}'): .field(...) references column '$backingColumn', " +
+                            "which no field on this schema declares.",
+                    )
                 EdgeFk(
                     edgeName = edge.name,
+                    edgeApiName = edge.apiName,
                     propertyName = fkPropertyName,
                     columnName = backingColumn,
                     targetName = targetName,
@@ -167,7 +171,8 @@ fun computeEdgeFks(
             } else {
                 EdgeFk(
                     edgeName = edge.name,
-                    propertyName = "${toCamelCase(edge.name)}Id",
+                    edgeApiName = edge.apiName,
+                    propertyName = "${edge.apiName}Id",
                     columnName = "${edge.name}_id",
                     targetName = targetName,
                     targetTable = edge.target.tableName,

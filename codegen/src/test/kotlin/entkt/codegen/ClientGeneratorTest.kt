@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import entkt.codegen.client.ClientGenerator
+import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test
@@ -20,8 +21,8 @@ class ClientGeneratorTest {
         val user = User()
         finalize(car, user)
         return listOf(
-            SchemaInput("Car", car),
-            SchemaInput("User", user),
+            SchemaInput(car),
+            SchemaInput(user),
         )
     }
 
@@ -517,12 +518,36 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `pluralize handles the cases the example schemas exercise`() {
-        assertEquals("users", pluralize("user"))
-        assertEquals("posts", pluralize("post"))
-        assertEquals("tags", pluralize("tag"))
-        assertEquals("categories", pluralize("category"))
-        assertEquals("boxes", pluralize("box"))
-        assertEquals("dishes", pluralize("dish"))
+    fun `client properties are the declared clientName, verbatim`() {
+        // No inflection step exists: whatever the schema declares is what
+        // the client exposes, including irregular and uncountable terms
+        // that no pluralizer would produce.
+        class Person : EntSchema("people", clientName = "people") {
+            override fun id() = EntId.long()
+            val name by string("name")
+        }
+        class NewsItem : EntSchema("news_items", clientName = "news") {
+            override fun id() = EntId.long()
+            val headline by string("headline")
+        }
+        class Audit : EntSchema("audit_log", clientName = "audit") {
+            override fun id() = EntId.long()
+            val action by string("action")
+        }
+        val schemas = listOf(Person(), NewsItem(), Audit())
+        val registry = schemas.associateBy { it::class }
+        schemas.forEach { it.finalize(registry) }
+
+        val output = ClientGenerator("com.example.ent")
+            .generate(schemas.map { SchemaInput(it) })
+            .toString()
+
+        for (prop in listOf("people", "news", "audit")) {
+            assert(output.contains("val $prop:")) { "expected client property '$prop'\n$output" }
+        }
+        // The pluralizer's output for these class names must not appear.
+        for (absent in listOf("persons", "newsItems", "audits")) {
+            assert(!output.contains("val $absent:")) { "unexpected inflected property '$absent'\n$output" }
+        }
     }
 }

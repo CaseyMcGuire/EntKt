@@ -31,9 +31,16 @@ data class EntitySchema(
      */
     val columns: List<ColumnMetadata>,
     /**
-     * Outgoing edges keyed by the *local* edge name as declared on this
-     * entity (so `User.edges["posts"]` describes how to walk to Post
-     * rows). Each entry is the join recipe — see [EdgeMetadata].
+     * Outgoing edges keyed by the edge's **storage** name — the string
+     * passed to `hasMany(...)` / `belongsTo(...)`, not the Kotlin
+     * property it was declared as. For
+     * `val outgoing by hasMany<Friendship>("sent_requests")` the key is
+     * `"sent_requests"`; `outgoing` names the generated API and never
+     * appears here.
+     *
+     * Driver authors: predicates reaching a driver carry the storage
+     * name too, so a lookup with the value out of a `Predicate` matches.
+     * Each entry is the join recipe — see [EdgeMetadata].
      */
     val edges: Map<String, EdgeMetadata>,
     /**

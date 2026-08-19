@@ -6,6 +6,19 @@ data class Edge(
     val kind: EdgeKind,
     val ref: String? = null,
     val comment: String? = null,
+    /**
+     * Kotlin `val` name of the delegated schema property that declared
+     * this edge — the name every generated edge API uses. [name] stays
+     * the storage identifier used for joins, edge lookup, and migration
+     * identity; the two are independent.
+     *
+     * Bound by the edge builder's `provideDelegate` during schema
+     * construction. Nullable only for a builder that was registered but
+     * never bound, which schema finalization rejects.
+     *
+     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     */
+    val declarationName: String? = null,
 )
 
 /**

@@ -19,7 +19,6 @@ import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.SchemaInput
 import entkt.codegen.metadata.ENTITY_SCHEMA
-import entkt.codegen.pluralize
 
 private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -466,7 +465,7 @@ internal class ClientGenerator(
 
         for (input in schemas) {
             val entityHooksClass = ClassName(packageName, "${input.name}Hooks")
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
 
             // Internal property holding the entity hooks
             builder.addProperty(
@@ -599,16 +598,16 @@ internal class ClientGenerator(
     ): CodeBlock {
         val block = CodeBlock.builder()
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             block.addStatement("%L.attachClientForInternalUse(this)", propName)
         }
         block.addStatement("val cfg = %T().apply(config)", configClass)
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             block.addStatement("%L.applyHooks(cfg.hooksConfig.%L)", propName, propName)
         }
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             block.addStatement("%L.applyPrivacy(cfg.policiesConfig.%LPrivacyConfig)", propName, propName)
             block.addStatement("%L.applyValidation(cfg.policiesConfig.%LValidationConfig)", propName, propName)
         }
@@ -650,7 +649,7 @@ internal class ClientGenerator(
         body.addStatement("tx.transactionExecutionGuard = this.transactionExecutionGuard")
         body.addStatement("tx.transactionExecutionToken = executionToken")
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             body.addStatement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
             body.addStatement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
             body.addStatement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
@@ -727,7 +726,7 @@ internal class ClientGenerator(
             )
 
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             val repoClass = ClassName(packageName, "${input.name}Repo")
             builder.addProperty(
                 PropertySpec.builder(propName, repoClass)
@@ -815,7 +814,7 @@ internal class ClientGenerator(
             )
 
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             val repoClass = ClassName(packageName, "${input.name}Repo")
             builder.addProperty(
                 PropertySpec.builder(propName, repoClass)
@@ -862,7 +861,7 @@ internal class ClientGenerator(
             )
 
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             val repoClass = ClassName(packageName, "${input.name}Repo")
             builder.addProperty(
                 PropertySpec.builder(propName, repoClass)
@@ -958,7 +957,7 @@ internal class ClientGenerator(
         // Per-entity DSL methods: `posts(interceptor, name = "...")`.
         for (input in schemas) {
             val entityClass = ClassName(packageName, input.name)
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             val interceptorType = QUERY_INTERCEPTOR.parameterizedBy(entityClass)
             builder.addFunction(
                 FunSpec.builder(propName)
@@ -996,7 +995,7 @@ internal class ClientGenerator(
             val policyScopeClass = ClassName(packageName, "${input.name}PolicyScope")
             val privacyConfigClass = ClassName(packageName, "${input.name}PrivacyConfig")
             val validationConfigClass = ClassName(packageName, "${input.name}ValidationConfig")
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             val policyType = ENTITY_POLICY.parameterizedBy(entityClass, policyScopeClass)
 
             // Internal privacy config property
@@ -1045,7 +1044,7 @@ internal class ClientGenerator(
         body.addStatement("scoped.transactionExecutionToken = this.transactionExecutionToken")
         body.addStatement("scoped.entityInterceptors = this.entityInterceptors")
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             body.addStatement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
             body.addStatement("scoped.%L.copyPrivacyFrom(this.%L)", propName, propName)
             body.addStatement("scoped.%L.copyValidationFrom(this.%L)", propName, propName)
@@ -1105,7 +1104,7 @@ internal class ClientGenerator(
 
     private fun buildRepoProperty(input: SchemaInput): PropertySpec {
         val repoClass = ClassName(packageName, "${input.name}Repo")
-        val propertyName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+        val propertyName = input.clientName
         // Covariant override of EntReadRuntime's `${prop}: ${Entity}ReadSurface`
         // accessor — the repo IS the entity's read surface, narrowed to the
         // full repo type for application callers.
@@ -1142,7 +1141,7 @@ internal class ClientGenerator(
         body.add("  transactionExecutionGuard,\n")
         body.add("  transactionExecutionToken,\n")
         for (input in schemas) {
-            val propName = pluralize(input.name.replaceFirstChar { it.lowercase() })
+            val propName = input.clientName
             body.add("  %L,\n", propName)
         }
         body.add(")\n")

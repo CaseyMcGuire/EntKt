@@ -38,18 +38,18 @@ private fun countOccurrences(haystack: String, needle: String): Int =
 
 // ── Fixtures ──────────────────────────────────────────────────────────
 
-private class IdxAuthor : EntSchema("authors") {
+private class IdxAuthor : EntSchema("authors", clientName = "idxAuthors") {
     override fun id() = EntId.long()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class IdxPost : EntSchema("posts") {
+private class IdxPost : EntSchema("posts", clientName = "idxPosts") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val createdAt = time("created_at")
-    val sequence = long("sequence")
-    val status = string("status")
-    val author = belongsTo<IdxAuthor>("author")
+    val title by string("title")
+    val createdAt by time("created_at")
+    val sequence by long("sequence")
+    val status by string("status")
+    val author by belongsTo<IdxAuthor>("author")
 
     val byAuthorCreated = index("idx_posts_author_created", author.fk, createdAt)
     val byAuthorCreatedSeq = index("idx_posts_author_created_seq", author.fk, createdAt, sequence)
@@ -65,148 +65,148 @@ private fun postOutput(): String {
         .toString().flat()
 }
 
-private class IdxEmailUser : EntSchema("users") {
+private class IdxEmailUser : EntSchema("users", clientName = "idxEmailUsers") {
     override fun id() = EntId.long()
-    val email = string("email").unique()
+    val email by string("email").unique()
 }
 
-private class IdxNullableUnique : EntSchema("nuniq") {
+private class IdxNullableUnique : EntSchema("nuniq", clientName = "idxNullableUniques") {
     override fun id() = EntId.long()
-    val nickname = string("nickname").nullable().unique()
+    val nickname by string("nickname").nullable().unique()
 }
 
-private class IdxNullable : EntSchema("nul") {
+private class IdxNullable : EntSchema("nul", clientName = "idxNullables") {
     override fun id() = EntId.long()
-    val nickname = string("nickname").nullable()
+    val nickname by string("nickname").nullable()
     val byNick = index("idx_nul_nickname", nickname)
 }
 
-private class IdxFriendship : EntSchema("friendships") {
+private class IdxFriendship : EntSchema("friendships", clientName = "idxFriendships") {
     override fun id() = EntId.long()
-    val requesterId = long("requester_id")
-    val recipientId = long("recipient_id")
+    val requesterId by long("requester_id")
+    val recipientId by long("recipient_id")
     val byPair = index("idx_friend_pair", requesterId, recipientId).unique()
 }
 
-private class IdxFlags : EntSchema("flags") {
+private class IdxFlags : EntSchema("flags", clientName = "idxFlagses") {
     override fun id() = EntId.long()
-    val active = bool("active")
+    val active by bool("active")
     val byActive = index("idx_flags_active", active)
 }
 
-private class IdxBytes : EntSchema("blobs") {
+private class IdxBytes : EntSchema("blobs", clientName = "idxByteses") {
     override fun id() = EntId.long()
-    val data = bytes("data")
+    val data by bytes("data")
     val byData = index("idx_blob_data", data)
 }
 
-private class IdxVec : EntSchema("vecs") {
+private class IdxVec : EntSchema("vecs", clientName = "idxVecs") {
     override fun id() = EntId.long()
-    val embedding = postgresVector("embedding", dimensions = 8).nullable()
+    val embedding by postgresVector("embedding", dimensions = 8).nullable()
     val byEmb = postgresVectorIndex("idx_vec_emb_hnsw", embedding).hnsw(VectorMetric.Cosine)
 }
 
-private class IdxPlainVec : EntSchema("pvecs") {
+private class IdxPlainVec : EntSchema("pvecs", clientName = "idxPlainVecs") {
     override fun id() = EntId.long()
-    val embedding = postgresVector("embedding", dimensions = 8).nullable()
+    val embedding by postgresVector("embedding", dimensions = 8).nullable()
     val byEmb = index("idx_pvec_emb", embedding)
 }
 
 @Serializable
 private data class IdxMeta(val k: String)
 
-private class IdxJson : EntSchema("jsons") {
+private class IdxJson : EntSchema("jsons", clientName = "idxJsons") {
     override fun id() = EntId.long()
-    val meta = json("meta", IdxMeta::class)
+    val meta by json("meta", IdxMeta::class)
     val byMeta = index("idx_json_meta", meta)
 }
 
-private class IdxPartial : EntSchema("part") {
+private class IdxPartial : EntSchema("part", clientName = "idxPartials") {
     override fun id() = EntId.long()
-    val email = string("email")
+    val email by string("email")
     val byEmailLive = index("idx_part_email_live", email).where("deleted_at IS NULL")
 }
 
-private class IdxCollisionTarget : EntSchema("ctargets") {
+private class IdxCollisionTarget : EntSchema("ctargets", clientName = "idxCollisionTargets") {
     override fun id() = EntId.long()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class IdxCollision : EntSchema("collide") {
+private class IdxCollision : EntSchema("collide", clientName = "idxCollisions") {
     override fun id() = EntId.long()
-    // A field-backed FK whose captured declaration name is `userId`, and a
-    // distinct scalar column `user_id` that also camel-cases to `userId`.
-    // Two distinct columns → same helper name at the same stage.
-    val userId = long("user_fk")
-    val owner = belongsTo<IdxCollisionTarget>("owner").field(userId)
-    val otherUserId = long("user_id")
-    val byFk = index("idx_collide_fk", userId)
-    val byScalar = index("idx_collide_scalar", otherUserId)
+    // An implicit FK is named `${edgeDeclaration}Id`, so edge `owner`
+    // generates the helper property `ownerId` on column `owner_id`. The
+    // scalar below declares that same name on a different column, so two
+    // distinct columns reach the same helper name at the same stage.
+    val owner by belongsTo<IdxCollisionTarget>("owner")
+    val ownerId by long("owner_ref")
+    val byFk = index("idx_collide_fk", owner.fk)
+    val byScalar = index("idx_collide_scalar", ownerId)
 }
 
-private class IdxFbAuthor : EntSchema("fbauthors") {
+private class IdxFbAuthor : EntSchema("fbauthors", clientName = "idxFbAuthors") {
     override fun id() = EntId.long()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class IdxFbPost : EntSchema("fbposts") {
+private class IdxFbPost : EntSchema("fbposts", clientName = "idxFbPosts") {
     override fun id() = EntId.long()
-    val writer = long("author_id")
-    val author = belongsTo<IdxFbAuthor>("author").field(writer)
+    val writer by long("author_id")
+    val author by belongsTo<IdxFbAuthor>("author").field(writer)
     val byWriter = index("idx_fbposts_writer", writer)
 }
 
-private class IdxNoIndex : EntSchema("plain") {
+private class IdxNoIndex : EntSchema("plain", clientName = "idxNoIndexes") {
     override fun id() = EntId.long()
-    val name = string("name")
+    val name by string("name")
 }
 
 // Two distinct prefixes whose PascalCase joins both equal "AB...": the
 // equality stage for `createdAtRange` and the range terminal for
 // `createdAt` both want the nested class "AuthorIdCreatedAtRange".
-private class IdxRangeNameCollision : EntSchema("rnc") {
+private class IdxRangeNameCollision : EntSchema("rnc", clientName = "idxRangeNameCollisions") {
     override fun id() = EntId.long()
-    val authorId = long("author_id")
-    val createdAt = time("created_at")
-    val createdAtRange = time("created_at_range")
+    val authorId by long("author_id")
+    val createdAt by time("created_at")
+    val createdAtRange by time("created_at_range")
     val i1 = index("idx_rnc_created", authorId, createdAt)
     val i2 = index("idx_rnc_created_range", authorId, createdAtRange)
 }
 
 // Distinct prefixes (a_b, c) and (a, b_c) both join to "ABC".
-private class IdxPrefixCollision : EntSchema("pc") {
+private class IdxPrefixCollision : EntSchema("pc", clientName = "idxPrefixCollisions") {
     override fun id() = EntId.long()
-    val ab = long("a_b")
-    val c = long("c")
-    val a = long("a")
-    val bc = long("b_c")
-    val i1 = index("idx_pc_1", ab, c)
-    val i2 = index("idx_pc_2", a, bc)
+    val aB by long("a_b")
+    val c by long("c")
+    val a by long("a")
+    val bC by long("b_c")
+    val i1 = index("idx_pc_1", aB, c)
+    val i2 = index("idx_pc_2", a, bC)
 }
 
 // A comparable column named `query` as a non-leading indexed column: its
 // range overload `query { }` clashes with the stage's `query { }` terminal.
-private class IdxQueryColumn : EntSchema("qc") {
+private class IdxQueryColumn : EntSchema("qc", clientName = "idxQueryColumns") {
     override fun id() = EntId.long()
-    val authorId = long("author_id")
-    val q = long("query")
-    val i = index("idx_qc", authorId, q)
+    val authorId by long("author_id")
+    val query by long("query_col")
+    val i = index("idx_qc", authorId, query)
 }
 
 // A column whose property name is the reserved `value`, so the generated
 // equality parameter is suffixed to `valueValue`.
-private class IdxValueColumn : EntSchema("vc") {
+private class IdxValueColumn : EntSchema("vc", clientName = "idxValueColumns") {
     override fun id() = EntId.long()
-    val v = long("value")
-    val i = index("idx_vc", v)
+    val value by long("value_col")
+    val i = index("idx_vc", value)
 }
 
 // Composite index whose prefix column is nullable: helper parameters must
 // still be non-null at every stage.
-private class IdxNullableComposite : EntSchema("ncomp") {
+private class IdxNullableComposite : EntSchema("ncomp", clientName = "idxNullableComposites") {
     override fun id() = EntId.long()
-    val tenantId = long("tenant_id").nullable()
-    val name = string("name")
+    val tenantId by long("tenant_id").nullable()
+    val name by string("name")
     val byTenantName = index("idx_ncomp_tenant_name", tenantId, name)
 }
 
@@ -485,12 +485,12 @@ class IndexHelperGeneratorTest {
         // SchemaInspector.validate (and therefore explain, which validates
         // first) must surface the same collision codegen rejects, rather
         // than advertising helper paths for an invalid surface.
-        val result = SchemaInspector.validate(listOf(SchemaInput("Rnc", IdxRangeNameCollision())))
+        val result = SchemaInspector.validate(listOf(SchemaInput(IdxRangeNameCollision())))
         assertTrue(!result.valid, "expected validation to fail")
         assertTrue(result.errors.any { it.contains("collision") }, result.errors.toString())
 
         assertFailsWith<IllegalStateException> {
-            SchemaInspector.explain(listOf(SchemaInput("Rnc", IdxRangeNameCollision())))
+            SchemaInspector.explain(listOf(SchemaInput(IdxRangeNameCollision())))
         }
     }
 

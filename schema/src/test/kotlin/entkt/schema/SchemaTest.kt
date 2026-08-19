@@ -18,145 +18,145 @@ enum class TaskStatus { TODO, IN_PROGRESS, DONE }
 
 // Example schemas using the typed-handles API
 
-class Car : EntSchema("cars") {
+class Car : EntSchema("cars", clientName = "cars") {
     override fun id() = EntId.int()
-    val model = string("model")
-    val year = int("year")
-    val price = float("price").nullable()
+    val model by string("model")
+    val year by int("year")
+    val price by float("price").nullable()
 }
 
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.int()
-    val name = string("name").minLength(1).maxLength(100)
-    val age = int("age").nullable().positive()
-    val email = string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
-    val role = enum<Role>("role").default(Role.USER)
-    val active = bool("active").default(true)
-    val createdAt = time("created_at").immutable()
+    val name by string("name").minLength(1).maxLength(100)
+    val age by int("age").nullable().positive()
+    val email by string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
+    val role by enum<Role>("role").default(Role.USER)
+    val active by bool("active").default(true)
+    val createdAt by time("created_at").immutable()
 
-    val cars = hasMany<Car>("cars")
+    val cars by hasMany<Car>("cars")
 
     val byNameEmail = index("idx_name_email", name, email).unique()
     val byCreatedAt = index("idx_created_at", createdAt)
     val byEmailPartial = index("idx_email_partial", email).unique().where("active = true")
 }
 
-class Group : EntSchema("groups") {
+class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.int()
-    val name = string("name")
+    val name by string("name")
 
-    val users = manyToMany<User>("users")
+    val users by manyToMany<User>("users")
         .throughEntity<UserGroup>(UserGroup::group, UserGroup::user)
 }
 
-class UserGroup : EntSchema("user_groups") {
+class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     override fun id() = EntId.int()
-    val joinedAt = time("joined_at")
+    val joinedAt by time("joined_at")
 
-    val userId = int("user_id")
-    val groupId = int("group_id")
+    val userId by int("user_id")
+    val groupId by int("group_id")
 
-    val user = belongsTo<User>("user").field(userId)
-    val group = belongsTo<Group>("group").field(groupId)
+    val user by belongsTo<User>("user").field(userId)
+    val group by belongsTo<Group>("group").field(groupId)
 }
 
-class Task : EntSchema("tasks") {
+class Task : EntSchema("tasks", clientName = "tasks") {
     override fun id() = EntId.int()
-    val title = string("title")
-    val status = enum<TaskStatus>("status").default(TaskStatus.TODO)
+    val title by string("title")
+    val status by enum<TaskStatus>("status").default(TaskStatus.TODO)
 }
 
-class Company : EntSchema("companies") {
+class Company : EntSchema("companies", clientName = "companies") {
     override fun id() = EntId.int()
 
     val timestamps = include(::Timestamps)
     val softDelete = include { scope -> SoftDelete(scope, "idx_deleted_at") }
 
-    val name = string("name").unique()
+    val name by string("name").unique()
 
-    val employees = hasMany<User>("employees")
+    val employees by hasMany<User>("employees")
 }
 
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt = time("created_at").defaultNow().immutable()
-    val updatedAt = time("updated_at").defaultNow().updateDefaultNow()
+    val createdAt by time("created_at").defaultNow().immutable()
+    val updatedAt by time("updated_at").defaultNow().updateDefaultNow()
 }
 
 class SoftDelete(
     scope: EntMixin.Scope,
     private val indexName: String,
 ) : EntMixin(scope) {
-    val deletedAt = time("deleted_at").nullable()
+    val deletedAt by time("deleted_at").nullable()
     val byDeletedAt = index(indexName, deletedAt)
 }
 
-class PostWithMixins : EntSchema("posts") {
+class PostWithMixins : EntSchema("posts", clientName = "postWithMixinses") {
     override fun id() = EntId.long()
 
     val timestamps = include(::Timestamps)
     val softDelete = include { scope -> SoftDelete(scope, "idx_posts_deleted_at") }
 
-    val title = string("title")
+    val title by string("title")
     val byCreatedAt = index("idx_posts_created_at", timestamps.createdAt)
 }
 
-class NoteWithInitMixin : EntSchema("notes") {
+class NoteWithInitMixin : EntSchema("notes", clientName = "noteWithInitMixins") {
     override fun id() = EntId.long()
 
     init {
         include(::Timestamps)
     }
 
-    val body = text("body")
+    val body by text("body")
 }
 
 // Schemas for computed-getter detection tests (must be file-level for forward references)
 
-private class ComputedGetterTarget : EntSchema("targets") {
+private class ComputedGetterTarget : EntSchema("targets", clientName = "computedGetterTargets") {
     override fun id() = EntId.int()
     val items get() = hasMany<ComputedGetterSource>("items")
 }
 
-private class ComputedGetterSource : EntSchema("sources") {
+private class ComputedGetterSource : EntSchema("sources", clientName = "computedGetterSources") {
     override fun id() = EntId.int()
-    val target = belongsTo<ComputedGetterTarget>("target").inverse(ComputedGetterTarget::items)
+    val target by belongsTo<ComputedGetterTarget>("target").inverse(ComputedGetterTarget::items)
 }
 
-private class M2mSide : EntSchema("sides") {
+private class M2mSide : EntSchema("sides", clientName = "m2mSides") {
     override fun id() = EntId.int()
 }
 
-private class ComputedGetterJunction : EntSchema("junctions") {
+private class ComputedGetterJunction : EntSchema("junctions", clientName = "computedGetterJunctions") {
     override fun id() = EntId.int()
     val left get() = belongsTo<M2mSide>("left")
-    val right = belongsTo<M2mSide>("right")
+    val right by belongsTo<M2mSide>("right")
 }
 
-private class ComputedGetterOwner : EntSchema("owners") {
+private class ComputedGetterOwner : EntSchema("owners", clientName = "computedGetterOwners") {
     override fun id() = EntId.int()
-    val sides = manyToMany<M2mSide>("sides")
+    val sides by manyToMany<M2mSide>("sides")
         .throughEntity<ComputedGetterJunction>(ComputedGetterJunction::left, ComputedGetterJunction::right)
 }
 
 // Fixtures for ref-resolution validation in ManyToManyBuilder.resolve().
-private class M2mTargetA : EntSchema("a") {
+private class M2mTargetA : EntSchema("a", clientName = "m2mTargetAs") {
     override fun id() = EntId.int()
 }
-private class M2mTargetB : EntSchema("b") {
+private class M2mTargetB : EntSchema("b", clientName = "m2mTargetBs") {
     override fun id() = EntId.int()
 }
 
 // Junction whose two belongsTo edges both point at M2mTargetA.
 // Using either as sourceEdge from a non-A declaring schema triggers
 // the "not the declaring schema" check.
-private class BadSourceJunction : EntSchema("bad_source_junction") {
+private class BadSourceJunction : EntSchema("bad_source_junction", clientName = "badSourceJunctions") {
     override fun id() = EntId.int()
-    val first = belongsTo<M2mTargetA>("first")
-    val second = belongsTo<M2mTargetA>("second")
+    val first by belongsTo<M2mTargetA>("first")
+    val second by belongsTo<M2mTargetA>("second")
 }
-private class WrongSourceTargetOwner : EntSchema("wst_owner") {
+private class WrongSourceTargetOwner : EntSchema("wst_owner", clientName = "wrongSourceTargetOwners") {
     override fun id() = EntId.int()
-    val bs = manyToMany<M2mTargetB>("bs")
+    val bs by manyToMany<M2mTargetB>("bs")
         .throughEntity<BadSourceJunction>(BadSourceJunction::first, BadSourceJunction::second)
 }
 
@@ -164,24 +164,24 @@ private class WrongSourceTargetOwner : EntSchema("wst_owner") {
 // but targetEdge points at M2mTargetA — mismatched with the M2M's
 // declared <M2mTargetB>. Exercises the "not the M2M target" check
 // after the source-side check passes.
-private class WrongTargetTargetOwner : EntSchema("wtt_owner") {
+private class WrongTargetTargetOwner : EntSchema("wtt_owner", clientName = "wrongTargetTargetOwners") {
     override fun id() = EntId.int()
-    val bs = manyToMany<M2mTargetB>("bs")
+    val bs by manyToMany<M2mTargetB>("bs")
         .throughEntity<BadTargetJunction>(BadTargetJunction::owner, BadTargetJunction::wrongTarget)
 }
-private class BadTargetJunction : EntSchema("bad_target_junction") {
+private class BadTargetJunction : EntSchema("bad_target_junction", clientName = "badTargetJunctions") {
     override fun id() = EntId.int()
-    val owner = belongsTo<WrongTargetTargetOwner>("owner")
-    val wrongTarget = belongsTo<M2mTargetA>("wrong_target")
+    val owner by belongsTo<WrongTargetTargetOwner>("owner")
+    val wrongTarget by belongsTo<M2mTargetA>("wrong_target")
 }
 
-private class SamePropJunction : EntSchema("same_prop_junction") {
+private class SamePropJunction : EntSchema("same_prop_junction", clientName = "samePropJunctions") {
     override fun id() = EntId.int()
-    val only = belongsTo<M2mTargetA>("only")
+    val only by belongsTo<M2mTargetA>("only")
 }
-private class SamePropOwner : EntSchema("same_prop_owner") {
+private class SamePropOwner : EntSchema("same_prop_owner", clientName = "samePropOwners") {
     override fun id() = EntId.int()
-    val xs = manyToMany<M2mTargetA>("xs")
+    val xs by manyToMany<M2mTargetA>("xs")
         .throughEntity<SamePropJunction>(SamePropJunction::only, SamePropJunction::only)
 }
 
@@ -439,10 +439,10 @@ class SchemaTest {
 
     @Test
     fun `onDelete accepted on belongsTo edge`() {
-        class Owner : EntSchema("owners") { override fun id() = EntId.int() }
-        class Pet : EntSchema("pets") {
+        class Owner : EntSchema("owners", clientName = "owners") { override fun id() = EntId.int() }
+        class Pet : EntSchema("pets", clientName = "pets") {
             override fun id() = EntId.int()
-            val owner = belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
+            val owner by belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
         }
         val ownerSchema = Owner()
         val petSchema = Pet()
@@ -455,10 +455,10 @@ class SchemaTest {
 
     @Test
     fun `onDelete SET_NULL rejected on required edge`() {
-        class Owner : EntSchema("owners") { override fun id() = EntId.int() }
-        class Pet : EntSchema("pets") {
+        class Owner : EntSchema("owners", clientName = "owners") { override fun id() = EntId.int() }
+        class Pet : EntSchema("pets", clientName = "pets") {
             override fun id() = EntId.int()
-            val owner = belongsTo<Owner>("owner")
+            val owner by belongsTo<Owner>("owner")
                 .onDelete(OnDelete.SET_NULL)
         }
         val ownerSchema = Owner()
@@ -472,10 +472,10 @@ class SchemaTest {
 
     @Test
     fun `onDelete SET_NULL accepted on non-required edge`() {
-        class Owner : EntSchema("owners") { override fun id() = EntId.int() }
-        class Pet : EntSchema("pets") {
+        class Owner : EntSchema("owners", clientName = "owners") { override fun id() = EntId.int() }
+        class Pet : EntSchema("pets", clientName = "pets") {
             override fun id() = EntId.int()
-            val owner = belongsTo<Owner>("owner").nullable().onDelete(OnDelete.SET_NULL)
+            val owner by belongsTo<Owner>("owner").nullable().onDelete(OnDelete.SET_NULL)
         }
         val ownerSchema = Owner()
         val petSchema = Pet()
@@ -529,9 +529,9 @@ class SchemaTest {
 
     @Test
     fun `duplicate semantic indexes are rejected`() {
-        class Duped : EntSchema("duped") {
+        class Duped : EntSchema("duped", clientName = "dupeds") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
             val a = index("idx_a", email)
             val b = index("idx_b", email)
         }
@@ -544,9 +544,9 @@ class SchemaTest {
 
     @Test
     fun `same columns with different uniqueness are allowed`() {
-        class Allowed : EntSchema("allowed") {
+        class Allowed : EntSchema("allowed", clientName = "alloweds") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
             val a = index("idx_a", email)
             val b = index("idx_b", email).unique()
         }
@@ -557,9 +557,9 @@ class SchemaTest {
 
     @Test
     fun `same columns with different where clauses are allowed`() {
-        class Allowed : EntSchema("allowed") {
+        class Allowed : EntSchema("allowed", clientName = "alloweds") {
             override fun id() = EntId.int()
-            val email = string("email")
+            val email by string("email")
             val a = index("idx_a", email).where("active = true")
             val b = index("idx_b", email).where("deleted_at IS NULL")
         }
@@ -570,9 +570,9 @@ class SchemaTest {
 
     @Test
     fun `explicit unique index duplicating field unique is rejected`() {
-        class Duped : EntSchema("duped") {
+        class Duped : EntSchema("duped", clientName = "dupeds") {
             override fun id() = EntId.int()
-            val email = string("email").unique()
+            val email by string("email").unique()
             val idx = index("idx_email", email).unique()
         }
         val schema = Duped()
@@ -584,9 +584,9 @@ class SchemaTest {
 
     @Test
     fun `non-unique index on unique field is allowed`() {
-        class Allowed : EntSchema("allowed") {
+        class Allowed : EntSchema("allowed", clientName = "alloweds") {
             override fun id() = EntId.int()
-            val email = string("email").unique()
+            val email by string("email").unique()
             val idx = index("idx_email", email) // not unique — different shape
         }
         val schema = Allowed()
@@ -615,7 +615,7 @@ class SchemaTest {
 
     @Test
     fun `schema finalize can only be called once`() {
-        class Solo : EntSchema("solos") { override fun id() = EntId.int() }
+        class Solo : EntSchema("solos", clientName = "solos") { override fun id() = EntId.int() }
         val solo = Solo()
         buildRegistry(solo)
 
@@ -626,9 +626,9 @@ class SchemaTest {
 
     @Test
     fun `edges cannot be accessed before finalization`() {
-        class Unfinalized : EntSchema("unfinalized") {
+        class Unfinalized : EntSchema("unfinalized", clientName = "unfinalizeds") {
             override fun id() = EntId.int()
-            val something = hasMany<Car>("something")
+            val something by hasMany<Car>("something")
         }
         val schema = Unfinalized()
 
@@ -679,25 +679,88 @@ class SchemaTest {
     }
 
     @Test
-    fun `field name that is a Kotlin hard keyword is rejected at schema-build time`() {
-        // Codegen emits field identifiers raw (`%L`); without
-        // rejection, a field named "class" would generate
-        // `val class = this.class` and fail to compile downstream.
-        val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("kw_check") {
-                override fun id() = EntId.long()
-                val classField = string("class")
+    fun `clientName must be a lower-camel Kotlin identifier`() {
+        // clientName is emitted verbatim as `client.<name>`, so anything
+        // that isn't a Kotlin identifier would produce uncompilable
+        // generated source. Storage-shaped (snake_case) names are the
+        // likely mistake, since tableName right next to it requires them.
+        val invalid = listOf(
+            "user_accounts",  // snake_case belongs to storage names
+            "UserAccounts",   // leading uppercase is a type name, not a property
+            "1users",         // cannot start with a digit
+            "users!",         // punctuation
+            "",               // empty
+            "user accounts",  // whitespace
+        )
+        for (name in invalid) {
+            val err = assertFailsWith<IllegalArgumentException>("expected reject for '$name'") {
+                object : EntSchema("client_name_check", clientName = name) {
+                    override fun id() = EntId.long()
+                }
             }
+            assertContains(err.message!!, "not a valid generated API name")
         }
-        assertContains(err.message!!, "Kotlin reserved keyword")
-        assertContains(err.message!!, "'class'")
     }
 
     @Test
-    fun `every Kotlin hard keyword is rejected as a field name`() {
-        // Sweep over the keyword set so a future addition to
-        // KOTLIN_HARD_KEYWORDS gets coverage automatically (the test
-        // body iterates the same source-of-truth list).
+    fun `clientName that is a Kotlin hard keyword is rejected`() {
+        val err = assertFailsWith<IllegalArgumentException> {
+            object : EntSchema("client_kw_check", clientName = "object") {
+                override fun id() = EntId.long()
+            }
+        }
+        assertContains(err.message!!, "Kotlin reserved keyword")
+        assertContains(err.message!!, "'object'")
+    }
+
+    @Test
+    fun `clientName is independent of tableName and is emitted verbatim`() {
+        // The whole point of the explicit client name: no inflection, no
+        // derivation from the table. An irregular or intentionally
+        // singular term survives exactly as written.
+        val irregular = object : EntSchema("people", clientName = "people") {
+            override fun id() = EntId.long()
+        }
+        assertEquals("people", irregular.clientName)
+        assertEquals("people", irregular.tableName)
+
+        val divergent = object : EntSchema("legacy_usr_acct", clientName = "accounts") {
+            override fun id() = EntId.long()
+        }
+        assertEquals("accounts", divergent.clientName)
+        assertEquals("legacy_usr_acct", divergent.tableName)
+
+        val uncountable = object : EntSchema("news_items", clientName = "news") {
+            override fun id() = EntId.long()
+        }
+        assertEquals("news", uncountable.clientName)
+    }
+
+    @Test
+    fun `a Kotlin hard keyword is a valid storage name`() {
+        // Storage strings reach generated source only as string literals
+        // and SQL only as quoted identifiers, so they are unconstrained
+        // by Kotlin's grammar. The declaration names the API.
+        val schema = object : EntSchema("object", clientName = "kwCheck") {
+            override fun id() = EntId.long()
+            val category by string("class")
+            val whenever by time("when")
+        }
+        assertEquals("object", schema.tableName)
+        assertEquals(
+            listOf("class", "when"),
+            schema.fields().map { it.name },
+        )
+        assertEquals(
+            listOf("category", "whenever"),
+            schema.fields().map { it.declarationName },
+        )
+    }
+
+    @Test
+    fun `every Kotlin hard keyword is accepted as a storage name`() {
+        // Sweep the same list the API-name validator rejects, so the two
+        // vocabularies stay explicitly opposed.
         val keywords = listOf(
             "as", "break", "class", "continue", "do", "else", "false",
             "for", "fun", "if", "in", "interface", "is", "null",
@@ -706,13 +769,12 @@ class SchemaTest {
             "while",
         )
         for (kw in keywords) {
-            val err = assertFailsWith<IllegalArgumentException>("expected reject for '$kw'") {
-                object : EntSchema("kw_$kw") {
-                    override fun id() = EntId.long()
-                    val f = string(kw)
-                }
+            val schema = object : EntSchema("kw_$kw", clientName = "kw$kw") {
+                override fun id() = EntId.long()
+                val f by string(kw)
             }
-            assertContains(err.message!!, "Kotlin reserved keyword")
+            assertEquals(kw, schema.fields().single().name, "storage name '$kw' must be accepted")
+            assertEquals("f", schema.fields().single().declarationName)
         }
     }
 

@@ -1,5 +1,6 @@
 package entkt.codegen.query
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -20,7 +21,6 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.toCamelCase
 import entkt.schema.ColumnStorage
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
@@ -62,7 +62,7 @@ internal fun indexHelperValueParamName(col: ResolvedIndexColumn): String =
  * to gate unique terminals).
  *
  * Names mirror the entity companion column refs exactly: `id` → `id`,
- * scalar fields → `toCamelCase(field.name)`, FK columns →
+ * scalar fields → `field.apiName`, FK columns →
  * `EdgeFk.propertyName` (implicit `${camel(edge)}Id`, field-backed = the
  * captured declaration name). See [resolveIndexColumns].
  */
@@ -130,7 +130,7 @@ private fun isEqualityEligible(type: FieldType, storage: ColumnStorage?): Boolea
  * keyed by physical column name. Built from `id` + [scalarFields] +
  * [computeEdgeFks] so the keys and generated property names line up 1:1
  * with the entity companion column refs (and so field-backed FK columns
- * use their declaration name, not `toCamelCase(column)`).
+ * use their declaration name, never the column).
  */
 internal fun resolveIndexColumns(
     schema: EntSchema,
@@ -151,7 +151,7 @@ internal fun resolveIndexColumns(
     for (field in scalarFields(schema)) {
         map[field.columnName] = ResolvedIndexColumn(
             columnName = field.columnName,
-            propertyName = toCamelCase(field.name),
+            propertyName = field.apiName,
             paramType = field.resolvedTypeName(),
             comparable = isComparable(field.type),
             equalityEligible = isEqualityEligible(field.type, field.storage),

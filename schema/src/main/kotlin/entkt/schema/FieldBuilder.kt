@@ -1,5 +1,7 @@
 package entkt.schema
 
+import kotlin.reflect.KProperty
+
 @Suppress("UNCHECKED_CAST")
 abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructor(
     override val fieldName: String,
@@ -11,18 +13,63 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     @PublishedApi internal var declarationOwner: EntSchema? = null
 
     /**
-     * Kotlin `val` name of the schema property that holds this
-     * builder, captured by [EntSchema.finalize] via reflection over
-     * `KProperty.javaField` (no getter invocation). Null until
-     * capture runs or for builders that have no qualifying `val`
-     * on the schema class (computed getters / delegated /
-     * inherited / mixin-backed / programmatic registration).
+     * Kotlin `val` name of the schema property this builder is
+     * delegated to — the name every generated field API uses.
+     *
+     * Set by [provideDelegate] while the property is constructed, so a
+     * builder declared with `by` carries its declaration name from that
+     * moment on. Null for a builder that was registered but never bound
+     * to a qualifying property (`val x = string(...)`), which schema
+     * finalization rejects.
      *
      * Propagated into [Field.declarationName] by [build].
      *
-     * See `docs/possible-features/edge-mutation/06-field-backed-fk-declaration-names.md`.
+     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
      */
     internal var declarationName: String? = null
+
+    /**
+     * The concrete [EntMixin] class this builder was bound inside, or
+     * null when it bound directly on the schema class.
+     *
+     * Mixin fields register on the host schema but have no property of
+     * that name on the host, so finalization exempts them from the
+     * "declared directly on the concrete schema class" check. Recording
+     * the class rather than a flag lets `include(...)` verify each
+     * mixin's own declarations without seeing a nested mixin's.
+     */
+    internal var declarationMixinClass: kotlin.reflect.KClass<*>? = null
+
+    /** True when this builder was bound inside an [EntMixin]. */
+    internal val declarationFromMixin: Boolean get() = declarationMixinClass != null
+
+    /**
+     * Bind this builder to the Kotlin property declaring it, and hand
+     * the property the builder itself as its delegate.
+     *
+     * Declared on the self-typed base so **one** operator pair covers
+     * every field builder subclass while preserving each one's concrete
+     * static type: `val title by string("t")` has type
+     * [StringFieldBuilder], so `.maxLength(64)` still resolves, and a
+     * handle passed to `index(...)`, `.field(...)`, or an inverse
+     * reference keeps its exact type.
+     */
+    operator fun provideDelegate(thisRef: Any?, property: KProperty<*>): Self {
+        declarationName = bindDeclarationName(
+            property = property,
+            kind = "Field",
+            storageName = fieldName,
+            owner = declarationOwner,
+            existing = declarationName,
+            thisRef = thisRef,
+            mixinAllowed = true,
+            onMixinBinding = { declarationMixinClass = it },
+        )
+        return self()
+    }
+
+    /** Reading the delegated property yields the builder itself. */
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): Self = self()
 
     protected fun checkNotFrozen() {
         check(!frozen) { "Field '$fieldName' cannot be modified after schema finalization" }

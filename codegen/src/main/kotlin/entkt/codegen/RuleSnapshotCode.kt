@@ -24,7 +24,7 @@ internal fun lifecycleValueSnapshot(
         .add("%L.copy(\n", source)
         .apply {
             for (field in mutableFields) {
-                val property = toCamelCase(field.name)
+                val property = field.apiName
                 if (field.type == FieldType.BYTES) {
                     val nullableAccess = if (field.nullable) "?" else ""
                     add("  %L = %L.%L$nullableAccess.copyOf(),\n", property, source, property)
@@ -62,7 +62,7 @@ internal fun lifecyclePatchSnapshot(
         .add("%L.copy(\n", source)
         .apply {
             for (field in mutableFields) {
-                val property = toCamelCase(field.name)
+                val property = field.apiName
                 add("  %L = when (val entry = %L.%L) {\n", property, source, property)
                 if (field.type == FieldType.BYTES) {
                     val nullableAccess = if (field.nullable) "?" else ""

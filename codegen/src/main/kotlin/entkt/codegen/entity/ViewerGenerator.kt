@@ -1,5 +1,6 @@
 package entkt.codegen.entity
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -16,8 +17,6 @@ import entkt.codegen.metadata.FIELD_TYPE
 import entkt.codegen.metadata.columnMetadataFor
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolveEdgeJoin
-import entkt.codegen.pluralize
-import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
@@ -60,8 +59,6 @@ internal class ViewerGenerator(private val packageName: String) {
         return files + generateRegistry(schemas)
     }
 
-    private fun routeName(entityName: String): String =
-        entityName.replaceFirstChar { it.lowercase() }
 
     private fun generateAdapter(input: SchemaInput, schemaNames: Map<EntSchema, String>): FileSpec {
         val name = input.name
@@ -69,7 +66,7 @@ internal class ViewerGenerator(private val packageName: String) {
         val entityClass = ClassName(packageName, name)
         val clientClass = ClassName(packageName, "EntClient")
         val objectName = "${name}ViewerEntity"
-        val repoProp = pluralize(name.replaceFirstChar { it.lowercase() })
+        val repoProp = input.clientName
 
         val columns = columnMetadataFor(schema, schemaNames)
 
@@ -91,8 +88,11 @@ internal class ViewerGenerator(private val packageName: String) {
                     .build(),
             )
             .addProperty(
+                // The viewer's route is the schema's declared client
+                // name, the same identifier application code uses as
+                // `client.<name>` — not an inflection of the class.
                 PropertySpec.builder("routeName", String::class, KModifier.OVERRIDE)
-                    .initializer("%S", routeName(name))
+                    .initializer("%S", schema.clientName)
                     .build(),
             )
             .addProperty(buildColumnsProperty(columns, schema))
@@ -175,7 +175,9 @@ internal class ViewerGenerator(private val packageName: String) {
     private fun buildEdgesProperty(schema: EntSchema, schemaNames: Map<EntSchema, String>): PropertySpec {
         val entries = schema.edges().map { edge ->
             val targetName = schemaNames[edge.target]
-            val targetRoute = targetName?.let { routeName(it) }
+            // Route to the target's declared client name, so viewer links
+            // agree with the routes those entities register under.
+            val targetRoute = targetName?.let { edge.target.clientName }
             val join = if (edge.kind is EdgeKind.ManyToMany) null else resolveEdgeJoin(edge, schema)
             val (cardinality, localFk, targetFilter) = when (edge.kind) {
                 is EdgeKind.BelongsTo -> Triple("to-one", join?.sourceColumn, null)
@@ -185,7 +187,7 @@ internal class ViewerGenerator(private val packageName: String) {
             }
             CodeBlock.of(
                 "%T(name = %S, targetRouteName = %L, cardinality = %S, localFkColumn = %L, targetFilterColumn = %L)",
-                VIEWER_EDGE, edge.name,
+                VIEWER_EDGE, edge.apiName,
                 targetRoute?.let { CodeBlock.of("%S", it) } ?: CodeBlock.of("null"),
                 cardinality,
                 localFk?.let { CodeBlock.of("%S", it) } ?: CodeBlock.of("null"),
@@ -348,9 +350,9 @@ internal class ViewerGenerator(private val packageName: String) {
                 val field = fieldsByColumn[col.name]
                 // FK columns first: field-backed FKs surface as an entity
                 // property named after the captured Kotlin val (EdgeFk
-                // .propertyName), not toCamelCase(column).
+                // .propertyName), which is declaration-derived.
                 val prop = fkByColumn[col.name]?.propertyName
-                    ?: field?.let { toCamelCase(it.name) }
+                    ?: field?.let { it.apiName }
                     ?: col.name
                 val access = if (col.nullable) "entity.$prop?" else "entity.$prop"
                 when (col.type) {

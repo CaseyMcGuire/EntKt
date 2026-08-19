@@ -13,33 +13,33 @@ import kotlin.test.assertEquals
 enum class Priority { LOW, MEDIUM, HIGH }
 enum class Category { BUG, FEATURE }
 
-class Car : EntSchema("cars") {
+class Car : EntSchema("cars", clientName = "cars") {
     override fun id() = EntId.int()
-    val model = string("model")
-    val year = int("year")
-    val price = float("price").nullable()
+    val model by string("model")
+    val year by int("year")
+    val price by float("price").nullable()
 
-    val user = belongsTo<User>("user").inverse(User::cars)
+    val user by belongsTo<User>("user").inverse(User::cars)
 }
 
-class Ticket : EntSchema("tickets") {
+class Ticket : EntSchema("tickets", clientName = "tickets") {
     override fun id() = EntId.int()
-    val title = string("title")
-    val priority = enum<Priority>("priority")
-    val category = enum<Category>("category")
+    val title by string("title")
+    val priority by enum<Priority>("priority")
+    val category by enum<Category>("category")
 }
 
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val createdAt = time("created_at").immutable()
-    val updatedAt = time("updated_at")
-    val name = string("name")
-    val age = int("age").nullable()
-    val email = string("email").unique()
-    val active = bool("active").default(true)
+    val createdAt by time("created_at").immutable()
+    val updatedAt by time("updated_at")
+    val name by string("name")
+    val age by int("age").nullable()
+    val email by string("email").unique()
+    val active by bool("active").default(true)
 
-    val cars = hasMany<Car>("cars")
+    val cars by hasMany<Car>("cars")
 
     val idxCreatedAt = index("idx_created_at", createdAt)
     val idxNameEmail = index("idx_name_email", name, email).unique()
@@ -49,57 +49,57 @@ class User : EntSchema("users") {
 // Test helper schemas for edge tests that need named file-level classes
 // (reified type params can't reference anonymous/local types from other anonymous objects)
 
-private class IdxParentSchema : EntSchema("parents") {
+private class IdxParentSchema : EntSchema("parents", clientName = "idxParentSchemas") {
     override fun id() = EntId.int()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class IdxChildSchema : EntSchema("children") {
+private class IdxChildSchema : EntSchema("children", clientName = "idxChildSchemas") {
     override fun id() = EntId.int()
-    val title = string("title")
-    val author = belongsTo<IdxParentSchema>("author")
+    val title by string("title")
+    val author by belongsTo<IdxParentSchema>("author")
     val byAuthor = index("idx_author", author.fk)
 }
 
-private class CollisionParentSchema : EntSchema("parents") {
+private class CollisionParentSchema : EntSchema("parents", clientName = "collisionParentSchemas") {
     override fun id() = EntId.int()
-    val name = string("name")
+    val name by string("name")
 }
 
-private class CollisionChildSchema : EntSchema("children") {
+private class CollisionChildSchema : EntSchema("children", clientName = "collisionChildSchemas") {
     override fun id() = EntId.int()
-    val ownerId = int("owner_id")
-    val owner = belongsTo<CollisionParentSchema>("owner")
+    val ownerId by int("owner_id")
+    val owner by belongsTo<CollisionParentSchema>("owner")
 }
 
-private class EdgeCommentTargetSchema : EntSchema("authors") {
+private class EdgeCommentTargetSchema : EntSchema("authors", clientName = "edgeCommentTargetSchemas") {
     override fun id() = EntId.long()
-    val title = string("title")
+    val title by string("title")
 }
 
-private class EdgeCommentSourceSchema : EntSchema("posts") {
+private class EdgeCommentSourceSchema : EntSchema("posts", clientName = "edgeCommentSourceSchemas") {
     override fun id() = EntId.int()
-    val name = string("name")
-    val author = belongsTo<EdgeCommentTargetSchema>("author").comment("The author of this post")
+    val name by string("name")
+    val author by belongsTo<EdgeCommentTargetSchema>("author").comment("The author of this post")
 }
 
-private class CommentPostSchema : EntSchema("posts") {
+private class CommentPostSchema : EntSchema("posts", clientName = "commentPostSchemas") {
     override fun id() = EntId.int()
-    val title = string("title")
-    val author = belongsTo<CommentAuthorSchema>("author").inverse(CommentAuthorSchema::posts)
+    val title by string("title")
+    val author by belongsTo<CommentAuthorSchema>("author").inverse(CommentAuthorSchema::posts)
 }
 
-private class CommentAuthorSchema : EntSchema("authors") {
+private class CommentAuthorSchema : EntSchema("authors", clientName = "commentAuthorSchemas") {
     override fun id() = EntId.int()
-    val name = string("name")
-    val posts = hasMany<CommentPostSchema>("posts").comment("All posts authored by this user")
+    val name by string("name")
+    val posts by hasMany<CommentPostSchema>("posts").comment("All posts authored by this user")
 }
 
-private class BlobSchema : EntSchema("blobs") {
+private class BlobSchema : EntSchema("blobs", clientName = "blobSchemas") {
     override fun id() = EntId.int()
-    val payload = bytes("payload")
-    val thumb = bytes("thumb").nullable()
-    val label = string("label")
+    val payload by bytes("payload")
+    val thumb by bytes("thumb").nullable()
+    val label by string("label")
 }
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -508,10 +508,10 @@ class EntityGeneratorTest {
 
     @Test
     fun `sensitive field is redacted in generated toString`() {
-        val schema = object : EntSchema("accounts") {
+        val schema = object : EntSchema("accounts", clientName = "accounts") {
             override fun id() = EntId.int()
-            val name = string("name")
-            val password = string("password").sensitive()
+            val name by string("name")
+            val password by string("password").sensitive()
         }
         finalize(schema)
         val output = generator.generate("Account", schema).toString()
@@ -543,9 +543,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `field comment emits KDoc on entity property`() {
-        val schema = object : EntSchema("commenteds") {
+        val schema = object : EntSchema("commenteds", clientName = "commenteds") {
             override fun id() = EntId.int()
-            val name = string("name").comment("The user's display name")
+            val name by string("name").comment("The user's display name")
         }
         finalize(schema)
         val output = generator.generate("Commented", schema).toString()
@@ -584,9 +584,9 @@ class EntityGeneratorTest {
 
     @Test
     fun `field comment appears in generated SCHEMA ColumnMetadata`() {
-        val schema = object : EntSchema("commenteds") {
+        val schema = object : EntSchema("commenteds", clientName = "commenteds") {
             override fun id() = EntId.int()
-            val name = string("name").comment("The user's display name")
+            val name by string("name").comment("The user's display name")
         }
         finalize(schema)
         val output = generator.generate("Commented", schema).toString()
@@ -652,10 +652,10 @@ class EntityGeneratorTest {
 // generated runtime ColumnMetadata so display surfaces (generated toString,
 // the ent viewer) can redact from metadata alone.
 class SensitiveColumnMetadataTest {
-    private class Vault : entkt.schema.EntSchema("vaults") {
+    private class Vault : entkt.schema.EntSchema("vaults", clientName = "vaults") {
         override fun id() = entkt.schema.EntId.long()
-        val name = string("name")
-        val secret = string("secret").sensitive()
+        val name by string("name")
+        val secret by string("secret").sensitive()
     }
 
     @kotlin.test.Test
@@ -663,7 +663,7 @@ class SensitiveColumnMetadataTest {
         val s = Vault()
         s.finalize(mapOf(s::class to s))
         val entity = EntGenerator("com.example.ent")
-            .generate(listOf(SchemaInput("Vault", s)))
+            .generate(listOf(SchemaInput(s)))
             .first { it.name == "Vault" }
             .toString()
             .replace("\\s+".toRegex(), " ")

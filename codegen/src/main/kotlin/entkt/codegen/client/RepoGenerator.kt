@@ -1,5 +1,6 @@
 package entkt.codegen.client
 
+import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
@@ -41,9 +42,7 @@ import entkt.codegen.mutation.driverCallFailureTail
 import entkt.codegen.mutation.indented
 import entkt.codegen.mutation.privacyDeniedFailure
 import entkt.codegen.mutation.recordAndReturnFailure
-import entkt.codegen.pluralize
 import entkt.codegen.query.indexHelperTree
-import entkt.codegen.toCamelCase
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
@@ -259,7 +258,7 @@ internal class RepoGenerator(
                             candidateClass = candidateClass,
                         ),
                     )
-                    builder.addFunction(buildCreateMany(schemaName, entityClass, createLambda))
+                    builder.addFunction(buildCreateMany(schemaName, schema.clientName, entityClass, createLambda))
                     builder.addFunction(
                         buildClassifyDriverFailureHelper(
                             schemaName,
@@ -270,7 +269,7 @@ internal class RepoGenerator(
                 }
             }
             .addFunction(buildExecuteDeleteManyPhases(schemaName, entityClass))
-            .addFunction(buildDeleteMany(schemaName, entityClass))
+            .addFunction(buildDeleteMany(schemaName, schema.clientName, entityClass))
             .addFunction(
                 buildClassifyDriverFailureHelper(
                     schemaName,
@@ -666,9 +665,10 @@ internal class RepoGenerator(
      */
     private fun buildDeleteMany(
         schemaName: String,
+        clientName: String,
         entityClass: ClassName,
     ): FunSpec {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val repoPropName = clientName
         val resultType = MUTATION_RESULT.parameterizedBy(INT)
         return FunSpec.builder("deleteMany")
             .addParameter(
@@ -1257,7 +1257,7 @@ internal class RepoGenerator(
         val body = CodeBlock.builder()
         body.add("return %T(\n", candidateClass)
         for (field in fields) {
-            val propName = toCamelCase(field.name)
+            val propName = field.apiName
             body.add("  %L = entity.%L,\n", propName, propName)
         }
         for (fk in edgeFks) {
@@ -1603,10 +1603,11 @@ internal class RepoGenerator(
      */
     private fun buildCreateMany(
         schemaName: String,
+        clientName: String,
         entityClass: ClassName,
         createLambda: LambdaTypeName,
     ): FunSpec {
-        val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+        val repoPropName = clientName
         val repoClass = ClassName(packageName, "${schemaName}Repo")
         val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
         val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))

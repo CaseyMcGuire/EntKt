@@ -1,19 +1,96 @@
 # Schema
 
 Schemas are the source of truth for your data model. Each schema is a
-Kotlin `class` that extends `EntSchema` with an explicit table name,
-and declares its fields, edges, and indexes as plain property
-declarations.
+Kotlin `class` that extends `EntSchema` with an explicit table name and
+client name, and declares its fields, edges, and indexes as delegated
+property declarations.
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val name = string("name").minLength(1).maxLength(64)
-    val email = string("email").unique()
+    val name by string("name").minLength(1).maxLength(64)
+    val email by string("email").unique()
 
-    val posts = hasMany<Post>("posts")
+    val posts by hasMany<Post>("posts")
 }
+```
+
+## Names
+
+A schema carries three independent kinds of name. entkt never derives
+one from another, and never pluralizes, singularizes, or otherwise
+transforms any of them.
+
+| What you write | What it names |
+|---|---|
+| The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreate`, `UserUpdate` |
+| `clientName = "users"` | Generated client and configuration properties: `client.users`, `privacy.users { }`, `validation.users { }`, `hooks.users { }` |
+| The delegated `val` (`val email by …`) | Every generated field or edge API: `User.email`, `user.email`, `create.email` |
+| The string argument (`string("email")`, `hasMany<Post>("posts")`) | Storage only: columns, tables, indexes, constraints, joins, migration identity |
+
+Because these are independent, renames have independent consequences:
+
+- rename the `val` → the Kotlin API changes, the database does not;
+- rename the storage string → a migration, but no Kotlin source change;
+- rename `clientName` → `client.<name>` changes, entity types and the
+  table do not.
+
+That independence is the point. A column named for a legacy system can
+carry a domain-appropriate Kotlin name:
+
+```kotlin
+class Article : EntSchema("legacy_article_tbl", clientName = "stories") {
+    override fun id() = EntId.long()
+
+    val publicTitle by string("legacy_title_txt")
+    val writer by belongsTo<User>("primary_author")
+}
+```
+
+This generates `Article.publicTitle`, `article.writer`,
+`queryWriter()`, and `client.stories` — never `legacyTitleTxt` or
+`primaryAuthor`.
+
+### `clientName` is required
+
+There is no default and no inference. Supply the exact lower-camel
+property name application code should read:
+
+```kotlin
+class Person : EntSchema("people", clientName = "people")
+class NewsItem : EntSchema("news_items", clientName = "news")
+class Audit : EntSchema("audit_log", clientName = "audit")
+```
+
+Irregular, uncountable, singular, acronym, and non-English names all
+work, because nothing inspects the word. `client.people`,
+`client.news`, and `client.audit` are emitted exactly as written.
+
+### `by` marks a generated API name
+
+Fields and edges are declared with Kotlin property delegation. The `by`
+keyword is what hands entkt the property name, and it tells the reader
+that the name is a public commitment rather than an incidental local:
+
+```kotlin
+val displayName by string("display_name")   // ✅ names Article.displayName
+val displayName = string("display_name")    // ❌ rejected: names nothing
+```
+
+An ordinary `=` still constructs a builder, so the column would exist
+while no generated API pointed at it. Schema finalization rejects that
+with a message naming the field. Also rejected: non-public declarations
+(a `private val` must not create a public generated member), binding one
+builder to two properties, wrapper delegates such as `by lazy { … }`,
+computed getters, and declarations inherited from a superclass. A
+delegated `var` does not compile at all — builders have no `setValue`.
+
+Index declarations keep `=`, because an index name is storage metadata
+and generates no member of its own:
+
+```kotlin
+val byEmail = index("idx_user_email", email).unique()
 ```
 
 ## ID Strategies
@@ -35,20 +112,20 @@ The `id()` method is abstract, so every schema must override it.
 Fields are declared as property declarations on the schema class:
 
 ```kotlin
-class Ticket : EntSchema("tickets") {
+class Ticket : EntSchema("tickets", clientName = "tickets") {
     override fun id() = EntId.int()
 
-    val title = string("title").minLength(1).maxLength(200)
-    val body = text("body")
-    val active = bool("active").default(true)
-    val count = int("count").positive()
-    val bigNumber = long("big_number")
-    val score = float("score")
-    val preciseScore = double("precise_score")
-    val createdAt = time("created_at").immutable()
-    val externalId = uuid("external_id")
-    val data = bytes("data")
-    val priority = enum<Priority>("priority").default(Priority.LOW)
+    val title by string("title").minLength(1).maxLength(200)
+    val body by text("body")
+    val active by bool("active").default(true)
+    val count by int("count").positive()
+    val bigNumber by long("big_number")
+    val score by float("score")
+    val preciseScore by double("precise_score")
+    val createdAt by time("created_at").immutable()
+    val externalId by uuid("external_id")
+    val data by bytes("data")
+    val priority by enum<Priority>("priority").default(Priority.LOW)
 }
 ```
 
@@ -125,11 +202,11 @@ references all use the actual enum type:
 ```kotlin
 enum class Priority { LOW, MEDIUM, HIGH }
 
-class Ticket : EntSchema("tickets") {
+class Ticket : EntSchema("tickets", clientName = "tickets") {
     override fun id() = EntId.int()
 
-    val title = string("title")
-    val priority = enum<Priority>("priority").default(Priority.LOW)
+    val title by string("title")
+    val priority by enum<Priority>("priority").default(Priority.LOW)
 }
 ```
 
@@ -169,16 +246,16 @@ Edges define relationships between entities. They are declared as
 property declarations on the schema class:
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val posts = hasMany<Post>("posts")
+    val posts by hasMany<Post>("posts")
 }
 
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val author = belongsTo<User>("author").inverse(User::posts)
+    val author by belongsTo<User>("author").inverse(User::posts)
 }
 ```
 
@@ -190,10 +267,10 @@ the target. `hasOne<Target>(name)` is similar but for one-to-one
 relationships (the inverse `belongsTo` must have `.unique()`).
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val posts = hasMany<Post>("posts")
+    val posts by hasMany<Post>("posts")
 }
 ```
 
@@ -204,10 +281,10 @@ a FK column (e.g. `author_id`) on the current entity. Relationships are
 required-by-default; add `.nullable()` to make the FK nullable.
 
 ```kotlin
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val author = belongsTo<User>("author").inverse(User::posts)
+    val author by belongsTo<User>("author").inverse(User::posts)
 }
 ```
 
@@ -225,10 +302,10 @@ By default, FK columns use `ON DELETE SET NULL` (nullable) or
 `ON DELETE RESTRICT` (required). Use `.onDelete()` to override:
 
 ```kotlin
-class Pet : EntSchema("pets") {
+class Pet : EntSchema("pets", clientName = "pets") {
     override fun id() = EntId.int()
 
-    val owner = belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
+    val owner by belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
 }
 ```
 
@@ -264,10 +341,10 @@ rejects refs that don't match this orientation.
 The throughEntity case (most domain models start here):
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val groups = manyToMany<Group>("groups")
+    val groups by manyToMany<Group>("groups")
         .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 ```
@@ -281,18 +358,18 @@ entity type), the typed property references disambiguate which
 junction edge is source vs target:
 
 ```kotlin
-class Person : EntSchema("people") {
+class Person : EntSchema("people", clientName = "persons") {
     override fun id() = EntId.long()
 
-    val friends = manyToMany<Person>("friends")
+    val friends by manyToMany<Person>("friends")
         .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
-class Friendship : EntSchema("friendships") {
+class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<Person>("user")
-    val friend = belongsTo<Person>("friend")
+    val user by belongsTo<Person>("user")
+    val friend by belongsTo<Person>("friend")
 }
 ```
 
@@ -329,16 +406,16 @@ Quick map:
 ### O2O Two Types
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val profile = hasOne<Profile>("profile")
+    val profile by hasOne<Profile>("profile")
 }
 
-class Profile : EntSchema("profiles") {
+class Profile : EntSchema("profiles", clientName = "profiles") {
     override fun id() = EntId.uuid()
 
-    val user = belongsTo<User>("user")
+    val user by belongsTo<User>("user")
         .inverse(User::profile)
         .unique()
 }
@@ -357,11 +434,11 @@ Generated table shape:
 ### O2O Same Type
 
 ```kotlin
-class Employee : EntSchema("employees") {
+class Employee : EntSchema("employees", clientName = "employees") {
     override fun id() = EntId.long()
 
-    val mentee = hasOne<Employee>("mentee")
-    val mentor = belongsTo<Employee>("mentor")
+    val mentee by hasOne<Employee>("mentee")
+    val mentor by belongsTo<Employee>("mentor")
         .inverse(Employee::mentee)
         .unique()
 }
@@ -382,16 +459,16 @@ In entkt, bidirectional O2O is not a separate builder shape. The normal O2O
 pattern is already bidirectional as soon as you declare the inverse:
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val profile = hasOne<Profile>("profile")
+    val profile by hasOne<Profile>("profile")
 }
 
-class Profile : EntSchema("profiles") {
+class Profile : EntSchema("profiles", clientName = "profiles") {
     override fun id() = EntId.uuid()
 
-    val user = belongsTo<User>("user")
+    val user by belongsTo<User>("user")
         .inverse(User::profile)
         .unique()
 }
@@ -406,16 +483,16 @@ Result:
 ### O2M Two Types
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val posts = hasMany<Post>("posts")
+    val posts by hasMany<Post>("posts")
 }
 
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val author = belongsTo<User>("author")
+    val author by belongsTo<User>("author")
         .inverse(User::posts)
 }
 ```
@@ -434,11 +511,11 @@ Generated table shape:
 ### O2M Same Type
 
 ```kotlin
-class Category : EntSchema("categories") {
+class Category : EntSchema("categories", clientName = "categories") {
     override fun id() = EntId.long()
 
-    val children = hasMany<Category>("children")
-    val parent = belongsTo<Category>("parent")
+    val children by hasMany<Category>("children")
+    val parent by belongsTo<Category>("parent")
         .inverse(Category::children)
         .nullable()
 }
@@ -455,22 +532,22 @@ This is the same physical pattern as O2M two types, but recursive.
 ### M2M Two Types
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val groups = manyToMany<Group>("groups")
+    val groups by manyToMany<Group>("groups")
         .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
-class Group : EntSchema("groups") {
+class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.long()
 }
 
-class UserGroup : EntSchema("user_groups") {
+class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<User>("user")
-    val group = belongsTo<Group>("group")
+    val user by belongsTo<User>("user")
+    val group by belongsTo<Group>("group")
 
     val byUserGroup = index("idx_user_groups_user_group", user.fk, group.fk).unique()
 }
@@ -494,18 +571,18 @@ an explicit `EntSchema`.
 ### M2M Same Type
 
 ```kotlin
-class Person : EntSchema("people") {
+class Person : EntSchema("people", clientName = "persons") {
     override fun id() = EntId.long()
 
-    val friends = manyToMany<Person>("friends")
+    val friends by manyToMany<Person>("friends")
         .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
-class Friendship : EntSchema("friendships") {
+class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<Person>("user")
-    val friend = belongsTo<Person>("friend")
+    val user by belongsTo<Person>("user")
+    val friend by belongsTo<Person>("friend")
 
     val byFriendPair = index("idx_friendships_user_friend", user.fk, friend.fk).unique()
 }
@@ -527,25 +604,25 @@ and which is the target — `sourceEdge` first, then `targetEdge`.
 ### M2M Bidirectional
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val groups = manyToMany<Group>("groups")
+    val groups by manyToMany<Group>("groups")
         .throughEntity<Membership>(Membership::user, Membership::group)
 }
 
-class Group : EntSchema("groups") {
+class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.long()
 
-    val users = manyToMany<User>("users")
+    val users by manyToMany<User>("users")
         .throughEntity<Membership>(Membership::group, Membership::user)
 }
 
-class Membership : EntSchema("memberships") {
+class Membership : EntSchema("memberships", clientName = "memberships") {
     override fun id() = EntId.long()
 
-    val user = belongsTo<User>("user")
-    val group = belongsTo<Group>("group")
+    val user by belongsTo<User>("user")
+    val group by belongsTo<Group>("group")
 }
 ```
 
@@ -588,24 +665,24 @@ Indexes are declared as property declarations using field handles.
 For synthesized FK columns, use `.fk` on the edge declaration:
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.int()
 
-    val name = string("name")
-    val email = string("email")
-    val status = string("status")
-    val priority = int("priority")
+    val name by string("name")
+    val email by string("email")
+    val status by string("status")
+    val priority by int("priority")
 
     val byNameEmail = index("idx_name_email", name, email).unique()
     val byStatus = index("idx_status_priority", status, priority)
 }
 
 // FK index using .fk on a belongsTo edge
-class Friendship : EntSchema("friendships") {
+class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.int()
 
-    val requester = belongsTo<User>("requester")
-    val recipient = belongsTo<User>("recipient")
+    val requester by belongsTo<User>("requester")
+    val recipient by belongsTo<User>("recipient")
 
     val idx = index("idx_requester_recipient", requester.fk, recipient.fk).unique()
 }
@@ -624,11 +701,11 @@ the repo's `indexes` namespace
 Partial (conditional) indexes include only rows matching a `WHERE` predicate:
 
 ```kotlin
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.int()
 
-    val email = string("email")
-    val active = bool("active").default(true)
+    val email by string("email")
+    val active by bool("active").default(true)
 
     val activeEmail = index("idx_active_email", email).unique().where("active = true")
 }
@@ -664,13 +741,13 @@ their indexes, so a Postgres-native field looks Postgres-native at the call site
 ```kotlin
 import entkt.postgres.vector.*   // postgresVector, postgresVectorIndex, VectorMetric
 
-class Article : EntSchema("articles") {
+class Article : EntSchema("articles", clientName = "articles") {
     override fun id() = EntId.long()
 
-    val title = text("title")
+    val title by text("title")
 
     // A vector(1536) column, generated as a `PgVector` property.
-    val embedding = postgresVector("embedding", dimensions = 1536).nullable()
+    val embedding by postgresVector("embedding", dimensions = 1536).nullable()
 
     // Vector indexes spell out the access method + metric (they are not btree).
     val embeddingHnsw = postgresVectorIndex("idx_articles_embedding_hnsw", embedding)
@@ -723,17 +800,17 @@ data class PetMetadata(val nickname: String?, val tags: List<String>)
 @Serializable
 data class HighlightRect(val page: Int, val x: Double, val y: Double)
 
-class Pet : EntSchema("pets") {
+class Pet : EntSchema("pets", clientName = "pets") {
     override fun id() = EntId.long()
 
-    val name = string("name")
-    val metadata = json("pet_metadata", PetMetadata::class).nullable()
+    val name by string("name")
+    val metadata by json("pet_metadata", PetMetadata::class).nullable()
     // Reified form: json<PetMetadata>("pet_metadata")
 
     // Generic shapes work directly — the full type is captured, so the
     // generated property is List<HighlightRect> and elements round-trip
     // through HighlightRect's serializer (no wrapper class needed):
-    val rects = json<List<HighlightRect>>("rects").nullable()
+    val rects by json<List<HighlightRect>>("rects").nullable()
 }
 ```
 
@@ -802,15 +879,15 @@ Reusable local field/index bundles can be shared via `EntMixin` and
 
 ```kotlin
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt = time("created_at").immutable()
-    val updatedAt = time("updated_at")
+    val createdAt by time("created_at").immutable()
+    val updatedAt by time("updated_at")
 }
 
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
     val timestamps = include(::Timestamps)
-    val name = string("name")
+    val name by string("name")
     // User includes createdAt and updatedAt
 }
 ```

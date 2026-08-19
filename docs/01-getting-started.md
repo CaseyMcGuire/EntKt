@@ -113,13 +113,13 @@ Create a Kotlin class that extends `EntSchema`:
 ```kotlin
 import entkt.schema.*
 
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val name = string("name").minLength(1).maxLength(64)
-    val email = string("email").unique()
-    val age = int("age").nullable().min(0).max(150)
-    val active = bool("active").default(true)
+    val name by string("name").minLength(1).maxLength(64)
+    val email by string("email").unique()
+    val age by int("age").nullable().min(0).max(150)
+    val active by bool("active").default(true)
 }
 ```
 

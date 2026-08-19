@@ -10,12 +10,12 @@ enum class FriendshipStatus { PENDING, ACCEPTED }
  * (PENDING vs ACCEPTED) so it's a first-class entity, not a
  * transparent M2M join.
  */
-class Friendship : EntSchema("friendships") {
+class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.int()
-    val status = enum<FriendshipStatus>("status")
+    val status by enum<FriendshipStatus>("status")
 
-    val requester = belongsTo<User>("requester").inverse(User::sentRequests)
-    val recipient = belongsTo<User>("recipient").inverse(User::receivedRequests)
+    val requester by belongsTo<User>("requester").inverse(User::sentRequests)
+    val recipient by belongsTo<User>("recipient").inverse(User::receivedRequests)
 
     val idx = index("idx_friendships_requester_id_recipient_id_unique", requester.fk, recipient.fk).unique()
 }

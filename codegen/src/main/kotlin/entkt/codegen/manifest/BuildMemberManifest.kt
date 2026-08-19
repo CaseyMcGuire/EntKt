@@ -1,10 +1,11 @@
 package entkt.codegen.manifest
 
+import entkt.codegen.apiName
+import entkt.codegen.generatedStem
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.scalarFields
-import entkt.codegen.toCamelCase
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 
@@ -23,9 +24,14 @@ import entkt.schema.EntSchema
  *   `edges` constructor slot when the schema has any edges).
  * - **entity companion** (`${name}.Companion`) — fixed `fromRow` /
  *   `TABLE` / `SCHEMA`, plus the id column ref, one column ref
- *   per scalar field (`toCamelCase(field.name)`), one column ref
+ *   per scalar field (`field.apiName`), one column ref
  *   per FK (`fk.propertyName`), and one edge ref per edge
- *   (`toCamelCase(edge.name)`).
+ *   (`edge.apiName`).
+ * - **query class** (`${name}Query`) — the fixed query surface plus
+ *   `query{Stem}` / `with{Stem}` / `eager{Stem}` per declared edge.
+ * - **entity Edges class** (`${name}.Edges`) — one property per
+ *   declared edge (`edge.apiName`) plus the data-class synthesized
+ *   members. Only present when the schema declares edges.
  * - **mutation interface** (`${name}Mutation`) — mutable scalar
  *   field properties, mutable FK properties.
  * - **create builder** (`${name}Create`) — every mutable scalar
@@ -72,6 +78,8 @@ internal fun buildMemberManifest(
     val nonFkEdges = schema.edges().filter { it.kind !is EdgeKind.BelongsTo }
 
     addEntityClassMembers(manifest, schemaName, scalars, fks, nonFkEdges)
+    addEdgesClassMembers(manifest, schemaName, schema.edges())
+    addQueryClassMembers(manifest, schemaName, schema.edges())
     addEntityCompanionMembers(manifest, schemaName, scalars, fks, schema.edges())
     addMutationInterfaceMembers(manifest, schemaName, mutableScalars, mutableFks)
     addCreateBuilderMembers(manifest, schemaName, scalars, fks)
@@ -86,6 +94,8 @@ internal fun buildMemberManifest(
 
 private fun entityArtifact(name: String): String = name
 private fun companionArtifact(name: String): String = "$name.Companion"
+private fun edgesArtifact(name: String): String = "$name.Edges"
+private fun queryArtifact(name: String): String = "${name}Query"
 private fun mutationInterfaceArtifact(name: String): String = "${name}Mutation"
 private fun createBuilderArtifact(name: String): String = "${name}Create"
 private fun updateBuilderArtifact(name: String): String = "${name}Update"
@@ -94,7 +104,6 @@ private fun updateViewArtifact(name: String): String = "${name}UpdateMutationVie
 
 // ── Name derivation helpers ───────────────────────────────────────
 
-private fun fieldPropertyName(fieldName: String): String = toCamelCase(fieldName)
 private fun unsetMethodName(propertyName: String): String =
     "unset${propertyName.replaceFirstChar { it.uppercaseChar() }}"
 
@@ -142,14 +151,14 @@ private fun addEntityClassMembers(
     for (field in scalars) {
         manifest.add(
             artifact,
-            fieldPropertyName(field.name),
+            field.apiName,
             GeneratedMemberKind.PROPERTY,
-            "field '${field.name}'",
+            "field '${field.apiName}'",
         )
     }
 
-    // FK properties. Implicit FKs are named `${edgeName}Id`;
-    // field-backed FKs are named `toCamelCase(backingColumn)`.
+    // FK properties. Implicit FKs are named `${edgeDeclaration}Id`;
+    // field-backed FKs take the backing field's declaration name.
     // The critical collision is when a
     // scalar field's generated property name equals an FK's
     // generated property name on the same entity.
@@ -158,18 +167,121 @@ private fun addEntityClassMembers(
             artifact,
             fk.propertyName,
             GeneratedMemberKind.PROPERTY,
-            if (fk.isFieldBacked) "FK for field-backed edge '${fk.edgeName}'"
-            else "FK for edge '${fk.edgeName}'",
+            if (fk.isFieldBacked) "FK for field-backed edge '${fk.edgeApiName}'"
+            else "FK for edge '${fk.edgeApiName}'",
         )
     }
 
-    // Non-belongsTo edges (hasMany / hasOne / M2M) — these
-    // accessors live on `${Entity}Edges`, NOT on the entity
-    // class itself, so they don't conflict here. They're tracked
-    // in their own artifact if/when we add coverage for it.
-    // The entity `edges` accessor is fixed, but per-edge members on
-    // the Edges class are intentionally out of scope here.
+    // Non-belongsTo edges (hasMany / hasOne / M2M) accessors live on
+    // `${Entity}Edges`, not on the entity class, so they don't conflict
+    // here — see addEdgesClassMembers for that artifact.
     @Suppress("UNUSED_PARAMETER") nonFkEdges
+}
+
+// ── Entity Edges class ───────────────────────────────────────────
+
+/**
+ * `${name}Edges` — one `EdgeState` property per declared edge, named by
+ * the edge's Kotlin declaration, plus the data-class members Kotlin
+ * synthesizes from them.
+ *
+ * This artifact matters because edge member names are now the schema
+ * author's Kotlin declarations rather than storage-derived strings, so
+ * an edge declared `copy` or `component1` reaches a synthesized member
+ * and produces a confusing compile error in generated source.
+ *
+ * Emitted only when the schema declares at least one edge —
+ * EntityGenerator generates the inner class under the same condition.
+ */
+private fun addEdgesClassMembers(
+    manifest: GeneratedMemberManifest,
+    schemaName: String,
+    allEdges: List<entkt.schema.Edge>,
+) {
+    if (allEdges.isEmpty()) return
+    val artifact = edgesArtifact(schemaName)
+
+    manifest.add(artifact, "copy", GeneratedMemberKind.FUNCTION, "data-class synthesized copy")
+    manifest.add(artifact, "equals", GeneratedMemberKind.FUNCTION, "data-class synthesized equals")
+    manifest.add(artifact, "hashCode", GeneratedMemberKind.FUNCTION, "data-class synthesized hashCode")
+    manifest.add(artifact, "toString", GeneratedMemberKind.FUNCTION, "data-class synthesized toString")
+    for (i in 1..allEdges.size) {
+        manifest.add(artifact, "component$i", GeneratedMemberKind.FUNCTION, "data-class synthesized component$i")
+    }
+
+    for (edge in allEdges) {
+        manifest.add(
+            artifact,
+            edge.apiName,
+            GeneratedMemberKind.PROPERTY,
+            "edge '${edge.apiName}'",
+        )
+    }
+}
+
+// ── Query class ──────────────────────────────────────────────────
+
+/**
+ * Members `QueryGenerator` always emits on `${name}Query`, public and
+ * private alike. Private members count: Kotlin does not allow a private
+ * and a generated public member to share a name on one class, so a
+ * declaration that lands on `eagerDenialBasePath` breaks compilation
+ * just as surely as one landing on `where`.
+ *
+ * Hand-maintained mirror of `QueryGenerator` — the same contract the
+ * other artifact lists in this file follow.
+ */
+private val FIXED_QUERY_MEMBERS: List<String> = listOf(
+    "aggregateRows", "all", "buildQueryPlan", "client", "combinedPredicate",
+    "deferredSourceStep", "driver", "eagerDenialBasePath", "explainRawCount",
+    "firstOrNull", "limit", "loadEdges", "offset", "orderBy", "orderFields",
+    "predicates", "query", "queryLimit", "queryOffset", "rawCount", "rawExists",
+    "requireClient", "runEdgePredicateInterceptors", "runReadInterceptors",
+    "seedEagerDenialBasePath", "seedEdgeTraversal", "setDeferredSourceStep",
+    "snapshotForTraversal", "traversalEdgeName", "traversalPath",
+    "traversalSourceEntity", "where",
+)
+
+/**
+ * `${name}Query` — the fixed query surface plus, per edge, the three
+ * declaration-derived members: `query{Stem}` traversal, `with{Stem}`
+ * eager entry point, and the private `eager{Stem}` backing property.
+ *
+ * All three take the edge's Kotlin declaration name, so an edge
+ * declared `denialBasePath` generates `eagerDenialBasePath` and
+ * collides with the fixed private property of that name.
+ */
+private fun addQueryClassMembers(
+    manifest: GeneratedMemberManifest,
+    schemaName: String,
+    allEdges: List<entkt.schema.Edge>,
+) {
+    val artifact = queryArtifact(schemaName)
+    for (fixed in FIXED_QUERY_MEMBERS) {
+        manifest.add(artifact, fixed, GeneratedMemberKind.PROPERTY, "fixed query member")
+    }
+    for (edge in allEdges) {
+        val stem = edge.apiName.generatedStem()
+        manifest.add(
+            artifact, "query$stem", GeneratedMemberKind.FUNCTION,
+            "traversal for edge '${edge.apiName}'",
+        )
+        manifest.add(
+            artifact, "with$stem", GeneratedMemberKind.FUNCTION,
+            "eager load for edge '${edge.apiName}'",
+        )
+        manifest.add(
+            artifact, "eager$stem", GeneratedMemberKind.PROPERTY,
+            "eager backing property for edge '${edge.apiName}'",
+        )
+        // The filterVisible opt-in is a second per-edge property, so
+        // edges declared `posts` and `postsFilterVisible` both reach
+        // `eagerPostsFilterVisible`.
+        manifest.add(
+            artifact, "eager${stem}FilterVisible", GeneratedMemberKind.PROPERTY,
+            "eager filterVisible opt-in for edge '${edge.apiName}'",
+        )
+    }
 }
 
 // ── Entity companion ─────────────────────────────────────────────
@@ -194,13 +306,13 @@ private fun addEntityCompanionMembers(
     manifest.add(artifact, "id", GeneratedMemberKind.PROPERTY, "id column ref")
 
     // One column ref per scalar field (EntityGenerator.buildFieldColumnRef
-    // uses toCamelCase(field.name) for the property name).
+    // uses field.apiName for the property name).
     for (field in scalars) {
         manifest.add(
             artifact,
-            fieldPropertyName(field.name),
+            field.apiName,
             GeneratedMemberKind.PROPERTY,
-            "column ref for field '${field.name}'",
+            "column ref for field '${field.apiName}'",
         )
     }
 
@@ -211,20 +323,20 @@ private fun addEntityCompanionMembers(
             artifact,
             fk.propertyName,
             GeneratedMemberKind.PROPERTY,
-            "column ref for FK edge '${fk.edgeName}'",
+            "column ref for FK edge '${fk.edgeApiName}'",
         )
     }
 
     // One edge ref per edge — including non-belongsTo edges
-    // (EntityGenerator.buildEdgeRef uses toCamelCase(edge.name)).
+    // (EntityGenerator.buildEdgeRef uses edge.apiName).
     // The edge refs are how the runtime walks `has` / `exists`
     // predicates, so every declared edge contributes one.
     for (edge in allEdges) {
         manifest.add(
             artifact,
-            toCamelCase(edge.name),
+            edge.apiName,
             GeneratedMemberKind.PROPERTY,
-            "edge ref for edge '${edge.name}'",
+            "edge ref for edge '${edge.apiName}'",
         )
     }
 }
@@ -241,17 +353,17 @@ private fun addMutationInterfaceMembers(
     for (field in mutableScalars) {
         manifest.add(
             artifact,
-            fieldPropertyName(field.name),
-            GeneratedMemberKind.PROPERTY,
-            "mutable field '${field.name}'",
+            field.apiName,
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "mutable field '${field.apiName}'",
         )
     }
     for (fk in mutableFks) {
         manifest.add(
             artifact,
             fk.propertyName,
-            GeneratedMemberKind.PROPERTY,
-            "mutable FK for edge '${fk.edgeName}'",
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "mutable FK for edge '${fk.edgeApiName}'",
         )
     }
 }
@@ -277,17 +389,17 @@ private fun addCreateBuilderMembers(
     for (field in allScalars) {
         manifest.add(
             artifact,
-            fieldPropertyName(field.name),
-            GeneratedMemberKind.PROPERTY,
-            "field '${field.name}' setter",
+            field.apiName,
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "field '${field.apiName}' setter",
         )
     }
     for (fk in allFks) {
         manifest.add(
             artifact,
             fk.propertyName,
-            GeneratedMemberKind.PROPERTY,
-            "FK setter for edge '${fk.edgeName}'",
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "FK setter for edge '${fk.edgeApiName}'",
         )
     }
 }
@@ -308,17 +420,17 @@ private fun addUpdateBuilderMembers(
     for (field in mutableScalars) {
         manifest.add(
             artifact,
-            fieldPropertyName(field.name),
-            GeneratedMemberKind.PROPERTY,
-            "field '${field.name}' setter",
+            field.apiName,
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "field '${field.apiName}' setter",
         )
     }
     for (fk in mutableFks) {
         manifest.add(
             artifact,
             fk.propertyName,
-            GeneratedMemberKind.PROPERTY,
-            "FK setter for edge '${fk.edgeName}'",
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "FK setter for edge '${fk.edgeApiName}'",
         )
     }
 
@@ -331,7 +443,7 @@ private fun addUpdateBuilderMembers(
             artifact,
             m2m.mutatorPropertyName,
             GeneratedMemberKind.PROPERTY,
-            "M2M edge mutator for edge '${m2m.edgeName}'",
+            "M2M edge mutator for edge '${m2m.mutatorPropertyName}'",
         )
     }
 
@@ -358,17 +470,17 @@ private fun addCreateMutationViewMembers(
     for (field in immutableScalars) {
         manifest.add(
             artifact,
-            fieldPropertyName(field.name),
-            GeneratedMemberKind.PROPERTY,
-            "immutable field '${field.name}' (create-only writable)",
+            field.apiName,
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "immutable field '${field.apiName}' (create-only writable)",
         )
     }
     for (fk in immutableFks) {
         manifest.add(
             artifact,
             fk.propertyName,
-            GeneratedMemberKind.PROPERTY,
-            "immutable FK setter for edge '${fk.edgeName}' (create-only writable)",
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "immutable FK setter for edge '${fk.edgeApiName}' (create-only writable)",
         )
     }
 }
@@ -391,27 +503,27 @@ private fun addUpdateMutationViewMembers(
     // diagnostic. (Mutation interface coverage handles the
     // separate concern of two mutables sharing a name there.)
     for (field in mutableScalars) {
-        val prop = fieldPropertyName(field.name)
-        manifest.add(artifact, prop, GeneratedMemberKind.PROPERTY, "mutable field '${field.name}'")
+        val prop = field.apiName
+        manifest.add(artifact, prop, GeneratedMemberKind.MUTABLE_PROPERTY, "mutable field '${field.apiName}'")
         manifest.add(
             artifact,
             unsetMethodName(prop),
             GeneratedMemberKind.FUNCTION,
-            "unset method for field '${field.name}'",
+            "unset method for field '${field.apiName}'",
         )
     }
     for (fk in mutableFks) {
         manifest.add(
             artifact,
             fk.propertyName,
-            GeneratedMemberKind.PROPERTY,
-            "mutable FK for edge '${fk.edgeName}'",
+            GeneratedMemberKind.MUTABLE_PROPERTY,
+            "mutable FK for edge '${fk.edgeApiName}'",
         )
         manifest.add(
             artifact,
             unsetMethodName(fk.propertyName),
             GeneratedMemberKind.FUNCTION,
-            "unset method for FK edge '${fk.edgeName}'",
+            "unset method for FK edge '${fk.edgeApiName}'",
         )
     }
 
@@ -446,9 +558,9 @@ private fun addFixedBuilderMembers(
     includeUpdateOnly: Boolean,
 ) {
     // Shared between Create and Update builders. The internal /
-    // private execution members are registered for the same reason as
-    // the `_`-prefixed adapters below: declaration-name capture can
-    // produce a user field whose generated property would collide.
+    // private execution members are registered because a declaration
+    // name can collide with them — these are ordinary lower-camel
+    // identifiers a schema author could plausibly choose.
     val shared = listOf(
         "save" to GeneratedMemberKind.FUNCTION,
         "saveAndLoad" to GeneratedMemberKind.FUNCTION,
@@ -466,6 +578,7 @@ private fun addFixedBuilderMembers(
             "id" to GeneratedMemberKind.PROPERTY,
             "consistency" to GeneratedMemberKind.PROPERTY,
             "dirtyFields" to GeneratedMemberKind.PROPERTY,
+            "relationshipLocking" to GeneratedMemberKind.PROPERTY,
             "beforeUpdateHooks" to GeneratedMemberKind.PROPERTY,
             "afterUpdateHooks" to GeneratedMemberKind.PROPERTY,
             // Private adapter and snapshot properties used by generated hooks.
@@ -492,11 +605,11 @@ private fun addFixedBuilderMembers(
         val createOnly = listOf(
             "beforeCreateHooks" to GeneratedMemberKind.PROPERTY,
             "afterCreateHooks" to GeneratedMemberKind.PROPERTY,
-            // create-hook adapter private adapter properties. Same reachability
-            // story as the update side above — schemas using declaration-name capture
-            // declaration capture can produce a `_beforeSaveView`-
-            // or `_createMutationView`-named FK property that would
-            // collide with these.
+            // Private create-hook adapter properties. A schema can no
+            // longer reach these: declaration names must be lower-camel
+            // identifiers, so the framework's `_` prefix is reserved.
+            // Registered anyway so a future *generated* member colliding
+            // with them is caught.
             "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
             "_createMutationView" to GeneratedMemberKind.PROPERTY,
             "_managedByCreateMany" to GeneratedMemberKind.PROPERTY,

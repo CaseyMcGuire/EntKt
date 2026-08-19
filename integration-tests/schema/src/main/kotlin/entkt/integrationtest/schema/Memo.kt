@@ -17,9 +17,9 @@ import entkt.schema.EntSchema
  * the soft-delete suite focuses on read-filter + write-mode
  * semantics rather than uniqueness behavior.
  */
-class Memo : EntSchema("memos") {
+class Memo : EntSchema("memos", clientName = "memos") {
     override fun id() = EntId.long()
 
     val softDelete = include(::DeletedAt)
-    val body = text("body")
+    val body by text("body")
 }

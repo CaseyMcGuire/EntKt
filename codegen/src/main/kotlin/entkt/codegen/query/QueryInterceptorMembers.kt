@@ -7,7 +7,6 @@ import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
-import entkt.codegen.pluralize
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
@@ -45,8 +44,8 @@ private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext
  * unchanged through traversal, edge-predicate, and eager subqueries;
  * this helper deliberately never samples the client's provider.
  */
-internal fun buildRunReadInterceptors(schemaName: String, entityClass: ClassName): FunSpec {
-    val repoPropName = pluralize(schemaName.replaceFirstChar { it.lowercase() })
+internal fun buildRunReadInterceptors(schemaName: String, clientName: String, entityClass: ClassName): FunSpec {
+    val repoPropName = clientName
     val readOp = READ_OPERATION
     // Structural predicates pass in typed to this query's entity
     // scope. The deferred-source-step bridge (target-scoped) and
@@ -292,8 +291,11 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
         body.add("      targetQ.where(typedInner)\n")
         // Cross-class write through the @EntktInternal seeder.
         body.add(
-            "      targetQ.seedEdgeTraversal(%T::class, predicate.edge, parentPath + %T(%T::class, predicate.edge, %T::class))\n",
-            entityClass, edgeStepClass, entityClass, targetClass,
+            // The `when` above dispatches on the storage key, but what
+            // the target's interceptors and denial paths see must be the
+            // declaration name.
+            "      targetQ.seedEdgeTraversal(%T::class, %S, parentPath + %T(%T::class, %S, %T::class))\n",
+            entityClass, re.publicName, edgeStepClass, entityClass, re.publicName, targetClass,
         )
         body.add(
             "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, privacy)\n",
@@ -335,8 +337,11 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
         body.add("      val targetQ = %T(driver, c)\n", targetQueryClass)
         // Cross-class write through the @EntktInternal seeder.
         body.add(
-            "      targetQ.seedEdgeTraversal(%T::class, predicate.edge, parentPath + %T(%T::class, predicate.edge, %T::class))\n",
-            entityClass, edgeStepClass, entityClass, targetClass,
+            // The `when` above dispatches on the storage key, but what
+            // the target's interceptors and denial paths see must be the
+            // declaration name.
+            "      targetQ.seedEdgeTraversal(%T::class, %S, parentPath + %T(%T::class, %S, %T::class))\n",
+            entityClass, re.publicName, edgeStepClass, entityClass, re.publicName, targetClass,
         )
         body.add(
             "      val spec = targetQ.runReadInterceptors(%T.EDGE_PREDICATE, privacy)\n",

@@ -13,16 +13,16 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-private class VecDdlArticle : EntSchema("articles") {
+private class VecDdlArticle : EntSchema("articles", clientName = "vecDdlArticles") {
     override fun id() = EntId.long()
-    val title = text("title")
-    val embedding = postgresVector("embedding", 1536).nullable()
+    val title by text("title")
+    val embedding by postgresVector("embedding", 1536).nullable()
     val embHnsw = postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.Cosine)
 }
 
-private class VecDdlIvf : EntSchema("ivf_items") {
+private class VecDdlIvf : EntSchema("ivf_items", clientName = "vecDdlIvfs") {
     override fun id() = EntId.long()
-    val embedding = postgresVector("embedding", 3)
+    val embedding by postgresVector("embedding", 3)
     val ivf = postgresVectorIndex("idx_ivf_embedding", embedding).ivfflat(VectorMetric.L2, lists = 100)
 }
 
@@ -34,7 +34,7 @@ class PgVectorDdlTest {
 
     private fun normalized(vararg schemas: EntSchema): NormalizedSchema =
         NormalizedSchema.fromEntitySchemas(
-            buildEntitySchemas(schemas.map { SchemaInput(it::class.simpleName ?: "S", it) }),
+            buildEntitySchemas(schemas.map { SchemaInput(it) }),
             typeMapper,
         )
 
@@ -83,15 +83,15 @@ class PgVectorDdlTest {
 
     @Test
     fun `a vector dimension change is classified manual via the type-change path`() {
-        class Big : EntSchema("articles") {
+        class Big : EntSchema("articles", clientName = "bigs") {
             override fun id() = EntId.long()
-            val title = text("title")
-            val embedding = postgresVector("embedding", 3072).nullable()
+            val title by text("title")
+            val embedding by postgresVector("embedding", 3072).nullable()
         }
-        class Small : EntSchema("articles") {
+        class Small : EntSchema("articles", clientName = "smalls") {
             override fun id() = EntId.long()
-            val title = text("title")
-            val embedding = postgresVector("embedding", 1536).nullable()
+            val title by text("title")
+            val embedding by postgresVector("embedding", 1536).nullable()
         }
         val result = differ.diff(normalized(Big()), normalized(Small()))
         assertTrue(result.ops.none { it is MigrationOp.AlterColumnType }, "must not be auto: ${result.ops}")

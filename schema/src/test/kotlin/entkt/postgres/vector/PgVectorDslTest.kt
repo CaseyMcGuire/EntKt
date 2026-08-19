@@ -9,10 +9,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-private class VecSchema : EntSchema("articles") {
+private class VecSchema : EntSchema("articles", clientName = "vecSchemas") {
     override fun id() = EntId.long()
-    val title = string("title")
-    val embedding = postgresVector("embedding", dimensions = 1536).nullable()
+    val title by string("title")
+    val embedding by postgresVector("embedding", dimensions = 1536).nullable()
 }
 
 class PgVectorDslTest {
@@ -43,29 +43,29 @@ class PgVectorDslTest {
     @Test
     fun `dimensions out of 1_16000 throw at declaration`() {
         assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("t0") {
+            object : EntSchema("t0", clientName = "t0") {
                 override fun id() = EntId.long()
-                val e = postgresVector("e", 0)
+                val e by postgresVector("e", 0)
             }
         }
         assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("t1") {
+            object : EntSchema("t1", clientName = "t1") {
                 override fun id() = EntId.long()
-                val e = postgresVector("e", 16001)
+                val e by postgresVector("e", 16001)
             }
         }
         // 3072 (e.g. OpenAI text-embedding-3-large) is valid.
-        object : EntSchema("t2") {
+        object : EntSchema("t2", clientName = "t2") {
             override fun id() = EntId.long()
-            val e = postgresVector("e", 3072)
+            val e by postgresVector("e", 3072)
         }
     }
 
     @Test
     fun `unique on a vector is rejected at build`() {
-        val s = object : EntSchema("u") {
+        val s = object : EntSchema("u", clientName = "u") {
             override fun id() = EntId.long()
-            val e = postgresVector("e", 4).unique()
+            val e by postgresVector("e", 4).unique()
         }
         finalize(s)
         // build() runs in fields(); the native-column .unique() rejection fires there.
@@ -79,9 +79,9 @@ class PgVectorDslTest {
     @Test
     fun `postgresVectorIndex on a non-vector column is rejected at declaration`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("nv") {
+            object : EntSchema("nv", clientName = "nv") {
                 override fun id() = EntId.long()
-                val title = string("title")
+                val title by string("title")
                 val i = postgresVectorIndex("i", title).hnsw(VectorMetric.Cosine)
             }
         }
@@ -91,9 +91,9 @@ class PgVectorDslTest {
     @Test
     fun `postgresVectorIndex on a column wider than 2000 dimensions is rejected`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("big") {
+            object : EntSchema("big", clientName = "big") {
                 override fun id() = EntId.long()
-                val emb = postgresVector("emb", 3072)
+                val emb by postgresVector("emb", 3072)
                 val i = postgresVectorIndex("i", emb).hnsw(VectorMetric.Cosine)
             }
         }
@@ -103,9 +103,9 @@ class PgVectorDslTest {
     @Test
     fun `hnsw on a plain index() is rejected`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("plain") {
+            object : EntSchema("plain", clientName = "plain") {
                 override fun id() = EntId.long()
-                val emb = postgresVector("emb", 4)
+                val emb by postgresVector("emb", 4)
                 val i = index("i", emb).hnsw(VectorMetric.Cosine)
             }
         }
@@ -115,9 +115,9 @@ class PgVectorDslTest {
     @Test
     fun `ivfflat with non-positive lists is rejected`() {
         val err = assertFailsWith<IllegalArgumentException> {
-            object : EntSchema("ivf") {
+            object : EntSchema("ivf", clientName = "ivf") {
                 override fun id() = EntId.long()
-                val emb = postgresVector("emb", 4)
+                val emb by postgresVector("emb", 4)
                 val i = postgresVectorIndex("i", emb).ivfflat(VectorMetric.L2, lists = 0)
             }
         }
@@ -126,9 +126,9 @@ class PgVectorDslTest {
 
     @Test
     fun `unique on a vector index is rejected at build`() {
-        val s = object : EntSchema("uqidx") {
+        val s = object : EntSchema("uqidx", clientName = "uqidx") {
             override fun id() = EntId.long()
-            val emb = postgresVector("emb", 4)
+            val emb by postgresVector("emb", 4)
             val i = postgresVectorIndex("i", emb).hnsw(VectorMetric.Cosine).unique()
         }
         finalize(s)
@@ -138,9 +138,9 @@ class PgVectorDslTest {
 
     @Test
     fun `vector index without an access method is rejected at build`() {
-        val s = object : EntSchema("noam") {
+        val s = object : EntSchema("noam", clientName = "noam") {
             override fun id() = EntId.long()
-            val emb = postgresVector("emb", 4)
+            val emb by postgresVector("emb", 4)
             val i = postgresVectorIndex("i", emb)
         }
         finalize(s)
@@ -150,9 +150,9 @@ class PgVectorDslTest {
 
     @Test
     fun `valid hnsw index builds with its native metadata`() {
-        val s = object : EntSchema("okh") {
+        val s = object : EntSchema("okh", clientName = "okh") {
             override fun id() = EntId.long()
-            val emb = postgresVector("emb", 4)
+            val emb by postgresVector("emb", 4)
             val h = postgresVectorIndex("h", emb).hnsw(VectorMetric.Cosine)
         }
         finalize(s)
@@ -165,9 +165,9 @@ class PgVectorDslTest {
 
     @Test
     fun `valid ivfflat index builds with its native metadata`() {
-        val s = object : EntSchema("okv") {
+        val s = object : EntSchema("okv", clientName = "okv") {
             override fun id() = EntId.long()
-            val emb = postgresVector("emb", 4)
+            val emb by postgresVector("emb", 4)
             val v = postgresVectorIndex("v", emb).ivfflat(VectorMetric.L2, lists = 100)
         }
         finalize(s)
@@ -181,9 +181,9 @@ class PgVectorDslTest {
     fun `two vector indexes on one column with different metrics are both allowed`() {
         // The dedup key mirrors the migration differ's index identity, so
         // indexes that differ by operator class are distinct, not duplicates.
-        val s = object : EntSchema("multi") {
+        val s = object : EntSchema("multi", clientName = "multi") {
             override fun id() = EntId.long()
-            val emb = postgresVector("emb", 4)
+            val emb by postgresVector("emb", 4)
             val cos = postgresVectorIndex("cos", emb).hnsw(VectorMetric.Cosine)
             val l2 = postgresVectorIndex("l2", emb).hnsw(VectorMetric.L2)
         }
@@ -193,9 +193,9 @@ class PgVectorDslTest {
 
     @Test
     fun `two identical vector indexes on one column are still rejected as duplicates`() {
-        val s = object : EntSchema("dup") {
+        val s = object : EntSchema("dup", clientName = "dup") {
             override fun id() = EntId.long()
-            val emb = postgresVector("emb", 4)
+            val emb by postgresVector("emb", 4)
             val a = postgresVectorIndex("a", emb).hnsw(VectorMetric.Cosine)
             val b = postgresVectorIndex("b", emb).hnsw(VectorMetric.Cosine)
         }

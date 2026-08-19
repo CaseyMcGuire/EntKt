@@ -17,12 +17,12 @@ import entkt.schema.EntSchema
  * (query-chain, predicate, eager) while remaining directly
  * queryable through `client.memberships`.
  */
-class Membership : EntSchema("memberships") {
+class Membership : EntSchema("memberships", clientName = "memberships") {
     override fun id() = EntId.long()
 
-    val group = belongsTo<Group>("group").nullable()
-    val user = belongsTo<User>("user").nullable()
+    val group by belongsTo<Group>("group").nullable()
+    val user by belongsTo<User>("user").nullable()
 
     /** Payload — proves the junction is a domain entity, not just a join row. */
-    val role = string("role")
+    val role by string("role")
 }

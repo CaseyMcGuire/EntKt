@@ -1,8 +1,8 @@
 package entkt.codegen.metadata
 
+import entkt.codegen.apiName
+import entkt.codegen.generatedStem
 import com.squareup.kotlinpoet.TypeName
-import entkt.codegen.toCamelCase
-import entkt.codegen.toPascalCase
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
@@ -26,13 +26,13 @@ import entkt.schema.ManyToManyThrough
  * through [resolveM2MEdgeJoin]. With symmetric link tables both pair-swapped
  * endpoints are writable, so a junction can surface here from both sides.
  *
- * The mutator is named after the source edge (`tags` →
- * `TagsEdgeMutator`, not `TagEdgeMutator`) so two M2M edges to the
- * same target type on the same source schema do not collide. Edge
- * names go through `toCamelCase` (property) and `toPascalCase`
- * (class) so a schema-side `manyToMany<Tag>("primary_tags")`
- * generates idiomatic `val primaryTags: PrimaryTagsEdgeMutator`
- * instead of leaking snake_case into the generated Kotlin API.
+ * The mutator is named after the source edge, not its target type, so
+ * two M2M edges to the same target on the same source schema do not
+ * collide. Both names come from the edge's Kotlin declaration: the
+ * property is the declaration itself and the class is its stem, so
+ * `val tags by manyToMany<Tag>("primary_tags")` generates
+ * `val tags: TagsEdgeMutator`. The storage string `primary_tags` never
+ * reaches the generated Kotlin API.
  */
 internal data class HelperEligibleM2M(
     val edge: Edge,
@@ -84,8 +84,8 @@ internal fun helperEligibleM2MEdges(
         HelperEligibleM2M(
             edge = edge,
             edgeName = edge.name,
-            mutatorPropertyName = toCamelCase(edge.name),
-            mutatorClassSimpleName = toPascalCase(edge.name) + "EdgeMutator",
+            mutatorPropertyName = edge.apiName,
+            mutatorClassSimpleName = edge.apiName.generatedStem() + "EdgeMutator",
             junctionTable = junctionTable,
             junctionSourceColumn = junctionSourceColumn,
             junctionTargetColumn = junctionTargetColumn,
