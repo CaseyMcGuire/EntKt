@@ -117,7 +117,9 @@ That creates a few recurring problems:
 - Eliminate string names from linkage-heavy schema APIs.
 - Keep schema code readable.
 - Keep SQL column and table naming explicit in schema declarations.
-- Avoid schema-level name inference from Kotlin variable names.
+- Use Kotlin declaration names for generated APIs while keeping SQL names
+  explicit, as specified by
+  [Schema Declaration Names As Generated API](schema-declaration-api-names.md).
 - Reject obvious schema mismatches earlier.
 - Use plain property declarations as the schema model for fields,
   edges, and indexes.
@@ -211,8 +213,9 @@ In this model:
 - field declarations name the SQL column up front
 - `title`, `authorId`, `author`, and `byAuthor` are plain Kotlin
   properties holding stable schema declarations
-- Kotlin property names improve readability, but they are not the
-  linkage key and should not drive SQL naming
+- Kotlin property names are the generated Kotlin API identity, while typed
+  handles remain the linkage key and explicit storage strings continue to
+  drive SQL naming
 - no delegated `by` API is required
 
 The intended schema surface is therefore:

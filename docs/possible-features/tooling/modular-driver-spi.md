@@ -76,12 +76,11 @@ whole schema graph rather than one connection session.
 ## Query And Mutation Commands
 
 Prefer structured internal commands over long parameter lists of table names,
-column strings, and erased maps:
-
-The accepted [SQL-Shaped Query Core](../query/sql-shaped-query-core.md) owns the
-relational statement boundary and supersedes the narrow illustrative command
-below. The eventual command must represent aliases, joins, subqueries,
-projections, grouping, and nested relationship projections in one statement.
+column strings, and erased maps. The command below remains illustrative; query
+and projection RFCs may expand it with aliases, joins, subqueries, grouping,
+and typed projections. Relationship-aware commands and native per-parent
+windows are owned by the
+[Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md).
 
 ```kotlin
 data class SelectCommand(
@@ -215,5 +214,5 @@ Optional capability suites run only when the driver declares support.
 
 - [Driver Capability Matrix](driver-capability-matrix.md)
 - [Coroutine And R2DBC Driver Track](coroutine-r2dbc-driver.md)
-- [SQL-Shaped Query Core](../query/sql-shaped-query-core.md)
+- [Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md)
 - [Thin Codegen And Runtime Execution Engines](thin-codegen-runtime-engines.md)

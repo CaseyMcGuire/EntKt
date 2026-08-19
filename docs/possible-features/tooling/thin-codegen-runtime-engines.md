@@ -49,7 +49,7 @@ Runtime code owns:
 
 - query-spec freezing and interceptor execution
 - relational-plan compilation, row-terminal execution, and result capture
-- nested relationship projection and graph decoding
+- set-based edge-load planning, execution, and graph attachment
 - privacy and validation batch evaluation
 - mutation phase orchestration
 - transaction/write-state propagation
@@ -68,13 +68,13 @@ internal object UserRuntimeModel : RuntimeEntityModel<User, UserId> {
 }
 
 public fun all(): ReadResult<List<User>> =
-    readEngine.all(UserRuntimeModel, compiledSelect())
+    readEngine.all(UserRuntimeModel, frozenQuery(), edgeLoadPlan())
 ```
 
-The exact interfaces are internal. `compiledSelect()` is illustrative of the
-single relational plan defined by
-[SQL-Shaped Query Core](../query/sql-shaped-query-core.md), including requested
-relationships; it is not a root plan plus a separate eager executor.
+The exact interfaces are internal. `frozenQuery()` and `edgeLoadPlan()` are
+illustrative of the boundary defined by the
+[Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md): one
+immutable root query plus a separately planned, set-based relationship graph.
 Application code still sees generated `UserQuery`, `UserRepo`, and typed
 results.
 
@@ -150,7 +150,7 @@ than arbitrary copies of generated execution algorithms.
 
 ## Related Features
 
-- [SQL-Shaped Query Core](../query/sql-shaped-query-core.md)
+- [Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md)
 - [Structured Mutation Pipeline](../mutation/structured-mutation-pipeline.md)
 - [Modular Driver SPI](modular-driver-spi.md)
 - [Codegen Plugin Hooks](codegen-plugin-hooks.md)

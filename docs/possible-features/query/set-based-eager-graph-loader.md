@@ -2,13 +2,13 @@
 
 ## Status
 
-Superseded as an architectural direction on 2026-08-18 by
-[SQL-Shaped Query Core](sql-shaped-query-core.md). This RFC is not implemented.
+Accepted execution direction as of 2026-08-18. This is not implemented.
 
-Its result-shape, privacy, and per-parent-window analysis remains useful
-compatibility input. Its multi-statement executor and relationship-aware
-`RelatedQuery` driver direction are no longer the proposed default for ordinary
-`with{Edge}` queries.
+This RFC owns set-based edge-load execution, not the public API used to select
+edges. Examples retain the currently generated `with{Edge}` spelling only to
+show query shapes. A separate public-API RFC may replace that spelling without
+changing the executor described here. The executor consumes an immutable edge
+load plan produced by whichever public DSL is accepted.
 
 ## Summary
 
@@ -498,8 +498,8 @@ removed.
 
 ## Observable Compatibility
 
-The public `with{Edge}` DSL and entity result types do not change. These
-contracts remain stable:
+The public edge-selection syntax is outside this executor RFC. Entity result
+types and these execution contracts remain stable:
 
 - root query and root LOAD privacy complete before eager loading
 - sibling paths and their descendants execute depth-first in schema

@@ -20,14 +20,21 @@ and semantic boundaries rather than adding more scalar types.
 
 ## Candidate Directions
 
-### 1. SQL-Shaped Query Execution
+### 1. Explicit, Set-Based Edge Loading
 
-Make an ordinary EntKt query represent at most one relational statement,
-including requested `with{Edge}` relationships. Compile to-one, to-many, and
-many-to-many edges as root-preserving nested relational projections rather than
-silently coordinating follow-up reads.
+Keep relationship loading explicit at the query call site, then execute each
+selected edge path once for the complete current parent batch rather than once
+per parent group. Preserve `EdgeState` and per-parent query semantics without
+making one large SQL statement the public contract.
 
-Detailed note: [SQL-Shaped Query Core](query/sql-shaped-query-core.md).
+Public edge-selection syntax and execution strategy are separate design
+decisions. The executor consumes an immutable edge-load plan; generated API
+names follow the schema declaration-name contract.
+
+Detailed notes:
+
+- [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
+- [Schema Declaration Names As Generated API](schema/schema-declaration-api-names.md)
 
 ### 2. Query-Time Visibility Predicates
 
@@ -125,9 +132,9 @@ Some directions should be designed together:
 
 - Query-time visibility should precede privacy-correct projection, counts, and
   public cursor pagination.
-- The SQL-shaped query core should use the modular driver capability model and
-  reject unsupported one-statement nested projections before statement
-  submission rather than falling back to hidden reads.
+- Set-based edge loading should use the modular driver capability model for
+  native per-parent windows and deterministic physical chunking, while keeping
+  emulated support explicit in plans and diagnostics.
 - Runtime execution engines make it easier to implement eager loading and
   mutation phases once rather than in every generated repository.
 - `afterCommit` semantics depend on explicit transaction ownership and nested

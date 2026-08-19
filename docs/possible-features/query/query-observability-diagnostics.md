@@ -69,10 +69,11 @@ runtime tracing for actual executions.
 
 The eager-query examples and estimates below describe the current
 multi-statement implementation. The accepted
-[SQL-Shaped Query Core](sql-shaped-query-core.md) changes ordinary
-`with{Edge}` queries to one nested relational statement. After that cutover,
-diagnostics should describe the nested plan and its one statement; separate
-loader operations and callback-issued queries retain independent trace entries.
+[Set-Based Eager Graph Loader](set-based-eager-graph-loader.md) retains explicit
+relationship reads while removing per-parent nested N+1 behavior. Diagnostics
+should therefore describe logical edge-load steps, physical chunks, and count
+ranges rather than assuming either one statement for a graph or one statement
+per returned parent. Callback-issued queries retain independent trace entries.
 
 Baseline explain output can already describe the post-interceptor root query
 shape:

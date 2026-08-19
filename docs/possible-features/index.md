@@ -35,7 +35,7 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 
 ## Query APIs
 
-- [SQL-Shaped Query Core](query/sql-shaped-query-core.md)
+- [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
 - [Explicit Query Authority And Cost](query/explicit-query-authority-and-cost.md)
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
 - [Privacy-Aware Visible Pagination](query/privacy-aware-visible-pagination.md)
@@ -47,6 +47,7 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 
 ## Model Behavior
 
+- [Schema Declaration Names As Generated API](schema/schema-declaration-api-names.md)
 - [Typed Schema Handles](schema/typed-schema-handles.md)
 - [Optimistic Locking](schema/optimistic-locking.md)
 - [Edge Groups](schema/edge-groups.md)

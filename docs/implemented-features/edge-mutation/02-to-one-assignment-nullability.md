@@ -9,6 +9,12 @@ Follow-up work was extracted into focused RFCs:
 - [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](08-create-hook-mutation-view-adapter.md)
+- [Schema Declaration Names As Generated API](../../possible-features/schema/schema-declaration-api-names.md)
+
+The core to-one behavior is implemented. The edge declaration-name capture
+described later in this document is not implemented and is superseded by the
+focused edge declaration-name RFC above. Current codegen still derives most
+edge APIs from the storage/runtime `Edge.name`.
 
 Create-side result variants are already implemented under
 [EntKt Result Variants](../tooling/entkt-result-variants-rfc.md).
@@ -210,6 +216,10 @@ should rename the declaration property or use `belongsTo(...).field(handle)` whe
 a collision would occur.
 
 ## Declaration Property Name Capture
+
+> **Historical design note:** this section was not implemented as part of the
+> core to-one baseline. Its edge-specific contract is superseded by
+> [Schema Declaration Names As Generated API](../../possible-features/schema/schema-declaration-api-names.md).
 
 Even without entity setter methods like `setAuthor(...)`, implicit FK
 properties still need a Kotlin source name for their generated API,
