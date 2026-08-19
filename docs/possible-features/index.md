@@ -35,6 +35,7 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 
 ## Query APIs
 
+- [Generated Edge Loading API](query/generated-edge-loading-api.md)
 - [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
 - [Explicit Query Authority And Cost](query/explicit-query-authority-and-cost.md)
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)

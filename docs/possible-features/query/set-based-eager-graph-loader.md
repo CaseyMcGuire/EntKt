@@ -5,10 +5,10 @@
 Accepted execution direction as of 2026-08-18. This is not implemented.
 
 This RFC owns set-based edge-load execution, not the public API used to select
-edges. Examples retain the currently generated `with{Edge}` spelling only to
-show query shapes. A separate public-API RFC may replace that spelling without
-changing the executor described here. The executor consumes an immutable edge
-load plan produced by whichever public DSL is accepted.
+edges. The accepted
+[Generated Edge Loading API](generated-edge-loading-api.md) RFC defines the
+`load{Name}` selection surface used in these examples. The executor consumes
+the immutable edge-load plan produced by that public DSL.
 
 ## Summary
 
@@ -46,11 +46,11 @@ Consider:
 
 ```kotlin
 client.users.query {
-    withPosts {
+    loadPosts {
         orderBy(Post.createdAt.desc())
         limit(5)
 
-        withComments {
+        loadComments {
             orderBy(Comment.createdAt.desc())
             limit(3)
         }
@@ -147,7 +147,7 @@ level.
 
 ### 1. Capture The Topology, Freeze Each Reached Step
 
-The `with{Edge}` calls configure the eager topology before edge execution. For
+The `load{Name}` calls configure the eager topology before edge execution. For
 the example above, the topology is conceptually:
 
 ```text
@@ -180,7 +180,7 @@ and many-to-many junction-failure precedence.
 ### 2. Execute Set-Based Depth-First
 
 The executor retains the existing eager-edge order, which is schema declaration
-order rather than the order of `with{Edge}` calls. For each configured edge it
+order rather than the order of `load{Name}` calls. For each configured edge it
 completes that edge and all of its nested children before starting the next
 sibling:
 
@@ -217,7 +217,7 @@ depth-first have the same asymptotic query count here because sibling edges
 usually target different relationship shapes and cannot share a query.
 Depth-first is preferred because it preserves today's observable path
 precedence: a failure in the first schema-declared edge's nested child stops
-work before the next sibling edge begins. Reversing the order of `with{Edge}`
+work before the next sibling edge begins. Reversing the order of `load{Name}`
 configuration calls does not reverse this execution order.
 
 The guarantee is not "one query per depth" or even always "one physical query
@@ -425,7 +425,7 @@ A phase-1 many-to-many eager step performs:
 8. Reattach canonical nested-loaded targets through the association map.
 
 Phase 2 must not rank raw junction rows before target filtering or pair dedup.
-For `withTags { where(...); orderBy(...); limit(n) }`, it ranks distinct
+For `loadTags { where(...); orderBy(...); limit(n) }`, it ranks distinct
 eligible `(source, target)` memberships only after all caller and interceptor
 target predicates have been applied, partitioned by source and ordered by the
 effective target order. Otherwise duplicate memberships or filtered targets
@@ -716,7 +716,7 @@ Before nested set batching ships, tests should prove:
   logical parent union is within the current driver limit
 - a two-level direct graph and a two-level many-to-many graph each recurse once
   per configured path, not once per outer group
-- reversed `with{Edge}` call order does not change schema-declaration execution
+- reversed `load{Name}` call order does not change schema-declaration execution
   order
 - a descendant failure under an earlier sibling occurs before any callback or
   query for a later sibling
@@ -799,6 +799,7 @@ Before native relationship windows and chunking ship, tests should prove:
 
 ## Related Features
 
+- [Generated Edge Loading API](generated-edge-loading-api.md)
 - [Request-Scoped Entity Loading](request-scoped-entity-loading.md)
 - [Query Observability Diagnostics](query-observability-diagnostics.md)
 - [Driver Capability Matrix](../tooling/driver-capability-matrix.md)

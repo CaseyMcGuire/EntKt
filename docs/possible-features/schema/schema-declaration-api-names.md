@@ -768,11 +768,12 @@ names remain storage metadata.
 
 ## Interaction With Edge Loading
 
-Edge-loading API and execution are separate designs. This RFC owns only the
-generated name.
+Edge-loading API and execution are separate designs. This RFC owns the
+generated name. The accepted
+[Generated Edge Loading API](../query/generated-edge-loading-api.md) RFC owns
+the method shape and adopts `load{Name}`.
 
-If the public API adopts generated `load{Name}` methods, it uses the exact edge
-declaration name:
+The public API uses the exact edge declaration name:
 
 ```kotlin
 client.people.query {
@@ -1011,4 +1012,5 @@ declaration/storage mismatch so the separation is visible.
 - [Field-Backed FK Declaration Names](../../implemented-features/edge-mutation/06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](../../implemented-features/edge-mutation/07-generated-member-name-collisions.md)
 - [To-One FK Mutation And Nullability](../../implemented-features/edge-mutation/02-to-one-assignment-nullability.md)
+- [Generated Edge Loading API](../query/generated-edge-loading-api.md)
 - [Set-Based Eager Graph Loader](../query/set-based-eager-graph-loader.md)

@@ -33,6 +33,7 @@ names follow the schema declaration-name contract.
 
 Detailed notes:
 
+- [Generated Edge Loading API](query/generated-edge-loading-api.md)
 - [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
 - [Schema Declaration Names As Generated API](schema/schema-declaration-api-names.md)
 
