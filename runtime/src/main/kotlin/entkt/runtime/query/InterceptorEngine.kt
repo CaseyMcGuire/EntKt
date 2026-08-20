@@ -61,6 +61,20 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * for the non-eager call sites where the two are identical.
      */
     callerOrderBy: List<OrderField<E>> = orderBy,
+    /**
+     * The driver's bind-capacity gate — generated code passes
+     * `{ driver.requireBindCapacity(it, Entity.TABLE) }`. Invoked
+     * with the running conservative minimum bind count (summed O(1)
+     * `IN`-operand sizes via
+     * [entkt.runtime.driver.minimumBindParameters]) immediately
+     * BEFORE every semantic snapshot: once at construction for the
+     * caller and structural predicates, and again for each
+     * [addInterceptorPredicate]. An over-budget operand — whoever
+     * contributed it — is therefore rejected without ever being
+     * iterated or copied. Defaults to a no-op for direct builder
+     * users with no driver in scope.
+     */
+    private val requireBindCapacity: (Long) -> Unit = {},
 ) {
     // Typed in E: every layer above the
     // driver call stays typed. Predicates enter the builder from
@@ -80,6 +94,19 @@ public class QuerySpecBuilder<E : Any> public constructor(
     // shape views hand out detached snapshots too, so the only
     // sanctioned mutations are the scope's own reduce-or-reject
     // operations.
+    // Running conservative minimum of the bind parameters the stored
+    // predicates will need. Checked through [requireBindCapacity]
+    // before the snapshots below run (initializers execute in
+    // declaration order), and re-checked before each interceptor
+    // addition's snapshot.
+    private var minimumBoundParameters: Long =
+        entkt.runtime.driver.minimumBindParameters(callerPredicates) +
+            entkt.runtime.driver.minimumBindParameters(structuralPredicates)
+
+    init {
+        requireBindCapacity(minimumBoundParameters)
+    }
+
     private val predicates: MutableList<Tagged<E>> = mutableListOf<Tagged<E>>().apply {
         addAll(callerPredicates.map { Tagged(it.semanticSnapshot(), Source.CALLER) })
         addAll(structuralPredicates.map { Tagged(it.semanticSnapshot(), Source.STRUCTURAL) })
@@ -96,11 +123,18 @@ public class QuerySpecBuilder<E : Any> public constructor(
     }
 
     /**
-     * Appends an interceptor-tagged predicate. Snapshotted at add
-     * time: an interceptor that retains its predicate's mutable
-     * operand cannot change the spec after contributing it.
+     * Appends an interceptor-tagged predicate. The running bind
+     * budget is enforced BEFORE the snapshot, so an interceptor
+     * contributing an over-budget `IN` operand fails fast without the
+     * operand ever being iterated or copied. Snapshotted at add time:
+     * an interceptor that retains its predicate's mutable operand
+     * cannot change the spec after contributing it.
      */
     internal fun addInterceptorPredicate(predicate: Predicate<E>) {
+        val candidate = minimumBoundParameters +
+            entkt.runtime.driver.minimumBindParameters(listOf(predicate))
+        requireBindCapacity(candidate)
+        minimumBoundParameters = candidate
         predicates.add(Tagged(predicate.semanticSnapshot(), Source.INTERCEPTOR))
     }
 

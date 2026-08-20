@@ -2,7 +2,9 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
+import entkt.integrationtest.support.RecordingDriver
 import entkt.postgres.PostgresBindLimitException
+import entkt.runtime.query.QueryInterceptor
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.integrationtest.ent.User
@@ -129,6 +131,59 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         assertContains(ex.message!!, "10,000,000")
         assertContains(ex.message!!, "\"users\"")
         assertEquals(0, virtual.reads, "no layer may materialize the operand before the capacity check")
+    }
+
+    @Test
+    fun `an interceptor-added oversized IN is rejected before its snapshot with no SQL submitted`() {
+        val recording = RecordingDriver(resetAndDriver())
+        val virtual = VirtualIds()
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                users(
+                    QueryInterceptor { scope, _ ->
+                        scope.addPredicate(Predicate.Leaf<User>("id", Op.IN, virtual))
+                    },
+                    name = "hostile-acl",
+                )
+            }
+        }
+        recording.reset()
+
+        // The running budget is enforced at the addPredicate call
+        // itself — before the operand snapshot — so a tenant/ACL
+        // interceptor contributing a huge IN never materializes it
+        // and nothing reaches the driver.
+        val result = client.users.query().all()
+
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<PostgresBindLimitException>(failed.exception)
+        assertContains(ex.message!!, "10,000,000")
+        assertEquals(0, virtual.reads, "the interceptor's operand must never be iterated or copied")
+        assertEquals(emptyList(), recording.calls, "no SQL may be submitted")
+    }
+
+    @Test
+    fun `the typed DSL's in operator does not materialize an oversized collection`() {
+        val recording = RecordingDriver(resetAndDriver())
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        val virtual = VirtualIds()
+        recording.reset()
+
+        // `column in values` no longer copies at construction —
+        // operands snapshot at terminal entry, after the capacity
+        // check — so the idiomatic typed path is as lazy as raw
+        // Predicate.Leaf construction.
+        val result = client.users.query {
+            where(User.id `in` virtual)
+        }.all()
+
+        val failed = assertIs<ReadResult.Failed>(result)
+        assertIs<PostgresBindLimitException>(failed.exception)
+        assertEquals(0, virtual.reads, "the DSL must not copy the collection eagerly")
+        assertEquals(emptyList(), recording.calls, "no SQL may be submitted")
     }
 
     @Test

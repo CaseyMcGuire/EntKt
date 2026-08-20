@@ -51,10 +51,19 @@ interface NullableGroupableColumn<E : Any, K> : GroupableColumn<E, K>
 open class Column<E : Any, T>(val name: String) {
     open infix fun eq(value: T): Predicate<E> = Predicate.Leaf(name, Op.EQ, value)
     open infix fun neq(value: T): Predicate<E> = Predicate.Leaf(name, Op.NEQ, value)
+
+    // Deliberately NO eager copy of the collection: operands are
+    // semantically snapshotted at terminal entry, AFTER the driver's
+    // bind-capacity check has consulted the collection's O(1) size —
+    // so an over-budget operand is rejected without ever being
+    // materialized, and the DSL behaves exactly like raw
+    // `Predicate.Leaf` construction (mutations between construction
+    // and the terminal are observed at chain entry, as everywhere
+    // else).
     open infix fun `in`(values: Collection<T>): Predicate<E> =
-        Predicate.Leaf(name, Op.IN, values.toList())
+        Predicate.Leaf(name, Op.IN, values)
     open infix fun notIn(values: Collection<T>): Predicate<E> =
-        Predicate.Leaf(name, Op.NOT_IN, values.toList())
+        Predicate.Leaf(name, Op.NOT_IN, values)
 }
 
 /**

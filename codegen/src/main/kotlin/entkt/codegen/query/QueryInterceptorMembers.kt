@@ -11,8 +11,6 @@ import com.squareup.kotlinpoet.asClassName
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
 private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
-private val MIN_BIND_PARAMETERS =
-    com.squareup.kotlinpoet.MemberName("entkt.runtime.driver", "minimumBindParameters")
 private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
 private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
@@ -114,18 +112,6 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 .addStatement(
                     "val structural = listOfNotNull(sourceResult?.bridge) + extraStructural",
                 )
-                // Fail fast on a query that can never execute: the
-                // conservative minimum bind count (summed IN-list
-                // sizes, O(1) per list) is checked against the
-                // driver's declared budget BEFORE the spec builder
-                // takes defensive snapshots of the operands — an
-                // absurdly large IN list must not be deep-copied
-                // several times on the way to the driver's own
-                // render-time rejection.
-                .addStatement(
-                    "driver.requireBindCapacity(%M(predicates) + %M(structural), %T.TABLE)",
-                    MIN_BIND_PARAMETERS, MIN_BIND_PARAMETERS, entityClass,
-                )
                 // rootEntity walks back along the traversal
                 // path; if no traversal context, this query IS
                 // the root. Otherwise the first EdgeStep's
@@ -158,6 +144,17 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 .add("  flags = emptySet(),\n")
                 .add("  initialAnnotations = initialAnnotations,\n")
                 .add("  callerOrderBy = orderFields,\n")
+                // The driver's bind-capacity gate: the builder invokes
+                // it with a running conservative minimum (summed O(1)
+                // IN-operand sizes) BEFORE every semantic snapshot —
+                // once for the caller/structural predicates at entry
+                // and again for each interceptor addition — so an
+                // over-budget operand is rejected without ever being
+                // iterated or copied, whoever contributed it.
+                .add(
+                    "  requireBindCapacity = { driver.requireBindCapacity(it, %T.TABLE) },\n",
+                    entityClass,
+                )
                 .add(")\n")
                 .add("val context = %T(\n", QUERY_CONTEXT)
                 .add("  privacy = privacy,\n")

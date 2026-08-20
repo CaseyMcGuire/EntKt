@@ -225,15 +225,18 @@ interface Driver {
      * default — a driver with no declared statement limit accepts
      * everything and may still enforce its own limit at render time.
      *
-     * Generated read paths call this at terminal entry with a
-     * conservative lower bound (the summed sizes of `IN`-list
-     * operands, via [minimumBindParameters]) BEFORE taking defensive
-     * snapshots of predicate operands, so a query that can never
-     * execute fails fast with the driver's own actionable error
-     * instead of copying enormous operand lists on the way to the
-     * same failure at render time. Runs before the interceptor
-     * chain: a rejected query never invokes interceptors, exactly as
-     * if the driver had failed.
+     * Generated read paths wire this into the query-spec builder,
+     * which invokes it with a running conservative lower bound (the
+     * summed O(1) sizes of `IN`-list operands, via
+     * [minimumBindParameters]) immediately BEFORE every defensive
+     * operand snapshot — once for the caller and structural
+     * predicates at terminal entry, and again for each
+     * interceptor-added predicate. A query that can never execute
+     * therefore fails fast with the driver's own actionable error,
+     * and an over-budget operand is never iterated or copied,
+     * whoever contributed it. The entry check runs before the
+     * interceptor chain; an interceptor contribution fails at its
+     * own `addPredicate` call.
      */
     fun requireBindCapacity(minimumParameters: Long, table: String) {}
 
