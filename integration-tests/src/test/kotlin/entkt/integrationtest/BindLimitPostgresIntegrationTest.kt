@@ -57,6 +57,9 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     fun `a statement one bind over the limit is rejected before reaching PostgreSQL`() {
         val driver = resetAndDriver()
 
+        // The oversized IN list trips the render-time pre-check, whose
+        // message carries the exact projected total and the offending
+        // predicate.
         val ex = assertFailsWith<PostgresBindLimitException> {
             driver.query(
                 "users",
@@ -68,9 +71,38 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         }
         assertContains(ex.message!!, "65,536")
         assertContains(ex.message!!, "65,535")
-        assertContains(ex.message!!, "query")
-        assertContains(ex.message!!, "\"users\"")
+        assertContains(ex.message!!, "users.id")
         assertContains(ex.message!!, "not yet chunked")
+    }
+
+    @Test
+    fun `an oversized IN list is rejected without being expanded or copied`() {
+        val driver = resetAndDriver()
+
+        // A virtual collection that is never materialized: if the
+        // renderer copied it or built its placeholders before checking
+        // the budget, this test would iterate ten million elements.
+        var reads = 0
+        val virtual = object : AbstractList<Long>() {
+            override val size: Int get() = 10_000_000
+            override fun get(index: Int): Long {
+                reads++
+                return index.toLong()
+            }
+        }
+
+        val ex = assertFailsWith<PostgresBindLimitException> {
+            driver.query(
+                "users",
+                listOf(Predicate.Leaf<Any>("id", Op.IN, virtual)),
+                emptyList(),
+                null,
+                null,
+            )
+        }
+        assertContains(ex.message!!, "10,000,000")
+        assertContains(ex.message!!, "65,535")
+        assertEquals(0, reads, "the projected-size pre-check must reject before reading any element")
     }
 
     @Test

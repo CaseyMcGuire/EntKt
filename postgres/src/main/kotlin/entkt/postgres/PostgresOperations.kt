@@ -22,12 +22,6 @@ private val COMPARABLE_FIELD_TYPES =
 private val GROUPABLE_FIELD_TYPES =
     COMPARABLE_FIELD_TYPES + setOf(FieldType.BOOL, FieldType.UUID, FieldType.ENUM)
 
-// PostgreSQL's extended-query protocol accepts at most 65,535 bind
-// parameters. ID-returning bulk deletes reserve the predicate parameters and
-// split only the ID portion when the complete logical operation exceeds that
-// limit; every statement remains on the caller's connection/transaction.
-private const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
-
 /**
  * Reject a rendered statement whose FINAL bind-parameter count exceeds
  * PostgreSQL's protocol limit — deterministically, before the statement
@@ -41,6 +35,12 @@ private const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
  * `exists`, `aggregate`, `updateMany`, and `deleteMany`. The count is
  * the statement's complete parameter list: relationship IDs, caller and
  * interceptor predicates, and ordering operands all consume binds.
+ * An oversized `IN` list — the one caller-unbounded amplification
+ * point — is rejected earlier still, by
+ * [PredicateSqlBuilder.lowerInList]'s projected-size pre-check, before
+ * any placeholder or parameter is allocated; this post-render check
+ * covers everything else (combined SET-plus-predicate counts, many
+ * small predicates, ordering operands).
  *
  * Deliberately NOT called by: `insertMany` and `deleteManyByIds`, which
  * chunk physical statements under the limit by construction; the

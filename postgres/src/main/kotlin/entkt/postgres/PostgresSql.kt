@@ -24,6 +24,18 @@ internal data class Param(val type: FieldType?, val value: Any?)
 internal data class PreparedSql(val sql: String, val params: List<Param>)
 
 /**
+ * PostgreSQL's extended-query protocol carries the bind-parameter count
+ * as an Int16, so a statement can bind at most 65,535 parameters.
+ * Enforced in three places: [PredicateSqlBuilder.lowerInList] pre-checks
+ * an `IN` list's projected total before expanding anything (the only
+ * caller-unbounded amplification point), the data-dependent operations
+ * in [PostgresOperations] check the final rendered count before
+ * preparing, and ID-returning bulk deletes reserve the predicate
+ * parameters and chunk only the ID portion.
+ */
+internal const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
+
+/**
  * AND together a list of erased predicates into a single erased
  * predicate, or null when the list is empty. Used by the SQL builders
  * to combine the driver-call's `List<Predicate<*>>` into a single

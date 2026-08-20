@@ -37,9 +37,12 @@ above it.
   `PostgresBindLimitException` before preparing anything over
   PostgreSQL's 65,535-parameter protocol limit — previously the JDBC
   driver failed with an opaque "out-of-range integer as a 2-byte
-  value" protocol error. Large eager relationship loads are the common
-  trigger; their `IN (...)` lists are not yet chunked. `insertMany`
-  and `deleteManyByIds` are unchanged (they already chunk).
+  value" protocol error. An oversized `IN` list is rejected at render
+  time from its projected size — before it is copied or expanded at
+  all, so an absurdly large list cannot exhaust memory on the way to
+  the error. Large eager relationship loads are the common trigger;
+  their `IN (...)` lists are not yet chunked. `insertMany` and
+  `deleteManyByIds` are unchanged (they already chunk).
   _Migration:_ none for in-range queries; code matching on the old
   PSQLException for this condition should match
   `PostgresBindLimitException` instead.

@@ -266,11 +266,33 @@ internal class PredicateSqlBuilder(
         label: String,
         negated: Boolean,
     ): String {
-        val items = (value as Collection<*>).toList()
-        if (items.isEmpty()) {
+        val collection = value as Collection<*>
+        if (collection.isEmpty()) {
             // Empty IN: matches nothing. Empty NOT IN: matches everything.
             return if (negated) "TRUE" else "FALSE"
         }
+        // Pre-check the projected bind total BEFORE expanding anything:
+        // an IN list is the one caller-unbounded amplification point,
+        // and `Collection.size` is O(1), so an absurdly oversized list
+        // is rejected here without copying it, building its
+        // placeholders, or allocating its parameters — the
+        // post-render operation check would fire far too late to help
+        // with memory. Long arithmetic: params.size + collection.size
+        // can overflow Int.
+        val projected = params.size.toLong() + collection.size.toLong()
+        if (projected > POSTGRES_BIND_PARAMETER_LIMIT) {
+            throw PostgresBindLimitException(
+                "PostgreSQL statement with a $label requires at least " +
+                    "%,d".format(java.util.Locale.ROOT, projected) +
+                    " bind parameters (an IN list with " +
+                    "%,d".format(java.util.Locale.ROOT, collection.size) +
+                    " values); PostgreSQL supports at most " +
+                    "%,d".format(java.util.Locale.ROOT, POSTGRES_BIND_PARAMETER_LIMIT) +
+                    ". Reduce the root result size or split the query. " +
+                    "Large relationship batches are not yet chunked.",
+            )
+        }
+        val items = collection.toList()
         val placeholders = items.joinToString(", ") { "?" }
         for (item in items) {
             checkVectorDimensions(native, item, label)
