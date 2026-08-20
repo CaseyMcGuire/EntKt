@@ -152,7 +152,19 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 .add("  currentEntity = %T::class,\n", entityClass)
                 .add("  sourceEntity = traversalSourceEntity,\n")
                 .add("  edgeName = traversalEdgeName,\n")
-                .add("  path = traversalPath,\n")
+                // Truly unmodifiable copy, never the stored traversal
+                // list: the same context instance is shared by every
+                // interceptor in the chain, so a consumer casting
+                // `path` to a mutable list (trivially from Java) must
+                // get an exception, not a corrupted path for later
+                // interceptors and descendant steps. (Collections
+                // rather than java.util.List.copyOf: the latter's
+                // simple name clashes with kotlin.collections.List
+                // and forces KotlinPoet to alias both.)
+                .add(
+                    "  path = %T.unmodifiableList(traversalPath.toList()),\n",
+                    ClassName("java.util", "Collections"),
+                )
                 .add("  flags = emptySet(),\n")
                 .add(")\n")
                 .add("val frozen = try {\n")

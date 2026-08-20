@@ -30,6 +30,47 @@ above it.
 
 ## Unreleased
 
+- **Eager many-to-many discovery runs the junction entity's read interceptors** (`codegen`, `runtime`)
+  An eager M2M step now fires the JUNCTION entity's interceptors with
+  the new `ReadOperation.EAGER_JUNCTION` before its junction read, so
+  predicates registered on the junction (tenant scoping,
+  `ExcludeDeleted`) narrow relationship discovery exactly as they
+  narrow direct junction reads — previously they were silently
+  bypassed and `load{Name}()` could expose relationships contributed
+  by rows those interceptors hide. `QueryContext.isEagerSubquery` is
+  true for the new operation, `QueryPlan` gains a
+  `junctionAnnotations` field, and the eager junction explain now
+  shows post-interceptor predicates. Junction LOAD privacy still does
+  not run on discovery, and the M2M `queryX()` / `has {}` lowerings
+  still bypass junction interceptors (open RFC phases).
+  _Migration:_ apps with interceptors registered on junction entities
+  get them applied to eager loading — results can shrink and a
+  rejecting junction interceptor now fails eager reads; exhaustive
+  `when (context.operation)` branches need an `EAGER_JUNCTION` arm.
+- **Schema names that shadow Kotlin default imports are rejected** (`codegen`)
+  An entity class named `Int`, `Any`, `MutableSet`, `List`, … would
+  shadow the Kotlin declaration inside the generated package and make
+  the generated sources uncompilable — including files that never
+  reference the entity, which no emission strategy can qualify.
+  `SchemaInspector.validate` and `EntGenerator.generate` now reject
+  such names with a clear diagnostic instead of shipping code that
+  fails to compile.
+  _Migration:_ rename any schema class whose simple name matches a
+  Kotlin default-import declaration used by generated code.
+- **Interceptor inputs are snapshotted; contexts and child queries can't be corrupted mid-flight** (`codegen`, `runtime`)
+  Query specs now take a semantic snapshot of predicate and ordering
+  operands at interceptor-chain entry (and at `addPredicate` time),
+  and every `QueryShape` view hands out detached copies — mutating a
+  retained or shape-exposed operand (an IN list, a ByteArray) no
+  longer changes what executes. `QueryContext.path` is an
+  unmodifiable snapshot (mutation attempts throw). An eager step's
+  traversal seeding is scoped to the step: a captured `load{Name}`
+  child query executed independently later behaves as the fresh root
+  query it was constructed as, and eager windows and explain
+  metadata read the frozen spec rather than live query state.
+  _Migration:_ none for well-behaved code; anything that relied on
+  mutating operands after handing them to the framework must apply
+  changes through the query DSL or interceptor scope instead.
 - **Nested eager loads execute set-based — one pass per edge step, not per parent group** (`codegen`, `runtime`)
   Phase 1 of the [set-based eager graph loader](../possible-features/query/set-based-eager-graph-loader.md)
   replaced grouped per-parent nested recursion: a nested eager edge under a

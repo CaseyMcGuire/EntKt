@@ -65,6 +65,11 @@ object SchemaInspector {
         // valid that generation rejects.
         errors.addAll(findClientNameErrors(inputs))
 
+        // Schema names that would shadow Kotlin default imports inside
+        // the generated package — shared with [EntGenerator.generate]
+        // under the same contract.
+        errors.addAll(findShadowedKotlinTypeNameErrors(inputs))
+
         return if (errors.isEmpty()) {
             ValidationResult(valid = true, errors = emptyList())
         } else {

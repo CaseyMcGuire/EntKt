@@ -421,7 +421,11 @@ parent.
 
 A phase-1 many-to-many eager step performs:
 
-1. One junction query for all source IDs.
+1. One junction query for all source IDs. (Since the
+   [junction read-interceptors RFC](junction-read-interceptors.md)
+   phase 1, the junction entity's read interceptors run first with
+   `ReadOperation.EAGER_JUNCTION` and their predicates narrow this
+   query.)
 2. Build the ordered distinct discovered target-value list exactly as today,
    including a nullable target value if malformed junction data contains one.
 3. Run the target interceptor once with that complete list in its structural

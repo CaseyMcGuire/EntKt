@@ -112,6 +112,45 @@ internal fun findClientNameErrors(schemas: List<SchemaInput>): List<String> = bu
 }
 
 /**
+ * Kotlin declarations the generated sources reference through default
+ * imports (bare `Int`, `List`, `@JvmOverloads`, ...). All generated
+ * files share one package with the entity classes they describe, and a
+ * same-package declaration outranks Kotlin's default imports, so an
+ * entity named after one of these would silently redirect every bare
+ * reference in every generated file to the entity class and the output
+ * would not compile — including files that never mention the entity,
+ * which KotlinPoet cannot know to qualify. An explicit
+ * `import kotlin.Int` is no fix either: it would break references to
+ * the entity itself. Rejected up front with a clear diagnostic instead
+ * of shipping uncompilable source.
+ */
+private val SHADOWABLE_KOTLIN_NAMES = setOf(
+    "Any", "Boolean", "Byte", "ByteArray", "Char", "Comparable", "Double",
+    "Exception", "Float", "IllegalArgumentException", "IllegalStateException",
+    "Int", "JvmOverloads", "List", "Long", "Map", "MutableList", "MutableMap",
+    "MutableSet", "Nothing", "OptIn", "Pair", "Regex", "RegexOption", "Set",
+    "Short", "String", "Suppress", "Throwable", "Unit",
+)
+
+/**
+ * Cross-schema check shared by [EntGenerator.generate] (throwing) and
+ * [SchemaInspector.validate] (collecting): entity schema names that
+ * shadow the Kotlin declarations in [SHADOWABLE_KOTLIN_NAMES] are
+ * rejected — see that property's KDoc for why generation cannot make
+ * such names work.
+ */
+internal fun findShadowedKotlinTypeNameErrors(schemas: List<SchemaInput>): List<String> = buildList {
+    for (input in schemas.filter { it.name in SHADOWABLE_KOTLIN_NAMES }) {
+        add(
+            "schema '${input.name}' is named after the Kotlin declaration '${input.name}', which " +
+                "generated sources in the same package reference through default imports; the " +
+                "entity class would shadow it and make the generated code uncompilable. Rename " +
+                "the schema class.",
+        )
+    }
+}
+
+/**
  * Finalize all schemas in the list if they haven't been finalized yet,
  * then run every cross-schema validation check. This is a no-op for
  * finalization when schemas were already finalized (e.g. by
@@ -769,6 +808,16 @@ class EntGenerator(
             error(
                 "Generated client property errors detected:\n" +
                     clientNameErrors.joinToString("\n") { "  - $it" },
+            )
+        }
+
+        // Shared with [SchemaInspector.validate] via
+        // [findShadowedKotlinTypeNameErrors], same contract as above.
+        val shadowedNameErrors = findShadowedKotlinTypeNameErrors(schemas)
+        if (shadowedNameErrors.isNotEmpty()) {
+            error(
+                "Schema name errors detected:\n" +
+                    shadowedNameErrors.joinToString("\n") { "  - $it" },
             )
         }
         val perSchema = schemas.flatMap { input ->

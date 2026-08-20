@@ -71,21 +71,34 @@ public class QuerySpecBuilder<E : Any> public constructor(
     // when `freeze()` produces the `FrozenQuerySpec<E>` and the
     // generated code passes its lists via covariance to the
     // driver's `List<Predicate<*>>` parameters.
+    //
+    // Everything is stored as a SEMANTIC SNAPSHOT taken at chain
+    // entry (and at [addInterceptorPredicate] time for interceptor
+    // contributions): a mutable operand — an IN list, a ByteArray —
+    // that the caller or an interceptor retains a reference to
+    // cannot change what this spec means after it entered. The
+    // shape views hand out detached snapshots too, so the only
+    // sanctioned mutations are the scope's own reduce-or-reject
+    // operations.
     private val predicates: MutableList<Tagged<E>> = mutableListOf<Tagged<E>>().apply {
-        addAll(callerPredicates.map { Tagged(it, Source.CALLER) })
-        addAll(structuralPredicates.map { Tagged(it, Source.STRUCTURAL) })
+        addAll(callerPredicates.map { Tagged(it.semanticSnapshot(), Source.CALLER) })
+        addAll(structuralPredicates.map { Tagged(it.semanticSnapshot(), Source.STRUCTURAL) })
     }
-    private val orderByList: MutableList<OrderField<E>> = orderBy.toMutableList()
-    private val callerOrderByList: List<OrderField<E>> = callerOrderBy.toList()
+    private val orderByList: MutableList<OrderField<E>> = orderBy.mapTo(mutableListOf()) { it.semanticSnapshot() }
+    private val callerOrderByList: List<OrderField<E>> = callerOrderBy.map { it.semanticSnapshot() }
     private var currentLimit: Int? = callerLimit
     public val callerLimit: Int? = callerLimit
     private val annotationsMap: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
         putAll(initialAnnotations)
     }
 
-    /** Appends an interceptor-tagged predicate. */
+    /**
+     * Appends an interceptor-tagged predicate. Snapshotted at add
+     * time: an interceptor that retains its predicate's mutable
+     * operand cannot change the spec after contributing it.
+     */
     internal fun addInterceptorPredicate(predicate: Predicate<E>) {
-        predicates.add(Tagged(predicate, Source.INTERCEPTOR))
+        predicates.add(Tagged(predicate.semanticSnapshot(), Source.INTERCEPTOR))
     }
 
     /** Clamps the effective limit to at most [max]; never raises. */
@@ -119,16 +132,16 @@ public class QuerySpecBuilder<E : Any> public constructor(
             Source.STRUCTURAL -> structural++
             Source.INTERCEPTOR -> interceptor++
         }
+        // Detached snapshots per shape, for every operand-bearing
+        // field: nothing the stored spec owns may be reachable
+        // through a returned shape, or one consumer's mutation
+        // (possible from Java, or via an unchecked cast) would
+        // corrupt what later interceptors and the driver observe.
         return QueryShape(
             table = table,
-            predicates = predicates.map { it.predicate },
-            orderBy = orderByList.toList(),
-            // Fresh copy per shape, like every sibling field: the
-            // stored list must not be reachable through a returned
-            // shape, or one consumer's mutation (possible from Java,
-            // or via an unchecked cast) would corrupt the authored
-            // attribution every later interceptor observes.
-            callerOrderBy = callerOrderByList.toList(),
+            predicates = predicates.map { it.predicate.semanticSnapshot() },
+            orderBy = orderByList.map { it.semanticSnapshot() },
+            callerOrderBy = callerOrderByList.map { it.semanticSnapshot() },
             limit = currentLimit,
             callerLimit = callerLimit,
             offset = offset,
@@ -167,12 +180,14 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * Semantic snapshot used by drivers / explain.
      *
      * Copying only the outer lists is insufficient: supported predicate
-     * operands such as ByteArray are mutable. A lifecycle callback can run
-     * after one driver call but before another reuses the same frozen spec
-     * (deleteMany candidate selection is the important example). Recursively
-     * snapshot predicate trees, shaped traversal sources, distance operands,
-     * arrays, and standard collection carriers so later caller mutation cannot
-     * change what this spec means.
+     * operands such as ByteArray are mutable. The stored spec was already
+     * detached at chain entry, but a lifecycle callback can run after one
+     * driver call and before another reuses the same frozen spec
+     * (deleteMany candidate selection is the important example), so the
+     * frozen value recursively snapshots predicate trees, shaped traversal
+     * sources, distance operands, arrays, and standard collection carriers
+     * again — the FrozenQuerySpec is independent of the builder and of
+     * anything any callback can still reach.
      */
     internal fun freeze(): FrozenQuerySpec<E> = FrozenQuerySpec(
         table = table,
@@ -342,6 +357,8 @@ public data class FrozenQuerySpec<E : Any> public constructor(
  * - `EAGER_LOAD`: per-parent-vs-batched semantics are ambiguous;
  *   the runtime fetches with null limit and paginates per-group
  *   in Kotlin.
+ * - `EAGER_JUNCTION`: relationship discovery must be complete — a
+ *   limit would silently drop associations.
  * - `EDGE_PREDICATE`: compiles to EXISTS; row count has no
  *   meaning inside an EXISTS subquery.
  *
@@ -365,6 +382,7 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
     // must never silently cap them (same reasoning as RAW_COUNT above).
     ReadOperation.RAW_AGGREGATE,
     ReadOperation.EAGER_LOAD,
+    ReadOperation.EAGER_JUNCTION,
     ReadOperation.EDGE_PREDICATE,
     // DELETE_CANDIDATES: silent no-op so a MaxLimitInterceptor
     // doesn't accidentally turn deleteMany(...) into "delete the

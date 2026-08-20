@@ -25,6 +25,15 @@ import entkt.query.Predicate
  * picks up `column IS NULL` as an additional ANDed predicate, so
  * soft-deleted rows are invisible by default.
  *
+ * Registered on a many-to-many JUNCTION entity, it also filters the
+ * eager junction-discovery read (`ReadOperation.EAGER_JUNCTION`): a
+ * soft-deleted junction row stops contributing relationships to
+ * `load{Name}()`. The M2M query-chain traversal (`queryX()`) and
+ * edge-predicate (`has {}` / `exists()`) lowerings do NOT yet run
+ * junction-entity interceptors — see
+ * `docs/possible-features/query/junction-read-interceptors.md` for
+ * the open phases.
+ *
  * The default [column] (`"deleted_at"`) matches the
  * [entkt.schema.DeletedAt] mixin so the canonical pairing is
  * zero-argument. Applications that pair the interceptor with a

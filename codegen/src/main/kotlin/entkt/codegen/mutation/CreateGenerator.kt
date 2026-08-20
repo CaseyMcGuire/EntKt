@@ -1359,17 +1359,26 @@ private fun emitValidatorCheck(
             MUTATION_VALIDATION_VIOLATION, message, fieldName,
         )
         is ValidatorSpec.Match -> {
+            // Regex / RegexOption go through %T, never raw text —
+            // kotlin.text is default-imported, so a raw name would
+            // resolve against same-package declarations first. (The
+            // shadowed-name validation independently rejects entities
+            // named after these.)
+            val regexClass = ClassName("kotlin.text", "Regex")
             if (spec.options.isEmpty()) {
                 builder.addStatement(
-                    "if (!Regex(%S).matches(%L)) $failExpr",
-                    spec.pattern, prop,
+                    "if (!%T(%S).matches(%L)) $failExpr",
+                    regexClass, spec.pattern, prop,
                     MUTATION_VALIDATION_VIOLATION, message, fieldName,
                 )
             } else {
-                val optionsLiteral = spec.options.joinToString(", ") { "RegexOption.${it.name}" }
+                val regexOptionClass = ClassName("kotlin.text", "RegexOption")
+                val optionsLiteral = spec.options.joinToString(", ") { "%T.${it.name}" }
                 builder.addStatement(
-                    "if (!Regex(%S, setOf($optionsLiteral)).matches(%L)) $failExpr",
-                    spec.pattern, prop,
+                    "if (!%T(%S, setOf($optionsLiteral)).matches(%L)) $failExpr",
+                    regexClass, spec.pattern,
+                    *spec.options.map { regexOptionClass }.toTypedArray(),
+                    prop,
                     MUTATION_VALIDATION_VIOLATION, message, fieldName,
                 )
             }

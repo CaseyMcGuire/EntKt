@@ -129,6 +129,15 @@ data class QueryPlan(
      * is a typed field rather than an [annotations] entry.
      */
     val eagerExecution: EagerExecutionPlan? = null,
+    /**
+     * Annotations contributed by the JUNCTION entity's interceptors
+     * during an eager many-to-many step's `EAGER_JUNCTION` discovery
+     * pass. Kept apart from [annotations] (the target spec's map) so
+     * junction- and target-step contributions stay attributable.
+     * Empty for non-M2M subplans and when no junction interceptor
+     * annotated.
+     */
+    val junctionAnnotations: Map<String, String> = emptyMap(),
 ) {
     /** Convenience: true iff [rejection] is non-null. */
     val rejected: Boolean get() = rejection != null
@@ -176,7 +185,10 @@ data class QueryPlan(
             "  [annotations: " + annotations.entries.joinToString(", ") { "${it.key}=${it.value}" } + "]"
         if (junctionQuery != null) {
             sb.appendLine("$pad$label:$annotationSuffix")
-            sb.appendLine("${pad}  Junction: ${junctionQuery.describe()}")
+            val junctionSuffix = if (junctionAnnotations.isEmpty()) "" else
+                "  [annotations: " +
+                    junctionAnnotations.entries.joinToString(", ") { "${it.key}=${it.value}" } + "]"
+            sb.appendLine("${pad}  Junction: ${junctionQuery.describe()}$junctionSuffix")
             sb.appendLine("${pad}  ${root?.describe()}")
         } else {
             sb.appendLine("$pad$label: ${root?.describe()}$annotationSuffix")

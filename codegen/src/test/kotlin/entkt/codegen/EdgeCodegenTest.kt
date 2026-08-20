@@ -1909,9 +1909,14 @@ class EdgeCodegenTest {
         assert(output.contains("\"team_members\"")) {
             "Should query junction table\n$output"
         }
-        // Junction-table query has no entity scope; Predicate.Leaf<Any>.
-        assert(output.contains("Predicate.Leaf<Any>(\"team_id\", Op.IN, sourceIds)")) {
-            "Should query junction with source FK as erased Predicate.Leaf<Any>\n$output"
+        // The junction discovery pass runs the JUNCTION entity's read
+        // interceptors with EAGER_JUNCTION and its structural
+        // source-FK IN, typed to the junction entity.
+        assert(output.contains("Predicate.Leaf<TeamMember>(\"team_id\", Op.IN, sourceIds)")) {
+            "Should predicate the junction pass on the source FK, typed to the junction entity\n$output"
+        }
+        assert(output.contains("runReadInterceptors(ReadOperation.EAGER_JUNCTION")) {
+            "Should run the junction entity's interceptors before the junction read\n$output"
         }
     }
 
@@ -2092,9 +2097,9 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Person", byName["Person"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        // Junction-table query, erased scope.
-        assert(output.contains("Predicate.Leaf<Any>(\"person_id\", Op.IN, sourceIds)")) {
-            "Should query junction with source FK person_id as erased Predicate.Leaf<Any>\n$output"
+        // Junction discovery pass, typed to the junction entity.
+        assert(output.contains("Predicate.Leaf<Friendship>(\"person_id\", Op.IN, sourceIds)")) {
+            "Should predicate the junction pass on source FK person_id, typed to the junction entity\n$output"
         }
     }
 

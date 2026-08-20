@@ -96,6 +96,16 @@ internal class ResolvedQueryEdge(
      * codegen skips the method in that case.
      */
     val inverse: Edge?,
+    /**
+     * The junction entity's generated entity and query classes, for
+     * the eager M2M step's `EAGER_JUNCTION` discovery interceptor
+     * pass. Non-null exactly when [join] is non-null on an M2M edge:
+     * eager capability requires a codegen-visible junction, and both
+     * `throughLink` and `throughEntity` junctions are entity classes.
+     * Null for direct edges.
+     */
+    val junctionEntityClass: ClassName?,
+    val junctionQueryClass: ClassName?,
 ) {
     /**
      * The edge's **storage** identifier. This is the edge-lookup key in
@@ -145,6 +155,11 @@ internal fun resolveQuerySchema(
         } else {
             resolveEdgeJoin(edge, schema)
         }
+        val junctionName = if (edge.kind is EdgeKind.ManyToMany && join != null) {
+            schemaNames[(edge.kind as EdgeKind.ManyToMany).through.junction]
+        } else {
+            null
+        }
         ResolvedQueryEdge(
             edge = edge,
             targetName = targetName,
@@ -157,6 +172,8 @@ internal fun resolveQuerySchema(
             edgePropName = edge.apiName,
             join = join,
             inverse = inverse,
+            junctionEntityClass = junctionName?.let { ClassName(packageName, it) },
+            junctionQueryClass = junctionName?.let { ClassName(packageName, "${it}Query") },
         )
     }
     return ResolvedQuerySchema(

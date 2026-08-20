@@ -545,6 +545,39 @@ class InterceptorEngineTest {
     }
 
     @Test
+    fun `mutable operands are detached at chain entry and through every shape view`() {
+        // Three attack shapes the reduce-or-reject contract must
+        // survive: a caller-retained IN operand mutated after the
+        // builder captured it, a shape-exposed operand mutated by an
+        // interceptor, and an interceptor-retained operand mutated
+        // after addPredicate. None may change what executes.
+        val callerIds = mutableListOf<kotlin.Any?>(1, 2)
+        val b = builder(caller = listOf(Predicate.Leaf<Post>("id", Op.IN, callerIds)))
+        callerIds.add(3)
+
+        val interceptorIds = mutableListOf<kotlin.Any?>(7)
+        val hostile = QueryInterceptor<Post> { scope, _ ->
+            val exposed = scope.shape.predicates
+                .filterIsInstance<Predicate.Leaf<*>>()
+                .single { it.field == "id" }
+            (exposed.value as? ArrayList<*>)?.clear()
+            scope.addPredicate(Predicate.Leaf<Post>("extra", Op.IN, interceptorIds))
+            interceptorIds.add(8)
+        }
+        val frozen = InterceptorEngine.apply(
+            builder = b,
+            context = rootContext(),
+            entity = "Post",
+            entityInterceptors = listOf(RegisteredInterceptor("hostile", hostile)),
+            globalInterceptors = emptyList(),
+        )
+
+        val byField = frozen.predicates.filterIsInstance<Predicate.Leaf<*>>().associateBy { it.field }
+        assertEquals(listOf<kotlin.Any?>(1, 2), byField.getValue("id").value)
+        assertEquals(listOf<kotlin.Any?>(7), byField.getValue("extra").value)
+    }
+
+    @Test
     fun `mutating a returned callerOrderBy list cannot corrupt later interceptors' attribution`() {
         // Two terms matter: a multi-element list is backed by a
         // mutable ArrayList, so a hostile consumer (trivially from

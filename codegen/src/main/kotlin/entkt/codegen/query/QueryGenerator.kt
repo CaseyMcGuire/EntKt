@@ -520,15 +520,23 @@ internal class QueryGenerator(
     }
 
     private fun buildSeedEdgeTraversal(): FunSpec {
+        // Parameters are nullable so an eager step can RESTORE the
+        // defaults it found — `seedEdgeTraversal(null, null,
+        // emptyList())` — after its work completes. A queryX-created
+        // traversal query keeps its seed for life (the returned query
+        // IS the traversal); an eager step's seed is scoped to the
+        // step so a captured child query executed independently later
+        // behaves as the fresh root query it was constructed as.
         return FunSpec.builder("seedEdgeTraversal")
             .addAnnotation(ClassName("entkt.query", "EntktInternal"))
             .addModifiers(KModifier.INTERNAL)
             .addParameter(
                 "sourceEntity",
                 ClassName("kotlin.reflect", "KClass")
-                    .parameterizedBy(com.squareup.kotlinpoet.STAR),
+                    .parameterizedBy(com.squareup.kotlinpoet.STAR)
+                    .copy(nullable = true),
             )
-            .addParameter("edgeName", String::class.asClassName())
+            .addParameter("edgeName", String::class.asClassName().copy(nullable = true))
             .addParameter(
                 "path",
                 List::class.asClassName().parameterizedBy(ClassName("entkt.runtime.query", "EdgeStep")),

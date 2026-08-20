@@ -829,16 +829,17 @@ by schema mixins.
 Each interceptor's `intercept(scope, context)` runs once per terminal
 read. The `context` carries:
 
-- `context.operation: ReadOperation` — which terminal fired
+- `context.operation: ReadOperation` — which read fired
   (`BY_ID`, `FIRST`, `ALL`, `RAW_COUNT`, `RAW_EXISTS`,
   `RAW_AGGREGATE`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`,
-  `EAGER_LOAD`, `DELETE_CANDIDATES`)
+  `EAGER_LOAD`, `EAGER_JUNCTION`, `DELETE_CANDIDATES`)
 - `context.privacy` — the active `PrivacyContext` (viewer, etc.)
 - `context.rootEntity` / `context.currentEntity` /
   `context.sourceEntity` / `context.edgeName` / `context.path` —
   set for traversal / eager / edge-predicate steps; null/empty
   for root reads
-- `context.isEagerSubquery` — true iff `operation == EAGER_LOAD`
+- `context.isEagerSubquery` — true iff the operation is
+  `EAGER_LOAD` or `EAGER_JUNCTION`
 
 The `scope` exposes only operations that *narrow* the query:
 
@@ -907,6 +908,15 @@ predicates fire the related entity's interceptors with
 deleted articles also prevents those articles from satisfying
 `User.articles.has()`. The same behavior applies to many-to-many
 edges.
+
+An eager many-to-many step additionally fires the JUNCTION entity's
+interceptors with `operation = EAGER_JUNCTION` before its junction
+discovery read, so predicates registered on the junction (tenant
+scoping, `ExcludeDeleted`) decide which junction rows contribute
+relationships — the same rows a direct junction read would return.
+The M2M `queryX()` traversal and `has {}` lowerings do not yet run
+junction-entity interceptors (see the junction read-interceptors
+RFC for the open phases).
 
 ## Transactions
 

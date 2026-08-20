@@ -225,6 +225,11 @@ data class UntypedQueryShape(
  * `edgeName` null, and `path` empty. Edge-traversal / eager-load /
  * edge-predicate subqueries carry the traversal context so an
  * interceptor can branch on what step it's running for.
+ *
+ * One instance is shared by every interceptor in a chain, so the
+ * framework constructs `path` as an unmodifiable snapshot —
+ * attempting to mutate it through a cast throws rather than
+ * corrupting what later interceptors observe.
  */
 data class QueryContext(
     val privacy: PrivacyContext,
@@ -236,7 +241,8 @@ data class QueryContext(
     val path: List<EdgeStep>,
     val flags: Set<QueryFlag>,
 ) {
-    val isEagerSubquery: Boolean get() = operation == ReadOperation.EAGER_LOAD
+    val isEagerSubquery: Boolean
+        get() = operation == ReadOperation.EAGER_LOAD || operation == ReadOperation.EAGER_JUNCTION
 }
 
 data class EdgeStep(
@@ -254,6 +260,29 @@ enum class ReadOperation {
     RAW_EXISTS,
     RAW_AGGREGATE,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
+
+    /**
+     * The junction-discovery read of an eager many-to-many step: the
+     * framework queries the junction entity's table to discover which
+     * targets each source is related to, and runs the JUNCTION
+     * entity's read interceptors with this operation so predicates
+     * registered on the junction (tenant scoping, `ExcludeDeleted`)
+     * narrow relationship discovery exactly as they narrow direct
+     * junction reads.
+     *
+     * Context convention: `currentEntity` is the JUNCTION entity;
+     * `sourceEntity`, `edgeName`, and `path` describe the eager M2M
+     * step being discovered (`path.last()` names the edge's declared
+     * source and target — not the junction, which no schema edge
+     * names). Limit operations are silent no-ops: discovery must see
+     * every membership or associations would silently vanish.
+     * `addPredicate`, `addAnnotation`, and `reject` apply normally.
+     * Junction LOAD privacy deliberately does NOT run on discovery —
+     * junction rows are never materialized to the caller here, and a
+     * fail-closed privacy pass would fail every M2M read for schemas
+     * without junction Allow rules.
+     */
+    EAGER_JUNCTION,
 
     /**
      * `deleteMany(...)` candidate fetch — the bulk-delete API runs

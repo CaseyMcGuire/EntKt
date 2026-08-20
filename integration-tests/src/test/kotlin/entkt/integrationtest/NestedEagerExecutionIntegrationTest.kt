@@ -704,6 +704,87 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         )
     }
 
+    // ---- context and child-query state cannot be corrupted ----
+
+    @Test
+    fun `mutating an exposed context path cannot corrupt later interceptors or descendant steps`() {
+        val observedPaths = mutableListOf<List<EdgeStep>>()
+        val nestedPaths = mutableListOf<List<EdgeStep>>()
+        val client = EntClient(resetAndDriver()) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                articles(
+                    QueryInterceptor { _, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_LOAD) {
+                            // Hostile: the unmodifiable snapshot throws
+                            // instead of letting the shared context be
+                            // corrupted for everyone after this point.
+                            runCatching { (ctx.path as? MutableList<*>)?.clear() }
+                        }
+                    },
+                    name = "hostile-path-clearer",
+                )
+                articles(
+                    QueryInterceptor { _, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_LOAD) observedPaths.add(ctx.path)
+                    },
+                    name = "path-observer",
+                )
+                users(
+                    QueryInterceptor { _, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_LOAD) nestedPaths.add(ctx.path)
+                    },
+                    name = "nested-path-observer",
+                )
+            }
+        }
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+
+        client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow()
+
+        val articlesStep = listOf(EdgeStep(User::class, "articles", Article::class))
+        val nestedStep = articlesStep + EdgeStep(Article::class, "author", User::class)
+        assertEquals(listOf(articlesStep), observedPaths, "the later interceptor sees the intact path")
+        assertEquals(listOf(nestedStep), nestedPaths, "the descendant step sees the intact path")
+    }
+
+    @Test
+    fun `a captured eager child query executed independently behaves as a root read`() {
+        var captured: ArticleQuery? = null
+        val contexts = mutableListOf<entkt.runtime.query.QueryContext>()
+        val client = EntClient(resetAndDriver()) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                articles(
+                    QueryInterceptor { _, ctx -> contexts.add(ctx) },
+                    name = "context-observer",
+                )
+            }
+        }
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+        val query = client.users.query()
+        query.loadArticles { captured = this }
+
+        // Run the parent's terminal AND its explain — both seed the
+        // child's traversal context for their own step.
+        query.all().getOrThrow()
+        query.explainAll()
+        contexts.clear()
+
+        // Executed on its own, the captured child is what it was
+        // constructed as: a root ArticleQuery — no stale eager
+        // attribution from the parent's earlier runs.
+        assertNotNull(captured).all().getOrThrow()
+        val ctx = contexts.single()
+        assertEquals(ReadOperation.ALL, ctx.operation)
+        assertEquals(emptyList(), ctx.path)
+        assertNull(ctx.sourceEntity)
+        assertNull(ctx.edgeName)
+        assertEquals(Article::class, ctx.rootEntity)
+    }
+
     // ---- an eager step's window is frozen with its spec ----
 
     @Test
