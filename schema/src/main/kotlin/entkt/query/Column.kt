@@ -164,10 +164,19 @@ open class EnumColumn<E : Any, T : Enum<T>>(
         Predicate.Leaf(name, Op.EQ, value.name)
     override infix fun neq(value: T): Predicate<E> =
         Predicate.Leaf(name, Op.NEQ, value.name)
+
+    // The `.name` mapping is applied through a lazy view, not an
+    // eager `map`: the collection LENGTH is caller-controlled (a
+    // huge list of repeated constants is legal), so materializing
+    // the mapped list here would bypass the driver's bind-capacity
+    // check exactly like the eager `toList()` the base column
+    // dropped. The view's `size` is O(1); elements map only when
+    // iterated — at the chain-entry snapshot for client reads, or
+    // at render for direct driver calls, both after that check.
     override infix fun `in`(values: Collection<T>): Predicate<E> =
-        Predicate.Leaf(name, Op.IN, values.map { it.name })
+        Predicate.Leaf(name, Op.IN, LazilyMappedOperands(values) { it.name })
     override infix fun notIn(values: Collection<T>): Predicate<E> =
-        Predicate.Leaf(name, Op.NOT_IN, values.map { it.name })
+        Predicate.Leaf(name, Op.NOT_IN, LazilyMappedOperands(values) { it.name })
 
     // Enums serialize to their .name string; ordering is alphabetical
     // on the name (not by ordinal). Declared here so EnumColumn can
@@ -213,3 +222,23 @@ fun <E : Any, C> C.isNull(): Predicate<E> where C : Column<E, *>, C : Nullable =
 
 fun <E : Any, C> C.isNotNull(): Predicate<E> where C : Column<E, *>, C : Nullable =
     Predicate.Leaf(name, Op.IS_NOT_NULL, null)
+
+/**
+ * Lazily-mapped view of an `IN` / `NOT_IN` operand collection whose
+ * elements need a storage transform (an enum's stored `.name`).
+ * `size` delegates to the source in O(1) — so a driver bind-capacity
+ * check can reject an over-budget operand without materializing it —
+ * and elements are transformed only when the view is iterated, which
+ * happens strictly after that check (at the runtime's chain-entry
+ * snapshot, or at a driver's render). Deliberately not
+ * equality-bearing: predicate equality is meaningful on the runtime's
+ * snapshots (shape views, frozen specs), which materialize this view
+ * into a plain list at chain entry.
+ */
+private class LazilyMappedOperands<T, R>(
+    private val source: Collection<T>,
+    private val transform: (T) -> R,
+) : AbstractCollection<R>() {
+    override val size: Int get() = source.size
+    override fun iterator(): Iterator<R> = source.asSequence().map(transform).iterator()
+}

@@ -187,6 +187,36 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     }
 
     @Test
+    fun `the enum DSL's in operator does not materialize its mapped operand either`() {
+        val recording = RecordingDriver(resetAndDriver())
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        // The collection LENGTH is caller-controlled even though the
+        // distinct constants are bounded: a huge list of repeated
+        // enum values must not be mapped to storage names before the
+        // capacity check.
+        var reads = 0
+        val virtual = object : AbstractList<entkt.integrationtest.schema.OrderStatus>() {
+            override val size: Int get() = 10_000_000
+            override fun get(index: Int): entkt.integrationtest.schema.OrderStatus {
+                reads++
+                return entkt.integrationtest.schema.OrderStatus.PENDING
+            }
+        }
+        recording.reset()
+
+        val result = client.orders.query {
+            where(entkt.integrationtest.ent.Order.status `in` virtual)
+        }.all()
+
+        val failed = assertIs<ReadResult.Failed>(result)
+        assertIs<PostgresBindLimitException>(failed.exception)
+        assertEquals(0, reads, "the enum mapping must be lazy — no element may be read or mapped")
+        assertEquals(emptyList(), recording.calls, "no SQL may be submitted")
+    }
+
+    @Test
     fun `the capacity check also guards reads inside a transaction`() {
         val client = EntClient(resetAndDriver()) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
