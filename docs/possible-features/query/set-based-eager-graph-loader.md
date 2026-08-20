@@ -652,6 +652,11 @@ Phase 1 explicitly inherits the current `Driver.query` limit. Merging parent
 groups can reach that limit sooner than the old per-group recursion, so phase 1
 must be documented and tested only within the supported parameter range. Large
 set support is complete only when the phase-2 driver capability is present.
+Until then, the PostgreSQL driver rejects an over-limit statement
+deterministically before any I/O with an actionable `PostgresBindLimitException`
+(counting the statement's complete bind list, not only relationship IDs); the
+root query of an eager load may already have executed, but the invalid
+relationship statement never reaches PostgreSQL.
 
 ## Explain
 

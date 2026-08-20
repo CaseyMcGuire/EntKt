@@ -371,6 +371,19 @@ The Postgres driver compiles the `Predicate` tree to parameterized SQL:
 - M2M edges include junction table joins in the subquery
 - All identifiers are double-quoted
 
+PostgreSQL's protocol accepts at most 65,535 bind parameters per
+statement. Operations whose parameter count is data-dependent
+(`query`, `count`, `exists`, `aggregate`, `updateMany`, `deleteMany`)
+count the rendered statement's final parameters — relationship IDs,
+predicates, and ordering operands all share the budget — and reject
+anything over the limit with `PostgresBindLimitException` before the
+statement is prepared or sent, instead of the JDBC driver's opaque
+protocol error. Eager relationship loads with very large parent sets
+are the common trigger; their `IN (...)` lists are not yet chunked, so
+reduce the root result size or split the query. `insertMany` and
+`deleteManyByIds` already chunk physical statements and stay under the
+limit by construction.
+
 ### Identifier Handling
 
 Postgres truncates identifiers to 63 bytes (NAMEDATALEN - 1). entkt

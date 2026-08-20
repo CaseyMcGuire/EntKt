@@ -30,6 +30,19 @@ above it.
 
 ## Unreleased
 
+- **Over-limit PostgreSQL statements fail fast with an actionable error** (`postgres`)
+  Operations whose bind-parameter count is data-dependent (`query`,
+  `count`, `exists`, `aggregate`, `updateMany`, `deleteMany`) now count
+  the rendered statement's final parameters and throw
+  `PostgresBindLimitException` before preparing anything over
+  PostgreSQL's 65,535-parameter protocol limit — previously the JDBC
+  driver failed with an opaque "out-of-range integer as a 2-byte
+  value" protocol error. Large eager relationship loads are the common
+  trigger; their `IN (...)` lists are not yet chunked. `insertMany`
+  and `deleteManyByIds` are unchanged (they already chunk).
+  _Migration:_ none for in-range queries; code matching on the old
+  PSQLException for this condition should match
+  `PostgresBindLimitException` instead.
 - **Eager many-to-many discovery runs the junction entity's read interceptors** (`codegen`, `runtime`)
   An eager M2M step now fires the JUNCTION entity's interceptors with
   the new `ReadOperation.EAGER_JUNCTION` before its junction read, so

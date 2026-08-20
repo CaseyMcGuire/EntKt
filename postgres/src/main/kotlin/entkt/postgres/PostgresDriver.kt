@@ -24,6 +24,23 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
 
 /**
+ * Thrown — before any statement is prepared or sent — when a rendered
+ * PostgreSQL statement's final bind-parameter count exceeds the
+ * protocol's 65,535-parameter limit. Read terminals capture it as
+ * `ReadResult.Failed` like any driver failure, so `getOrThrow()`
+ * rethrows it. The count covers every parameter the statement binds —
+ * relationship IDs, caller and interceptor predicates, and ordering
+ * operands — because they all share the same budget. Eager
+ * relationship loads with very large parent sets are the common
+ * trigger: their `IN (...)` lists are not yet chunked, so the fix is
+ * to reduce the root result size or split the query. Note the root
+ * query of an eager load may already have executed by the time the
+ * relationship statement is rejected; the over-limit statement itself
+ * never reaches PostgreSQL.
+ */
+class PostgresBindLimitException(message: String) : RuntimeException(message)
+
+/**
  * A [Driver] backed by a JDBC [DataSource] talking to PostgreSQL.
  *
  * Each call borrows one connection from the pool and runs a single

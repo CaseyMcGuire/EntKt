@@ -29,6 +29,40 @@ private val GROUPABLE_FIELD_TYPES =
 private const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
 
 /**
+ * Reject a rendered statement whose FINAL bind-parameter count exceeds
+ * PostgreSQL's protocol limit — deterministically, before the statement
+ * is prepared or any I/O happens — instead of surfacing the JDBC
+ * driver's opaque protocol error ("Tried to send an out-of-range
+ * integer as a 2-byte value").
+ *
+ * Called by every operation whose parameter count is data-dependent:
+ * `query` (which serves eager relationship loads — their `IN (...)`
+ * lists grow with the parent set and are not yet chunked), `count`,
+ * `exists`, `aggregate`, `updateMany`, and `deleteMany`. The count is
+ * the statement's complete parameter list: relationship IDs, caller and
+ * interceptor predicates, and ordering operands all consume binds.
+ *
+ * Deliberately NOT called by: `insertMany` and `deleteManyByIds`, which
+ * chunk physical statements under the limit by construction; the
+ * single-row operations (`insert`, `update`, `byId`, `delete`, row
+ * locks), whose parameter count is bounded by the schema's column count
+ * (PostgreSQL caps tables at 1,600 columns); and the explain builders,
+ * which only render SQL and never reach PostgreSQL.
+ */
+private fun checkBindLimit(paramCount: Int, operation: String, table: String) {
+    if (paramCount > POSTGRES_BIND_PARAMETER_LIMIT) {
+        throw PostgresBindLimitException(
+            "PostgreSQL $operation on \"$table\" requires " +
+                "%,d".format(java.util.Locale.ROOT, paramCount) +
+                " bind parameters; PostgreSQL supports at most " +
+                "%,d".format(java.util.Locale.ROOT, POSTGRES_BIND_PARAMETER_LIMIT) +
+                ". Reduce the root result size or split the query. " +
+                "Large relationship batches are not yet chunked.",
+        )
+    }
+}
+
+/**
  * The Postgres driver's operation core: every read/write/lock operation as a
  * function of an explicit JDBC [Connection]. Both facades delegate here —
  * [PostgresDriver] borrows a pooled connection per call, and
@@ -219,6 +253,7 @@ internal class PostgresOperations(
     ): List<Map<String, Any?>> {
         val schema = schemaFor(table)
         val prepared = buildSelectSql(table, predicates, orderBy, limit, offset)
+        checkBindLimit(prepared.params.size, "query", table)
 
         return conn.prepareStatement(prepared.sql).useQuietClose { stmt ->
             for ((i, p) in prepared.params.withIndex()) {
@@ -256,6 +291,7 @@ internal class PostgresOperations(
         predicates: List<Predicate<*>>,
     ): Long {
         val prepared = buildCountSql(table, predicates)
+        checkBindLimit(prepared.params.size, "count", table)
 
         return conn.prepareStatement(prepared.sql).useQuietClose { stmt ->
             for ((i, p) in prepared.params.withIndex()) {
@@ -347,6 +383,7 @@ internal class PostgresOperations(
 
         val groupCol = groupBy?.let { gb -> schema.columns.first { it.name == gb } }
         val metricCol = column?.let { c -> schema.columns.first { it.name == c } }
+        checkBindLimit(builder.params.size, "aggregate", table)
 
         return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             for ((i, p) in builder.params.withIndex()) {
@@ -407,6 +444,7 @@ internal class PostgresOperations(
             sql.append(" WHERE ").append(whereSql)
         }
         sql.append(")")
+        checkBindLimit(builder.params.size, "exists", table)
 
         return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             for ((i, p) in builder.params.withIndex()) {
@@ -693,6 +731,9 @@ internal class PostgresOperations(
             sql.append(" WHERE ").append(whereSql)
         }
 
+        // SET values and predicate parameters share one bind budget.
+        checkBindLimit(cols.size + builder.params.size, "updateMany", table)
+
         return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             var idx = 1
             for (col in cols) {
@@ -722,6 +763,8 @@ internal class PostgresOperations(
             val whereSql = builder.lower(combined, schema, baseAlias)
             sql.append(" WHERE ").append(whereSql)
         }
+
+        checkBindLimit(builder.params.size, "deleteMany", table)
 
         return conn.prepareStatement(sql.toString()).useQuietClose { stmt ->
             for ((i, p) in builder.params.withIndex()) {
