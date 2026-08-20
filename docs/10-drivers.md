@@ -380,7 +380,12 @@ anything over the limit with `PostgresBindLimitException` before the
 statement is prepared or sent, instead of the JDBC driver's opaque
 protocol error. An oversized `IN` list is rejected from its projected
 size before being copied or expanded at all, so even an absurdly
-large list cannot exhaust memory on the way to the error. Eager relationship loads with very large parent sets
+large list cannot exhaust memory on the way to the error. Generated
+read terminals also call `Driver.requireBindCapacity` at entry — a
+default no-op that PostgreSQL overrides — with a conservative minimum
+computed from the lists' O(1) sizes, so the rejection happens before
+the runtime takes any defensive snapshot of the operands and before
+any interceptor runs. Eager relationship loads with very large parent sets
 are the common trigger; their `IN (...)` lists are not yet chunked, so
 reduce the root result size or split the query. `insertMany` and
 `deleteManyByIds` already chunk physical statements and stay under the

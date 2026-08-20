@@ -36,6 +36,25 @@ internal data class PreparedSql(val sql: String, val params: List<Param>)
 internal const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
 
 /**
+ * The [entkt.runtime.driver.Driver.requireBindCapacity] contract for
+ * both PostgreSQL facades: reject a read whose conservative minimum
+ * bind count already exceeds the protocol limit, before the runtime
+ * takes any defensive snapshot of the operands.
+ */
+internal fun requirePostgresBindCapacity(minimumParameters: Long, table: String) {
+    if (minimumParameters > POSTGRES_BIND_PARAMETER_LIMIT) {
+        throw PostgresBindLimitException(
+            "PostgreSQL query on \"$table\" requires at least " +
+                "%,d".format(java.util.Locale.ROOT, minimumParameters) +
+                " bind parameters; PostgreSQL supports at most " +
+                "%,d".format(java.util.Locale.ROOT, POSTGRES_BIND_PARAMETER_LIMIT.toLong()) +
+                ". Reduce the root result size or split the query. " +
+                "Large relationship batches are not yet chunked.",
+        )
+    }
+}
+
+/**
  * AND together a list of erased predicates into a single erased
  * predicate, or null when the list is empty. Used by the SQL builders
  * to combine the driver-call's `List<Predicate<*>>` into a single

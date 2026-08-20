@@ -11,6 +11,8 @@ import com.squareup.kotlinpoet.asClassName
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
 private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
+private val MIN_BIND_PARAMETERS =
+    com.squareup.kotlinpoet.MemberName("entkt.runtime.driver", "minimumBindParameters")
 private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
 private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
@@ -111,6 +113,18 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 // extras (byId's id leaf, eager-load's IN clause).
                 .addStatement(
                     "val structural = listOfNotNull(sourceResult?.bridge) + extraStructural",
+                )
+                // Fail fast on a query that can never execute: the
+                // conservative minimum bind count (summed IN-list
+                // sizes, O(1) per list) is checked against the
+                // driver's declared budget BEFORE the spec builder
+                // takes defensive snapshots of the operands — an
+                // absurdly large IN list must not be deep-copied
+                // several times on the way to the driver's own
+                // render-time rejection.
+                .addStatement(
+                    "driver.requireBindCapacity(%M(predicates) + %M(structural), %T.TABLE)",
+                    MIN_BIND_PARAMETERS, MIN_BIND_PARAMETERS, entityClass,
                 )
                 // rootEntity walks back along the traversal
                 // path; if no traversal context, this query IS

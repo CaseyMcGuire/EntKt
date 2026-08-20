@@ -75,21 +75,24 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         assertContains(ex.message!!, "not yet chunked")
     }
 
-    @Test
-    fun `an oversized IN list is rejected without being expanded or copied`() {
-        val driver = resetAndDriver()
-
-        // A virtual collection that is never materialized: if the
-        // renderer copied it or built its placeholders before checking
-        // the budget, this test would iterate ten million elements.
+    /**
+     * A virtual collection that is never materialized: if any layer
+     * copied it or expanded its placeholders before a budget check,
+     * the read counter would show ten million element reads.
+     */
+    private class VirtualIds : AbstractList<Long>() {
         var reads = 0
-        val virtual = object : AbstractList<Long>() {
-            override val size: Int get() = 10_000_000
-            override fun get(index: Int): Long {
-                reads++
-                return index.toLong()
-            }
+        override val size: Int get() = 10_000_000
+        override fun get(index: Int): Long {
+            reads++
+            return index.toLong()
         }
+    }
+
+    @Test
+    fun `an oversized IN list is rejected at render without being expanded or copied`() {
+        val driver = resetAndDriver()
+        val virtual = VirtualIds()
 
         val ex = assertFailsWith<PostgresBindLimitException> {
             driver.query(
@@ -102,7 +105,50 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         }
         assertContains(ex.message!!, "10,000,000")
         assertContains(ex.message!!, "65,535")
-        assertEquals(0, reads, "the projected-size pre-check must reject before reading any element")
+        assertEquals(0, virtual.reads, "the projected-size pre-check must reject before reading any element")
+    }
+
+    @Test
+    fun `the public query path rejects an oversized IN before any snapshot copies`() {
+        val client = EntClient(resetAndDriver()) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        val virtual = VirtualIds()
+
+        // The terminal-entry capacity check consults the driver's
+        // declared budget from the lists' O(1) sizes BEFORE the spec
+        // builder takes its defensive operand snapshots — the
+        // ordinary client path must not deep-copy an enormous operand
+        // several times on the way to the render-time rejection.
+        val result = client.users.query {
+            where(Predicate.Leaf<User>("id", Op.IN, virtual))
+        }.all()
+
+        val failed = assertIs<ReadResult.Failed>(result)
+        val ex = assertIs<PostgresBindLimitException>(failed.exception)
+        assertContains(ex.message!!, "10,000,000")
+        assertContains(ex.message!!, "\"users\"")
+        assertEquals(0, virtual.reads, "no layer may materialize the operand before the capacity check")
+    }
+
+    @Test
+    fun `the capacity check also guards reads inside a transaction`() {
+        val client = EntClient(resetAndDriver()) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        val virtual = VirtualIds()
+
+        val outcome = client.withTransaction { tx ->
+            val result = tx.users.query {
+                where(Predicate.Leaf<User>("id", Op.IN, virtual))
+            }.all()
+            val failed = assertIs<ReadResult.Failed>(result)
+            assertIs<PostgresBindLimitException>(failed.exception)
+            "checked"
+        }.getOrThrow()
+
+        assertEquals("checked", outcome)
+        assertEquals(0, virtual.reads)
     }
 
     @Test

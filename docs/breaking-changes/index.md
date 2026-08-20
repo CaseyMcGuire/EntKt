@@ -39,10 +39,18 @@ above it.
   driver failed with an opaque "out-of-range integer as a 2-byte
   value" protocol error. An oversized `IN` list is rejected at render
   time from its projected size — before it is copied or expanded at
-  all, so an absurdly large list cannot exhaust memory on the way to
-  the error. Large eager relationship loads are the common trigger;
-  their `IN (...)` lists are not yet chunked. `insertMany` and
-  `deleteManyByIds` are unchanged (they already chunk).
+  all — and generated read terminals additionally consult the
+  driver's declared budget at entry (the new
+  `Driver.requireBindCapacity`, a default no-op for custom drivers)
+  from the lists' O(1) sizes, BEFORE the spec builder takes its
+  defensive operand snapshots, so the ordinary
+  `client.x.query { ... }.all()` path cannot deep-copy an enormous
+  operand on the way to the error either. That entry check runs
+  before the interceptor chain — a query that can never execute
+  invokes no interceptors. Large eager relationship loads are the
+  common trigger; their `IN (...)` lists are not yet chunked.
+  `insertMany` and `deleteManyByIds` are unchanged (they already
+  chunk).
   _Migration:_ none for in-range queries; code matching on the old
   PSQLException for this condition should match
   `PostgresBindLimitException` instead.

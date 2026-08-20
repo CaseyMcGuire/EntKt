@@ -220,6 +220,24 @@ interface Driver {
     fun byId(table: String, id: Any): Map<String, Any?>?
 
     /**
+     * Assert this driver can bind at least [minimumParameters]
+     * parameters in one statement for a read of [table]. No-op by
+     * default — a driver with no declared statement limit accepts
+     * everything and may still enforce its own limit at render time.
+     *
+     * Generated read paths call this at terminal entry with a
+     * conservative lower bound (the summed sizes of `IN`-list
+     * operands, via [minimumBindParameters]) BEFORE taking defensive
+     * snapshots of predicate operands, so a query that can never
+     * execute fails fast with the driver's own actionable error
+     * instead of copying enormous operand lists on the way to the
+     * same failure at render time. Runs before the interceptor
+     * chain: a rejected query never invokes interceptors, exactly as
+     * if the driver had failed.
+     */
+    fun requireBindCapacity(minimumParameters: Long, table: String) {}
+
+    /**
      * Run a query. Predicates are AND-ed together (the generated query
      * accumulates them as a list and the driver folds them). The
      * driver applies `orderBy` then `offset`/`limit` after filtering.
@@ -693,4 +711,40 @@ interface Driver {
         entity: String,
         operation: EntOperation,
     ): EntMutationException? = null
+}
+
+/**
+ * Conservative lower bound on the bind parameters a predicate list will
+ * need: the summed sizes of `IN` / `NOT_IN` collection operands, the
+ * one caller-unbounded amplification point. Everything else (scalar
+ * leaves, ordering operands) is deliberately counted as zero, so the
+ * bound never over-rejects — a query this reports as over a driver's
+ * budget provably cannot execute. `Collection.size` is O(1), so the
+ * walk allocates nothing and never iterates an operand.
+ *
+ * Used with [Driver.requireBindCapacity] at generated terminal entry,
+ * before any defensive operand snapshot. Public for the generated
+ * cross-module call sites; not application API.
+ */
+@entkt.query.EntktInternal
+public fun minimumBindParameters(predicates: List<Predicate<*>>): Long =
+    predicates.sumOf { minimumBindParameters(it) }
+
+// The shaped-traversal branches read @EntktInternal predicate members;
+// this walk is itself framework plumbing for the generated call sites.
+@OptIn(entkt.query.EntktInternal::class)
+private fun minimumBindParameters(predicate: Predicate<*>): Long = when (predicate) {
+    is Predicate.Leaf ->
+        if ((predicate.op == Op.IN || predicate.op == Op.NOT_IN) && predicate.value is Collection<*>) {
+            (predicate.value as Collection<*>).size.toLong()
+        } else {
+            0L
+        }
+    is Predicate.And -> minimumBindParameters(predicate.left) + minimumBindParameters(predicate.right)
+    is Predicate.Or -> minimumBindParameters(predicate.left) + minimumBindParameters(predicate.right)
+    is Predicate.HasEdge -> 0L
+    is Predicate.HasEdgeWith<*, *> -> minimumBindParameters(predicate.inner)
+    is Predicate.HasM2MEdgeFrom<*, *> -> predicate.sourceFilter?.let { minimumBindParameters(it) } ?: 0L
+    is Predicate.HasEdgeFromShape<*, *> -> minimumBindParameters(predicate.source.predicates)
+    is Predicate.HasM2MEdgeFromShape<*, *> -> minimumBindParameters(predicate.source.predicates)
 }

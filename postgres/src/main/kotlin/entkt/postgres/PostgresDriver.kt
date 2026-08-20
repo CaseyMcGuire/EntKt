@@ -865,6 +865,9 @@ class PostgresDriver(
     ): List<Map<String, Any?>> =
         withConnection { ops.query(it, table, predicates, orderBy, limit, offset) }
 
+    override fun requireBindCapacity(minimumParameters: Long, table: String) =
+        requirePostgresBindCapacity(minimumParameters, table)
+
     override fun explainQuery(
         table: String,
         predicates: List<Predicate<*>>,

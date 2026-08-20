@@ -82,6 +82,9 @@ internal class PostgresTransactionalDriver(
         checkOpen(); return ops.byId(conn, table, id)
     }
 
+    override fun requireBindCapacity(minimumParameters: Long, table: String) =
+        requirePostgresBindCapacity(minimumParameters, table)
+
     override fun query(
         table: String,
         predicates: List<Predicate<*>>,
