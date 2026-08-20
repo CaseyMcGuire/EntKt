@@ -41,12 +41,13 @@ private class Plain : EntSchema("plain_rows", clientName = "plainRows") {
 
 /**
  * A schema class named after a Kotlin declaration that generated
- * sources reference through default imports (`Int`, `MutableSet`, ...)
- * would shadow it for every generated file in the package — including
- * files that never mention the entity, which no emission strategy can
- * qualify — and the output would not compile. Both codegen entry
- * points reject such names up front: `SchemaInspector.validate`
- * collects the diagnostic, `EntGenerator.generate` throws it.
+ * sources reference as a bare, unimported name (`Int`, `MutableSet`,
+ * `Regex`, ...) would shadow it wherever an emitter writes the name
+ * as raw text — the reference carries no import, so the same-package
+ * entity wins over the default import and the output does not
+ * compile. Both codegen entry points reject such names up front:
+ * `SchemaInspector.validate` collects the diagnostic,
+ * `EntGenerator.generate` throws it.
  */
 class ShadowedKotlinNameValidationTest {
 

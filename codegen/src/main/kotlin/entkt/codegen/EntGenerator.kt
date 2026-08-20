@@ -112,17 +112,23 @@ internal fun findClientNameErrors(schemas: List<SchemaInput>): List<String> = bu
 }
 
 /**
- * Kotlin declarations the generated sources reference through default
- * imports (bare `Int`, `List`, `@JvmOverloads`, ...). All generated
- * files share one package with the entity classes they describe, and a
- * same-package declaration outranks Kotlin's default imports, so an
- * entity named after one of these would silently redirect every bare
- * reference in every generated file to the entity class and the output
- * would not compile — including files that never mention the entity,
- * which KotlinPoet cannot know to qualify. An explicit
- * `import kotlin.Int` is no fix either: it would break references to
- * the entity itself. Rejected up front with a clear diagnostic instead
- * of shipping uncompilable source.
+ * Kotlin declarations that generated sources may reference as bare,
+ * unimported names. All generated files share one package with the
+ * entity classes they describe, and a same-package declaration
+ * outranks Kotlin's DEFAULT imports (explicit imports outrank both),
+ * so the breaking class is precisely a name an emitter writes as raw
+ * text: it carries no import, resolves to the same-package entity, and
+ * the output does not compile — in files that may never otherwise
+ * mention the entity. Names emitted through KotlinPoet `%T`
+ * references are safe (they get an explicit import, which wins), but
+ * raw emissions have recurred across emitters — `Regex` in the
+ * `match()` validator was found after the eager sites — and any
+ * missed one ships uncompilable source with no diagnostic. So the set
+ * is deliberately conservative: every name generated code references
+ * bare today, plus the primitive/stdlib family as margin for future
+ * emitters. Over-rejecting a name like `Int` costs a rename prompted
+ * by a clear message; under-rejecting costs a wall of compiler errors
+ * in generated code.
  */
 private val SHADOWABLE_KOTLIN_NAMES = setOf(
     "Any", "Boolean", "Byte", "ByteArray", "Char", "Comparable", "Double",

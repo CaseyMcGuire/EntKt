@@ -7,7 +7,7 @@ import entkt.query.Predicate
  * Reusable read-path interceptor that hides rows whose timestamp
  * column is non-null. The runtime half of the soft-delete
  * convention (see
- * `docs/possible-features/schema/soft-delete.md`).
+ * `docs/implemented-features/schema/soft-delete.md`).
  *
  * Register per-entity through the generated client interceptor DSL:
  *
@@ -20,10 +20,11 @@ import entkt.query.Predicate
  *
  * Once installed, every read path that already routes through the
  * read-interceptor framework (root queries, terminals, by-id
- * lookups via query code, eager loads, non-M2M edge predicates,
- * edge traversals, and the `DELETE_CANDIDATES` candidate fetch)
- * picks up `column IS NULL` as an additional ANDed predicate, so
- * soft-deleted rows are invisible by default.
+ * lookups via query code, eager loads, edge predicates —
+ * target-entity interceptors, many-to-many included — edge
+ * traversals, and the `DELETE_CANDIDATES` candidate fetch) picks up
+ * `column IS NULL` as an additional ANDed predicate, so soft-deleted
+ * rows are invisible by default.
  *
  * Registered on a many-to-many JUNCTION entity, it also filters the
  * eager junction-discovery read (`ReadOperation.EAGER_JUNCTION`): a

@@ -43,7 +43,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
     orderBy: List<OrderField<E>>,
     callerLimit: Int?,
     public val offset: Int?,
-    public val flags: Set<QueryFlag>,
+    flags: Set<QueryFlag>,
     /**
      * Annotations to seed the builder with before any interceptor
      * runs. Generated code populates this from the source step's
@@ -88,6 +88,9 @@ public class QuerySpecBuilder<E : Any> public constructor(
     private val callerOrderByList: List<OrderField<E>> = callerOrderBy.map { it.semanticSnapshot() }
     private var currentLimit: Int? = callerLimit
     public val callerLimit: Int? = callerLimit
+
+    /** Entry snapshot, like every other constructor input. */
+    public val flags: Set<QueryFlag> = flags.toSet()
     private val annotationsMap: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
         putAll(initialAnnotations)
     }
@@ -145,7 +148,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
             limit = currentLimit,
             callerLimit = callerLimit,
             offset = offset,
-            flags = flags,
+            flags = flags.toSet(),
             annotations = annotationsMap.toMap(),
             callerPredicateCount = caller,
             structuralPredicateCount = structural,

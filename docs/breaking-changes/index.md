@@ -48,10 +48,11 @@ above it.
   rejecting junction interceptor now fails eager reads; exhaustive
   `when (context.operation)` branches need an `EAGER_JUNCTION` arm.
 - **Schema names that shadow Kotlin default imports are rejected** (`codegen`)
-  An entity class named `Int`, `Any`, `MutableSet`, `List`, … would
-  shadow the Kotlin declaration inside the generated package and make
-  the generated sources uncompilable — including files that never
-  reference the entity, which no emission strategy can qualify.
+  An entity class named `Int`, `Any`, `MutableSet`, `Regex`, … would
+  shadow the Kotlin declaration wherever generated code references it
+  as a bare, unimported name (a same-package declaration outranks
+  default imports), making the generated sources uncompilable — in
+  files that may never otherwise mention the entity.
   `SchemaInspector.validate` and `EntGenerator.generate` now reject
   such names with a clear diagnostic instead of shipping code that
   fails to compile.

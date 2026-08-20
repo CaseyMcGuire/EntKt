@@ -125,6 +125,44 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
     }
 
     @Test
+    fun `a nested M2M step's junction pass carries the full path from the root`() {
+        val contexts = mutableListOf<QueryContext>()
+        val client = EntClient(resetAndDriver()) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                postTags(
+                    QueryInterceptor { _, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_JUNCTION) contexts.add(ctx)
+                    },
+                    name = "junction-context-observer",
+                )
+            }
+        }
+        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
+        val tag = client.tags.create { name = "t" }.saveAndLoad().getOrThrow()
+        client.postTags.create { postId = post.id; tagId = tag.id }.save().getOrThrow()
+
+        // Post → tags (M2M) → posts (M2M): the SAME junction entity
+        // serves both steps, so one interceptor observes both
+        // discovery passes and their distinct contexts.
+        client.posts.query { loadTags { loadPosts() } }.all().getOrThrow()
+
+        val tagsStep = EdgeStep(entkt.integrationtest.ent.Post::class, "tags", entkt.integrationtest.ent.Tag::class)
+        val nestedStep = EdgeStep(entkt.integrationtest.ent.Tag::class, "posts", entkt.integrationtest.ent.Post::class)
+        assertEquals(2, contexts.size, "one junction pass per configured M2M step")
+        val (top, nested) = contexts
+        assertEquals(listOf(tagsStep), top.path)
+        assertEquals("tags", top.edgeName)
+        // The nested step's junction pass sees the complete
+        // root-to-target path — parent scoping/restore must not have
+        // clipped it — and the chain's true root.
+        assertEquals(listOf(tagsStep, nestedStep), nested.path)
+        assertEquals("posts", nested.edgeName)
+        assertEquals(entkt.integrationtest.ent.Tag::class, nested.sourceEntity)
+        assertEquals(entkt.integrationtest.ent.Post::class, nested.rootEntity)
+    }
+
+    @Test
     fun `a junction rejection stops the step before junction IO and the target pass`() {
         val recording = RecordingDriver(resetAndDriver())
         var targetPassFires = 0

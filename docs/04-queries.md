@@ -911,12 +911,18 @@ edges.
 
 An eager many-to-many step additionally fires the JUNCTION entity's
 interceptors with `operation = EAGER_JUNCTION` before its junction
-discovery read, so predicates registered on the junction (tenant
-scoping, `ExcludeDeleted`) decide which junction rows contribute
-relationships — the same rows a direct junction read would return.
-The M2M `queryX()` traversal and `has {}` lowerings do not yet run
-junction-entity interceptors (see the junction read-interceptors
-RFC for the open phases).
+discovery read, so interceptor predicates registered on the junction
+(tenant scoping, `ExcludeDeleted`) decide which junction rows
+contribute relationships, exactly as they narrow direct junction
+reads. Junction LOAD *privacy* deliberately does NOT run on
+discovery — junction rows are never materialized to the caller
+here, and the fail-closed model would otherwise fail every
+many-to-many read for schemas without junction Allow rules — so a
+junction guarded only by privacy rules (no interceptors) still
+contributes every relationship to eager loading. The M2M `queryX()`
+traversal and `has {}` lowerings do not yet run junction-entity
+interceptors either (see the junction read-interceptors RFC for the
+open phases).
 
 ## Transactions
 
