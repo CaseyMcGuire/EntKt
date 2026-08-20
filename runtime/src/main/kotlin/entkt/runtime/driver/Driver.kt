@@ -221,9 +221,10 @@ interface Driver {
 
     /**
      * Assert this driver can bind at least [minimumParameters]
-     * parameters in one statement for a read of [table]. No-op by
-     * default — a driver with no declared statement limit accepts
-     * everything and may still enforce its own limit at render time.
+     * parameters in one statement for a read of [table]. A driver
+     * with no declared statement limit implements this as an
+     * explicit no-op (and may still enforce its own limit at render
+     * time).
      *
      * Generated read paths wire this into the query-spec builder,
      * which invokes it with a running conservative lower bound (the
@@ -237,8 +238,16 @@ interface Driver {
      * whoever contributed it. The entry check runs before the
      * interceptor chain; an interceptor contribution fails at its
      * own `addPredicate` call.
+     *
+     * Deliberately abstract, like [registerAll]: a metrics/tracing
+     * decorator that forwards each operation by hand would silently
+     * disable the pre-snapshot guard if a default no-op existed —
+     * huge operands would materialize again on the way to the
+     * backend's eventual rejection. Kotlin `by`-delegating wrappers
+     * forward it automatically; manual and Java decorators are
+     * forced to.
      */
-    fun requireBindCapacity(minimumParameters: Long, table: String) {}
+    fun requireBindCapacity(minimumParameters: Long, table: String)
 
     /**
      * Run a query. Predicates are AND-ed together (the generated query

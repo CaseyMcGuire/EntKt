@@ -330,6 +330,8 @@ class ResultAlgebraTest {
     ) : Driver {
         var transactionsStarted = 0
 
+        override fun requireBindCapacity(minimumParameters: Long, table: String) {}
+
         override val inTransaction: Boolean
             get() = inTransactionError?.let { throw it } ?: inTransactionValue
 

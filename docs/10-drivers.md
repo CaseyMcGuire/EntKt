@@ -524,6 +524,17 @@ contract:
    column and reject an unregistered table. Decorating and transaction-scoped
    drivers must forward this lookup as well. It is used to validate the raw
    identifier accepted by the default ID-scoped bulk delete.
+
+   `requireBindCapacity(minimumParameters, table)` must reject a minimum
+   bind count the backend cannot satisfy in one statement, and must be an
+   explicit no-op for a backend with no declared limit. It is deliberately
+   abstract for the same reason `registerAll()` has no default: generated
+   read paths call it before taking defensive snapshots of predicate
+   operands, so a hand-written decorator that inherited a no-op would
+   silently let huge operands materialize again on the way to the
+   backend's eventual rejection. Decorating and transaction-scoped
+   drivers must forward it (Kotlin `by`-delegating wrappers do so
+   automatically).
 2. `insert()` must return the full row including server-assigned values.
    `insertMany()` must preserve positional input/result correlation, keep any
    physical chunks inside the surrounding transaction, and never commit

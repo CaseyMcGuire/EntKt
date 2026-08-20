@@ -40,10 +40,13 @@ above it.
   value" protocol error. An oversized `IN` list is rejected at render
   time from its projected size — before it is copied or expanded at
   all — and generated read terminals additionally consult the
-  driver's declared budget at entry (the new
-  `Driver.requireBindCapacity`, a default no-op for custom drivers)
-  from the lists' O(1) sizes, BEFORE the spec builder takes its
-  defensive operand snapshots, so the ordinary
+  driver's declared budget at entry (the new abstract
+  `Driver.requireBindCapacity`; drivers with no statement limit
+  implement an explicit no-op, and hand-written decorators must
+  forward it — it is deliberately not defaulted, like
+  `registerAll()`, so a manually-forwarding wrapper cannot silently
+  disable the guard) from the lists' O(1) sizes, BEFORE the spec
+  builder takes its defensive operand snapshots, so the ordinary
   `client.x.query { ... }.all()` path cannot deep-copy an enormous
   operand on the way to the error either. That entry check runs
   before the interceptor chain — a query that can never execute
@@ -57,8 +60,10 @@ above it.
   `column in values` / `notIn` no longer copy their collection at
   construction: operands are snapshotted at terminal entry, after
   the capacity check, matching raw `Predicate.Leaf` construction.
-  _Migration:_ none for in-range queries; code matching on the old
-  PSQLException for this condition should match
+  _Migration:_ custom `Driver` implementations must implement
+  `requireBindCapacity` (an empty body for backends with no
+  statement limit); none for in-range queries otherwise; code
+  matching on the old PSQLException for this condition should match
   `PostgresBindLimitException` instead. Code that mutated a
   collection AFTER passing it to `column in values` and relied on
   the predicate keeping the construction-time contents must copy

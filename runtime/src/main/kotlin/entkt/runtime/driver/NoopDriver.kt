@@ -34,6 +34,11 @@ object NoopDriver : Driver {
         // there's no ordering to honor and nothing to remember.
     }
 
+    override fun requireBindCapacity(minimumParameters: Long, table: String) {
+        // Explicitly unlimited: nothing is ever bound, so no
+        // statement limit exists to enforce.
+    }
+
     override fun registeredIdColumn(table: String): String =
         error("NoopDriver has no registered schema metadata")
 
