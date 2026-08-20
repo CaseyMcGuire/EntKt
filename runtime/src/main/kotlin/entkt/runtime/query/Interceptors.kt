@@ -144,11 +144,21 @@ interface GlobalInterceptScope {
  * interceptor mutation, enabling attribution-aware policies like
  * "public callers must set a limit" that would otherwise be
  * defeated by a prior `setDefaultLimitIfAbsent`.
+ *
+ * `orderBy` is the *effective* order storage will execute. On
+ * eager-load subqueries the framework appends a primary-key
+ * ascending term when the caller didn't order by the primary key
+ * (the set-based executor's deterministic-ordering rule), so
+ * `orderBy` can be non-empty even when the caller authored no
+ * ordering. `callerOrderBy` retains the caller-authored terms
+ * only; policies that specifically require caller-authored
+ * ordering use it (or [hasCallerOrderBy]) rather than `orderBy`.
  */
 data class QueryShape<E : Any>(
     val table: String,
     val predicates: List<Predicate<E>>,
     val orderBy: List<OrderField<E>>,
+    val callerOrderBy: List<OrderField<E>>,
     val limit: Int?,
     val callerLimit: Int?,
     val offset: Int?,
@@ -160,6 +170,7 @@ data class QueryShape<E : Any>(
 ) {
     val hasCallerPredicates: Boolean get() = callerPredicateCount > 0
     val hasInterceptorPredicates: Boolean get() = interceptorPredicateCount > 0
+    val hasCallerOrderBy: Boolean get() = callerOrderBy.isNotEmpty()
 
     init {
         val total = callerPredicateCount + structuralPredicateCount + interceptorPredicateCount
@@ -174,6 +185,12 @@ data class QueryShape<E : Any>(
 /**
  * Read-only erased view for global interceptors. Exposes
  * attribution-count metadata but no typed `Predicate` references.
+ *
+ * `hasOrderBy` reflects the *effective* order (on eager-load
+ * subqueries the framework appends a primary-key term when the
+ * caller didn't order by the primary key, so it is true for every
+ * eager shape); `hasCallerOrderBy` is true only when the caller
+ * authored at least one ordering term.
  */
 data class UntypedQueryShape(
     val table: String,
@@ -186,6 +203,7 @@ data class UntypedQueryShape(
     val callerLimit: Int?,
     val offset: Int?,
     val hasOrderBy: Boolean,
+    val hasCallerOrderBy: Boolean,
     val annotations: Map<String, String>,
 ) {
     val hasCallerPredicates: Boolean get() = callerPredicateCount > 0

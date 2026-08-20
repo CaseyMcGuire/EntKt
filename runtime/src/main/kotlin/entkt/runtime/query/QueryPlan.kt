@@ -1,6 +1,71 @@
 package entkt.runtime.query
 
+import entkt.query.OrderField
 import entkt.runtime.result.EntQueryRejectedException
+
+/**
+ * How an eager edge's per-parent `limit` / `offset` window is
+ * executed. Phase 1 of the set-based eager graph loader always
+ * emulates the window in memory: the driver fetches every matching
+ * target row and the runtime applies each parent's window in Kotlin,
+ * so a finite window can overfetch. A native per-parent window
+ * strategy is owned by the phase-2 driver capability.
+ */
+enum class EagerWindowStrategy {
+    /**
+     * The driver query carries no LIMIT/OFFSET; the per-parent
+     * window is applied in memory after grouping. Correct results,
+     * but a finite window does not reduce rows fetched.
+     */
+    IN_MEMORY_EMULATED,
+}
+
+/**
+ * Framework-owned execution-strategy metadata for one eager edge
+ * step. Carried on the eager subplan's [QueryPlan.eagerExecution]
+ * field — deliberately NOT the caller-controlled
+ * [QueryPlan.annotations] map, whose keys are last-writer-wins: an
+ * application or interceptor annotation cannot override what the
+ * framework reports about its own execution strategy.
+ *
+ * This is structural metadata, not a runtime measurement: it does
+ * not predict query multiplicity, chunk counts, or row counts (those
+ * depend on runtime parent sets and belong to the separate
+ * query-observability feature).
+ */
+data class EagerExecutionPlan(
+    /**
+     * True: the edge's nested eager loads execute once for the
+     * ordered distinct union of retained targets, not once per
+     * populated parent group.
+     */
+    val setBatchedNestedExecution: Boolean,
+    /**
+     * The canonical effective target order storage executes — the
+     * caller's terms plus the framework's primary-key ascending
+     * tie-breaker when the caller didn't order by the primary key.
+     * This order drives storage reads, in-memory per-parent windows,
+     * privacy-batch order, and association order.
+     */
+    val effectiveOrder: List<OrderField<*>>,
+    /** How the per-parent window is executed. See [EagerWindowStrategy]. */
+    val windowStrategy: EagerWindowStrategy,
+    /** The configured per-parent limit, or null when unbounded. */
+    val perParentLimit: Int?,
+    /** The configured per-parent offset, or null when none was set. */
+    val perParentOffset: Int?,
+    /**
+     * True when the emulated window can make this step fetch rows
+     * the caller will never see — a positive finite per-parent limit
+     * or a positive offset discards fetched rows in memory rather
+     * than in storage. False when the step provably fetches nothing
+     * to discard: a `limit(0)` window skips the driver fetch
+     * entirely, and a to-one edge's fetch is gated on a window that
+     * admits its at-most-one candidate, so to-one edges never
+     * overfetch.
+     */
+    val windowOverfetchRisk: Boolean,
+)
 
 /**
  * A tree of [QueryExplanation]s describing the **shapes** of the
@@ -9,10 +74,12 @@ import entkt.runtime.result.EntQueryRejectedException
  * nested eager loads).
  *
  * Each entry in [eagerQueries] represents one query shape per edge.
- * At runtime, nested eager loads may execute that shape multiple
- * times (once per parent group), but the plan shows the structure
- * rather than the multiplicity since the actual count depends on
- * data returned by the root query.
+ * The plan is a structural walk, not a simulation of runtime
+ * fail-fast execution: it may describe later sibling steps a real
+ * read would stop before, and it does not predict physical query
+ * multiplicity or row counts (an eager edge step is one logical
+ * query, but junction reads and driver strategies can require
+ * several physical queries).
  *
  * Returned by every generated per-terminal explain method — one
  * mirror per canonical terminal: `explainAll`, `explainFirstOrNull`,
@@ -55,6 +122,13 @@ data class QueryPlan(
      * accurate (not synthetic).
      */
     val rejection: EntQueryRejectedException? = null,
+    /**
+     * Framework-owned eager execution-strategy metadata. Non-null
+     * only on the eager subplans under [eagerQueries] (never on a
+     * root or rejected node). See [EagerExecutionPlan] for why this
+     * is a typed field rather than an [annotations] entry.
+     */
+    val eagerExecution: EagerExecutionPlan? = null,
 ) {
     /** Convenience: true iff [rejection] is non-null. */
     val rejected: Boolean get() = rejection != null
@@ -72,14 +146,16 @@ data class QueryPlan(
      * rejection the output describes the rejection metadata
      * instead of a driver subplan.
      *
-     * Happy path:
+     * Happy path (each eager subplan carries its framework-owned
+     * `[eager execution: ...]` strategy line):
      * ```
      * Root: SELECT * FROM "posts" WHERE "published" = ?  args: [true]  [annotations: tenant=acme]
-     *   Edge "author":
-     *     SELECT * FROM "users" WHERE "id" IN (?)  args: [<parent IDs>]
+     *   Edge "author": SELECT * FROM "users" WHERE "id" IN (?) ORDER BY "id" ASC  args: [<parent IDs>]
+     *     [eager execution: set-batched nested loads; effective order: id ASC; per-parent window: in-memory emulation (limit=null, offset=null)]
      *   Edge "tags":
      *     Junction: SELECT * FROM "post_tags" WHERE "post_id" IN (?)  args: [<parent IDs>]
-     *     SELECT * FROM "tags" WHERE "id" IN (?)  args: [<parent IDs>]
+     *     SELECT * FROM "tags" WHERE "id" IN (?) ORDER BY "id" ASC  args: [<parent IDs>]
+     *     [eager execution: set-batched nested loads; effective order: id ASC; per-parent window: in-memory emulation (limit=null, offset=null)]
      * ```
      *
      * Rejected:
@@ -104,6 +180,18 @@ data class QueryPlan(
             sb.appendLine("${pad}  ${root?.describe()}")
         } else {
             sb.appendLine("$pad$label: ${root?.describe()}$annotationSuffix")
+        }
+        eagerExecution?.let { exec ->
+            val order = exec.effectiveOrder.joinToString(", ") { it.describeOrderTerm() }
+            val window = when (exec.windowStrategy) {
+                EagerWindowStrategy.IN_MEMORY_EMULATED ->
+                    "in-memory emulation (limit=${exec.perParentLimit}, offset=${exec.perParentOffset})" +
+                        if (exec.windowOverfetchRisk) " — may overfetch" else ""
+            }
+            sb.appendLine(
+                "$pad  [eager execution: set-batched nested loads; " +
+                    "effective order: $order; per-parent window: $window]",
+            )
         }
         for ((name, plan) in eagerQueries) {
             plan.renderTo(sb, indent + 1, "Edge \"$name\"")
@@ -157,4 +245,16 @@ data class QueryPlan(
             rejection = rejection,
         )
     }
+}
+
+/**
+ * Render one ordering term for [QueryPlan.render]'s eager-execution
+ * line: `"title DESC"`, `"id ASC"`, or `"embedding <-> ? ASC"` for a
+ * distance term (the operand is a bind value, never inlined; the
+ * direction is kept because ascending and descending distance orders
+ * select different rows into a finite window).
+ */
+private fun OrderField<*>.describeOrderTerm(): String {
+    val d = distance
+    return if (d != null) "$field ${d.operator.sql} ? $direction" else "$field $direction"
 }

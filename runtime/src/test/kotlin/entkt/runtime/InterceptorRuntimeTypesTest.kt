@@ -45,6 +45,7 @@ class InterceptorRuntimeTypesTest {
             table = "as",
             predicates = listOf(p1, p2),
             orderBy = emptyList(),
+            callerOrderBy = emptyList(),
             limit = null,
             callerLimit = null,
             offset = null,
@@ -66,6 +67,7 @@ class InterceptorRuntimeTypesTest {
                 table = "as",
                 predicates = listOf(Predicate.Leaf<A>("x", Op.EQ, 1), Predicate.Leaf<A>("y", Op.EQ, 2)),
                 orderBy = emptyList(),
+                callerOrderBy = emptyList(),
                 limit = null,
                 callerLimit = null,
                 offset = null,
@@ -85,6 +87,7 @@ class InterceptorRuntimeTypesTest {
             table = "as",
             predicates = emptyList(),
             orderBy = emptyList(),
+            callerOrderBy = emptyList(),
             limit = null,
             callerLimit = null,
             offset = null,
@@ -113,6 +116,7 @@ class InterceptorRuntimeTypesTest {
             callerLimit = null,
             offset = null,
             hasOrderBy = false,
+            hasCallerOrderBy = false,
             annotations = emptyMap(),
         )
         assertTrue(shape.hasCallerPredicates)
@@ -133,6 +137,7 @@ class InterceptorRuntimeTypesTest {
                 callerLimit = null,
                 offset = null,
                 hasOrderBy = false,
+                hasCallerOrderBy = false,
                 annotations = emptyMap(),
             )
         }
@@ -272,6 +277,7 @@ class InterceptorRuntimeTypesTest {
             table = "as",
             predicates = emptyList(),
             orderBy = listOf(OrderField("name", entkt.query.OrderDirection.ASC)),
+            callerOrderBy = listOf(OrderField("name", entkt.query.OrderDirection.ASC)),
             limit = null,
             callerLimit = null,
             offset = null,

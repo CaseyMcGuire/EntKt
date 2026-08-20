@@ -2,7 +2,18 @@
 
 ## Status
 
-Accepted execution direction as of 2026-08-18. This is not implemented.
+Accepted execution direction as of 2026-08-18.
+
+**Phase 1 implemented 2026-08-19**: set-based nested eager execution (one
+interceptor pass, driver query, privacy batch, and nested recursion per
+logical edge step), the deterministic effective-ordering contract with
+`callerOrderBy` / `hasCallerOrderBy` attribution, and the typed
+`QueryPlan.eagerExecution` explain metadata. Per-parent windows remain
+emulated in memory. The "Current Behavior" section below describes the
+pre-phase-1 executor this RFC replaced.
+
+**Phase 2 is open**: the relationship-aware driver capability that pushes
+per-parent windows into storage, and driver-owned parent-ID chunking.
 
 This RFC owns set-based edge-load execution, not the public API used to select
 edges. The accepted

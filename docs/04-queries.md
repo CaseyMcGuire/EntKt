@@ -586,20 +586,37 @@ generates `loadDirectories()` — nothing is derived from the
 `legacy_owner` storage string, the `Directory` type, or an English
 pluralizer.
 
-The current executor avoids N+1 queries by collecting all parent IDs
-from the main query result, then batch-loading the related entities
-with an `IN (id1, id2, ...)` query. That is an execution detail, not
-part of the method's contract: `load{Edge}()` promises relationship
-materialization, not a fixed SQL strategy or statement count —
-many-to-many edges add a junction read, and nested edge loads may
-currently execute once per parent group.
+The executor is set-based: each configured eager edge collects the
+IDs of every current parent, batch-loads the related entities with
+one `IN (id1, id2, ...)` query, and runs each nested eager edge once
+for the ordered distinct union of retained targets — never once per
+parent group. Framework-issued relationship-read counts are bounded
+by configured eager paths, not by how many parents have data. That
+is an execution detail, not part of the method's contract:
+`load{Edge}()` promises relationship materialization, not a fixed
+SQL strategy or statement count — many-to-many edges add a junction
+read.
+
+Every eager target query executes one deterministic *effective
+order*: the caller's `orderBy` terms followed by the target primary
+key ascending, unless the caller already ordered by the primary key.
+That order drives storage reads, per-parent windows, privacy-batch
+order, and association order — so tied rows enter a finite window
+deterministically. Interceptors see the effective order on
+`shape.orderBy` and the caller-authored terms separately on
+`shape.callerOrderBy` / `hasCallerOrderBy`; root (non-eager) queries
+gain no framework ordering term.
 
 `limit` and `offset` inside a `load...()` block apply **per parent**, not
 to that batched query — `loadPosts { limit(5) }` gives each user their
-first five posts, not five posts across all users. The same holds for
-to-one edges, where at most one target exists per parent: a positive
-limit is already satisfied, while `limit(0)` loads no target and any
-positive offset steps past the only candidate.
+first five posts, not five posts across all users. The window is
+currently emulated in memory: the driver fetches every matching row
+and the runtime slices each parent's window in Kotlin, so a finite
+window bounds the result, not the rows fetched (explain reports this
+as the `IN_MEMORY_EMULATED` window strategy). The same per-parent
+semantics hold for to-one edges, where at most one target exists per
+parent: a positive limit is already satisfied, while `limit(0)` loads
+no target and any positive offset steps past the only candidate.
 
 ### One Selection Per Edge
 
@@ -670,11 +687,13 @@ only *root* denial to absence, so adding an eager load can never make a
 visible root look absent.
 
 For each eager query, LOAD privacy receives one ordered batch of the distinct
-targets that remain in at least one parent's requested window. A shared
-many-to-many target is evaluated once, not once per parent. Strict mode reports
-the first denied target after evaluating that batch; `filterVisible()` removes
-every denied target from every group that references it. Nested eager paths
-repeat the contract for each actual nested edge-load invocation.
+targets that remain in at least one parent's requested window, in effective
+target order. A shared many-to-many target is evaluated once, not once per
+parent. Strict mode reports the first denied target after evaluating that
+batch; `filterVisible()` removes every denied target from every group that
+references it. Nested eager paths repeat the contract once per logical edge
+step: a nested edge's privacy batch holds the ordered distinct union of every
+parent group's retained targets, not one batch per group.
 
 Each `load{Edge} { ... }` call returns an `EdgeLoad` handle. Calling
 `filterVisible()` on it opts that one edge into retaining only visible

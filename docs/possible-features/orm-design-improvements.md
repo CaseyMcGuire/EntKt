@@ -25,7 +25,9 @@ and semantic boundaries rather than adding more scalar types.
 Keep relationship loading explicit at the query call site, then execute each
 selected edge path once for the complete current parent batch rather than once
 per parent group. Preserve `EdgeState` and per-parent query semantics without
-making one large SQL statement the public contract.
+making one large SQL statement the public contract. *(Phase 1 of this —
+set-based nested execution with in-memory per-parent windows — shipped
+2026-08-19; native per-parent storage windows remain open.)*
 
 Public edge-selection syntax and execution strategy are separate design
 decisions. The executor consumes an immutable edge-load plan; generated API

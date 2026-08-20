@@ -27,6 +27,8 @@ private val EDGE_LOAD_HANDLE = ClassName("entkt.runtime.query", "EdgeLoad")
 private val ENT_QUERY_CONFIGURATION_EXCEPTION =
     ClassName("entkt.runtime.result", "EntQueryConfigurationException")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
+private val EAGER_EXECUTION_PLAN = ClassName("entkt.runtime.query", "EagerExecutionPlan")
+private val EAGER_WINDOW_STRATEGY = ClassName("entkt.runtime.query", "EagerWindowStrategy")
 
 // ------------------------------------------------------------------
 // Edge loading: the `loadX` DSL surface, the batch `loadEdges`
@@ -343,9 +345,10 @@ private fun emitToManyEagerBlock(
     // predicate that ties target rows back to the source ids
     // goes in via extraStructural so it's tagged STRUCTURAL,
     // not CALLER. Fetch all matching rows — limit/offset are
-    // applied per group below.
+    // applied per group below. appendPrimaryKeyOrder installs the
+    // effective-order primary-key tie-breaker before the chain runs.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Bounds are resolved before the fetch so a window that admits
@@ -359,10 +362,11 @@ private fun emitToManyEagerBlock(
         "val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
         targetClass,
     )
-    // Decode once, in the target query's result order, so the strict
-    // privacy pass can evaluate targets in that order (the grouped map
-    // iterates in first-occurrence order, which is NOT result order
-    // when denied targets belong to different parents).
+    // Decode once, in the target query's result order (the effective
+    // order), so the strict privacy pass and the set-based nested
+    // pass both see targets in that order (the grouped map iterates
+    // in first-occurrence order, which is NOT result order when
+    // targets belong to different parents).
     body.addStatement(
         "val decodedTargets = targetRows.map { it to %T.fromRow(it) }",
         targetClass,
@@ -378,10 +382,7 @@ private fun emitToManyEagerBlock(
         body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "decodedTargets.map { it.second }",
     )
-    body.addStatement(
-        "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
-    )
-    emitEmptyGroupsNestedPass(body)
+    emitSetBasedNestedPass(body, orderedTargetsExpr = "decodedTargets.map { it.second }")
     body.addStatement(
         "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(loadedGroups[entity.id] ?: emptyList()))) }",
         re.edgePropName, EDGE_STATE,
@@ -405,7 +406,7 @@ private fun emitHasOneEagerBlock(
     body.addStatement("val sourceIds = entities.map { it.id }")
     emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Bounds are resolved before the fetch so a window that admits
@@ -446,10 +447,7 @@ private fun emitHasOneEagerBlock(
         body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "decodedTargets.map { it.second }",
     )
-    body.addStatement(
-        "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
-    )
-    emitEmptyGroupsNestedPass(body)
+    emitSetBasedNestedPass(body, orderedTargetsExpr = "decodedTargets.map { it.second }")
     body.addStatement(
         "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(loadedGroups[entity.id]?.firstOrNull()))) }",
         re.edgePropName, EDGE_STATE,
@@ -458,19 +456,37 @@ private fun emitHasOneEagerBlock(
 }
 
 /**
- * Emit the zero-group nested pass for the grouped eager paths
- * (hasMany / hasOne / M2M): nested eager loads run once per parent
- * group, so with no groups the nested EAGER_LOAD interceptor pass
- * would silently not fire — making a nested interceptor's view of
- * the query (and its ability to `reject()`) depend on what level-1
- * data came back. One empty-batch pass keeps nested firing
- * data-independent, matching the belongsTo path (whose single
- * unconditional `loadEdges` call has these semantics already) and
- * `explain()`'s unconditional recursion into nested eager shapes.
+ * Emit the set-based nested pass for the grouped eager paths
+ * (hasMany / hasOne / M2M). One logical edge step owns exactly one
+ * recursive nested pass: the retained (windowed, privacy-filtered)
+ * targets are flattened in effective target order via
+ * [orderedTargetsExpr], deduplicated by target ID at first
+ * occurrence, and nested-loaded ONCE — never once per populated
+ * parent group. The returned copies are the canonical targets for
+ * this step; every group is rebuilt from them by ID so no
+ * association retains a stale pre-recursion instance, and a target
+ * shared by several parents (M2M) is nested-loaded once while
+ * remaining attached to every source.
+ *
+ * The pass is unconditional, including when the union is empty:
+ * whether a nested EAGER_LOAD interceptor fires (and can
+ * `reject()`) must not depend on what level-1 data came back —
+ * matching the belongsTo path (whose single unconditional
+ * `loadEdges` call has these semantics already) and `explain()`'s
+ * unconditional recursion into nested eager shapes.
  */
-private fun emitEmptyGroupsNestedPass(body: CodeBlock.Builder) {
+private fun emitSetBasedNestedPass(body: CodeBlock.Builder, orderedTargetsExpr: String) {
     body.addStatement(
-        "if (loadedGroups.isEmpty()) subQuery.loadEdges(emptyList(), eagerPrivacyContext)",
+        "val retainedTargetIds = loadedGroups.values.flatten().mapTo(mutableSetOf()) { it.id }",
+    )
+    body.addStatement(
+        "val selectedTargets = $orderedTargetsExpr.filter { it.id in retainedTargetIds }.distinctBy { it.id }",
+    )
+    body.addStatement(
+        "val nestedLoadedById = subQuery.loadEdges(selectedTargets, eagerPrivacyContext).associateBy { it.id }",
+    )
+    body.addStatement(
+        "loadedGroups = loadedGroups.mapValues { (_, list) -> list.map { nestedLoadedById.getValue(it.id) } }",
     )
 }
 
@@ -533,7 +549,7 @@ private fun emitToOneEagerBlock(
     // `explain()` fires it unconditionally too. An empty `fkValues`
     // just means the structural IN predicate is empty.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
     // Only the fetch is conditional. Skipped when nothing could
@@ -609,7 +625,7 @@ private fun emitM2MEagerBlock(
     // unconditionally too. No junction rows just means the structural
     // IN predicate is empty.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)))",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, "id", OP,
     )
     // Bounds resolved before the fetch, as on the direct-edge paths:
@@ -675,7 +691,9 @@ private fun emitM2MEagerBlock(
     )
     body.endControlFlow()
     body.endControlFlow()
-    // Paginate, then privacy, then loadEdges — denied targets never trigger nested reads.
+    // Paginate, then privacy, then the set-based nested pass —
+    // denied targets never trigger nested reads, and a target shared
+    // by several sources is nested-loaded once for the step.
     body.addStatement(
         "var loadedGroups = grouped.mapValues { (_, list) -> list.drop(perGroupOffset).take(perGroupLimit) }",
     )
@@ -683,10 +701,7 @@ private fun emitM2MEagerBlock(
         body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "orderedTargets",
     )
-    body.addStatement(
-        "loadedGroups = loadedGroups.mapValues { (_, list) -> subQuery.loadEdges(list, eagerPrivacyContext) }",
-    )
-    emitEmptyGroupsNestedPass(body)
+    emitSetBasedNestedPass(body, orderedTargetsExpr = "orderedTargets")
     body.addStatement(
         "entities = entities.map { entity -> entity.copy(edges = entity.edges.copy(%L = %T.Loaded(loadedGroups[entity.id] ?: emptyList()))) }",
         re.edgePropName, EDGE_STATE,
@@ -875,7 +890,7 @@ internal fun buildEagerExplainBlock(
         )
         body.add("edges[%S] = try {\n", info.publicName)
         body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), appendPrimaryKeyOrder = true)\n",
             READ_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
         )
         // Strip limit/offset before handing to buildQueryPlan:
@@ -885,10 +900,13 @@ internal fun buildEagerExplainBlock(
         // here would render LIMIT/OFFSET in the explain that
         // doesn't match what the driver actually receives at
         // runtime. Predicates / orderBy / annotations DO flow
-        // through accurately.
+        // through accurately. The framework-owned execution
+        // metadata rides the typed eagerExecution field, never
+        // the caller-controlled annotation map.
         body.add(
-            "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy, junctionExplain = junctionExplain)\n",
+            "  val subPlan = subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy, junctionExplain = junctionExplain)\n",
         )
+        emitEagerExecutionMetadata(body, isToOne = false)
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
         body.add("  %T.rejected(e)\n", queryPlanLocal)
         body.add("}\n")
@@ -898,13 +916,17 @@ internal fun buildEagerExplainBlock(
         // belongsTo: IN on targetColumn ("id" on target side).
         body.add("edges[%S] = try {\n", info.publicName)
         body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
+            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), appendPrimaryKeyOrder = true)\n",
             READ_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,
         )
         // See M2M branch above for why limit/offset are
         // stripped here.
         body.add(
-            "  subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy)\n",
+            "  val subPlan = subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy)\n",
+        )
+        emitEagerExecutionMetadata(
+            body,
+            isToOne = info.edge.kind is EdgeKind.BelongsTo || info.edge.kind is EdgeKind.HasOne,
         )
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
         body.add("  %T.rejected(e)\n", queryPlanLocal)
@@ -913,4 +935,35 @@ internal fun buildEagerExplainBlock(
 
     body.endControlFlow()
     return body.build()
+}
+
+/**
+ * Emit the typed framework-owned execution metadata onto the eager
+ * subplan — the try-expression's value. `subSpec.orderBy` is the
+ * post-interceptor effective order (caller terms + the framework's
+ * primary-key tie-breaker); the window strategy is phase-1 in-memory
+ * emulation for every eager edge, with the configured per-parent
+ * bounds carried alongside.
+ *
+ * The overfetch-risk value mirrors the runtime fetch gates exactly:
+ * a to-one edge fetches only when the window admits its at-most-one
+ * candidate, so it never fetches a row it discards ([isToOne] emits
+ * a constant `false`); a grouped edge overfetches only when it
+ * fetches at all (`limit != 0`) and the window can discard — a
+ * finite positive limit or a positive offset.
+ */
+private fun emitEagerExecutionMetadata(body: CodeBlock.Builder, isToOne: Boolean) {
+    val overfetchRiskExpr = if (isToOne) {
+        "false"
+    } else {
+        "(subQuery.queryLimit ?: 1) != 0 && (subQuery.queryLimit != null || (subQuery.queryOffset ?: 0) > 0)"
+    }
+    body.add("  subPlan.copy(eagerExecution = %T(\n", EAGER_EXECUTION_PLAN)
+    body.add("    setBatchedNestedExecution = true,\n")
+    body.add("    effectiveOrder = subSpec.orderBy,\n")
+    body.add("    windowStrategy = %T.IN_MEMORY_EMULATED,\n", EAGER_WINDOW_STRATEGY)
+    body.add("    perParentLimit = subQuery.queryLimit,\n")
+    body.add("    perParentOffset = subQuery.queryOffset,\n")
+    body.add("    windowOverfetchRisk = $overfetchRiskExpr,\n")
+    body.add("  ))\n")
 }

@@ -9,6 +9,8 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
+private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
+private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
 private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
 private val ABORT_QUERY_REJECTED = ClassName("entkt.runtime.query", "AbortQueryRejected")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
@@ -64,6 +66,18 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 .defaultValue("emptyList()")
                 .build()
         )
+        // Eager-load call sites pass true: the set-based executor's
+        // deterministic-ordering rule appends a primary-key ascending
+        // term when the caller didn't order by the primary key, BEFORE
+        // the interceptor chain runs, so interceptors and explain see
+        // the effective order storage will execute. The caller-authored
+        // terms stay separately attributed on the shape views
+        // (callerOrderBy / hasCallerOrderBy).
+        .addParameter(
+            ParameterSpec.builder("appendPrimaryKeyOrder", Boolean::class)
+                .defaultValue("false")
+                .build()
+        )
         // Return type is typed in this query's entity scope; the
         // FrozenQuerySpec produced by `runReadInterceptors` carries
         // `List<Predicate<EntityClass>>` so the walker rewrite and
@@ -106,6 +120,16 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                     "val root = traversalPath.firstOrNull()?.source ?: %T::class",
                     entityClass,
                 )
+                // Effective ordering: the caller's terms plus the
+                // framework's primary-key ascending tie-breaker, unless
+                // the caller already ordered by the primary key (the id
+                // column is fixed to "id" across the framework).
+                // Computed before the interceptor chain so shapes and
+                // explain describe the order storage will execute.
+                .addStatement(
+                    "val effectiveOrderBy = if (appendPrimaryKeyOrder && orderFields.none { it.field == %S }) orderFields + %T<%T>(%S, %T.ASC) else orderFields",
+                    "id", ORDER_FIELD, entityClass, "id", ORDER_DIRECTION,
+                )
                 // QuerySpecBuilder<EntityClass> typed at construction
                 // — the typed `predicates` / `orderFields` from this
                 // query class feed in without casts.
@@ -114,11 +138,12 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 .add("  entity = %T::class,\n", entityClass)
                 .add("  callerPredicates = predicates,\n")
                 .add("  structuralPredicates = structural,\n")
-                .add("  orderBy = orderFields,\n")
+                .add("  orderBy = effectiveOrderBy,\n")
                 .add("  callerLimit = queryLimit,\n")
                 .add("  offset = queryOffset,\n")
                 .add("  flags = emptySet(),\n")
                 .add("  initialAnnotations = initialAnnotations,\n")
+                .add("  callerOrderBy = orderFields,\n")
                 .add(")\n")
                 .add("val context = %T(\n", QUERY_CONTEXT)
                 .add("  privacy = privacy,\n")

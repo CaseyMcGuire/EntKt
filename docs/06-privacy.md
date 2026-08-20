@@ -336,10 +336,13 @@ result:
 
 Collection terminals pass the ordered materialized root list to LOAD rules as
 one batch. Each eager query does the same for its ordered, deduplicated targets
-that remain in at least one parent's requested window. Strict loading projects
-the first eager denial after that batch evaluation; `filterVisible()` removes
-every denied target from the relevant parent groups. Nested eager loads repeat
-this contract for each actual nested edge-load invocation.
+that remain in at least one parent's requested window, in effective target
+order (the caller's ordering plus the framework's primary-key tie-breaker).
+Strict loading projects the first eager denial after that batch evaluation;
+`filterVisible()` removes every denied target from the relevant parent groups.
+Nested eager loads repeat this contract once per logical edge step: the nested
+batch holds the ordered distinct union of every parent group's retained
+targets, never one batch per group.
 
 `.getOrThrow()` throws the stored exception; `.visibleOrNull()` maps a
 singular *root* denial to `Success(null)` for explicit

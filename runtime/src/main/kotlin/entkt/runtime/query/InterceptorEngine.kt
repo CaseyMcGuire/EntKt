@@ -34,6 +34,12 @@ public class QuerySpecBuilder<E : Any> public constructor(
     public val entity: kotlin.reflect.KClass<*>,
     callerPredicates: List<Predicate<E>>,
     structuralPredicates: List<Predicate<E>>,
+    /**
+     * The *effective* ordering storage will execute. On eager-load
+     * subqueries generated code appends the framework's primary-key
+     * ascending term before any interceptor runs; everywhere else
+     * this equals [callerOrderBy].
+     */
     orderBy: List<OrderField<E>>,
     callerLimit: Int?,
     public val offset: Int?,
@@ -48,6 +54,13 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * Empty on root reads.
      */
     initialAnnotations: Map<String, String> = emptyMap(),
+    /**
+     * The caller-authored ordering terms only, for authored-order
+     * attribution on the shape views ([QueryShape.callerOrderBy] /
+     * [UntypedQueryShape.hasCallerOrderBy]). Defaults to [orderBy]
+     * for the non-eager call sites where the two are identical.
+     */
+    callerOrderBy: List<OrderField<E>> = orderBy,
 ) {
     // Typed in E: every layer above the
     // driver call stays typed. Predicates enter the builder from
@@ -63,6 +76,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
         addAll(structuralPredicates.map { Tagged(it, Source.STRUCTURAL) })
     }
     private val orderByList: MutableList<OrderField<E>> = orderBy.toMutableList()
+    private val callerOrderByList: List<OrderField<E>> = callerOrderBy.toList()
     private var currentLimit: Int? = callerLimit
     public val callerLimit: Int? = callerLimit
     private val annotationsMap: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
@@ -109,6 +123,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
             table = table,
             predicates = predicates.map { it.predicate },
             orderBy = orderByList.toList(),
+            callerOrderBy = callerOrderByList,
             limit = currentLimit,
             callerLimit = callerLimit,
             offset = offset,
@@ -138,6 +153,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
             callerLimit = callerLimit,
             offset = offset,
             hasOrderBy = orderByList.isNotEmpty(),
+            hasCallerOrderBy = callerOrderByList.isNotEmpty(),
             annotations = annotationsMap.toMap(),
         )
     }

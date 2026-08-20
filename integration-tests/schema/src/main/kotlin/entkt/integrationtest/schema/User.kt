@@ -32,4 +32,13 @@ class User : EntSchema("users", clientName = "users") {
      */
     val groups by manyToMany<Group>("groups")
         .throughEntity<Membership>(Membership::user, Membership::group)
+
+    /**
+     * Inverse of [Profile.owner]; the schema's only hasOne edge.
+     * Declared LAST deliberately: several tests pin that eager
+     * edges execute in schema-declaration order using the three
+     * edges above, and appending keeps their relative order
+     * stable.
+     */
+    val profile by hasOne<Profile>("profile")
 }

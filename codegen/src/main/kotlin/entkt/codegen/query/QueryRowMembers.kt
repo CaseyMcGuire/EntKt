@@ -89,9 +89,11 @@ internal fun buildRowShapedExplain(
         .addKdoc(
             "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
             "Interceptors run with operation = ALL. Eager edge subplans show structure,\n" +
-            "not multiplicity — nested eager loads may execute once per parent group at\n" +
-            "runtime. On interceptor rejection, returns a plan with `rejected = true`\n" +
-            "carrying the rejection metadata; explain does NOT throw."
+            "not physical multiplicity — each eager path is one logical set-batched step,\n" +
+            "but junction reads can add physical queries. Each eager subplan carries the\n" +
+            "framework-owned `eagerExecution` strategy metadata. On interceptor rejection,\n" +
+            "returns a plan with `rejected = true` carrying the rejection metadata;\n" +
+            "explain does NOT throw."
         )
         .returns(queryPlan)
         .addCode(

@@ -863,12 +863,12 @@ rules see that list once. Strict eager loading still reports the first denied
 target in this order, while `filterVisible()` removes every denied target from
 all parent groups that reference it.
 
-Nested eager loads repeat the same behavior for each actual nested `loadEdges`
-invocation. Grouped eager paths currently recurse once per populated parent
-group (plus their existing empty-group interceptor pass), so this RFC does not
-incorrectly promise one privacy batch across independent nested invocations.
-The privacy context captured by the root terminal is threaded unchanged through
-every invocation.
+Nested eager loads repeat the same behavior once per logical edge step: since
+the set-based eager executor shipped, a grouped eager path's nested edges
+recurse once for the ordered distinct union of retained targets (including one
+empty pass when nothing was retained), so each nested edge contributes exactly
+one privacy batch. The privacy context captured by the root terminal is
+threaded unchanged through every step.
 
 ### Interceptors
 

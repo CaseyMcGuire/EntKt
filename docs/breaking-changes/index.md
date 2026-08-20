@@ -30,6 +30,38 @@ above it.
 
 ## Unreleased
 
+- **Nested eager loads execute set-based — one pass per edge step, not per parent group** (`codegen`, `runtime`)
+  Phase 1 of the [set-based eager graph loader](../possible-features/query/set-based-eager-graph-loader.md)
+  replaced grouped per-parent nested recursion: a nested eager edge under a
+  hasMany / hasOne / manyToMany step now runs its `EAGER_LOAD` interceptor
+  pass, driver query, LOAD-privacy batch, and deeper recursion exactly once
+  for the ordered distinct union of every parent group's retained targets.
+  Result values are unchanged, but callback observables are not: a grouped
+  nested interceptor fires once per logical edge step (its structural `IN`
+  holds the complete match set for the edge shape, not one group's), nested
+  privacy rules receive one union batch instead of one batch per group, and
+  item-level callback and first-denial order follow that union.
+  _Migration:_ interceptors and privacy rules on nested eager paths must
+  describe the eager query as a whole — any logic that relied on
+  per-parent-group invocation counts, per-group batch membership, or
+  per-group failure order needs to read the union batch instead.
+- **Eager queries execute a deterministic effective order; shape views gain authored-order attribution** (`codegen`, `runtime`)
+  Every eager target query now orders by the caller's `orderBy` terms plus
+  the target primary key ascending (skipped when the caller already ordered
+  by the primary key), computed before the `EAGER_LOAD` interceptor pass.
+  Tied rows therefore enter finite per-parent windows deterministically, and
+  an otherwise-unordered eager query gains a database sort.
+  `QueryShape.orderBy` / `UntypedQueryShape.hasOrderBy` describe that
+  effective order — `hasOrderBy` is now true for every eager shape — and the
+  new `QueryShape.callerOrderBy` / `hasCallerOrderBy` and
+  `UntypedQueryShape.hasCallerOrderBy` fields carry the caller-authored
+  attribution. `QueryPlan` gains a framework-owned `eagerExecution` field
+  (`EagerExecutionPlan`) reporting set-batched execution, the effective
+  order, and the in-memory window-emulation strategy per eager path.
+  _Migration:_ policies that require caller-authored ordering must switch
+  from `hasOrderBy` to `hasCallerOrderBy`; code constructing `QueryShape` /
+  `UntypedQueryShape` directly must pass the new fields; callers relying on
+  driver-default row order inside eager windows now get primary-key order.
 - **Select edge loads with `load{Name}` instead of `with{Name}`** (`codegen`, `runtime`)
   Generated eager-loading methods are renamed from `with{Name}` to
   `load{Name}` (`withPosts` → `loadPosts`), and the public handle they return
