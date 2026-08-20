@@ -169,6 +169,30 @@ internal fun buildSetDeferredSourceStep(entityClass: ClassName): FunSpec {
 }
 
 /**
+ * Prepend the selected-edge rejection to a `queryX()` traversal
+ * method: a traversal returns a fresh query rooted at the target
+ * entity, so a source query with selected edge loads has no coherent
+ * graph to carry across and must fail loudly rather than silently
+ * discard the selection. The throw happens in `queryX()` itself —
+ * traversal is a configuration operation, not a result-bearing
+ * terminal. Emitted only when the source query has a load-capable
+ * edge; otherwise nothing can be selected and the generated
+ * `requireNoSelectedEdges` helper does not exist.
+ */
+private fun addTraversalSelectedEdgeGuard(
+    builder: FunSpec.Builder,
+    resolved: ResolvedQuerySchema,
+    methodName: String,
+) {
+    if (resolved.edges.any { it.join != null }) {
+        builder.addStatement(
+            "requireNoSelectedEdges(%S, %S)",
+            "$methodName()", TRAVERSAL_EDGE_REASON,
+        )
+    }
+}
+
+/**
  * Generate a `queryX(): TargetQuery` traversal for a many-to-many
  * edge [re]. Lowered to a `Predicate.HasM2MEdgeFromShape` against
  * the candidate target row, embedding the source query's post-
@@ -189,7 +213,7 @@ internal fun buildM2MTraversal(
     val methodName = re.queryMethodName
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
 
-    return FunSpec.builder(methodName)
+    val builder = FunSpec.builder(methodName)
         // Defaulted receiver block matching the repository / index
         // `query { ... }` helpers: it configures the *target* query
         // and runs after all traversal seeding, so it is exactly
@@ -204,6 +228,8 @@ internal fun buildM2MTraversal(
             ).defaultValue("{}").build(),
         )
         .returns(targetQueryClass)
+    addTraversalSelectedEdgeGuard(builder, resolved, methodName)
+    return builder
         // Construct the target query and stash a deferred
         // source-step lambda — the source's interceptor chain
         // does NOT fire here; it fires at the terminal's call
@@ -288,7 +314,7 @@ internal fun buildTraversal(
     val methodName = re.queryMethodName
     val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
 
-    return FunSpec.builder(methodName)
+    val builder = FunSpec.builder(methodName)
         // Defaulted receiver block matching the repository / index
         // `query { ... }` helpers: it configures the *target* query
         // and runs after all traversal seeding, so it is exactly
@@ -303,6 +329,8 @@ internal fun buildTraversal(
             ).defaultValue("{}").build(),
         )
         .returns(targetQueryClass)
+    addTraversalSelectedEdgeGuard(builder, resolved, methodName)
+    return builder
         // Construct the target query and stash a deferred
         // source-step lambda — the source's interceptor chain
         // does NOT fire here; it fires at the terminal's call

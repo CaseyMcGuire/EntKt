@@ -76,7 +76,7 @@ class PostController(private val client: EntClient) {
      * List tags on a post.
      *
      * Demonstrates the generated forward M2M *eager-load* surface
-     * (`PostQuery.withTags { }`) declared by `Post.tags =
+     * (`PostQuery.loadTags { }`) declared by `Post.tags =
      * manyToMany<Tag>(...).throughEntity<PostTag>(...)`. The query
      * fetches the matching `Post` row plus all related `Tag` rows in
      * the runtime's M2M-eager-load helper (junction-IN → target-IN);
@@ -91,7 +91,7 @@ class PostController(private val client: EntClient) {
     fun tags(@PathVariable id: Long): List<TagResponse> {
         val post = client.posts.query {
             where(Post.id eq id)
-            withTags()
+            loadTags()
         }.firstOrNull().getOrThrow() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return post.edges.tags.requireLoaded().map { it.toResponse() }
     }

@@ -31,7 +31,7 @@ class UserController(private val client: EntClient) {
             if (active != null) where(User.active eq active)
             orderBy(User.name.asc())
             if (includePosts) {
-                withPosts { orderBy(Post.createdAt.desc()) }
+                loadPosts { orderBy(Post.createdAt.desc()) }
             }
         }.all().getOrThrow()
         return users.map { it.toResponse(includePosts) }

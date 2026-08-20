@@ -42,23 +42,45 @@ private val KOTLIN_COMPARABLE = ClassName("kotlin", "Comparable")
 // ------------------------------------------------------------------
 
 /**
+ * Emit the selected-edge guard line opening every non-entity
+ * terminal's happy path. Inside the canonical capture boundary the
+ * thrown `EntQueryConfigurationException` becomes `ReadResult.Failed`
+ * — and because it precedes `requireClient()`, failure happens before
+ * any interceptor or driver work. Emitted only when the query has a
+ * load-capable edge; without one no graph can be selected and the
+ * generated `requireNoSelectedEdges` helper does not exist.
+ */
+private fun CodeBlock.Builder.addNonEntityTerminalGuard(
+    hasEdges: Boolean,
+    terminal: String,
+): CodeBlock.Builder {
+    if (hasEdges) {
+        add("  requireNoSelectedEdges(%S, %S)\n", terminal, NON_ENTITY_TERMINAL_EDGE_REASON)
+    }
+    return this
+}
+
+/**
  * `rawCount(): ReadResult<Long>` — count matching rows without
  * materializing them. This is a raw aggregate: LOAD privacy is not
  * evaluated, so there is no privacy-denial surface here. The `raw`
  * name makes that storage-level posture explicit, including inside
  * privacy rules.
  */
-internal fun buildRawCount(schemaName: String, entityClass: ClassName): FunSpec {
+internal fun buildRawCount(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
     return FunSpec.builder("rawCount")
         .addKdoc(
             "Count matching rows. This is a raw aggregate that does not evaluate LOAD\n" +
             "privacy or materialize entities. This storage-level behavior is the same\n" +
-            "on application, validation, and privacy-rule clients.",
+            "on application, validation, and privacy-rule clients.\n" +
+            "Fails with `EntQueryConfigurationException` before any interceptor or\n" +
+            "driver work when the query has selected edge loads.",
         )
         .returns(READ_RESULT.parameterizedBy(LONG))
         .addCode(
             canonicalReadBody(
                 CodeBlock.builder()
+                    .addNonEntityTerminalGuard(hasEdges, "rawCount()")
                     .add("  val c = requireClient()\n")
                     .add("  val privacy = c.currentPrivacyContext()\n")
                     .add("  val spec = runReadInterceptors(%T.RAW_COUNT, privacy)\n", READ_OPERATION)
@@ -72,23 +94,34 @@ internal fun buildRawCount(schemaName: String, entityClass: ClassName): FunSpec 
         .build()
 }
 
-internal fun buildRawCountExplain(queryPlan: ClassName, entityClass: ClassName): FunSpec {
+internal fun buildRawCountExplain(queryPlan: ClassName, entityClass: ClassName, hasEdges: Boolean): FunSpec {
     // explainRawCount uses driver.explainCount (a COUNT(*) plan)
     // rather than the row-fetch buildQueryPlan path.
     val body = CodeBlock.of(
         "%T(driver.explainCount(%T.TABLE, spec.predicates), annotations = spec.annotations)",
         queryPlan, entityClass,
     )
-    return FunSpec.builder("explainRawCount")
+    val builder = FunSpec.builder("explainRawCount")
         .addKdoc(
             "Return a [QueryPlan] describing the COUNT query [rawCount] would execute.\n" +
             "Interceptors run with operation = RAW_COUNT; predicate contributions show\n" +
             "up in the plan, limit operations are silent no-ops by contract.\n" +
-            "On interceptor rejection, returns a plan with `rejected = true`."
+            "On interceptor rejection, returns a plan with `rejected = true`.\n" +
+            "Throws `EntQueryConfigurationException` before driver explain work when\n" +
+            "the query has selected edge loads — like [rawCount] itself, this explain\n" +
+            "cannot describe a selected graph."
         )
         .returns(queryPlan)
-        .addCode(explainBody("RAW_COUNT", body))
-        .build()
+    if (hasEdges) {
+        // Unlike interceptor rejection (recorded on the plan), the
+        // configuration exception is thrown: an incompatible explain
+        // has no meaningful plan to return.
+        builder.addStatement(
+            "requireNoSelectedEdges(%S, %S)",
+            "explainRawCount()", NON_ENTITY_TERMINAL_EDGE_REASON,
+        )
+    }
+    return builder.addCode(explainBody("RAW_COUNT", body)).build()
 }
 
 /**
@@ -97,17 +130,20 @@ internal fun buildRawCountExplain(queryPlan: ClassName, entityClass: ClassName):
  * the predicate. This storage-level behavior is available in every
  * read posture.
  */
-internal fun buildRawExists(schemaName: String, entityClass: ClassName): FunSpec {
+internal fun buildRawExists(schemaName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
     return FunSpec.builder("rawExists")
         .addKdoc(
             "Fast existence check; skips LOAD privacy. `Success(true)` iff at least one\n" +
             "storage row matches the predicate. No entities are materialized. This\n" +
-            "storage-level behavior is the same in every read posture.",
+            "storage-level behavior is the same in every read posture.\n" +
+            "Fails with `EntQueryConfigurationException` before any interceptor or\n" +
+            "driver work when the query has selected edge loads.",
         )
         .returns(READ_RESULT.parameterizedBy(BOOLEAN))
         .addCode(
             canonicalReadBody(
                 CodeBlock.builder()
+                    .addNonEntityTerminalGuard(hasEdges, "rawExists()")
                     .add("  val c = requireClient()\n")
                     .add("  val privacy = c.currentPrivacyContext()\n")
                     .add("  val spec = runReadInterceptors(%T.RAW_EXISTS, privacy)\n", READ_OPERATION)
@@ -130,6 +166,7 @@ internal fun buildExistsShapedExplain(
     name: String,
     terminalName: String,
     operationName: String,
+    hasEdges: Boolean,
 ): FunSpec {
     // Runtime: `driver.query(TABLE, spec.predicates,
     // emptyList(), minOf(1, spec.limit ?: 1), spec.offset)`.
@@ -141,7 +178,7 @@ internal fun buildExistsShapedExplain(
     // limit mirrors the runtime's `minOf(1, spec.limit ?: 1)`
     // so a caller who pre-set `limit(0)` shows up as `limit
     // = 0` in the plan.
-    return FunSpec.builder(name)
+    val builder = FunSpec.builder(name)
         .addKdoc(
             "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
             "Interceptors run with operation = $operationName; limit operations are\n" +
@@ -150,9 +187,21 @@ internal fun buildExistsShapedExplain(
             "`limit = minOf(1, spec.limit ?: 1)` (usually 1, 0 when the caller\n" +
             "passed `query { limit(0) }`), and `offset = spec.offset` (caller's\n" +
             "offset is preserved). On interceptor rejection, returns a plan with\n" +
-            "`rejected = true`."
+            "`rejected = true`.\n" +
+            "Throws `EntQueryConfigurationException` before driver explain work when\n" +
+            "the query has selected edge loads — like [$terminalName] itself, this\n" +
+            "explain cannot describe a selected graph."
         )
         .returns(queryPlan)
+    if (hasEdges) {
+        // Thrown, not recorded on the plan: an incompatible explain
+        // has no meaningful plan to return.
+        builder.addStatement(
+            "requireNoSelectedEdges(%S, %S)",
+            "$name()", NON_ENTITY_TERMINAL_EDGE_REASON,
+        )
+    }
+    return builder
         .addCode(
             explainBody(
                 operationName,
@@ -170,8 +219,13 @@ internal fun buildExistsShapedExplain(
  * `ReadResult<List<AggregateBucket<K, V>>>`. All route through the
  * private `aggregateRows` helper, which runs the read interceptors as
  * RAW_AGGREGATE and calls `driver.aggregate`.
+ *
+ * Every public aggregate terminal opens with the selected-edge guard
+ * (naming itself, not the shared helper) so a configured graph fails
+ * as `ReadResult.Failed(EntQueryConfigurationException)` before any
+ * interceptor or driver work.
  */
-internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName): List<FunSpec> {
+internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName, hasEdges: Boolean): List<FunSpec> {
     val specs = mutableListOf<FunSpec>()
     val suppress = AnnotationSpec.builder(Suppress::class)
         .addMember("%S", "UNCHECKED_CAST").build()
@@ -199,9 +253,10 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
     }
 
     // Canonical body wrapping a happy-path expression in the shared
-    // capture boundary.
-    fun resultBody(happy: CodeBlock): CodeBlock = canonicalReadBody(
+    // capture boundary, opened by the terminal's selected-edge guard.
+    fun resultBody(terminal: String, happy: CodeBlock): CodeBlock = canonicalReadBody(
         CodeBlock.builder()
+            .addNonEntityTerminalGuard(hasEdges, "$terminal()")
             .add("  %T.Success(%L)\n", READ_RESULT, happy)
             .build(),
     )
@@ -215,7 +270,7 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
         )
         specs += FunSpec.builder(name).addAnnotation(suppress).addTypeVariables(typeVars)
             .addParameter(columnParam).returns(READ_RESULT.parameterizedBy(returnType))
-            .addCode(resultBody(happy)).build()
+            .addCode(resultBody(name, happy)).build()
     }
 
     run {
@@ -248,7 +303,7 @@ internal fun buildAggregateTerminals(schemaName: String, entityClass: ClassName)
             val typeVars = listOf(k) + valueTypeVars
             specs += FunSpec.builder(name).addAnnotation(suppress).addTypeVariables(typeVars)
                 .addParameters(params).returns(READ_RESULT.parameterizedBy(listType))
-                .addCode(resultBody(happy)).build()
+                .addCode(resultBody(name, happy)).build()
         }
     }
 

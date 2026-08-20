@@ -255,7 +255,7 @@ class ExplainInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.users.query { withArticles() }.explainAll()
+        val plan = client.users.query { loadArticles() }.explainAll()
         assertFalse(plan.rejected, "root plan must not be rejected — the rejection is edge-scoped")
         assertTrue(plan.eagerQueries.getValue("articles").rejected)
 

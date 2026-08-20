@@ -33,6 +33,7 @@ Open or speculative RFCs remain in the
 - [Edge Traversal Query Blocks](query/edge-traversal-query-blocks.md)
 - [Edge Traversal Source Shape](query/edge-traversal-source-shape.md)
 - [Loaded Edge State](query/loaded-edge-state.md)
+- [Generated Edge Loading API](query/generated-edge-loading-api.md)
 
 ## Privacy And Validation
 

@@ -27,8 +27,8 @@ For each schema the generator emits:
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
   `.offset(...)`, `.all(): ReadResult<List<E>>`,
   `.firstOrNull(): ReadResult<E?>`, edge traversal methods
-  (e.g. `.queryPosts()`), and eager loading methods (e.g. `.withPosts { }`,
-  returning an `EagerLoad` handle whose `filterVisible()` opts that edge out
+  (e.g. `.queryPosts()`), and edge loading methods (e.g. `.loadPosts { }`,
+  returning an `EdgeLoad` handle whose `filterVisible()` opts that edge out
   of strict eager privacy).
 - **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
   `.findById(id): ReadResult<Entity?>`, `.delete(entity)`, `.deleteById(id)`,
@@ -132,11 +132,11 @@ confirmed; a confirmed rollback is `NotPersisted`, and an uncertain boundary
 is `PersistenceUnknown`. The same failure in a caller-owned transaction is
 `TransactionPending` and marks that transaction rollback-only.
 
-## Eager loading
+## Edge loading
 
-Query builders support eager loading of related entities via `with{Edge}()`
-methods. This avoids N+1 queries by batch-loading edges using `IN` predicates
-after the main query.
+Query builders select related entities for loading via `load{Edge}()`
+methods. The current executor avoids N+1 queries by batch-loading edges
+using `IN` predicates after the main query.
 
 LOAD privacy is batch-aware too: the first rule receives the ordered root
 result, and later rules receive only the ordered still-unresolved subset.
@@ -147,14 +147,14 @@ is shared across root and eager evaluation.
 ```kotlin
 val users = client.users.query {
     where(User.active eq true)
-    withPosts {                          // load posts for each user
+    loadPosts {                          // load posts for each user
         where(Post.published eq true)    // optional: filter/order the edge
         orderBy(Post.createdAt.desc())
     }
 }.all().getOrThrow()
 
 users[0].edges.posts                  // → EdgeState.Loaded(List<Post>)
-users[0].edges.posts.requireLoaded()  // → List<Post>; throws EdgeNotLoadedException if withPosts() wasn't called
+users[0].edges.posts.requireLoaded()  // → List<Post>; throws EdgeNotLoadedException if loadPosts() wasn't called
 ```
 
 Each entity with edges gets a nested `Edges` data class whose properties
@@ -164,12 +164,12 @@ empty), to-one edges are `EdgeState<Target?>` (`Loaded(null)` means
 loaded with no returned target).
 
 Supports all edge types (to-one, to-many, M2M via junction table) and
-nested eager loading:
+nested edge loading:
 
 ```kotlin
 val owners = client.owners.query {
-    withPets {
-        withOwner()  // nested: also load each pet's owner
+    loadPets {
+        loadOwner()  // nested: also load each pet's owner
     }
 }.all().getOrThrow()
 ```

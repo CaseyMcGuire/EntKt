@@ -102,7 +102,7 @@ flowchart TD
     interceptor["Read interceptors"] --> query["Database query"]
     query --> materialize["Materialize entities"]
     materialize --> privacy["LOAD privacy"]
-    privacy --> eager["Requested eager edges and their LOAD privacy"]
+    privacy --> eager["Selected edge loads and their LOAD privacy"]
     eager --> result["ReadResult"]
 ```
 
@@ -113,19 +113,23 @@ a query may be valid while a selected entity is not visible to the viewer.
 Important behavior:
 
 - One terminal uses one viewer context across its interceptors, root LOAD
-  privacy, traversal work, and eager loads.
+  privacy, traversal work, and selected edge loads.
 - Root LOAD privacy evaluates the materialized result as one ordered batch.
-  Each eager query likewise evaluates its ordered, deduplicated, in-window
+  Each edge-load query likewise evaluates its ordered, deduplicated, in-window
   targets as one batch before strict or `filterVisible()` projection.
 - LOAD denial is strict by default and returns a failed result.
 - `visibleOrNull()` converts only a singular root LOAD denial to successful
-  absence. It does not hide query, driver, or eager-edge failures.
-- An eager edge is strict unless that eager handle opts into `filterVisible()`.
+  absence. It does not hide query, driver, or edge-load failures.
+- A selected edge is strict unless its `EdgeLoad` handle opts into
+  `filterVisible()`.
 - Raw terminals such as `rawCount()` and `rawExists()` run read interceptors but
-  do not materialize entities and therefore do not run LOAD privacy.
+  do not materialize entities and therefore do not run LOAD privacy. A query
+  with selected edge loads fails those terminals with
+  `EntQueryConfigurationException` before interceptor or driver work — they
+  cannot expose loaded edges, so the selection is rejected, never ignored.
 - Reads do not run mutation hooks or validators.
 
-See [Queries](04-queries.md) for query construction, traversal, eager loading,
+See [Queries](04-queries.md) for query construction, traversal, edge loading,
 and interceptors, and [Privacy](06-privacy.md) for LOAD-denial handling.
 
 ## Create
@@ -284,5 +288,5 @@ privacy, and validation.
 - [Hooks](05-hooks.md) documents each hook context and the state it exposes.
 - [Privacy](06-privacy.md) documents read, write, and returned-entity privacy.
 - [Validation](07-validation.md) covers field and entity validation APIs.
-- [Queries](04-queries.md) covers read interceptors, traversal, and eager loads.
+- [Queries](04-queries.md) covers read interceptors, traversal, and edge loads.
 - [Drivers](10-drivers.md) covers transactions and write-outcome certainty.

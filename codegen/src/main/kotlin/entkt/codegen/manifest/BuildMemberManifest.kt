@@ -28,7 +28,7 @@ import entkt.schema.EntSchema
  *   per FK (`fk.propertyName`), and one edge ref per edge
  *   (`edge.apiName`).
  * - **query class** (`${name}Query`) — the fixed query surface plus
- *   `query{Stem}` / `with{Stem}` / `eager{Stem}` per declared edge.
+ *   `query{Stem}` / `load{Stem}` / `eager{Stem}` per declared edge.
  * - **entity Edges class** (`${name}.Edges`) — one property per
  *   declared edge (`edge.apiName`) plus the data-class synthesized
  *   members. Only present when the schema declares edges.
@@ -232,24 +232,36 @@ private fun addEdgesClassMembers(
  * other artifact lists in this file follow.
  */
 private val FIXED_QUERY_MEMBERS: List<String> = listOf(
-    "aggregateRows", "all", "buildQueryPlan", "client", "combinedPredicate",
-    "deferredSourceStep", "driver", "eagerDenialBasePath", "explainRawCount",
-    "firstOrNull", "limit", "loadEdges", "offset", "orderBy", "orderFields",
-    "predicates", "query", "queryLimit", "queryOffset", "rawCount", "rawExists",
-    "requireClient", "runEdgePredicateInterceptors", "runReadInterceptors",
+    "acquireEdgeTopology", "activeTerminals", "aggregateRows", "all",
+    "buildQueryPlan", "client", "combinedPredicate", "deferredSourceStep",
+    "driver", "eagerDenialBasePath", "explainRawCount", "firstOrNull", "limit",
+    "loadEdges", "offset", "orderBy", "orderFields", "predicates", "query",
+    "queryLimit", "queryOffset", "rawCount", "rawExists",
+    "releaseEdgeTopology", "requireClient", "requireNoSelectedEdges",
+    "runEdgePredicateInterceptors", "runReadInterceptors",
     "seedEagerDenialBasePath", "seedEdgeTraversal", "setDeferredSourceStep",
     "snapshotForTraversal", "traversalEdgeName", "traversalPath",
     "traversalSourceEntity", "where",
 )
 
 /**
- * `${name}Query` — the fixed query surface plus, per edge, the three
- * declaration-derived members: `query{Stem}` traversal, `with{Stem}`
- * eager entry point, and the private `eager{Stem}` backing property.
+ * `${name}Query` — the fixed query surface plus, per edge, the
+ * declaration-derived members: `query{Stem}` traversal, `load{Stem}`
+ * edge-load entry point, and the private `eager{Stem}` backing
+ * property (with its `FilterVisible` companion).
  *
- * All three take the edge's Kotlin declaration name, so an edge
+ * All of them take the edge's Kotlin declaration name, so an edge
  * declared `denialBasePath` generates `eagerDenialBasePath` and
- * collides with the fixed private property of that name.
+ * collides with the fixed private property of that name — and an edge
+ * declared `edges` generates `loadEdges` and collides with the fixed
+ * internal executor helper. The complete `load{Stem}` family is
+ * reserved here before source emission.
+ *
+ * Source phrases name the delegated declaration and the storage edge
+ * name distinctly: the storage string does not name this API, so its
+ * uniqueness proves nothing about the generated members, but the
+ * diagnostic must let the schema author find the declaration by
+ * either identity.
  */
 private fun addQueryClassMembers(
     manifest: GeneratedMemberManifest,
@@ -262,24 +274,25 @@ private fun addQueryClassMembers(
     }
     for (edge in allEdges) {
         val stem = edge.apiName.generatedStem()
+        val identity = "edge declared '${edge.apiName}' (storage '${edge.name}')"
         manifest.add(
             artifact, "query$stem", GeneratedMemberKind.FUNCTION,
-            "traversal for edge '${edge.apiName}'",
+            "traversal for $identity",
         )
         manifest.add(
-            artifact, "with$stem", GeneratedMemberKind.FUNCTION,
-            "eager load for edge '${edge.apiName}'",
+            artifact, "load$stem", GeneratedMemberKind.FUNCTION,
+            "edge load for $identity",
         )
         manifest.add(
             artifact, "eager$stem", GeneratedMemberKind.PROPERTY,
-            "eager backing property for edge '${edge.apiName}'",
+            "eager backing property for $identity",
         )
         // The filterVisible opt-in is a second per-edge property, so
         // edges declared `posts` and `postsFilterVisible` both reach
         // `eagerPostsFilterVisible`.
         manifest.add(
             artifact, "eager${stem}FilterVisible", GeneratedMemberKind.PROPERTY,
-            "eager filterVisible opt-in for edge '${edge.apiName}'",
+            "eager filterVisible opt-in for $identity",
         )
     }
 }

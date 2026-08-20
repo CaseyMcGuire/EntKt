@@ -34,8 +34,8 @@ Generated APIs can hide useful complexity:
 
 ```kotlin
 client.posts.query {
-    withAuthor()
-    withComments()
+    loadAuthor()
+    loadComments()
 }.allOrThrow()
 ```
 
@@ -119,7 +119,7 @@ Add an optional execution trace API for real runs:
 ```kotlin
 val trace = client.withQueryTracing {
     posts.query {
-        withAuthor()
+        loadAuthor()
         limit(20)
     }.allOrThrow()
 }
@@ -153,7 +153,7 @@ preformatted strings:
 ```kotlin
 client.withQueryLogging(QueryLogOptions()) {
     posts.query {
-        withAuthor()
+        loadAuthor()
         limit(20)
     }.allOrThrow()
 }

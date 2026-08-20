@@ -328,7 +328,7 @@ result:
 - `query.firstOrNull()` -- `Failed(EntPrivacyDeniedException(Root, ...))`
   if the fetched row is denied; `Success(null)` only when no matching
   row exists
-- Eager-loaded edges (`withPosts()`, etc.) --
+- Eager-loaded edges (`loadPosts()`, etc.) --
   `Failed(EntPrivacyDeniedException(EagerEdge(path), ...))` if any
   eagerly loaded entity is denied, unless that edge opts into
   `filterVisible()` (see

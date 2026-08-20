@@ -54,7 +54,7 @@ internal val Edge.apiName: String
 /**
  * A declaration name with only its first character title-cased, for
  * composing the generated API family around it: `posts` → `queryPosts`,
- * `withPosts`, `eagerPosts`; `primaryAuthor` → `primaryAuthorId`.
+ * `loadPosts`, `eagerPosts`; `primaryAuthor` → `primaryAuthorId`.
  *
  * These affixes are mechanical, not linguistic. Nothing here parses,
  * translates, singularizes, or pluralizes the declaration.

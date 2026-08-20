@@ -6,7 +6,7 @@ Accepted execution direction as of 2026-08-18. This is not implemented.
 
 This RFC owns set-based edge-load execution, not the public API used to select
 edges. The accepted
-[Generated Edge Loading API](generated-edge-loading-api.md) RFC defines the
+[Generated Edge Loading API](../../implemented-features/query/generated-edge-loading-api.md) RFC defines the
 `load{Name}` selection surface used in these examples. The executor consumes
 the immutable edge-load plan produced by that public DSL.
 
@@ -799,7 +799,7 @@ Before native relationship windows and chunking ship, tests should prove:
 
 ## Related Features
 
-- [Generated Edge Loading API](generated-edge-loading-api.md)
+- [Generated Edge Loading API](../../implemented-features/query/generated-edge-loading-api.md)
 - [Request-Scoped Entity Loading](request-scoped-entity-loading.md)
 - [Query Observability Diagnostics](query-observability-diagnostics.md)
 - [Driver Capability Matrix](../tooling/driver-capability-matrix.md)

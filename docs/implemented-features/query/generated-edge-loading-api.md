@@ -2,17 +2,18 @@
 
 ## Status
 
-Accepted public API direction as of 2026-08-19. This is not implemented.
+Implemented as of 2026-08-19. Accepted as a public API direction 2026-08-19.
 
 This RFC owns the generated API used to select entity edges for loading. It
 does not own the execution algorithm. The initial API cutover deliberately
 preserves the current eager-loading executor and its observable behavior. The
-accepted [Set-Based Eager Graph Loader](set-based-eager-graph-loader.md) RFC is
-a separate follow-up that may optimize the same selected graph without another
-public API migration.
+accepted
+[Set-Based Eager Graph Loader](../../possible-features/query/set-based-eager-graph-loader.md)
+RFC is a separate follow-up that may optimize the same selected graph without
+another public API migration.
 
 The
-[Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md)
+[Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md)
 RFC defines where every `{Name}` in this document comes from.
 
 ## Summary
@@ -428,14 +429,43 @@ result boundary. Its `getOrThrow()` projection throws that exact exception.
 
 ### Snapshot boundary
 
-The public API builds a mutable query configuration. At terminal entry, the
-framework captures the edge-load topology consumed by the executor. Mutating a
-query after a terminal begins must not change that in-flight execution.
+The public API builds a mutable, thread-confined query configuration. Generated
+query builders are not thread-safe: callers configure and execute one instance
+from one thread at a time and create a separate query builder for each
+concurrent operation. A fully configured query may be executed repeatedly when
+those executions are sequential.
+
+Within that supported usage, at terminal entry the framework captures the
+edge-load topology consumed by the executor. Re-entrant mutation from an
+interceptor or privacy callback after a terminal begins must not change that
+in-flight execution. The terminal-entry guard is not a concurrent-use
+primitive and does not make the mutable query builder thread-safe.
 
 The API cutover must preserve the current terminal-entry behavior. The
 set-based executor RFC owns any later change to the internal plan
 representation and the more precise timing for defensive snapshots,
 interceptor execution, and nested target operands.
+
+Implementation note: the cutover enforces this boundary by rejection
+rather than by copying. At terminal entry, an entity terminal or
+entity explain acquires a guard recursively across the entire selected
+topology — the root query and every selected target query — before any
+user callback runs (privacy-context capture included), and releases it
+through a `finally` when the operation completes. While the guard is
+held,
+`load{Name}` and `filterVisible()` calls against any query in that
+graph throw `EntQueryConfigurationException` — an interceptor or
+privacy rule that captured the root or a nested target query cannot
+change the in-flight operation's selected graph or privacy posture,
+loudly rather than silently deferring the change to a later execution.
+Defensive copies of a captured target query's contents (for example,
+predicates, ordering, or bounds mutated on it mid-flight) remain owned
+by the set-based executor RFC, as above. Additionally, a `load{Name}`
+selection reserves its edge slot before running the caller's
+configuration block — so a re-entrant selection of the same edge from
+inside the block hits the duplicate-selection rejection instead of
+being silently overwritten — and rolls the reservation back if the
+block throws.
 
 ## Terminal Compatibility
 
@@ -816,9 +846,9 @@ Examples should include:
 
 ## Related RFCs
 
-- [Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md)
-- [Set-Based Eager Graph Loader](set-based-eager-graph-loader.md)
-- [Explicit Query Authority And Cost](explicit-query-authority-and-cost.md)
-- [Query Observability Diagnostics](query-observability-diagnostics.md)
-- [Loaded Edge State](../../implemented-features/query/loaded-edge-state.md)
-- [Eager-Edge Privacy](../../implemented-features/api/operation-result-algebra.md#eager-edge-privacy)
+- [Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md)
+- [Set-Based Eager Graph Loader](../../possible-features/query/set-based-eager-graph-loader.md)
+- [Explicit Query Authority And Cost](../../possible-features/query/explicit-query-authority-and-cost.md)
+- [Query Observability Diagnostics](../../possible-features/query/query-observability-diagnostics.md)
+- [Loaded Edge State](loaded-edge-state.md)
+- [Eager-Edge Privacy](../api/operation-result-algebra.md#eager-edge-privacy)

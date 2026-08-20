@@ -27,11 +27,11 @@ import kotlin.test.assertTrue
  * `Loaded(...)` — `Loaded(emptyList())` for a to-many with no rows,
  * `Loaded(null)` for a to-one with no returned target (including a
  * *required* `belongsTo` whose target an eager predicate filtered
- * out) — and nested eager loads set state independently at every
- * level. Eager loads are requested with `with{Edge}(block)` inside the
- * `query { ... }` block (the returned `EagerLoad` handle is only for
+ * out) — and nested edge loads set state independently at every
+ * level. Edge loads are selected with `load{Edge}(block)` inside the
+ * `query { ... }` block (the returned `EdgeLoad` handle is only for
  * opting out of strict eager privacy). Mutation returns never
- * eager-load, so create/update entities keep the all-`Unloaded`
+ * load edges, so create/update entities keep the all-`Unloaded`
  * default.
  */
 class EdgeStateIntegrationTest : PostgresTestBase() {
@@ -61,7 +61,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
 
-        val user = client.users.query { withArticles() }.all().getOrThrow().single()
+        val user = client.users.query { loadArticles() }.all().getOrThrow().single()
 
         assertEquals(listOf("T"), user.edges.articles.requireLoaded().map { it.title })
         assertEquals(EdgeState.Unloaded, user.edges.groups)
@@ -72,7 +72,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
 
-        val user = client.users.query { withArticles() }.all().getOrThrow().single()
+        val user = client.users.query { loadArticles() }.all().getOrThrow().single()
 
         assertEquals(EdgeState.Loaded(emptyList()), user.edges.articles.loadedOrNull())
         assertTrue(user.edges.articles.requireLoaded().isEmpty())
@@ -83,7 +83,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         client.posts.create { title = "p" }.save().getOrThrow()
 
-        val post = client.posts.query { withTags() }.all().getOrThrow().single()
+        val post = client.posts.query { loadTags() }.all().getOrThrow().single()
 
         assertEquals(EdgeState.Loaded(emptyList()), post.edges.tags.loadedOrNull())
     }
@@ -97,7 +97,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
             tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
         }.getOrThrow()
 
-        val loaded = client.posts.query { withTags() }.all().getOrThrow().single()
+        val loaded = client.posts.query { loadTags() }.all().getOrThrow().single()
 
         assertEquals(listOf(tag.id), loaded.edges.tags.requireLoaded().map { it.id })
     }
@@ -108,7 +108,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
 
-        val article = client.articles.query { withAuthor() }.all().getOrThrow().single()
+        val article = client.articles.query { loadAuthor() }.all().getOrThrow().single()
 
         assertTrue(article.edges.author.isLoaded)
         assertEquals(author.id, article.edges.author.requireLoaded()?.id)
@@ -119,7 +119,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         client.reminders.create { body = "unassigned" }.save().getOrThrow()
 
-        val reminder = client.reminders.query { withAssignee() }.all().getOrThrow().single()
+        val reminder = client.reminders.query { loadAssignee() }.all().getOrThrow().single()
 
         // loadedOrNull() preserves the distinction valueOrNull() collapses:
         // the edge WAS requested, there just is no target.
@@ -138,7 +138,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         // eager subquery's own predicate excludes it, so the edge is
         // loaded with no returned target, never Unloaded.
         val article = client.articles.query {
-            withAuthor { where(User.name eq "nobody") }
+            loadAuthor { where(User.name eq "nobody") }
         }.all().getOrThrow().single()
 
         assertEquals(EdgeState.Loaded(null), article.edges.author.loadedOrNull())
@@ -160,7 +160,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
 
-        val article = client.articles.query { withAuthor() }.all().getOrThrow().single()
+        val article = client.articles.query { loadAuthor() }.all().getOrThrow().single()
 
         assertEquals(EdgeState.Loaded(null), article.edges.author.loadedOrNull())
     }
@@ -171,7 +171,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
 
-        val user = client.users.query { withArticles { withAuthor() } }.all().getOrThrow().single()
+        val user = client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow().single()
 
         val article = user.edges.articles.requireLoaded().single()
         assertEquals(author.id, article.edges.author.requireLoaded()?.id)
@@ -183,7 +183,7 @@ class EdgeStateIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
 
-        val user = client.users.query { withArticles() }.all().getOrThrow().single()
+        val user = client.users.query { loadArticles() }.all().getOrThrow().single()
 
         val article = user.edges.articles.requireLoaded().single()
         assertEquals(EdgeState.Unloaded, article.edges.author)

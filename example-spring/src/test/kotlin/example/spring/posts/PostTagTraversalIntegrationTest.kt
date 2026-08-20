@@ -24,7 +24,7 @@ import java.util.UUID
  * introduced when forward-edge M2M lowering replaced synthesized
  * reverse-edge metadata.
  *
- * `PostController.tags(id)` lowers to `PostQuery.withTags { }` (M2M
+ * `PostController.tags(id)` lowers to `PostQuery.loadTags { }` (M2M
  * eager-load helper); `TagController.posts(id)` lowers to
  * `TagQuery.queryPosts()` → `Predicate.HasM2MEdgeFromShape("posts",
  * <shaped tag source>)` → a junction walk fed by a shaped source
@@ -103,7 +103,7 @@ class PostTagTraversalIntegrationTest {
     }
 
     @Test
-    fun `tags on a post returns each linked tag exactly once via withTags eager load`() {
+    fun `tags on a post returns each linked tag exactly once via loadTags eager load`() {
         val kotlinTagId = createTag("kotlin", "TOPIC")
         val webTagId = createTag("web", "TOPIC")
         val unusedTagId = createTag("unused", "AUDIENCE")

@@ -10,17 +10,18 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Compile-time proof of the eager-load handle contract (RFC
- * "Eager-Edge Privacy"): every generated `with<Edge> { }` returns an
- * edge-specific `EagerLoad<ParentQuery>` handle. Ignoring the handle
+ * Compile-time proof of the edge-load handle contract (RFC "Generated
+ * Edge Loading API"): every generated `load<Edge> { }` returns an
+ * edge-specific `EdgeLoad<ParentQuery>` handle. Ignoring the handle
  * compiles — strict privacy is the default, not something the caller
  * opts into — while `filterVisible()` returns the concrete parent query
  * for continued fluent composition. The runtime behavior (strict denial
  * versus filtered visibility) is pinned by the string-assertion and
  * integration suites; this test pins the shape the application
- * compiles against.
+ * compiles against, including the `@JvmOverloads` zero-block overload
+ * Java callers use without Kotlin's default-argument marker.
  */
-class EagerLoadHandleCompileTest {
+class EdgeLoadHandleCompileTest {
 
     private fun generatedSources(): List<SourceFile> {
         val car = Car()
@@ -46,34 +47,34 @@ class EagerLoadHandleCompileTest {
         }.compile()
 
     @Test
-    fun `withEdge returns an EagerLoad handle that may be ignored or chained`() {
+    fun `loadEdge returns an EdgeLoad handle that may be ignored or chained`() {
         val result = compile(
             generatedSources() + SourceFile.kotlin(
-                "EagerSnippet.kt",
+                "EdgeLoadSnippet.kt",
                 """
                 package com.example.app
 
                 import com.example.ent.CarQuery
                 import com.example.ent.UserQuery
-                import entkt.runtime.query.EagerLoad
+                import entkt.runtime.query.EdgeLoad
 
                 fun strictByDefault(q: CarQuery) {
-                    // Ignoring the returned handle compiles: strict eager
+                    // Ignoring the returned handle compiles: strict edge-load
                     // privacy needs no acknowledgement from the caller.
-                    q.withUser()
+                    q.loadUser()
                 }
 
                 fun typedHandle(q: CarQuery) {
-                    // The handle is the runtime EagerLoad interface,
+                    // The handle is the runtime EdgeLoad interface,
                     // parameterized on the concrete parent query type.
-                    val handle: EagerLoad<CarQuery> = q.withUser { }
+                    val handle: EdgeLoad<CarQuery> = q.loadUser { }
                     val parent: CarQuery = handle.filterVisible()
                     parent.limit(1)
                 }
 
                 fun fluentToMany(q: UserQuery) {
                     // filterVisible() on a to-many edge chains the same way.
-                    val parent: UserQuery = q.withCars { limit(3) }.filterVisible()
+                    val parent: UserQuery = q.loadCars { limit(3) }.filterVisible()
                     parent.firstOrNull()
                 }
                 """.trimIndent(),
@@ -82,7 +83,41 @@ class EagerLoadHandleCompileTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected the EagerLoad handle snippet to compile, got:\n${result.messages}",
+            "Expected the EdgeLoad handle snippet to compile, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `Java callers use the zero-block overload without a default-argument marker`() {
+        val result = compile(
+            generatedSources() + SourceFile.java(
+                "EdgeLoadJavaSnippet.java",
+                """
+                package com.example.app;
+
+                import com.example.ent.CarQuery;
+                import com.example.ent.UserQuery;
+                import entkt.runtime.query.EdgeLoad;
+
+                public class EdgeLoadJavaSnippet {
+                    // The @JvmOverloads zero-arg overload: no Function1 and no
+                    // Kotlin default-argument marker required from Java.
+                    public static CarQuery strict(CarQuery q) {
+                        EdgeLoad<CarQuery> handle = q.loadUser();
+                        return handle.filterVisible();
+                    }
+
+                    public static void ignoredHandle(UserQuery q) {
+                        q.loadCars();
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Expected the Java zero-block overload snippet to compile, got:\n${result.messages}",
         )
     }
 }

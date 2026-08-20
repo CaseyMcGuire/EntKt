@@ -329,6 +329,25 @@ class MemberCollisionValidationTest {
     }
 
     @Test
+    fun `edge declared 'edges' collides with the internal loadEdges query member`() {
+        // The complete load{Name} family is reserved before source
+        // emission, so the declaration-derived `loadEdges` hits the
+        // fixed internal executor helper of the same name.
+        val errors = validate(
+            "LoadClashOwner" to LoadClashOwner(),
+            "LoadClashTarget" to LoadClashTarget(),
+        )
+        assertCollision(errors, "LoadClashOwnerQuery", "loadEdges")
+        // The diagnostic names the declaration and storage identities
+        // distinctly — storage-name uniqueness alone proves nothing
+        // about the generated member namespace.
+        assertTrue(
+            errors.any { it.contains("edge declared 'edges' (storage 'owner')") },
+            "diagnostic should carry both declaration and storage identity: $errors",
+        )
+    }
+
+    @Test
     fun `mutable properties differing only by an is-prefix collide on the JVM setter`() {
         // Kotlin maps `var isActive` to `setActive(...)` and `var active`
         // to the same signature, so generated mutation surfaces holding
@@ -408,6 +427,19 @@ private class EdgesCopyOwner : EntSchema("edges_copy_owners", clientName = "edge
     override fun id() = EntId.long()
     // `copy` is synthesized on the Edges data class.
     val copy by hasMany<EdgesCopyTarget>("owner")
+}
+
+// load{Stem}-family collision fixture. The generated edge-load method
+// for an edge declared `edges` is `loadEdges`, which collides with the
+// fixed internal batch-loading helper of that name on the query class.
+private class LoadClashTarget : EntSchema("load_clash_targets", clientName = "loadClashTargets") {
+    override fun id() = EntId.long()
+    val owner by belongsTo<LoadClashOwner>("owner")
+}
+
+private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "loadClashOwners") {
+    override fun id() = EntId.long()
+    val edges by hasMany<LoadClashTarget>("owner")
 }
 
 // Query-artifact collision fixture. `eager{Stem}` is a private backing

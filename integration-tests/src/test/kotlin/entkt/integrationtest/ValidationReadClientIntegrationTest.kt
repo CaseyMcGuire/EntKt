@@ -68,7 +68,7 @@ private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
 }
 
 /**
- * Invariant check across edges: the `withAuthor()` eager load and the
+ * Invariant check across edges: the `loadAuthor()` eager load and the
  * `queryAuthor()` traversal both run under the validation client's
  * fixed bypass context, so author rows LOAD privacy hides from the
  * caller are still visible to the invariant check.
@@ -76,7 +76,7 @@ private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
 private val AuthorReachableViaEdges = ArticleCreateValidationRule { context, item ->
     val prior = context.client.articles.query {
         where(Article.authorId eq item.candidate.authorId)
-        withAuthor()
+        loadAuthor()
     }.all().getOrThrow()
     val traversed = context.client.articles.query { where(Article.authorId eq item.candidate.authorId) }
         .queryAuthor().all().getOrThrow()

@@ -189,7 +189,7 @@ write users:
 |---------|---------|
 | `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
 | `UserCreate` / `UserUpdate` | Typed create and update builders with the `save()` / `saveAndLoad()` terminals |
-| `UserQuery` | Filtering, ordering, pagination, traversal, eager loading, and result-bearing read terminals |
+| `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
 | Privacy and validation rule types | Typed contexts and scopes for application policies |
 | `EntClient` | The application entry point containing every generated repository |

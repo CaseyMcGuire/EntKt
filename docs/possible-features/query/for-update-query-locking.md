@@ -228,7 +228,7 @@ For eager loading:
 ```kotlin
 tx.posts.query {
     forUpdate()
-    withAuthor()
+    loadAuthor()
 }.allOrThrow()
 ```
 

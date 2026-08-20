@@ -170,17 +170,17 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
             }
         }
 
-        client.users.query { withArticles() }.explainAll()
+        client.users.query { loadArticles() }.explainAll()
 
         // The eager subquery for "articles" should have fired
         // Article's interceptors with EAGER_LOAD (not ALL).
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
-            "explain on a withArticles() query should fire Article interceptors with EAGER_LOAD; observed: $ops",
+            "explain on a loadArticles() query should fire Article interceptors with EAGER_LOAD; observed: $ops",
         )
         assertTrue(
             !ops.contains(ReadOperation.ALL),
-            "explain on a withArticles() query must NOT fire Article interceptors with ALL; observed: $ops",
+            "explain on a loadArticles() query must NOT fire Article interceptors with ALL; observed: $ops",
         )
     }
 
@@ -198,7 +198,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val plan = client.users.query { withArticles() }.explainAll()
+        val plan = client.users.query { loadArticles() }.explainAll()
 
         val articlesEdge = plan.eagerQueries["articles"]
         assertNotNull(articlesEdge, "explain plan should include an 'articles' edge subplan")

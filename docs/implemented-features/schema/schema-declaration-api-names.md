@@ -795,7 +795,7 @@ names remain storage metadata.
 
 Edge-loading API and execution are separate designs. This RFC owns the
 generated name. The accepted
-[Generated Edge Loading API](../../possible-features/query/generated-edge-loading-api.md) RFC owns
+[Generated Edge Loading API](../query/generated-edge-loading-api.md) RFC owns
 the method shape and adopts `load{Name}`.
 
 The public API uses the exact edge declaration name:
@@ -1038,5 +1038,5 @@ declaration/storage mismatch so the separation is visible.
 - [Field-Backed FK Declaration Names](../edge-mutation/06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](../edge-mutation/07-generated-member-name-collisions.md)
 - [To-One FK Mutation And Nullability](../edge-mutation/02-to-one-assignment-nullability.md)
-- [Generated Edge Loading API](../../possible-features/query/generated-edge-loading-api.md)
+- [Generated Edge Loading API](../query/generated-edge-loading-api.md)
 - [Set-Based Eager Graph Loader](../../possible-features/query/set-based-eager-graph-loader.md)

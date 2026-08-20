@@ -78,19 +78,22 @@ client.posts.create {
 }.save().getOrThrow()
 ```
 
-The `hasMany(...)` side generates a query traversal method and an eager-loading
-method on the query builder:
+The `hasMany(...)` side generates a query traversal method and an
+edge-loading method on the query builder — both named from the
+delegated declaration (`posts` → `queryPosts` / `loadPosts`):
 
 ```kotlin
-// Query traversal: "find all posts for this user"
+// Query traversal: "find all posts for this user" — changes the
+// result root to posts
 val posts = client.users.query { where(User.id eq alice.id) }
     .queryPosts()
     .all()
     .getOrThrow()
 
-// Eager loading: batch-load posts for all queried users
+// Edge loading: keep the users as the result and batch-load each
+// user's posts edge
 val users = client.users.query {
-    withPosts { orderBy(Post.createdAt.desc()) }
+    loadPosts { orderBy(Post.createdAt.desc()) }
 }.all().getOrThrow()
 users[0].edges.posts.requireLoaded()  // → List<Post>
 ```
@@ -237,7 +240,7 @@ defaults such as `updatedAt = updateDefaultNow()` also apply.
 an acknowledgement only. `saveAndLoad()` returns the owner entity with
 scalar / FK fields reflecting the saved owner row. The M2M edge
 itself is returned in the normal unloaded state — to inspect the
-new link set, requery with eager loading (`with{Edge}`).
+new link set, requery with eager loading (`load{Edge}`).
 
 **Hook visibility.** Before hooks see the captured pending edge
 ops via `ctx.pendingEdges.tags` (a read-only `PendingEdgeOps<ID>`).

@@ -557,7 +557,7 @@ class PrivacyIntegrationTest {
         // Eagerly load author on published articles — authors are publicly visible
         val articles = client.articles.query {
             where(Article.published eq true)
-            withAuthor()
+            loadAuthor()
         }.all().getOrThrow()
         assertEquals(2, articles.size)
         for (article in articles) {
@@ -577,7 +577,7 @@ class PrivacyIntegrationTest {
             val articles = scoped.articles.query {
                 where(Article.authorId eq alice.id)
                 where(Article.published eq true)
-                withAuthor()
+                loadAuthor()
             }.all().getOrThrow()
             assertEquals(1, articles.size)
             assertNotNull(articles[0].edges.author.requireLoaded())
@@ -589,7 +589,7 @@ class PrivacyIntegrationTest {
             val failed = assertIs<ReadResult.Failed>(
                 scoped.articles.query {
                     where(Article.published eq true)
-                    withAuthor()
+                    loadAuthor()
                 }.all(),
             )
             val ex = assertIs<EntPrivacyDeniedException>(failed.exception)

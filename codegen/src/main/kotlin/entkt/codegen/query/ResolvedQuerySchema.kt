@@ -17,10 +17,10 @@ import entkt.schema.EntSchema
  * Names, joins, and inverses for one generated query class, resolved
  * once per [QueryGenerator.generate] call.
  *
- * Eager loading, eager explain, edge-predicate interception, and
+ * Edge loading, edge-load explain, edge-predicate interception, and
  * `queryX()` traversal all key off the same per-edge metadata: the
  * target schema's generated name, the join columns, the inverse edge,
- * and the derived member names (`eagerX` / `withX` / edge property).
+ * and the derived member names (`eagerX` / `loadX` / edge property).
  * Each of those emitters used to re-derive that metadata from the raw
  * schema at its own call site, which meant several copies of the same
  * resolution rules that could drift apart. Resolution happens here,
@@ -43,7 +43,7 @@ internal class ResolvedQuerySchema(
     val schema: EntSchema,
     /**
      * This schema's own entry in the `schemaNames` map, which is what
-     * traversal codegen and the eager with-method's return-type name
+     * traversal codegen and the load-method's return-type name
      * have always been derived from — not the [schemaName] argument.
      * The two agree for every real caller ([EntGenerator] builds the
      * map from the same names it passes as arguments); carrying the
@@ -73,10 +73,10 @@ internal class ResolvedQueryEdge(
     val targetClientName: String,
     val targetClass: ClassName,
     val targetQueryClass: ClassName,
-    /** Backing property holding the eager sub-query: `eagerX`. */
+    /** Backing property holding the selected edge-load sub-query: `eagerX`. */
     val eagerPropName: String,
-    /** Eager-load DSL entry point: `withX`. */
-    val withMethodName: String,
+    /** Edge-load DSL entry point: `loadX`. */
+    val loadMethodName: String,
     /** Edge-traversal entry point: `queryX`. */
     val queryMethodName: String,
     /** Generated `Edges` property the eager result lands on. */
@@ -152,7 +152,7 @@ internal fun resolveQuerySchema(
             targetClass = ClassName(packageName, targetName),
             targetQueryClass = ClassName(packageName, "${targetName}Query"),
             eagerPropName = "eager${edge.apiName.generatedStem()}",
-            withMethodName = "with${edge.apiName.generatedStem()}",
+            loadMethodName = "load${edge.apiName.generatedStem()}",
             queryMethodName = "query${edge.apiName.generatedStem()}",
             edgePropName = edge.apiName,
             join = join,

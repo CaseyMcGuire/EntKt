@@ -71,6 +71,12 @@ class QueryGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         assert(output.contains("class CarQuery")) { "Should generate CarQuery\n$output" }
+        assert(output.contains("query builders are not thread-safe")) {
+            "Generated query KDoc should state the mutable builder's concurrency contract\n$output"
+        }
+        assert(output.contains("a separate query builder for each concurrent operation")) {
+            "Generated query KDoc should give callers an actionable concurrent-use alternative\n$output"
+        }
     }
 
     @Test
@@ -281,13 +287,13 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `does not emit per-edge withMethods when schemaNames is empty but always emits loadEdges`() {
+    fun `does not emit per-edge loadMethods when schemaNames is empty but always emits loadEdges`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(!output.contains("withCars")) {
-            "Without schemaNames, with{Edge} should be skipped\n$output"
+        assert(!output.contains("loadCars")) {
+            "Without schemaNames, load{Edge} should be skipped\n$output"
         }
         // loadEdges is always emitted (link-table M2M helpers fix): an M2M
         // eager-load block on a source query unconditionally calls
@@ -301,6 +307,181 @@ class QueryGeneratorTest {
     }
 
     @Test
+    fun `selected-edge guard protects non-entity terminals, incompatible explains, and traversal`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
+        val output = generator.generate("Car", car, names).toString().replace("\\s+".toRegex(), " ")
+
+        // The shared private guard enumerates every selected
+        // declaration-derived edge path and throws the configuration
+        // exception naming the rejected operation.
+        assert(
+            output.contains(
+                "private fun requireNoSelectedEdges(operation: String, reason: String) { " +
+                    "val selected = listOfNotNull( if (eagerUser != null) \"Car.user\" else null, ) " +
+                    "if (selected.isEmpty()) return " +
+                    "throw EntQueryConfigurationException( \"Car\", " +
+                    "operation + \" on CarQuery is incompatible with the selected edge loads [\" + " +
+                    "selected.joinToString(\", \") + \"]: \" + reason, ) }",
+            ),
+        ) {
+            "Should emit the requireNoSelectedEdges guard listing Car.user\n$output"
+        }
+
+        // Result-bearing non-entity terminals open with the guard
+        // inside the capture boundary — the throw becomes
+        // ReadResult.Failed before requireClient / interceptor /
+        // driver work.
+        for (terminal in listOf("rawCount", "rawExists")) {
+            assert(
+                output.contains(
+                    "fun $terminal(): ReadResult<" ,
+                ) && output.contains(
+                    "= try { requireNoSelectedEdges(\"$terminal()\", \"this terminal does not return " +
+                        "entities and cannot expose loaded edges; use an entity terminal such as all() " +
+                        "or firstOrNull(), or remove the load calls\") val c = requireClient()",
+                ),
+            ) {
+                "$terminal should open with the selected-edge guard inside the capture boundary\n$output"
+            }
+        }
+        // Ungrouped and grouped aggregates carry the same guard,
+        // named per terminal.
+        for (terminal in listOf("rawMin", "rawMax", "rawSum", "rawAvg", "rawCountBy", "rawMinBy", "rawMaxBy", "rawSumBy", "rawAvgBy")) {
+            assert(output.contains("requireNoSelectedEdges(\"$terminal()\"")) {
+                "$terminal should carry the selected-edge guard\n$output"
+            }
+        }
+
+        // Incompatible explain variants throw before any driver
+        // explain work: the guard precedes the privacy-context fetch.
+        assert(
+            output.contains(
+                "fun explainRawCount(): QueryPlan { requireNoSelectedEdges(\"explainRawCount()\"",
+            ),
+        ) {
+            "explainRawCount should throw the configuration exception before explain work\n$output"
+        }
+        assert(
+            output.contains(
+                "fun explainRawExists(): QueryPlan { requireNoSelectedEdges(\"explainRawExists()\"",
+            ),
+        ) {
+            "explainRawExists should throw the configuration exception before explain work\n$output"
+        }
+        // Compatible entity explains keep describing the selected graph.
+        assert(!output.contains("requireNoSelectedEdges(\"explainAll()\"")) {
+            "explainAll is an entity explain and must not reject selected edges\n$output"
+        }
+        assert(!output.contains("requireNoSelectedEdges(\"explainFirstOrNull()\"")) {
+            "explainFirstOrNull is an entity explain and must not reject selected edges\n$output"
+        }
+
+        // Traversal is a configuration operation: queryX() itself
+        // throws before constructing the target query.
+        assert(
+            output.contains(
+                "requireNoSelectedEdges(\"queryUser()\", \"traversal changes the result root and " +
+                    "cannot carry the source query's selected graph; traverse first and select edge " +
+                    "loads on the target query, or materialize the source graph with an entity " +
+                    "terminal\") val target = UserQuery(driver, client)",
+            ),
+        ) {
+            "queryUser should reject a source query with selected edge loads\n$output"
+        }
+    }
+
+    @Test
+    fun `topology-consuming terminals hold the activeTerminals guard for their duration`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
+        val output = generator.generate("Car", car, names).toString().replace("\\s+".toRegex(), " ")
+
+        // The private counter backs terminal-entry isolation: while a
+        // terminal or entity explain is executing, load{Name} and
+        // filterVisible() on this query are rejected.
+        assert(output.contains("private var activeTerminals: Int = 0")) {
+            "Should emit the private activeTerminals counter\n$output"
+        }
+        // Acquire/release walk the entire selected graph: the guard
+        // covers retained nested target queries, not just the root.
+        assert(output.contains("internal fun acquireEdgeTopology() { activeTerminals++ eagerUser?.acquireEdgeTopology() }")) {
+            "acquire should guard this query and recurse into selected targets\n$output"
+        }
+        assert(output.contains("internal fun releaseEdgeTopology() { activeTerminals-- eagerUser?.releaseEdgeTopology() }")) {
+            "release should mirror the acquire walk\n$output"
+        }
+        // all() / firstOrNull() acquire on entry, before any
+        // interceptor or driver work, and release in a finally.
+        assert(output.contains("fun all(): ReadResult<List<Car>> { acquireEdgeTopology() return try { val c = requireClient()")) {
+            "all() should hold the guard from terminal entry\n$output"
+        }
+        assert(output.contains("fun firstOrNull(): ReadResult<Car?> { acquireEdgeTopology() return try { val c = requireClient()")) {
+            "firstOrNull() should hold the guard from terminal entry\n$output"
+        }
+        assert(output.contains("} finally { releaseEdgeTopology() }")) {
+            "guard release must sit in a finally\n$output"
+        }
+        // Entity explains consume the same topology and hold the same
+        // guard while building the plan — acquired before the
+        // privacy-context capture, so even the privacy provider cannot
+        // mutate the topology being described, and released in the
+        // finally if the provider throws.
+        assert(
+            output.contains(
+                "acquireEdgeTopology() return try { " +
+                    "val privacy = requireClient().currentPrivacyContext() " +
+                    "val spec = runReadInterceptors(ReadOperation.ALL, privacy)",
+            ),
+        ) {
+            "explainAll should acquire the guard before privacy capture\n$output"
+        }
+        assert(
+            output.contains(
+                "acquireEdgeTopology() return try { " +
+                    "val privacy = requireClient().currentPrivacyContext() " +
+                    "val spec = runReadInterceptors(ReadOperation.FIRST, privacy)",
+            ),
+        ) {
+            "explainFirstOrNull should acquire the guard before privacy capture\n$output"
+        }
+        // Non-entity terminals reject selected topology outright and
+        // do not consume it, so they never take the guard.
+        assert(!output.contains("fun rawCount(): ReadResult<Long> { acquireEdgeTopology()")) {
+            "rawCount must not take the guard — it rejects selected edges instead\n$output"
+        }
+    }
+
+    @Test
+    fun `no selected-edge guard is emitted for queries without load-capable edges`() {
+        val car = Car()
+        finalize(car, User())
+        // Empty schemaNames: no edge is codegen-visible, so no edge
+        // can be selected and the guards would be dead weight.
+        val output = generator.generate("Car", car).toString()
+
+        assert(!output.contains("requireNoSelectedEdges")) {
+            "Guard should not exist when nothing can be selected\n$output"
+        }
+        assert(!output.contains("activeTerminals")) {
+            "Isolation counter should not exist when nothing can be selected\n$output"
+        }
+        // The acquire/release pair still exists as no-ops — a parent
+        // query's guard recursion calls them on every selected target
+        // class unconditionally, mirroring loadEdges.
+        assert(output.contains("internal fun acquireEdgeTopology()")) {
+            "No-op acquire must exist for parent guard recursion\n$output"
+        }
+        assert(output.contains("internal fun releaseEdgeTopology()")) {
+            "No-op release must exist for parent guard recursion\n$output"
+        }
+    }
+
+    @Test
     fun `always emits loadEdges as a no-op for schemas with no edges`() {
         val car = Car()
         finalize(car, User())
@@ -310,7 +491,7 @@ class QueryGeneratorTest {
             "loadEdges should always be emitted — needed by M2M eager-load callers from other queries\n$output"
         }
         // No per-edge eager block since Car has only a belongsTo
-        // (currently not eager-loadable via withMethod). The eager
+        // (currently not eager-loadable via loadMethod). The eager
         // blocks all open with an `eagerX?.let { subQuery ->` guard,
         // so its absence pins a no-op body.
         assert(!output.contains("?.let { subQuery ->")) {

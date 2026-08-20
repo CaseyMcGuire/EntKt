@@ -92,7 +92,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             author.id
         }
 
-        val result = client.notes.query { withAuthor() }.all()
+        val result = client.notes.query { loadAuthor() }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -140,7 +140,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val result = client.posts.query {
             where(Post.id eq post.id)
-            withTags { orderBy(Tag.name.asc()) }
+            loadTags { orderBy(Tag.name.asc()) }
         }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
@@ -197,7 +197,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val result = client.posts.query {
             orderBy(Post.title.asc())
-            withTags { orderBy(Tag.name.asc()); limit(2) }
+            loadTags { orderBy(Tag.name.asc()); limit(2) }
         }.all()
 
         assertEquals(
@@ -245,7 +245,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         // through the nested eager hop Tag → posts.
         val result = client.posts.query {
             where(Post.title eq "P1")
-            withTags { withPosts() }
+            loadTags { loadPosts() }
         }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
@@ -303,8 +303,8 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         // (and generated) first, so it wins, and the groups edge is not
         // evaluated solely for diagnostics.
         val result = client.users.query {
-            withArticles()
-            withGroups()
+            loadArticles()
+            loadGroups()
         }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
@@ -341,7 +341,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
         }
 
-        val result = client.notes.query { withAuthor() }.all()
+        val result = client.notes.query { loadAuthor() }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -374,7 +374,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         // The root note is visible; only the eager author is denied.
         // Adding an eager load must never convert a visible root into
         // apparent absence.
-        val result = client.notes.query { withAuthor() }.firstOrNull()
+        val result = client.notes.query { loadAuthor() }.firstOrNull()
         val failed = assertIs<ReadResult.Failed>(result)
         assertIs<LoadDenialOrigin.EagerEdge>(
             assertIs<EntPrivacyDeniedException>(failed.exception).origin,

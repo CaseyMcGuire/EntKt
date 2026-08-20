@@ -4,6 +4,12 @@ The generated `{Entity}Query` builder provides a type-safe API for
 filtering, ordering, paginating, traversing edges, and eager loading
 related entities.
 
+Generated query builders are mutable and **not thread-safe**. Configure and
+execute a query instance from one thread at a time; do not mutate or execute
+the same instance concurrently. Create a separate query builder for each
+concurrent operation. A fully configured query may be executed repeatedly when
+those executions are sequential.
+
 ## Basic Usage
 
 ```kotlin
@@ -303,7 +309,9 @@ either.
 
 Uses `SELECT COUNT(*)` without materializing rows. Does **not** evaluate
 LOAD privacy, so it may count rows the viewer cannot read. Ignores
-`orderBy`, `limit`, and `offset`. Returns `ReadResult<Long>`.
+`orderBy`, `limit`, and `offset`. Returns `ReadResult<Long>`. A query
+with selected edge loads is rejected, not silently ignored — see
+[Terminals That Cannot Load Edges](#terminals-that-cannot-load-edges).
 
 The raw family has the same storage-level contract on every read client,
 including `EntPrivacyReadClient`: it runs read interceptors but does not
@@ -494,7 +502,7 @@ users." Three details worth pinning:
   target query (`queryPosts { orderBy(Post.createdAt.desc()) }`) if
   post order matters.
 - **A target `limit` is a total target-row limit**, not "N posts per
-  user." Use `withPosts { limit(n) }` for per-source eager-load
+  user." Use `loadPosts { limit(n) }` for per-source eager-load
   shaping.
 - **Target rows are never duplicated** by fan-out, even when several
   selected source rows reach the same target (many-to-many).
@@ -526,15 +534,21 @@ client.users.query {
 
 The same `has { ... }` API works for direct and many-to-many edges.
 
-## Eager Loading
+## Edge Loading
 
-By default, edge data is not loaded. Use `with{Edge}()` to batch-load
-related entities alongside the main query:
+By default, relationships are unloaded. Use the generated `load{Edge}()`
+methods to select the relationships materialized for the returned
+entities — `{Edge}` is always the delegated Kotlin edge declaration on
+the schema, never a storage string or a pluralized type name. Loading
+preserves the query's result root: `loadPosts()` returns the same users
+and fills `user.edges.posts`, while `queryPosts()` *changes* the result
+root to posts. No relationship accessor ever performs implicit database
+I/O — an edge is either selected up front or stays `Unloaded`.
 
 ```kotlin
 val users = client.users.query {
     where(User.active eq true)
-    withPosts {
+    loadPosts {
         where(Post.published eq true)
         orderBy(Post.createdAt.desc())
     }
@@ -543,23 +557,106 @@ val users = client.users.query {
 // Access loaded edges
 users.forEach { user ->
     val posts: EdgeState<List<Post>> = user.edges.posts
-    // EdgeState.Unloaded            = withPosts() was not called
+    // EdgeState.Unloaded            = loadPosts() was not called
     // EdgeState.Loaded(emptyList()) = loaded, but no matching posts
     // EdgeState.Loaded([...])       = loaded with data
     val loaded: List<Post> = posts.requireLoaded()
 }
 ```
 
-Eager loading avoids N+1 queries by collecting all parent IDs from the
-main query result, then batch-loading the related entities with a single
-`IN (id1, id2, ...)` query.
+Because `{Edge}` is the delegated declaration, two edges to the same
+target type keep their distinct roles, and a storage name never leaks
+into the API:
 
-`limit` and `offset` inside a `with...()` block apply **per parent**, not
-to that batched query — `withPosts { limit(5) }` gives each user their
+```kotlin
+class User : EntSchema("people", clientName = "users") {
+    val authoredPosts by hasMany<Post>("authored_post_rows")
+    val reviewedPosts by hasMany<Post>("reviewed_post_rows")
+}
+
+client.users.query {
+    loadAuthoredPosts()   // not loadPosts, loadPostEdges, or loadUser
+    loadReviewedPosts { orderBy(Post.createdAt.desc()) }
+}.all()
+```
+
+A declaration/storage mismatch generates only the declaration-based
+method: `val directories by hasMany<Directory>("legacy_owner")`
+generates `loadDirectories()` — nothing is derived from the
+`legacy_owner` storage string, the `Directory` type, or an English
+pluralizer.
+
+The current executor avoids N+1 queries by collecting all parent IDs
+from the main query result, then batch-loading the related entities
+with an `IN (id1, id2, ...)` query. That is an execution detail, not
+part of the method's contract: `load{Edge}()` promises relationship
+materialization, not a fixed SQL strategy or statement count —
+many-to-many edges add a junction read, and nested edge loads may
+currently execute once per parent group.
+
+`limit` and `offset` inside a `load...()` block apply **per parent**, not
+to that batched query — `loadPosts { limit(5) }` gives each user their
 first five posts, not five posts across all users. The same holds for
 to-one edges, where at most one target exists per parent: a positive
 limit is already satisfied, while `limit(0)` loads no target and any
 positive offset steps past the only candidate.
+
+### One Selection Per Edge
+
+A query selects each edge at most once. A second `load{Edge}` call for
+the same edge throws `EntQueryConfigurationException` immediately — the
+first block is never silently replaced or merged:
+
+```kotlin
+client.users.query {
+    loadPosts { where(Post.published eq true) }
+    loadPosts { orderBy(Post.createdAt.desc()) } // throws
+}
+```
+
+Compose all configuration for one edge in one block. Executing the
+same fully configured query object more than once is not a duplicate
+selection — the selected graph remains part of the query until the
+query object is discarded.
+
+The rejection also covers re-entrant selection (`load{Edge}` called
+again from inside its own configuration block) — a failed selection is
+rolled back, so a caught error leaves the query as if it never
+happened. And while a terminal or entity explain is executing,
+`load{Edge}` and `filterVisible()` throw the same exception anywhere
+in the selected graph — root query and nested target queries alike —
+so an interceptor or privacy rule that captured any of them cannot
+change the in-flight operation's selected graph or privacy posture.
+
+### Terminals That Cannot Load Edges
+
+`load{Edge}` is meaningful on terminals that return entities (`all()`,
+`firstOrNull()`), and every result projection of those terminals
+preserves the selected graph. Raw count, existence, and aggregate
+terminals do not return entities, so they refuse a selected graph
+rather than silently ignoring it:
+
+```kotlin
+val query = client.users.query { loadPosts() }
+
+query.rawCount()        // ReadResult.Failed(EntQueryConfigurationException)
+query.explainRawCount() // throws EntQueryConfigurationException
+```
+
+The failure happens before any interceptor or driver work, and the
+message names the terminal and the selected edge declarations.
+`query{Edge}` traversal rejects a source query with selected edges the
+same way — a traversal changes the result root, so there is no
+coherent graph to carry across. Traverse first, then select loads on
+the target query:
+
+```kotlin
+client.users.query { loadPosts() }.queryPosts()   // throws
+
+client.users.query { where(User.active eq true) }
+    .queryPosts { loadComments() }                // fine
+    .all()
+```
 
 ### Eager Privacy and `filterVisible()`
 
@@ -579,14 +676,14 @@ the first denied target after evaluating that batch; `filterVisible()` removes
 every denied target from every group that references it. Nested eager paths
 repeat the contract for each actual nested edge-load invocation.
 
-Each `with{Edge} { ... }` call returns an `EagerLoad` handle. Calling
+Each `load{Edge} { ... }` call returns an `EdgeLoad` handle. Calling
 `filterVisible()` on it opts that one edge into retaining only visible
 targets:
 
 ```kotlin
 val users = client.users.query {
     where(User.active eq true)
-    withPosts {
+    loadPosts {
         orderBy(Post.createdAt.desc())
         limit(10)
     }.filterVisible()
@@ -602,14 +699,21 @@ denial behavior, and does not suppress eager-query rejection or
 ordinary driver/materialization failures. Ignoring the returned handle
 keeps the strict default.
 
-### Nested Eager Loading
+### Nested Edge Loading
 
-You can nest eager loads to load multiple levels of relationships:
+Nested `load{Edge}` calls select a multi-level graph. Every nested
+block is the ordinary generated query DSL for that relationship's
+target, so its fields, query operations, traversals, and loadable
+edges all complete normally:
 
 ```kotlin
 val users = client.users.query {
-    withPosts {
+    loadPosts {
         where(Post.published eq true)
+
+        loadComments {
+            orderBy(Comment.createdAt.asc())
+        }
     }
 }.all().getOrThrow()
 ```
@@ -635,7 +739,7 @@ The `edges` container itself is never null — it defaults to an empty
 `Edges()`. Each edge carries an explicit `EdgeState`, so loaded vs
 unloaded is a first-class distinction:
 
-- `user.edges.posts` is `EdgeState.Unloaded` when `withPosts()` was not
+- `user.edges.posts` is `EdgeState.Unloaded` when `loadPosts()` was not
   called
 - `EdgeState.Loaded(emptyList())` means the edge was loaded but no
   related entities exist
@@ -748,6 +852,15 @@ limits, change ordering, or swap the table. That property —
 `interceptor` name — so callers can branch on those fields without
 parsing the message.
 
+`EntQueryConfigurationException` is a different failure family:
+deterministic application misuse discovered by the query DSL itself —
+selecting one edge twice, or a selected edge-load graph reaching a
+non-entity terminal or a `query{Edge}` traversal. Configuration
+operations throw it immediately; result-bearing terminals capture it
+as `ReadResult.Failed` before any interceptor or driver work; and the
+incompatible `explain*` variants throw it rather than returning a
+rejected plan. It carries `entityType` and `reason`.
+
 ### Ordering and traversal
 
 Within a single terminal, per-entity interceptors run before
@@ -768,7 +881,7 @@ own `QueryContext`:
   `operation = ALL`, `sourceEntity = Group`, `edgeName = "posts"`,
   `path = [User→groups→Group, Group→posts→Post]`
 
-Eager loads (`with{Edge} { ... }`) fire the related entity's
+Eager loads (`load{Edge} { ... }`) fire the related entity's
 interceptors with `operation = EAGER_LOAD`. `has { ... }` edge
 predicates fire the related entity's interceptors with
 `operation = EDGE_PREDICATE`. This means an interceptor that hides

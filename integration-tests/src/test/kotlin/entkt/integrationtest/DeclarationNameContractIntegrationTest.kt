@@ -133,7 +133,7 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
             .all().getOrThrow()
         assertEquals(listOf("Rare books"), owned.map { it.publicLabel })
 
-        val loaded = client.people.query { withCurator() }.all().getOrThrow()
+        val loaded = client.people.query { loadCurator() }.all().getOrThrow()
         // Both rows were *requested*, so both edges are Loaded; only the
         // value differs. Asserting on the wrapper keeps "loaded with no
         // target" distinct from "never requested".

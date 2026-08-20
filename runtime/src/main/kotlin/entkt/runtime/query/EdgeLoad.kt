@@ -2,28 +2,28 @@ package entkt.runtime.query
 
 /**
  * Edge-specific configuration handle returned by every generated
- * `with<Edge> { ... }` eager-load method.
+ * `load<Edge> { ... }` edge-load selection method.
  *
- * Ignoring the handle keeps the strict default: a LOAD-denied eager
+ * Ignoring the handle keeps the strict default: a LOAD-denied selected
  * target fails the whole root terminal with
  * `EntPrivacyDeniedException(EagerEdge(path), ...)`. Calling
  * [filterVisible] opts that exact edge into retaining only visible
  * targets — a denied to-one target produces `EdgeState.Loaded(null)`
  * and denied to-many targets are omitted from the non-null loaded
- * list, without scanning beyond the selected eager-load window to
+ * list, without scanning beyond the selected per-parent window to
  * replace them.
  *
- * The handle scopes the modifier to the edge whose `with` call
+ * The handle scopes the modifier to the edge whose `load` call
  * produced it, so it cannot accidentally change root-query privacy or
- * whichever eager edge happened to be configured most recently. The
- * setting is not inherited by nested eager loads — each nested edge
- * opts in independently — and it suppresses only a returned LOAD-deny
- * decision: eager-query rejection and ordinary privacy, driver, or
- * materialization exceptions remain terminal failures.
+ * a sibling edge's posture. The setting is not inherited by nested
+ * edge loads — each nested edge opts in independently — and it
+ * suppresses only a returned LOAD-deny decision: edge-load query
+ * rejection and ordinary privacy, driver, or materialization
+ * exceptions remain terminal failures.
  *
  * [filterVisible] returns the parent query so a fluent chain may
  * continue.
  */
-interface EagerLoad<out ParentQuery> {
+interface EdgeLoad<out ParentQuery> {
     fun filterVisible(): ParentQuery
 }

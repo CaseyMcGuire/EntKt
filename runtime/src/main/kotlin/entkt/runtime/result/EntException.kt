@@ -235,6 +235,29 @@ class EntQueryRejectedException(
 ) : EntException(reason)
 
 /**
+ * The query DSL was combined in a way the generated API rejects:
+ * deterministic application misuse discovered while configuring or
+ * validating a query, such as selecting the same edge twice with
+ * `load{Name}`, traversing with `query{Name}` while the source query
+ * has selected edge loads, or executing a non-entity terminal on a
+ * query with a selected graph. Distinct from
+ * [EntQueryRejectedException], which is a policy decision returned by
+ * a read interceptor.
+ *
+ * Configuration operations (`load{Name}`, `query{Name}`) throw this
+ * immediately. A result-bearing terminal that discovers incompatible
+ * existing configuration captures it as [ReadResult.Failed] before
+ * any interceptor or driver work — its `getOrThrow()` projection
+ * throws this exact exception — and incompatible `explain*` variants
+ * throw it before driver explain work. [reason] names the rejected
+ * operation and the declaration-derived edge paths involved.
+ */
+class EntQueryConfigurationException(
+    val entityType: String,
+    val reason: String,
+) : EntException(reason)
+
+/**
  * LOAD privacy denied a read. [origin] identifies whether the
  * terminal's root selection ([LoadDenialOrigin.Root]) or an eagerly
  * loaded target ([LoadDenialOrigin.EagerEdge]) produced the denial;

@@ -125,7 +125,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
         val articles = client.users.query().queryArticles {
             where(Predicate.HasEdge<Article>("author"))
-            withAuthor()
+            loadAuthor()
         }.all().getOrThrow()
 
         assertEquals(1, articles.size)
@@ -459,7 +459,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         // Article repo allows everything; User repo denies the
         // specific viewer. firstOrNull on Article with an eager
-        // `withAuthor()` fails with EntPrivacyDeniedException whose
+        // `loadAuthor()` fails with EntPrivacyDeniedException whose
         // origin is EagerEdge when the article's author is denied.
         // visibleOrNull maps only ROOT denials to absence, so the
         // eager denial must stay Failed — an eager load can never
@@ -486,7 +486,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             sys.articles.create { title = "with-denied-author"; authorId = u.id }.saveAndLoad().getOrThrow()
         }
 
-        val result = client.articles.query { withAuthor() }.firstOrNull()
+        val result = client.articles.query { loadAuthor() }.firstOrNull()
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)

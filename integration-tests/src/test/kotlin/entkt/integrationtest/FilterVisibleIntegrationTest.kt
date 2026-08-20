@@ -75,7 +75,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
             sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
         }
 
-        val notes = client.notes.query { withAuthor().filterVisible() }.all().getOrThrow()
+        val notes = client.notes.query { loadAuthor().filterVisible() }.all().getOrThrow()
 
         assertEquals(1, notes.size)
         assertEquals(EdgeState.Loaded(null), notes.single().edges.author)
@@ -90,7 +90,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
 
         val loaded = client.posts.query {
             where(Post.id eq post.id)
-            withTags { orderBy(Tag.name.asc()) }.filterVisible()
+            loadTags { orderBy(Tag.name.asc()) }.filterVisible()
         }.all().getOrThrow()
 
         val tags = assertIs<EdgeState.Loaded<List<Tag>>>(loaded.single().edges.tags)
@@ -136,7 +136,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
 
         val loaded = client.posts.query {
             orderBy(Post.title.asc())
-            withTags { orderBy(Tag.name.asc()) }.filterVisible()
+            loadTags { orderBy(Tag.name.asc()) }.filterVisible()
         }.all().getOrThrow()
 
         assertEquals(listOf(listOf("a-denied-shared", "b-visible-shared")), invocations)
@@ -157,7 +157,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         // scanned in as a replacement.
         val loaded = client.posts.query {
             where(Post.id eq post.id)
-            withTags { orderBy(Tag.name.asc()); limit(1) }.filterVisible()
+            loadTags { orderBy(Tag.name.asc()); limit(1) }.filterVisible()
         }.all().getOrThrow()
 
         val tags = assertIs<EdgeState.Loaded<List<Tag>>>(loaded.single().edges.tags)
@@ -202,7 +202,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         // still fails the whole terminal.
         val result = client.posts.query {
             where(Post.title eq "P1")
-            withTags { withPosts() }.filterVisible()
+            loadTags { loadPosts() }.filterVisible()
         }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
@@ -235,7 +235,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
             sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
         }
 
-        val result = client.notes.query { withAuthor().filterVisible() }.all()
+        val result = client.notes.query { loadAuthor().filterVisible() }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -263,7 +263,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
 
         val result = client.posts.query {
             where(Post.id eq post.id)
-            withTags().filterVisible()
+            loadTags().filterVisible()
         }.all()
 
         val failed = assertIs<ReadResult.Failed>(result)

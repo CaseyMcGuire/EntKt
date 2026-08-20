@@ -30,6 +30,31 @@ above it.
 
 ## Unreleased
 
+- **Select edge loads with `load{Name}` instead of `with{Name}`** (`codegen`, `runtime`)
+  Generated eager-loading methods are renamed from `with{Name}` to
+  `load{Name}` (`withPosts` → `loadPosts`), and the public handle they return
+  is renamed from `EagerLoad<ParentQuery>` to `EdgeLoad<ParentQuery>`;
+  `filterVisible()` is unchanged. The name states the operation — include the
+  relationship in the materialized graph — without promising a SQL strategy.
+  Configuration is also stricter, throwing the new
+  `EntQueryConfigurationException` instead of silently proceeding: selecting
+  one edge twice no longer last-write-wins (including re-entrant selection
+  from inside the configuration block, which rolls back on failure); raw
+  count / existence / aggregate terminals and their `explain*` variants no
+  longer silently ignore a selected graph; `query{Name}` traversal rejects a
+  source query with selected edge loads; and `load{Name}` / `filterVisible()`
+  are rejected while a terminal or entity explain is executing anywhere in
+  the query's selected graph — root and nested target queries alike — so a
+  captured query cannot change an in-flight operation.
+  Execution, `EdgeState`, and eager LOAD privacy
+  semantics are unchanged. See the
+  [generated edge loading API note](../implemented-features/query/generated-edge-loading-api.md).
+  _Migration:_ rename `with{Name}` calls to `load{Name}` (nested blocks
+  included) and `EagerLoad` type references to `EdgeLoad`; merge duplicate
+  `load{Name}` calls for one edge into a single block; move `load{Name}`
+  selection off queries that end in raw/aggregate terminals; select edge
+  loads on the traversal target instead of the traversal source.
+
 - **Namespace the Gradle plugin IDs under `io.entkt`** (`gradle-plugin`)
   The public plugin IDs now align with the verified Maven group and project
   domain: `entkt` is now `io.entkt`, and `entkt.flyway` is now

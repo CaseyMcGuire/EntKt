@@ -29,8 +29,8 @@ import kotlin.test.assertTrue
  *    `Group.users.has { where(...) }` and the inverse. Lowers to
  *    `Predicate.HasEdge` / `Predicate.HasEdgeWith` EXISTS
  *    subqueries.
- *  - **Eager loading**: `withUsers { ... }` /
- *    `withGroups { ... }` requested inside the `query { ... }`
+ *  - **Eager loading**: `loadUsers { ... }` /
+ *    `loadGroups { ... }` requested inside the `query { ... }`
  *    block. Two-step driver call (junction fetch then target fetch).
  *
  * Coverage matrix per shape: forward direction (`Group → User`)
@@ -314,14 +314,14 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Eager loading: withUsers / withGroups
+    // Eager loading: loadUsers / loadGroups
     // ──────────────────────────────────────────────────────────────
     //
     // Eager loading uses two driver calls:
     //   1. junction = SELECT … FROM memberships WHERE <sourceCol> IN (parentIds)
     //   2. target   = SELECT … FROM <target>     WHERE id           IN (targetIds)
     //
-    // `with{Edge}` returns an `EagerLoad<ParentQuery>` handle, so the
+    // `load{Edge}` returns an `EdgeLoad<ParentQuery>` handle, so the
     // eager request is made inside the `query { ... }` block (the
     // handle is ignored; strict eager semantics apply).
     //
@@ -334,7 +334,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     //     contribute a null entry to `entity.edges.<edge>`.
 
     @Test
-    fun `forward withUsers omits users contributed by null-source junction rows`() {
+    fun `forward loadUsers omits users contributed by null-source junction rows`() {
         // Real link (g1, u1); stray (null, u2) row that should not
         // contribute u2 to g1 (the (null, u2) junction is filtered
         // out at step 1's `group_id IN (g1.id)` IN-test because
@@ -347,7 +347,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
 
         val loaded = client.groups.query {
             where(Group.id eq g1.id)
-            withUsers()
+            loadUsers()
         }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val users = loaded.first().edges.users.requireLoaded()
@@ -355,7 +355,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `forward withUsers does not include null target user from null-target junction rows`() {
+    fun `forward loadUsers does not include null target user from null-target junction rows`() {
         // g1 has a real (g1, u1) link AND a (g1, null) row. Step 2's
         // target query excludes null ids (SQL `IN (..., NULL, ...)`
         // never matches users.id), and the per-target grouping looks
@@ -368,7 +368,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
 
         val loaded = client.groups.query {
             where(Group.id eq g1.id)
-            withUsers()
+            loadUsers()
         }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val users = loaded.first().edges.users.requireLoaded()
@@ -376,7 +376,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `inverse withGroups omits groups contributed by null-source junction rows`() {
+    fun `inverse loadGroups omits groups contributed by null-source junction rows`() {
         // Inverse direction: User.groups uses pair-swapped junction
         // refs, so "source col" = user_id, "target col" = group_id.
         // Stray (g2, null) junction must not surface g2 in u1's
@@ -389,7 +389,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
 
         val loaded = client.users.query {
             where(User.id eq u1.id)
-            withGroups()
+            loadGroups()
         }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val groups = loaded.first().edges.groups.requireLoaded()
@@ -397,7 +397,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `inverse withGroups does not include null target group from null-target junction rows`() {
+    fun `inverse loadGroups does not include null target group from null-target junction rows`() {
         // u1 has a real (g1, u1) link AND a (null, u1) row (null group
         // from User's perspective). The null-group_id row's target id
         // is null, so step 2's `id IN (g1.id, NULL)` matches only
@@ -410,7 +410,7 @@ class ThroughEntityNullableM2MTraversalIntegrationTest : PostgresTestBase() {
 
         val loaded = client.users.query {
             where(User.id eq u1.id)
-            withGroups()
+            loadGroups()
         }.all().getOrThrow()
         assertEquals(1, loaded.size)
         val groups = loaded.first().edges.groups.requireLoaded()

@@ -47,11 +47,11 @@ val authorsWithPublishedPosts = client.users.query {
 // Eager loading
 val usersWithPosts = client.users.query {
     where(User.active eq true)
-    withPosts {                        // batch-load posts for each user
+    loadPosts {                        // batch-load posts for each user
         where(Post.published eq true)  // optional: filter the loaded edge
     }
 }.all().getOrThrow()
-usersWithPosts[0].edges.posts.requireLoaded()  // → List<Post> (throws EdgeNotLoadedException if withPosts wasn't called)
+usersWithPosts[0].edges.posts.requireLoaded()  // → List<Post> (throws EdgeNotLoadedException if loadPosts wasn't called)
 
 // Every data operation returns an exhaustive result you can match on
 // instead of projecting with getOrThrow():

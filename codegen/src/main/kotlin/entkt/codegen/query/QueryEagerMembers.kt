@@ -23,11 +23,13 @@ private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "En
 private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
 private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
 private val EAGER_EDGE_STEP = ClassName("entkt.runtime.result", "EagerEdgeStep")
-private val EAGER_LOAD_HANDLE = ClassName("entkt.runtime.query", "EagerLoad")
+private val EDGE_LOAD_HANDLE = ClassName("entkt.runtime.query", "EdgeLoad")
+private val ENT_QUERY_CONFIGURATION_EXCEPTION =
+    ClassName("entkt.runtime.result", "EntQueryConfigurationException")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 
 // ------------------------------------------------------------------
-// Eager loading: the `withX` DSL surface, the batch `loadEdges`
+// Edge loading: the `loadX` DSL surface, the batch `loadEdges`
 // member, and the per-edge eager explain block. Split out of
 // QueryGenerator so the eager runtime shape and its explain mirror
 // live side by side — every "explain must match the driver call"
@@ -37,20 +39,20 @@ private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 // ------------------------------------------------------------------
 
 /**
- * Holds the generated property and `with{Edge}()` method for one
- * eagerly-loadable edge.
+ * Holds the generated property and `load{Edge}()` method for one
+ * loadable edge.
  */
 internal data class EagerEdgeSpec(
     val edgeName: String,
     val property: PropertySpec,
     val filterVisibleProperty: PropertySpec,
-    val withMethod: FunSpec,
+    val loadMethod: FunSpec,
 )
 
 /**
- * Build the nullable property and `with{Edge}()` method for a single
- * eager-capable edge. Callers pass only edges with a resolved
- * [ResolvedQueryEdge.join] — an unresolvable join means no eager
+ * Build the nullable property and `load{Edge}()` method for a single
+ * load-capable edge. Callers pass only edges with a resolved
+ * [ResolvedQueryEdge.join] — an unresolvable join means no edge-load
  * surface at all.
  */
 internal fun buildEagerEdgeSpec(
@@ -59,12 +61,12 @@ internal fun buildEagerEdgeSpec(
     packageName: String,
 ): EagerEdgeSpec {
     val targetQueryClass = re.targetQueryClass
-    // The with-method's return type names this query class via the
+    // The load-method's return type names this query class via the
     // schemaNames map entry, not the schemaName argument — see
     // [ResolvedQuerySchema.sourceName] for why the lookup is kept.
     val queryClass = ClassName(packageName, "${resolved.sourceName}Query")
     val eagerPropName = re.eagerPropName
-    val withMethodName = re.withMethodName
+    val loadMethodName = re.loadMethodName
 
     val property = PropertySpec.builder(
         eagerPropName,
@@ -75,10 +77,10 @@ internal fun buildEagerEdgeSpec(
         .initializer("null")
         .build()
 
-    // Per-edge filterVisible opt-in, set only through the EagerLoad
-    // handle returned by the with-method. Reset on every
-    // reconfiguration of the edge so a stale opt-in can't leak into a
-    // later strict configuration.
+    // Per-edge filterVisible opt-in, set only through the EdgeLoad
+    // handle returned by the load-method. Selecting an edge twice is
+    // rejected, so the handle always governs the edge's only
+    // configuration and no reset is needed.
     val filterVisibleProperty = PropertySpec.builder(
         "${eagerPropName}FilterVisible",
         Boolean::class,
@@ -92,29 +94,73 @@ internal fun buildEagerEdgeSpec(
         receiver = targetQueryClass,
         returnType = UNIT,
     )
-    val withMethod = FunSpec.builder(withMethodName)
+    val inFlightGuard = "a terminal or explain on this ${resolved.schemaName}Query is " +
+        "executing and the in-flight operation's edge-load topology is fixed at " +
+        "terminal entry"
+    val loadMethod = FunSpec.builder(loadMethodName)
+        // The zero-block overload must be callable from Java without
+        // Kotlin's default-argument marker, so the JVM surface gets a
+        // real no-arg method.
+        .addAnnotation(JvmOverloads::class)
         .addParameter(
             ParameterSpec.builder("block", blockLambda)
                 .defaultValue("{}")
                 .build()
         )
-        .returns(EAGER_LOAD_HANDLE.parameterizedBy(queryClass))
-        .addStatement("val configured = %T(driver, client).apply(block)", targetQueryClass)
+        .returns(EDGE_LOAD_HANDLE.parameterizedBy(queryClass))
+        // Terminal-entry isolation: an interceptor or privacy rule
+        // that captured this query must not change the graph the
+        // in-flight terminal is materializing. Rejected loudly rather
+        // than silently deferred to the next execution.
+        .beginControlFlow("if (activeTerminals > 0)")
+        .addStatement(
+            "throw %T(\n%S,\n%S,\n)",
+            ENT_QUERY_CONFIGURATION_EXCEPTION,
+            resolved.schemaName,
+            "$loadMethodName() cannot select an edge now: $inFlightGuard",
+        )
+        .endControlFlow()
+        // One selection per edge: a second load call must not silently
+        // replace or merge the first block. Configuration misuse is
+        // thrown here, at the call, before any terminal or driver I/O.
+        .beginControlFlow("if (%L != null)", eagerPropName)
+        .addStatement(
+            "throw %T(\n%S,\n%S,\n)",
+            ENT_QUERY_CONFIGURATION_EXCEPTION,
+            resolved.schemaName,
+            "${resolved.schemaName}.${re.publicName} is already selected on this " +
+                "${resolved.schemaName}Query: $loadMethodName() may be called at most once " +
+                "per query; compose all configuration for the edge in a single " +
+                "$loadMethodName block",
+        )
+        .endControlFlow()
+        .addStatement("val configured = %T(driver, client)", targetQueryClass)
+        // Reserve the slot before the block runs so a re-entrant
+        // load call inside the block hits the duplicate guard instead
+        // of silently last-write-winning; roll the reservation back if
+        // the block fails so a caught error leaves the query as if
+        // the selection never happened.
         .addStatement("%L = configured", eagerPropName)
-        .addStatement("%LFilterVisible = false", eagerPropName)
+        .beginControlFlow("try")
+        .addStatement("configured.apply(block)")
+        .nextControlFlow("catch (e: %T)", Throwable::class)
+        .addStatement("%L = null", eagerPropName)
+        .addStatement("throw e")
+        .endControlFlow()
         .addCode(
             CodeBlock.builder()
-                .add("return object : %T<%T> {\n", EAGER_LOAD_HANDLE, queryClass)
+                .add("return object : %T<%T> {\n", EDGE_LOAD_HANDLE, queryClass)
                 .add("  override fun filterVisible(): %T {\n", queryClass)
-                // The handle governs only the configuration that
-                // produced it: reconfiguring the edge resets the flag,
-                // and a retained stale handle must not silently weaken
-                // the newer (strict-by-default) configuration.
-                .add("    check(%L === configured) {\n", eagerPropName)
+                // Same terminal-entry isolation as the load call: a
+                // retained handle cannot change the in-flight
+                // operation's privacy posture.
+                .add("    if (activeTerminals > 0) {\n")
                 .add(
-                    "      %S\n",
-                    "stale EagerLoad handle: with-edge was reconfigured after this handle was created; " +
-                        "call filterVisible() on the handle returned by the latest configuration",
+                    "      throw %T(\n%S,\n%S,\n)\n",
+                    ENT_QUERY_CONFIGURATION_EXCEPTION,
+                    resolved.schemaName,
+                    "filterVisible() for ${resolved.schemaName}.${re.publicName} cannot be " +
+                        "called now: $inFlightGuard",
                 )
                 .add("    }\n")
                 .add("    %LFilterVisible = true\n", eagerPropName)
@@ -125,7 +171,116 @@ internal fun buildEagerEdgeSpec(
         )
         .build()
 
-    return EagerEdgeSpec(re.name, property, filterVisibleProperty, withMethod)
+    return EagerEdgeSpec(re.name, property, filterVisibleProperty, loadMethod)
+}
+
+/**
+ * Build the private `activeTerminals` counter that backs terminal-entry
+ * isolation for the edge-load topology. Entity terminals (`all` /
+ * `firstOrNull`) and entity explains (`explainAll` /
+ * `explainFirstOrNull`) acquire it via [buildAcquireEdgeTopology] on
+ * entry and release in a `finally`; `load{Name}` and `filterVisible()`
+ * reject while it is positive, so an interceptor or privacy rule that
+ * captured any query in the selected graph cannot change the topology
+ * or privacy posture the in-flight operation is materializing. A
+ * counter rather than a flag so a re-entrant terminal started from an
+ * interceptor cannot clear the outer terminal's guard early. Defensive
+ * copies of a captured target query's *contents* (predicates, ordering,
+ * bounds mutated mid-flight) remain owned by the set-based executor
+ * RFC. Emitted only when the query has a load-capable edge.
+ */
+internal fun buildActiveTerminalsProperty(): PropertySpec {
+    return PropertySpec.builder("activeTerminals", Int::class)
+        .addModifiers(KModifier.PRIVATE)
+        .mutable(true)
+        .initializer("0")
+        .build()
+}
+
+/**
+ * Build the `acquireEdgeTopology` / `releaseEdgeTopology` pair that
+ * terminal-entry isolation holds across the *entire selected graph*:
+ * acquiring increments this query's guard and recurses into every
+ * selected target query, so a retained nested query rejects
+ * `load{Name}` / `filterVisible()` mid-flight exactly as the root
+ * does. The selected topology is always a tree of
+ * framework-constructed query instances (each `load{Name}` call
+ * builds its own fresh target), so the recursion cannot cycle — and
+ * because every node is guarded while acquired, the topology cannot
+ * change between acquire and release, which therefore walk identical
+ * nodes.
+ *
+ * Always emitted, mirroring `loadEdges`: a parent query's acquire
+ * recursion calls these on the target's query class unconditionally,
+ * so a target schema with no load-capable edges of its own still
+ * needs the (no-op) methods to satisfy those call sites.
+ */
+internal fun buildAcquireEdgeTopology(resolved: ResolvedQuerySchema): FunSpec {
+    return buildTopologyGuardWalk("acquireEdgeTopology", "activeTerminals++", resolved)
+}
+
+internal fun buildReleaseEdgeTopology(resolved: ResolvedQuerySchema): FunSpec {
+    return buildTopologyGuardWalk("releaseEdgeTopology", "activeTerminals--", resolved)
+}
+
+private fun buildTopologyGuardWalk(
+    name: String,
+    counterStatement: String,
+    resolved: ResolvedQuerySchema,
+): FunSpec {
+    val builder = FunSpec.builder(name)
+        .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        .addModifiers(KModifier.INTERNAL)
+    val eager = resolved.edges.filter { it.join != null }
+    if (eager.isNotEmpty()) {
+        builder.addStatement(counterStatement)
+        for (re in eager) {
+            builder.addStatement("%L?.%L()", re.eagerPropName, name)
+        }
+    }
+    return builder.build()
+}
+
+/**
+ * Build the private `requireNoSelectedEdges(operation, reason)` guard
+ * shared by every generated surface that cannot carry a selected
+ * edge-load graph: the raw count / existence / aggregate terminals
+ * (whose canonical bodies capture the throw as `ReadResult.Failed`
+ * before any interceptor or driver work), their explain variants
+ * (which throw before driver explain work), and `query{Name}`
+ * traversal (which throws at configuration time). A selected edge is
+ * a non-null `eager{Stem}` backing property; the diagnostic names the
+ * rejected operation and every selected declaration-derived edge
+ * path. Emitted only when the query has at least one load-capable
+ * edge.
+ */
+internal fun buildRequireNoSelectedEdges(resolved: ResolvedQuerySchema): FunSpec {
+    val body = CodeBlock.builder()
+    body.add("val selected = listOfNotNull(\n")
+    for (re in resolved.edges) {
+        if (re.join == null) continue
+        body.add(
+            "  if (%L != null) %S else null,\n",
+            re.eagerPropName,
+            "${resolved.schemaName}.${re.publicName}",
+        )
+    }
+    body.add(")\n")
+    body.addStatement("if (selected.isEmpty()) return")
+    body.add(
+        "throw %T(\n  %S,\n  operation + %S + selected.joinToString(%S) + %S + reason,\n)\n",
+        ENT_QUERY_CONFIGURATION_EXCEPTION,
+        resolved.schemaName,
+        " on ${resolved.schemaName}Query is incompatible with the selected edge loads [",
+        ", ",
+        "]: ",
+    )
+    return FunSpec.builder("requireNoSelectedEdges")
+        .addModifiers(KModifier.PRIVATE)
+        .addParameter("operation", String::class)
+        .addParameter("reason", String::class)
+        .addCode(body.build())
+        .build()
 }
 
 /**
@@ -355,7 +510,7 @@ private fun emitToOneEagerBlock(
     // is what the to-many and hasOne paths do — so an excluded target
     // is never privacy-evaluated or nested-eager-loaded. A denial for
     // a row the caller explicitly asked not to load would otherwise
-    // throw out of `withAuthor { limit(0) }`.
+    // throw out of `loadAuthor { limit(0) }`.
     //
     // Deliberately not short-circuiting the whole branch: the
     // EAGER_LOAD interceptor pass has to fire on every eager subquery
@@ -480,14 +635,14 @@ private fun emitM2MEagerBlock(
     // rows directly here would drop the ordering — junction rows
     // come back in driver-default order, not target order — and the
     // subsequent `drop(offset).take(limit)` per group would slice
-    // the wrong subset for `withTags { orderBy(...); limit(...) }`.
+    // the wrong subset for `loadTags { orderBy(...); limit(...) }`.
     //
     // The membership lookup uses a `MutableSet` per target id, not
     // a `MutableList`, so a junction with duplicate
     // `(source_id, target_id)` pairs (legal for `throughEntity`
     // junctions with no unique pair index — the row carries
     // distinct payload) collapses to one membership entry. Without
-    // the dedup, `withTags()` would return the same target multiple
+    // the dedup, `loadTags()` would return the same target multiple
     // times in one source's group, while the EXISTS-based
     // `queryTags()` traversal correctly returns each target once,
     // and per-group `drop`/`take` would slice from a duplicated

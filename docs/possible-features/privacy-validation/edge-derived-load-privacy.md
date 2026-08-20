@@ -177,7 +177,7 @@ This feature should apply only to eager-loaded edges in the first version:
 
 ```kotlin
 client.users.query {
-    withPosts()
+    loadPosts()
 }.all()
 ```
 

@@ -1743,44 +1743,62 @@ class EdgeCodegenTest {
         }
     }
 
-    // ---------- Eager loading: with{Edge} methods ----------
+    // ---------- Edge loading: load{Edge} methods ----------
 
     @Test
-    fun `query generates withPets returning the EagerLoad handle for to-many edge`() {
+    fun `query generates loadPets returning the EdgeLoad handle for to-many edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        // with{Edge} returns an EagerLoad<ParentQuery> handle whose
+        // load{Edge} returns an EdgeLoad<ParentQuery> handle whose
         // filterVisible() flips the per-edge filter flag and hands the
-        // parent query back for chaining. The handle is bound to the
-        // configuration that produced it: a retained stale handle must
-        // fail loudly rather than silently weaken a newer strict
-        // configuration.
+        // parent query back for chaining. Selecting an edge twice is
+        // rejected up front, so the handle always governs the edge's
+        // only configuration — no stale-handle state exists. The slot
+        // is reserved before the block runs (re-entrant calls hit the
+        // duplicate guard, never last-write-wins) and rolled back if
+        // the block fails, and both the load call and the handle
+        // reject while a terminal on the query is in flight.
         assert(
             output.contains(
-                "public fun withPets(block: PetQuery.() -> Unit = {}): EagerLoad<OwnerQuery> " +
-                    "{ val configured = PetQuery(driver, client).apply(block) eagerPets = configured " +
-                    "eagerPetsFilterVisible = false " +
-                    "return object : EagerLoad<OwnerQuery> { override fun filterVisible(): OwnerQuery " +
-                    "{ check(eagerPets === configured) { " +
-                    "\"stale EagerLoad handle: with-edge was reconfigured after this handle was created; " +
-                    "call filterVisible() on the handle returned by the latest configuration\" } " +
+                "public fun loadPets(block: PetQuery.() -> Unit = {}): EdgeLoad<OwnerQuery> " +
+                    "{ if (activeTerminals > 0) { throw EntQueryConfigurationException( \"Owner\", " +
+                    "\"loadPets() cannot select an edge now: a terminal or explain on this " +
+                    "OwnerQuery is executing and the in-flight operation's edge-load topology " +
+                    "is fixed at terminal entry\", ) } " +
+                    "if (eagerPets != null) { throw EntQueryConfigurationException( \"Owner\", " +
+                    "\"Owner.pets is already selected on this OwnerQuery: loadPets() may be called " +
+                    "at most once per query; compose all configuration for the edge in a single " +
+                    "loadPets block\", ) } " +
+                    "val configured = PetQuery(driver, client) " +
+                    "eagerPets = configured " +
+                    "try { configured.apply(block) } catch (e: Throwable) { eagerPets = null throw e } " +
+                    "return object : EdgeLoad<OwnerQuery> { override fun filterVisible(): OwnerQuery " +
+                    "{ if (activeTerminals > 0) { throw EntQueryConfigurationException( \"Owner\", " +
+                    "\"filterVisible() for Owner.pets cannot be called now: a terminal or explain " +
+                    "on this OwnerQuery is executing and the in-flight operation's edge-load " +
+                    "topology is fixed at terminal entry\", ) } " +
                     "eagerPetsFilterVisible = true return this@OwnerQuery } } }",
             ),
         ) {
-            "withPets should return an EagerLoad<OwnerQuery> handle with filterVisible()\n$output"
+            "loadPets should guard in-flight terminals, reject duplicate selection with rollback, and return an EdgeLoad<OwnerQuery> handle\n$output"
+        }
+        // Java callers get a real zero-arg overload rather than
+        // Kotlin's default-argument marker.
+        assert(output.contains("@JvmOverloads public fun loadPets(")) {
+            "loadPets should carry @JvmOverloads for the zero-block Java overload\n$output"
         }
     }
 
     @Test
-    fun `query generates withOwner for to-one edge`() {
+    fun `query generates loadOwner for to-one edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun withOwner(block: OwnerQuery.() -> Unit = {}): EagerLoad<PetQuery>")) {
-            "withOwner should accept an OwnerQuery DSL block and return EagerLoad<PetQuery>\n$output"
+        assert(output.contains("fun loadOwner(block: OwnerQuery.() -> Unit = {}): EdgeLoad<PetQuery>")) {
+            "loadOwner should accept an OwnerQuery DSL block and return EdgeLoad<PetQuery>\n$output"
         }
     }
 
@@ -1808,13 +1826,30 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `query generates withMembers for M2M edge`() {
+    fun `query generates loadMembers for M2M edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun withMembers(block: PetQuery.() -> Unit = {}): EagerLoad<TeamQuery>")) {
-            "withMembers should return the EagerLoad<TeamQuery> handle\n$output"
+        assert(output.contains("fun loadMembers(block: PetQuery.() -> Unit = {}): EdgeLoad<TeamQuery>")) {
+            "loadMembers should return the EdgeLoad<TeamQuery> handle\n$output"
+        }
+    }
+
+    @Test
+    fun `generated query emits no public with-prefixed edge methods`() {
+        val (_, names, byName) = createAllSchemas()
+        for (schemaName in listOf("Owner", "Pet", "Team")) {
+            val output = QueryGenerator("com.example.ent")
+                .generate(schemaName, byName[schemaName]!!, names).toString()
+            // The atomic cutover leaves no with{Name} spelling behind:
+            // the declaration-derived family is load{Name} only.
+            assert(!Regex("fun with[A-Z]").containsMatchIn(output)) {
+                "$schemaName query should not emit any with{Name} method\n$output"
+            }
+            assert(!output.contains("EagerLoad")) {
+                "$schemaName query should reference EdgeLoad, not EagerLoad\n$output"
+            }
         }
     }
 
@@ -1918,20 +1953,20 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `with-edge builder configuration stays a private nullable query field`() {
+    fun `load-edge builder configuration stays a private nullable query field`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
         // EdgeState wraps returned entity edges only — the builder's
-        // with{Edge} bookkeeping keeps its private nullable field.
+        // load{Edge} bookkeeping keeps its private nullable field.
         assert(output.contains("private var eagerPets: PetQuery? = null")) {
-            "with{Edge} config should stay a private nullable builder field\n$output"
+            "load{Edge} config should stay a private nullable builder field\n$output"
         }
-        // The EagerLoad handle's filterVisible() state is a private
+        // The EdgeLoad handle's filterVisible() state is a private
         // per-edge flag alongside it.
         assert(output.contains("private var eagerPetsFilterVisible: Boolean = false")) {
-            "with{Edge} filterVisible state should be a private per-edge flag\n$output"
+            "load{Edge} filterVisible state should be a private per-edge flag\n$output"
         }
     }
 
@@ -2466,7 +2501,7 @@ class EdgeCodegenTest {
         // Iterating junctionRows here would group in driver-default
         // junction order — which is unrelated to `subQuery.orderFields`
         // — so a later `drop(offset).take(limit)` per group would pick
-        // the wrong subset for `withTags { orderBy(...); limit(...) }`.
+        // the wrong subset for `loadTags { orderBy(...); limit(...) }`.
         // The fix builds a target→sources membership lookup from the
         // junction rows, then iterates targetRows (already ordered by
         // `subQuery.orderFields`) and appends each target to its

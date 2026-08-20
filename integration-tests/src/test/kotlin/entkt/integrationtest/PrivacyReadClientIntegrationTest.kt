@@ -73,7 +73,7 @@ private val AuthorRowMustExist = ArticleCreatePrivacyRule { context, item ->
 }
 
 /**
- * Load rule whose decision reads through edges: the `withUser()` eager
+ * Load rule whose decision reads through edges: the `loadUser()` eager
  * load, the `queryUsers()` M2M traversal, and the staged index helper
  * all run through the privacy client, so the hop rows they materialize
  * pass the caller's LOAD privacy like any other rule read — a viewer
@@ -83,7 +83,7 @@ private val AuthorRowMustExist = ArticleCreatePrivacyRule { context, item ->
  * structural and never materialize.)
  */
 private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { context, _ ->
-    val memberships = context.client.memberships.query { withUser() }.all().getOrThrow()
+    val memberships = context.client.memberships.query { loadUser() }.all().getOrThrow()
     val traversedMember = context.client.groups.query { }.queryUsers().firstOrNull().getOrThrow()
     val indexedMember = context.client.users.indexes.email("alice@test.com").find().getOrThrow()
     if (memberships.any { it.edges.user.requireLoaded() != null } && traversedMember != null && indexedMember != null) {

@@ -71,6 +71,9 @@ internal fun buildAll(schemaName: String, clientName: String, entityClass: Class
                         if (hasEdges) "loadEdges(results, privacy)" else "results",
                     )
                     .build(),
+                // Hold the activeTerminals guard while the terminal
+                // consumes the selected edge-load topology.
+                guardEdgeTopology = hasEdges,
             ),
         )
         .build()
@@ -80,6 +83,7 @@ internal fun buildRowShapedExplain(
     queryPlan: ClassName,
     name: String,
     terminalName: String,
+    hasEdges: Boolean,
 ): FunSpec {
     return FunSpec.builder(name)
         .addKdoc(
@@ -90,7 +94,13 @@ internal fun buildRowShapedExplain(
             "carrying the rejection metadata; explain does NOT throw."
         )
         .returns(queryPlan)
-        .addCode(explainBody("ALL", CodeBlock.of("buildQueryPlan(spec, true, privacy)")))
+        .addCode(
+            explainBody(
+                "ALL",
+                CodeBlock.of("buildQueryPlan(spec, true, privacy)"),
+                guardEdgeTopology = hasEdges,
+            ),
+        )
         .build()
 }
 
@@ -157,7 +167,9 @@ internal fun buildFirstOrNull(schemaName: String, clientName: String, entityClas
     }
     return FunSpec.builder("firstOrNull")
         .returns(resultType)
-        .addCode(canonicalReadBody(happy.build()))
+        // Hold the activeTerminals guard while the terminal consumes
+        // the selected edge-load topology.
+        .addCode(canonicalReadBody(happy.build(), guardEdgeTopology = hasEdges))
         .build()
 }
 
@@ -165,6 +177,7 @@ internal fun buildFirstShapedExplain(
     queryPlan: ClassName,
     name: String,
     terminalName: String,
+    hasEdges: Boolean,
 ): FunSpec {
     return FunSpec.builder(name)
         .addKdoc(
@@ -177,7 +190,11 @@ internal fun buildFirstShapedExplain(
         )
         .returns(queryPlan)
         .addCode(
-            explainBody("FIRST", CodeBlock.of("buildQueryPlan(spec.copy(limit = %L), true, privacy)", SINGLE_ROW_LIMIT_EXPR)),
+            explainBody(
+                "FIRST",
+                CodeBlock.of("buildQueryPlan(spec.copy(limit = %L), true, privacy)", SINGLE_ROW_LIMIT_EXPR),
+                guardEdgeTopology = hasEdges,
+            ),
         )
         .build()
 }

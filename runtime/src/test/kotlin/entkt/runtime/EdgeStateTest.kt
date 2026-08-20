@@ -80,7 +80,7 @@ class EdgeStateTest {
         val state: EdgeState<List<String>> = EdgeState.Unloaded
         val exception = assertFailsWith<EdgeNotLoadedException> { state.requireLoaded() }
         assertEquals(
-            "Edge was not loaded; eager-load it before calling requireLoaded()",
+            "Edge was not loaded; select it with the query's load{Edge} method before calling requireLoaded()",
             exception.message,
         )
     }

@@ -143,12 +143,12 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `limit(0) on a to-one eager load yields no target`() {
         val client = seededClient()
 
-        // `withAuthor { limit(0) }` used to load the author anyway: the
+        // `loadAuthor { limit(0) }` used to load the author anyway: the
         // to-one eager path passed null limit/offset on the reasoning
         // that "limit is meaningless for a to-one". Positive limits are
         // indeed already satisfied by one target per parent — but zero
         // is a bound, not a no-op.
-        val articles = client.articles.query { withAuthor { limit(0) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
 
         assertTrue(articles.isNotEmpty(), "the root rows still load")
         assertTrue(
@@ -161,7 +161,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `offset on a to-one eager load steps past the only candidate`() {
         val client = seededClient()
 
-        val articles = client.articles.query { withAuthor { offset(1) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { offset(1) } }.all().getOrThrow()
 
         assertTrue(
             articles.all { it.edges.author.requireLoaded() == null },
@@ -175,7 +175,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // Guard against over-correcting: with no bounds set, the window
         // is wide open and behavior is unchanged.
-        val articles = client.articles.query { withAuthor() }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor() }.all().getOrThrow()
 
         assertTrue(articles.isNotEmpty())
         assertTrue(
@@ -184,7 +184,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         )
         // A positive limit is already satisfied by the single target.
         assertTrue(
-            client.articles.query { withAuthor { limit(1) } }.all().getOrThrow()
+            client.articles.query { loadAuthor { limit(1) } }.all().getOrThrow()
                 .all { it.edges.author.requireLoaded() != null },
         )
     }
@@ -196,13 +196,13 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // The inconsistency this fixes: to-many already sliced per
         // parent, so the two cardinalities answered `limit(0)`
         // differently for no reason the caller could see.
-        val users = client.users.query { withArticles { limit(0) } }.all().getOrThrow()
+        val users = client.users.query { loadArticles { limit(0) } }.all().getOrThrow()
         assertTrue(users.isNotEmpty())
         // `requireLoaded()` throws if the edge were Unloaded, so this
         // pins "eagerly loaded and empty", not "never loaded".
         assertTrue(users.all { it.edges.articles.requireLoaded().isEmpty() }, "to-many honors limit(0)")
 
-        val articles = client.articles.query { withAuthor { limit(0) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
         assertTrue(articles.all { it.edges.author.requireLoaded() == null }, "to-one now honors it too")
     }
 
@@ -241,7 +241,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // row nobody asked to load. Gating only the final assignment
         // left the fetch, the privacy check, and nested eager loading
         // all still running.
-        val articles = client.articles.query { withAuthor { limit(0) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
 
         assertTrue(articles.isNotEmpty())
         assertTrue(articles.all { it.edges.author.requireLoaded() == null })
@@ -251,7 +251,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `offset past a to-one eager target does not evaluate it`() {
         val client = clientWithDeniedAuthors()
 
-        val articles = client.articles.query { withAuthor { offset(1) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { offset(1) } }.all().getOrThrow()
 
         assertTrue(articles.all { it.edges.author.requireLoaded() == null })
     }
@@ -265,10 +265,10 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // ask for the target. The denial is stored in the result;
         // getOrThrow surfaces it.
         assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.query { withAuthor() }.all().getOrThrow()
+            client.articles.query { loadAuthor() }.all().getOrThrow()
         }
         assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.query { withAuthor { limit(1) } }.all().getOrThrow()
+            client.articles.query { loadAuthor { limit(1) } }.all().getOrThrow()
         }
     }
 
@@ -292,7 +292,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         }
         ops.clear()
 
-        client.articles.query { withAuthor { limit(0) } }.all().getOrThrow()
+        client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
 
         // The bound decides which rows survive, not whether the eager
         // subquery exists. Interceptors fire on every eager subquery —
@@ -301,7 +301,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // interceptor's view of the query depend on the caller's limit.
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
-            "withAuthor { limit(0) } should still fire User interceptors with EAGER_LOAD; observed: $ops",
+            "loadAuthor { limit(0) } should still fire User interceptors with EAGER_LOAD; observed: $ops",
         )
     }
 
@@ -342,7 +342,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `an empty to-one eager window issues no query for the target`() {
         val (client, counting) = countingClient()
 
-        client.articles.query { withAuthor { limit(0) } }.all().getOrThrow()
+        client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
 
         assertTrue(counting.queriedTables.contains("articles"), "the root query still runs")
         assertFalse(
@@ -355,7 +355,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `an empty to-many eager window issues no query for the target`() {
         val (client, counting) = countingClient()
 
-        client.users.query { withArticles { limit(0) } }.all().getOrThrow()
+        client.users.query { loadArticles { limit(0) } }.all().getOrThrow()
 
         assertTrue(counting.queriedTables.contains("users"), "the root query still runs")
         assertFalse(
@@ -380,7 +380,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         }.getOrThrow()
         counting.queriedTables.clear()
 
-        val posts = client.posts.query { withTags { limit(0) } }.all().getOrThrow()
+        val posts = client.posts.query { loadTags { limit(0) } }.all().getOrThrow()
 
         assertTrue(posts.all { it.edges.tags.requireLoaded().isEmpty() })
         assertFalse(
@@ -412,7 +412,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         }.getOrThrow()
         counting.queriedTables.clear()
 
-        client.posts.query { withTags { limit(5) } }.all().getOrThrow()
+        client.posts.query { loadTags { limit(5) } }.all().getOrThrow()
 
         assertTrue(counting.queriedTables.contains("tags"), "queried: ${counting.queriedTables}")
     }
@@ -422,7 +422,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val (client, counting) = countingClient()
 
         // Guard against over-correcting the skip into always-skip.
-        val articles = client.articles.query { withAuthor { limit(1) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(1) } }.all().getOrThrow()
 
         assertTrue(articles.all { it.edges.author.requireLoaded() != null })
         assertTrue(counting.queriedTables.contains("users"), "queried: ${counting.queriedTables}")
@@ -453,14 +453,14 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         client.posts.create { title = "untagged" }.saveAndLoad().getOrThrow()
         ops.clear()
 
-        client.reminders.query { withAssignee() }.all().getOrThrow()
+        client.reminders.query { loadAssignee() }.all().getOrThrow()
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
             "belongs-to with every FK null should still fire target interceptors; observed: $ops",
         )
 
         ops.clear()
-        client.posts.query { withTags() }.all().getOrThrow()
+        client.posts.query { loadTags() }.all().getOrThrow()
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
             "many-to-many with an empty junction should still fire target interceptors; observed: $ops",
@@ -484,7 +484,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         val articles = client.articles.query {
             where(Article.title eq "no-such-title")
-            withAuthor()
+            loadAuthor()
         }.all().getOrThrow()
 
         // The root result decides what gets loaded, not whether the
@@ -516,7 +516,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val query = { client.articles.query { where(Article.title eq "no-such-title"); withAuthor() } }
+        val query = { client.articles.query { where(Article.title eq "no-such-title"); loadAuthor() } }
 
         val result = query().all()
 
@@ -544,7 +544,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         }
 
         assertNull(
-            client.articles.query { where(Article.title eq "no-such-title"); withAuthor() }
+            client.articles.query { where(Article.title eq "no-such-title"); loadAuthor() }
                 .firstOrNull().getOrThrow(),
         )
         assertTrue(
@@ -564,7 +564,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val posts = client.posts.query { where(Post.title eq "no-such"); withTags() }.all().getOrThrow()
+        val posts = client.posts.query { where(Post.title eq "no-such"); loadTags() }.all().getOrThrow()
 
         assertTrue(posts.isEmpty())
         assertTrue(
@@ -600,11 +600,11 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         }
         ops.clear()
 
-        // The user has no articles, so the nested withAuthor pass has
+        // The user has no articles, so the nested loadAuthor pass has
         // zero parent groups. The only User-targeted EAGER_LOAD in
         // this query is that nested pass — the root runs with ALL —
         // so the assertion isolates nested firing.
-        client.users.query { withArticles { withAuthor() } }.all().getOrThrow()
+        client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow()
 
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
@@ -625,7 +625,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         client.reminders.create { body = "unassigned" }.saveAndLoad().getOrThrow()
         counting.queriedTables.clear()
 
-        val reminders = client.reminders.query { withAssignee() }.all().getOrThrow()
+        val reminders = client.reminders.query { loadAssignee() }.all().getOrThrow()
 
         // Firing the interceptor is not a reason to issue a query whose
         // IN list is empty.

@@ -65,7 +65,7 @@ internal class QueryGenerator(
             }
         }
 
-        // Eager loading: with{Edge}() methods and properties
+        // Edge loading: load{Edge}() methods and properties
         val eagerEdgeSpecs = resolved.edges
             .filter { it.join != null }
             .map { buildEagerEdgeSpec(it, resolved, packageName) }
@@ -75,6 +75,14 @@ internal class QueryGenerator(
         val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
 
         val typeSpec = TypeSpec.classBuilder(className)
+            .addKdoc(
+                "Mutable query builder for [%T]. Configure and execute this instance from one " +
+                    "thread at a time; query builders are not thread-safe. Do not mutate or " +
+                    "execute the same instance concurrently. Create a separate query builder " +
+                    "for each concurrent operation. A fully configured instance may be " +
+                    "executed repeatedly when those executions are sequential.\n",
+                entityClass,
+            )
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
             // Generated query class implements EdgeQuery<EntityClass>;
             // the scope flows out of combinedPredicate() typed as
@@ -256,7 +264,7 @@ internal class QueryGenerator(
             .addFunction(buildLimit(queryClass))
             .addFunction(buildOffset(queryClass))
             .addFunction(buildCombinedPredicate(predicateForEntity))
-            .addFunctions(eagerEdgeSpecs.map { it.withMethod })
+            .addFunctions(eagerEdgeSpecs.map { it.loadMethod })
             // Always emit `loadEdges` — the M2M eager-load codegen
             // emitted on a *source* query calls `subQuery.loadEdges(...)`
             // unconditionally on the target's query, so a target schema
@@ -266,6 +274,12 @@ internal class QueryGenerator(
             // iterations for edge-less schemas, so the method just
             // returns its `results` parameter unchanged.
             .addFunction(buildLoadEdges(resolved))
+            // Always emitted for the same reason as loadEdges: a parent
+            // query's terminal-entry guard recurses into every selected
+            // target query, so even edge-less target classes need the
+            // (no-op) acquire/release pair.
+            .addFunction(buildAcquireEdgeTopology(resolved))
+            .addFunction(buildReleaseEdgeTopology(resolved))
             .addFunction(buildRequireClient(schemaName))
             .addFunction(buildRunReadInterceptors(schemaName, clientName, entityClass))
             .addFunction(buildRunEdgePredicateInterceptors(resolved))
@@ -275,12 +289,21 @@ internal class QueryGenerator(
             .addFunction(buildSetDeferredSourceStep(entityClass))
             .addFunction(buildAll(schemaName, clientName, entityClass, hasEdges))
             .addFunction(buildFirstOrNull(schemaName, clientName, entityClass, hasEdges))
-            .addFunction(buildRawCount(schemaName, entityClass))
-            .addFunctions(buildAggregateTerminals(schemaName, entityClass))
-            .addFunction(buildRawExists(schemaName, entityClass))
+            .addFunction(buildRawCount(schemaName, entityClass, hasEdges))
+            .addFunctions(buildAggregateTerminals(schemaName, entityClass, hasEdges))
+            .addFunction(buildRawExists(schemaName, entityClass, hasEdges))
             .addFunctions(buildExplainMethods(resolved))
             .addFunctions(traversalMethods)
-            .build()
+
+        // The selected-edge guard and the terminal-entry isolation
+        // counter exist only when a graph can be selected at all;
+        // non-entity terminals, incompatible explains, and traversal
+        // route through the former, and topology-consuming terminals
+        // and entity explains hold the latter.
+        if (hasEdges) {
+            typeSpec.addFunction(buildRequireNoSelectedEdges(resolved))
+            typeSpec.addProperty(buildActiveTerminalsProperty())
+        }
 
         // Every generated query file constructs `Predicate.HasEdge` /
         // `Predicate.HasEdgeWith` in the edge-predicate walker and
@@ -295,7 +318,7 @@ internal class QueryGenerator(
                     .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
                     .build()
             )
-            .addType(typeSpec)
+            .addType(typeSpec.build())
             .build()
     }
 
@@ -325,14 +348,16 @@ internal class QueryGenerator(
 
         // Row-shaped reads (ALL operation, eager edges included):
         // one explain per canonical terminal, tracking its name.
-        methods += buildRowShapedExplain(queryPlan, "explainAll", "all")
+        methods += buildRowShapedExplain(queryPlan, "explainAll", "all", hasEager)
 
         // First-row read: fetches with `minOf(1, spec.limit ?: 1)`.
-        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrNull", "firstOrNull")
+        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrNull", "firstOrNull", hasEager)
 
-        // Aggregate reads.
-        methods += buildExistsShapedExplain(queryPlan, "explainRawExists", "rawExists", "RAW_EXISTS")
-        methods += buildRawCountExplain(queryPlan, entityClass)
+        // Aggregate reads. Both explains reject a selected edge-load
+        // graph before driver explain work, exactly as their
+        // terminals reject it before interceptor or driver work.
+        methods += buildExistsShapedExplain(queryPlan, "explainRawExists", "rawExists", "RAW_EXISTS", hasEager)
+        methods += buildRawCountExplain(queryPlan, entityClass, hasEager)
 
         // Internal buildQueryPlan helper. Takes the post-interceptor
         // FrozenQuerySpec rather than raw limit/offset so the explain

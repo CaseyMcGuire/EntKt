@@ -1,21 +1,21 @@
 package entkt.runtime.query
 
 /**
- * The loaded state of one eager-loadable edge on a returned generated
+ * The loaded state of one loadable edge on a returned generated
  * entity.
  *
- * `Unloaded` means the query did not request the edge — no `with{Edge}`
- * clause was configured, so nothing is known about the related rows.
- * `Loaded(value)` means the query requested the edge and [value] is the
+ * `Unloaded` means the query did not select the edge — no `load{Edge}`
+ * call was configured, so nothing is known about the related rows.
+ * `Loaded(value)` means the query selected the edge and [value] is the
  * result: a non-null `List` for to-many and many-to-many edges
  * (`Loaded(emptyList())` when no rows matched), or a nullable target for
  * `hasOne` / `belongsTo` edges (`Loaded(null)` when the edge was
- * requested but no target was returned — eager-load predicates, read
+ * selected but no target was returned — edge-load predicates, read
  * interceptors, `limit(0)`, or a positive offset can all exclude the
  * target even under a required foreign key).
  *
- * Generated `Edges` properties default to [Unloaded]; eager loading
- * assigns [Loaded] for every returned parent whose edge was requested.
+ * Generated `Edges` properties default to [Unloaded]; edge loading
+ * assigns [Loaded] for every returned parent whose edge was selected.
  * The wrapper makes loaded-empty and unloaded distinct without nested
  * nullable checks — see [loadedOrNull] for the state-preserving
  * accessor, [valueOrNull] for the deliberately lossy one, and
@@ -28,7 +28,7 @@ sealed interface EdgeState<out T> {
 }
 
 /**
- * True when this edge was eager-loaded — the state is [EdgeState.Loaded],
+ * True when this edge was loaded — the state is [EdgeState.Loaded],
  * whatever its value (including a loaded `null` or an empty list).
  */
 val EdgeState<*>.isLoaded: Boolean
@@ -60,7 +60,7 @@ fun <T> EdgeState<T>.valueOrNull(): T? = when (this) {
 /**
  * The loaded value — including a loaded `null` for a to-one edge with
  * no returned target. Throws [EdgeNotLoadedException] when the edge was
- * not eager-loaded; requiring an edge the query never requested is a
+ * not loaded; requiring an edge the query never selected is a
  * programming error, not an operational query failure.
  */
 fun <T> EdgeState<T>.requireLoaded(): T = when (this) {
@@ -69,13 +69,13 @@ fun <T> EdgeState<T>.requireLoaded(): T = when (this) {
 }
 
 /**
- * Thrown by [requireLoaded] when the edge was not eager-loaded. A
- * caller reaching this forgot the `with{Edge}` clause on the query —
+ * Thrown by [requireLoaded] when the edge was not loaded. A
+ * caller reaching this forgot the `load{Edge}` call on the query —
  * a programming error, so this deliberately propagates as an exception
  * and has no result-algebra representation. It sits outside
  * the `EntException` hierarchy, whose `Ent` prefix this project
  * reserves for the structured error family.
  */
 class EdgeNotLoadedException : IllegalStateException(
-    "Edge was not loaded; eager-load it before calling requireLoaded()",
+    "Edge was not loaded; select it with the query's load{Edge} method before calling requireLoaded()",
 )
