@@ -51,9 +51,20 @@ above it.
   common trigger; their `IN (...)` lists are not yet chunked.
   `insertMany` and `deleteManyByIds` are unchanged (they already
   chunk).
+  The budget is enforced as a running minimum inside the query-spec
+  builder, immediately before every operand snapshot — including
+  interceptor `addPredicate` contributions — and the typed DSL's
+  `column in values` / `notIn` no longer copy their collection at
+  construction: operands are snapshotted at terminal entry, after
+  the capacity check, matching raw `Predicate.Leaf` construction.
   _Migration:_ none for in-range queries; code matching on the old
   PSQLException for this condition should match
-  `PostgresBindLimitException` instead.
+  `PostgresBindLimitException` instead. Code that mutated a
+  collection AFTER passing it to `column in values` and relied on
+  the predicate keeping the construction-time contents must copy
+  explicitly (`column in values.toList()`); mutations now become
+  visible up to terminal entry, as they always were for raw `Leaf`
+  construction.
 - **Eager many-to-many discovery runs the junction entity's read interceptors** (`codegen`, `runtime`)
   An eager M2M step now fires the JUNCTION entity's interceptors with
   the new `ReadOperation.EAGER_JUNCTION` before its junction read, so
