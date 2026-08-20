@@ -186,10 +186,14 @@ internal fun buildEagerEdgeSpec(
  * captured any query in the selected graph cannot change the topology
  * or privacy posture the in-flight operation is materializing. A
  * counter rather than a flag so a re-entrant terminal started from an
- * interceptor cannot clear the outer terminal's guard early. Defensive
- * copies of a captured target query's *contents* (predicates, ordering,
- * bounds mutated mid-flight) remain owned by the set-based executor
- * RFC. Emitted only when the query has a load-capable edge.
+ * interceptor cannot clear the outer terminal's guard early. A
+ * captured target query's *contents* need no guard: each eager step
+ * snapshots them when depth-first execution reaches it — the spec
+ * builder copies predicates and ordering at interceptor-chain entry,
+ * and the step's window and explain metadata read the frozen spec's
+ * bounds — so predicates, ordering, or bounds mutated mid-flight
+ * affect later executions only. Emitted only when the query has a
+ * load-capable edge.
  */
 internal fun buildActiveTerminalsProperty(): PropertySpec {
     return PropertySpec.builder("activeTerminals", Int::class)
@@ -356,8 +360,12 @@ private fun emitToManyEagerBlock(
     // `take(0)` below. An empty parent set skips it too — the IN
     // could match nothing. The interceptor pass above still runs —
     // it fires on every eager subquery regardless of bounds or data.
-    body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
-    body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
+    // Bounds come from the frozen spec, not live sub-query state: an
+    // interceptor that captured the nested query and mutates its
+    // limit()/offset() mid-flight cannot shift the window this step
+    // executes (the mutation applies to later executions only).
+    body.addStatement("val perGroupOffset = subSpec.offset ?: 0")
+    body.addStatement("val perGroupLimit = subSpec.limit ?: Int.MAX_VALUE")
     body.addStatement(
         "val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
         targetClass,
@@ -412,15 +420,17 @@ private fun emitHasOneEagerBlock(
     // Bounds are resolved before the fetch so a window that admits
     // nothing skips the round trip; every row would be dropped by the
     // `drop().take()` below. The interceptor pass above still runs —
-    // it fires on every eager subquery regardless of bounds.
+    // it fires on every eager subquery regardless of bounds. Bounds
+    // come from the frozen spec, matching the sibling paths, so a
+    // captured sub-query mutated mid-flight cannot shift the window.
     //
     // A positive offset also empties the window here, which it does
     // not on the to-many path: a `hasOne` edge requires its inverse
     // `belongsTo` to declare `.unique()` (enforced by codegen and by
     // the schema DSL), so the unique index guarantees at most one row
     // per source and `drop(1)` leaves nothing.
-    body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
-    body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
+    body.addStatement("val perGroupOffset = subSpec.offset ?: 0")
+    body.addStatement("val perGroupLimit = subSpec.limit ?: Int.MAX_VALUE")
     body.addStatement("val targetInWindow = perGroupOffset == 0 && perGroupLimit > 0")
     body.addStatement(
         "val targetRows = if (targetInWindow && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
@@ -517,24 +527,6 @@ private fun emitToOneEagerBlock(
     val fkRequired = fk?.required ?: false
 
     body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
-    // Per-parent bounds, same contract as the to-many edges. A
-    // belongsTo yields at most one target per parent, so the window
-    // collapses to "is index 0 inside it?" — false for `limit(0)`
-    // ("no rows", as everywhere else) and for any positive offset.
-    //
-    // Applied as a row slice below — before the privacy check, which
-    // is what the to-many and hasOne paths do — so an excluded target
-    // is never privacy-evaluated or nested-eager-loaded. A denial for
-    // a row the caller explicitly asked not to load would otherwise
-    // throw out of `loadAuthor { limit(0) }`.
-    //
-    // Deliberately not short-circuiting the whole branch: the
-    // EAGER_LOAD interceptor pass has to fire on every eager subquery
-    // regardless of bounds, which is what the sibling paths and
-    // `explain()` both do.
-    body.addStatement("val perParentOffset = subQuery.queryOffset ?: 0")
-    body.addStatement("val perParentLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
-    body.addStatement("val targetInWindow = perParentOffset == 0 && perParentLimit > 0")
     body.addStatement("val fkValues = entities.mapNotNull { it.%L }.distinct()", fkPropName)
     emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
     // Fetch every matching target in one `IN (...)` pass. The
@@ -552,6 +544,27 @@ private fun emitToOneEagerBlock(
         "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
+    // Per-parent bounds, same contract as the to-many edges. A
+    // belongsTo yields at most one target per parent, so the window
+    // collapses to "is index 0 inside it?" — false for `limit(0)`
+    // ("no rows", as everywhere else) and for any positive offset.
+    // Bounds come from the frozen spec, matching the sibling paths,
+    // so a captured sub-query mutated mid-flight cannot shift the
+    // window.
+    //
+    // Applied as a row slice below — before the privacy check, which
+    // is what the to-many and hasOne paths do — so an excluded target
+    // is never privacy-evaluated or nested-eager-loaded. A denial for
+    // a row the caller explicitly asked not to load would otherwise
+    // throw out of `loadAuthor { limit(0) }`.
+    //
+    // Deliberately not short-circuiting the whole branch: the
+    // EAGER_LOAD interceptor pass above fires on every eager subquery
+    // regardless of bounds, which is what the sibling paths and
+    // `explain()` both do.
+    body.addStatement("val perParentOffset = subSpec.offset ?: 0")
+    body.addStatement("val perParentLimit = subSpec.limit ?: Int.MAX_VALUE")
+    body.addStatement("val targetInWindow = perParentOffset == 0 && perParentLimit > 0")
     // Only the fetch is conditional. Skipped when nothing could
     // match — an empty IN, or a window that admits no row — because
     // every row it returned would be discarded anyway.
@@ -637,9 +650,11 @@ private fun emitM2MEagerBlock(
     // The junction query above is deliberately still issued: its rows
     // produce the `targetIds` that the EAGER_LOAD interceptor pass
     // predicates on, and interceptors fire on every eager subquery
-    // regardless of bounds.
-    body.addStatement("val perGroupOffset = subQuery.queryOffset ?: 0")
-    body.addStatement("val perGroupLimit = subQuery.queryLimit ?: Int.MAX_VALUE")
+    // regardless of bounds. Bounds come from the frozen spec,
+    // matching the direct-edge paths, so a captured sub-query
+    // mutated mid-flight cannot shift the window.
+    body.addStatement("val perGroupOffset = subSpec.offset ?: 0")
+    body.addStatement("val perGroupLimit = subSpec.limit ?: Int.MAX_VALUE")
     body.addStatement(
         "val targetRows = if (perGroupLimit > 0 && targetIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
         targetClass,
@@ -951,19 +966,25 @@ internal fun buildEagerExplainBlock(
  * a constant `false`); a grouped edge overfetches only when it
  * fetches at all (`limit != 0`) and the window can discard — a
  * finite positive limit or a positive offset.
+ *
+ * Bounds come from the frozen `subSpec` (before its limit/offset are
+ * stripped for the driver-explain call), never from live sub-query
+ * state, matching the runtime blocks — a captured sub-query mutated
+ * mid-explain cannot make the metadata describe a window this plan's
+ * execution would not use.
  */
 private fun emitEagerExecutionMetadata(body: CodeBlock.Builder, isToOne: Boolean) {
     val overfetchRiskExpr = if (isToOne) {
         "false"
     } else {
-        "(subQuery.queryLimit ?: 1) != 0 && (subQuery.queryLimit != null || (subQuery.queryOffset ?: 0) > 0)"
+        "(subSpec.limit ?: 1) != 0 && (subSpec.limit != null || (subSpec.offset ?: 0) > 0)"
     }
     body.add("  subPlan.copy(eagerExecution = %T(\n", EAGER_EXECUTION_PLAN)
     body.add("    setBatchedNestedExecution = true,\n")
     body.add("    effectiveOrder = subSpec.orderBy,\n")
     body.add("    windowStrategy = %T.IN_MEMORY_EMULATED,\n", EAGER_WINDOW_STRATEGY)
-    body.add("    perParentLimit = subQuery.queryLimit,\n")
-    body.add("    perParentOffset = subQuery.queryOffset,\n")
+    body.add("    perParentLimit = subSpec.limit,\n")
+    body.add("    perParentOffset = subSpec.offset,\n")
     body.add("    windowOverfetchRisk = $overfetchRiskExpr,\n")
     body.add("  ))\n")
 }

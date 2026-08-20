@@ -13,6 +13,7 @@ import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.query.QueryInterceptor
 
 import entkt.query.Op
+import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
 import java.math.BigDecimal
@@ -541,5 +542,48 @@ class InterceptorEngineTest {
             )
         }
         assertEquals("hook bug", ex.message)
+    }
+
+    @Test
+    fun `mutating a returned callerOrderBy list cannot corrupt later interceptors' attribution`() {
+        // Two terms matter: a multi-element list is backed by a
+        // mutable ArrayList, so a hostile consumer (trivially from
+        // Java) can mutate what the shape handed out. Each shape must
+        // return a fresh copy, never the builder's stored list.
+        val terms = listOf(
+            OrderField<Post>("a", OrderDirection.ASC),
+            OrderField<Post>("b", OrderDirection.DESC),
+        )
+        val b = QuerySpecBuilder(
+            table = "posts",
+            entity = Post::class,
+            callerPredicates = emptyList(),
+            structuralPredicates = emptyList(),
+            orderBy = terms,
+            callerLimit = null,
+            offset = null,
+            flags = emptySet(),
+        )
+        val hostile = QueryInterceptor<Post> { scope, _ ->
+            (scope.shape.callerOrderBy as? ArrayList<*>)?.clear()
+        }
+        var observed: List<OrderField<Post>>? = null
+        var observedHasCallerOrderBy = false
+        val observer = QueryInterceptor<Post> { scope, _ ->
+            observed = scope.shape.callerOrderBy
+            observedHasCallerOrderBy = scope.shape.hasCallerOrderBy
+        }
+        InterceptorEngine.apply(
+            builder = b,
+            context = rootContext(),
+            entity = "Post",
+            entityInterceptors = listOf(
+                RegisteredInterceptor("hostile", hostile),
+                RegisteredInterceptor("observer", observer),
+            ),
+            globalInterceptors = emptyList(),
+        )
+        assertEquals(terms, observed, "authored attribution must survive a consumer's mutation")
+        assertTrue(observedHasCallerOrderBy)
     }
 }

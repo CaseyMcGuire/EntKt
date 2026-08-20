@@ -1,6 +1,7 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
+import entkt.integrationtest.ent.ArticleQuery
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
@@ -255,6 +256,37 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
         assertEquals(1, profile.perParentOffset)
         assertFalse(profile.windowOverfetchRisk, "a to-one edge never fetches a row it discards")
         assertFalse(plan.render().contains("may overfetch"))
+    }
+
+    @Test
+    fun `mid-explain bounds mutation cannot change the reported window metadata`() {
+        var captured: ArticleQuery? = null
+        val client = EntClient(resetAndDriver()) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                articles(
+                    QueryInterceptor { _, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_LOAD) captured?.offset(3)
+                    },
+                    name = "mid-explain-bounds-mutator",
+                )
+            }
+        }
+        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        val query = client.users.query()
+        var target: ArticleQuery? = null
+        query.loadArticles { target = this }
+        captured = target
+
+        val plan = query.explainAll()
+
+        // The metadata reads the spec frozen before the interceptor
+        // chain ran, so it describes the window this plan's execution
+        // would actually use — not the mid-flight mutation, which
+        // governs later executions only.
+        val exec = assertNotNull(plan.eagerQueries.getValue("articles").eagerExecution)
+        assertNull(exec.perParentOffset)
+        assertFalse(exec.windowOverfetchRisk)
     }
 
     @Test

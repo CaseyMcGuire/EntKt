@@ -123,7 +123,12 @@ public class QuerySpecBuilder<E : Any> public constructor(
             table = table,
             predicates = predicates.map { it.predicate },
             orderBy = orderByList.toList(),
-            callerOrderBy = callerOrderByList,
+            // Fresh copy per shape, like every sibling field: the
+            // stored list must not be reachable through a returned
+            // shape, or one consumer's mutation (possible from Java,
+            // or via an unchecked cast) would corrupt the authored
+            // attribution every later interceptor observes.
+            callerOrderBy = callerOrderByList.toList(),
             limit = currentLimit,
             callerLimit = callerLimit,
             offset = offset,

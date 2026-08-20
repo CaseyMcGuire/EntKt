@@ -3,6 +3,7 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleLoadPrivacyItem
 import entkt.integrationtest.ent.ArticlePolicyScope
+import entkt.integrationtest.ent.ArticleQuery
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntPrivacyReadClient
 import entkt.integrationtest.ent.Group
@@ -701,6 +702,45 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
             listOf("a-member"),
             groups.single().edges.users.requireLoaded().map { it.name },
         )
+    }
+
+    // ---- an eager step's window is frozen with its spec ----
+
+    @Test
+    fun `mid-flight bounds mutation of a captured eager query affects only later executions`() {
+        val recording = RecordingDriver(resetAndDriver())
+        var captured: ArticleQuery? = null
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+            interceptors {
+                articles(
+                    QueryInterceptor { _, ctx ->
+                        if (ctx.operation == ReadOperation.EAGER_LOAD) captured?.limit(1)
+                    },
+                    name = "mid-flight-bounds-mutator",
+                )
+            }
+        }
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+        client.articles.create { title = "a2"; authorId = a.id }.save().getOrThrow()
+        client.articles.create { title = "a3"; authorId = a.id }.save().getOrThrow()
+        val query = client.users.query()
+        var target: ArticleQuery? = null
+        query.loadArticles { target = this }
+        captured = target
+
+        // The step's window comes from the spec frozen before the
+        // interceptor chain ran, so the mid-flight limit(1) cannot
+        // shift what this execution loads.
+        val first = query.all().getOrThrow().single()
+        assertEquals(3, first.edges.articles.requireLoaded().size)
+
+        // The mutation persisted on the captured query, so — like any
+        // other post-terminal mutation — it governs later executions.
+        captured = null
+        val second = query.all().getOrThrow().single()
+        assertEquals(1, second.edges.articles.requireLoaded().size)
     }
 
     // ---- nested privacy: one union batch per logical edge step ----
