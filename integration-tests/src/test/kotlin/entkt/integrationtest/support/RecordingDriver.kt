@@ -66,6 +66,17 @@ class RecordingDriver private constructor(
         return delegate.query(table, predicates, orderBy, limit, offset)
     }
 
+    // Capability probes are pure and unrecorded; the read itself is
+    // the data-path call. Recorded under its own name so call-list
+    // pins distinguish the native lowering from an ordinary query.
+    @OptIn(entkt.query.EntktInternal::class)
+    override fun queryDirectToMany(
+        query: entkt.runtime.driver.DirectToManyQuery,
+    ): entkt.runtime.driver.RelatedRows {
+        calls += "queryDirectToMany:${query.targetTable}"
+        return delegate.queryDirectToMany(query)
+    }
+
     override fun count(table: String, predicates: List<Predicate<*>>): Long {
         calls += "count:$table"
         return delegate.count(table, predicates)

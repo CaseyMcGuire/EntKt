@@ -184,11 +184,67 @@ class QueryGeneratorTest {
 
         // A window that admits nothing would discard every fetched row,
         // so the round trip is pure waste — likewise when there are no
-        // parents at all and the IN could match nothing. The interceptor
-        // pass above it still runs — it fires on every eager subquery
-        // regardless of bounds or data — so only the fetch is conditional.
-        assert(output.contains("val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(")) {
-            "to-many eager fetch should be skipped when limit(0) or an empty parent set admits nothing\n$output"
+        // parents at all and the IN could match nothing. Those data
+        // gates live in the runtime's executeDirectToMany; generated
+        // code hands it the parent keys and the frozen window so the
+        // gate decision stays driver-independent, while the
+        // interceptor pass above always runs.
+        assert(output.contains("val related = executeDirectToMany(")) {
+            "to-many eager fetch should route through the runtime direct to-many executor\n$output"
+        }
+        assert(output.contains("window = PerParentWindow(offset = perGroupOffset, limit = subSpec.limit)")) {
+            "the runtime executor should receive the frozen per-parent window\n$output"
+        }
+        assert(output.contains("emulationPredicates = subSpec.predicates,")) {
+            "the emulated fallback should receive the complete frozen predicate list\n$output"
+        }
+    }
+
+    @Test
+    fun `to-many eager loads probe the driver's native window capability`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val output = generator.generate("User", user, mapOf(user to "User", car to "Car"))
+            .toString().replace("\\s+".toRegex(), " ")
+
+        // The capability is sampled ONCE, BEFORE the interceptor
+        // chain: a native driver transports the structural
+        // relationship IN as one typed-array bind, so the running
+        // bind budget must not charge one scalar bind per parent key
+        // — and the SAME sample routes the fetch, so budgeting and
+        // routing cannot disagree against an unstable capability.
+        assert(output.contains("val toManyWindowCapability = driver.directToManyWindowCapability()")) {
+            "to-many eager block should sample the driver capability once\n$output"
+        }
+        assert(
+            output.contains("val nativeToManyWindows = toManyWindowCapability == DirectToManyWindowCapability.NATIVE"),
+        ) {
+            "the bind-budget flag should derive from the one sample\n$output"
+        }
+        assert(output.contains("structuralSingleBindTransport = nativeToManyWindows")) {
+            "the capability should drive the structural bind-budget accounting\n$output"
+        }
+        assert(output.contains("capability = toManyWindowCapability,")) {
+            "the runtime executor should receive the same capability sample\n$output"
+        }
+        // The driver receives the frozen predicates minus the
+        // separately-attributed relationship constraint on the native
+        // path.
+        assert(output.contains("targetPredicates = subSpec.nonStructuralPredicates,")) {
+            "the native path should hand the driver only non-structural predicates\n$output"
+        }
+        // Explain mirrors the same probe so the reported strategy and
+        // overfetch risk match what execution would do.
+        assert(
+            output.contains(
+                "windowStrategy = if (nativeToManyWindows) EagerWindowStrategy.STORAGE_NATIVE else EagerWindowStrategy.IN_MEMORY_EMULATED",
+            ),
+        ) {
+            "explain should report native vs emulated from the driver capability\n$output"
+        }
+        assert(output.contains("windowOverfetchRisk = if (nativeToManyWindows) false else")) {
+            "a storage-native window has nothing to overfetch\n$output"
         }
     }
 

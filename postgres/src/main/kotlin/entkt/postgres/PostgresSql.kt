@@ -24,6 +24,16 @@ internal data class Param(val type: FieldType?, val value: Any?)
 internal data class PreparedSql(val sql: String, val params: List<Param>)
 
 /**
+ * A [Param] value carrying one typed PostgreSQL array bind (the
+ * `= ANY(?)` relationship transport of the native direct to-many
+ * lowering). Bound via `Connection.createArrayOf(typeName, elements)`
+ * / `PreparedStatement.setArray` rather than [PostgresValueCodec.bind]
+ * — the codec dispatches on scalar [FieldType]s and has no array
+ * notion. Carried with `Param(type = null, value = PgTypedArray(...))`.
+ */
+internal class PgTypedArray(val typeName: String, val elements: Array<Any?>)
+
+/**
  * PostgreSQL's extended-query protocol carries the bind-parameter count
  * as an Int16, so a statement can bind at most 65,535 parameters.
  * Enforced in three places: [PredicateSqlBuilder.lowerInList] pre-checks

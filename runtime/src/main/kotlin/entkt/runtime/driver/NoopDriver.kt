@@ -74,6 +74,16 @@ object NoopDriver : Driver {
     ): List<Map<String, Any?>> =
         error("NoopDriver cannot query — was a terminal op called inside EdgeRef.has { }?")
 
+    override fun directToManyWindowCapability(): DirectToManyWindowCapability =
+        error(
+            "NoopDriver cannot report a direct to-many window capability — " +
+                "was a terminal op called inside EdgeRef.has { }?",
+        )
+
+    @OptIn(entkt.query.EntktInternal::class)
+    override fun queryDirectToMany(query: DirectToManyQuery): RelatedRows =
+        error("NoopDriver cannot queryDirectToMany — was a terminal op called inside EdgeRef.has { }?")
+
     override fun count(table: String, predicates: List<Predicate<*>>): Long =
         error("NoopDriver cannot count — was a terminal op called inside EdgeRef.has { }?")
 

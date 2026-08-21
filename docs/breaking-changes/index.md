@@ -30,6 +30,31 @@ above it.
 
 ## Unreleased
 
+- **`Driver` gains two abstract members for native direct to-many windows** (`runtime`, `postgres`)
+  `directToManyWindowCapability()` and `queryDirectToMany(query)` are new
+  and deliberately abstract (like `registerAll` / `requireBindCapacity`),
+  so hand-written drivers and decorators no longer compile until they
+  choose: report `DirectToManyWindowCapability.EMULATED` with a throwing
+  `queryDirectToMany` stub to keep the phase-1 behavior, or implement
+  native per-parent windows. `PostgresDriver` is `NATIVE`: a direct
+  to-many eager edge now executes one `ROW_NUMBER()`-windowed statement
+  with the parent keys bound as a single typed array — rows outside a
+  finite per-parent window are no longer fetched, parent cardinality no
+  longer counts against the 65,535-bind budget, and explain reports the
+  step as `EagerWindowStrategy.STORAGE_NATIVE` (a new enum value —
+  exhaustive `when`s over `EagerWindowStrategy` gain a branch) with
+  `windowOverfetchRisk = false`. The selected rows are identical to
+  phase 1's. `FrozenQuerySpec` additionally carries
+  `callerPredicateCount` / `structuralPredicateCount` attribution (new
+  constructor parameters with backward-compatible defaults).
+  _Migration:_ custom drivers implement the two members (`EMULATED` +
+  `UnsupportedOperationException` stub is the drop-in choice); Kotlin
+  `by`-delegating wrappers forward them automatically but observation
+  wrappers that record `query()` calls must also record
+  `queryDirectToMany` or direct to-many eager reads disappear from
+  their logs; assertions pinning `IN_MEMORY_EMULATED` or overfetch risk
+  on direct to-many explain output flip on native drivers.
+
 - **Over-limit PostgreSQL statements fail fast with an actionable error** (`postgres`)
   Operations whose bind-parameter count is data-dependent (`query`,
   `count`, `exists`, `aggregate`, `updateMany`, `deleteMany`) now count

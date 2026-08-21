@@ -263,6 +263,64 @@ interface Driver {
     ): List<Map<String, Any?>>
 
     /**
+     * Whether this driver can push a direct to-many eager edge's
+     * per-parent ordering, offset, and limit into storage. The
+     * runtime consults this before every direct to-many eager fetch
+     * and routes NATIVE drivers through [queryDirectToMany]; EMULATED
+     * drivers retain the phase-1 lowering (one ordinary [query] with
+     * the window applied in memory), so no eager query a driver
+     * accepted before this capability existed is ever rejected.
+     *
+     * Deliberately abstract, like [registerAll] and
+     * [requireBindCapacity]: a decorator that forwards each operation
+     * by hand but inherited an EMULATED default would silently
+     * downgrade a native driver back to full-result overfetch — and
+     * one that inherited a NATIVE default over an emulated driver
+     * would route reads to a [queryDirectToMany] that cannot execute.
+     * Kotlin `by`-delegating wrappers forward it automatically;
+     * manual and Java decorators are forced to choose.
+     */
+    fun directToManyWindowCapability(): DirectToManyWindowCapability
+
+    /**
+     * Execute one logical direct to-many relationship read with the
+     * per-parent window applied in storage. Called by the runtime
+     * only when [directToManyWindowCapability] is NATIVE; drivers
+     * without the capability implement this as a throwing stub.
+     *
+     * Contract, per the set-based eager graph loader RFC:
+     *  - The relationship constraint is lowered by the driver itself
+     *    from [DirectToManyQuery.sourceKeys] and
+     *    [DirectToManyQuery.targetForeignKey], without spending one
+     *    scalar bind per parent key (PostgreSQL: one typed-array
+     *    parameter). [DirectToManyQuery.targetPredicates] are AND-ed
+     *    with it before any ranking, so a predicate can never make a
+     *    window return fewer than `limit` rows while later matching
+     *    rows exist.
+     *  - Rows return in the one global canonical
+     *    [DirectToManyQuery.effectiveOrder], each carrying its source
+     *    key ([RelatedRow.sourceKey], the decoded FK value).
+     *  - Rows outside a parent's window are not returned; window
+     *    bound arithmetic must not overflow `Int`.
+     *  - Synthetic driver columns (ranking aliases) never appear in
+     *    the returned row maps, and must not collide with registered
+     *    storage columns.
+     *  - All physical reads for the one logical query observe one
+     *    database snapshot (a single statement satisfies this).
+     *  - Deterministic pre-I/O guards (bind-parameter budgets) apply
+     *    to the statement's complete bind list before any I/O.
+     *
+     * Deliberately abstract, paired with [directToManyWindowCapability]:
+     * the two members are one forwarding unit for decorators.
+     *
+     * `@EntktInternal` propagates from the relationship-plan types:
+     * implementing or calling this member is framework wiring, and a
+     * custom driver opts in explicitly.
+     */
+    @entkt.query.EntktInternal
+    fun queryDirectToMany(query: DirectToManyQuery): RelatedRows
+
+    /**
      * Count rows matching [predicates]. Predicates are AND-ed together,
      * same as [query]. Returns zero for an empty or unmatched table.
      */

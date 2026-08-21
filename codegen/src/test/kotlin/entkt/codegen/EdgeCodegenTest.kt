@@ -2447,15 +2447,21 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        // Batch fetch passes null,null limit/offset to the driver
-        // (per-group pagination is applied below in Kotlin). The
-        // orderBy comes from spec.orderBy after EAGER_LOAD
-        // interceptors have run.
-        assert(output.contains("subSpec.orderBy, null, null)")) {
-            "Batch query should not pass limit/offset to driver\n$output"
+        // The batch fetch routes through the runtime-owned direct
+        // to-many executor: the statement carries no LIMIT/OFFSET —
+        // a native driver applies each parent's window in storage,
+        // and the emulated fallback fetches everything and windows
+        // per group in Kotlin below.
+        assert(output.contains("val related = executeDirectToMany(")) {
+            "to-many fetch should route through the runtime direct to-many executor\n$output"
         }
-        assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
-            "Should apply limit/offset per group\n$output"
+        assert(output.contains("pairs.drop(perGroupOffset).take(perGroupLimit)")) {
+            "Should apply limit/offset per group on the emulated path\n$output"
+        }
+        // Under STORAGE_NATIVE the rows are already windowed — the
+        // Kotlin drop/take must not run a second time.
+        assert(output.contains("val windowInStorage = related.strategy == EagerWindowStrategy.STORAGE_NATIVE")) {
+            "Should skip the Kotlin window when storage applied it\n$output"
         }
     }
 

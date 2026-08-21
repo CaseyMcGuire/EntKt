@@ -37,9 +37,10 @@ import kotlin.test.assertTrue
  * - Tied rows enter a finite per-parent window deterministically.
  * - Each eager subplan carries typed `eagerExecution` metadata —
  *   set-batched nested execution, the effective order, and the
- *   in-memory window emulation with its overfetch risk — on a
- *   framework-owned field that caller-controlled annotations
- *   cannot override.
+ *   per-path window strategy (storage-native for direct to-many
+ *   edges on the PostgreSQL driver; in-memory emulation with its
+ *   overfetch risk elsewhere) — on a framework-owned field that
+ *   caller-controlled annotations cannot override.
  */
 class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
 
@@ -178,7 +179,7 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `explain reports set-batched execution, the effective order, and the emulated window per eager path`() {
+    fun `explain reports set-batched execution, the effective order, and each eager path's window strategy`() {
         val client = EntClient(resetAndDriver()) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }
@@ -209,10 +210,13 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
             ),
             articles.effectiveOrder,
         )
-        assertEquals(EagerWindowStrategy.IN_MEMORY_EMULATED, articles.windowStrategy)
+        // The PostgreSQL driver has native direct to-many windows, so
+        // the hasMany step reports the storage-native strategy — and a
+        // storage window has nothing to overfetch.
+        assertEquals(EagerWindowStrategy.STORAGE_NATIVE, articles.windowStrategy)
         assertEquals(5, articles.perParentLimit)
         assertEquals(2, articles.perParentOffset)
-        assertTrue(articles.windowOverfetchRisk, "a finite emulated window overfetches")
+        assertFalse(articles.windowOverfetchRisk, "a storage-native window discards nothing")
 
         // Nested eager subplans carry the metadata too — one per
         // logical edge step, recursively.
@@ -226,10 +230,13 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
         assertNull(groups.perParentLimit)
         assertFalse(groups.windowOverfetchRisk, "an unbounded window discards nothing")
 
-        // The human-readable rendering labels the emulation without
-        // claiming any row-fetch reduction.
+        // The human-readable rendering labels each edge's real
+        // strategy: storage-native for the direct to-many step,
+        // in-memory emulation for the many-to-many step (which never
+        // claims a row-fetch reduction it doesn't have).
         val rendered = plan.render()
         assertContains(rendered, "set-batched nested loads")
+        assertContains(rendered, "storage-native")
         assertContains(rendered, "in-memory emulation")
     }
 
@@ -312,10 +319,12 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
         // The annotations land in the caller-controlled map…
         val articlesPlan = plan.eagerQueries.getValue("articles")
         assertEquals("native", articlesPlan.annotations["entkt.eager.window"])
-        // …while the typed framework field reports the real strategy.
+        // …while the typed framework field reports the real strategy
+        // (storage-native on the PostgreSQL driver, with no overfetch
+        // for the annotation to misreport).
         val exec = assertNotNull(articlesPlan.eagerExecution)
         assertTrue(exec.setBatchedNestedExecution)
-        assertEquals(EagerWindowStrategy.IN_MEMORY_EMULATED, exec.windowStrategy)
-        assertTrue(exec.windowOverfetchRisk)
+        assertEquals(EagerWindowStrategy.STORAGE_NATIVE, exec.windowStrategy)
+        assertFalse(exec.windowOverfetchRisk)
     }
 }

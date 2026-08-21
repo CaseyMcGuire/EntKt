@@ -75,6 +75,20 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * users with no driver in scope.
      */
     private val requireBindCapacity: (Long) -> Unit = {},
+    /**
+     * True when the driver lowers this call's structural predicates
+     * through a single-bind relationship transport (a typed-array /
+     * table-valued parent-key parameter) instead of one scalar bind
+     * per operand. The running bind minimum then charges one
+     * parameter per structural predicate rather than its O(1)
+     * `IN`-operand size, so a parent set larger than the driver's
+     * scalar bind limit is not falsely rejected. Caller and
+     * interceptor predicates always charge their scalar sizes —
+     * they bind normally regardless of the relationship transport.
+     * Generated code passes the driver's direct to-many window
+     * capability here for eager direct to-many steps only.
+     */
+    structuralSingleBindTransport: Boolean = false,
 ) {
     // Typed in E: every layer above the
     // driver call stays typed. Predicates enter the builder from
@@ -101,7 +115,11 @@ public class QuerySpecBuilder<E : Any> public constructor(
     // addition's snapshot.
     private var minimumBoundParameters: Long =
         entkt.runtime.driver.minimumBindParameters(callerPredicates) +
-            entkt.runtime.driver.minimumBindParameters(structuralPredicates)
+            if (structuralSingleBindTransport) {
+                structuralPredicates.size.toLong()
+            } else {
+                entkt.runtime.driver.minimumBindParameters(structuralPredicates)
+            }
 
     init {
         requireBindCapacity(minimumBoundParameters)
@@ -226,15 +244,30 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * again — the FrozenQuerySpec is independent of the builder and of
      * anything any callback can still reach.
      */
-    internal fun freeze(): FrozenQuerySpec<E> = FrozenQuerySpec(
-        table = table,
-        predicates = predicates.map { it.predicate.semanticSnapshot() },
-        orderBy = orderByList.map { it.semanticSnapshot() },
-        limit = currentLimit,
-        offset = offset,
-        flags = flags.toSet(),
-        annotations = annotationsMap.toMap(),
-    )
+    internal fun freeze(): FrozenQuerySpec<E> {
+        // The stored list is [caller..., structural..., interceptor...]
+        // by construction (entry seeds caller then structural;
+        // interceptor additions append), which is the positional
+        // contract FrozenQuerySpec's attribution slices rely on.
+        var caller = 0
+        var structural = 0
+        for (t in predicates) when (t.source) {
+            Source.CALLER -> caller++
+            Source.STRUCTURAL -> structural++
+            Source.INTERCEPTOR -> {}
+        }
+        return FrozenQuerySpec(
+            table = table,
+            predicates = predicates.map { it.predicate.semanticSnapshot() },
+            orderBy = orderByList.map { it.semanticSnapshot() },
+            limit = currentLimit,
+            offset = offset,
+            flags = flags.toSet(),
+            annotations = annotationsMap.toMap(),
+            callerPredicateCount = caller,
+            structuralPredicateCount = structural,
+        )
+    }
 
     private enum class Source { CALLER, STRUCTURAL, INTERCEPTOR }
     private data class Tagged<E : Any>(val predicate: Predicate<E>, val source: Source)
@@ -365,13 +398,57 @@ public data class TraversalSourceResult<E : Any> public constructor(
  */
 public data class FrozenQuerySpec<E : Any> public constructor(
     val table: String,
+    /**
+     * The complete frozen predicate list, positionally attributed:
+     * `[caller..., structural..., interceptor...]`. The first
+     * [callerPredicateCount] entries are caller-authored, the next
+     * [structuralPredicateCount] are framework structural predicates
+     * (by-id leaves, traversal bridges, eager relationship `IN`s),
+     * and the remainder are interceptor contributions. [freeze]
+     * produces this order from the builder's tagged buckets, and the
+     * generated edge-predicate walker rewrites entries in place, so
+     * the slices stay valid on a positionally-mapped `copy`.
+     */
     val predicates: List<Predicate<E>>,
     val orderBy: List<OrderField<E>>,
     val limit: Int?,
     val offset: Int?,
     val flags: Set<QueryFlag>,
     val annotations: Map<String, String>,
-)
+    /** Count of caller-authored predicates at the head of [predicates]. */
+    val callerPredicateCount: Int = predicates.size,
+    /** Count of framework structural predicates after the caller slice. */
+    val structuralPredicateCount: Int = 0,
+) {
+    init {
+        require(callerPredicateCount >= 0 && structuralPredicateCount >= 0) {
+            "FrozenQuerySpec attribution counts must be non-negative: " +
+                "caller=$callerPredicateCount structural=$structuralPredicateCount"
+        }
+        require(callerPredicateCount + structuralPredicateCount <= predicates.size) {
+            "FrozenQuerySpec attribution overflow: caller=$callerPredicateCount + " +
+                "structural=$structuralPredicateCount > predicates.size=${predicates.size}"
+        }
+    }
+
+    /** The framework structural slice of [predicates]. */
+    val structuralPredicates: List<Predicate<E>>
+        get() = predicates.subList(
+            callerPredicateCount,
+            callerPredicateCount + structuralPredicateCount,
+        )
+
+    /**
+     * [predicates] minus the structural slice — the caller and
+     * interceptor predicates, in stored order. The native direct
+     * to-many path hands these to the driver as the remaining target
+     * predicates while the driver lowers the separately-attributed
+     * relationship constraint itself.
+     */
+    val nonStructuralPredicates: List<Predicate<E>>
+        get() = predicates.subList(0, callerPredicateCount) +
+            predicates.subList(callerPredicateCount + structuralPredicateCount, predicates.size)
+}
 
 /**
  * Whether limit operations have meaningful effect on the given

@@ -868,6 +868,14 @@ class PostgresDriver(
     override fun requireBindCapacity(minimumParameters: Long, table: String) =
         requirePostgresBindCapacity(minimumParameters, table)
 
+    override fun directToManyWindowCapability(): entkt.runtime.driver.DirectToManyWindowCapability =
+        entkt.runtime.driver.DirectToManyWindowCapability.NATIVE
+
+    override fun queryDirectToMany(
+        query: entkt.runtime.driver.DirectToManyQuery,
+    ): entkt.runtime.driver.RelatedRows =
+        withConnection { ops.queryDirectToMany(it, query) }
+
     override fun explainQuery(
         table: String,
         predicates: List<Predicate<*>>,

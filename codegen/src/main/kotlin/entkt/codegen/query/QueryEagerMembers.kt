@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -29,6 +30,11 @@ private val ENT_QUERY_CONFIGURATION_EXCEPTION =
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val EAGER_EXECUTION_PLAN = ClassName("entkt.runtime.query", "EagerExecutionPlan")
 private val EAGER_WINDOW_STRATEGY = ClassName("entkt.runtime.query", "EagerWindowStrategy")
+private val DIRECT_TO_MANY_QUERY = ClassName("entkt.runtime.driver", "DirectToManyQuery")
+private val PER_PARENT_WINDOW = ClassName("entkt.runtime.driver", "PerParentWindow")
+private val DIRECT_TO_MANY_WINDOW_CAPABILITY =
+    ClassName("entkt.runtime.driver", "DirectToManyWindowCapability")
+private val EXECUTE_DIRECT_TO_MANY = MemberName("entkt.runtime.driver", "executeDirectToMany")
 
 // ------------------------------------------------------------------
 // Edge loading: the `loadX` DSL surface, the batch `loadEdges`
@@ -334,6 +340,15 @@ internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
 /**
  * Emit the eager loading block for a to-many direct edge.
  * The FK lives on the target side: source.id → target.fk_column.
+ *
+ * The fetch goes through the runtime-owned `executeDirectToMany`,
+ * which selects the driver's native per-parent window lowering when
+ * `directToManyWindowCapability()` is NATIVE and otherwise issues the
+ * phase-1 emulated fetch (the complete frozen predicate list through
+ * `Driver.query`, window applied in Kotlin below). The runtime helper
+ * also owns the phase-1 data gates: an empty parent set or a
+ * `limit(0)` window performs no driver read, while the interceptor
+ * pass above it always runs.
  */
 private fun emitToManyEagerBlock(
     body: CodeBlock.Builder,
@@ -345,47 +360,83 @@ private fun emitToManyEagerBlock(
     body.beginControlFlow("%L?.let { subQuery ->", re.eagerPropName)
     body.addStatement("val sourceIds = entities.map { it.id }")
     emitEagerSubquerySetup(body, re.publicName, sourceClass, targetClass)
+    // Capability is sampled ONCE per eager step, before the
+    // interceptor chain, because the running bind budget depends on
+    // it: a NATIVE driver transports the structural relationship IN
+    // as one typed-array bind, so the budget must not charge one
+    // scalar bind per parent key. The same sample routes the fetch
+    // below, so budgeting and routing cannot disagree even against a
+    // driver whose capability answer changes between calls.
+    body.addStatement(
+        "val toManyWindowCapability = driver.directToManyWindowCapability()",
+    )
+    body.addStatement(
+        "val nativeToManyWindows = toManyWindowCapability == %T.NATIVE",
+        DIRECT_TO_MANY_WINDOW_CAPABILITY,
+    )
     // Run target interceptors with EAGER_LOAD. The IN
     // predicate that ties target rows back to the source ids
     // goes in via extraStructural so it's tagged STRUCTURAL,
-    // not CALLER. Fetch all matching rows — limit/offset are
-    // applied per group below. appendPrimaryKeyOrder installs the
-    // effective-order primary-key tie-breaker before the chain runs.
+    // not CALLER — interceptors always see the complete logical
+    // relationship constraint, whichever lowering executes it.
+    // appendPrimaryKeyOrder installs the effective-order
+    // primary-key tie-breaker before the chain runs.
     body.addStatement(
-        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), appendPrimaryKeyOrder = true)",
+        "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, sourceIds)), appendPrimaryKeyOrder = true, structuralSingleBindTransport = nativeToManyWindows)",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
     )
-    // Bounds are resolved before the fetch so a window that admits
-    // nothing skips the round trip; every row would be dropped by the
-    // `take(0)` below. An empty parent set skips it too — the IN
-    // could match nothing. The interceptor pass above still runs —
-    // it fires on every eager subquery regardless of bounds or data.
     // Bounds come from the frozen spec, not live sub-query state: an
     // interceptor that captured the nested query and mutates its
     // limit()/offset() mid-flight cannot shift the window this step
     // executes (the mutation applies to later executions only).
     body.addStatement("val perGroupOffset = subSpec.offset ?: 0")
     body.addStatement("val perGroupLimit = subSpec.limit ?: %T.MAX_VALUE", Int::class.asClassName())
+    // The frozen spec's predicates split at the driver boundary: the
+    // native path hands the driver the non-structural remainder and
+    // lets it lower the separately-attributed relationship constraint
+    // through the typed parent array, while the emulated path
+    // receives the complete ordered list and stays byte-identical
+    // with phase 1.
+    body.add("val related = %M(\n", EXECUTE_DIRECT_TO_MANY)
+    body.add("  driver,\n")
+    body.add("  %T(\n", DIRECT_TO_MANY_QUERY)
+    body.add("    targetTable = %T.TABLE,\n", targetClass)
+    body.add("    sourceKeys = sourceIds,\n")
+    body.add("    targetForeignKey = %S,\n", join.targetColumn)
+    body.add("    targetPredicates = subSpec.nonStructuralPredicates,\n")
+    body.add("    effectiveOrder = subSpec.orderBy,\n")
+    body.add("    window = %T(offset = perGroupOffset, limit = subSpec.limit),\n", PER_PARENT_WINDOW)
+    body.add("  ),\n")
+    body.add("  emulationPredicates = subSpec.predicates,\n")
+    body.add("  capability = toManyWindowCapability,\n")
+    body.add(")\n")
+    // Decode once, in the returned global effective order, so the
+    // strict privacy pass and the set-based nested pass both see
+    // targets in that order (the grouped map iterates in
+    // first-occurrence order, which is NOT result order when targets
+    // belong to different parents). The association key rides the
+    // envelope (`sourceKey` — the decoded FK value), never a
+    // re-parsed entity field.
     body.addStatement(
-        "val targetRows = if (perGroupLimit > 0 && sourceIds.isNotEmpty()) driver.query(%T.TABLE, subSpec.predicates, subSpec.orderBy, null, null) else emptyList()",
+        "val decodedTargets = related.rows.map { it.sourceKey to %T.fromRow(it.targetRow) }",
         targetClass,
     )
-    // Decode once, in the target query's result order (the effective
-    // order), so the strict privacy pass and the set-based nested
-    // pass both see targets in that order (the grouped map iterates
-    // in first-occurrence order, which is NOT result order when
-    // targets belong to different parents).
     body.addStatement(
-        "val decodedTargets = targetRows.map { it to %T.fromRow(it) }",
-        targetClass,
+        "val grouped = decodedTargets.groupBy { (sourceKey, _) -> sourceKey }",
     )
+    // Under STORAGE_NATIVE every returned row is already inside its
+    // parent's window — re-applying drop/take here would discard rows
+    // the storage window selected. The emulated strategy returns the
+    // complete match set and keeps the phase-1 Kotlin window.
     body.addStatement(
-        "val grouped = decodedTargets.groupBy { (row, _) -> row[%S] }",
-        join.targetColumn,
+        "val windowInStorage = related.strategy == %T.STORAGE_NATIVE",
+        EAGER_WINDOW_STRATEGY,
     )
-    body.addStatement(
-        "var loadedGroups = grouped.mapValues { (_, pairs) -> pairs.drop(perGroupOffset).take(perGroupLimit).map { it.second } }",
-    )
+    body.add("var loadedGroups = if (windowInStorage) {\n")
+    body.add("  grouped.mapValues { (_, pairs) -> pairs.map { it.second } }\n")
+    body.add("} else {\n")
+    body.add("  grouped.mapValues { (_, pairs) -> pairs.drop(perGroupOffset).take(perGroupLimit).map { it.second } }\n")
+    body.add("}\n")
     emitEagerPrivacyCheck(
         body, re.targetClientName, "loadedGroups", grouped = true, eagerPropName = re.eagerPropName,
         orderedTargets = "decodedTargets.map { it.second }",
@@ -1003,6 +1054,7 @@ internal fun buildEagerExplainBlock(
         // Direct edge: single query with IN on the join column.
         // hasMany/hasOne: IN on targetColumn (FK on target side).
         // belongsTo: IN on targetColumn ("id" on target side).
+        val isDirectToMany = info.edge.kind is EdgeKind.HasMany
         body.add("edges[%S] = try {\n", info.publicName)
         body.add(
             "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), appendPrimaryKeyOrder = true)\n",
@@ -1013,9 +1065,21 @@ internal fun buildEagerExplainBlock(
         body.add(
             "  val subPlan = subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy)\n",
         )
+        if (isDirectToMany) {
+            // Native-versus-emulated is a driver capability, not a
+            // generation-time fact — mirror the runtime block's
+            // capability probe so the reported strategy matches what
+            // executing this plan would actually do. Explain performs
+            // no driver I/O; the capability accessor is pure.
+            body.add(
+                "  val nativeToManyWindows = driver.directToManyWindowCapability() == %T.NATIVE\n",
+                DIRECT_TO_MANY_WINDOW_CAPABILITY,
+            )
+        }
         emitEagerExecutionMetadata(
             body,
             isToOne = info.edge.kind is EdgeKind.BelongsTo || info.edge.kind is EdgeKind.HasOne,
+            isDirectToMany = isDirectToMany,
         )
         body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
         body.add("  %T.rejected(e)\n", queryPlanLocal)
@@ -1033,16 +1097,22 @@ internal fun buildEagerExplainBlock(
  * Emit the typed framework-owned execution metadata onto the eager
  * subplan — the try-expression's value. `subSpec.orderBy` is the
  * post-interceptor effective order (caller terms + the framework's
- * primary-key tie-breaker); the window strategy is phase-1 in-memory
- * emulation for every eager edge, with the configured per-parent
- * bounds carried alongside.
+ * primary-key tie-breaker), with the configured per-parent bounds
+ * carried alongside.
+ *
+ * The window strategy is phase-1 in-memory emulation for every eager
+ * edge except a direct to-many on a driver with native per-parent
+ * windows: [isDirectToMany] emits a probe of the runtime driver's
+ * capability (the `nativeToManyWindows` local emitted by the caller)
+ * so the reported strategy matches what executing the plan would do.
  *
  * The overfetch-risk value mirrors the runtime fetch gates exactly:
  * a to-one edge fetches only when the window admits its at-most-one
  * candidate, so it never fetches a row it discards ([isToOne] emits
- * a constant `false`); a grouped edge overfetches only when it
- * fetches at all (`limit != 0`) and the window can discard — a
- * finite positive limit or a positive offset.
+ * a constant `false`); a storage-native window discards nothing; an
+ * emulated grouped edge overfetches only when it fetches at all
+ * (`limit != 0`) and the window can discard — a finite positive
+ * limit or a positive offset.
  *
  * Bounds come from the frozen `subSpec` (before its limit/offset are
  * stripped for the driver-explain call), never from live sub-query
@@ -1054,16 +1124,26 @@ private fun emitEagerExecutionMetadata(
     body: CodeBlock.Builder,
     isToOne: Boolean,
     withJunctionAnnotations: Boolean = false,
+    isDirectToMany: Boolean = false,
 ) {
-    val overfetchRiskExpr = if (isToOne) {
-        "false"
-    } else {
+    val emulatedRiskExpr =
         "(subSpec.limit ?: 1) != 0 && (subSpec.limit != null || (subSpec.offset ?: 0) > 0)"
+    val overfetchRiskExpr = when {
+        isToOne -> "false"
+        isDirectToMany -> "if (nativeToManyWindows) false else $emulatedRiskExpr"
+        else -> emulatedRiskExpr
     }
     body.add("  subPlan.copy(eagerExecution = %T(\n", EAGER_EXECUTION_PLAN)
     body.add("    setBatchedNestedExecution = true,\n")
     body.add("    effectiveOrder = subSpec.orderBy,\n")
-    body.add("    windowStrategy = %T.IN_MEMORY_EMULATED,\n", EAGER_WINDOW_STRATEGY)
+    if (isDirectToMany) {
+        body.add(
+            "    windowStrategy = if (nativeToManyWindows) %T.STORAGE_NATIVE else %T.IN_MEMORY_EMULATED,\n",
+            EAGER_WINDOW_STRATEGY, EAGER_WINDOW_STRATEGY,
+        )
+    } else {
+        body.add("    windowStrategy = %T.IN_MEMORY_EMULATED,\n", EAGER_WINDOW_STRATEGY)
+    }
     body.add("    perParentLimit = subSpec.limit,\n")
     body.add("    perParentOffset = subSpec.offset,\n")
     body.add("    windowOverfetchRisk = $overfetchRiskExpr,\n")

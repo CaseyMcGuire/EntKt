@@ -36,5 +36,15 @@ class DriverContractTest {
             "requireBindCapacity",
             "a no-op default would silently disable the pre-snapshot bind guard in manual decorators",
         )
+        assertAbstract(
+            "directToManyWindowCapability",
+            "an EMULATED default would silently downgrade a native driver's per-parent windows " +
+                "back to full-result overfetch in manual decorators",
+        )
+        assertAbstract(
+            "queryDirectToMany",
+            "it forwards as one unit with directToManyWindowCapability — a decorator forwarding " +
+                "the capability but inheriting a throwing default would fail at the first native read",
+        )
     }
 }

@@ -361,6 +361,12 @@ class ResultAlgebraTest {
             limit: Int?,
             offset: Int?,
         ): List<Map<String, Any?>> = error("unused")
+        override fun directToManyWindowCapability(): entkt.runtime.driver.DirectToManyWindowCapability =
+            error("unused")
+        @OptIn(entkt.query.EntktInternal::class)
+        override fun queryDirectToMany(
+            query: entkt.runtime.driver.DirectToManyQuery,
+        ): entkt.runtime.driver.RelatedRows = error("unused")
         override fun count(table: String, predicates: List<Predicate<*>>): Long = error("unused")
         override fun exists(table: String, predicates: List<Predicate<*>>): Boolean = error("unused")
         override fun delete(table: String, id: Any): Boolean = error("unused")

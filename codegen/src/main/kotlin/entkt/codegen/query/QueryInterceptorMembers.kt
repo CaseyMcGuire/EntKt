@@ -78,6 +78,17 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 .defaultValue("false")
                 .build()
         )
+        // Direct to-many eager call sites pass the driver's native
+        // window capability: a NATIVE driver lowers the structural
+        // relationship `IN` through one typed-array bind, so the
+        // running bind budget charges one parameter per structural
+        // predicate instead of one per parent key. Caller and
+        // interceptor predicates always charge their scalar sizes.
+        .addParameter(
+            ParameterSpec.builder("structuralSingleBindTransport", Boolean::class)
+                .defaultValue("false")
+                .build()
+        )
         // Return type is typed in this query's entity scope; the
         // FrozenQuerySpec produced by `runReadInterceptors` carries
         // `List<Predicate<EntityClass>>` so the walker rewrite and
@@ -155,6 +166,7 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                     "  requireBindCapacity = { driver.requireBindCapacity(it, %T.TABLE) },\n",
                     entityClass,
                 )
+                .add("  structuralSingleBindTransport = structuralSingleBindTransport,\n")
                 .add(")\n")
                 .add("val context = %T(\n", QUERY_CONTEXT)
                 .add("  privacy = privacy,\n")

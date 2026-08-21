@@ -1,12 +1,18 @@
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.postgres
 
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
+import entkt.runtime.query.EagerWindowStrategy
 import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.DirectToManyQuery
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.RelatedRow
+import entkt.runtime.driver.RelatedRows
 import entkt.schema.FieldType
 import java.sql.Connection
 import java.sql.ResultSet
@@ -265,6 +271,203 @@ internal class PostgresOperations(
                 out
             }
         }
+    }
+
+    /**
+     * The native direct to-many lowering: one statement whose
+     * relationship constraint travels as a single typed PostgreSQL
+     * array (`fk = ANY(?)`) instead of one scalar bind per parent,
+     * with any finite per-parent window applied in storage through
+     * `ROW_NUMBER() OVER (PARTITION BY fk ORDER BY <effective order>)`.
+     *
+     * The window-less shape omits `ROW_NUMBER()` but keeps the
+     * typed-array relationship predicate — parent cardinality never
+     * consumes scalar binds on this path. Window-bound arithmetic is
+     * evaluated in `Long` and bound as BIGINT parameters, so extreme
+     * `offset`/`limit` values cannot overflow. One statement ⇒ one
+     * database snapshot, per the RFC's consistency requirement.
+     *
+     * The ranking alias is allocated to dodge every registered
+     * storage column (a collision would make the derived table's
+     * column names ambiguous), and the outer SELECT lists exactly the
+     * registered columns, so the synthetic column never crosses into
+     * the decoded row maps — which [PostgresValueCodec.decodeRow]
+     * additionally guarantees by decoding registered names only.
+     *
+     * The caller (the runtime's `executeDirectToMany`) gates empty
+     * parent sets and `limit(0)` windows; this method mirrors those
+     * gates defensively so a direct low-level call can never reach
+     * PostgreSQL with a read that returns nothing by construction.
+     */
+    fun queryDirectToMany(conn: Connection, query: DirectToManyQuery): RelatedRows {
+        val schema = schemaFor(query.targetTable)
+        val fkColumn = query.targetForeignKey
+        // Validate before the data gates so a malformed plan fails
+        // fast even when the gated read would perform no I/O.
+        val fkType = schema.columnType(fkColumn)
+            ?: error("'${query.targetTable}.$fkColumn' is not a registered column")
+        // The effective order is the deterministic-selection contract:
+        // ranking (and chunk-free global row order) is meaningless
+        // without it, and the runtime always supplies at least the
+        // framework's primary-key term.
+        require(query.effectiveOrder.isNotEmpty()) {
+            "queryDirectToMany for '${query.targetTable}' requires a non-empty effective order"
+        }
+        if (query.sourceKeys.isEmpty() || query.window.limit == 0) {
+            return RelatedRows(emptyList(), EagerWindowStrategy.STORAGE_NATIVE)
+        }
+
+        val prepared = buildDirectToManySql(query)
+        checkBindLimit(prepared.params.size, "direct to-many query", query.targetTable)
+
+        return conn.prepareStatement(prepared.sql).useQuietClose { stmt ->
+            for ((i, p) in prepared.params.withIndex()) {
+                val value = p.value
+                if (value is PgTypedArray) {
+                    stmt.setArray(i + 1, conn.createArrayOf(value.typeName, value.elements))
+                } else {
+                    codec.bind(stmt, i + 1, p.type, p.value)
+                }
+            }
+            stmt.executeQuery().useQuietClose { rs ->
+                val rows = ArrayList<RelatedRow>()
+                while (rs.next()) {
+                    val decoded = codec.decodeRow(rs, schema.table, schema.columns)
+                    rows.add(RelatedRow(decoded[fkColumn], decoded))
+                }
+                RelatedRows(rows, EagerWindowStrategy.STORAGE_NATIVE)
+            }
+        }
+    }
+
+    /**
+     * Render the native direct to-many statement without executing
+     * it, [buildSelectSql]-style: the returned SQL and positional
+     * params are exactly what [queryDirectToMany] prepares, so tests
+     * pin the storage-window shape itself — a lowering that stopped
+     * windowing in storage (or dropped the typed-array transport)
+     * changes this text, not just runtime row counts. The parent-key
+     * array rides the param list as a [PgTypedArray]-valued [Param].
+     */
+    fun buildDirectToManySql(query: DirectToManyQuery): PreparedSql {
+        val schema = schemaFor(query.targetTable)
+        val fkColumn = query.targetForeignKey
+        val fkType = schema.columnType(fkColumn)
+            ?: error("'${query.targetTable}.$fkColumn' is not a registered column")
+        require(query.effectiveOrder.isNotEmpty()) {
+            "queryDirectToMany for '${query.targetTable}' requires a non-empty effective order"
+        }
+        val window = query.window
+
+        val arrayTypeName = when (fkType) {
+            FieldType.INT -> "integer"
+            FieldType.LONG -> "bigint"
+            FieldType.STRING, FieldType.TEXT -> "text"
+            FieldType.UUID -> "uuid"
+            else -> error(
+                "'${query.targetTable}.$fkColumn' is $fkType, which cannot transport " +
+                    "parent keys as a typed array",
+            )
+        }
+        // Same normalization scalar binds get (exact INT/LONG
+        // conversion), so a raw Number subtype behaves identically on
+        // the array path and the emulated fallback's IN list.
+        val arrayElements = query.sourceKeys
+            .map { codec.idCorrelationKey(fkType, it) }
+            .toTypedArray()
+        val arrayParam = Param(null, PgTypedArray(arrayTypeName, arrayElements))
+
+        val builder = PredicateSqlBuilder(registry)
+        val combined = query.targetPredicates.andTogether()
+        val ranked = window.limit != null || window.offset > 0
+
+        val sql: String
+        val params: List<Param>
+        if (!ranked) {
+            // Param order mirrors SQL text: array, predicate binds,
+            // ordering operands.
+            val predicateSql = combined?.let { builder.lower(it, schema, "t0") }
+            val orderSql = builder.orderBySql(query.effectiveOrder, schema, "t0")
+            sql = buildString {
+                append("SELECT t0.* FROM ").append(quote(query.targetTable)).append(" AS t0")
+                append(" WHERE t0.").append(quote(fkColumn)).append(" = ANY(?)")
+                if (predicateSql != null) append(" AND (").append(predicateSql).append(")")
+                append(" ORDER BY ").append(orderSql)
+            }
+            params = listOf(arrayParam) + builder.params
+        } else {
+            // The ranked input applies every frozen predicate BEFORE
+            // ROW_NUMBER() is assigned — filtering after ranking could
+            // return fewer than the requested limit while later
+            // matching rows exist. Param order mirrors SQL text: the
+            // OVER (ORDER BY ...) operands sit in the select list and
+            // therefore bind FIRST, then the array, predicate binds,
+            // rank bounds, and the outer ordering operands.
+            val rankAlias = allocateRankAlias(schema)
+            val overOrderSql = builder.orderBySql(query.effectiveOrder, schema, "t0")
+            val overOrderEnd = builder.params.size
+            val predicateSql = combined?.let { builder.lower(it, schema, "t0") }
+            val predicateEnd = builder.params.size
+            val outerOrderSql = builder.orderBySql(query.effectiveOrder, schema, "t1")
+            val overOrderParams = builder.params.subList(0, overOrderEnd).toList()
+            val predicateParams = builder.params.subList(overOrderEnd, predicateEnd).toList()
+            val outerOrderParams = builder.params.subList(predicateEnd, builder.params.size).toList()
+            // Long arithmetic: the Kotlin DSL bounds are Ints, but
+            // offset + limit must never be evaluated in Int width.
+            val lowerBound = window.offset.toLong()
+            val upperBound = window.limit?.let { window.offset.toLong() + it.toLong() }
+            val boundParams = listOfNotNull(
+                Param(FieldType.LONG, lowerBound),
+                upperBound?.let { Param(FieldType.LONG, it) },
+            )
+            // Both select lists enumerate the REGISTERED columns.
+            // `t0.*` would also drag unregistered physical columns
+            // into the derived table (registration is metadata-only
+            // under autoDdl = false), and a hand-managed column that
+            // happened to share the rank alias's name would make the
+            // outer rank reference ambiguous — with the explicit
+            // list, probing the alias against registered names is
+            // sufficient by construction.
+            val innerColumns = schema.columns.joinToString(", ") { "t0.${quote(it.name)}" }
+            val outerColumns = schema.columns.joinToString(", ") { "t1.${quote(it.name)}" }
+            sql = buildString {
+                append("SELECT ").append(outerColumns).append(" FROM (")
+                append("SELECT ").append(innerColumns).append(", ROW_NUMBER() OVER (PARTITION BY t0.")
+                append(quote(fkColumn)).append(" ORDER BY ").append(overOrderSql)
+                append(") AS ").append(quote(rankAlias))
+                append(" FROM ").append(quote(query.targetTable)).append(" AS t0")
+                append(" WHERE t0.").append(quote(fkColumn)).append(" = ANY(?)")
+                if (predicateSql != null) append(" AND (").append(predicateSql).append(")")
+                append(") AS t1 WHERE t1.").append(quote(rankAlias)).append(" > ?")
+                if (upperBound != null) {
+                    append(" AND t1.").append(quote(rankAlias)).append(" <= ?")
+                }
+                append(" ORDER BY ").append(outerOrderSql)
+            }
+            params = overOrderParams + arrayParam + predicateParams + boundParams + outerOrderParams
+        }
+
+        return PreparedSql(sql, params)
+    }
+
+    /**
+     * Pick a ranking alias no registered storage column uses. DSL
+     * storage names can never start with an underscore, but the raw
+     * driver API accepts hand-built schemas with arbitrary column
+     * names, so the allocator probes rather than trusting the prefix.
+     * Probing registered names suffices because the ranked query's
+     * select lists enumerate registered columns explicitly — an
+     * unregistered physical column on the live table (legal under
+     * metadata-only registration) never enters the derived table and
+     * so can never make the alias ambiguous.
+     */
+    private fun allocateRankAlias(schema: EntitySchema): String {
+        var candidate = "__entkt_rank"
+        var suffix = 0
+        while (schema.columns.any { it.name == candidate }) {
+            candidate = "__entkt_rank_${suffix++}"
+        }
+        return candidate
     }
 
     fun buildCountSql(table: String, predicates: List<Predicate<*>>): PreparedSql {

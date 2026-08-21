@@ -130,7 +130,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         assertEquals(
             listOf(
                 "query:users",
-                "query:articles",
+                "queryDirectToMany:articles",
                 "query:users",
             ),
             recording.calls,
@@ -215,7 +215,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 "query:groups",
                 "query:memberships",
                 "query:users",
-                "query:articles",
+                "queryDirectToMany:articles",
             ),
             recording.calls,
         )
@@ -279,7 +279,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         // exactly one nested articles query — and both groups hold
         // the SAME canonical nested-loaded copy, articles edge
         // populated in each.
-        assertEquals(1, recording.calls.count { it == "query:articles" })
+        assertEquals(1, recording.calls.count { it == "queryDirectToMany:articles" })
         val inG1 = groups.single { it.name == "g1" }.edges.users.requireLoaded().single()
         val inG2 = groups.single { it.name == "g2" }.edges.users.requireLoaded().single()
         assertSame(inG1, inG2)
@@ -420,7 +420,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
             listOf(
                 "query:articles",
                 "query:users",
-                "query:articles",
+                "queryDirectToMany:articles",
             ),
             recording.calls,
         )
@@ -531,9 +531,9 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         assertEquals(
             listOf(
                 "query:users",
-                "query:articles",
+                "queryDirectToMany:articles",
                 "query:users",
-                "query:legacy_people_tbl",
+                "queryDirectToMany:legacy_people_tbl",
                 "query:memberships",
             ),
             recording.calls,
@@ -578,7 +578,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         assertEquals("nested-author-rejector", ex.interceptor)
         assertEquals("User", ex.entityType)
         assertEquals(0, directoryInterceptorFires, "later siblings must see no callback after a descendant failure")
-        assertEquals(listOf("query:users", "query:articles"), recording.calls)
+        assertEquals(listOf("query:users", "queryDirectToMany:articles"), recording.calls)
     }
 
     @Test
@@ -1036,7 +1036,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         assertEquals(1, articlePasses.size, "one pass for the configured articles edge")
         assertEquals(setOf<Any?>(a.id, b.id), articlePasses.single().toSet())
         assertEquals(listOf(emptyList<Any?>()), nestedAuthorPasses, "exactly one empty nested pass")
-        assertEquals(listOf("query:users", "query:articles"), recording.calls)
+        assertEquals(listOf("query:users", "queryDirectToMany:articles"), recording.calls)
     }
 
     @Test

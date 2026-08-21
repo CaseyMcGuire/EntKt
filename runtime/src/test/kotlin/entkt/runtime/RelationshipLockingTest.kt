@@ -136,6 +136,13 @@ class RelationshipLockingTest {
             limit: Int?,
             offset: Int?,
         ): List<Map<String, Any?>> = emptyList()
+        override fun directToManyWindowCapability(): entkt.runtime.driver.DirectToManyWindowCapability =
+            entkt.runtime.driver.DirectToManyWindowCapability.EMULATED
+        @OptIn(entkt.query.EntktInternal::class)
+        override fun queryDirectToMany(
+            query: entkt.runtime.driver.DirectToManyQuery,
+        ): entkt.runtime.driver.RelatedRows =
+            throw UnsupportedOperationException("EMULATED capability — never called")
         override fun count(table: String, predicates: List<entkt.query.Predicate<*>>): Long = 0
         override fun exists(table: String, predicates: List<entkt.query.Predicate<*>>): Boolean = false
         override fun delete(table: String, id: Any): Boolean = false

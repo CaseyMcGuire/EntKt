@@ -12,8 +12,20 @@ logical edge step), the deterministic effective-ordering contract with
 emulated in memory. The "Current Behavior" section below describes the
 pre-phase-1 executor this RFC replaced.
 
-**Phase 2 is open**: the relationship-aware driver capability that pushes
-per-parent windows into storage, and driver-owned parent-ID chunking.
+**Phase 2A implemented 2026-08-20** (design accepted the same day):
+PostgreSQL-native per-parent windows for direct to-many edges, using the
+runtime-owned relationship plan (`DirectToManyQuery` / `RelatedRows` and
+the `executeDirectToMany` fallback selector in `entkt.runtime.driver`),
+two new abstract `Driver` members (`directToManyWindowCapability` /
+`queryDirectToMany`), typed-array parent-key transport (`= ANY(?)`), a
+`ROW_NUMBER() OVER (PARTITION BY ...)` lowering with collision-safe rank
+aliases and Long window bounds, frozen-spec structural-predicate
+attribution, capability-aware bind budgeting, and the
+`EagerWindowStrategy.STORAGE_NATIVE` explain metadata. Drivers without
+the native capability retain phase-1 emulation.
+
+Native many-to-many windows and generic physical chunking are deferred to
+later phases; they are not prerequisites for phase 2A.
 
 This RFC owns set-based edge-load execution, not the public API used to select
 edges. The accepted
@@ -44,8 +56,8 @@ counts and item-level failure ordering; those changes are specified below.
 Delivery is intentionally split:
 
 1. Eliminate nested N+1 queries using the existing driver query surface.
-2. Add a relationship-aware driver capability that can push per-parent
-   windows into storage.
+2. Add a relationship-aware driver capability that pushes direct to-many
+   per-parent windows into PostgreSQL storage.
 
 The first phase does not wait for the second. It fixes query multiplication
 even though finite per-parent windows may still overfetch until the driver
@@ -137,7 +149,8 @@ level.
   defining the intentional change from per-group to per-edge-step invocation.
 - Deduplicate shared many-to-many targets before LOAD privacy evaluation.
 - Keep eager execution observable and explainable.
-- Bound large ID collections through deterministic chunking.
+- Avoid one-bind-per-parent amplification for native PostgreSQL direct
+  to-many loads through typed-array parent-key transport.
 
 ## Non-Goals
 
@@ -321,15 +334,26 @@ at most one existing `Driver.query` call per target-table fetch; empty parent
 sets and windows such as `limit(0)` can use zero. Many-to-many retains its
 separate junction query. Phase 1 therefore inherits the driver's current
 parameter limit. It does not claim generic large-parent chunking; that requires
-a driver-owned relationship-query capability in phase 2.
+a later driver-owned relationship-query capability.
 
-### Phase 2: Push Per-Parent Windows Into Storage
+### Phase 2A: Native Direct To-Many Windows
 
-Phase 2 adds a relationship-aware driver capability for per-parent ordering,
-offset, and limit. Where that capability is native, it replaces the
-overfetching portion of an eager edge step; otherwise phase-1 emulation remains.
-It does not change graph traversal, privacy, interceptor, attachment, or
-failure semantics established by phase 1.
+Phase 2A adds a relationship-aware driver capability for direct to-many
+per-parent ordering, offset, and limit. PostgreSQL implements it with a native
+window query and typed-array parent-key transport. Where that capability is
+unavailable, phase-1 emulation remains. It does not change graph traversal,
+privacy, interceptor, attachment, or failure semantics established by phase 1.
+
+Belongs-to and has-one do not need a native window: each source has at most one
+target, and the existing phase-1 fetch gates already avoid discarded rows.
+Many-to-many retains phase-1 window emulation until a later phase can preserve
+its junction-interceptor, pair-deduplication, and failure-precedence contracts.
+
+### Phase 2B And Later: M2M Windows And Generic Chunking
+
+Native many-to-many pagination and generic physical chunking are separate
+follow-up features. They must not expand phase 2A's driver contract or delay
+the direct to-many overfetch fix.
 
 ## Ordering Contract
 
@@ -342,7 +366,7 @@ Both phases use:
 
 With no caller ordering, the effective order is primary key ascending. The
 same effective order drives storage reads, Kotlin-side phase-1 grouping and
-windows, phase-2 storage windows, privacy-batch order, and association order.
+windows, phase-2A storage windows, privacy-batch order, and association order.
 
 The executor computes this effective order before the `EAGER_LOAD` interceptor
 pass. `QueryShape.orderBy` and explain output therefore describe the order that
@@ -356,7 +380,7 @@ attribution rather than `hasOrderBy`.
 This is an intentional deterministic-ordering rule. Today tied caller terms
 and queries without `orderBy` retain unspecified driver order. Adding the
 primary-key term can change which tied rows enter a finite window, but prevents
-phase 1 and phase 2 from selecting different rows for the same query.
+phase 1 and phase 2A from selecting different rows for the same query.
 It can also add a database sort to an otherwise unordered, unbounded eager
 query; that cost is accepted in exchange for deterministic privacy, failure,
 and chunk-merge order and must be visible in explain output.
@@ -408,14 +432,20 @@ predicates before `ROW_NUMBER()` is assigned. Applying an interceptor predicate
 after ranking could return fewer than the requested limit even when later
 matching rows exist, and would not match phase-1 semantics.
 
-A lateral query is another possible PostgreSQL lowering. The driver-facing
-contract should describe per-parent window semantics rather than expose a
-PostgreSQL-specific strategy to generated code.
+Phase 2A selects `ROW_NUMBER() OVER (PARTITION BY ...)` as PostgreSQL's native
+lowering. The driver-facing contract remains expressed in per-parent window
+semantics rather than exposing this PostgreSQL strategy to generated code.
 
-When no finite limit exists, an ordinary batched `IN` query remains
-appropriate. An offset without a limit still benefits from a window-function
-lowering because it avoids transferring the discarded prefix for every
-parent.
+The parent keys are passed as one typed PostgreSQL array (`ANY(?)` or an
+equivalent `unnest(?)` relation), not expanded into one bind per source. This
+keeps direct relationship loads below PostgreSQL's scalar bind limit without
+introducing physical chunks into phase 2A.
+
+When neither a finite limit nor a positive offset exists, the native operation
+may omit `ROW_NUMBER()` while retaining its typed-array relationship predicate;
+the phase-1 fallback continues to use an ordinary batched `IN` query. An offset
+without a limit still benefits from the window-function lowering because it
+avoids transferring the discarded prefix for every parent.
 
 ## Many-To-Many Edges
 
@@ -439,7 +469,8 @@ A phase-1 many-to-many eager step performs:
    ordered distinct target union once.
 8. Reattach canonical nested-loaded targets through the association map.
 
-Phase 2 must not rank raw junction rows before target filtering or pair dedup.
+Any later native many-to-many phase must not rank raw junction rows before
+target filtering or pair dedup.
 For `loadTags { where(...); orderBy(...); limit(n) }`, it ranks distinct
 eligible `(source, target)` memberships only after all caller and interceptor
 target predicates have been applied, partitioned by source and ordered by the
@@ -543,53 +574,66 @@ These behaviors intentionally change:
 These are callback and ordering changes even though they require no public
 method rename. Migration notes must call them out when phase 1 ships.
 
-## Phase 2 Driver Contract
+## Phase 2A Driver Contract
 
-Phase 1 uses `Driver.query`. Phase 2 needs a driver operation expressed in
-relationship terms, for example an internal shape equivalent to:
+Phase 1 uses `Driver.query`. Phase 2A adds a strategy-neutral operation for a
+direct to-many relationship. The runtime owns the logical plan and fallback;
+generated code supplies typed schema metadata, entity decoding, IDs, and edge
+attachment adapters. A conceptual cross-module shape is:
 
 ```kotlin
-data class RelatedQuery(
+@EntktInternal
+data class DirectToManyQuery(
     val targetTable: String,
-    val relationship: RelationshipPlan,
-    val targetStructuralPredicate: Predicate<*>,
+    val sourceKeys: List<Any>,
+    val targetForeignKey: String,
     val targetPredicates: List<Predicate<*>>,
     val effectiveOrder: List<OrderField<*>>,
-    val perParentLimit: Int?,
-    val perParentOffset: Int,
+    val window: PerParentWindow,
 )
 
-fun queryRelated(query: RelatedQuery): RelatedRows
+@EntktInternal
+data class PerParentWindow(
+    val offset: Int,
+    val limit: Int?,
+)
+
+@EntktInternal
+data class RelatedRow(
+    val sourceKey: Any,
+    val targetRow: Map<String, Any?>,
+)
+
+@EntktInternal
+data class RelatedRows(
+    val rows: List<RelatedRow>,
+    val strategy: EagerWindowStrategy,
+)
+
+enum class DirectToManyWindowCapability { NATIVE, EMULATED }
+
+fun directToManyWindowCapability(): DirectToManyWindowCapability
+fun queryDirectToMany(query: DirectToManyQuery): RelatedRows
 ```
 
-`RelationshipPlan` keeps association data separate from the target-side
-structural predicate:
+The names above are the accepted semantic boundary, not a promise that these
+exact data classes must be copied verbatim. The implemented SPI must preserve
+the same information and keep PostgreSQL-specific ranking concepts out of
+generated code.
 
-- has-many and has-one map source IDs to rows whose target FK matches those IDs
-- belongs-to maps each source ID to its nullable FK value and matches target
-  IDs against the ordered distinct non-null FK values
-- many-to-many carries discovered source-target memberships and matches target
-  IDs against the ordered distinct discovered target values
+Before the driver call, the target interceptor still sees the complete logical
+structural predicate (`targetForeignKey IN sourceKeys`) exactly once. After
+interception, the runtime retains that framework-owned relationship constraint
+separately from caller and interceptor predicates. `targetPredicates` therefore
+contains the remaining frozen target predicates; the driver lowers the
+relationship constraint itself using the typed parent array.
 
-`targetStructuralPredicate` is the complete logical target predicate exposed
-to the target interceptor: target-FK `IN` source IDs for has-many/has-one, and
-target-ID `IN` match values for belongs-to and many-to-many. The plan also owns
-the independently chunkable relation input and the source-to-target
-association data; these are not always the same value list.
-
-After interception, the executor retains this exact framework-owned structural
-slot separately from caller and interceptor predicates. A driver can substitute
-chunk-local values without leaving the full-union `IN` in every chunk or
-accidentally rewriting an application predicate that happens to look similar.
-This requires preserving predicate provenance beyond today's flattened
-`FrozenQuerySpec.predicates`.
-
-The example is illustrative rather than a proposed public signature.
-`RelatedRows` must return:
-
-- the globally effective-ordered distinct target sequence
-- source-to-target-ID associations in per-source order
-- enough strategy metadata to distinguish native and emulated windows
+`RelatedRows` returns target rows in the same global effective target order as
+phase 1, with each row's source association key carried outside the entity row
+map. Synthetic ranking aliases are driver-private and never reach generated
+entity decoding. The runtime groups by `sourceKey`, runs the existing logical
+privacy/nested pass, and attaches generated entity copies exactly as phase 1
+does.
 
 Any executor, relationship-plan, or driver type referenced across the runtime,
 driver, and generated application-module boundary must be public and guarded by
@@ -598,29 +642,28 @@ used only inside one generated file can remain private. Every new generated
 query member name must also participate in generated-member collision
 validation before code emission.
 
-The driver owns physical chunking beneath this one logical call. It must return
-the same global sequence an unchunked query would return. Concatenating sorted
-chunks is not sufficient. A driver may use a database-side array/table input,
-a true k-way merge over comparable database order keys, or a final globally
-ordered target fetch. The runtime executor must not attempt to compare opaque
-driver-specific ordering expressions itself.
-
-Driver capabilities should state whether per-parent windows are:
+Driver capabilities state whether direct to-many per-parent windows are:
 
 - natively supported
 - emulated in memory with explicitly disclosed overfetch behavior
 
 The emulated phase-1 behavior is the mandatory compatibility fallback whenever
-a driver or relationship shape lacks native window support. Phase 2 does not
-reject an eager query that phase 1 accepted. Silent full-result overfetch must
-not be reported as native per-parent pagination.
+a driver lacks native direct to-many window support. Phase 2A does not reject
+an eager query that phase 1 accepted. Silent full-result overfetch must not be
+reported as native per-parent pagination.
 
 ## Large Parent Sets
 
-Phase 2 lets the driver own chunking so it can respect the complete bind budget,
-including target predicates. The framework must not guess a universal safe
-`IN` size: database limits differ, and non-structural predicates consume
-parameters too.
+Phase 2A's PostgreSQL direct to-many lowering sends parent keys through one
+typed array parameter. Parent cardinality therefore does not consume one bind
+per source and does not require physical chunks for this path. Caller and
+interceptor predicates still consume the ordinary statement bind budget and
+retain the driver's deterministic pre-I/O limit checks.
+
+Generic chunking remains a later phase. When it is designed, the driver must
+respect the complete bind budget, including target predicates; the framework
+must not guess a universal safe `IN` size because database limits differ and
+non-structural predicates consume parameters too.
 
 A driver may avoid chunks through an array/table-valued parameter or execute
 several physical queries. If it chunks, it must preserve:
@@ -648,11 +691,13 @@ cost alone exhausts the backend limit, the driver must use an alternate
 lowering or reject deterministically before the first physical target read;
 splitting relationship IDs cannot make such a query valid.
 
-Phase 1 explicitly inherits the current `Driver.query` limit. Merging parent
+Phase 1 and every phase-2A fallback explicitly inherit the current
+`Driver.query` limit. Merging parent
 groups can reach that limit sooner than the old per-group recursion, so phase 1
 must be documented and tested only within the supported parameter range. Large
-set support is complete only when the phase-2 driver capability is present.
-Until then, the PostgreSQL driver rejects an over-limit statement
+direct to-many parent sets are handled by the phase-2A PostgreSQL typed-array
+path; other relationship shapes require a later capability. Until then, the
+PostgreSQL driver rejects an over-limit fallback statement
 deterministically before any I/O with an actionable `PostgresBindLimitException`
 (counting the statement's complete bind list, not only relationship IDs); the
 root query of an eager load may already have executed, but the invalid
@@ -673,7 +718,7 @@ This metadata must not share the application/interceptor annotation map, whose
 keys are caller-controlled and last-writer-wins. An application annotation
 cannot override the framework's reported execution strategy.
 
-Phase 2 adds native-versus-emulated window metadata. It does not put
+Phase 2A adds native-versus-emulated window metadata. It does not put
 estimated chunk counts into `QueryPlan`, because those depend on runtime parent
 sets and driver choices.
 
@@ -711,14 +756,26 @@ A safe sequence is split into independently reviewable phases.
    design overview, and the breaking-change log so none describe per-parent
    nested invocation as current behavior.
 
-### Phase 2: Native Relationship Windows And Chunking
+### Phase 2A: Native Direct To-Many Windows
 
-1. Define the relationship constraint, driver query, and window capability.
-2. Add a PostgreSQL window-function or lateral-query implementation.
-3. Add stable physical chunking and logical-result merging.
-4. Switch direct and many-to-many eager strategies to native per-parent
-   windows when supported.
-5. Expose native-versus-emulated window metadata in explain output.
+1. Introduce the runtime-owned direct-to-many relationship plan, result
+   envelope, and native-versus-emulated driver capability.
+2. Preserve the framework structural relationship constraint separately from
+   caller and interceptor predicates after the one logical interceptor pass.
+3. Add PostgreSQL typed-array parent-key binding and a `ROW_NUMBER() OVER
+   (PARTITION BY ...)` lowering with collision-safe private rank aliases.
+4. Return source-key/target-row envelopes in canonical effective target order,
+   stripping every synthetic driver column before entity decoding.
+5. Switch direct to-many eager steps to the native capability when available;
+   keep phase-1 emulation as the mandatory fallback.
+6. Expose native-versus-emulated window metadata in explain output.
+
+### Phase 2B And Later
+
+1. Design native many-to-many windowing without changing junction discovery,
+   interceptor, filtering, pair-deduplication, or failure precedence.
+2. Design generic driver-owned physical chunking and stable logical-result
+   merging for relationship shapes that cannot use a single array/table input.
 
 The final architecture should be a runtime execution engine with generated
 typed metadata and attachment adapters, rather than reproducing the graph
@@ -772,9 +829,9 @@ Before nested set batching ships, tests should prove:
   cannot override framework execution metadata
 - new generated query members participate in collision validation
 
-### Phase 2
+### Phase 2A
 
-Before native relationship windows and chunking ship, tests should prove:
+Before native direct to-many windows ship, tests should prove:
 
 - per-parent limit and offset select exactly the same rows as phase 1
 - PostgreSQL does not fetch rows outside finite per-parent windows
@@ -783,15 +840,13 @@ Before native relationship windows and chunking ship, tests should prove:
 - extreme `offset` and `limit` values cannot overflow window-bound arithmetic
 - offset without a limit uses native lowering where supported and otherwise
   retains phase-1 emulation
-- window-function or lateral lowering uses the canonical effective order
-- direct and many-to-many association maps remain correct across physical
-  chunks
+- PostgreSQL's window lowering uses the canonical effective order
+- typed-array transport supports parent sets larger than the scalar bind limit
+  without physical chunks or repeated interceptor/privacy callbacks
 - interceptors see one full logical relationship constraint while the driver
-  substitutes only that separately attributed constraint per physical chunk
-- chunking runs interceptors once, produces one logical privacy batch, stably
-  merges target order, and does not change denials or results
-- chunked target reads share one database snapshot under a concurrent-write
-  regression test
+  lowers only that separately attributed constraint through the parent array
+- direct association maps remain correct for several parents, empty groups,
+  duplicate source keys, and nested loads
 - fixed non-relationship binds that exhaust the backend limit use an alternate
   lowering or reject before physical target I/O
 - a generated application and custom driver compile against every public
@@ -809,13 +864,21 @@ Before native relationship windows and chunking ship, tests should prove:
 - Deliver nested N+1 elimination before native per-parent pagination.
 - Keep physical chunking below the logical interceptor and privacy boundary.
 - Use phase-1 emulation whenever native relationship windows are unavailable.
+- Scope phase 2A to direct to-many edges; belongs-to and has-one need no native
+  window, and many-to-many remains emulated until a later phase.
+- Use PostgreSQL window functions, not lateral queries, for phase-2A native
+  direct to-many pagination.
+- Transport direct relationship parent keys through one typed PostgreSQL array
+  rather than scalar bind expansion or physical chunking.
+- Keep relationship planning and fallback in the runtime; generated code owns
+  typed metadata, decoding, IDs, and attachment adapters.
+- Keep generic physical chunking out of phase 2A.
 
-## Open Decisions
+## Deferred Decisions
 
-- The eager-topology, relationship-plan, and association-result type shapes.
-- The exact phase-2 relationship-query and association-constraint shape.
-- Window functions versus lateral queries for PostgreSQL.
-- The threshold and mechanism for parent-ID chunking.
+- Native many-to-many window-query and association-plan shape.
+- The threshold, transport, and stable-merge mechanism for generic physical
+  parent-ID chunking where a single array/table input is unavailable.
 
 ## Related Features
 

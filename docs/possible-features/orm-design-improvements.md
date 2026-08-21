@@ -27,7 +27,10 @@ selected edge path once for the complete current parent batch rather than once
 per parent group. Preserve `EdgeState` and per-parent query semantics without
 making one large SQL statement the public contract. *(Phase 1 of this —
 set-based nested execution with in-memory per-parent windows — shipped
-2026-08-19; native per-parent storage windows remain open.)*
+2026-08-19; phase 2A — PostgreSQL-native per-parent storage windows for
+direct to-many edges, with typed-array parent-key transport — shipped
+2026-08-20. Native many-to-many windows and generic chunking remain
+open.)*
 
 Public edge-selection syntax and execution strategy are separate design
 decisions. The executor consumes an immutable edge-load plan; generated API

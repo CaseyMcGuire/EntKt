@@ -1,7 +1,12 @@
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.postgres
 
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.runtime.driver.DirectToManyQuery
+import entkt.runtime.driver.DirectToManyWindowCapability
+import entkt.runtime.driver.RelatedRows
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.QueryExplanation
@@ -93,6 +98,16 @@ internal class PostgresTransactionalDriver(
         offset: Int?,
     ): List<Map<String, Any?>> {
         checkOpen(); return ops.query(conn, table, predicates, orderBy, limit, offset)
+    }
+
+    override fun directToManyWindowCapability(): DirectToManyWindowCapability {
+        checkOpen(); return root.directToManyWindowCapability()
+    }
+
+    // Runs on the pinned transaction connection, so the one-statement
+    // native read shares the transaction's snapshot.
+    override fun queryDirectToMany(query: DirectToManyQuery): RelatedRows {
+        checkOpen(); return ops.queryDirectToMany(conn, query)
     }
 
     override fun count(table: String, predicates: List<Predicate<*>>): Long {

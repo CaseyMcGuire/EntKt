@@ -350,7 +350,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
             loadArticles()
         }.all().getOrThrow()
 
-        val articlesAt = recording.calls.indexOf("query:articles")
+        val articlesAt = recording.calls.indexOf("queryDirectToMany:articles")
         val junctionAt = recording.calls.indexOf("query:memberships")
         assertTrue(
             articlesAt >= 0 && junctionAt >= 0,

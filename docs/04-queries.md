@@ -609,14 +609,26 @@ gain no framework ordering term.
 
 `limit` and `offset` inside a `load...()` block apply **per parent**, not
 to that batched query — `loadPosts { limit(5) }` gives each user their
-first five posts, not five posts across all users. The window is
-currently emulated in memory: the driver fetches every matching row
-and the runtime slices each parent's window in Kotlin, so a finite
-window bounds the result, not the rows fetched (explain reports this
-as the `IN_MEMORY_EMULATED` window strategy). The same per-parent
-semantics hold for to-one edges, where at most one target exists per
-parent: a positive limit is already satisfied, while `limit(0)` loads
-no target and any positive offset steps past the only candidate.
+first five posts, not five posts across all users. How the window
+executes depends on the edge kind and the driver. On a driver with
+native per-parent windows (PostgreSQL), a direct to-many edge pushes
+the window into storage — one statement ranks each parent's targets
+with the effective order and returns only in-window rows, with the
+parent keys transported as a single typed array (explain reports the
+`STORAGE_NATIVE` window strategy). Every other edge kind — and every
+driver without the capability — emulates the window in memory: the
+driver fetches every matching row and the runtime slices each
+parent's window in Kotlin, so a finite window bounds the result, not
+the rows fetched (`IN_MEMORY_EMULATED` in explain). Both strategies
+select exactly the same rows; they follow the same effective order
+with its primary-key tie-breaker. Explain output renders each eager
+step's *logical* relationship query — the batched `IN` shape
+interceptors see — while the native per-parent window statement is a
+driver-private lowering, reported through the typed window-strategy
+metadata rather than as rendered SQL. The same per-parent semantics hold
+for to-one edges, where at most one target exists per parent: a
+positive limit is already satisfied, while `limit(0)` loads no target
+and any positive offset steps past the only candidate.
 
 ### One Selection Per Edge
 

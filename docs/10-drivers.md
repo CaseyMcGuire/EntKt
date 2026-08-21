@@ -31,6 +31,11 @@ interface Driver {
     fun count(table: String, predicates: List<Predicate<*>>): Long
     fun exists(table: String, predicates: List<Predicate<*>>): Boolean
 
+    // Native per-parent windows for direct to-many eager loads.
+    // Both are abstract and forward as one unit through decorators.
+    fun directToManyWindowCapability(): DirectToManyWindowCapability
+    fun queryDirectToMany(query: DirectToManyQuery): RelatedRows
+
     fun insertMany(table: String, values: List<Map<String, Any?>>): List<Map<String, Any?>>
     fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int
     fun deleteMany(table: String, predicates: List<Predicate<*>>): Int
@@ -155,6 +160,32 @@ there is no earlier input to account for. An EntKt-owned batch can report
 JVM errors reach the transaction boundary so it can perform the same rollback
 discipline.
 
+- `directToManyWindowCapability()` reports whether the driver can push
+  a direct to-many eager edge's per-parent ordering, offset, and limit
+  into storage (`NATIVE`) or the runtime should retain the emulated
+  fallback — one ordinary `query()` with the window applied in memory
+  (`EMULATED`). The runtime samples it once per eager step, before the
+  interceptor chain, and that one sample drives both the structural
+  bind budgeting and the fetch routing — implementations must answer
+  purely (no I/O) and stably, like every other capability accessor.
+  An emulated driver accepts every eager query it accepted before the
+  capability existed.
+- `queryDirectToMany(query)` executes one logical direct to-many
+  relationship read with the window applied in storage. Only called
+  when the capability is `NATIVE`; emulated drivers implement it as a
+  throwing stub. The `DirectToManyQuery` plan carries the parent keys
+  and target FK column separately from the remaining frozen target
+  predicates — the driver lowers the relationship constraint itself
+  (PostgreSQL: one typed-array `= ANY(?)` parameter) so parent
+  cardinality never consumes scalar binds. Rows return in the
+  canonical effective order as `RelatedRows`, each row paired with its
+  decoded source key; synthetic driver columns (ranking aliases) never
+  reach the row maps, and the one-statement lowering keeps every
+  physical read on one database snapshot. Both members are
+  deliberately abstract — they forward as one unit, so a hand-written
+  decorator cannot silently downgrade a native driver or forward the
+  capability without the operation. The plan and envelope types are
+  `@EntktInternal` cross-module SPI.
 - `explainQuery()` / `explainCount()` return a `QueryExplanation` for the
   SELECT / COUNT the driver *would* run, without executing it. Defaults
   to `UnsupportedQueryExplanation`; PostgresDriver returns SQL + bind
@@ -382,14 +413,57 @@ protocol error. An oversized `IN` list is rejected from its projected
 size before being copied or expanded at all, so even an absurdly
 large list cannot exhaust memory on the way to the error. Generated
 read terminals also call `Driver.requireBindCapacity` at entry — a
-default no-op that PostgreSQL overrides — with a conservative minimum
-computed from the lists' O(1) sizes, so the rejection happens before
-the runtime takes any defensive snapshot of the operands and before
-any interceptor runs. Eager relationship loads with very large parent sets
-are the common trigger; their `IN (...)` lists are not yet chunked, so
-reduce the root result size or split the query. `insertMany` and
+deliberately abstract member both PostgreSQL facades implement — with
+a conservative minimum computed from the lists' O(1) sizes, so the
+rejection happens before the runtime takes any defensive snapshot of
+the operands and before any interceptor runs. Direct to-many eager
+loads no longer trigger the limit: their parent keys travel as one
+typed array (see below). The other relationship shapes (belongs-to,
+has-one, many-to-many) and any caller-supplied `IN` list still bind
+one scalar per value and are not yet chunked, so reduce the root
+result size or split the query when they overflow. `insertMany` and
 `deleteManyByIds` already chunk physical statements and stay under the
 limit by construction.
+
+#### Native direct to-many windows
+
+`PostgresDriver` reports `DirectToManyWindowCapability.NATIVE` and
+lowers `queryDirectToMany` as one statement. The parent keys bind as
+a single typed PostgreSQL array (`fk = ANY(?)` — `integer`/`bigint`/
+`text`/`uuid`, from the FK column's registered type), so parent
+cardinality never consumes scalar binds. With a finite per-parent
+`limit` or a positive `offset`, the ranked form applies the window in
+storage:
+
+```sql
+SELECT t1."id", t1."title", ... FROM (
+    SELECT t0."id", t0."title", ..., ROW_NUMBER() OVER (
+        PARTITION BY t0."author_id"
+        ORDER BY t0."created_at" DESC, t0."id" ASC
+    ) AS "__entkt_rank"
+    FROM "posts" AS t0
+    WHERE t0."author_id" = ANY(?) AND (...)
+) AS t1
+WHERE t1."__entkt_rank" > ? AND t1."__entkt_rank" <= ?
+ORDER BY t1."created_at" DESC, t1."id" ASC
+```
+
+Both select lists enumerate the registered columns rather than using
+`t0.*`: registration is metadata-only under `autoDdl = false`, so a
+hand-managed table may carry unregistered physical columns, and the
+explicit lists keep them out of the derived table where one could
+otherwise make the ranking alias ambiguous.
+
+Every frozen predicate applies before `ROW_NUMBER()` is assigned, so
+a filter can never make a window return fewer rows while later
+matches exist. The rank bounds bind as BIGINT parameters computed in
+`Long`, so extreme `offset`/`limit` values cannot overflow. The rank
+alias is allocated to dodge every registered storage column and the
+outer SELECT lists only registered columns, so the synthetic column
+never reaches entity decoding. Without a finite window the statement
+drops `ROW_NUMBER()` but keeps the typed-array relationship
+predicate. One statement means every physical read shares one
+database snapshot.
 
 ### Identifier Handling
 
@@ -535,6 +609,21 @@ contract:
    backend's eventual rejection. Decorating and transaction-scoped
    drivers must forward it (Kotlin `by`-delegating wrappers do so
    automatically).
+
+   `directToManyWindowCapability()` and `queryDirectToMany(query)` are
+   likewise abstract and forward as one unit. A driver without native
+   per-parent windows returns
+   `DirectToManyWindowCapability.EMULATED` and implements
+   `queryDirectToMany` as a throwing stub — the runtime then keeps
+   direct to-many eager loads on ordinary `query()` calls with the
+   window applied in memory, so nothing the driver accepted before is
+   rejected. A `NATIVE` driver must apply the per-parent window in
+   storage, return rows in the supplied effective order with each
+   row's decoded source key, keep synthetic columns out of the row
+   maps, keep every physical read on one database snapshot, and never
+   spend one scalar bind per parent key. The relationship-plan types
+   are `@EntktInternal`; implementing the member is an explicit
+   framework-wiring opt-in.
 2. `insert()` must return the full row including server-assigned values.
    `insertMany()` must preserve positional input/result correlation, keep any
    physical chunks inside the surrounding transaction, and never commit

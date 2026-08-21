@@ -8,8 +8,11 @@ import entkt.runtime.result.EntQueryRejectedException
  * executed. Phase 1 of the set-based eager graph loader always
  * emulates the window in memory: the driver fetches every matching
  * target row and the runtime applies each parent's window in Kotlin,
- * so a finite window can overfetch. A native per-parent window
- * strategy is owned by the phase-2 driver capability.
+ * so a finite window can overfetch. Phase 2A adds a native strategy
+ * for direct to-many edges on drivers whose
+ * [entkt.runtime.driver.Driver.directToManyWindowCapability] is
+ * NATIVE; every other edge kind — and every driver without the
+ * capability — retains in-memory emulation.
  */
 enum class EagerWindowStrategy {
     /**
@@ -18,6 +21,22 @@ enum class EagerWindowStrategy {
      * but a finite window does not reduce rows fetched.
      */
     IN_MEMORY_EMULATED,
+
+    /**
+     * The driver's relationship-aware direct to-many operation
+     * applies each parent's window in storage (PostgreSQL: a
+     * `ROW_NUMBER() OVER (PARTITION BY ...)` lowering with the
+     * parent keys transported as one typed array), so rows outside a
+     * finite window are never fetched or decoded. Selects exactly
+     * the rows the emulated strategy selects — both follow the
+     * canonical effective order with its primary-key tie-breaker.
+     *
+     * The eager subplan's rendered SQL still describes the step's
+     * *logical* relationship query (the batched `IN` shape
+     * interceptors see); the physical windowed statement is a
+     * driver-private lowering that this strategy value reports.
+     */
+    STORAGE_NATIVE,
 }
 
 /**
@@ -60,9 +79,10 @@ data class EagerExecutionPlan(
      * or a positive offset discards fetched rows in memory rather
      * than in storage. False when the step provably fetches nothing
      * to discard: a `limit(0)` window skips the driver fetch
-     * entirely, and a to-one edge's fetch is gated on a window that
-     * admits its at-most-one candidate, so to-one edges never
-     * overfetch.
+     * entirely, a to-one edge's fetch is gated on a window that
+     * admits its at-most-one candidate, and a
+     * [EagerWindowStrategy.STORAGE_NATIVE] step applies the window
+     * in storage, so none of those overfetch.
      */
     val windowOverfetchRisk: Boolean,
 )
@@ -199,6 +219,8 @@ data class QueryPlan(
                 EagerWindowStrategy.IN_MEMORY_EMULATED ->
                     "in-memory emulation (limit=${exec.perParentLimit}, offset=${exec.perParentOffset})" +
                         if (exec.windowOverfetchRisk) " — may overfetch" else ""
+                EagerWindowStrategy.STORAGE_NATIVE ->
+                    "storage-native (limit=${exec.perParentLimit}, offset=${exec.perParentOffset})"
             }
             sb.appendLine(
                 "$pad  [eager execution: set-batched nested loads; " +
