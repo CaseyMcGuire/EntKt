@@ -39,9 +39,8 @@ private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext
  * Returns the [FrozenQuerySpec] terminals should hand to the
  * driver. Translates the internal [AbortQueryRejected] marker into
  * the user-facing [EntQueryRejectedException] at the boundary so
- * downstream terminal code only ever sees the public type — data
- * terminals store it in `ReadResult.Failed` via their capture
- * boundary; explain wrappers catch it and build a rejected plan.
+ * downstream terminal code only ever sees the public type. Data
+ * terminals store it in `ReadResult.Failed` via their capture boundary.
  * `privacy` is captured once by the terminal and must be forwarded
  * unchanged through traversal, edge-predicate, and eager subqueries;
  * this helper deliberately never samples the client's provider.
@@ -69,8 +68,8 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
         // Eager-load call sites pass true: the set-based executor's
         // deterministic-ordering rule appends a primary-key ascending
         // term when the caller didn't order by the primary key, BEFORE
-        // the interceptor chain runs, so interceptors and explain see
-        // the effective order storage will execute. The caller-authored
+        // the interceptor chain runs, so interceptors see the effective
+        // order storage will execute. The caller-authored
         // terms stay separately attributed on the shape views
         // (callerOrderBy / hasCallerOrderBy).
         .addParameter(
@@ -91,8 +90,8 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
         )
         // Return type is typed in this query's entity scope; the
         // FrozenQuerySpec produced by `runReadInterceptors` carries
-        // `List<Predicate<EntityClass>>` so the walker rewrite and
-        // explain plan builders don't need unchecked casts.
+        // `List<Predicate<EntityClass>>` so the walker rewrite needs
+        // no unchecked casts.
         .returns(FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
         .addCode(
             CodeBlock.builder()
@@ -106,10 +105,9 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 // invocation at queryX() time would have raised
                 // the throw before the terminal could capture it.
                 .addStatement("val sourceResult = deferredSourceStep?.invoke(privacy)")
-                // Source annotations seed the builder so they
-                // surface on the final terminal's
-                // QueryPlan.annotations — interceptors at this
-                // step can overwrite via scope.addAnnotation
+                // Source annotations seed the builder so interceptors
+                // at this step can observe and overwrite them
+                // via scope.addAnnotation
                 // (last-writer-wins).
                 .addStatement(
                     "val initialAnnotations = sourceResult?.annotations ?: emptyMap<%T, %T>()",
@@ -135,8 +133,8 @@ internal fun buildRunReadInterceptors(schemaName: String, clientName: String, en
                 // framework's primary-key ascending tie-breaker, unless
                 // the caller already ordered by the primary key (the id
                 // column is fixed to "id" across the framework).
-                // Computed before the interceptor chain so shapes and
-                // explain describe the order storage will execute.
+                // Computed before the interceptor chain so its shape
+                // describes the order storage will execute.
                 .addStatement(
                     "val effectiveOrderBy = if (appendPrimaryKeyOrder && orderFields.none { it.field == %S }) orderFields + %T<%T>(%S, %T.ASC) else orderFields",
                     "id", ORDER_FIELD, entityClass, "id", ORDER_DIRECTION,
@@ -362,8 +360,7 @@ internal fun buildRunEdgePredicateInterceptors(resolved: ResolvedQuerySchema): F
             READ_OPERATION,
         )
         // Bubble up target-step annotations into the outer
-        // accumulator so observability sees them on the outer
-        // QueryPlan. Source-of-truth merge rule (outer wins on
+        // accumulator. Source-of-truth merge rule (outer wins on
         // collision) is applied at the outer's
         // runReadInterceptors via `edgeAnnotations + frozen.annotations`.
         body.add("      edgeAnnotations.putAll(spec.annotations)\n")

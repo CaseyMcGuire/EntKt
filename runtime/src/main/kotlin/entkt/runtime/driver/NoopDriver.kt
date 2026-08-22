@@ -1,5 +1,4 @@
 package entkt.runtime.driver
-import entkt.runtime.query.QueryExplanation
 import entkt.runtime.mutation.RelationshipLockKey
 
 import entkt.query.OrderField
@@ -98,18 +97,6 @@ object NoopDriver : Driver {
 
     override fun updateMany(table: String, values: Map<String, Any?>, predicates: List<Predicate<*>>): Int =
         error("NoopDriver cannot updateMany — was a terminal op called inside EdgeRef.has { }?")
-
-    override fun explainQuery(
-        table: String,
-        predicates: List<Predicate<*>>,
-        orderBy: List<OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ): QueryExplanation =
-        error("NoopDriver cannot explainQuery — was a terminal op called inside EdgeRef.has { }?")
-
-    override fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation =
-        error("NoopDriver cannot explainCount — was a terminal op called inside EdgeRef.has { }?")
 
     override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
         error("NoopDriver cannot deleteMany — was a terminal op called inside EdgeRef.has { }?")

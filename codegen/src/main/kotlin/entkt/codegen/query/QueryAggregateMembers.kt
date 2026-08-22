@@ -32,13 +32,7 @@ private val NULLABLE_GROUPABLE_COLUMN = ClassName("entkt.query", "NullableGroupa
 private val KOTLIN_COMPARABLE = ClassName("kotlin", "Comparable")
 
 // ------------------------------------------------------------------
-// Canonical count, exists, and raw-aggregate terminals with their
-// explain mirrors. Same pairing rule as QueryRowMembers.kt: each
-// explain builder sits next to the terminal whose driver call it
-// models, and the shared query-shape expressions, canonicalReadBody
-// capture boundary, and explainBody wrapper come from
-// QueryShapeSupport.kt. QueryGenerator.generate() assembles the
-// members.
+// Canonical count, exists, and raw-aggregate terminals.
 // ------------------------------------------------------------------
 
 /**
@@ -94,36 +88,6 @@ internal fun buildRawCount(schemaName: String, entityClass: ClassName, hasEdges:
         .build()
 }
 
-internal fun buildRawCountExplain(queryPlan: ClassName, entityClass: ClassName, hasEdges: Boolean): FunSpec {
-    // explainRawCount uses driver.explainCount (a COUNT(*) plan)
-    // rather than the row-fetch buildQueryPlan path.
-    val body = CodeBlock.of(
-        "%T(driver.explainCount(%T.TABLE, spec.predicates), annotations = spec.annotations)",
-        queryPlan, entityClass,
-    )
-    val builder = FunSpec.builder("explainRawCount")
-        .addKdoc(
-            "Return a [QueryPlan] describing the COUNT query [rawCount] would execute.\n" +
-            "Interceptors run with operation = RAW_COUNT; predicate contributions show\n" +
-            "up in the plan, limit operations are silent no-ops by contract.\n" +
-            "On interceptor rejection, returns a plan with `rejected = true`.\n" +
-            "Throws `EntQueryConfigurationException` before driver explain work when\n" +
-            "the query has selected edge loads — like [rawCount] itself, this explain\n" +
-            "cannot describe a selected graph."
-        )
-        .returns(queryPlan)
-    if (hasEdges) {
-        // Unlike interceptor rejection (recorded on the plan), the
-        // configuration exception is thrown: an incompatible explain
-        // has no meaningful plan to return.
-        builder.addStatement(
-            "requireNoSelectedEdges(%S, %S)",
-            "explainRawCount()", NON_ENTITY_TERMINAL_EDGE_REASON,
-        )
-    }
-    return builder.addCode(explainBody("RAW_COUNT", body)).build()
-}
-
 /**
  * `rawExists(): ReadResult<Boolean>` — fast existence check; skips
  * LOAD privacy. `Success(true)` iff at least one storage row matches
@@ -156,56 +120,6 @@ internal fun buildRawExists(schemaName: String, entityClass: ClassName, hasEdges
                         READ_RESULT, entityClass,
                     )
                     .build(),
-            ),
-        )
-        .build()
-}
-
-internal fun buildExistsShapedExplain(
-    queryPlan: ClassName,
-    name: String,
-    terminalName: String,
-    operationName: String,
-    hasEdges: Boolean,
-): FunSpec {
-    // Runtime: `driver.query(TABLE, spec.predicates,
-    // emptyList(), minOf(1, spec.limit ?: 1), spec.offset)`.
-    // The orderBy is dropped (no point ordering for an
-    // existence probe) but the caller's offset is preserved
-    // (so `query { offset(5) }.rawExists()` skips the first
-    // 5 rows and asks "is there a 6th?"). Mirror exactly so
-    // the explain plan matches the driver call. Note the
-    // limit mirrors the runtime's `minOf(1, spec.limit ?: 1)`
-    // so a caller who pre-set `limit(0)` shows up as `limit
-    // = 0` in the plan.
-    val builder = FunSpec.builder(name)
-        .addKdoc(
-            "Return a [QueryPlan] describing the query shape [$terminalName] would execute.\n" +
-            "Interceptors run with operation = $operationName; limit operations are\n" +
-            "silent no-ops by contract. Plan mirrors the runtime exactly:\n" +
-            "`orderBy = emptyList()` (existence probe doesn't order),\n" +
-            "`limit = minOf(1, spec.limit ?: 1)` (usually 1, 0 when the caller\n" +
-            "passed `query { limit(0) }`), and `offset = spec.offset` (caller's\n" +
-            "offset is preserved). On interceptor rejection, returns a plan with\n" +
-            "`rejected = true`.\n" +
-            "Throws `EntQueryConfigurationException` before driver explain work when\n" +
-            "the query has selected edge loads — like [$terminalName] itself, this\n" +
-            "explain cannot describe a selected graph."
-        )
-        .returns(queryPlan)
-    if (hasEdges) {
-        // Thrown, not recorded on the plan: an incompatible explain
-        // has no meaningful plan to return.
-        builder.addStatement(
-            "requireNoSelectedEdges(%S, %S)",
-            "$name()", NON_ENTITY_TERMINAL_EDGE_REASON,
-        )
-    }
-    return builder
-        .addCode(
-            explainBody(
-                operationName,
-                CodeBlock.of("buildQueryPlan(spec.copy(orderBy = emptyList(), limit = %L), false, privacy)", SINGLE_ROW_LIMIT_EXPR),
             ),
         )
         .build()

@@ -40,7 +40,7 @@ import kotlin.test.assertTrue
  *  - Global interceptors run AFTER per-entity ones (registration-order
  *    + per-entity-first per the engine contract).
  *
- * Edge / eager / explain wiring is covered by separate focused tests.
+ * Edge and eager wiring is covered by separate focused tests.
  */
 class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
 

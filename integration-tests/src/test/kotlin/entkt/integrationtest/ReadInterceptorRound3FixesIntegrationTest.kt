@@ -46,19 +46,12 @@ import kotlin.test.assertTrue
  *    time, so `.queryX().all()` captures source-step rejection as
  *    `ReadResult.Failed(EntQueryRejectedException)` instead of
  *    having queryX() throw.
- *  - Traversal-source annotations carry forward into the terminal
- *    QueryPlan.
  *  - Identity-based skipWalk: a caller-authored predicate that's
  *    structurally equal to a framework structural is still walked
  *    through the edge-predicate processor.
  *  - Recursion guard on the edge-predicate walker: a cyclic
  *    interceptor configuration trips the guard with a clear error,
  *    captured as `Failed(IllegalStateException)` by the terminal.
- *  - Raw-exists explain matches the runtime driver call shape
- *    (+ the limit(0) edge case).
- *  - requireNotRejected throws the original stored
- *    EntQueryRejectedException (entityType preserved) rather than
- *    synthesizing "<explain>" metadata.
  *  - deleteMany candidate selection routes through
  *    DELETE_CANDIDATES interceptors; its rejection surfaces as
  *    `MutationResult.Failed(EntUnexpectedMutationException(NotPersisted,
@@ -202,73 +195,6 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `traversal-source rejection surfaces as rejected QueryPlan on chained explain`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                users(QueryInterceptor { scope, _ -> scope.reject("src nope", code = "src") }, name = "rej")
-            }
-        }
-        val plan = client.users.query().queryArticles().explainAll()
-        assertTrue(plan.rejected)
-        assertEquals("src", plan.rejectedCode)
-        assertEquals("rej", plan.rejectedInterceptor)
-        // requireNotRejected throws the original stored exception —
-        // entityType is the source entity (User), not synthetic.
-        val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        assertEquals("User", ex.entityType)
-    }
-
-    // ---------- traversal-source annotations carry forward ----------
-
-    @Test
-    fun `traversal-source annotations surface on terminal QueryPlan`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                users(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("tenant", "acme") },
-                    name = "user-tenant",
-                )
-                articles(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "article-terminal") },
-                    name = "article-step",
-                )
-            }
-        }
-        val plan = client.users.query().queryArticles().explainAll()
-        // Both source-step ("tenant=acme" from User) and terminal-step
-        // ("step=article-terminal" from Article) annotations are
-        // present.
-        assertEquals("acme", plan.annotations["tenant"])
-        assertEquals("article-terminal", plan.annotations["step"])
-    }
-
-    @Test
-    fun `terminal interceptor overwrites a source annotation with the same key (last-writer-wins)`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                users(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-user") },
-                    name = "u",
-                )
-                articles(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-article") },
-                    name = "a",
-                )
-            }
-        }
-        val plan = client.users.query().queryArticles().explainAll()
-        assertEquals("from-article", plan.annotations["step"])
-    }
-
-    // ---------- identity-based skipWalk ----------
-
-    @Test
     fun `caller-authored HasEdge structurally equal to a framework-structural is still walked`() {
         // Construct a caller HasEdge whose target has a soft-delete-
         // style interceptor; the walker should fire that target
@@ -334,54 +260,6 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // Sanity: the cap is the documented constant.
         assertEquals(32, InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH)
     }
-
-    // ---------- raw-exists explain matches runtime ----------
-
-    @Test
-    fun `explainRawExists with limit(0) shows limit 0, matching runtime`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
-        // No interceptors so spec.limit = caller's limit(0) = 0.
-        // Runtime: `minOf(1, 0 ?: 1) = 0` → driver.query with limit 0.
-        // Explain must show the same.
-        val plan = client.posts.query { limit(0) }.explainRawExists()
-        assertNotNull(plan.root)
-        val desc = plan.root.toString()
-        assertTrue(
-            desc.contains("LIMIT 0") || desc.contains("limit=0") || desc.contains("limit: 0"),
-            "explainRawExists with limit(0) should show limit 0; was: $desc",
-        )
-    }
-
-    @Test
-    fun `explainRawExists drops orderBy and preserves offset, matching runtime`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
-        // Runtime rawExists calls driver.query with orderBy =
-        // emptyList() and offset = spec.offset. Explain must
-        // mirror exactly. Pre-fix: explain kept spec.orderBy and
-        // forced offset = null.
-        val plan = client.posts.query {
-            orderBy(OrderField("title", OrderDirection.ASC))
-            offset(5)
-        }.explainRawExists()
-        assertNotNull(plan.root)
-        val desc = plan.root.toString()
-        // orderBy is dropped — should NOT mention "title" in the
-        // explain output (the only place it could appear is in
-        // ORDER BY since there's no predicate on title).
-        assertTrue(
-            !desc.contains("ORDER BY") && !desc.contains("orderBy=[OrderField"),
-            "explainRawExists should drop orderBy to match runtime; was: $desc",
-        )
-        // offset is preserved.
-        assertTrue(
-            desc.contains("OFFSET 5") || desc.contains("offset=5") || desc.contains("offset: 5"),
-            "explainRawExists should preserve caller offset; was: $desc",
-        )
-    }
-
-    // ---------- Deferred traversal snapshots source at queryX() ----------
 
     @Test
     fun `mutating source query after queryX does not leak into target's terminal`() {
@@ -656,75 +534,4 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
     // ---------- Edge-predicate target annotations bubble up ----------
 
-    @Test
-    fun `edge-predicate target interceptor annotations surface on outer QueryPlan`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                // Article EDGE_PREDICATE step adds annotations.
-                // Without this fix they vanish — only spec.predicates
-                // was reduced into the inner; spec.annotations was
-                // discarded.
-                articles(
-                    QueryInterceptor { scope, _ ->
-                        scope.addAnnotation("article-scoped", "true")
-                        scope.addAnnotation("audit", "via-has")
-                    },
-                    name = "article-edge-annotator",
-                )
-            }
-        }
-        val plan = client.users.query {
-            where(User.articles.has { where(Article.published eq true) })
-        }.explainAll()
-        assertEquals("true", plan.annotations["article-scoped"])
-        assertEquals("via-has", plan.annotations["audit"])
-    }
-
-    @Test
-    fun `outer-step annotation wins when edge-predicate target uses the same key`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                articles(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-article-edge") },
-                    name = "article-annotator",
-                )
-                users(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("step", "from-user-outer") },
-                    name = "user-annotator",
-                )
-            }
-        }
-        val plan = client.users.query {
-            where(User.articles.has { where(Article.published eq true) })
-        }.explainAll()
-        // Outer step (User) wins on key conflicts — matches the
-        // traversal-source-vs-terminal direction (closer-to-caller
-        // wins).
-        assertEquals("from-user-outer", plan.annotations["step"])
-    }
-
-    @Test
-    fun `requireNotRejected throws with the original entityType, not synthetic values`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ -> scope.reject("nope", code = "x") },
-                    name = "post-rejector",
-                )
-            }
-        }
-        val plan = client.posts.query().explainAll()
-        val ex = assertFailsWith<EntQueryRejectedException> { plan.requireNotRejected() }
-        // Pre-fix: the entity was synthesized as "<explain>".
-        assertEquals("Post", ex.entityType)
-        assertEquals("nope", ex.reason)
-        assertEquals("x", ex.code)
-        assertEquals("post-rejector", ex.interceptor)
-    }
 }

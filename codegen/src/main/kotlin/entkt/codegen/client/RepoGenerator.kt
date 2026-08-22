@@ -242,7 +242,6 @@ internal class RepoGenerator(
                     .build()
             )
             .addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
-            .addFunction(buildFindByIdExplainMethod(schemaName, entityClass, idType, clientRef = "client"))
             .addFunction(buildDelete(schemaName, entityClass))
             .addFunction(buildDeleteLoaded(schemaName, entityClass))
             .addFunction(buildDeleteById(schemaName, entityClass, idType))

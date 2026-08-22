@@ -26,7 +26,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Regression coverage for four fixes identified post-contract review:
+ * Regression coverage for fixes identified post-contract review:
  *
  * - **P1** limit interceptor methods are no-ops on read shapes where
  *   row limits have no meaning (BY_ID / FIRST / aggregates / EAGER /
@@ -35,18 +35,10 @@ import kotlin.test.assertTrue
  *   `setDefaultLimitIfAbsent` / `requireLimitAtMost` never silently
  *   clamp the no-limit shapes.
  *
- * - **P2a** eager-load `explain()` plans fire target interceptors
- *   with `EAGER_LOAD` (not `ALL`) and reflect post-interceptor
- *   predicates / annotations.
- *
  * - **P2b** by-id reads route through the *Query's
  *   `runReadInterceptors` so `Edge.has { ... }` predicates added by
  *   a by-id interceptor are walked and fire target `EDGE_PREDICATE`
  *   interceptors.
- *
- * - **P3** annotations attached via `scope.addAnnotation` surface
- *   on `QueryPlan.annotations` so observability / explain consumers
- *   can read them.
  */
 class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
 
@@ -154,65 +146,6 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         assertEquals(2, client.posts.query().all().getOrThrow().size)
     }
 
-    // ---------- P2a: eager-load explain fires EAGER_LOAD ----------
-
-    @Test
-    fun `eager-load explain fires target interceptors with EAGER_LOAD`() {
-        val driver = freshDriver()
-        val ops = mutableListOf<ReadOperation>()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                articles(
-                    QueryInterceptor { _, ctx -> ops.add(ctx.operation) },
-                    name = "article-observer",
-                )
-            }
-        }
-
-        client.users.query { loadArticles() }.explainAll()
-
-        // The eager subquery for "articles" should have fired
-        // Article's interceptors with EAGER_LOAD (not ALL).
-        assertTrue(
-            ops.contains(ReadOperation.EAGER_LOAD),
-            "explain on a loadArticles() query should fire Article interceptors with EAGER_LOAD; observed: $ops",
-        )
-        assertTrue(
-            !ops.contains(ReadOperation.ALL),
-            "explain on a loadArticles() query must NOT fire Article interceptors with ALL; observed: $ops",
-        )
-    }
-
-    @Test
-    fun `eager-load explain plan reflects target interceptor predicates`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                articles(
-                    QueryInterceptor { scope, _ ->
-                        scope.addPredicate(Predicate.Leaf("published", Op.EQ, true))
-                    },
-                    name = "only-published",
-                )
-            }
-        }
-        val plan = client.users.query { loadArticles() }.explainAll()
-
-        val articlesEdge = plan.eagerQueries["articles"]
-        assertNotNull(articlesEdge, "explain plan should include an 'articles' edge subplan")
-        // The eager subplan's root description should mention the
-        // interceptor-added 'published' predicate.
-        assertNotNull(articlesEdge.root, "eager subplan should have a driver root")
-        assertTrue(
-            articlesEdge.root!!.toString().contains("published"),
-            "eager-load explain subplan should reflect target interceptor predicates; was: ${articlesEdge.root}",
-        )
-    }
-
-    // ---------- P2b: by-id edge-predicate walk ----------
-
     @Test
     fun `findById walks HasEdgeWith predicates added by a by-id interceptor`() {
         val driver = freshDriver()
@@ -253,48 +186,4 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         )
     }
 
-    // ---------- QueryPlan annotations ----------
-
-    @Test
-    fun `explain reflects scope addAnnotation on QueryPlan annotations`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ ->
-                        scope.addAnnotation("tenant", "acme")
-                        scope.addAnnotation("audit-id", "abc-123")
-                    },
-                    name = "annotator",
-                )
-            }
-        }
-        val plan = client.posts.query().explainAll()
-        assertEquals("acme", plan.annotations["tenant"])
-        assertEquals("abc-123", plan.annotations["audit-id"])
-
-        // Annotations also surface in render() output for human
-        // observability consumers.
-        assertTrue(
-            plan.render().contains("tenant=acme"),
-            "render() should include the annotation suffix; was:\n${plan.render()}",
-        )
-    }
-
-    @Test
-    fun `explainRawCount carries annotations on QueryPlan`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ -> scope.addAnnotation("k", "v") },
-                    name = "annotator",
-                )
-            }
-        }
-        val plan = client.posts.query().explainRawCount()
-        assertEquals("v", plan.annotations["k"])
-    }
 }

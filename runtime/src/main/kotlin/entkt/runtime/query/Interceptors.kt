@@ -90,9 +90,9 @@ interface InterceptScope<E : Any> {
     fun rejectIfLimitGreaterThan(max: Int, reason: () -> String)
 
     /**
-     * Attaches a key/value annotation for diagnostics; surfaces in
-     * explain output. Does not affect the query plan. Duplicate
-     * keys across interceptors use last-writer-wins.
+     * Attaches a key/value annotation visible through
+     * `scope.shape.annotations` to later interceptors. Does not affect
+     * query execution. Duplicate keys use last-writer-wins.
      */
     fun addAnnotation(key: String, value: String)
 
@@ -310,9 +310,8 @@ public class InterceptorConfig internal constructor()
  * Internal marker thrown by [InterceptScope.reject] /
  * [GlobalInterceptScope.reject] to short-circuit the interceptor
  * chain. The framework catches this at the wrapper boundary and
- * converts it to the per-API outcome: canonical data terminals store
- * [rejected] in `ReadResult.Failed`, while `explain*` terminals
- * record it on their diagnostic `QueryPlan`.
+ * converts it to the public [rejected] exception, which canonical data
+ * terminals store in `ReadResult.Failed`.
  *
  * Public so generated wrapper code in a different module can catch
  * it; application code should never throw or catch this directly

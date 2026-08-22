@@ -31,8 +31,8 @@ import kotlin.test.assertTrue
  * [EntQueryConfigurationException] at the second `load{Name}` call;
  * non-entity terminals (raw count / existence / aggregates) capture
  * the same exception as `ReadResult.Failed` before any interceptor or
- * driver work; their explain variants and `query{Name}` traversal
- * throw it directly; and none of this restricts entity terminals —
+ * driver work; `query{Name}` traversal throws it directly; and none
+ * of this restricts entity terminals —
  * a fully configured query stays executable any number of times.
  */
 class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
@@ -108,20 +108,6 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
             assertContains(ex.reason, operation)
             assertContains(ex.reason, "User.groups")
         }
-        assertEquals(0, recording.callCount())
-    }
-
-    @Test
-    fun `incompatible explain variants throw before driver explain work`() {
-        val (client, recording) = recordingClient()
-        val query = client.users.query { loadArticles() }
-        recording.reset()
-
-        val countEx = assertFailsWith<EntQueryConfigurationException> { query.explainRawCount() }
-        assertContains(countEx.reason, "explainRawCount()")
-        assertContains(countEx.reason, "User.articles")
-        val existsEx = assertFailsWith<EntQueryConfigurationException> { query.explainRawExists() }
-        assertContains(existsEx.reason, "explainRawExists()")
         assertEquals(0, recording.callCount())
     }
 
@@ -208,7 +194,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `an interceptor cannot select an edge on the in-flight query`() {
+    fun `an interceptor mutation applies only to later captured queries`() {
         val recording = RecordingDriver(resetAndDriver())
         var target: UserQuery? = null
         val client = EntClient(recording) {
@@ -224,21 +210,19 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val query = client.users.query { }
 
         target = query
-        val failed = assertIs<ReadResult.Failed>(query.all())
-        val ex = assertIs<EntQueryConfigurationException>(failed.exception)
-        assertContains(ex.reason, "loadArticles()")
-        assertContains(ex.reason, "terminal entry")
+        val first = query.all().getOrThrow().single()
+        assertEquals(EdgeState.Unloaded, first.edges.articles)
 
-        // The rejected mid-flight selection installed nothing: with
-        // the interceptor disarmed, the same query still loads no
-        // edges.
+        // Terminal entry captured the original graph before the
+        // interceptor mutated the reusable builder. A later terminal
+        // captures and executes the newly selected edge.
         target = null
         val user = query.all().getOrThrow().single()
-        assertEquals(EdgeState.Unloaded, user.edges.articles)
+        assertTrue(user.edges.articles.isLoaded)
     }
 
     @Test
-    fun `an interceptor cannot select a nested edge on the in-flight graph`() {
+    fun `an interceptor nested mutation applies only to later captured graphs`() {
         val recording = RecordingDriver(resetAndDriver())
         var target: ArticleQuery? = null
         val client = EntClient(recording) {
@@ -253,61 +237,26 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
 
-        // Retain the *nested* target query from the configuration
-        // block: terminal entry acquires the guard across the whole
-        // selected graph, not just the root query object.
+        // Retain the nested builder so the root interceptor can mutate it
+        // after terminal entry has captured the complete recursive graph.
         val query = client.users.query { }
         var captured: ArticleQuery? = null
         query.loadArticles { captured = this }
 
         target = captured
-        val failed = assertIs<ReadResult.Failed>(query.all())
-        val ex = assertIs<EntQueryConfigurationException>(failed.exception)
-        assertContains(ex.reason, "loadAuthor()")
-        assertContains(ex.reason, "terminal entry")
+        val first = query.all().getOrThrow().single()
+        val firstArticle = first.edges.articles.requireLoaded().single()
+        assertEquals(EdgeState.Unloaded, firstArticle.edges.author)
 
-        // The rejected nested selection installed nothing: with the
-        // interceptor disarmed, articles load but their author edge
-        // stays unselected.
+        // The builder mutation appears in the next recursive capture.
         target = null
         val user = query.all().getOrThrow().single()
         val article = user.edges.articles.requireLoaded().single()
-        assertEquals(EdgeState.Unloaded, article.edges.author)
+        assertTrue(article.edges.author.isLoaded)
     }
 
     @Test
-    fun `a privacy-context provider cannot select an edge during an entity explain`() {
-        val recording = RecordingDriver(resetAndDriver())
-        var target: UserQuery? = null
-        val client = EntClient(recording) {
-            // The provider runs inside the explain's guarded region:
-            // the topology guard is acquired before privacy capture,
-            // so even this callback cannot mutate the plan being
-            // described.
-            privacyContext {
-                target?.loadGroups()
-                PrivacyContext(Viewer.PrivacyBypass("test"))
-            }
-        }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-        val query = client.users.query { loadArticles() }
-
-        target = query
-        val ex = assertFailsWith<EntQueryConfigurationException> { query.explainAll() }
-        assertContains(ex.reason, "loadGroups()")
-        assertContains(ex.reason, "terminal entry")
-
-        // The guard was released through the finally, and the rejected
-        // selection installed nothing: disarmed, the same query
-        // explains its original topology only.
-        target = null
-        val plan = query.explainAll()
-        assertTrue("articles" in plan.eagerQueries, "original selection survives")
-        assertTrue("groups" !in plan.eagerQueries, "rejected mid-explain selection must not appear")
-    }
-
-    @Test
-    fun `a retained handle cannot change the in-flight operation's privacy posture`() {
+    fun `a retained handle changes only later captured privacy posture`() {
         val recording = RecordingDriver(resetAndDriver())
         var retained: EdgeLoad<UserQuery>? = null
         val client = EntClient(recording) {
@@ -324,12 +273,10 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val handle = query.loadArticles()
 
         retained = handle
-        val failed = assertIs<ReadResult.Failed>(query.all())
-        val ex = assertIs<EntQueryConfigurationException>(failed.exception)
-        assertContains(ex.reason, "filterVisible()")
-        assertContains(ex.reason, "User.articles")
+        assertTrue(query.all().getOrThrow().single().edges.articles.isLoaded)
 
-        // Outside a terminal the same handle works normally.
+        // The interceptor changed the reusable builder after the first
+        // capture. The same handle remains idempotent for later captures.
         retained = null
         handle.filterVisible()
         assertTrue(query.all().getOrThrow().single().edges.articles.isLoaded)
@@ -383,15 +330,10 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `entity terminals and entity explains still accept a selected graph`() {
+    fun `entity terminals accept a selected graph`() {
         val (client, _) = recordingClient()
         client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
         val query = client.users.query { loadArticles() }
-
-        // Entity explain includes the selected topology under the
-        // declaration-derived edge name rather than rejecting it.
-        val plan = query.explainAll()
-        assertTrue("articles" in plan.eagerQueries, "explainAll should describe the selected edge")
 
         val user = query.firstOrNull().getOrThrow()
         assertEquals(emptyList(), user?.edges?.articles?.requireLoaded())

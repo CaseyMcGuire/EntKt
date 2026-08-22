@@ -52,8 +52,7 @@ private val GROUPABLE_FIELD_TYPES =
  * chunk physical statements under the limit by construction; the
  * single-row operations (`insert`, `update`, `byId`, `delete`, row
  * locks), whose parameter count is bounded by the schema's column count
- * (PostgreSQL caps tables at 1,600 columns); and the explain builders,
- * which only render SQL and never reach PostgreSQL.
+ * (PostgreSQL caps tables at 1,600 columns).
  */
 private fun checkBindLimit(paramCount: Int, operation: String, table: String) {
     if (paramCount > POSTGRES_BIND_PARAMETER_LIMIT) {

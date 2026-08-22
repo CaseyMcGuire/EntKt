@@ -70,8 +70,7 @@ import kotlin.test.assertTrue
  * - belongsTo, hasOne, hasMany, and manyToMany all run through the
  *   same set-based shape.
  *
- * The effective-ordering contract and the explain metadata that
- * accompany this executor are pinned separately in
+ * The effective-ordering contract is pinned separately in
  * [EagerEffectiveOrderIntegrationTest].
  */
 class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
@@ -767,10 +766,9 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val query = client.users.query()
         query.loadArticles { captured = this }
 
-        // Run the parent's terminal AND its explain — both seed the
-        // child's traversal context for their own step.
+        // Run the parent's terminal, which seeds the child's traversal
+        // context for its eager step.
         query.all().getOrThrow()
-        query.explainAll()
         contexts.clear()
 
         // Executed on its own, the captured child is what it was

@@ -1,7 +1,6 @@
 package entkt.codegen.query
 
 import com.squareup.kotlinpoet.AnnotationSpec
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -27,8 +26,6 @@ private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext
 // EntReadRuntime's surface, so the read-only EntReadClientImpl behind
 // the posture wrappers can host queries identically.
 private val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
-private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
-private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
 
 internal class QueryGenerator(
     private val packageName: String,
@@ -239,9 +236,8 @@ internal class QueryGenerator(
             // able to catch traversal-source rejection too. Returns
             // the bridging predicate to inject as STRUCTURAL into the
             // target's QuerySpecBuilder, plus the source-step
-            // annotations to seed the target's spec with so
-            // observability consumers see source annotations on the
-            // final QueryPlan.
+            // annotations to seed the target's spec with so the final
+            // interceptor step sees source annotations.
             .addProperty(
                 PropertySpec.builder(
                     "deferredSourceStep",
@@ -292,14 +288,12 @@ internal class QueryGenerator(
             .addFunction(buildRawCount(schemaName, entityClass, hasEdges))
             .addFunctions(buildAggregateTerminals(schemaName, entityClass, hasEdges))
             .addFunction(buildRawExists(schemaName, entityClass, hasEdges))
-            .addFunctions(buildExplainMethods(resolved))
             .addFunctions(traversalMethods)
 
         // The selected-edge guard and the terminal-entry isolation
         // counter exist only when a graph can be selected at all;
-        // non-entity terminals, incompatible explains, and traversal
-        // route through the former, and topology-consuming terminals
-        // and entity explains hold the latter.
+        // non-entity terminals and traversal route through the former,
+        // and topology-consuming terminals hold the latter.
         if (hasEdges) {
             typeSpec.addFunction(buildRequireNoSelectedEdges(resolved))
             typeSpec.addProperty(buildActiveTerminalsProperty())
@@ -320,98 +314,6 @@ internal class QueryGenerator(
             )
             .addType(typeSpec.build())
             .build()
-    }
-
-    /**
-     * Assemble the per-terminal explain methods plus the internal
-     * `buildQueryPlan` helper that builds the [QueryPlan] tree. The
-     * per-terminal builders live next to their terminals — row-shaped
-     * ones in QueryRowMembers.kt, count/exists ones in
-     * QueryAggregateMembers.kt, the eager explain block in
-     * QueryEagerMembers.kt — and this assembler stitches them
-     * together. Each explain method mirrors the execution shape of
-     * its terminal:
-     *
-     * - `explainAll` → configured limit/offset + eager edges
-     * - `explainFirstOrNull` → `minOf(1, spec.limit ?: 1)` + eager edges
-     * - `explainRawExists` → existence probe shape, no eager edges
-     * - `explainRawCount` → COUNT query, no eager edges
-     */
-    private fun buildExplainMethods(resolved: ResolvedQuerySchema): List<FunSpec> {
-        val entityClass = resolved.entityClass
-        val queryPlan = ClassName("entkt.runtime.query", "QueryPlan")
-        // Only edges with a resolved join can be explained eagerly —
-        // the same capability that gates the eager-load surface.
-        val hasEager = resolved.edges.any { it.join != null }
-
-        val methods = mutableListOf<FunSpec>()
-
-        // Row-shaped reads (ALL operation, eager edges included):
-        // one explain per canonical terminal, tracking its name.
-        methods += buildRowShapedExplain(queryPlan, "explainAll", "all", hasEager)
-
-        // First-row read: fetches with `minOf(1, spec.limit ?: 1)`.
-        methods += buildFirstShapedExplain(queryPlan, "explainFirstOrNull", "firstOrNull", hasEager)
-
-        // Aggregate reads. Both explains reject a selected edge-load
-        // graph before driver explain work, exactly as their
-        // terminals reject it before interceptor or driver work.
-        methods += buildExistsShapedExplain(queryPlan, "explainRawExists", "rawExists", "RAW_EXISTS", hasEager)
-        methods += buildRawCountExplain(queryPlan, entityClass, hasEager)
-
-        // Internal buildQueryPlan helper. Takes the post-interceptor
-        // FrozenQuerySpec rather than raw limit/offset so the explain
-        // output reflects every predicate, limit, offset, and
-        // annotation contribution from the chain. `internal` (not
-        // private) so a parent query's eager-explain block can call
-        // it on a sibling *Query — that's how eager-load plans get
-        // built with the right EAGER_LOAD-step spec instead of
-        // re-running the sub-query through its own root explain().
-        // [junctionExplain] is non-null only on the M2M eager path
-        // where the parent block has computed the junction table's
-        // explain (junction is internal-only, not subject to
-        // interceptors).
-        val helper = FunSpec.builder("buildQueryPlan")
-            .addModifiers(KModifier.INTERNAL)
-            // Spec is typed in this query's entity scope; every layer above the driver
-            // call carries E through.
-            .addParameter("spec", FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
-            .addParameter("includeEager", BOOLEAN)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter(
-                ParameterSpec.builder("junctionExplain", QUERY_EXPLANATION.copy(nullable = true))
-                    .defaultValue("null")
-                    .build()
-            )
-            .returns(queryPlan)
-            .addStatement(
-                "val root = driver.explainQuery(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)",
-                entityClass,
-            )
-
-        if (!hasEager) {
-            helper.addStatement(
-                "return %T(root, junctionQuery = junctionExplain, annotations = spec.annotations)",
-                queryPlan,
-            )
-        } else {
-            helper.addStatement(
-                "if (!includeEager) return %T(root, junctionQuery = junctionExplain, annotations = spec.annotations)",
-                queryPlan,
-            )
-            helper.addStatement("val edges = mutableMapOf<String, %T>()", queryPlan)
-            for (info in resolved.edges) {
-                val join = info.join ?: continue
-                helper.addCode(buildEagerExplainBlock(info, join, entityClass))
-            }
-            helper.addStatement(
-                "return %T(root, junctionQuery = junctionExplain, eagerQueries = edges, annotations = spec.annotations)",
-                queryPlan,
-            )
-        }
-        methods += helper.build()
-
-        return methods
     }
 
     private fun buildRequireClient(schemaName: String): FunSpec {

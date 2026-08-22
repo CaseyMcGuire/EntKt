@@ -233,8 +233,8 @@ private fun addEdgesClassMembers(
  */
 private val FIXED_QUERY_MEMBERS: List<String> = listOf(
     "acquireEdgeTopology", "activeTerminals", "aggregateRows", "all",
-    "buildQueryPlan", "client", "combinedPredicate", "deferredSourceStep",
-    "driver", "eagerDenialBasePath", "explainRawCount", "firstOrNull", "limit",
+    "client", "combinedPredicate", "deferredSourceStep", "driver",
+    "eagerDenialBasePath", "firstOrNull", "limit",
     "loadEdges", "offset", "orderBy", "orderFields", "predicates", "query",
     "queryLimit", "queryOffset", "rawCount", "rawExists",
     "releaseEdgeTopology", "requireClient", "requireNoSelectedEdges",

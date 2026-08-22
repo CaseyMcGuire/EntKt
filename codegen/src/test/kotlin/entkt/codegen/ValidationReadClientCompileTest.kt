@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * Car/User fixture schemas plus a validator snippet exercising one
  * write entry point, and asserts a compilation error naming that
  * member. The positive twin compiles a validator that uses the read
- * surface (query DSL + terminal, byId family, index helpers, explain)
+ * surface (query DSL + terminal, byId family, and index helpers)
  * — proving the negatives fail on the missing write surface, not a
  * broken harness.
  *
@@ -96,7 +96,7 @@ class ValidationReadClientCompileTest {
     }
 
     @Test
-    fun `validator can read - query terminals, byId family, index helpers, explain`() {
+    fun `validator can read - query terminals, byId family, and index helpers`() {
         // The positive twin: every read-surface family the RFC promises
         // validators, in one snippet. If this stops compiling, the
         // negatives below prove nothing.
@@ -113,7 +113,6 @@ class ValidationReadClientCompileTest {
                 ctx.client.users.findById(UUID.randomUUID()).visibleOrNull()
                 ctx.client.users.indexes.email("a@b.c").find()
                 ctx.client.users.indexes.name("n").email("a@b.c").find().getOrThrow()
-                ctx.client.cars.explainFindById(1)
                 """.trimIndent(),
             ),
         )

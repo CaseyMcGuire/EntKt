@@ -348,24 +348,4 @@ class DirectToManyExecutionTest {
         assertEquals(10_000L, observedMinimum)
     }
 
-    // ---------- explain rendering ----------
-
-    @Test
-    fun `render labels a storage-native window without an overfetch warning`() {
-        val plan = entkt.runtime.query.QueryPlan(
-            root = null,
-            eagerExecution = entkt.runtime.query.EagerExecutionPlan(
-                setBatchedNestedExecution = true,
-                effectiveOrder = order,
-                windowStrategy = EagerWindowStrategy.STORAGE_NATIVE,
-                perParentLimit = 5,
-                perParentOffset = null,
-                windowOverfetchRisk = false,
-            ),
-        )
-        val rendered = plan.render()
-        assertTrue("storage-native (limit=5, offset=null)" in rendered, rendered)
-        assertTrue("may overfetch" !in rendered, rendered)
-        assertNull(plan.rejection)
-    }
 }

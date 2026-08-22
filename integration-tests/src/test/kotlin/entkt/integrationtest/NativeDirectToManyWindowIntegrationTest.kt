@@ -42,8 +42,7 @@ import kotlin.test.assertTrue
  * emulation demonstrably overfetches; interceptors see the complete
  * logical relationship constraint while the driver receives it
  * separately from the remaining frozen predicates; association maps
- * survive empty groups and nested loads; and explain reports the
- * strategy a given driver would actually execute. The SQL-level
+ * survive empty groups and nested loads. The SQL-level
  * lowering contract (typed-array transport past the scalar bind
  * limit, rank-alias collision safety, Long window arithmetic) is
  * pinned by the driver-level `DirectToManyPostgresDriverTest`.
@@ -287,26 +286,6 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
                 assertEquals(nativeUser.id, article.edges.author.requireLoaded()?.id)
             }
         }
-    }
-
-    @Test
-    fun `explain reports the strategy the executing driver would use`() {
-        val real = resetAndDriver()
-        bypassClient(real).users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-
-        val nativePlan = bypassClient(real).users.query { loadArticles { limit(3) } }.explainAll()
-        val nativeExec = assertNotNull(nativePlan.eagerQueries.getValue("articles").eagerExecution)
-        assertEquals(EagerWindowStrategy.STORAGE_NATIVE, nativeExec.windowStrategy)
-        assertFalse(nativeExec.windowOverfetchRisk)
-        assertTrue("storage-native" in nativePlan.render())
-
-        val emulatedPlan = bypassClient(EmulatedWindowsDriver(real)).users
-            .query { loadArticles { limit(3) } }.explainAll()
-        val emulatedExec = assertNotNull(emulatedPlan.eagerQueries.getValue("articles").eagerExecution)
-        assertEquals(EagerWindowStrategy.IN_MEMORY_EMULATED, emulatedExec.windowStrategy)
-        assertTrue(emulatedExec.windowOverfetchRisk, "a finite emulated window overfetches")
-        assertTrue("in-memory emulation" in emulatedPlan.render())
-        assertNull(emulatedPlan.eagerExecution, "framework metadata belongs to eager subplans")
     }
 
     @Test

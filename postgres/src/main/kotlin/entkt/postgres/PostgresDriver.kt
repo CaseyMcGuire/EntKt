@@ -19,7 +19,6 @@ import entkt.runtime.driver.JsonColumnCodec
 import entkt.runtime.driver.KotlinxJsonCodec
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionExecutionGuard
-import entkt.runtime.query.QueryExplanation
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
 
@@ -875,27 +874,6 @@ class PostgresDriver(
         query: entkt.runtime.driver.DirectToManyQuery,
     ): entkt.runtime.driver.RelatedRows =
         withConnection { ops.queryDirectToMany(it, query) }
-
-    override fun explainQuery(
-        table: String,
-        predicates: List<Predicate<*>>,
-        orderBy: List<OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ): QueryExplanation {
-        transactionExecutionGuard.checkClientOperation(null)
-        val prepared = ops.buildSelectSql(table, predicates, orderBy, limit, offset)
-        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
-    }
-
-    override fun explainCount(
-        table: String,
-        predicates: List<Predicate<*>>,
-    ): QueryExplanation {
-        transactionExecutionGuard.checkClientOperation(null)
-        val prepared = ops.buildCountSql(table, predicates)
-        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
-    }
 
     override fun count(table: String, predicates: List<Predicate<*>>): Long =
         withConnection { ops.count(it, table, predicates) }

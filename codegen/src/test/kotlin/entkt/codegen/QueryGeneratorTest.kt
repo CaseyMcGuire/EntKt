@@ -156,23 +156,6 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `first-shaped explain plans mirror the clamped runtime limit`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        // explain* is only useful if it reports what the terminal will
-        // actually send. A plan pinned at `limit = 1` would hide the
-        // caller's limit(0) rather than surface it.
-        assert(!output.contains("spec.copy(limit = 1)")) {
-            "explain should not pin a first-shaped plan at limit 1\n$output"
-        }
-        assert(output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1))")) {
-            "explainFirstOrNull should mirror the runtime clamp\n$output"
-        }
-    }
-
-    @Test
     fun `eager loads skip the target fetch when the window admits nothing`() {
         val car = Car()
         val user = User()
@@ -233,18 +216,6 @@ class QueryGeneratorTest {
         // path.
         assert(output.contains("targetPredicates = subSpec.nonStructuralPredicates,")) {
             "the native path should hand the driver only non-structural predicates\n$output"
-        }
-        // Explain mirrors the same probe so the reported strategy and
-        // overfetch risk match what execution would do.
-        assert(
-            output.contains(
-                "windowStrategy = if (nativeToManyWindows) EagerWindowStrategy.STORAGE_NATIVE else EagerWindowStrategy.IN_MEMORY_EMULATED",
-            ),
-        ) {
-            "explain should report native vs emulated from the driver capability\n$output"
-        }
-        assert(output.contains("windowOverfetchRisk = if (nativeToManyWindows) false else")) {
-            "a storage-native window has nothing to overfetch\n$output"
         }
     }
 
@@ -363,7 +334,7 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `selected-edge guard protects non-entity terminals, incompatible explains, and traversal`() {
+    fun `selected-edge guard protects non-entity terminals and traversal`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -411,30 +382,6 @@ class QueryGeneratorTest {
             }
         }
 
-        // Incompatible explain variants throw before any driver
-        // explain work: the guard precedes the privacy-context fetch.
-        assert(
-            output.contains(
-                "fun explainRawCount(): QueryPlan { requireNoSelectedEdges(\"explainRawCount()\"",
-            ),
-        ) {
-            "explainRawCount should throw the configuration exception before explain work\n$output"
-        }
-        assert(
-            output.contains(
-                "fun explainRawExists(): QueryPlan { requireNoSelectedEdges(\"explainRawExists()\"",
-            ),
-        ) {
-            "explainRawExists should throw the configuration exception before explain work\n$output"
-        }
-        // Compatible entity explains keep describing the selected graph.
-        assert(!output.contains("requireNoSelectedEdges(\"explainAll()\"")) {
-            "explainAll is an entity explain and must not reject selected edges\n$output"
-        }
-        assert(!output.contains("requireNoSelectedEdges(\"explainFirstOrNull()\"")) {
-            "explainFirstOrNull is an entity explain and must not reject selected edges\n$output"
-        }
-
         // Traversal is a configuration operation: queryX() itself
         // throws before constructing the target query.
         assert(
@@ -458,7 +405,7 @@ class QueryGeneratorTest {
         val output = generator.generate("Car", car, names).toString().replace("\\s+".toRegex(), " ")
 
         // The private counter backs terminal-entry isolation: while a
-        // terminal or entity explain is executing, load{Name} and
+        // terminal is executing, load{Name} and
         // filterVisible() on this query are rejected.
         assert(output.contains("private var activeTerminals: Int = 0")) {
             "Should emit the private activeTerminals counter\n$output"
@@ -481,29 +428,6 @@ class QueryGeneratorTest {
         }
         assert(output.contains("} finally { releaseEdgeTopology() }")) {
             "guard release must sit in a finally\n$output"
-        }
-        // Entity explains consume the same topology and hold the same
-        // guard while building the plan — acquired before the
-        // privacy-context capture, so even the privacy provider cannot
-        // mutate the topology being described, and released in the
-        // finally if the provider throws.
-        assert(
-            output.contains(
-                "acquireEdgeTopology() return try { " +
-                    "val privacy = requireClient().currentPrivacyContext() " +
-                    "val spec = runReadInterceptors(ReadOperation.ALL, privacy)",
-            ),
-        ) {
-            "explainAll should acquire the guard before privacy capture\n$output"
-        }
-        assert(
-            output.contains(
-                "acquireEdgeTopology() return try { " +
-                    "val privacy = requireClient().currentPrivacyContext() " +
-                    "val spec = runReadInterceptors(ReadOperation.FIRST, privacy)",
-            ),
-        ) {
-            "explainFirstOrNull should acquire the guard before privacy capture\n$output"
         }
         // Non-entity terminals reject selected topology outright and
         // do not consume it, so they never take the guard.
@@ -651,71 +575,14 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `explain roster is exactly one mirror per canonical terminal`() {
+    fun `query builders do not expose an explain API`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // Every canonical terminal gets its own explain method named after
-        // the terminal; there is no shared "explain()" entry, and the
-        // mirrors of the deleted visible* / OrThrow / OrError terminals
-        // are gone with them.
-        for (name in listOf(
-            "public fun explainAll(): QueryPlan {",
-            "public fun explainFirstOrNull(): QueryPlan {",
-            "public fun explainRawCount(): QueryPlan {",
-            "public fun explainRawExists(): QueryPlan {",
-        )) {
-            assert(output.contains(name)) { "Should generate $name\n$output" }
-        }
         val explainMethods = Regex("public fun explain\\w*\\(").findAll(output).count()
-        assert(explainMethods == 4) {
-            "the explain roster should be exactly explainAll / explainFirstOrNull / " +
-                "explainRawCount / explainRawExists; found $explainMethods explain methods\n$output"
-        }
-        // Row-shaped explains delegate through buildQueryPlan to
-        // driver.explainQuery with the post-interceptor spec; the count
-        // mirror delegates to driver.explainCount.
-        assert(output.contains("driver.explainQuery(Car.TABLE, spec.predicates, spec.orderBy,")) {
-            "row-shaped explain should delegate to driver.explainQuery with the post-interceptor spec\n$output"
-        }
-        assert(output.contains("QueryPlan(driver.explainCount(Car.TABLE, spec.predicates), annotations = spec.annotations)")) {
-            "explainRawCount should delegate to driver.explainCount and carry annotations\n$output"
-        }
-        // Rejection produces a rejected plan carrying the typed
-        // exception, not a throw — explain does NOT throw.
-        val rejections = Regex(
-            Regex.escape("} catch (e: EntQueryRejectedException) { QueryPlan.rejected(e) }")
-        ).findAll(output).count()
-        assert(rejections == 4) {
-            "each explain mirror should map EntQueryRejectedException to QueryPlan.rejected(e); " +
-                "found $rejections rejection handlers\n$output"
-        }
-    }
-
-    @Test
-    fun `exists explain drops orderBy and preserves caller offset (match runtime driver call)`() {
-        // Runtime rawExists calls driver.query(TABLE, spec.predicates,
-        // emptyList(), minOf(1, spec.limit ?: 1), spec.offset). The
-        // explain mirror must match exactly so the plan doesn't lie about
-        // what the terminal would actually send. Pre-fix the
-        // explain passed spec.orderBy and forced offset = null,
-        // which silently disagreed with `query { orderBy(...);
-        // offset(N) }.rawExists()`.
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // explainRawExists body should copy spec with orderBy =
-        // emptyList() + limit clamp; offset must NOT be reset.
-        assert(output.contains("spec.copy(orderBy = emptyList(), limit = minOf(1, spec.limit ?: 1))")) {
-            "explainRawExists should pass spec.copy(orderBy = emptyList(), limit = ...) to buildQueryPlan without forcing offset = null\n$output"
-        }
-        // Negative guards: pre-fix shape ("offset = null") must
-        // NOT appear on the exists path.
-        assert(!output.contains("spec.copy(limit = minOf(1, spec.limit ?: 1), offset = null)")) {
-            "exists explain must NOT force offset = null (runtime preserves caller offset)\n$output"
+        assert(explainMethods == 0) {
+            "generated query builders should not expose explain methods; found $explainMethods\n$output"
         }
     }
 
@@ -755,8 +622,7 @@ class QueryGeneratorTest {
         // Every data terminal shares the canonical capture boundary:
         // rethrow cancellation, capture Exception. Car emits 21 of them —
         // all, firstOrNull, rawCount, rawExists, and 17 raw aggregate
-        // overloads. Explains are NOT data terminals and stay outside
-        // this count (they only convert interceptor rejection).
+        // overloads.
         val boundaries = Regex(
             Regex.escape(
                 "} catch (e: CancellationException) { throw e } " +
@@ -768,37 +634,4 @@ class QueryGeneratorTest {
         }
     }
 
-    @Test
-    fun `explain includes eager edge subqueries`() {
-        val car = Car()
-        val user = User()
-        finalize(car, user)
-        val output = generator.generate("User", user, mapOf(user to "User", car to "Car")).toString()
-
-        assert(output.contains("eagerCars?.let { subQuery ->")) {
-            "explain() should iterate eager edges\n$output"
-        }
-        // After + the eager-load explain interceptor fix,
-        // the parent's eager block runs EAGER_LOAD interceptors on
-        // the sub-query and delegates the actual driver.explainQuery
-        // call to the sub-query's own buildQueryPlan. So the parent
-        // *Query no longer directly references the target table in
-        // driver.explainQuery; instead it builds a subSpec and
-        // delegates.
-        assert(output.contains("subQuery.runReadInterceptors(ReadOperation.EAGER_LOAD")) {
-            "eager explain should fire target interceptors with EAGER_LOAD before building the plan\n$output"
-        }
-        assert(output.contains("subQuery.buildQueryPlan(subSpec")) {
-            "eager explain should delegate plan construction to the sub-query's buildQueryPlan\n$output"
-        }
-        assert(output.contains("edges[\"cars\"]")) {
-            "explain() should store edge subquery under edge name\n$output"
-        }
-        assert(output.contains("QueryExplanation.EXPLAIN_PLACEHOLDER")) {
-            "eager explain should use EXPLAIN_PLACEHOLDER for IN predicates, not emptyList()\n$output"
-        }
-        assert(!output.contains("emptyList<Any>()")) {
-            "eager explain should not use emptyList<Any>() — it causes the driver to render IN as FALSE\n$output"
-        }
-    }
 }

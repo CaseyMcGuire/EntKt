@@ -669,7 +669,6 @@ rather than silently ignoring it:
 val query = client.users.query { loadPosts() }
 
 query.rawCount()        // ReadResult.Failed(EntQueryConfigurationException)
-query.explainRawCount() // throws EntQueryConfigurationException
 ```
 
 The failure happens before any interceptor or driver work, and the
@@ -862,8 +861,8 @@ The `scope` exposes only operations that *narrow* the query:
   set none
 - `rejectIfLimitGreaterThan(max) { reason }` — reject with
   `code = "max_limit_exceeded"` if unbounded or above `max`
-- `addAnnotation(key, value)` — diagnostic key/value, surfaces in
-  the `explain*()` plans
+- `addAnnotation(key, value)` — attach diagnostic metadata visible to
+  the current and later interceptors through `scope.shape.annotations`
 - `reject(reason, code)` — short-circuit the chain
 
 Interceptors cannot remove caller predicates, raise caller-set
@@ -877,7 +876,6 @@ limits, change ordering, or swap the table. That property —
 | Terminal shape | On rejection |
 |---|---|
 | Result-bearing reads (`findById`, `firstOrNull`, `all`, `find`, `rawCount`, `rawExists`, raw aggregates) | `ReadResult.Failed(EntQueryRejectedException)` — never collapsed to `null` / `false` / `0`; `.getOrThrow()` throws it, `.visibleOrNull()` leaves it unchanged |
-| `explain*` methods | Rejected `QueryPlan` (`rejected = true`, the exception stored in `plan.rejection`) — explain never throws; chain `requireNotRejected()` for exception-style handling |
 
 `EntQueryRejectedException` exposes direct properties — `entityType`,
 `reason`, optional `code`, and the rejecting interceptor's

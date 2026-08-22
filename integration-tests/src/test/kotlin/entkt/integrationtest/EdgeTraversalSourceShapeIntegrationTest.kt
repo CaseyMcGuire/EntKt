@@ -379,7 +379,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         assertEquals(listOf(draft.id), denied.denials.map { it.entityKey.value })
     }
 
-    // ---- Chains and explain ----
+    // ---- Traversal chains ----
 
     @Test
     fun `traversal chains preserve shape at each hop`() {
@@ -403,23 +403,6 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         assertEquals(listOf("bob"), authors.map { it.name })
     }
 
-    @Test
-    fun `explain shows the shaped traversal source`() {
-        val client = bypassClient(resetAndDriver())
-
-        val plan = client.users.query {
-            where(User.name eq "alice")
-            orderBy(User.id.desc())
-            limit(10)
-            offset(5)
-        }.queryArticles().explainAll()
-
-        val sql = assertNotNull(plan.root).describe()
-        assertTrue("IN (SELECT" in sql, "traversal should lower to a source-id subquery; was: $sql")
-        assertTrue("ORDER BY" in sql, "source orderBy should appear in the subquery; was: $sql")
-        assertTrue("LIMIT 10" in sql, "source limit should appear in the subquery; was: $sql")
-        assertTrue("OFFSET 5" in sql, "source offset should appear in the subquery; was: $sql")
-    }
 }
 
 // ---- Privacy fixtures ----

@@ -9,7 +9,6 @@ import entkt.runtime.driver.DirectToManyWindowCapability
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
-import entkt.runtime.query.QueryExplanation
 import entkt.runtime.driver.Driver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
@@ -126,24 +125,6 @@ internal class PostgresTransactionalDriver(
         groupBy: String?,
     ): List<AggregateResultRow> {
         checkOpen(); return ops.aggregate(conn, table, function, column, predicates, groupBy)
-    }
-
-    override fun explainQuery(
-        table: String,
-        predicates: List<Predicate<*>>,
-        orderBy: List<OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ): QueryExplanation {
-        checkOpen()
-        val prepared = ops.buildSelectSql(table, predicates, orderBy, limit, offset)
-        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
-    }
-
-    override fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation {
-        checkOpen()
-        val prepared = ops.buildCountSql(table, predicates)
-        return PostgresQueryExplanation(prepared.sql, prepared.params.map { it.value })
     }
 
     override fun delete(table: String, id: Any): Boolean {

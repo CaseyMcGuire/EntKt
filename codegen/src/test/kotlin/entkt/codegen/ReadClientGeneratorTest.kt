@@ -38,19 +38,14 @@ class ReadClientGeneratorTest {
     private fun readRuntimeOutput(): String =
         generateFiles().first { it.name == "EntReadRuntime" }.toString()
 
-    /**
-     * The findById + explainFindById span of a repo class: from the
-     * terminal's declaration through the end of the explain mirror's
-     * rejection handler. Both emitters place the two members adjacently
-     * (one KDoc between), so the span is contiguous.
-     */
+    /** The generated findById member of one repository class. */
     private fun findByIdSpan(source: String): String {
         val start = source.indexOf("public fun findById")
         assert(start >= 0) { "findById not found in\n$source" }
-        val endMarker = "QueryPlan.rejected(e)\n    }\n  }"
-        val end = source.indexOf(endMarker, start)
-        assert(end >= 0) { "explainFindById tail not found in\n$source" }
-        return source.substring(start, end + endMarker.length)
+        val closingBrace = "\n  }"
+        val end = source.indexOf(closingBrace, start)
+        check(end >= 0) { "findById tail not found in\n$source" }
+        return source.substring(start, end + closingBrace.length)
     }
 
     @Test
@@ -159,12 +154,12 @@ class ReadClientGeneratorTest {
     @Test
     fun `read repo findById is the full repo's findById modulo the runtime host reference`() {
         // The read client's per-entity repos must not re-implement the
-        // primary-key read path: CarReadRepo's findById/explainFindById
-        // are byte-identical to CarRepo's, with the sole difference that
+        // primary-key read path: CarReadRepo's findById is byte-identical
+        // to CarRepo's, with the sole difference that
         // the read repo reaches its host through `runtime` where the full
         // repo uses `client`. Any other difference is behavioral drift
         // between the two read surfaces (privacy, interceptors, capture
-        // boundary, or explain shape diverging by construction site).
+        // boundary diverging by construction site).
         val files = generateFiles()
         val readClient = files.first { it.name == "EntReadClient" }.toString()
         val carRepo = files.first { it.name == "CarRepo" }.toString()
@@ -176,12 +171,12 @@ class ReadClientGeneratorTest {
         assertEquals(
             repoSpan,
             readSpan.replace("runtime", "client"),
-            "read repo findById/explainFindById must match the full repo's modulo the host reference",
+            "read repo findById must match the full repo's modulo the host reference",
         )
 
         // And the shared span is the canonical primary-key read: a
         // ReadResult terminal running interceptors at BY_ID with the id
-        // as a structural predicate, plus its non-throwing explain mirror.
+        // as a structural predicate.
         assert(readSpan.contains("public fun findById(id: Int): ReadResult<Car?> = try {")) {
             "findById should return ReadResult<Car?> through the capture boundary\n$readSpan"
         }
@@ -190,9 +185,6 @@ class ReadClientGeneratorTest {
         }
         assert(readSpan.contains("extraStructural = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)),")) {
             "findById should pass the id as a structural predicate\n$readSpan"
-        }
-        assert(readSpan.contains("public fun explainFindById(id: Int): QueryPlan {")) {
-            "explainFindById should mirror findById returning QueryPlan\n$readSpan"
         }
     }
 

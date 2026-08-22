@@ -17,7 +17,7 @@ import entkt.schema.EntSchema
  * Names, joins, and inverses for one generated query class, resolved
  * once per [QueryGenerator.generate] call.
  *
- * Edge loading, edge-load explain, edge-predicate interception, and
+ * Edge loading, edge-predicate interception, and
  * `queryX()` traversal all key off the same per-edge metadata: the
  * target schema's generated name, the join columns, the inverse edge,
  * and the derived member names (`eagerX` / `loadX` / edge property).
@@ -32,8 +32,7 @@ import entkt.schema.EntSchema
  *    targets aren't being generated are skipped everywhere, exactly
  *    as the per-site `schemaNames[edge.target] ?: continue` guards
  *    used to do;
- *  - [ResolvedQueryEdge.join] non-null ⇔ the edge supports eager
- *    loading and eager explain;
+ *  - [ResolvedQueryEdge.join] non-null ⇔ the edge supports eager loading;
  *  - [ResolvedQueryEdge.inverse] non-null ⇔ a direct edge supports
  *    `queryX()` traversal (M2M traversal never needs an inverse).
  */
@@ -82,7 +81,7 @@ internal class ResolvedQueryEdge(
     /** Generated `Edges` property the eager result lands on. */
     val edgePropName: String,
     /**
-     * Join columns for eager loading / eager explain, or null when
+     * Join columns for eager loading, or null when
      * they can't be resolved (an M2M junction schema not visible to
      * codegen). Direct-edge join resolution either succeeds or throws
      * — see [resolveEdgeJoin] — so null here always means "skip the

@@ -1764,7 +1764,7 @@ class EdgeCodegenTest {
             output.contains(
                 "public fun loadPets(block: PetQuery.() -> Unit = {}): EdgeLoad<OwnerQuery> " +
                     "{ if (activeTerminals > 0) { throw EntQueryConfigurationException( \"Owner\", " +
-                    "\"loadPets() cannot select an edge now: a terminal or explain on this " +
+                    "\"loadPets() cannot select an edge now: a terminal on this " +
                     "OwnerQuery is executing and the in-flight operation's edge-load topology " +
                     "is fixed at terminal entry\", ) } " +
                     "if (eagerPets != null) { throw EntQueryConfigurationException( \"Owner\", " +
@@ -1776,7 +1776,7 @@ class EdgeCodegenTest {
                     "try { configured.apply(block) } catch (e: Throwable) { eagerPets = null throw e } " +
                     "return object : EdgeLoad<OwnerQuery> { override fun filterVisible(): OwnerQuery " +
                     "{ if (activeTerminals > 0) { throw EntQueryConfigurationException( \"Owner\", " +
-                    "\"filterVisible() for Owner.pets cannot be called now: a terminal or explain " +
+                    "\"filterVisible() for Owner.pets cannot be called now: a terminal " +
                     "on this OwnerQuery is executing and the in-flight operation's edge-load " +
                     "topology is fixed at terminal entry\", ) } " +
                     "eagerPetsFilterVisible = true return this@OwnerQuery } } }",

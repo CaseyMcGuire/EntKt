@@ -40,9 +40,7 @@ import kotlin.test.assertTrue
  * stays data-gated; a junction rejection stops the step before
  * junction I/O and before the target interceptor pass; the context
  * names the junction as `currentEntity` and the eager M2M step as
- * its path; explain mirrors the pass (post-interceptor junction
- * predicates, separately attributed junction annotations, rejection
- * as a rejected edge entry). Junction LOAD privacy deliberately
+ * its path. Junction LOAD privacy deliberately
  * does NOT run on discovery.
  */
 class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
@@ -268,57 +266,4 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         )
     }
 
-    @Test
-    fun `explain mirrors the junction pass and attributes its annotations separately`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                memberships(
-                    QueryInterceptor { scope, ctx ->
-                        if (ctx.operation == ReadOperation.EAGER_JUNCTION) {
-                            scope.addPredicate(Predicate.Leaf("role", Op.EQ, "member"))
-                            scope.addAnnotation("junction-scope", "members-only")
-                        }
-                    },
-                    name = "junction-scoper",
-                )
-            }
-        }
-        client.groups.create { name = "g1" }.save().getOrThrow()
-
-        val plan = client.groups.query { loadUsers() }.explainAll()
-
-        val usersPlan = plan.eagerQueries.getValue("users")
-        // The junction explain shows the post-interceptor predicates…
-        assertContains(assertNotNull(usersPlan.junctionQuery).describe(), "role")
-        // …and the junction pass's annotations stay separately
-        // attributed, never merged into the target spec's map.
-        assertEquals("members-only", usersPlan.junctionAnnotations["junction-scope"])
-        assertTrue("junction-scope" !in usersPlan.annotations)
-        assertContains(plan.render(), "junction-scope=members-only")
-    }
-
-    @Test
-    fun `a junction rejection renders as a rejected edge entry in explain`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                memberships(
-                    QueryInterceptor { scope, ctx ->
-                        if (ctx.operation == ReadOperation.EAGER_JUNCTION) {
-                            scope.reject("no discovery", code = "junction_rej")
-                        }
-                    },
-                    name = "junction-rejector",
-                )
-            }
-        }
-        client.groups.create { name = "g1" }.save().getOrThrow()
-
-        val plan = client.groups.query { loadUsers() }.explainAll()
-
-        val usersPlan = plan.eagerQueries.getValue("users")
-        assertTrue(usersPlan.rejected)
-        assertEquals("junction_rej", usersPlan.rejectedCode)
-    }
 }

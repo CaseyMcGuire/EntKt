@@ -141,20 +141,20 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo exposes findById and explainFindById taking the schema id type`() {
+    fun `repo exposes findById taking the schema id type`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
         // User has UUID id. The canonical primary-key lookup is the
         // single `findById(id): ReadResult<Entity?>` (absence is a
-        // successful null payload) plus its diagnostic explain — the
-        // old byId / *OrNull / *OrThrow / *OrError family is gone.
+        // successful null payload). The old byId / *OrNull /
+        // *OrThrow / *OrError family is gone.
         assert(output.contains("public fun findById(id: UUID): ReadResult<User?>")) {
             "findById should take the schema id type and return ReadResult<User?>\n$output"
         }
-        assert(output.contains("public fun explainFindById(id: UUID): QueryPlan")) {
-            "explainFindById should take the schema id type and return QueryPlan\n$output"
+        assert(!output.contains("explainFindById")) {
+            "repositories should not expose a query explain API\n$output"
         }
     }
 
@@ -186,7 +186,7 @@ class RepoGeneratorTest {
             "findById should hydrate the driver's row via Car.fromRow\n$output"
         }
         // Negative guard on the findById body itself: no raw PK lookup.
-        val body = raw.substring(raw.indexOf("fun findById("), raw.indexOf("fun explainFindById("))
+        val body = raw.substring(raw.indexOf("fun findById("), raw.indexOf("fun delete("))
         assert(!body.contains("driver.byId(")) {
             "findById must not use driver.byId — interceptor predicates would be silently dropped\n$body"
         }
@@ -237,24 +237,6 @@ class RepoGeneratorTest {
             ),
         ) {
             "a selected-but-denied row should be Failed(EntPrivacyDeniedException(Root, listOf(denial)))\n$output"
-        }
-    }
-
-    @Test
-    fun `explainFindById returns a rejected QueryPlan instead of throwing`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // Explain stays outside the result algebra: interceptor
-        // rejection is a diagnostic plan, not an exception, and the
-        // plan hardwires the runtime call's limit = 1 / offset = null.
-        assert(output.contains("q.buildQueryPlan(spec.copy(limit = 1, offset = null), includeEager = false, privacy = privacy)")) {
-            "explainFindById should build the plan with limit 1 / no offset, no eager\n$output"
-        }
-        assert(output.contains("} catch (e: EntQueryRejectedException) { QueryPlan.rejected(e) }")) {
-            "explainFindById should convert interceptor rejection to QueryPlan.rejected\n$output"
         }
     }
 

@@ -23,7 +23,6 @@ import kotlin.test.assertTrue
 
 /**
  * Pins the set-based eager loader's deterministic-ordering contract
- * and its framework-owned explain metadata
  * (`docs/possible-features/query/set-based-eager-graph-loader.md`,
  * "Ordering Contract" and "Explain"):
  *
@@ -35,12 +34,6 @@ import kotlin.test.assertTrue
  *   `shape.callerOrderBy` / `hasCallerOrderBy`.
  * - Root (non-eager) queries gain no framework ordering term.
  * - Tied rows enter a finite per-parent window deterministically.
- * - Each eager subplan carries typed `eagerExecution` metadata —
- *   set-batched nested execution, the effective order, and the
- *   per-path window strategy (storage-native for direct to-many
- *   edges on the PostgreSQL driver; in-memory emulation with its
- *   overfetch risk elsewhere) — on a framework-owned field that
- *   caller-controlled annotations cannot override.
  */
 class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
 
@@ -178,153 +171,4 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
         assertEquals(emptyList(), assertNotNull(rootOrderBy))
     }
 
-    @Test
-    fun `explain reports set-batched execution, the effective order, and each eager path's window strategy`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-
-        // Selected in reverse declaration order — the plan's edge
-        // entries still follow schema-declaration order, matching the
-        // depth-first execution order the runtime tests pin.
-        val plan = client.users.query {
-            loadGroups()
-            loadArticles {
-                orderBy(Article.title.asc())
-                limit(5)
-                offset(2)
-                loadAuthor()
-            }
-        }.explainAll()
-
-        assertNull(plan.eagerExecution, "framework metadata belongs to eager subplans, not the root")
-        assertEquals(listOf("articles", "groups"), plan.eagerQueries.keys.toList())
-
-        val articles = assertNotNull(plan.eagerQueries.getValue("articles").eagerExecution)
-        assertTrue(articles.setBatchedNestedExecution)
-        assertEquals(
-            listOf(
-                OrderField<Article>("title", OrderDirection.ASC),
-                OrderField<Article>("id", OrderDirection.ASC),
-            ),
-            articles.effectiveOrder,
-        )
-        // The PostgreSQL driver has native direct to-many windows, so
-        // the hasMany step reports the storage-native strategy — and a
-        // storage window has nothing to overfetch.
-        assertEquals(EagerWindowStrategy.STORAGE_NATIVE, articles.windowStrategy)
-        assertEquals(5, articles.perParentLimit)
-        assertEquals(2, articles.perParentOffset)
-        assertFalse(articles.windowOverfetchRisk, "a storage-native window discards nothing")
-
-        // Nested eager subplans carry the metadata too — one per
-        // logical edge step, recursively.
-        val nestedAuthor = assertNotNull(
-            plan.eagerQueries.getValue("articles").eagerQueries.getValue("author").eagerExecution,
-        )
-        assertEquals(listOf(OrderField<Any>("id", OrderDirection.ASC)), nestedAuthor.effectiveOrder)
-
-        val groups = assertNotNull(plan.eagerQueries.getValue("groups").eagerExecution)
-        assertEquals(listOf(OrderField<Any>("id", OrderDirection.ASC)), groups.effectiveOrder)
-        assertNull(groups.perParentLimit)
-        assertFalse(groups.windowOverfetchRisk, "an unbounded window discards nothing")
-
-        // The human-readable rendering labels each edge's real
-        // strategy: storage-native for the direct to-many step,
-        // in-memory emulation for the many-to-many step (which never
-        // claims a row-fetch reduction it doesn't have).
-        val rendered = plan.render()
-        assertContains(rendered, "set-batched nested loads")
-        assertContains(rendered, "storage-native")
-        assertContains(rendered, "in-memory emulation")
-    }
-
-    @Test
-    fun `overfetch risk is not reported for windows that fetch nothing`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-
-        val plan = client.users.query {
-            loadArticles { limit(0) }
-            loadProfile { offset(1) }
-        }.explainAll()
-
-        // limit(0) skips the driver fetch on every edge kind, and a
-        // to-one edge's fetch is gated on a window admitting its
-        // at-most-one candidate — neither step can fetch a row it
-        // discards, so neither may claim overfetch.
-        val articles = assertNotNull(plan.eagerQueries.getValue("articles").eagerExecution)
-        assertEquals(0, articles.perParentLimit)
-        assertFalse(articles.windowOverfetchRisk, "limit(0) never reaches the driver")
-        val profile = assertNotNull(plan.eagerQueries.getValue("profile").eagerExecution)
-        assertEquals(1, profile.perParentOffset)
-        assertFalse(profile.windowOverfetchRisk, "a to-one edge never fetches a row it discards")
-        assertFalse(plan.render().contains("may overfetch"))
-    }
-
-    @Test
-    fun `mid-explain bounds mutation cannot change the reported window metadata`() {
-        var captured: ArticleQuery? = null
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                articles(
-                    QueryInterceptor { _, ctx ->
-                        if (ctx.operation == ReadOperation.EAGER_LOAD) captured?.offset(3)
-                    },
-                    name = "mid-explain-bounds-mutator",
-                )
-            }
-        }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-        val query = client.users.query()
-        var target: ArticleQuery? = null
-        query.loadArticles { target = this }
-        captured = target
-
-        val plan = query.explainAll()
-
-        // The metadata reads the spec frozen before the interceptor
-        // chain ran, so it describes the window this plan's execution
-        // would actually use — not the mid-flight mutation, which
-        // governs later executions only.
-        val exec = assertNotNull(plan.eagerQueries.getValue("articles").eagerExecution)
-        assertNull(exec.perParentOffset)
-        assertFalse(exec.windowOverfetchRisk)
-    }
-
-    @Test
-    fun `an application annotation cannot override the framework execution metadata`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-            interceptors {
-                articles(
-                    QueryInterceptor { scope, ctx ->
-                        if (ctx.operation == ReadOperation.EAGER_LOAD) {
-                            scope.addAnnotation("entkt.eager.window", "native")
-                            scope.addAnnotation("strategy", "not-set-batched")
-                        }
-                    },
-                    name = "strategy-spoofer",
-                )
-            }
-        }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-
-        val plan = client.users.query { loadArticles { limit(3) } }.explainAll()
-
-        // The annotations land in the caller-controlled map…
-        val articlesPlan = plan.eagerQueries.getValue("articles")
-        assertEquals("native", articlesPlan.annotations["entkt.eager.window"])
-        // …while the typed framework field reports the real strategy
-        // (storage-native on the PostgreSQL driver, with no overfetch
-        // for the annotation to misreport).
-        val exec = assertNotNull(articlesPlan.eagerExecution)
-        assertTrue(exec.setBatchedNestedExecution)
-        assertEquals(EagerWindowStrategy.STORAGE_NATIVE, exec.windowStrategy)
-        assertFalse(exec.windowOverfetchRisk)
-    }
 }

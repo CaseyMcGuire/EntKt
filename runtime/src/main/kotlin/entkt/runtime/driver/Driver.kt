@@ -2,8 +2,6 @@ package entkt.runtime.driver
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.mutation.RelationshipLockKey
-import entkt.runtime.query.QueryExplanation
-import entkt.runtime.query.UnsupportedQueryExplanation
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.AggregateFunction
@@ -455,37 +453,6 @@ interface Driver {
         }
         return deleted
     }
-
-    /**
-     * Return a [QueryExplanation] describing the SELECT query the
-     * driver would execute for the given parameters, without actually
-     * running it. Useful for debugging and logging — the explanation
-     * format is driver-specific (e.g. SQL + bind args for Postgres).
-     *
-     * The default implementation returns an [UnsupportedQueryExplanation].
-     * Override this to provide driver-specific detail (e.g. SQL + bind args).
-     */
-    fun explainQuery(
-        table: String,
-        predicates: List<Predicate<*>>,
-        orderBy: List<OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ): QueryExplanation = UnsupportedQueryExplanation(this::class.simpleName ?: "Driver")
-
-    /**
-     * Return a [QueryExplanation] describing the COUNT query the
-     * driver would execute for the given parameters, without actually
-     * running it. Used by `explainRawCount()` on generated query
-     * builders.
-     *
-     * The default implementation returns an [UnsupportedQueryExplanation].
-     * Override this to provide driver-specific detail.
-     */
-    fun explainCount(
-        table: String,
-        predicates: List<Predicate<*>>,
-    ): QueryExplanation = UnsupportedQueryExplanation(this::class.simpleName ?: "Driver")
 
     /**
      * Run [block] inside a transaction and report the outcome

@@ -36,8 +36,7 @@ public enum class DirectToManyWindowCapability {
     /**
      * No native per-parent window: the runtime fetches every matching
      * row through [Driver.query] and applies each parent's window in
-     * memory, with the overfetch that implies disclosed through
-     * [EagerWindowStrategy.IN_MEMORY_EMULATED] in explain output.
+     * memory, which can overfetch rows that the runtime later discards.
      */
     EMULATED,
 }

@@ -19,8 +19,6 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP = ClassName("entkt.query", "Op")
 private val EDGE_STATE = ClassName("entkt.runtime.query", "EdgeState")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val QUERY_EXPLANATION = ClassName("entkt.runtime.query", "QueryExplanation")
-private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "EntQueryRejectedException")
 private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
 private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
 private val EAGER_EDGE_STEP = ClassName("entkt.runtime.result", "EagerEdgeStep")
@@ -28,7 +26,6 @@ private val EDGE_LOAD_HANDLE = ClassName("entkt.runtime.query", "EdgeLoad")
 private val ENT_QUERY_CONFIGURATION_EXCEPTION =
     ClassName("entkt.runtime.result", "EntQueryConfigurationException")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
-private val EAGER_EXECUTION_PLAN = ClassName("entkt.runtime.query", "EagerExecutionPlan")
 private val EAGER_WINDOW_STRATEGY = ClassName("entkt.runtime.query", "EagerWindowStrategy")
 private val DIRECT_TO_MANY_QUERY = ClassName("entkt.runtime.driver", "DirectToManyQuery")
 private val PER_PARENT_WINDOW = ClassName("entkt.runtime.driver", "PerParentWindow")
@@ -37,11 +34,9 @@ private val DIRECT_TO_MANY_WINDOW_CAPABILITY =
 private val EXECUTE_DIRECT_TO_MANY = MemberName("entkt.runtime.driver", "executeDirectToMany")
 
 // ------------------------------------------------------------------
-// Edge loading: the `loadX` DSL surface, the batch `loadEdges`
-// member, and the per-edge eager explain block. Split out of
-// QueryGenerator so the eager runtime shape and its explain mirror
-// live side by side — every "explain must match the driver call"
-// constraint in here binds a block below to its sibling.
+// Edge loading: the `loadX` DSL surface and the batch `loadEdges`
+// member. Split out of QueryGenerator to keep the generated graph
+// loading algorithm together.
 // QueryGenerator.generate() assembles the members; everything here
 // is driven by the resolved edge metadata in [ResolvedQuerySchema].
 // ------------------------------------------------------------------
@@ -102,7 +97,7 @@ internal fun buildEagerEdgeSpec(
         receiver = targetQueryClass,
         returnType = UNIT,
     )
-    val inFlightGuard = "a terminal or explain on this ${resolved.schemaName}Query is " +
+    val inFlightGuard = "a terminal on this ${resolved.schemaName}Query is " +
         "executing and the in-flight operation's edge-load topology is fixed at " +
         "terminal entry"
     val loadMethod = FunSpec.builder(loadMethodName)
@@ -185,8 +180,7 @@ internal fun buildEagerEdgeSpec(
 /**
  * Build the private `activeTerminals` counter that backs terminal-entry
  * isolation for the edge-load topology. Entity terminals (`all` /
- * `firstOrNull`) and entity explains (`explainAll` /
- * `explainFirstOrNull`) acquire it via [buildAcquireEdgeTopology] on
+ * `firstOrNull`) acquire it via [buildAcquireEdgeTopology] on
  * entry and release in a `finally`; `load{Name}` and `filterVisible()`
  * reject while it is positive, so an interceptor or privacy rule that
  * captured any query in the selected graph cannot change the topology
@@ -196,8 +190,8 @@ internal fun buildEagerEdgeSpec(
  * captured target query's *contents* need no guard: each eager step
  * snapshots them when depth-first execution reaches it — the spec
  * builder copies predicates and ordering at interceptor-chain entry,
- * and the step's window and explain metadata read the frozen spec's
- * bounds — so predicates, ordering, or bounds mutated mid-flight
+ * and the step's window reads the frozen spec's bounds — so
+ * predicates, ordering, or bounds mutated mid-flight
  * affect later executions only. Emitted only when the query has a
  * load-capable edge.
  */
@@ -258,9 +252,8 @@ private fun buildTopologyGuardWalk(
  * shared by every generated surface that cannot carry a selected
  * edge-load graph: the raw count / existence / aggregate terminals
  * (whose canonical bodies capture the throw as `ReadResult.Failed`
- * before any interceptor or driver work), their explain variants
- * (which throw before driver explain work), and `query{Name}`
- * traversal (which throws at configuration time). A selected edge is
+ * before any interceptor or driver work), and `query{Name}` traversal
+ * (which throws at configuration time). A selected edge is
  * a non-null `eager{Stem}` backing property; the diagnostic names the
  * rejected operation and every selected declaration-derived edge
  * path. Emitted only when the query has at least one load-capable
@@ -308,8 +301,7 @@ internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
     // fires on every configured eager subquery even when the root
     // matched nothing — whether an interceptor runs, and whether it
     // can `reject()`, must not depend on what the database returned.
-    // `explain()` fires the pass unconditionally too. Only the
-    // driver fetches inside the per-edge blocks are data-gated.
+    // Only the driver fetches inside the per-edge blocks are data-gated.
     // (Scope: a read that aborts before edge loading — a root
     // interceptor rejection, or a strict read's LOAD-privacy denial
     // thrown before its loadEdges call — never reaches this pass;
@@ -534,9 +526,8 @@ private fun emitHasOneEagerBlock(
  * The pass is unconditional, including when the union is empty:
  * whether a nested EAGER_LOAD interceptor fires (and can
  * `reject()`) must not depend on what level-1 data came back —
- * matching the belongsTo path (whose single unconditional
- * `loadEdges` call has these semantics already) and `explain()`'s
- * unconditional recursion into nested eager shapes.
+ * matching the belongsTo path, whose single unconditional
+ * `loadEdges` call has these semantics already.
  */
 private fun emitSetBasedNestedPass(body: CodeBlock.Builder, orderedTargetsExpr: String) {
     // `·` marks non-breaking spaces: KotlinPoet must not wrap between
@@ -594,8 +585,7 @@ private fun emitToOneEagerBlock(
     // interceptor pass fires on every eager subquery, so whether an
     // interceptor runs — and whether it can `reject()` — must not
     // depend on the relationship data that happens to be present.
-    // `explain()` fires it unconditionally too. An empty `fkValues`
-    // just means the structural IN predicate is empty.
+    // An empty `fkValues` just means the structural IN predicate is empty.
     body.addStatement(
         "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, fkValues)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, join.targetColumn, OP,
@@ -616,8 +606,7 @@ private fun emitToOneEagerBlock(
     //
     // Deliberately not short-circuiting the whole branch: the
     // EAGER_LOAD interceptor pass above fires on every eager subquery
-    // regardless of bounds, which is what the sibling paths and
-    // `explain()` both do.
+    // regardless of bounds, which is what the sibling paths do.
     body.addStatement("val perParentOffset = subSpec.offset ?: 0")
     body.addStatement("val perParentLimit = subSpec.limit ?: %T.MAX_VALUE", Int::class.asClassName())
     body.addStatement("val targetInWindow = perParentOffset == 0 && perParentLimit > 0")
@@ -711,9 +700,8 @@ private fun emitM2MEagerBlock(
     // The interceptor pass is unconditional, including when the
     // junction has no rows: whether an interceptor runs — and whether
     // it can `reject()` — must not depend on the relationship data
-    // that happens to be present, and `explain()` fires it
-    // unconditionally too. No junction rows just means the structural
-    // IN predicate is empty.
+    // that happens to be present. No junction rows just means the
+    // structural IN predicate is empty.
     body.addStatement(
         "val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, eagerPrivacyContext, listOf(%T.Leaf<%T>(%S, %T.IN, targetIds)), appendPrimaryKeyOrder = true)",
         READ_OPERATION, PREDICATE, targetClass, "id", OP,
@@ -944,212 +932,4 @@ private fun emitEagerPrivacyCheck(
     body.endControlFlow()
     body.endControlFlow()
     body.endControlFlow()
-}
-
-/**
- * Emit the explain block for a single eager edge. Mirrors the
- * runtime EAGER_LOAD flow in `emit*EagerBlock` so the plan
- * reflects what actually runs:
- *
- * 1. Set up the sub-query's traversal context (sourceEntity /
- *    edgeName / path) — same as runtime.
- * 2. Run `subQuery.runReadInterceptors(EAGER_LOAD, privacy, QUERY,
- *    listOf(IN-predicate))`. The target's interceptors fire with
- *    `context.operation == EAGER_LOAD` (not ALL as the previous
- *    `subQuery.explain()` route would have done), and the
- *    resulting spec contains every target-side interceptor's
- *    predicates + annotations.
- * 3. Hand the spec to the sub-query's own `buildQueryPlan` so
- *    the rendered plan shows the post-interceptor shape, plus
- *    recursively-walked nested eager edges via the same path.
- *
- * For M2M edges the junction-table explain is computed in this
- * block (junction tables aren't entities and don't have
- * interceptors), then handed to the sub-query's `buildQueryPlan`
- * as the optional junction explain.
- *
- * The IN predicate uses [QueryExplanation.EXPLAIN_PLACEHOLDER]
- * as the value so the driver renders the actual column name
- * (e.g. `"author_id" IN (?)`) rather than collapsing an empty
- * IN list to FALSE.
- */
-internal fun buildEagerExplainBlock(
-    info: ResolvedQueryEdge,
-    join: EdgeJoin,
-    sourceClass: ClassName,
-): CodeBlock {
-    val edgeStepClass = ClassName("entkt.runtime.query", "EdgeStep")
-    val body = CodeBlock.builder()
-    body.beginControlFlow("%L?.let { subQuery ->", info.eagerPropName)
-    // Mirror runtime emit*EagerBlock context setup so the
-    // sub-query's interceptors see the right QueryContext.
-    // Cross-class write goes through the @EntktInternal seeder.
-    body.addStatement(
-        "subQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))",
-        sourceClass, info.publicName, edgeStepClass, sourceClass, info.publicName, info.targetClass,
-    )
-    // The seed is scoped to this explain step, mirroring the runtime
-    // blocks: the `finally` below restores the child's default root
-    // state so a captured sub-query executed independently later
-    // carries no stale parent attribution.
-    body.beginControlFlow("try")
-
-    // A rejected eager sub-explain becomes a rejected entry
-    // in `edges` rather than failing the whole parent plan —
-    // the root + sibling eager subplans still appear, the
-    // caller can inspect `plan.eagerQueries["X"]?.rejected` to
-    // see which step rejected. Explain rejection lives on the
-    // plan, not as an exception.
-    val queryPlanLocal = ClassName("entkt.runtime.query", "QueryPlan")
-    if (info.isManyToMany) {
-        // M2M: the junction discovery pass mirrors runtime — the
-        // JUNCTION entity's interceptors run with EAGER_JUNCTION and
-        // their post-interceptor predicates feed the junction
-        // explain, then the target-table plan uses the
-        // post-EAGER_LOAD spec with an IN on "id". Inside the try so
-        // a junction interceptor rejection renders as a rejected
-        // edge entry, exactly like a target rejection.
-        val junctionEntityClass = checkNotNull(info.junctionEntityClass) {
-            "M2M eager explain for '${info.publicName}' requires a codegen-visible junction"
-        }
-        val junctionQueryClass = checkNotNull(info.junctionQueryClass) {
-            "M2M eager explain for '${info.publicName}' requires a codegen-visible junction"
-        }
-        body.add("edges[%S] = try {\n", info.publicName)
-        body.add("  val junctionQuery = %T(driver, client)\n", junctionQueryClass)
-        body.add(
-            "  junctionQuery.seedEdgeTraversal(%T::class, %S, this.traversalPath + %T(%T::class, %S, %T::class))\n",
-            sourceClass, info.publicName, edgeStepClass, sourceClass, info.publicName, info.targetClass,
-        )
-        body.add(
-            "  val junctionSpec = junctionQuery.runReadInterceptors(%T.EAGER_JUNCTION, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)))\n",
-            READ_OPERATION, PREDICATE, junctionEntityClass, join.junctionSourceColumn, OP, QUERY_EXPLANATION,
-        )
-        body.add(
-            "  val junctionExplain = driver.explainQuery(%S, junctionSpec.predicates, junctionSpec.orderBy, null, null)\n",
-            join.junctionTable,
-        )
-        body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), appendPrimaryKeyOrder = true)\n",
-            READ_OPERATION, PREDICATE, info.targetClass, "id", OP, QUERY_EXPLANATION,
-        )
-        // Strip limit/offset before handing to buildQueryPlan:
-        // the runtime eager fetch uses null/null limit/offset
-        // and paginates per-group in Kotlin (see
-        // emit*EagerBlock), so passing spec.limit/spec.offset
-        // here would render LIMIT/OFFSET in the explain that
-        // doesn't match what the driver actually receives at
-        // runtime. Predicates / orderBy / annotations DO flow
-        // through accurately. The framework-owned execution
-        // metadata rides the typed eagerExecution field, never
-        // the caller-controlled annotation map.
-        body.add(
-            "  val subPlan = subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy, junctionExplain = junctionExplain)\n",
-        )
-        emitEagerExecutionMetadata(body, isToOne = false, withJunctionAnnotations = true)
-        body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-        body.add("  %T.rejected(e)\n", queryPlanLocal)
-        body.add("}\n")
-    } else {
-        // Direct edge: single query with IN on the join column.
-        // hasMany/hasOne: IN on targetColumn (FK on target side).
-        // belongsTo: IN on targetColumn ("id" on target side).
-        val isDirectToMany = info.edge.kind is EdgeKind.HasMany
-        body.add("edges[%S] = try {\n", info.publicName)
-        body.add(
-            "  val subSpec = subQuery.runReadInterceptors(%T.EAGER_LOAD, privacy, listOf(%T.Leaf<%T>(%S, %T.IN, %T.EXPLAIN_PLACEHOLDER)), appendPrimaryKeyOrder = true)\n",
-            READ_OPERATION, PREDICATE, info.targetClass, join.targetColumn, OP, QUERY_EXPLANATION,
-        )
-        // See M2M branch above for why limit/offset are
-        // stripped here.
-        body.add(
-            "  val subPlan = subQuery.buildQueryPlan(subSpec.copy(limit = null, offset = null), includeEager = true, privacy = privacy)\n",
-        )
-        if (isDirectToMany) {
-            // Native-versus-emulated is a driver capability, not a
-            // generation-time fact — mirror the runtime block's
-            // capability probe so the reported strategy matches what
-            // executing this plan would actually do. Explain performs
-            // no driver I/O; the capability accessor is pure.
-            body.add(
-                "  val nativeToManyWindows = driver.directToManyWindowCapability() == %T.NATIVE\n",
-                DIRECT_TO_MANY_WINDOW_CAPABILITY,
-            )
-        }
-        emitEagerExecutionMetadata(
-            body,
-            isToOne = info.edge.kind is EdgeKind.BelongsTo || info.edge.kind is EdgeKind.HasOne,
-            isDirectToMany = isDirectToMany,
-        )
-        body.add("} catch (e: %T) {\n", ENT_QUERY_REJECTED_EXCEPTION)
-        body.add("  %T.rejected(e)\n", queryPlanLocal)
-        body.add("}\n")
-    }
-
-    body.nextControlFlow("finally")
-    body.addStatement("subQuery.seedEdgeTraversal(null, null, emptyList())")
-    body.endControlFlow()
-    body.endControlFlow()
-    return body.build()
-}
-
-/**
- * Emit the typed framework-owned execution metadata onto the eager
- * subplan — the try-expression's value. `subSpec.orderBy` is the
- * post-interceptor effective order (caller terms + the framework's
- * primary-key tie-breaker), with the configured per-parent bounds
- * carried alongside.
- *
- * The window strategy is phase-1 in-memory emulation for every eager
- * edge except a direct to-many on a driver with native per-parent
- * windows: [isDirectToMany] emits a probe of the runtime driver's
- * capability (the `nativeToManyWindows` local emitted by the caller)
- * so the reported strategy matches what executing the plan would do.
- *
- * The overfetch-risk value mirrors the runtime fetch gates exactly:
- * a to-one edge fetches only when the window admits its at-most-one
- * candidate, so it never fetches a row it discards ([isToOne] emits
- * a constant `false`); a storage-native window discards nothing; an
- * emulated grouped edge overfetches only when it fetches at all
- * (`limit != 0`) and the window can discard — a finite positive
- * limit or a positive offset.
- *
- * Bounds come from the frozen `subSpec` (before its limit/offset are
- * stripped for the driver-explain call), never from live sub-query
- * state, matching the runtime blocks — a captured sub-query mutated
- * mid-explain cannot make the metadata describe a window this plan's
- * execution would not use.
- */
-private fun emitEagerExecutionMetadata(
-    body: CodeBlock.Builder,
-    isToOne: Boolean,
-    withJunctionAnnotations: Boolean = false,
-    isDirectToMany: Boolean = false,
-) {
-    val emulatedRiskExpr =
-        "(subSpec.limit ?: 1) != 0 && (subSpec.limit != null || (subSpec.offset ?: 0) > 0)"
-    val overfetchRiskExpr = when {
-        isToOne -> "false"
-        isDirectToMany -> "if (nativeToManyWindows) false else $emulatedRiskExpr"
-        else -> emulatedRiskExpr
-    }
-    body.add("  subPlan.copy(eagerExecution = %T(\n", EAGER_EXECUTION_PLAN)
-    body.add("    setBatchedNestedExecution = true,\n")
-    body.add("    effectiveOrder = subSpec.orderBy,\n")
-    if (isDirectToMany) {
-        body.add(
-            "    windowStrategy = if (nativeToManyWindows) %T.STORAGE_NATIVE else %T.IN_MEMORY_EMULATED,\n",
-            EAGER_WINDOW_STRATEGY, EAGER_WINDOW_STRATEGY,
-        )
-    } else {
-        body.add("    windowStrategy = %T.IN_MEMORY_EMULATED,\n", EAGER_WINDOW_STRATEGY)
-    }
-    body.add("    perParentLimit = subSpec.limit,\n")
-    body.add("    perParentOffset = subSpec.offset,\n")
-    body.add("    windowOverfetchRisk = $overfetchRiskExpr,\n")
-    if (withJunctionAnnotations) {
-        body.add("  ), junctionAnnotations = junctionSpec.annotations)\n")
-    } else {
-        body.add("  ))\n")
-    }
 }

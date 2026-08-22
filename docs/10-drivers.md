@@ -46,15 +46,6 @@ interface Driver {
         predicates: List<Predicate<*>>,
     ): List<Any>
 
-    fun explainQuery(
-        table: String,
-        predicates: List<Predicate<*>>,
-        orderBy: List<OrderField<*>>,
-        limit: Int?,
-        offset: Int?,
-    ): QueryExplanation
-    fun explainCount(table: String, predicates: List<Predicate<*>>): QueryExplanation
-
     fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
     val inTransaction: Boolean
 
@@ -186,12 +177,6 @@ discipline.
   decorator cannot silently downgrade a native driver or forward the
   capability without the operation. The plan and envelope types are
   `@EntktInternal` cross-module SPI.
-- `explainQuery()` / `explainCount()` return a `QueryExplanation` for the
-  SELECT / COUNT the driver *would* run, without executing it. Defaults
-  to `UnsupportedQueryExplanation`; PostgresDriver returns SQL + bind
-  args. Used by the generated per-terminal `explain*()` methods
-  (`explainAll`, `explainFirstOrNull`, `explainFindById`,
-  `explainRawCount`, `explainRawExists`).
 - `withTransaction()` runs a block in a transaction and reports the
   outcome structurally as `DriverTransactionResult<T>`. The block
   receives a transaction-scoped driver. `Success(value)` is returned
@@ -662,10 +647,6 @@ contract:
    without a containing transaction — call
    `requireTransactionForLocking("methodName")` for the canonical
    error.
-7. Optional: override `explainQuery` / `explainCount` to surface a
-   driver-specific `QueryExplanation` (default returns
-   `UnsupportedQueryExplanation`).
-
 The flags advertise driver-family ability, not instance-level
 ability — see the RFC #4 capability section above. Optional capability
 methods on `Driver` retain safe `false` / throwing defaults, but the three

@@ -2,7 +2,6 @@ package entkt.runtime
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.RelationshipLockKey
-import entkt.runtime.query.QueryExplanation
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.Driver
 
@@ -152,15 +151,6 @@ class RelationshipLockingTest {
             values: Map<String, Any?>,
             predicates: List<entkt.query.Predicate<*>>,
         ): Int = 0
-        override fun explainQuery(
-            table: String,
-            predicates: List<entkt.query.Predicate<*>>,
-            orderBy: List<entkt.query.OrderField<*>>,
-            limit: Int?,
-            offset: Int?,
-        ): QueryExplanation = throw UnsupportedOperationException()
-        override fun explainCount(table: String, predicates: List<entkt.query.Predicate<*>>): QueryExplanation =
-            throw UnsupportedOperationException()
         override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>): Int = 0
         override fun <T> withTransaction(block: (Driver) -> T): entkt.runtime.driver.DriverTransactionResult<T> =
             entkt.runtime.driver.DriverTransactionResult.Success(block(this))

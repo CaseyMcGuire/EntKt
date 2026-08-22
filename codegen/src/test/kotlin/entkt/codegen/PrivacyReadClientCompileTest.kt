@@ -91,7 +91,7 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
-    fun `privacy rule can read - LOAD-checked terminals, byId family, index helpers, explain`() {
+    fun `privacy rule can read - LOAD-checked terminals, byId family, and index helpers`() {
         // The positive twin: the viewer-scoped read surface the RFC
         // promises rules. Raw terminals (rawCount / rawExists / raw
         // aggregates) compile as explicit storage-level operations that
@@ -109,7 +109,6 @@ class PrivacyReadClientCompileTest {
                 ctx.client.users.findById(UUID.randomUUID()).getOrThrow()
                 ctx.client.users.findById(UUID.randomUUID()).visibleOrNull()
                 ctx.client.users.indexes.email("a@b.c").find()
-                ctx.client.cars.explainFindById(1)
                 """.trimIndent(),
             ),
         )

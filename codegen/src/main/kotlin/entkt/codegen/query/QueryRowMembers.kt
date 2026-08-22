@@ -12,12 +12,7 @@ private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDe
 private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
 
 // ------------------------------------------------------------------
-// Canonical row-shaped terminals (all / firstOrNull) and their explain
-// mirrors. Each explain builder sits next to the terminal whose driver
-// call it models; the query-shape expressions both sides send live in
-// QueryShapeSupport.kt — so the plan a caller inspects cannot drift
-// from the call the terminal makes. QueryGenerator.generate()
-// assembles the members.
+// Canonical row-shaped terminals (all / firstOrNull).
 // ------------------------------------------------------------------
 
 /**
@@ -79,33 +74,6 @@ internal fun buildAll(schemaName: String, clientName: String, entityClass: Class
         .build()
 }
 
-internal fun buildRowShapedExplain(
-    queryPlan: ClassName,
-    name: String,
-    terminalName: String,
-    hasEdges: Boolean,
-): FunSpec {
-    return FunSpec.builder(name)
-        .addKdoc(
-            "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
-            "Interceptors run with operation = ALL. Eager edge subplans show structure,\n" +
-            "not physical multiplicity — each eager path is one logical set-batched step,\n" +
-            "but junction reads can add physical queries. Each eager subplan carries the\n" +
-            "framework-owned `eagerExecution` strategy metadata. On interceptor rejection,\n" +
-            "returns a plan with `rejected = true` carrying the rejection metadata;\n" +
-            "explain does NOT throw."
-        )
-        .returns(queryPlan)
-        .addCode(
-            explainBody(
-                "ALL",
-                CodeBlock.of("buildQueryPlan(spec, true, privacy)"),
-                guardEdgeTopology = hasEdges,
-            ),
-        )
-        .build()
-}
-
 /**
  * `firstOrNull(): ReadResult<T?>` — the canonical single-row read.
  * SQL-shaped and exact-window: the driver executes
@@ -156,7 +124,6 @@ internal fun buildFirstOrNull(schemaName: String, clientName: String, entityClas
         // interceptor pass fires on every configured eager subquery
         // even when no row matched — interceptor firing must not
         // depend on what the database returned, and
-        // `explainFirstOrNull` models the eager shapes
         // unconditionally. An empty batch loads nothing. (A root row
         // denied by LOAD privacy has already returned Failed above —
         // root privacy completes before eager loading begins.)
@@ -172,31 +139,5 @@ internal fun buildFirstOrNull(schemaName: String, clientName: String, entityClas
         // Hold the activeTerminals guard while the terminal consumes
         // the selected edge-load topology.
         .addCode(canonicalReadBody(happy.build(), guardEdgeTopology = hasEdges))
-        .build()
-}
-
-internal fun buildFirstShapedExplain(
-    queryPlan: ClassName,
-    name: String,
-    terminalName: String,
-    hasEdges: Boolean,
-): FunSpec {
-    return FunSpec.builder(name)
-        .addKdoc(
-            "Return a [QueryPlan] describing the query shapes [$terminalName] would execute.\n" +
-            "Interceptors run with operation = FIRST; interceptor limit operations are\n" +
-            "silent no-ops for this terminal. Plan limit mirrors the runtime's\n" +
-            "`minOf(1, spec.limit ?: 1)` — 1 normally, 0 when the caller passed\n" +
-            "`query { limit(0) }`.\n" +
-            "On interceptor rejection, returns a plan with `rejected = true`."
-        )
-        .returns(queryPlan)
-        .addCode(
-            explainBody(
-                "FIRST",
-                CodeBlock.of("buildQueryPlan(spec.copy(limit = %L), true, privacy)", SINGLE_ROW_LIMIT_EXPR),
-                guardEdgeTopology = hasEdges,
-            ),
-        )
         .build()
 }

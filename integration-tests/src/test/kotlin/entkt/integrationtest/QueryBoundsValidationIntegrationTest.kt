@@ -295,8 +295,8 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
 
         // The bound decides which rows survive, not whether the eager
-        // subquery exists. Interceptors fire on every eager subquery —
-        // `explain*` does it unconditionally, and the to-many paths fire
+        // subquery exists. Interceptors fire on every eager subquery, and
+        // the to-many paths fire
         // before slicing — so skipping them here would make an
         // interceptor's view of the query depend on the caller's limit.
         assertTrue(
@@ -489,8 +489,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // The root result decides what gets loaded, not whether the
         // eager subquery exists. An empty root must fire the same
-        // EAGER_LOAD pass the relationship-empty and limit(0) cases
-        // fire — and the same pass `explain*` models unconditionally.
+        // EAGER_LOAD pass the relationship-empty and limit(0) cases fire.
         assertTrue(articles.isEmpty())
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
@@ -520,12 +519,9 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         val result = query().all()
 
-        // Runtime agrees with explain: the plan records the eager
-        // rejection for the same query, so execution must reject too.
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("no_eager", ex.code)
-        assertTrue(query().explainAll().eagerQueries.getValue("author").rejected)
     }
 
     @Test
@@ -645,21 +641,6 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // documented contract — pin the boundary so "limit(0) means no
         // rows" isn't mistaken for a universal rule.
         assertEquals(2L, client.articles.query { limit(0) }.rawCount().getOrThrow())
-    }
-
-    @Test
-    fun `explainFirstOrNull reports the limit the terminal will actually send`() {
-        val client = seededClient()
-
-        // explain* is only useful if it mirrors the runtime; a plan
-        // pinned at 1 would hide the caller's bound.
-        val plan = client.articles.query { limit(0) }.explainFirstOrNull()
-        assertNotNull(plan.root)
-        val desc = plan.root.toString()
-        assertTrue(
-            desc.contains("LIMIT 0") || desc.contains("limit=0") || desc.contains("limit: 0"),
-            "explainFirstOrNull with limit(0) should show limit 0; was: $desc",
-        )
     }
 
     @Test

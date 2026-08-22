@@ -220,7 +220,6 @@ internal class ReadClientGenerator(
                 }
             }
             .addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "runtime"))
-            .addFunction(buildFindByIdExplainMethod(schemaName, entityClass, idType, clientRef = "runtime"))
             .build()
     }
 

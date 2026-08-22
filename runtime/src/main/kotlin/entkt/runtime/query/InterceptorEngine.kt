@@ -48,9 +48,9 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * Annotations to seed the builder with before any interceptor
      * runs. Generated code populates this from the source step's
      * `FrozenQuerySpec.annotations` on traversal terminals, so a
-     * source-step `scope.addAnnotation(...)` surfaces on the final
-     * terminal's `QueryPlan.annotations`. Interceptors on this step
-     * can overwrite these via `scope.addAnnotation` (last-writer-wins).
+     * source-step `scope.addAnnotation(...)` is visible to interceptors
+     * on the final step. Interceptors on this step can overwrite these
+     * via `scope.addAnnotation` (last-writer-wins).
      * Empty on root reads.
      */
     initialAnnotations: Map<String, String> = emptyMap(),
@@ -232,7 +232,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
     }
 
     /**
-     * Semantic snapshot used by drivers / explain.
+     * Semantic snapshot used by drivers and later lifecycle steps.
      *
      * Copying only the outer lists is insufficient: supported predicate
      * operands such as ByteArray are mutable. The stored spec was already
@@ -368,8 +368,7 @@ private fun Any?.semanticSnapshot(): Any? = when (this) {
  * predicate that constrains the target). [annotations] carry
  * forward any
  * `scope.addAnnotation(...)` contributions made by source-step
- * interceptors so they surface on the final terminal's
- * `QueryPlan.annotations`.
+ * interceptors so they remain visible to the final interceptor step.
  *
  * The deferred-invocation design is what lets canonical terminals
  * capture traversal-source rejections — if the source's
