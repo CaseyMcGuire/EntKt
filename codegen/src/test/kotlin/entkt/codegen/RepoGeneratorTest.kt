@@ -179,7 +179,7 @@ class RepoGeneratorTest {
             "findById should build the id-scoped EntityQuery\n$output"
         }
         assert(output.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
-            "findById should delegate BY_ID and its single-row bound to GraphLoader\n$output"
+            "findById should delegate BY_ID and its single-row bound to ReadQueryEvaluator\n$output"
         }
         assert(output.contains("ReadResult.Success(result.value.firstOrNull())")) {
             "the repo should adapt the runtime entity list to nullable cardinality\n$output"
@@ -205,7 +205,7 @@ class RepoGeneratorTest {
             raw.indexOf("public fun delete"),
         ).replace("\\s+".toRegex(), " ")
         assert(!body.contains("catch (e:")) {
-            "findById should reuse GraphLoader's single failure boundary\n$body"
+            "findById should reuse ReadQueryEvaluator's single failure boundary\n$body"
         }
         assert(body.contains("is ReadResult.Failed -> result")) {
             "findById should preserve runtime failures without wrapping them\n$body"
@@ -224,7 +224,7 @@ class RepoGeneratorTest {
             raw.indexOf("public fun delete"),
         ).replace("\\s+".toRegex(), " ")
         assert(body.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
-            "findById should use the same GraphLoader root-privacy lifecycle as entity queries\n$body"
+            "findById should use the same ReadQueryEvaluator root-privacy lifecycle as entity queries\n$body"
         }
         assert(!body.contains("loadDenialOrNull")) {
             "the generated repo should not duplicate LOAD-privacy evaluation\n$body"

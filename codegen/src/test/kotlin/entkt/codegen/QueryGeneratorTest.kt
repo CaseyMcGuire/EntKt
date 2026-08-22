@@ -203,7 +203,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `eager loads skip the target fetch when the window admits nothing`() {
         val car = Car()
         val user = User()
@@ -231,7 +231,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `to-many eager loads probe the driver's native window capability`() {
         val car = Car()
         val user = User()
@@ -267,7 +267,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `a hasOne eager load also skips the fetch for a positive offset`() {
         // hasOne requires its inverse belongsTo to declare `.unique()`
         // (SchemaMetadata enforces it), so the unique index guarantees at

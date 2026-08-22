@@ -35,11 +35,9 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
         registeredInterceptors = registeredInterceptorsProvider,
     )
 
-    private val graphLoader = GraphLoader<Entity>(
-        driver = driver,
-        privacyContextProvider = privacyContextProvider,
-        queryPreparation = queryPreparation,
-        loadPrivacyEvaluator = loadPrivacyEvaluatorProvider,
+    private val entityGraphLoader = EntityGraphLoader<Entity>(
+        storage = DatabaseGraphStorage(driver, queryPreparation),
+        loadPrivacyEvaluatorProvider = loadPrivacyEvaluatorProvider,
     )
 
     /** Load root entities, authorize them, and recursively load their selected edges. */
@@ -47,11 +45,21 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
         captureQuery: () -> EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
-    ): ReadResult<List<Entity>> = graphLoader.readRootQuery(
-        captureQuery = captureQuery,
-        operation = operation,
-        maximumRows = maximumRows,
-    )
+    ): ReadResult<List<Entity>> {
+        require(maximumRows == null || maximumRows >= 0) {
+            "Root query maximum rows must be non-negative"
+        }
+        return captureFailure {
+            val query = captureQuery()
+            val privacyContext = privacyContextProvider()
+            entityGraphLoader.loadRoot(
+                query = query,
+                operation = operation,
+                maximumRows = maximumRows,
+                privacyContext = privacyContext,
+            )
+        }
+    }
 
     /** Prepare a captured entity query for a framework-owned storage operation. */
     fun prepareEntityQuery(

@@ -1763,7 +1763,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `to-one eager resolution omits the redundant safe-call for a required FK`() {
         val (_, names, byName) = createAllSchemas()
 
@@ -1814,7 +1814,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `query generates loadEdges for schemas with edges`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -1825,7 +1825,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `selected edge adapter delegates graph completion to loadEdges`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -1836,7 +1836,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `to-many eager loading queries target with IN predicate on FK column`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -1849,7 +1849,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `to-one eager loading queries target by id`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -1861,7 +1861,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `M2M eager loading queries junction table then target`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -1881,7 +1881,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `every eager assignment path wraps its result in EdgeState Loaded`() {
         val (_, names, byName) = createAllSchemas()
 
@@ -1936,7 +1936,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `eager privacy batches ordered deduped targets and filters by target id`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -1994,7 +1994,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `every eager edge shape emits exactly one plural LOAD call`() {
         val (_, names, byName) = createAllSchemas()
         val generator = QueryGenerator("com.example.ent")
@@ -2052,7 +2052,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `self-referential M2M query uses correct junction FKs`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -2402,7 +2402,7 @@ class EdgeCodegenTest {
 
     // ---------- Per-group limit/offset in eager loading ----------
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `to-many eager loading applies limit per group not globally`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -2426,7 +2426,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `M2M eager loading applies limit per group not globally`() {
         val (_, names, byName) = createAllSchemas()
         val output = QueryGenerator("com.example.ent")
@@ -2440,7 +2440,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `M2M eager loading dedups duplicate (source, target) junction rows`() {
         // throughEntity junctions can legitimately carry duplicate
         // (source_id, target_id) pairs (the row carries distinct
@@ -2468,7 +2468,7 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `M2M eager loading groups by iterating ordered target rows, not junction rows`() {
         // Iterating junctionRows here would group in driver-default
         // junction order — which is unrelated to `subQuery.orderFields`
@@ -2666,7 +2666,7 @@ class EdgeCodegenTest {
 
     // ---------- HasOne eager loading ----------
 
-    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
+    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
     fun `hasOne eager loading queries target by FK not source FK`() {
         val parent = HasOneEagerParentSchema()
         val profile = ProfileSchema()

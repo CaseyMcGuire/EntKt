@@ -16,21 +16,20 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.query.execution.EntityQueryPreparation
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
-import entkt.runtime.query.execution.EntityLoader
-import entkt.runtime.query.execution.SubgraphLoader
+import entkt.runtime.query.execution.ReadQueryEvaluator
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.PrivacyDenial
+import entkt.runtime.result.ReadResult
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
-class SubgraphLoaderTest {
+class ReadQueryEvaluatorRelationshipTest {
     private data class Parent(
         override val id: Long,
         val favoriteId: Long?,
@@ -266,6 +265,30 @@ class SubgraphLoaderTest {
         }
     }
 
+    private class RootRowsDriver(
+        private val delegate: DatabaseDriver,
+        private val parents: List<Parent>,
+    ) : DatabaseDriver by delegate {
+        override fun query(
+            table: String,
+            predicates: List<Predicate<*>>,
+            orderBy: List<OrderField<*>>,
+            limit: Int?,
+            offset: Int?,
+        ): List<Map<String, Any?>> {
+            if (table != ParentMapping.table) {
+                return delegate.query(table, predicates, orderBy, limit, offset)
+            }
+            val rows = parents.map { parent ->
+                mapOf(
+                    "id" to parent.id,
+                    "favorite_id" to parent.favoriteId,
+                )
+            }
+            return rows.drop(offset ?: 0).let { selected -> limit?.let(selected::take) ?: selected }
+        }
+    }
+
     private class Privacy(
         private val configured: Set<EntityMapping<*>> = emptySet(),
         private val deniedIds: Set<Any> = emptySet(),
@@ -310,7 +333,6 @@ class SubgraphLoaderTest {
             addEntity<Child>("children", "record") { _, context -> contexts += context }
             addEntity<Note>("notes", "record") { _, context -> contexts += context }
         }
-        val loader = graphLoader(driver, Privacy(), interceptors)
         val noteQuery = query(NoteMapping)
         val childQuery = query(
             mapping = ChildMapping,
@@ -324,10 +346,11 @@ class SubgraphLoaderTest {
             edges = listOf(EdgeSelection(ChildrenEdge, childQuery, EdgeVisibility.REQUIRE_VISIBLE)),
         )
 
-        val loaded = loader.load(
-            parentQuery,
-            listOf(Parent(10, null), Parent(20, null)),
-            privacyContext,
+        val loaded = loadGraph(
+            driver = driver,
+            query = parentQuery,
+            parents = listOf(Parent(10, null), Parent(20, null)),
+            interceptors = interceptors,
         )
 
         assertEquals(listOf(2L), loaded[0].children.map { it.id })
@@ -365,10 +388,10 @@ class SubgraphLoaderTest {
             edges = listOf(EdgeSelection(ChildrenEdge, childQuery, EdgeVisibility.REQUIRE_VISIBLE)),
         )
 
-        val loaded = graphLoader(driver).load(
-            parentQuery,
-            listOf(Parent(10, null), Parent(20, null)),
-            privacyContext,
+        val loaded = loadGraph(
+            driver = driver,
+            query = parentQuery,
+            parents = listOf(Parent(10, null), Parent(20, null)),
         )
 
         assertEquals(listOf(2L), loaded[0].children.map { it.id })
@@ -407,10 +430,10 @@ class SubgraphLoaderTest {
             ),
         )
 
-        val loaded = graphLoader(driver).load(
-            parentQuery,
-            listOf(Parent(10, 7), Parent(20, 8)),
-            privacyContext,
+        val loaded = loadGraph(
+            driver = driver,
+            query = parentQuery,
+            parents = listOf(Parent(10, 7), Parent(20, 8)),
         )
 
         assertEquals(101L, loaded[0].profile?.id)
@@ -446,10 +469,11 @@ class SubgraphLoaderTest {
         )
         val privacy = Privacy(setOf(ChildMapping), deniedIds = setOf(2L))
 
-        val filtered = graphLoader(RowsDriver(rows), privacy).load(
-            filteredQuery,
-            listOf(Parent(10, null)),
-            privacyContext,
+        val filtered = loadGraph(
+            driver = RowsDriver(rows),
+            query = filteredQuery,
+            parents = listOf(Parent(10, null)),
+            privacy = privacy,
         )
         assertEquals(listOf(1L), filtered.single().children.map { it.id })
 
@@ -464,10 +488,11 @@ class SubgraphLoaderTest {
             ),
         )
         val failure = assertFailsWith<EntPrivacyDeniedException> {
-            graphLoader(RowsDriver(rows), privacy).load(
-                strictQuery,
-                listOf(Parent(10, null)),
-                privacyContext,
+            loadGraph(
+                driver = RowsDriver(rows),
+                query = strictQuery,
+                parents = listOf(Parent(10, null)),
+                privacy = privacy,
             )
         }
         val origin = assertIs<LoadDenialOrigin.EagerEdge>(failure.origin)
@@ -475,19 +500,30 @@ class SubgraphLoaderTest {
         assertEquals(2L, failure.denials.single().entityKey.value)
     }
 
-    private fun graphLoader(
+    private fun loadGraph(
         driver: DatabaseDriver,
+        query: EntityQuery<Parent>,
+        parents: List<Parent>,
         privacy: LoadPrivacyEvaluator = Privacy(),
         interceptors: EntInterceptorsConfig = EntInterceptorsConfig(),
-    ): SubgraphLoader = SubgraphLoader(
-        driver = driver,
-        queryPreparation = EntityQueryPreparation(
-            driver = driver,
-            registeredInterceptors = { interceptors },
-        ),
-        entityLoader = EntityLoader(driver),
-        loadPrivacyEvaluator = { privacy },
-    )
+    ): List<Parent> {
+        val evaluator = ReadQueryEvaluator<Parent>(
+            driver = RootRowsDriver(driver, parents),
+            privacyContextProvider = { privacyContext },
+            registeredInterceptorsProvider = { interceptors },
+            loadPrivacyEvaluatorProvider = { privacy },
+        )
+        return when (
+            val result = evaluator.readRootQuery(
+                captureQuery = { query },
+                operation = ReadOperation.ALL,
+                maximumRows = null,
+            )
+        ) {
+            is ReadResult.Success -> result.value
+            is ReadResult.Failed -> throw result.exception
+        }
+    }
 
     private fun <Entity : EntEntity<*>> query(
         mapping: EntityMapping<Entity>,

@@ -22,9 +22,8 @@ import entkt.runtime.query.InterceptScope
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.query.execution.GraphLoader
-import entkt.runtime.query.execution.EntityQueryPreparation
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
+import entkt.runtime.query.execution.ReadQueryEvaluator
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
@@ -37,7 +36,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 
-class GraphLoaderTest {
+class ReadQueryEvaluatorRootTest {
     private data class Item(
         override val id: Long,
         val loaded: Boolean = false,
@@ -149,23 +148,20 @@ class GraphLoaderTest {
         adapter: Adapter,
         query: EntityQuery<Item>,
         operation: ReadOperation = ReadOperation.ALL,
-    ): ReadResult<List<Item>> = graphLoader(adapter).readRootQuery(
+    ): ReadResult<List<Item>> = queryEvaluator(adapter).readRootQuery(
         captureQuery = { query },
         operation = operation,
         maximumRows = null,
     )
 
-    private fun graphLoader(adapter: Adapter): GraphLoader<Item> = GraphLoader(
+    private fun queryEvaluator(adapter: Adapter): ReadQueryEvaluator<Item> = ReadQueryEvaluator(
         driver = adapter.driver,
         privacyContextProvider = {
             adapter.events += "privacy-context"
             adapter.privacy
         },
-        queryPreparation = EntityQueryPreparation(
-            driver = adapter.driver,
-            registeredInterceptors = { adapter.interceptors },
-        ),
-        loadPrivacyEvaluator = { object : LoadPrivacyEvaluator {
+        registeredInterceptorsProvider = { adapter.interceptors },
+        loadPrivacyEvaluatorProvider = { object : LoadPrivacyEvaluator {
             override fun isConfigured(entity: EntityMapping<*>): Boolean {
                 assertSame(adapter as Any, entity as Any)
                 adapter.events += "has-privacy"
@@ -186,7 +182,7 @@ class GraphLoaderTest {
     )
 
     private fun readAll(adapter: Adapter): ReadResult<List<Item>> =
-        graphLoader(adapter).readRootQuery(
+        queryEvaluator(adapter).readRootQuery(
             captureQuery = { rootQuery(adapter) },
             operation = ReadOperation.ALL,
             maximumRows = null,
@@ -194,7 +190,7 @@ class GraphLoaderTest {
 
     private fun readFirstOrNull(adapter: Adapter): ReadResult<Item?> =
         when (
-            val result = graphLoader(adapter).readRootQuery(
+            val result = queryEvaluator(adapter).readRootQuery(
                 captureQuery = { rootQuery(adapter) },
                 operation = ReadOperation.FIRST,
                 maximumRows = 1,
@@ -205,11 +201,11 @@ class GraphLoaderTest {
         }
 
     @Test
-    fun `loader rejects a negative terminal bound`() {
+    fun `evaluator rejects a negative terminal bound`() {
         val adapter = Adapter(mutableListOf())
 
         assertFailsWith<IllegalArgumentException> {
-            graphLoader(adapter).readRootQuery(
+            queryEvaluator(adapter).readRootQuery(
                 captureQuery = { rootQuery(adapter) },
                 operation = ReadOperation.ALL,
                 maximumRows = -1,
@@ -223,7 +219,7 @@ class GraphLoaderTest {
         val adapter = Adapter(events)
         val failure = IllegalStateException("capture failed")
 
-        val result = graphLoader(adapter).readRootQuery(
+        val result = queryEvaluator(adapter).readRootQuery(
             captureQuery = { throw failure },
             operation = ReadOperation.ALL,
             maximumRows = null,
