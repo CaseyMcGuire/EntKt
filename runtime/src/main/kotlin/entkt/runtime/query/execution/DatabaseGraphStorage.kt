@@ -153,18 +153,11 @@ internal class DatabaseGraphStorage(
             rootEntity = rootEntity,
             path = targetPath,
         )
-        val targetIsInsideWindow = (targetQuery.offset ?: 0) == 0 &&
-            (targetQuery.limit ?: Int.MAX_VALUE) > 0
-        val targets = if (targetIsInsideWindow && targetKeys.isNotEmpty()) {
-            readEntities(
-                entity = selection.target.entity,
-                query = targetQuery,
-                limit = null,
-                offset = null,
-            )
-        } else {
-            emptyList()
-        }
+        val targets = readToOneRelationshipTargets(
+            entity = selection.target.entity,
+            query = targetQuery,
+            targetKeys = targetKeys,
+        )
 
         return LoadedRelationship(targets) { evaluatedTargets ->
             val targetsByKey = evaluatedTargets.associateBy(storage.targetKey)
@@ -232,17 +225,11 @@ internal class DatabaseGraphStorage(
         )
         val offset = targetQuery.offset ?: 0
         val limit = targetQuery.limit ?: Int.MAX_VALUE
-        val targetIsInsideWindow = offset == 0 && limit > 0
-        val orderedTargets = if (targetIsInsideWindow && sourceKeys.isNotEmpty()) {
-            readEntities(
-                entity = selection.target.entity,
-                query = targetQuery,
-                limit = null,
-                offset = null,
-            )
-        } else {
-            emptyList()
-        }
+        val orderedTargets = readToOneRelationshipTargets(
+            entity = selection.target.entity,
+            query = targetQuery,
+            targetKeys = sourceKeys,
+        )
         val groups = orderedTargets
             .groupBy(storage.targetForeignKey)
             .mapValues { (_, targets) -> targets.drop(offset).take(limit) }
@@ -313,6 +300,25 @@ internal class DatabaseGraphStorage(
                 edge.attach(source, evaluatedGroups[storage.sourceKey(source)] ?: emptyList())
             }
         }
+    }
+
+    private fun <Target : EntEntity<*>> readToOneRelationshipTargets(
+        entity: EntityMapping<Target>,
+        query: StorageQuerySpec<Target>,
+        targetKeys: Collection<*>,
+    ): List<Target> {
+        val windowCanContainTarget =
+            (query.offset ?: 0) == 0 && (query.limit ?: Int.MAX_VALUE) > 0
+        if (targetKeys.isEmpty() || !windowCanContainTarget) {
+            return emptyList()
+        }
+
+        return readEntities(
+            entity = entity,
+            query = query,
+            limit = null,
+            offset = null,
+        )
     }
 
     private fun <Entity : EntEntity<*>> readEntities(
