@@ -167,10 +167,12 @@ class ReadClientGeneratorTest {
         }
         assert(
             output.contains(
-                "CarQuery.GeneratedEntityMapping -> cars.loadDenials(privacyContext, entities as List<Car>)",
+                "CarQuery.GeneratedEntityMapping -> correlateLoadPrivacyEvaluationsForInternalUse( " +
+                    "\"Car LOAD privacy\", entities, " +
+                    "cars.loadDenials(privacyContext, entities as List<Car>), )",
             ),
         ) {
-            "recursive targets should retain the repository's typed positional LOAD batch\n$output"
+            "recursive targets should correlate each entity with its LOAD denial\n$output"
         }
     }
 

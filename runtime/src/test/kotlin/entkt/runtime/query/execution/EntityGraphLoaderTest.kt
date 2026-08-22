@@ -111,13 +111,16 @@ class EntityGraphLoaderTest {
             entity: EntityMapping<Entity>,
             privacyContext: PrivacyContext,
             entities: List<Entity>,
-        ): List<PrivacyDenial?> {
+        ): List<LoadPrivacyEvaluation<Entity>> {
             events += "privacy:${entities.joinToString { it.id.toString() }}"
             return entities.map { value ->
-                if (value.id in deniedIds) {
+                val denial = if (value.id in deniedIds) {
                     PrivacyDenial(entity.entityName, EntityKey("id", value.id), "hidden")
+                } else null
+                if (denial == null) {
+                    LoadPrivacyEvaluation.Allowed(value)
                 } else {
-                    null
+                    LoadPrivacyEvaluation.Denied(value, denial)
                 }
             }
         }
@@ -154,7 +157,7 @@ class EntityGraphLoaderTest {
             EdgeSelection(peers, query(), EdgeVisibility.REQUIRE_VISIBLE),
         )
 
-        val loaded = loader.loadRoot(
+        val loaded = loader.load(
             query = rootQuery,
             operation = ReadOperation.ALL,
             maximumRows = null,
@@ -202,7 +205,7 @@ class EntityGraphLoaderTest {
         )
 
         val failure = assertFailsWith<EntPrivacyDeniedException> {
-            loader.loadRoot(query, ReadOperation.ALL, null, privacyContext)
+            loader.load(query, ReadOperation.ALL, null, privacyContext)
         }
 
         assertSame(LoadDenialOrigin.Root, failure.origin)
@@ -228,7 +231,7 @@ class EntityGraphLoaderTest {
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.FILTER_INVISIBLE),
         )
 
-        val loaded = loader.loadRoot(query, ReadOperation.ALL, null, privacyContext)
+        val loaded = loader.load(query, ReadOperation.ALL, null, privacyContext)
 
         assertEquals(listOf(3L), loaded.single().relationships.getValue("children").map(Item::id))
         assertEquals(
@@ -265,7 +268,7 @@ class EntityGraphLoaderTest {
         )
 
         val failure = assertFailsWith<EntPrivacyDeniedException> {
-            loader.loadRoot(query, ReadOperation.ALL, null, privacyContext)
+            loader.load(query, ReadOperation.ALL, null, privacyContext)
         }
 
         val origin = assertIs<LoadDenialOrigin.EagerEdge>(failure.origin)
@@ -293,7 +296,7 @@ class EntityGraphLoaderTest {
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.REQUIRE_VISIBLE),
         )
 
-        val loaded = loader.loadRoot(query, ReadOperation.ALL, null, privacyContext)
+        val loaded = loader.load(query, ReadOperation.ALL, null, privacyContext)
 
         assertEquals(emptyList(), loaded.single().relationships.getValue("children"))
         assertEquals(

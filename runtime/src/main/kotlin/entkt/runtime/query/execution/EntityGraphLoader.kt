@@ -40,7 +40,7 @@ internal class EntityGraphLoader(
     private val loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
 ) {
     /** Load the root batch, then evaluate its recursively selected graph. */
-    fun <Entity : EntEntity<*>> loadRoot(
+    fun <Entity : EntEntity<*>> load(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
@@ -55,7 +55,7 @@ internal class EntityGraphLoader(
         return evaluateEntityBatch(
             query = query,
             entities = rootEntities,
-            privacyDisposition = LoadPrivacyDisposition.Root,
+            denialPolicy = LoadDenialPolicy.FailRoot,
             privacyContext = privacyContext,
             context = rootContext(query),
         )
@@ -65,14 +65,14 @@ internal class EntityGraphLoader(
     private fun <Node : EntEntity<*>> evaluateEntityBatch(
         query: EntityQuery<Node>,
         entities: List<Node>,
-        privacyDisposition: LoadPrivacyDisposition,
+        denialPolicy: LoadDenialPolicy,
         privacyContext: PrivacyContext,
         context: NodeEvaluationContext,
     ): List<Node> {
         val authorizedEntities = evaluateLoadPrivacy(
             entity = query.entity,
             entities = entities,
-            disposition = privacyDisposition,
+            denialPolicy = denialPolicy,
             privacyContext = privacyContext,
         )
         return evaluateSelectedRelationships(
@@ -134,10 +134,12 @@ internal class EntityGraphLoader(
         val evaluatedTargets = evaluateEntityBatch(
             query = selection.target,
             entities = loadedRelationship.targets,
-            privacyDisposition = LoadPrivacyDisposition.Edge(
-                visibility = selection.visibility,
-                denialPath = childContext.denialPath,
-            ),
+            denialPolicy = when (selection.visibility) {
+                EdgeVisibility.FILTER_INVISIBLE -> LoadDenialPolicy.FilterDeniedTargets
+                EdgeVisibility.REQUIRE_VISIBLE -> LoadDenialPolicy.FailEdge(
+                    LoadDenialOrigin.EagerEdge(childContext.denialPath),
+                )
+            },
             privacyContext = privacyContext,
             context = childContext,
         )
@@ -148,10 +150,12 @@ internal class EntityGraphLoader(
     private fun <Node : EntEntity<*>> evaluateLoadPrivacy(
         entity: EntityMapping<Node>,
         entities: List<Node>,
-        disposition: LoadPrivacyDisposition,
+        denialPolicy: LoadDenialPolicy,
         privacyContext: PrivacyContext,
     ): List<Node> {
-        if (disposition is LoadPrivacyDisposition.Root && entities.isEmpty()) {
+        // An empty root completes the read; selected edges still evaluate so their lifecycle does
+        // not depend on whether storage happened to return any targets.
+        if (denialPolicy == LoadDenialPolicy.FailRoot && entities.isEmpty()) {
             return entities
         }
 
@@ -159,45 +163,58 @@ internal class EntityGraphLoader(
         if (!evaluator.isConfigured(entity)) {
             return entities
         }
-        val denials = evaluator.evaluate(entity, privacyContext, entities)
+        val evaluations = evaluator.evaluate(entity, privacyContext, entities)
 
-        return when (disposition) {
-            is LoadPrivacyDisposition.Root -> {
-                val rejected = denials.filterNotNull()
+        return when (denialPolicy) {
+            LoadDenialPolicy.FailRoot -> {
+                val rejected = evaluations.mapNotNull { evaluation ->
+                    when (evaluation) {
+                        is LoadPrivacyEvaluation.Allowed -> null
+                        is LoadPrivacyEvaluation.Denied -> evaluation.denial
+                    }
+                }
                 if (rejected.isNotEmpty()) {
                     throw EntPrivacyDeniedException(LoadDenialOrigin.Root, rejected)
                 }
-                entities
+                evaluations.map { evaluation -> evaluation.entity }
             }
 
-            is LoadPrivacyDisposition.Edge -> when (disposition.visibility) {
-                EdgeVisibility.FILTER_INVISIBLE -> entities.zip(denials)
-                    .filter { (_, denial) -> denial == null }
-                    .map { (entityValue, _) -> entityValue }
-
-                EdgeVisibility.REQUIRE_VISIBLE -> {
-                    val denial = denials.firstOrNull { it != null }
-                    if (denial != null) {
-                        throw EntPrivacyDeniedException(
-                            LoadDenialOrigin.EagerEdge(disposition.denialPath),
-                            listOf(denial),
-                        )
+            is LoadDenialPolicy.FailEdge -> {
+                val denial = evaluations.firstNotNullOfOrNull { evaluation ->
+                    when (evaluation) {
+                        is LoadPrivacyEvaluation.Allowed -> null
+                        is LoadPrivacyEvaluation.Denied -> evaluation.denial
                     }
-                    entities
+                }
+                if (denial != null) {
+                    throw EntPrivacyDeniedException(
+                        denialPolicy.origin,
+                        listOf(denial),
+                    )
+                }
+                evaluations.map { evaluation -> evaluation.entity }
+            }
+
+            LoadDenialPolicy.FilterDeniedTargets -> evaluations.mapNotNull { evaluation ->
+                when (evaluation) {
+                    is LoadPrivacyEvaluation.Allowed -> evaluation.entity
+                    is LoadPrivacyEvaluation.Denied -> null
                 }
             }
         }
     }
 }
 
-/** LOAD-privacy outcome required by a root or selected-edge query node. */
-private sealed interface LoadPrivacyDisposition {
-    data object Root : LoadPrivacyDisposition
+/** Determines how an entity batch handles LOAD-privacy denials during graph evaluation. */
+private sealed interface LoadDenialPolicy {
+    /** Any denied root entity fails the complete query. */
+    data object FailRoot : LoadDenialPolicy
 
-    data class Edge(
-        val visibility: EdgeVisibility,
-        val denialPath: List<EagerEdgeStep>,
-    ) : LoadPrivacyDisposition
+    /** Any denied target fails the query and identifies the selected edge that caused it. */
+    data class FailEdge(val origin: LoadDenialOrigin.EagerEdge) : LoadDenialPolicy
+
+    /** Denied targets are omitted while visible targets remain attached to the selected edge. */
+    data object FilterDeniedTargets : LoadDenialPolicy
 }
 
 /** Root identity and traversal paths carried through recursive node evaluation. */

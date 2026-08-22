@@ -23,6 +23,7 @@ import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
+import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryEvaluator
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntityKey
@@ -172,11 +173,19 @@ class ReadQueryEvaluatorRootTest {
                 entity: EntityMapping<Entity>,
                 privacyContext: PrivacyContext,
                 entities: List<Entity>,
-            ): List<PrivacyDenial?> {
+            ): List<LoadPrivacyEvaluation<Entity>> {
                 assertSame(adapter as Any, entity as Any)
                 assertSame(adapter.privacy, privacyContext)
                 adapter.events += "load-privacy:${entities.joinToString { it.id.toString() }}"
-                return adapter.denials.ifEmpty { List(entities.size) { null } }
+                val denials = adapter.denials.ifEmpty { List(entities.size) { null } }
+                return entities.mapIndexed { index, entityValue ->
+                    val denial = denials[index]
+                    if (denial == null) {
+                        LoadPrivacyEvaluation.Allowed(entityValue)
+                    } else {
+                        LoadPrivacyEvaluation.Denied(entityValue, denial)
+                    }
+                }
             }
         } },
     )

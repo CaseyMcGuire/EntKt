@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
@@ -21,6 +22,12 @@ private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
 private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
 private val LOAD_PRIVACY_EVALUATOR =
     ClassName("entkt.runtime.query.execution", "LoadPrivacyEvaluator")
+private val LOAD_PRIVACY_EVALUATION =
+    ClassName("entkt.runtime.query.execution", "LoadPrivacyEvaluation")
+private val CORRELATE_LOAD_PRIVACY_EVALUATIONS = MemberName(
+    "entkt.runtime.query.execution",
+    "correlateLoadPrivacyEvaluationsForInternalUse",
+)
 
 /**
  * Emits the generated read-runtime contract: `EntReadRuntime` plus one
@@ -188,8 +195,14 @@ internal class ReadRuntimeGenerator(
         val body = com.squareup.kotlinpoet.CodeBlock.builder().add("return when (entity) {\n")
         for (input in sorted) {
             body.add(
-                "  %T.GeneratedEntityMapping -> %L.loadDenials(privacyContext, entities as %T<%T>)\n",
+                "  %T.GeneratedEntityMapping -> %M(\n" +
+                    "    %S,\n" +
+                    "    entities,\n" +
+                    "    %L.loadDenials(privacyContext, entities as %T<%T>),\n" +
+                    "  )\n",
                 ClassName(packageName, "${input.name}Query"),
+                CORRELATE_LOAD_PRIVACY_EVALUATIONS,
+                "${input.name} LOAD privacy",
                 input.clientName,
                 LIST,
                 ClassName(packageName, input.name),
@@ -211,7 +224,7 @@ internal class ReadRuntimeGenerator(
             .addParameter("entity", ENTITY_MAPPING.parameterizedBy(entityType))
             .addParameter("privacyContext", PRIVACY_CONTEXT)
             .addParameter("entities", LIST.parameterizedBy(entityType))
-            .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
+            .returns(LIST.parameterizedBy(LOAD_PRIVACY_EVALUATION.parameterizedBy(entityType)))
             .addCode(body.build())
             .build()
     }

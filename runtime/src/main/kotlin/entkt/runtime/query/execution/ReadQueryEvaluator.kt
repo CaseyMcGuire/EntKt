@@ -52,7 +52,7 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
         return captureFailure {
             val query = captureQuery()
             val privacyContext = privacyContextProvider()
-            entityGraphLoader.loadRoot(
+            entityGraphLoader.load(
                 query = query,
                 operation = operation,
                 maximumRows = maximumRows,

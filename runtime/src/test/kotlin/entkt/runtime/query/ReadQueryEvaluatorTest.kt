@@ -12,6 +12,7 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
+import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryEvaluator
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
@@ -85,7 +86,7 @@ class ReadQueryEvaluatorTest {
                         entity: EntityMapping<Entity>,
                         privacyContext: PrivacyContext,
                         entities: List<Entity>,
-                    ): List<PrivacyDenial?> = error("LOAD privacy is not configured")
+                    ): List<LoadPrivacyEvaluation<Entity>> = error("LOAD privacy is not configured")
                 }
             },
         )
