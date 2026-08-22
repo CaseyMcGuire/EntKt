@@ -132,6 +132,7 @@ internal class DatabaseGraphStorage(
         )
     }
 
+    /** Load a nullable target whose foreign key is stored on each source entity. */
     @Suppress("UNCHECKED_CAST")
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> loadForeignKeyOnSource(
         selection: EdgeSelection<Source, Target>,
@@ -167,6 +168,7 @@ internal class DatabaseGraphStorage(
         }
     }
 
+    /** Dispatch an inverse foreign-key relationship according to its declared cardinality. */
     @Suppress("UNCHECKED_CAST")
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> loadForeignKeyOnTarget(
         selection: EdgeSelection<Source, Target>,
@@ -205,6 +207,7 @@ internal class DatabaseGraphStorage(
         }
     }
 
+    /** Load inverse to-one targets and preserve their correlation with each source entity. */
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> loadToOneForeignKeyOnTarget(
         selection: EdgeSelection<Source, Target>,
         edge: ToOneEdgeMapping<Source, Target>,
@@ -243,6 +246,7 @@ internal class DatabaseGraphStorage(
         }
     }
 
+    /** Load inverse to-many targets using native or emulated per-source windows. */
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> loadToManyForeignKeyOnTarget(
         selection: EdgeSelection<Source, Target>,
         edge: ToManyEdgeMapping<Source, Target>,
@@ -302,6 +306,7 @@ internal class DatabaseGraphStorage(
         }
     }
 
+    /** Read to-one targets only when the keys and per-source window can produce a value. */
     private fun <Target : EntEntity<*>> readToOneRelationshipTargets(
         entity: EntityMapping<Target>,
         query: StorageQuerySpec<Target>,
@@ -321,6 +326,7 @@ internal class DatabaseGraphStorage(
         )
     }
 
+    /** Execute a compiled storage query and decode its bounded result rows. */
     private fun <Entity : EntEntity<*>> readEntities(
         entity: EntityMapping<Entity>,
         query: StorageQuerySpec<Entity>,
