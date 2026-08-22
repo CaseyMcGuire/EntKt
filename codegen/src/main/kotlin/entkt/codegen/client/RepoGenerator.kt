@@ -46,7 +46,7 @@ import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val LIST = ClassName("kotlin.collections", "List")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
@@ -76,7 +76,7 @@ private val SNAPSHOT_EDGE_CHANGES =
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
- * for I/O — it owns the [Driver] and exposes `query`, `create`,
+ * for I/O — it owns the [DatabaseDriver] and exposes `query`, `create`,
  * `update(id)`, and `byId` accessors. Its `init` block registers the
  * entity's [entkt.runtime.driver.EntitySchema] so the driver knows the table
  * layout before any other call lands, and every builder it hands back is
@@ -630,12 +630,12 @@ internal class RepoGenerator(
                     .add("  val deletedIdSet = deletedIdSnapshot.toSet()\n")
                     .add(
                         "  check(deletedIdSnapshot.size == deletedIdSet.size && deletedIdSet.all { it in approvedIdSet }) { %S }\n",
-                        "Driver.deleteManyByIds returned duplicate or unapproved IDs",
+                        "DatabaseDriver.deleteManyByIds returned duplicate or unapproved IDs",
                     )
                     .add("  val deletedEntities = entities.filter { it.id in deletedIdSet }\n")
                     .add(
                         "  check(deletedEntities.size == deletedIdSnapshot.size) { %S }\n",
-                        "Driver.deleteManyByIds acknowledgement could not be correlated to candidates",
+                        "DatabaseDriver.deleteManyByIds acknowledgement could not be correlated to candidates",
                     )
                     .add("  %M(deletedEntities, afterDeleteHooks)\n", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
                     .add("  return %T.Success(deletedIdSnapshot.size)\n", MUTATION_RESULT)
@@ -1532,7 +1532,7 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("  }\n")
-                    // A transaction-scoped Driver.insertMany may use several
+                    // A transaction-scoped DatabaseDriver.insertMany may use several
                     // physical statements. Once the call begins, an exception
                     // can follow an earlier staged chunk, so the batch is
                     // conservatively pending until its transaction resolves.
@@ -1560,7 +1560,7 @@ internal class RepoGenerator(
                     .add("  check(rows.size == prepared.size) {\n")
                     .add(
                         "    %S + prepared.size + %S + rows.size",
-                        "Driver.insertMany contract violation for $schemaName: expected ",
+                        "DatabaseDriver.insertMany contract violation for $schemaName: expected ",
                         " persisted rows but received ",
                     )
                     .add("\n  }\n")
@@ -1591,7 +1591,7 @@ internal class RepoGenerator(
      * `createMany(*blocks): MutationResult<List<T>>` — strict, atomic,
      * phase-major bulk create. Every builder and before-hook phase completes,
      * then CREATE privacy and validation evaluate the complete candidate list,
-     * before one correlated `Driver.insertMany` persists the batch. Every row
+     * before one correlated `DatabaseDriver.insertMany` persists the batch. Every row
      * is hydrated before the single afterCreate phase begins.
      *
      * Returned LOAD disclosure uses the same privacy-context snapshot as

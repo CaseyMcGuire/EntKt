@@ -5,7 +5,7 @@ import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
 /**
- * Runtime metadata describing one entity to a [Driver]: enough to look
+ * Runtime metadata describing one entity to a [DatabaseDriver]: enough to look
  * up rows by id, evaluate predicates, and resolve edges into joins.
  *
  * The codegen emits one of these per generated entity (e.g.
@@ -38,7 +38,7 @@ data class EntitySchema(
      * `"sent_requests"`; `outgoing` names the generated API and never
      * appears here.
      *
-     * Driver authors: predicates reaching a driver carry the storage
+     * DatabaseDriver authors: predicates reaching a driver carry the storage
      * name too, so a lookup with the value out of a `Predicate` matches.
      * Each entry is the join recipe — see [EdgeMetadata].
      */
@@ -56,7 +56,7 @@ data class EntitySchema(
  * the right SQL type and constraints.
  */
 data class ColumnMetadata(
-    /** snake_case column name as it appears in `Driver` row maps. */
+    /** snake_case column name as it appears in `DatabaseDriver` row maps. */
     val name: String,
     /** Logical type, mapped to a SQL type by each driver. */
     val type: FieldType,
@@ -85,7 +85,7 @@ data class ColumnMetadata(
      * [entkt.migrations.TypeMapper] converts into a SQL `DEFAULT`
      * expression for its dialect.
      *
-     * Consumed only on the migration path: [Driver]s never apply column
+     * Consumed only on the migration path: [DatabaseDriver]s never apply column
      * defaults at runtime (the generated `create()` bakes them in from
      * `Field.default` directly), so the generated `SCHEMA` literal leaves
      * this null. The migration builder
@@ -242,16 +242,16 @@ data class EdgeMetadata(
 )
 
 /**
- * How a [Driver] should populate the id column when [Driver.insert] is
+ * How a [DatabaseDriver] should populate the id column when [DatabaseDriver.insert] is
  * called without one. UUIDs are minted by the generated `save()` (so
  * the caller can see the id without a round trip), but numeric auto-ids
  * are assigned by the driver itself — only the driver knows which ids
  * are already taken.
  */
 enum class IdStrategy {
-    /** Driver assigns the next available `Int` per table. */
+    /** DatabaseDriver assigns the next available `Int` per table. */
     AUTO_INT,
-    /** Driver assigns the next available `Long` per table. */
+    /** DatabaseDriver assigns the next available `Long` per table. */
     AUTO_LONG,
     /** Caller (generated `save()`) provides a `UUID`. */
     CLIENT_UUID,

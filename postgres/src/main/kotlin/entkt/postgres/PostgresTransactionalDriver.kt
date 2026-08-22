@@ -9,14 +9,14 @@ import entkt.runtime.driver.DirectToManyWindowCapability
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.result.NestedTransactionUnsupportedException
 import java.sql.Connection
 
 /**
- * A [Driver] that runs all I/O on a single JDBC [Connection] with
+ * A [DatabaseDriver] that runs all I/O on a single JDBC [Connection] with
  * `autoCommit = false`. Every operation delegates to the shared
  * [PostgresOperations] core with the pinned connection; [register]
  * delegates to [root] so DDL never runs inside user transactions.
@@ -29,7 +29,7 @@ internal class PostgresTransactionalDriver(
     private val conn: Connection,
     private val root: PostgresDriver,
     private val ops: PostgresOperations,
-) : Driver {
+) : DatabaseDriver {
     @Volatile var closed = false
 
     private fun checkOpen() {
@@ -152,7 +152,7 @@ internal class PostgresTransactionalDriver(
         checkOpen(); return ops.deleteManyByIds(conn, table, idColumn, ids, predicates)
     }
 
-    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
         // Nested transactions are unsupported: the guard throws before
         // the nested block runs, before any savepoint is created, and
         // before any transaction I/O — the outer transaction is

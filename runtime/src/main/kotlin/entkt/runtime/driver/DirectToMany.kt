@@ -22,20 +22,20 @@ import entkt.runtime.query.EagerWindowStrategy
  * ordering, offset, and limit into storage.
  *
  * The runtime consults this before every direct to-many eager fetch:
- * NATIVE routes the step through [Driver.queryDirectToMany]; EMULATED
- * retains the phase-1 lowering — one ordinary [Driver.query] with the
+ * NATIVE routes the step through [DatabaseDriver.queryDirectToMany]; EMULATED
+ * retains the phase-1 lowering — one ordinary [DatabaseDriver.query] with the
  * complete frozen predicate list and the window applied in memory
  * after grouping. Emulation is the mandatory compatibility fallback:
  * a driver without the native capability accepts every eager query it
  * accepted before this capability existed.
  */
 public enum class DirectToManyWindowCapability {
-    /** [Driver.queryDirectToMany] applies per-parent windows in storage. */
+    /** [DatabaseDriver.queryDirectToMany] applies per-parent windows in storage. */
     NATIVE,
 
     /**
      * No native per-parent window: the runtime fetches every matching
-     * row through [Driver.query] and applies each parent's window in
+     * row through [DatabaseDriver.query] and applies each parent's window in
      * memory, which can overfetch rows that the runtime later discards.
      */
     EMULATED,
@@ -139,13 +139,13 @@ public data class RelatedRows(
  * phase-1 emulation otherwise.
  *
  * [capability] is the caller's ONE
- * [Driver.directToManyWindowCapability] sample for this eager step —
+ * [DatabaseDriver.directToManyWindowCapability] sample for this eager step —
  * generated code takes it before the interceptor chain (the running
  * bind budget depends on it) and passes the same sample here, so
  * budgeting and routing cannot disagree even against a driver whose
  * capability answer is not stable between calls.
  *
- * Driver reads stay data-gated exactly as in phase 1: an empty parent
+ * DatabaseDriver reads stay data-gated exactly as in phase 1: an empty parent
  * set or a `limit(0)` window performs no driver I/O at all (the
  * interceptor pass has already run by the time this is called). On
  * the emulated path the driver receives [emulationPredicates] — the
@@ -159,7 +159,7 @@ public data class RelatedRows(
  */
 @EntktInternal
 public fun executeDirectToMany(
-    driver: Driver,
+    driver: DatabaseDriver,
     query: DirectToManyQuery,
     emulationPredicates: List<Predicate<*>>,
     capability: DirectToManyWindowCapability,

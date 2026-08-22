@@ -21,7 +21,7 @@ sealed interface ColumnStorage {
         val typeName: String,
         /** Full SQL type rendered into DDL verbatim, e.g. `"vector(1536)"`. */
         val sqlType: String,
-        /** Driver bind/decode dispatch key, e.g. `"postgres.vector"`. */
+        /** DatabaseDriver bind/decode dispatch key, e.g. `"postgres.vector"`. */
         val codec: String,
         /** Extension this column needs, e.g. `"vector"` → `CREATE EXTENSION`. Null if none. */
         val requiredExtension: String?,

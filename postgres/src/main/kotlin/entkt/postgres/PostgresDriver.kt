@@ -11,7 +11,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
@@ -40,7 +40,7 @@ import javax.sql.DataSource
 class PostgresBindLimitException(message: String) : RuntimeException(message)
 
 /**
- * A [Driver] backed by a JDBC [DataSource] talking to PostgreSQL.
+ * A [DatabaseDriver] backed by a JDBC [DataSource] talking to PostgreSQL.
  *
  * Each call borrows one connection from the pool and runs a single
  * statement. The driver does no caching beyond the per-table
@@ -82,7 +82,7 @@ class PostgresDriver(
      * `jsonMapper` the schema code was generated with, checked at [register].
      */
     private val jsonCodec: JsonColumnCodec = KotlinxJsonCodec(),
-) : Driver {
+) : DatabaseDriver {
 
     private val schemas: MutableMap<String, EntitySchema> = ConcurrentHashMap()
     private val ddl = PostgresDdl()
@@ -914,7 +914,7 @@ class PostgresDriver(
     /**
      * Run [block] against a connection-pinned driver inside one
      * transaction, reporting the outcome structurally per the
-     * [Driver.withTransaction] write-certainty contract: `Success`
+     * [DatabaseDriver.withTransaction] write-certainty contract: `Success`
      * only after a confirmed commit; an ordinary block failure with a
      * confirmed rollback is `Failed(exception, NotCommitted)`; a
      * failed rollback or a failed commit is
@@ -948,7 +948,7 @@ class PostgresDriver(
      * are released independently so a failed restore can't leak the
      * pooled connection.
      */
-    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
         val executionToken = transactionExecutionGuard.enterTransaction()
         return try {
             runTransaction(block)
@@ -957,7 +957,7 @@ class PostgresDriver(
         }
     }
 
-    private fun <T> runTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+    private fun <T> runTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
         val conn = dataSource.connection
         // The exception the caller will observe — thrown (cancellation
         // / JVM errors / setup failures) or stored in Failed. Cleanup
@@ -1094,7 +1094,7 @@ class PostgresDriver(
 
     override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
         // Uniform contract enforcement (transaction locking): the
-        // `Driver.readRowForUpdate` interface contract requires
+        // `DatabaseDriver.readRowForUpdate` interface contract requires
         // implementations to reject non-transactional callers. The
         // helper throws IllegalStateException when `inTransaction`
         // is false, which on the root driver is always.
@@ -1151,7 +1151,7 @@ class PostgresDriver(
         )
     }
 
-    // ---------- Driver exception classification (write certainty) ----------
+    // ---------- DatabaseDriver exception classification (write certainty) ----------
 
     /**
      * Classify a [PSQLException] thrown by one of this driver's

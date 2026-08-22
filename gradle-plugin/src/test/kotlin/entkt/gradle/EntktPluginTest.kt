@@ -176,11 +176,11 @@ class EntktPluginTest {
             assertTrue(!queryContent.contains("whereHasOwner"), "Should not emit old whereHasOwner alias")
             assertTrue(!queryContent.contains("whereOwnerIdEq"), "Should not emit old per-field predicate")
 
-            // Repo is the DI seam — takes a Driver, exposes create/query/update/byId
+            // Repo is the DI seam — takes a DatabaseDriver, exposes create/query/update/byId
             val repoContent = generatedDir.resolve("PetRepo.kt").readText()
             assertTrue(repoContent.contains("class PetRepo"), "Should generate PetRepo class")
-            assertTrue(repoContent.contains("import entkt.runtime.driver.Driver"), "Should import Driver")
-            assertTrue(repoContent.contains("driver: Driver"), "Should take Driver in constructor")
+            assertTrue(repoContent.contains("import entkt.runtime.driver.DatabaseDriver"), "Should import DatabaseDriver")
+            assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
             assertTrue(
                 repoContent.contains("fun create(block: PetCreate.() -> Unit): PetCreate"),
                 "Repo should expose create(block)",
@@ -209,7 +209,7 @@ class EntktPluginTest {
             // EntClient wires repos together — this is the DI entry point
             val clientContent = generatedDir.resolve("EntClient.kt").readText()
             assertTrue(clientContent.contains("class EntClient"), "Should generate EntClient class")
-            assertTrue(clientContent.contains("driver: Driver"), "Client should take Driver")
+            assertTrue(clientContent.contains("driver: DatabaseDriver"), "Client should take DatabaseDriver")
             assertTrue(
                 clientContent.contains("val pets: PetRepo = PetRepo(driver)"),
                 "Client should expose pets: PetRepo",

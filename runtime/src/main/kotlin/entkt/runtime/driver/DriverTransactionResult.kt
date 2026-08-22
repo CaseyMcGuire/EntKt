@@ -3,7 +3,7 @@ package entkt.runtime.driver
 import entkt.runtime.result.TransactionFailureState
 
 /**
- * Structured outcome of [Driver.withTransaction]. Deliberately about
+ * Structured outcome of [DatabaseDriver.withTransaction]. Deliberately about
  * execution certainty, not application error policy: drivers construct
  * this but never `ReadResult`, `MutationResult`, or
  * `TransactionResult`.

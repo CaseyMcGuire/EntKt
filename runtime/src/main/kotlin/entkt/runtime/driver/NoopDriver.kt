@@ -5,7 +5,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 
 /**
- * A driver that only exists to satisfy the `Driver` constructor
+ * A driver that only exists to satisfy the `DatabaseDriver` constructor
  * parameter on generated query classes when they're being used purely
  * for predicate construction (e.g. inside `EdgeRef.has { }`).
  *
@@ -21,7 +21,7 @@ import entkt.query.Predicate
  * you've almost certainly called a terminal op (`all`, `firstOrNull`,
  * `save`) inside a `has { ... }` block, which isn't meaningful.
  */
-object NoopDriver : Driver {
+object NoopDriver : DatabaseDriver {
     override fun register(schema: EntitySchema) {
         // Registering a schema is harmless — the Noop driver just
         // ignores it. This lets a query class safely be constructed
@@ -101,6 +101,6 @@ object NoopDriver : Driver {
     override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int =
         error("NoopDriver cannot deleteMany — was a terminal op called inside EdgeRef.has { }?")
 
-    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
         error("NoopDriver cannot start a transaction — was withTransaction called inside EdgeRef.has { }?")
 }

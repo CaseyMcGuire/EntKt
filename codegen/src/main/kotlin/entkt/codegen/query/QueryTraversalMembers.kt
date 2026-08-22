@@ -13,7 +13,7 @@ import com.squareup.kotlinpoet.UNIT
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val TRAVERSAL_SOURCE_SHAPE = ClassName("entkt.query", "TraversalSourceShape")
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENT_OPERATION = ClassName("entkt.runtime.result", "EntOperation")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")

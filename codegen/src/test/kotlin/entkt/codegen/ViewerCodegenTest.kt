@@ -121,7 +121,7 @@ class ViewerCodegenTest {
         assertFalse("visibleOverfetchLimit" in adapter, adapter)
         assertFalse("OverfetchCapExceeded" in adapter, adapter)
         assertFalse("client.driver" in adapter, "must not touch the raw driver: $adapter")
-        assertFalse("Driver.query" in adapter, "must not touch the raw driver: $adapter")
+        assertFalse("DatabaseDriver.query" in adapter, "must not touch the raw driver: $adapter")
     }
 
     @Test

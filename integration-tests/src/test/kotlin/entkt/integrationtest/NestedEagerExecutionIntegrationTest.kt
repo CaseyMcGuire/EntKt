@@ -16,7 +16,7 @@ import entkt.integrationtest.support.RecordingDriver
 import entkt.query.Op
 import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -631,7 +631,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `a junction driver failure precedes the target interceptor pass`() {
         val boom = IllegalStateException("junction storage unavailable")
         val real = resetAndDriver()
-        val failingJunction = object : Driver by real {
+        val failingJunction = object : DatabaseDriver by real {
             override fun query(
                 table: String,
                 predicates: List<Predicate<*>>,

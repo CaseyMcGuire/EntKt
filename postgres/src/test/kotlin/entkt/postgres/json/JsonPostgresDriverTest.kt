@@ -2,7 +2,7 @@ package entkt.postgres.json
 
 import entkt.postgres.PostgresDriver
 import entkt.runtime.driver.ColumnMetadata
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.JsonColumnMetadata
@@ -30,7 +30,7 @@ import kotlin.test.assertTrue
 data class Meta(val nickname: String?, val tags: List<String>)
 
 /**
- * Driver-level bind/decode/DDL/capability coverage for typed JSON columns
+ * DatabaseDriver-level bind/decode/DDL/capability coverage for typed JSON columns
  * against a real Postgres. Uses a hand-built
  * [EntitySchema] carrying [JsonColumnMetadata]; `jsonb` needs no extension, so a
  * plain Postgres image suffices.
@@ -175,7 +175,7 @@ class JsonPostgresDriverTest {
 
     @Test
     fun `a non-Postgres driver rejects a typed JSON schema at register`() {
-        val noJson = object : Driver by NoopDriver {
+        val noJson = object : DatabaseDriver by NoopDriver {
             override fun supportsTypedJson(): Boolean = false
             override fun register(schema: EntitySchema) = checkTypedJsonSupported(schema)
         }

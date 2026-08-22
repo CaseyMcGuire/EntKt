@@ -11,7 +11,7 @@ import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -306,7 +306,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     }
 
     /** Records which tables were queried, delegating everything else. */
-    private class QueryCountingDriver(private val real: Driver) : Driver by real {
+    private class QueryCountingDriver(private val real: DatabaseDriver) : DatabaseDriver by real {
         val queriedTables = mutableListOf<String>()
 
         override fun query(

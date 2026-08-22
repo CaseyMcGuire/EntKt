@@ -5,7 +5,7 @@ import entkt.query.Column
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.driver.ColumnMetadata
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.IndexMetadata
@@ -26,7 +26,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Driver-level bind/decode/DDL coverage for pgvector against a real
+ * DatabaseDriver-level bind/decode/DDL coverage for pgvector against a real
  * pgvector-enabled Postgres.
  * Uses a hand-built [EntitySchema] carrying [ColumnStorage.Native]; the
  * generated-entity end-to-end path is exercised in the integration-tests module.
@@ -130,7 +130,7 @@ class PgVectorPostgresDriverTest {
 
     @Test
     fun `a non-Postgres driver rejects a vector schema at register`() {
-        val noVector = object : Driver by NoopDriver {
+        val noVector = object : DatabaseDriver by NoopDriver {
             override fun supportsNativeStorage(codec: String): Boolean = false
             override fun register(schema: EntitySchema) = checkNativeStorageSupported(schema)
         }

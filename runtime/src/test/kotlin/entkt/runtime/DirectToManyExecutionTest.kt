@@ -8,7 +8,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DirectToManyQuery
 import entkt.runtime.driver.DirectToManyWindowCapability
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.PerParentWindow
@@ -56,7 +56,7 @@ class DirectToManyExecutionTest {
         private val capability: DirectToManyWindowCapability,
         private val queryRows: List<Map<String, Any?>> = emptyList(),
         private val nativeResult: RelatedRows? = null,
-    ) : Driver {
+    ) : DatabaseDriver {
         var queryCalls = 0
         var nativeCalls = 0
         var lastQueryPredicates: List<Predicate<*>>? = null
@@ -108,7 +108,7 @@ class DirectToManyExecutionTest {
             predicates: List<Predicate<*>>,
         ): Int = error("unused")
         override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int = error("unused")
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> = error("unused")
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> = error("unused")
     }
 
     // ---------- executeDirectToMany ----------

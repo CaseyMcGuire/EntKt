@@ -31,7 +31,7 @@ import entkt.schema.EntSchema
 import entkt.schema.Field
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENT_CLIENT_NAME = "EntClient"
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")

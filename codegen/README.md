@@ -39,7 +39,7 @@ For each schema the generator emits:
   There is no generated lifecycle-aware `updateMany()` terminal.
   Registers the entity's `EntitySchema` with the driver on construction.
 - **`EntClient`** — single entry point holding one repo per entity, constructed
-  with a `Driver` and an optional lifecycle-configuration lambda.
+  with a `DatabaseDriver` and an optional lifecycle-configuration lambda.
 - **Hooks DSL classes** — `EntClientConfig`, `EntClientHooks`, and per-entity
   `{Entity}Hooks` classes that provide a structured DSL for registering
   lifecycle hooks at client construction time.
@@ -110,10 +110,10 @@ correlate.
 
 **Bulk operations are phase-major and transactional.** `createMany` completes
 all before hooks, preparation, CREATE privacy, and validation before one
-logical `Driver.insertMany`; it then hydrates every row, runs `afterCreate`, and
+logical `DatabaseDriver.insertMany`; it then hydrates every row, runs `afterCreate`, and
 batch-evaluates returned LOAD privacy. `deleteMany` selects candidates once,
 completes DELETE privacy, validation, and `beforeDelete`, then calls
-`Driver.deleteManyByIds` with the approved IDs and frozen effective predicates;
+`DatabaseDriver.deleteManyByIds` with the approved IDs and frozen effective predicates;
 `afterDelete` sees only rows actually removed. The whole database operation
 uses the caller's transaction or an EntKt-owned one. Postgres implements both
 logical writes with set-based `INSERT` / `DELETE ... RETURNING` statements

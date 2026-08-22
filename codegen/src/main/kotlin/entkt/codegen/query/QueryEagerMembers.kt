@@ -337,7 +337,7 @@ internal fun buildLoadEdges(resolved: ResolvedQuerySchema): FunSpec {
  * which selects the driver's native per-parent window lowering when
  * `directToManyWindowCapability()` is NATIVE and otherwise issues the
  * phase-1 emulated fetch (the complete frozen predicate list through
- * `Driver.query`, window applied in Kotlin below). The runtime helper
+ * `DatabaseDriver.query`, window applied in Kotlin below). The runtime helper
  * also owns the phase-1 data gates: an empty parent set or a
  * `limit(0)` window performs no driver read, while the interceptor
  * pass above it always runs.

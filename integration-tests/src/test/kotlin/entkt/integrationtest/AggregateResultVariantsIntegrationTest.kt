@@ -24,7 +24,7 @@ import kotlin.test.assertIs
  *  - interceptor rejection → `Failed(EntQueryRejectedException)` with
  *    direct `reason` / `code` / `interceptor` properties
  *
- * Driver-failure tests are intentionally omitted on this surface; the
+ * DatabaseDriver-failure tests are intentionally omitted on this surface; the
  * `Failed(exception)` capture path is identical to the read terminals
  * already exercised end-to-end in [QueryResultVariantsIntegrationTest].
  */

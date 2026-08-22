@@ -27,7 +27,7 @@ import entkt.query.Predicate
  * is called, the driver already knows the table layout, the id
  * strategy, and how to walk edges.
  */
-interface Driver {
+interface DatabaseDriver {
     /**
      * Tell the driver about the complete set of entities it will serve.
      *
@@ -110,7 +110,7 @@ interface Driver {
 
     /**
      * Reject a schema whose native-storage columns use a codec this driver
-     * doesn't [supportsNativeStorage]. Driver `register` implementations call
+     * doesn't [supportsNativeStorage]. DatabaseDriver `register` implementations call
      * this so an incompatible schema fails at `EntClient` construction (the
      * generated repo registers in its `init`) rather than at first read/write.
      */
@@ -203,7 +203,7 @@ interface Driver {
         conflictColumns: List<String>,
     ): Map<String, Any?>? =
         throw UnsupportedOperationException(
-            "Driver ${this::class.simpleName} does not support insertIgnore; " +
+            "DatabaseDriver ${this::class.simpleName} does not support insertIgnore; " +
                 "check supportsInsertIgnore before calling.",
         )
 
@@ -456,7 +456,7 @@ interface Driver {
 
     /**
      * Run [block] inside a transaction and report the outcome
-     * structurally. The block receives a transaction-scoped [Driver]
+     * structurally. The block receives a transaction-scoped [DatabaseDriver]
      * that shares a single underlying connection / snapshot.
      *
      * Write-certainty contract:
@@ -487,10 +487,10 @@ interface Driver {
      * The driver passed to [block] is only valid for the duration of
      * the block — using it after the block returns will throw.
      */
-    fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
+    fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T>
 
     /**
-     * True when this [Driver] is the transaction-scoped driver passed
+     * True when this [DatabaseDriver] is the transaction-scoped driver passed
      * inside [withTransaction]. False on a normal client-level driver.
      * Generated saves use this at save-start to enforce a configured
      * [entkt.runtime.mutation.TransactionRequirement] (transaction locking) without having
@@ -579,7 +579,7 @@ interface Driver {
      */
     fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? =
         throw UnsupportedOperationException(
-            "Driver ${this::class.simpleName} does not support readRowForUpdate; " +
+            "DatabaseDriver ${this::class.simpleName} does not support readRowForUpdate; " +
                 "check supportsReadRowForUpdate before calling.",
         )
 
@@ -644,7 +644,7 @@ interface Driver {
      */
     fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? =
         throw UnsupportedOperationException(
-            "Driver ${this::class.simpleName} does not support serializeOwnerEdgeAndRead; " +
+            "DatabaseDriver ${this::class.simpleName} does not support serializeOwnerEdgeAndRead; " +
                 "check supportsOwnerEdgeSerialization before calling.",
         )
 
@@ -681,7 +681,7 @@ interface Driver {
      */
     fun serializeRelationship(key: RelationshipLockKey): Unit =
         throw UnsupportedOperationException(
-            "Driver ${this::class.simpleName} does not support serializeRelationship; " +
+            "DatabaseDriver ${this::class.simpleName} does not support serializeRelationship; " +
                 "check supportsRelationshipSerialization before calling.",
         )
 
@@ -705,7 +705,7 @@ interface Driver {
      */
     fun requireTransactionForLocking(method: String) {
         check(inTransaction) {
-            "Driver.$method requires a transaction-scoped driver — call inside withTransaction. " +
+            "DatabaseDriver.$method requires a transaction-scoped driver — call inside withTransaction. " +
                 "Calling on a non-transactional driver would release the lock immediately " +
                 "(in auto-commit) or have no transaction boundary to bind to."
         }
@@ -759,7 +759,7 @@ interface Driver {
  * budget provably cannot execute. `Collection.size` is O(1), so the
  * walk allocates nothing and never iterates an operand.
  *
- * Used with [Driver.requireBindCapacity] at generated terminal entry,
+ * Used with [DatabaseDriver.requireBindCapacity] at generated terminal entry,
  * before any defensive operand snapshot. Public for the generated
  * cross-module call sites; not application API.
  */

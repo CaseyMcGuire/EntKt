@@ -3,7 +3,7 @@
 package entkt.runtime.result
 
 import entkt.query.EntktInternal
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 
 /**
@@ -269,13 +269,13 @@ class TransactionCoordinator @EntktInternal constructor() {
  */
 @EntktInternal
 fun <C, T> runEntTransaction(
-    driver: Driver,
-    makeTxClient: (Driver, TransactionCoordinator) -> C,
+    driver: DatabaseDriver,
+    makeTxClient: (DatabaseDriver, TransactionCoordinator) -> C,
     block: TransactionScope.(C) -> T,
 ): TransactionResult<T> {
     // The result boundary begins with this call, so even the
     // transaction-posture read is inside it: an ordinary exception
-    // from a third-party driver's [Driver.inTransaction] becomes
+    // from a third-party driver's [DatabaseDriver.inTransaction] becomes
     // Failed(NotCommitted) — nothing began — rather than escaping the
     // algebra. The nested-transaction rejection itself stays a thrown
     // exception by contract, so it is raised outside the capture.

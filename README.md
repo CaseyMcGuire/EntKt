@@ -2,7 +2,7 @@
 
 A Kotlin entity framework. Declare your entities in a Kotlin DSL, run code
 generation, and get typed data classes, query builders, and repositories
-that talk to a pluggable `Driver`.
+that talk to a pluggable `DatabaseDriver`.
 
 This project is under active development — see the module READMEs for
 details on each component, and [Roadmap](#roadmap) for what's missing.
@@ -78,9 +78,9 @@ Boot REST API example backed by Postgres.
 | Module | Description |
 |---|---|
 | [`:schema`](schema/README.md) | Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType` |
-| [`:runtime`](runtime/README.md) | `Driver` interface, `EntitySchema`, query `Predicate` hierarchy |
+| [`:runtime`](runtime/README.md) | `DatabaseDriver` interface, `EntitySchema`, query `Predicate` hierarchy |
 | [`:codegen`](codegen/README.md) | KotlinPoet-based generator: entity classes, create/update/query builders, repos, `EntClient` |
-| [`:migrations`](migrations/README.md) | Driver-agnostic schema diffing and migration planning |
+| [`:migrations`](migrations/README.md) | DatabaseDriver-agnostic schema diffing and migration planning |
 | [`:gradle-plugin`](gradle-plugin/README.md) | EntKt Gradle plugin registering `generateEntkt` task |
 | [`:postgres`](postgres/README.md) | JDBC driver for PostgreSQL with DDL emission, predicate-to-SQL lowering, introspection, and migration rendering |
 | [`:example-spring`](example-spring/README.md) | Spring Boot REST API example with Postgres, Flyway-applied SQL migrations, lifecycle hooks, and friendship management |
@@ -89,7 +89,7 @@ Boot REST API example backed by Postgres.
 
 Things that are **not yet implemented**, roughly in order of severity:
 
-### Driver capabilities
+### DatabaseDriver capabilities
 - **More drivers.** Only `PostgresDriver` exists today. No SQLite,
   MySQL, etc.
 - **Observability.** No logging, metrics, or query-lifecycle hooks on the

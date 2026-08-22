@@ -21,7 +21,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Driver-level coverage for [PostgresDriver.aggregate] against a real Postgres.
+ * DatabaseDriver-level coverage for [PostgresDriver.aggregate] against a real Postgres.
  * A hand-built [EntitySchema] (no extension needed) exercises sum/avg/min/max/count,
  * ungrouped and grouped, the decode-by-type contract, empty-set semantics, and
  * field-named identifier validation.

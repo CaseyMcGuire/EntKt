@@ -3,7 +3,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.driver.EntitySchema
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 
 /**
  * Unit tests for the symmetric link-table writes driver primitives' runtime types and the
- * default (unsupported) Driver behavior. Postgres-specific behavior of
+ * default (unsupported) DatabaseDriver behavior. Postgres-specific behavior of
  * `insertIgnore` / `serializeRelationship` lives in the integration tests.
  */
 class RelationshipLockingTest {
@@ -76,7 +76,7 @@ class RelationshipLockingTest {
         assertEquals(listOf("OwnerOnly", "Canonical"), RelationshipLocking.entries.map { it.name })
     }
 
-    // ---------- Driver defaults (unsupported) ----------
+    // ---------- DatabaseDriver defaults (unsupported) ----------
 
     @Test
     fun `default driver reports the new capabilities off`() {
@@ -115,12 +115,12 @@ class RelationshipLockingTest {
     }
 
     /**
-     * A Driver that overrides only the abstract members, leaving every
+     * A DatabaseDriver that overrides only the abstract members, leaving every
      * defaulted method (including the two new symmetric link-table writes primitives) at its
      * interface default — so we can assert the *interface* default throws
      * `UnsupportedOperationException`, not NoopDriver's `IllegalStateException`.
      */
-    private class DefaultsOnlyDriver : Driver {
+    private class DefaultsOnlyDriver : DatabaseDriver {
         override fun register(schema: EntitySchema) {}
         override fun registerAll(schemas: List<EntitySchema>) {}
         override fun requireBindCapacity(minimumParameters: Long, table: String) {}
@@ -152,7 +152,7 @@ class RelationshipLockingTest {
             predicates: List<entkt.query.Predicate<*>>,
         ): Int = 0
         override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>): Int = 0
-        override fun <T> withTransaction(block: (Driver) -> T): entkt.runtime.driver.DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): entkt.runtime.driver.DriverTransactionResult<T> =
             entkt.runtime.driver.DriverTransactionResult.Success(block(this))
     }
 }

@@ -28,7 +28,7 @@ enum class UpdateConsistency {
 /**
  * Thrown by generated saves when the requested consistency mode (or
  * a multi-write helper) needs a driver capability the configured
- * [Driver] doesn't expose — e.g. `UpdateConsistency.Pessimistic` on a
+ * [DatabaseDriver] doesn't expose — e.g. `UpdateConsistency.Pessimistic` on a
  * driver that reports `supportsReadRowForUpdate = false`.
  *
  * The save throws *before* hooks, privacy, validation, driver reads,
@@ -62,7 +62,7 @@ enum class RelationshipLocking {
 
 /**
  * Canonical identity of a link-table relationship, used as the key for the
- * relationship lock ([Driver.serializeRelationship]). [fkColumns] is the
+ * relationship lock ([DatabaseDriver.serializeRelationship]). [fkColumns] is the
  * unordered FK pair stored in canonical (sorted) order so both orientations
  * of the same link table produce an equal key. The constructor rejects an
  * unsorted pair; build via [canonical] to sort automatically.

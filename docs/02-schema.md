@@ -779,7 +779,7 @@ index DDL. A dimension change (`vector(1536)` -> `vector(3072)`) is classified
 manual/destructive. The Flyway shadow workflow defaults to a pgvector-capable
 image so these apply in the shadow database.
 
-**Driver support.** A non-Postgres driver rejects a vector schema at `register()`
+**DatabaseDriver support.** A non-Postgres driver rejects a vector schema at `register()`
 with `UnsupportedDriverCapabilityException` rather than failing later.
 
 See [Queries -> Vector distance ordering](04-queries.md#vector-distance-ordering-pgvector)
@@ -869,7 +869,7 @@ facts (column existence, `jsonb` type, nullability) -- changing the Kotlin class
 property names, `@SerialName`s, or serializer config produces **no** automatic
 migration, since the database can't reconstruct them.
 
-**Driver support.** A non-Postgres driver rejects a typed JSON schema at
+**DatabaseDriver support.** A non-Postgres driver rejects a typed JSON schema at
 `register()` with `UnsupportedDriverCapabilityException`.
 
 ## Reusable Mixins

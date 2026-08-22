@@ -2,7 +2,7 @@
 
 entkt is a Kotlin entity framework. Declare your entities in a Kotlin DSL, run
 code generation, and get typed data classes, query builders, and repositories
-that talk to a pluggable `Driver`.
+that talk to a pluggable `DatabaseDriver`.
 
 ## Guides
 

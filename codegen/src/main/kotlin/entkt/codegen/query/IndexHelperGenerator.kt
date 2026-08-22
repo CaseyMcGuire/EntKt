@@ -25,7 +25,7 @@ import entkt.schema.ColumnStorage
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
 
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val INDEX_RANGE_BUILDER = ClassName("entkt.query", "IndexRangeBuilder")

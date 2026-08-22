@@ -32,7 +32,7 @@ import entkt.schema.FieldType
 import entkt.schema.ValidatorSpec
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val ENT_CLIENT_NAME = "EntClient"
@@ -179,7 +179,7 @@ internal fun driverCallFailureTail(
 /**
  * Build the private driver-classification member named by [helperName]:
  * the driver-exception classification point for one entity + operation.
- * Consults [entkt.runtime.driver.Driver.classifyMutationException]; a
+ * Consults [entkt.runtime.driver.DatabaseDriver.classifyMutationException]; a
  * classification carrying a sealed [ENT_MUTATION_EXCEPTION] (a
  * recognized constraint violation or expected conflict, both hardcoded
  * NotPersisted) is used directly, any other classified exception is

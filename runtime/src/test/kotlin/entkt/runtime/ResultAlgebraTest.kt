@@ -5,7 +5,7 @@ package entkt.runtime
 import entkt.query.EntktInternal
 import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.result.EagerEdgeStep
@@ -327,7 +327,7 @@ class ResultAlgebraTest {
     private class FakeDriver(
         private val inTransactionValue: Boolean = false,
         private val inTransactionError: Exception? = null,
-    ) : Driver {
+    ) : DatabaseDriver {
         var transactionsStarted = 0
 
         override fun requireBindCapacity(minimumParameters: Long, table: String) {}
@@ -335,7 +335,7 @@ class ResultAlgebraTest {
         override val inTransaction: Boolean
             get() = inTransactionError?.let { throw it } ?: inTransactionValue
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
             transactionsStarted++
             return try {
                 DriverTransactionResult.Success(block(FakeDriver(inTransactionValue = true)))

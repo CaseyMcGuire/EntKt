@@ -2,7 +2,7 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
 
@@ -13,7 +13,7 @@ import entkt.runtime.privacy.Viewer
  * ran effectively without privacy before it became fail-closed (an unpolicied
  * entity was implicitly allow-all), and System preserves that.
  */
-internal fun sysClient(driver: Driver, config: EntClientConfig.() -> Unit = {}): EntClient =
+internal fun sysClient(driver: DatabaseDriver, config: EntClientConfig.() -> Unit = {}): EntClient =
     EntClient(driver) {
         privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         config()

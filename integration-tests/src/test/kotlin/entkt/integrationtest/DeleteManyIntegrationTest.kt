@@ -12,7 +12,7 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.query.OrderField
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.hook.batchHook
 import entkt.runtime.privacy.EntityPolicy
@@ -71,7 +71,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var legacyDeleteManyCalls = 0
         var orderCandidatesByDescendingId = true
         var orderReturnedIdsByAscendingId = false
-        var beforeDeleteManyByIds: (Driver, List<Any>) -> Unit = { _, _ -> }
+        var beforeDeleteManyByIds: (DatabaseDriver, List<Any>) -> Unit = { _, _ -> }
         var transformReturnedIds: (List<Any>) -> List<Any> = { it }
 
         fun names(ids: List<Any>): String = ids.joinToString { namesById.getValue(it) }
@@ -84,11 +84,11 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
      * semantics with a fake database.
      */
     private class DeleteProbeDriver private constructor(
-        private val delegate: Driver,
+        private val delegate: DatabaseDriver,
         val probe: DeleteProbe,
-    ) : Driver by delegate {
+    ) : DatabaseDriver by delegate {
 
-        constructor(delegate: Driver) : this(delegate, DeleteProbe())
+        constructor(delegate: DatabaseDriver) : this(delegate, DeleteProbe())
 
         override fun query(
             table: String,
@@ -144,7 +144,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             return probe.transformReturnedIds(ordered)
         }
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
             probe.withTransactionCalls++
             return delegate.withTransaction { transactionDriver ->
                 block(DeleteProbeDriver(transactionDriver, probe))
@@ -154,14 +154,14 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
 
     private class DefaultFallbackFailure(message: String) : RuntimeException(message)
 
-    /** Forces Driver's correctness fallback to stage one per-ID delete, then fail. */
+    /** Forces DatabaseDriver's correctness fallback to stage one per-ID delete, then fail. */
     private class FallbackThenFailDriver private constructor(
-        private val delegate: Driver,
+        private val delegate: DatabaseDriver,
         private val failure: DefaultFallbackFailure,
         private val deleteManyCalls: IntArray,
-    ) : Driver by delegate {
+    ) : DatabaseDriver by delegate {
 
-        constructor(delegate: Driver, failure: DefaultFallbackFailure) :
+        constructor(delegate: DatabaseDriver, failure: DefaultFallbackFailure) :
             this(delegate, failure, intArrayOf(0))
 
         override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int {
@@ -175,7 +175,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             idColumn: String,
             ids: List<Any>,
             predicates: List<Predicate<*>>,
-        ): List<Any> = super<Driver>.deleteManyByIds(table, idColumn, ids, predicates)
+        ): List<Any> = super<DatabaseDriver>.deleteManyByIds(table, idColumn, ids, predicates)
 
         override fun classifyMutationException(
             exception: Exception,
@@ -196,7 +196,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                 delegate.classifyMutationException(exception, entity, operation)
             }
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             delegate.withTransaction { transactionDriver ->
                 block(FallbackThenFailDriver(transactionDriver, failure, deleteManyCalls))
             }
@@ -207,7 +207,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.block()
         }
 
-    private fun seedUsers(driver: Driver, vararg names: String): List<SeededUser> =
+    private fun seedUsers(driver: DatabaseDriver, vararg names: String): List<SeededUser> =
         names.map { name ->
             val row = driver.insert(
                 User.TABLE,

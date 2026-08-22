@@ -3,7 +3,7 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * preflights — transaction required, driver capability required — fire
  * before the owner-row load, hooks, privacy, validation, or driver
  * writes; the actual lock-and-read lands the owner row through
- * `Driver.readRowForUpdate(...)` rather than the `ReadCurrent`
+ * `DatabaseDriver.readRowForUpdate(...)` rather than the `ReadCurrent`
  * `byId(...)` path.
  *
  * An unsatisfied preflight no longer throws out of the terminal: it is
@@ -47,7 +47,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
      * Same as [freshDriver] — kept as a named alias so test bodies
      * make their intent ("this branch needs row-lock support") clear.
      */
-    private fun lockingDriver(): Driver = resetAndDriver()
+    private fun lockingDriver(): DatabaseDriver = resetAndDriver()
 
     /** Assert the captured-preflight failure shape and return the cause. */
     private inline fun <reified C : Exception> assertPreflightFailure(result: MutationResult<*>): C {
@@ -209,17 +209,17 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 }
 
 /**
- * A thin wrapper that delegates everything to a real [Driver] but
+ * A thin wrapper that delegates everything to a real [DatabaseDriver] but
  * advertises `supportsReadRowForUpdate = false`. Lets the
  * capability-rejection branch of the Pessimistic preflight be
  * exercised without needing a second real driver implementation.
  * `registerAll` is forwarded (not re-derived) so the batch DDL
  * guarantee of the wrapped driver is preserved.
  */
-private class NoLockSupportDriver(private val real: Driver) : Driver by real {
+private class NoLockSupportDriver(private val real: DatabaseDriver) : DatabaseDriver by real {
     override val supportsReadRowForUpdate: Boolean get() = false
 
-    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
         real.withTransaction { txReal ->
             // Wrap the tx driver too, so the in-tx Pessimistic preflight
             // sees the same false capability flag.
@@ -227,6 +227,6 @@ private class NoLockSupportDriver(private val real: Driver) : Driver by real {
         }
 }
 
-private class NoLockSupportTxDriver(txReal: Driver) : Driver by txReal {
+private class NoLockSupportTxDriver(txReal: DatabaseDriver) : DatabaseDriver by txReal {
     override val supportsReadRowForUpdate: Boolean get() = false
 }

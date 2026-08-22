@@ -117,9 +117,9 @@ class TransactionClientCompileTest {
                 package com.example.app
 
                 import com.example.ent.EntClient
-                import entkt.runtime.driver.Driver
+                import entkt.runtime.driver.DatabaseDriver
 
-                fun configuredClient(driver: Driver): EntClient = EntClient(driver) {
+                fun configuredClient(driver: DatabaseDriver): EntClient = EntClient(driver) {
                     hooks {
                         cars {
                             beforeCreate { ctx ->

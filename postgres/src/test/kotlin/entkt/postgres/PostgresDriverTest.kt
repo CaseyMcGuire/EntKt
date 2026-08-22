@@ -1,8 +1,8 @@
-// Driver-level test fixtures construct edge predicates
+// DatabaseDriver-level test fixtures construct edge predicates
 // (`Predicate.HasEdgeWith` / `HasEdge` / `HasM2MEdgeFrom`) directly
 // to exercise the SQL renderer in isolation. These types carry
 // `@EntktInternal` so application code can't fabricate them outside
-// the generated `EdgeRef.has(...)` surface. Driver tests opt in once at the file header — the
+// the generated `EdgeRef.has(...)` surface. DatabaseDriver tests opt in once at the file header — the
 // fabrication is intentional and scoped to driver-internal coverage.
 @file:OptIn(EntktInternal::class)
 
@@ -174,7 +174,7 @@ private class DecimalTextNumber(
 }
 
 /**
- * Driver-contract tests for [PostgresDriver] against a real Postgres
+ * DatabaseDriver-contract tests for [PostgresDriver] against a real Postgres
  * container.
  *
  * Each test starts from a TRUNCATE — schemas live for the lifetime of
@@ -745,7 +745,7 @@ class PostgresDriverTest {
     @Test
     fun `the transaction driver cannot be used after the block returns`() {
         val driver = fresh()
-        var leaked: entkt.runtime.driver.Driver? = null
+        var leaked: entkt.runtime.driver.DatabaseDriver? = null
         driver.withTransaction { tx -> leaked = tx }
         // The block-scoped driver's connection is returned to the pool when
         // withTransaction exits; a captured reference must fail loudly, not
@@ -879,7 +879,7 @@ class PostgresDriverTest {
     @Test
     fun `transaction driver throws after block returns including register`() {
         val driver = fresh()
-        var captured: entkt.runtime.driver.Driver? = null
+        var captured: entkt.runtime.driver.DatabaseDriver? = null
         driver.withTransaction { tx ->
             captured = tx
         }

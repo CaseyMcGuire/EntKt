@@ -77,7 +77,7 @@ class BatchLifecycleCodegenCompileTest {
                 import com.example.ent.EntClient
                 import com.example.ent.EntPrivacyReadClient
                 import com.example.ent.EntValidationReadClient
-                import entkt.runtime.driver.Driver
+                import entkt.runtime.driver.DatabaseDriver
                 import entkt.runtime.hook.Hook
                 import entkt.runtime.hook.batchHook
                 import entkt.runtime.privacy.EntityPolicy
@@ -125,7 +125,7 @@ class BatchLifecycleCodegenCompileTest {
                     }
                 }
 
-                fun configuredClient(driver: Driver): EntClient = EntClient(driver) {
+                fun configuredClient(driver: DatabaseDriver): EntClient = EntClient(driver) {
                     policies { cars(MixedPolicy) }
                     hooks {
                         cars {
@@ -218,7 +218,7 @@ class BatchLifecycleCodegenCompileTest {
             import com.example.ent.WidgetPolicyScope
             import entkt.query.OrderField
             import entkt.query.Predicate
-            import entkt.runtime.driver.Driver
+            import entkt.runtime.driver.DatabaseDriver
             import entkt.runtime.driver.NoopDriver
             import entkt.runtime.privacy.EntityPolicy
             import entkt.runtime.privacy.PrivacyDecision
@@ -234,7 +234,7 @@ class BatchLifecycleCodegenCompileTest {
             import entkt.runtime.result.ReadResult
 
             object BatchLifecycleRuntimeProbe {
-                private fun rowDriver(vararg ids: Int): Driver = object : Driver by NoopDriver {
+                private fun rowDriver(vararg ids: Int): DatabaseDriver = object : DatabaseDriver by NoopDriver {
                     override fun query(
                         table: String,
                         predicates: List<Predicate<*>>,

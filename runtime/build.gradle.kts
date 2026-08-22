@@ -51,7 +51,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    // The Driver contract test asserts abstractness of members that
+    // The DatabaseDriver contract test asserts abstractness of members that
     // decorators must forward (kotlin.reflect full API).
     testImplementation(kotlin("reflect"))
 }

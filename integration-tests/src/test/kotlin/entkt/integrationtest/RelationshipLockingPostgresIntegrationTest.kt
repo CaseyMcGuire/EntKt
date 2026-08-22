@@ -2,7 +2,7 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
 import entkt.postgres.PostgresDriver
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.mutation.RelationshipLocking
@@ -62,40 +62,40 @@ class RelationshipLockingPostgresIntegrationTest {
     }
 
     /**
-     * A [Driver] decorator that records every [serializeRelationship] key,
+     * A [DatabaseDriver] decorator that records every [serializeRelationship] key,
      * delegating all other calls to [inner]. Wraps the transaction-scoped
      * driver too so locks taken inside `withTransaction` are observed.
      */
     private class RecordingDriver(
-        private val inner: Driver,
+        private val inner: DatabaseDriver,
         val keys: MutableList<RelationshipLockKey>,
-    ) : Driver by inner {
+    ) : DatabaseDriver by inner {
         override fun serializeRelationship(key: RelationshipLockKey) {
             keys.add(key)
             inner.serializeRelationship(key)
         }
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             inner.withTransaction { tx -> block(RecordingDriver(tx, keys)) }
     }
 
     /**
-     * A [Driver] decorator that forces the two relationship-locking capability flags to a
+     * A [DatabaseDriver] decorator that forces the two relationship-locking capability flags to a
      * fixed value while delegating everything else (including the real lock
      * primitives) to [inner]. Lets the capability preflights be exercised
      * against a real Postgres database.
      */
     private class CapabilityOverrideDriver(
-        private val inner: Driver,
+        private val inner: DatabaseDriver,
         private val insertIgnore: Boolean? = null,
         private val relationshipSerialization: Boolean? = null,
-    ) : Driver by inner {
+    ) : DatabaseDriver by inner {
         override val supportsInsertIgnore: Boolean
             get() = insertIgnore ?: inner.supportsInsertIgnore
         override val supportsRelationshipSerialization: Boolean
             get() = relationshipSerialization ?: inner.supportsRelationshipSerialization
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             inner.withTransaction { tx -> block(CapabilityOverrideDriver(tx, insertIgnore, relationshipSerialization)) }
     }
 

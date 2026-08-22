@@ -46,7 +46,7 @@ internal class PgTypedArray(val typeName: String, val elements: Array<Any?>)
 internal const val POSTGRES_BIND_PARAMETER_LIMIT = 65_535
 
 /**
- * The [entkt.runtime.driver.Driver.requireBindCapacity] contract for
+ * The [entkt.runtime.driver.DatabaseDriver.requireBindCapacity] contract for
  * both PostgreSQL facades: reject a read whose conservative minimum
  * bind count already exceeds the protocol limit, before the runtime
  * takes any defensive snapshot of the operands.

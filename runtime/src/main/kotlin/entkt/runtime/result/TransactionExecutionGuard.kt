@@ -3,7 +3,7 @@
 package entkt.runtime.result
 
 import entkt.query.EntktInternal
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import java.util.WeakHashMap
 
 /**
@@ -50,14 +50,14 @@ class TransactionExecutionGuard {
     }
 }
 
-private val guardsByDriver = WeakHashMap<Driver, TransactionExecutionGuard>()
+private val guardsByDriver = WeakHashMap<DatabaseDriver, TransactionExecutionGuard>()
 
 /**
  * Returns the execution guard shared by generated clients over [driver].
  * Weak keys avoid extending the lifetime of application-owned drivers.
  */
 @EntktInternal
-fun transactionExecutionGuardForInternalUse(driver: Driver): TransactionExecutionGuard =
+fun transactionExecutionGuardForInternalUse(driver: DatabaseDriver): TransactionExecutionGuard =
     synchronized(guardsByDriver) {
         guardsByDriver.getOrPut(driver) { TransactionExecutionGuard() }
     }

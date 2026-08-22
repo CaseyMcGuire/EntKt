@@ -1,12 +1,12 @@
 package entkt.runtime
 
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * Pins the [Driver] members that MUST stay abstract so hand-written
+ * Pins the [DatabaseDriver] members that MUST stay abstract so hand-written
  * decorators (metrics, tracing, Java implementations) are forced to
  * forward them — a default body would let a manually-forwarding
  * wrapper silently drop the behavior. Kotlin `by`-delegating
@@ -22,8 +22,8 @@ import kotlin.test.assertTrue
 class DriverContractTest {
 
     private fun assertAbstract(name: String, why: String) {
-        val member = Driver::class.declaredMemberFunctions.first { it.name == name }
-        assertTrue(member.isAbstract, "Driver.$name must stay abstract: $why")
+        val member = DatabaseDriver::class.declaredMemberFunctions.first { it.name == name }
+        assertTrue(member.isAbstract, "DatabaseDriver.$name must stay abstract: $why")
     }
 
     @Test

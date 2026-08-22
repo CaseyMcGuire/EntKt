@@ -13,7 +13,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DirectToManyQuery
 import entkt.runtime.driver.DirectToManyWindowCapability
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.privacy.PrivacyContext
@@ -58,27 +58,27 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
      * emulated side would fail loudly instead of silently comparing
      * native against native.
      */
-    private class EmulatedWindowsDriver(private val real: Driver) : Driver by real {
+    private class EmulatedWindowsDriver(private val real: DatabaseDriver) : DatabaseDriver by real {
         override fun directToManyWindowCapability() = DirectToManyWindowCapability.EMULATED
 
         override fun queryDirectToMany(query: DirectToManyQuery): RelatedRows =
             throw AssertionError(
                 "queryDirectToMany reached a driver reporting EMULATED — the runtime must " +
-                    "fall back to Driver.query",
+                    "fall back to DatabaseDriver.query",
             )
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             real.withTransaction { tx -> block(EmulatedWindowsDriver(tx)) }
     }
 
     /** Counts rows crossing each read path, native and emulated. */
     private class RowObservingDriver(
-        private val real: Driver,
+        private val real: DatabaseDriver,
         val nativeQueries: MutableList<DirectToManyQuery> = mutableListOf(),
         val nativeRowCounts: MutableList<Int> = mutableListOf(),
         val emulatedRowCounts: MutableList<Int> = mutableListOf(),
         private val emulated: Boolean = false,
-    ) : Driver by real {
+    ) : DatabaseDriver by real {
 
         override fun directToManyWindowCapability() =
             if (emulated) DirectToManyWindowCapability.EMULATED
@@ -100,13 +100,13 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
                 if (table == Article.TABLE) emulatedRowCounts.add(it.size)
             }
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             real.withTransaction { tx ->
                 block(RowObservingDriver(tx, nativeQueries, nativeRowCounts, emulatedRowCounts, emulated))
             }
     }
 
-    private fun bypassClient(driver: Driver): EntClient =
+    private fun bypassClient(driver: DatabaseDriver): EntClient =
         EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
         }

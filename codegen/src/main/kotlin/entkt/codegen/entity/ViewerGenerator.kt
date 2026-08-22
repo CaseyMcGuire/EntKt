@@ -47,7 +47,7 @@ private val VISIBLE_OR_NULL = com.squareup.kotlinpoet.MemberName("entkt.runtime.
  * Adapters go through the generated typed repos
  * (`client.<repo>.query { ... }.all()`, `findById(...).visibleOrNull()`) so the
  * viewer inherits read privacy, read interceptors, soft-delete filters, and
- * result decoding — never `Driver.query(...)`.
+ * result decoding — never `DatabaseDriver.query(...)`.
  *
  * When the flag is off (the default) no viewer files are emitted and the
  * application needs no `io.entkt:ent-viewer` dependency.

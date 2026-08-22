@@ -2,14 +2,14 @@ package entkt.integrationtest.support
 
 import entkt.query.OrderField
 import entkt.query.Predicate
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 
 /**
- * Delegating [Driver] wrapper that records every data-path call while
- * forwarding to a real driver — the sanctioned "narrow fake Driver
+ * Delegating [DatabaseDriver] wrapper that records every data-path call while
+ * forwarding to a real driver — the sanctioned "narrow fake DatabaseDriver
  * local to the test" pattern (see
  * docs/implemented-features/tooling/remove-in-memory-driver.md). Used
  * to prove no-I/O contracts (projections perform zero driver calls;
@@ -20,11 +20,11 @@ import entkt.runtime.query.AggregateResultRow
  * made inside `withTransaction` are still counted.
  */
 class RecordingDriver private constructor(
-    private val delegate: Driver,
+    private val delegate: DatabaseDriver,
     val calls: MutableList<String>,
-) : Driver by delegate {
+) : DatabaseDriver by delegate {
 
-    constructor(delegate: Driver) : this(delegate, mutableListOf())
+    constructor(delegate: DatabaseDriver) : this(delegate, mutableListOf())
 
     fun reset() = calls.clear()
 
@@ -137,7 +137,7 @@ class RecordingDriver private constructor(
         return delegate.readRowForUpdate(table, id)
     }
 
-    override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> {
+    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
         calls += "withTransaction"
         return delegate.withTransaction { txDriver ->
             block(RecordingDriver(txDriver, calls))

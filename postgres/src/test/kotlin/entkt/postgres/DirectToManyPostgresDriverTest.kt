@@ -1,4 +1,4 @@
-// Driver-level coverage for the phase-2A native direct to-many
+// DatabaseDriver-level coverage for the phase-2A native direct to-many
 // window lowering. Constructs the relationship plan directly (it is
 // `@EntktInternal` framework wiring); the opt-in is intentional and
 // scoped to driver-internal coverage.

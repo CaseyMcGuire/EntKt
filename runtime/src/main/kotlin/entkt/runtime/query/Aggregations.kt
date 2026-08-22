@@ -1,13 +1,13 @@
 package entkt.runtime.query
 
 /**
- * The aggregate function computed by [Driver.aggregate]. V1 supports a single
+ * The aggregate function computed by [DatabaseDriver.aggregate]. V1 supports a single
  * metric per call.
  */
 enum class AggregateFunction { COUNT, SUM, AVG, MIN, MAX }
 
 /**
- * One row returned by [Driver.aggregate]. [key] is the group-key value (null
+ * One row returned by [DatabaseDriver.aggregate]. [key] is the group-key value (null
  * when the query is ungrouped, or for the single NULL-key bucket of a nullable
  * group column); [value] is the metric — already decoded to its Kotlin type
  * (`Long` for COUNT and integral SUM, `Double` for floating SUM / AVG, the

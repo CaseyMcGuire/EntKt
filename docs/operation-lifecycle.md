@@ -236,7 +236,7 @@ flowchart TD
     beforeCreate --> fields["Defaults and field validation — all inputs"]
     fields --> privacy["CREATE privacy — all candidates"]
     privacy --> validation["CREATE entity validation — all candidates"]
-    validation --> insert["Driver.insertMany — prepared batch"]
+    validation --> insert["DatabaseDriver.insertMany — prepared batch"]
     insert --> hydrate["Hydrate all returned rows in input order"]
     hydrate --> after["afterCreate — all persisted entities"]
     after --> load["Returned LOAD privacy — complete result list"]
@@ -265,7 +265,7 @@ flowchart TD
     query --> privacy["DELETE privacy — all candidates"]
     privacy --> validation["DELETE entity validation — all candidates"]
     validation --> before["beforeDelete — all candidates"]
-    before --> delete["Driver.deleteManyByIds — approved IDs + frozen predicates"]
+    before --> delete["DatabaseDriver.deleteManyByIds — approved IDs + frozen predicates"]
     delete --> after["afterDelete — entities actually removed"]
     after --> result["MutationResult<Int>"]
 ```

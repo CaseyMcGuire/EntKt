@@ -525,7 +525,7 @@ class CreateGeneratorTest {
         ) {
             "CREATE denial should map to EntMutationPrivacyDeniedException(NotPersisted, CREATE)\n$output"
         }
-        // Driver insert failures are classified into typed
+        // DatabaseDriver insert failures are classified into typed
         // EntMutationExceptions at the insert site (CancellationException
         // rethrown), recorded on the transaction coordinator, and
         // returned as Failed.
@@ -683,7 +683,7 @@ class CreateGeneratorTest {
             tail.contains("_classifyCreateDriverFailure(e,") &&
                 tail.contains("MutationWriteState.PersistenceUnknown"),
         ) {
-            "Driver-call tail should invoke the matching requested classifier\n$tail"
+            "DatabaseDriver-call tail should invoke the matching requested classifier\n$tail"
         }
     }
 

@@ -15,7 +15,7 @@ import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val LIST = ClassName("kotlin.collections", "List")

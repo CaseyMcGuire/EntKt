@@ -2,7 +2,7 @@ package entkt.runtime
 
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,7 +59,7 @@ class DriverDeleteManyByIdsTest {
 
     private class DefaultDeleteDriver(
         private val counts: Map<Any, Int> = emptyMap(),
-    ) : Driver by NoopDriver {
+    ) : DatabaseDriver by NoopDriver {
         val calls = mutableListOf<List<Predicate<*>>>()
         val deletedIds = mutableListOf<Any>()
         var metadataLookups: Int = 0
@@ -81,6 +81,6 @@ class DriverDeleteManyByIdsTest {
             idColumn: String,
             ids: List<Any>,
             predicates: List<Predicate<*>>,
-        ): List<Any> = super<Driver>.deleteManyByIds(table, idColumn, ids, predicates)
+        ): List<Any> = super<DatabaseDriver>.deleteManyByIds(table, idColumn, ids, predicates)
     }
 }

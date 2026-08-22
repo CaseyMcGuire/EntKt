@@ -17,7 +17,7 @@ import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val EDGE_QUERY = ClassName("entkt.query", "EdgeQuery")
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 
 // Generated queries depend on the read-runtime contract, not the full

@@ -1,6 +1,6 @@
 # :runtime
 
-`Driver` interface, `EntitySchema`/`ColumnMetadata`/`EdgeMetadata`,
+`DatabaseDriver` interface, `EntitySchema`/`ColumnMetadata`/`EdgeMetadata`,
 query `Predicate` hierarchy, `Op` enum.
 
 ## Package layout
@@ -9,7 +9,7 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 
 | Subpackage | Holds |
 |---|---|
-| `entkt.runtime.driver` | `Driver` SPI, `NoopDriver`, `DriverTransactionResult`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
+| `entkt.runtime.driver` | `DatabaseDriver` SPI, `NoopDriver`, `DriverTransactionResult`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
 | `entkt.runtime.privacy` | `Viewer`, `PrivacyContext`, shared `PrivacyRuleContext`, scalar/batch privacy rules and evaluators, `allowAll`, `EntityPolicy` |
 | `entkt.runtime.validation` | Shared `ValidationRuleContext` plus scalar/batch validation rules and evaluators |
 | `entkt.runtime.hook` | Scalar/batch lifecycle hook contracts and factories |
@@ -18,10 +18,10 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 | `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
 | `entkt.runtime.result` | `ReadResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |
 
-## Driver interface
+## DatabaseDriver interface
 
 ```kotlin
-interface Driver {
+interface DatabaseDriver {
     fun registerAll(schemas: List<EntitySchema>)
     fun register(schema: EntitySchema)
     fun registeredIdColumn(table: String): String
@@ -48,13 +48,13 @@ interface Driver {
         ids: List<Any>,
         predicates: List<Predicate<*>>,
     ): List<Any>
-    fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
+    fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T>
 }
 ```
 
 Rows are plain `Map<String, Any?>` keyed by snake_case column name — the
 driver layer speaks in these maps and the generated entity classes provide
-the typed facade. See [Driver](../docs/10-drivers.md) for the complete SPI,
+the typed facade. See [DatabaseDriver](../docs/10-drivers.md) for the complete SPI,
 including lifecycle snapshot and logical-batch guarantees.
 
 ## Predicates

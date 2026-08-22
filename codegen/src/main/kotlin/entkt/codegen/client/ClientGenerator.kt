@@ -20,7 +20,7 @@ import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.SchemaInput
 import entkt.codegen.metadata.ENTITY_SCHEMA
 
-private val DRIVER = ClassName("entkt.runtime.driver", "Driver")
+private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
@@ -43,7 +43,7 @@ private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
  * together, plus the hooks DSL classes (`EntClientConfig`,
  * `EntClientHooks`, and per-entity `{Entity}Hooks`).
  *
- * The client takes a [Driver] and an optional configuration lambda:
+ * The client takes a [DatabaseDriver] and an optional configuration lambda:
  *
  * ```kotlin
  * val client = EntClient(driver) {

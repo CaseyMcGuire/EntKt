@@ -1,14 +1,14 @@
 # Drivers
 
-entkt uses a pluggable `Driver` interface to abstract over storage
+entkt uses a pluggable `DatabaseDriver` interface to abstract over storage
 backends. All generated code talks to the driver through `Map<String, Any?>`
 rows -- the driver handles SQL (or whatever storage you use), and the
 generated entity classes provide the typed facade.
 
-## The Driver Interface
+## The DatabaseDriver Interface
 
 ```kotlin
-interface Driver {
+interface DatabaseDriver {
     // Both are required. The generated client calls registerAll() once
     // with the complete schema set; register() is the single-entity form.
     fun registerAll(schemas: List<EntitySchema>)
@@ -46,7 +46,7 @@ interface Driver {
         predicates: List<Predicate<*>>,
     ): List<Any>
 
-    fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T>
+    fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T>
     val inTransaction: Boolean
 
     fun classifyMutationException(
@@ -70,7 +70,7 @@ interface Driver {
   construction. It should be idempotent.
 - `registeredIdColumn(table)` returns the primary-key column captured during
   registration and rejects an unregistered table. It is abstract: every
-  `Driver` implementation must provide this metadata lookup.
+  `DatabaseDriver` implementation must provide this metadata lookup.
 - `copyJsonValue(table, column, value)` returns a detached value of the same
   declared Kotlin type using the driver's configured JSON mapper. Generated
   privacy and validation contexts use it to isolate mutable typed-JSON graphs
@@ -308,7 +308,7 @@ are not examined.
 
 ### Registration
 
-`Driver.registerAll(schemas)` is the entry point. The generated
+`DatabaseDriver.registerAll(schemas)` is the entry point. The generated
 `EntClient` calls it once with the complete `SCHEMAS` set while
 initializing its driver property — before any repo is constructed — so a
 driver that materializes storage always sees the whole set at once:
@@ -397,7 +397,7 @@ statement is prepared or sent, instead of the JDBC driver's opaque
 protocol error. An oversized `IN` list is rejected from its projected
 size before being copied or expanded at all, so even an absurdly
 large list cannot exhaust memory on the way to the error. Generated
-read terminals also call `Driver.requireBindCapacity` at entry — a
+read terminals also call `DatabaseDriver.requireBindCapacity` at entry — a
 deliberately abstract member both PostgreSQL facades implement — with
 a conservative minimum computed from the lists' O(1) sizes, so the
 rejection happens before the runtime takes any defensive snapshot of
@@ -553,9 +553,9 @@ class MyTest {
 
 Requires Docker to be running.
 
-## Writing a Custom Driver
+## Writing a Custom DatabaseDriver
 
-To support a new database, implement the `Driver` interface. The key
+To support a new database, implement the `DatabaseDriver` interface. The key
 contract:
 
 1. `registerAll()`, `register()`, and `registeredIdColumn()` are abstract and
@@ -649,7 +649,7 @@ contract:
    error.
 The flags advertise driver-family ability, not instance-level
 ability — see the RFC #4 capability section above. Optional capability
-methods on `Driver` retain safe `false` / throwing defaults, but the three
+methods on `DatabaseDriver` retain safe `false` / throwing defaults, but the three
 registration/metadata methods above are required.
 
 For migration planning, you'll also need:

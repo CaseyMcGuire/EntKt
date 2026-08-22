@@ -3,7 +3,7 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationResult
@@ -31,7 +31,7 @@ import kotlin.test.assertSame
  *    `TransactionPending` + rollback-only (boundary reports
  *    NotCommitted after confirmed rollback)
  *
- * Driver faults are injected by wrapping the real PostgresDriver
+ * DatabaseDriver faults are injected by wrapping the real PostgresDriver
  * (delegation, same pattern as postgres' PostgresTransactionCleanupTest).
  */
 class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
@@ -41,7 +41,7 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
     @Test
     fun `an unclassified insert failure reports PersistenceUnknown with the original cause`() {
         val boom = RuntimeException("connection dropped mid-flight")
-        val failing = object : Driver by resetAndDriver() {
+        val failing = object : DatabaseDriver by resetAndDriver() {
             override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
                 throw boom
         }
@@ -66,7 +66,7 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
             .saveAndLoad().getOrThrow()
 
         val boom = RuntimeException("socket reset during UPDATE")
-        val failing = object : Driver by real {
+        val failing = object : DatabaseDriver by real {
             override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? =
                 throw boom
         }

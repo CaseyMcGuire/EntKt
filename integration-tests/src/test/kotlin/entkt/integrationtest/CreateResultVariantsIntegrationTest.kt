@@ -335,7 +335,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
         assertIs<MutationResult.Failed>(client.users.create { name = "K" }.save())
 
-        // Driver count must be zero — nothing reached insert().
+        // DatabaseDriver count must be zero — nothing reached insert().
         assertEquals(0L, client.users.query().rawCount().getOrThrow())
     }
 

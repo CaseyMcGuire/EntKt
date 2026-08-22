@@ -17,7 +17,7 @@ import entkt.integrationtest.ent.UserMutation
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
-import entkt.runtime.driver.Driver
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.hook.batchHook
 import entkt.runtime.privacy.EntityPolicy
@@ -64,14 +64,14 @@ import kotlin.test.assertSame
 class CreateManyIntegrationTest : PostgresTestBase() {
 
     private class WrongCardinalityDriver(
-        private val delegate: Driver,
-    ) : Driver by delegate {
+        private val delegate: DatabaseDriver,
+    ) : DatabaseDriver by delegate {
         override fun insertMany(
             table: String,
             values: List<Map<String, Any?>>,
         ): List<Map<String, Any?>> = delegate.insertMany(table, values).dropLast(1)
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             delegate.withTransaction { transactionDriver ->
                 block(WrongCardinalityDriver(transactionDriver))
             }
@@ -85,10 +85,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
      * the second fails; a one-input call fails before staging anything.
      */
     private class ChunkThenFailDriver(
-        private val delegate: Driver,
+        private val delegate: DatabaseDriver,
         private val failure: Exception,
         private val classifyAsConstraint: Boolean,
-    ) : Driver by delegate {
+    ) : DatabaseDriver by delegate {
         override fun insertMany(
             table: String,
             values: List<Map<String, Any?>>,
@@ -118,7 +118,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 delegate.classifyMutationException(exception, entity, operation)
             }
 
-        override fun <T> withTransaction(block: (Driver) -> T): DriverTransactionResult<T> =
+        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
             delegate.withTransaction { transactionDriver ->
                 block(ChunkThenFailDriver(transactionDriver, failure, classifyAsConstraint))
             }
@@ -671,7 +671,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val exception = assertIs<EntUnexpectedMutationException>(failed.exception)
         assertEquals(MutationWriteState.NotPersisted, exception.writeState)
         val cause = assertIs<IllegalStateException>(exception.cause)
-        assertContains(cause.message.orEmpty(), "Driver.insertMany contract violation for User")
+        assertContains(cause.message.orEmpty(), "DatabaseDriver.insertMany contract violation for User")
         assertEquals(0, afterCreateCalls)
         assertEquals(0L, bypassCount(client))
     }
@@ -696,7 +696,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val failed = assertIs<MutationResult.Failed>(inner)
         val exception = assertIs<EntUnexpectedMutationException>(failed.exception)
         assertEquals(MutationWriteState.TransactionPending, exception.writeState)
-        assertContains(exception.cause?.message.orEmpty(), "Driver.insertMany contract violation for User")
+        assertContains(exception.cause?.message.orEmpty(), "DatabaseDriver.insertMany contract violation for User")
         assertEquals(0, afterCreateCalls)
         val transactionFailed = assertIs<TransactionResult.Failed>(txResult)
         assertSame(exception, transactionFailed.exception)

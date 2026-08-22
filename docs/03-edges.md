@@ -205,7 +205,7 @@ A missing transaction or an unsupported driver fails the save with
 `MutationResult.Failed(EntUnexpectedMutationException)` (write state
 `NotPersisted`) whose cause is `TransactionRequiredException` /
 `UnsupportedDriverCapabilityException`. These checks run at save-start,
-before hooks or changes. Driver authors can see
+before hooks or changes. DatabaseDriver authors can see
 [Drivers — Locking](10-drivers.md#locking-rfc-4) for the capability surface.
 
 **Writes from both endpoints.** The default

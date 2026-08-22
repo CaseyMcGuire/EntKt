@@ -103,13 +103,13 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo takes a Driver in its constructor`() {
+    fun `repo takes a DatabaseDriver in its constructor`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("import entkt.runtime.driver.Driver")) { "Should import Driver\n$output" }
-        assert(output.contains("driver: Driver")) { "Should take Driver in constructor\n$output" }
+        assert(output.contains("import entkt.runtime.driver.DatabaseDriver")) { "Should import DatabaseDriver\n$output" }
+        assert(output.contains("driver: DatabaseDriver")) { "Should take DatabaseDriver in constructor\n$output" }
     }
 
     @Test
@@ -118,8 +118,8 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("private val driver: Driver")) {
-            "Driver should be a private val\n$output"
+        assert(output.contains("private val driver: DatabaseDriver")) {
+            "DatabaseDriver should be a private val\n$output"
         }
     }
 

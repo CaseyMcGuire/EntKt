@@ -138,7 +138,7 @@ import entkt.postgres.PostgresDriver
 import org.postgresql.ds.PGSimpleDataSource
 
 fun main() {
-    // Create a client with any Driver implementation
+    // Create a client with any DatabaseDriver implementation
     val dataSource = PGSimpleDataSource().apply {
         setURL("jdbc:postgresql://localhost:5432/mydb")
         user = "myuser"
