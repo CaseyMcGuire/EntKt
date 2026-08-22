@@ -167,12 +167,7 @@ internal class EntityGraphLoader(
 
         return when (denialPolicy) {
             LoadDenialPolicy.FailRoot -> {
-                val rejected = evaluations.mapNotNull { evaluation ->
-                    when (evaluation) {
-                        is LoadPrivacyEvaluation.Allowed -> null
-                        is LoadPrivacyEvaluation.Denied -> evaluation.denial
-                    }
-                }
+                val rejected = evaluations.mapNotNull { it.denialOrNull() }
                 if (rejected.isNotEmpty()) {
                     throw EntPrivacyDeniedException(LoadDenialOrigin.Root, rejected)
                 }
@@ -180,12 +175,7 @@ internal class EntityGraphLoader(
             }
 
             is LoadDenialPolicy.FailEdge -> {
-                val denial = evaluations.firstNotNullOfOrNull { evaluation ->
-                    when (evaluation) {
-                        is LoadPrivacyEvaluation.Allowed -> null
-                        is LoadPrivacyEvaluation.Denied -> evaluation.denial
-                    }
-                }
+                val denial = evaluations.firstNotNullOfOrNull { it.denialOrNull() }
                 if (denial != null) {
                     throw EntPrivacyDeniedException(
                         denialPolicy.origin,
@@ -195,12 +185,8 @@ internal class EntityGraphLoader(
                 evaluations.map { evaluation -> evaluation.entity }
             }
 
-            LoadDenialPolicy.FilterDeniedTargets -> evaluations.mapNotNull { evaluation ->
-                when (evaluation) {
-                    is LoadPrivacyEvaluation.Allowed -> evaluation.entity
-                    is LoadPrivacyEvaluation.Denied -> null
-                }
-            }
+            LoadDenialPolicy.FilterDeniedTargets ->
+                evaluations.mapNotNull { it.allowedEntityOrNull() }
         }
     }
 }

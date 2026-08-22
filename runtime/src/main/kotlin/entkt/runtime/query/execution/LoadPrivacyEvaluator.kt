@@ -10,6 +10,18 @@ import entkt.runtime.result.PrivacyDenial
 /** The final LOAD-privacy outcome for one entity. */
 @EntktInternal
 sealed interface LoadPrivacyEvaluation<out Entity : EntEntity<*>> {
+    /** Return this outcome's denial details, or `null` when the entity was allowed. */
+    fun denialOrNull(): PrivacyDenial? = when (this) {
+        is Allowed -> null
+        is Denied -> denial
+    }
+
+    /** Return the allowed entity, or `null` when LOAD privacy denied it. */
+    fun allowedEntityOrNull(): Entity? = when (this) {
+        is Allowed -> entity
+        is Denied -> null
+    }
+
     /** Entity permitted by its LOAD-privacy rules. */
     class Allowed<Entity : EntEntity<*>> internal constructor(
         override val entity: Entity,

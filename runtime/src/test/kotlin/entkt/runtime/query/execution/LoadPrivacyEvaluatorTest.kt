@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class LoadPrivacyEvaluatorTest {
@@ -29,10 +30,14 @@ class LoadPrivacyEvaluatorTest {
 
         val allowed = assertIs<LoadPrivacyEvaluation.Allowed<Item>>(evaluations[0])
         assertSame(first, allowed.entity)
+        assertSame(first, allowed.allowedEntityOrNull())
+        assertNull(allowed.denialOrNull())
 
         val denied = assertIs<LoadPrivacyEvaluation.Denied<Item>>(evaluations[1])
         assertSame(second, denied.entity)
         assertSame(denial, denied.denial)
+        assertNull(denied.allowedEntityOrNull())
+        assertSame(denial, denied.denialOrNull())
     }
 
     @Test
