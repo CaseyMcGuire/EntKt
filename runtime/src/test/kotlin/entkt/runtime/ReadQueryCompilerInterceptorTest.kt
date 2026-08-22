@@ -12,9 +12,9 @@ import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.QueryShape
 import entkt.runtime.query.RegisteredInterceptor
 import entkt.runtime.query.QueryInterceptor
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.EntInterceptorsConfig
-import entkt.runtime.query.execution.EntityQueryPreparation
+import entkt.runtime.query.execution.ReadQueryCompiler
 import entkt.runtime.result.EntQueryRejectedException
 
 import entkt.query.Op
@@ -34,16 +34,16 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * Coverage for the query-preparation stage that runs the interceptor chain
+ * Coverage for the query-compilation stage that runs the interceptor chain
  * against a [QuerySpecBuilder], plus the live-vs-snapshot behavior
  * of `scope.shape`, the attribution buckets, and the
  * `scope.reject(...)` short-circuit.
  */
-class EntityQueryPreparationInterceptorTest {
+class ReadQueryCompilerInterceptorTest {
 
     private class Post
 
-    private val queryPreparation = EntityQueryPreparation(
+    private val queryCompiler = ReadQueryCompiler(
         driver = NoopDriver,
         registeredInterceptors = { EntInterceptorsConfig() },
     )
@@ -82,7 +82,7 @@ class EntityQueryPreparationInterceptorTest {
         entityInterceptors: List<RegisteredInterceptor<Entity>>,
         globalInterceptors: List<RegisteredGlobalInterceptor>,
     ) {
-        queryPreparation.runInterceptors(
+        queryCompiler.runInterceptors(
             builder = builder,
             context = context,
             entityName = entity,
@@ -97,7 +97,7 @@ class EntityQueryPreparationInterceptorTest {
         entity: String,
         entityInterceptors: List<RegisteredInterceptor<Entity>>,
         globalInterceptors: List<RegisteredGlobalInterceptor>,
-    ): FrozenQuerySpec<Entity> {
+    ): StorageQuerySpec<Entity> {
         evaluateInterceptors(
             builder,
             context,
@@ -105,13 +105,13 @@ class EntityQueryPreparationInterceptorTest {
             entityInterceptors,
             globalInterceptors,
         )
-        return builder.freeze()
+        return builder.build()
     }
 
     // ---- Shape live-vs-snapshot ----
 
     @Test
-    fun `running interceptors and freezing are separate explicit steps`() {
+    fun `running interceptors and building the storage query are separate explicit steps`() {
         val builder = builder()
         val added = Predicate.Leaf<Post>("active", Op.EQ, true)
 
@@ -125,7 +125,7 @@ class EntityQueryPreparationInterceptorTest {
             globalInterceptors = emptyList(),
         )
 
-        assertEquals(listOf(added), builder.freeze().predicates)
+        assertEquals(listOf(added), builder.build().predicates)
     }
 
     @Test
@@ -169,7 +169,7 @@ class EntityQueryPreparationInterceptorTest {
     }
 
     @Test
-    fun `frozen spec recursively snapshots mutable predicate operands`() {
+    fun `storage query spec recursively snapshots mutable predicate operands`() {
         val equalityBytes = byteArrayOf(1, 2)
         val memberBytes = byteArrayOf(3, 4)
         val predicate = Predicate.Leaf<Post>("payload", Op.EQ, equalityBytes) and
@@ -193,7 +193,7 @@ class EntityQueryPreparationInterceptorTest {
     }
 
     @Test
-    fun `frozen spec detaches mutable Number operands`() {
+    fun `storage query spec detaches mutable Number operands`() {
         val operand = AtomicInteger(7)
         val frozen = applyInterceptors(
             builder = builder(caller = listOf(Predicate.Leaf<Post>("rank", Op.EQ, operand))),

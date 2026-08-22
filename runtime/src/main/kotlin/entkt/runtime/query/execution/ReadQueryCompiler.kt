@@ -16,7 +16,7 @@ import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeTraversal
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.EntInterceptorsConfig
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.query.GlobalInterceptScopeImpl
 import entkt.runtime.query.InterceptScopeImpl
@@ -32,32 +32,32 @@ import kotlin.reflect.KClass
 /** Maximum nested edge-predicate depth before a likely interceptor cycle is rejected. */
 private const val EDGE_PREDICATE_MAX_DEPTH: Int = 32
 
-/** Turns a recursive entity query into the immutable shape sent to storage. */
+/** Resolves framework query behavior into an immutable query for database storage. */
 @EntktInternal
-class EntityQueryPreparation(
+class ReadQueryCompiler(
     private val driver: DatabaseDriver,
     private val registeredInterceptors: () -> EntInterceptorsConfig,
 ) {
     /** Apply traversal and interceptor stages at every node in [query]. */
-    fun <Entity : EntEntity<*>> prepare(
+    fun <Entity : EntEntity<*>> compile(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         privacyContext: PrivacyContext,
-    ): FrozenQuerySpec<Entity> = prepareWithContext(
+    ): StorageQuerySpec<Entity> = compileWithContext(
         query,
         operation,
         privacyContext,
     ).spec
 
-    /** Prepare one selected edge target with its relationship and traversal context. */
-    fun <Entity : EntEntity<*>> prepareSelectedEdge(
+    /** Compile one selected edge target with its relationship and traversal context. */
+    fun <Entity : EntEntity<*>> compileSelectedEdge(
         query: EntityQuery<Entity>,
         privacyContext: PrivacyContext,
         rootEntity: KClass<*>,
         path: List<EdgeStep>,
         structuralPredicates: List<Predicate<Entity>>,
         structuralSingleBindTransport: Boolean = false,
-    ): FrozenQuerySpec<Entity> = prepareRelatedNode(
+    ): StorageQuerySpec<Entity> = compileRelatedNode(
         entity = query.entity,
         callerPredicates = query.predicates,
         orderBy = query.orderBy,
@@ -72,14 +72,14 @@ class EntityQueryPreparation(
         structuralSingleBindTransport = structuralSingleBindTransport,
     )
 
-    /** Prepare the junction-discovery read for a selected many-to-many edge. */
-    fun <Entity : EntEntity<*>> prepareJunction(
+    /** Compile the junction-discovery read for a selected many-to-many edge. */
+    fun <Entity : EntEntity<*>> compileJunction(
         entity: EntityMapping<Entity>,
         privacyContext: PrivacyContext,
         rootEntity: KClass<*>,
         path: List<EdgeStep>,
         structuralPredicates: List<Predicate<Entity>>,
-    ): FrozenQuerySpec<Entity> = prepareRelatedNode(
+    ): StorageQuerySpec<Entity> = compileRelatedNode(
         entity = entity,
         callerPredicates = emptyList(),
         orderBy = emptyList(),
@@ -94,7 +94,7 @@ class EntityQueryPreparation(
         structuralSingleBindTransport = false,
     )
 
-    private fun <Entity : EntEntity<*>> prepareRelatedNode(
+    private fun <Entity : EntEntity<*>> compileRelatedNode(
         entity: EntityMapping<Entity>,
         callerPredicates: List<Predicate<Entity>>,
         orderBy: List<OrderField<Entity>>,
@@ -107,7 +107,7 @@ class EntityQueryPreparation(
         structuralPredicates: List<Predicate<Entity>>,
         appendPrimaryKeyOrder: Boolean,
         structuralSingleBindTransport: Boolean,
-    ): FrozenQuerySpec<Entity> {
+    ): StorageQuerySpec<Entity> {
         val step = path.lastOrNull()
         val effectiveOrder = if (appendPrimaryKeyOrder && orderBy.none { it.field == "id" }) {
             orderBy + OrderField("id", OrderDirection.ASC)
@@ -124,7 +124,7 @@ class EntityQueryPreparation(
             path = immutablePath(path),
             flags = emptySet(),
         )
-        return prepareNode(
+        return compileNode(
             entity = entity,
             callerPredicates = callerPredicates,
             orderBy = effectiveOrder,
@@ -138,12 +138,12 @@ class EntityQueryPreparation(
         ).spec
     }
 
-    private fun <Entity : EntEntity<*>> prepareWithContext(
+    private fun <Entity : EntEntity<*>> compileWithContext(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         privacyContext: PrivacyContext,
-    ): PreparedEntityQuery<Entity> {
-        val traversal = prepareTraversal(query, privacyContext)
+    ): CompiledEntityQuery<Entity> {
+        val traversal = compileTraversal(query, privacyContext)
         val context = QueryContext(
             privacy = privacyContext,
             operation = operation,
@@ -154,7 +154,7 @@ class EntityQueryPreparation(
             path = traversal?.path ?: emptyList(),
             flags = emptySet(),
         )
-        return prepareNode(
+        return compileNode(
             entity = query.entity,
             callerPredicates = query.predicates,
             orderBy = query.orderBy,
@@ -167,21 +167,21 @@ class EntityQueryPreparation(
         )
     }
 
-    private fun <Entity : EntEntity<*>> prepareTraversal(
+    private fun <Entity : EntEntity<*>> compileTraversal(
         query: EntityQuery<Entity>,
         privacyContext: PrivacyContext,
-    ): PreparedTraversal<Entity>? = when (val source = query.source) {
+    ): CompiledTraversal<Entity>? = when (val source = query.source) {
         is QuerySource.Root -> null
-        is QuerySource.Traversal<*, *> -> prepareTraversalSource(source, privacyContext)
+        is QuerySource.Traversal<*, *> -> compileTraversalSource(source, privacyContext)
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun <Target : EntEntity<*>> prepareTraversalSource(
+    private fun <Target : EntEntity<*>> compileTraversalSource(
         source: QuerySource.Traversal<*, *>,
         privacyContext: PrivacyContext,
-    ): PreparedTraversal<Target> {
+    ): CompiledTraversal<Target> {
         val typedSource = source as QuerySource.Traversal<EntEntity<*>, Target>
-        val sourceQuery = prepareWithContext(
+        val sourceQuery = compileWithContext(
             typedSource.source,
             ReadOperation.EDGE_TRAVERSAL,
             privacyContext,
@@ -215,7 +215,7 @@ class EntityQueryPreparation(
             target = typedSource.edge.target.entityClass,
         )
 
-        return PreparedTraversal(
+        return CompiledTraversal(
             bridge = bridge,
             annotations = sourceQuery.spec.annotations,
             rootEntity = sourceQuery.context.rootEntity,
@@ -225,7 +225,7 @@ class EntityQueryPreparation(
         )
     }
 
-    private fun <Entity : EntEntity<*>> prepareNode(
+    private fun <Entity : EntEntity<*>> compileNode(
         entity: EntityMapping<Entity>,
         callerPredicates: List<Predicate<Entity>>,
         orderBy: List<OrderField<Entity>>,
@@ -236,7 +236,7 @@ class EntityQueryPreparation(
         initialAnnotations: Map<String, String>,
         context: QueryContext,
         structuralSingleBindTransport: Boolean = false,
-    ): PreparedEntityQuery<Entity> {
+    ): CompiledEntityQuery<Entity> {
         val interceptors = registeredInterceptors()
         val queryBuilder = QuerySpecBuilder(
             table = entity.table,
@@ -261,13 +261,13 @@ class EntityQueryPreparation(
             globalInterceptors = interceptors.globals(),
         )
 
-        val queryAfterInterceptors = queryBuilder.freeze()
+        val queryAfterInterceptors = queryBuilder.build()
         val queryReadyForStorage = applyEdgePredicateInterceptors(
             entity,
             queryAfterInterceptors,
             context,
         )
-        return PreparedEntityQuery(queryReadyForStorage, context)
+        return CompiledEntityQuery(queryReadyForStorage, context)
     }
 
     /** Run entity interceptors first, followed by global interceptors. */
@@ -304,9 +304,9 @@ class EntityQueryPreparation(
 
     private fun <Entity : EntEntity<*>> applyEdgePredicateInterceptors(
         entity: EntityMapping<Entity>,
-        query: FrozenQuerySpec<Entity>,
+        query: StorageQuerySpec<Entity>,
         context: QueryContext,
-    ): FrozenQuerySpec<Entity> {
+    ): StorageQuerySpec<Entity> {
         val edgeAnnotations = linkedMapOf<String, String>()
         val structuralRange = query.callerPredicateCount until
             (query.callerPredicateCount + query.structuralPredicateCount)
@@ -372,7 +372,7 @@ class EntityQueryPreparation(
             as? EdgeMapping<Source, EntEntity<*>>
             ?: return predicate
         val inner = predicate.inner as Predicate<EntEntity<*>>
-        val targetQuery = prepareEdgePredicateTarget(
+        val targetQuery = compileEdgePredicateTarget(
             edge,
             listOf(inner),
             context,
@@ -393,7 +393,7 @@ class EntityQueryPreparation(
         val edge = entity.edgeByStorageName(predicate.edge)
             as? EdgeMapping<Source, EntEntity<*>>
             ?: return predicate
-        val targetQuery = prepareEdgePredicateTarget(edge, emptyList(), context)
+        val targetQuery = compileEdgePredicateTarget(edge, emptyList(), context)
         edgeAnnotations.putAll(targetQuery.annotations)
         val combined = targetQuery.predicates.reduceOrNull(Predicate<EntEntity<*>>::and)
         return if (combined == null) {
@@ -403,11 +403,11 @@ class EntityQueryPreparation(
         }
     }
 
-    private fun <Source : EntEntity<*>, Target : EntEntity<*>> prepareEdgePredicateTarget(
+    private fun <Source : EntEntity<*>, Target : EntEntity<*>> compileEdgePredicateTarget(
         edge: EdgeMapping<Source, Target>,
         predicates: List<Predicate<Target>>,
         parentContext: QueryContext,
-    ): FrozenQuerySpec<Target> {
+    ): StorageQuerySpec<Target> {
         check(parentContext.path.size < EDGE_PREDICATE_MAX_DEPTH) {
             edgePredicateDepthMessage(parentContext.path)
         }
@@ -426,7 +426,7 @@ class EntityQueryPreparation(
             path = immutablePath(parentContext.path + step),
             flags = emptySet(),
         )
-        return prepareNode(
+        return compileNode(
             entity = edge.target,
             callerPredicates = predicates,
             orderBy = emptyList(),
@@ -448,7 +448,7 @@ class EntityQueryPreparation(
     private fun immutablePath(path: List<EdgeStep>): List<EdgeStep> =
         Collections.unmodifiableList(path.toList())
 
-    private data class PreparedTraversal<Entity : EntEntity<*>>(
+    private data class CompiledTraversal<Entity : EntEntity<*>>(
         val bridge: Predicate<Entity>,
         val annotations: Map<String, String>,
         val rootEntity: KClass<*>,
@@ -457,8 +457,8 @@ class EntityQueryPreparation(
         val path: List<EdgeStep>,
     )
 
-    private data class PreparedEntityQuery<Entity : EntEntity<*>>(
-        val spec: FrozenQuerySpec<Entity>,
+    private data class CompiledEntityQuery<Entity : EntEntity<*>>(
+        val spec: StorageQuerySpec<Entity>,
         val context: QueryContext,
     )
 }

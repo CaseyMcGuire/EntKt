@@ -12,7 +12,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeStep
@@ -74,7 +74,7 @@ class ReadQueryEvaluatorRootTest {
     private class Adapter(
         val events: MutableList<String>,
         var driver: DatabaseDriver = NoopDriver,
-        var spec: FrozenQuerySpec<Item> = FrozenQuerySpec(
+        var spec: StorageQuerySpec<Item> = StorageQuerySpec(
             table = "items",
             predicates = emptyList(),
             orderBy = emptyList(),

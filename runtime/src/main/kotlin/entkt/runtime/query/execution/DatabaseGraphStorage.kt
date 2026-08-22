@@ -17,7 +17,7 @@ import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeStorage
 import entkt.runtime.query.EagerWindowStrategy
 import entkt.runtime.query.EntityQuery
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.ToManyEdgeMapping
 import entkt.runtime.query.ToOneEdgeMapping
@@ -26,7 +26,7 @@ import kotlin.reflect.KClass
 /** Executes and correlates every database operation required to materialize an entity graph. */
 internal class DatabaseGraphStorage(
     private val driver: DatabaseDriver,
-    private val queryPreparation: EntityQueryPreparation,
+    private val queryCompiler: ReadQueryCompiler,
 ) : GraphStorage {
     override fun <Entity : EntEntity<*>> loadRoot(
         query: EntityQuery<Entity>,
@@ -34,15 +34,15 @@ internal class DatabaseGraphStorage(
         maximumRows: Int?,
         privacyContext: PrivacyContext,
     ): List<Entity> {
-        val preparedQuery = queryPreparation.prepare(query, operation, privacyContext)
+        val queryForStorage = queryCompiler.compile(query, operation, privacyContext)
         val storageLimit = maximumRows?.let { maximum ->
-            minOf(maximum, preparedQuery.limit ?: maximum)
-        } ?: preparedQuery.limit
+            minOf(maximum, queryForStorage.limit ?: maximum)
+        } ?: queryForStorage.limit
         return loadEntities(
             entity = query.entity,
-            query = preparedQuery,
+            query = queryForStorage,
             limit = storageLimit,
-            offset = preparedQuery.offset,
+            offset = queryForStorage.offset,
             maximumEntities = maximumRows,
         )
     }
@@ -96,7 +96,7 @@ internal class DatabaseGraphStorage(
         val edge = selection.edge as? ToOneEdgeMapping<Source, Target>
             ?: error("Foreign-key-on-source edge '${selection.edge.name}' must be to-one")
         val targetKeys = sources.mapNotNull(storage.sourceForeignKey).distinct()
-        val targetQuery = queryPreparation.prepareSelectedEdge(
+        val targetQuery = queryCompiler.compileSelectedEdge(
             query = selection.target,
             privacyContext = privacyContext,
             rootEntity = rootEntity,
@@ -176,7 +176,7 @@ internal class DatabaseGraphStorage(
         rootEntity: KClass<*>,
         targetPath: List<EdgeStep>,
     ): LoadedRelationship<Source, Target> {
-        val targetQuery = queryPreparation.prepareSelectedEdge(
+        val targetQuery = queryCompiler.compileSelectedEdge(
             query = selection.target,
             privacyContext = privacyContext,
             rootEntity = rootEntity,
@@ -223,7 +223,7 @@ internal class DatabaseGraphStorage(
         targetPath: List<EdgeStep>,
     ): LoadedRelationship<Source, Target> {
         val capability = driver.directToManyWindowCapability()
-        val targetQuery = queryPreparation.prepareSelectedEdge(
+        val targetQuery = queryCompiler.compileSelectedEdge(
             query = selection.target,
             privacyContext = privacyContext,
             rootEntity = rootEntity,
@@ -292,7 +292,7 @@ internal class DatabaseGraphStorage(
         val edge = selection.edge as? ToManyEdgeMapping<Source, Target>
             ?: error("Junction edge '${selection.edge.name}' must be to-many")
         val sourceKeys = sources.map(storage.sourceKey)
-        val junctionQuery = queryPreparation.prepareJunction(
+        val junctionQuery = queryCompiler.compileJunction(
             entity = storage.junctionEntity,
             privacyContext = privacyContext,
             rootEntity = rootEntity,
@@ -313,7 +313,7 @@ internal class DatabaseGraphStorage(
             emptyList()
         }
         val targetKeys = junctionRows.map { it[storage.targetColumn] }.distinct()
-        val targetQuery = queryPreparation.prepareSelectedEdge(
+        val targetQuery = queryCompiler.compileSelectedEdge(
             query = selection.target,
             privacyContext = privacyContext,
             rootEntity = rootEntity,
@@ -384,10 +384,10 @@ internal class DatabaseGraphStorage(
         }
     }
 
-    /** Execute one prepared entity query and decode its caller-bounded result rows. */
+    /** Execute one storage query and decode its caller-bounded result rows. */
     private fun <Entity : EntEntity<*>> loadEntities(
         entity: EntityMapping<Entity>,
-        query: FrozenQuerySpec<Entity>,
+        query: StorageQuerySpec<Entity>,
         limit: Int?,
         offset: Int?,
         maximumEntities: Int? = null,

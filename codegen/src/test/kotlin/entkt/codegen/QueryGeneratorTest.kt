@@ -174,8 +174,8 @@ class QueryGeneratorTest {
         ) {
             "generated queries should configure one runtime read evaluator\n$output"
         }
-        assert(!output.contains("private val _queryPreparation")) {
-            "generated queries should not assemble query-preparation dependencies\n$output"
+        assert(!output.contains("private val _queryCompiler")) {
+            "generated queries should not assemble query-compilation dependencies\n$output"
         }
         assert(!output.contains("private val _graphLoader")) {
             "generated queries should not construct graph loaders separately\n$output"
@@ -190,7 +190,7 @@ class QueryGeneratorTest {
             "privacy-context capture should be a named loader dependency\n$output"
         }
         assert(!output.contains("GeneratedRootQueryPreparation")) {
-            "root query preparation should be owned by the runtime loader\n$output"
+            "root query compilation should be owned by the runtime loader\n$output"
         }
         assert(!output.contains("GeneratedLoadPrivacyEvaluator")) {
             "root LOAD privacy should use a configured runtime evaluator instead of a generated type\n$output"
@@ -203,7 +203,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
+    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
     fun `eager loads skip the target fetch when the window admits nothing`() {
         val car = Car()
         val user = User()
@@ -231,7 +231,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
+    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
     fun `to-many eager loads probe the driver's native window capability`() {
         val car = Car()
         val user = User()
@@ -267,7 +267,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage: ReadQueryEvaluatorRelationshipTest.
+    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
     fun `a hasOne eager load also skips the fetch for a positive offset`() {
         // hasOne requires its inverse belongsTo to declare `.unique()`
         // (SchemaMetadata enforces it), so the unique index guarantees at

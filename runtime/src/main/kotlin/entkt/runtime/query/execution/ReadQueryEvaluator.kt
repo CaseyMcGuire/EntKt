@@ -10,7 +10,7 @@ import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.EntityQuery
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireNoSelectedEdges
 import entkt.runtime.result.ReadResult
@@ -20,7 +20,7 @@ import java.util.concurrent.CancellationException
  * Runs every terminal over a captured entity query.
  *
  * This is the single runtime entry point generated queries construct. It owns the
- * shared preparation, entity-graph loading, and raw-terminal lifecycles so generated code
+ * shared query compilation, entity-graph loading, and raw-terminal lifecycles so generated code
  * does not assemble or coordinate read execution itself.
  */
 @EntktInternal
@@ -30,13 +30,13 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
     registeredInterceptorsProvider: () -> EntInterceptorsConfig,
     loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
 ) {
-    private val queryPreparation = EntityQueryPreparation(
+    private val queryCompiler = ReadQueryCompiler(
         driver = driver,
         registeredInterceptors = registeredInterceptorsProvider,
     )
 
-    private val entityGraphLoader = EntityGraphLoader<Entity>(
-        storage = DatabaseGraphStorage(driver, queryPreparation),
+    private val entityGraphLoader = EntityGraphLoader(
+        storage = DatabaseGraphStorage(driver, queryCompiler),
         loadPrivacyEvaluatorProvider = loadPrivacyEvaluatorProvider,
     )
 
@@ -61,12 +61,12 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
         }
     }
 
-    /** Prepare a captured entity query for a framework-owned storage operation. */
-    fun prepareEntityQuery(
+    /** Compile a captured entity query for a framework-owned storage operation. */
+    fun compileEntityQuery(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         privacyContext: PrivacyContext,
-    ): FrozenQuerySpec<Entity> = queryPreparation.prepare(
+    ): StorageQuerySpec<Entity> = queryCompiler.compile(
         query,
         operation,
         privacyContext,
@@ -78,8 +78,8 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
     ): ReadResult<Long> = captureFailure {
         val query = captureQuery()
         query.requireNoSelectedEdges("rawCount()", NON_ENTITY_TERMINAL_EDGE_REASON)
-        val preparedQuery = prepareRawQuery(query, ReadOperation.RAW_COUNT)
-        driver.count(preparedQuery.table, preparedQuery.predicates)
+        val compiledQuery = compileRawQuery(query, ReadOperation.RAW_COUNT)
+        driver.count(compiledQuery.table, compiledQuery.predicates)
     }
 
     /** Test whether the caller's storage window contains at least one row. */
@@ -88,14 +88,14 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
     ): ReadResult<Boolean> = captureFailure {
         val query = captureQuery()
         query.requireNoSelectedEdges("rawExists()", NON_ENTITY_TERMINAL_EDGE_REASON)
-        val preparedQuery = prepareRawQuery(query, ReadOperation.RAW_EXISTS)
-        val limit = minOf(1, preparedQuery.limit ?: 1)
+        val compiledQuery = compileRawQuery(query, ReadOperation.RAW_EXISTS)
+        val limit = minOf(1, compiledQuery.limit ?: 1)
         driver.query(
-            preparedQuery.table,
-            preparedQuery.predicates,
+            compiledQuery.table,
+            compiledQuery.predicates,
             emptyList(),
             limit,
-            preparedQuery.offset,
+            compiledQuery.offset,
         ).isNotEmpty()
     }
 
@@ -110,22 +110,22 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
     ): ReadResult<Value> = captureFailure {
         val query = captureQuery()
         query.requireNoSelectedEdges("$terminal()", NON_ENTITY_TERMINAL_EDGE_REASON)
-        val preparedQuery = prepareRawQuery(query, ReadOperation.RAW_AGGREGATE)
+        val compiledQuery = compileRawQuery(query, ReadOperation.RAW_AGGREGATE)
         transform(
             driver.aggregate(
-                preparedQuery.table,
+                compiledQuery.table,
                 function,
                 column,
-                preparedQuery.predicates,
+                compiledQuery.predicates,
                 groupBy,
             ),
         )
     }
 
-    private fun prepareRawQuery(
+    private fun compileRawQuery(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-    ): FrozenQuerySpec<Entity> = queryPreparation.prepare(
+    ): StorageQuerySpec<Entity> = queryCompiler.compile(
         query,
         operation,
         privacyContextProvider(),

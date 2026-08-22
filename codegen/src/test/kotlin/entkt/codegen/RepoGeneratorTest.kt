@@ -960,7 +960,7 @@ class RepoGeneratorTest {
         assert(output.contains("val privacy = client.currentPrivacyContext()")) {
             "deleteMany should capture a privacy context for candidate-selection interceptors\n$output"
         }
-        assert(output.contains("prepareEntityQuery(ReadOperation.DELETE_CANDIDATES, privacy)")) {
+        assert(output.contains("compileEntityQuery(ReadOperation.DELETE_CANDIDATES, privacy)")) {
             "deleteMany should delegate DELETE_CANDIDATES preparation to the runtime pipeline\n$output"
         }
         assert(output.contains("val effectivePredicates = spec.predicates.toList()")) {

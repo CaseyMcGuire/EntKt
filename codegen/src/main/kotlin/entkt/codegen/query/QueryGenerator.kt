@@ -172,7 +172,7 @@ internal class QueryGenerator(
             .addFunction(buildSetEntityQuerySource(entityClass))
             .addFunction(buildCaptureEntityQuery(resolved))
             .addFunction(buildReadRootQuery(entityClass))
-            .addFunction(buildPrepareEntityQuery(entityClass))
+            .addFunction(buildCompileEntityQuery(entityClass))
             .addFunction(buildAll(entityClass))
             .addFunction(buildFirstOrNull(entityClass))
             .addFunction(buildRawCount())

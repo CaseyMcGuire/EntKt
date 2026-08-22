@@ -17,18 +17,30 @@ import entkt.runtime.result.LoadDenialOrigin
 import kotlin.reflect.KClass
 
 /**
- * Loads a root entity batch and evaluates its complete selected graph.
+ * Loads and evaluates the complete entity graph selected by one root query.
  *
- * The algorithm applies LOAD privacy to each entity batch, visits selected relationships
- * in declaration order, recursively evaluates every retained target batch, and attaches
- * the completed targets to their sources. [GraphStorage] owns all database mechanics.
+ * The algorithm is:
+ *
+ * 1. Load the root entities as one batch.
+ * 2. Evaluate root LOAD privacy; any denial fails the root read.
+ * 3. Visit each selected relationship in schema-declaration order.
+ * 4. Ask [GraphStorage] to load and correlate that relationship for the complete source
+ *    batch. Direct relationships use one target read; many-to-many relationships discover
+ *    junction rows before loading the resulting target set.
+ * 5. Evaluate LOAD privacy for the retained target batch, filtering or failing according
+ *    to the relationship's visibility policy.
+ * 6. Recursively evaluate the targets' selected relationships.
+ * 7. Attach the completed targets to their source entities.
+ *
+ * The unit of batching is one selected relationship path: never one query per source
+ * entity, but also not one query for the entire graph.
  */
-internal class EntityGraphLoader<Entity : EntEntity<*>>(
+internal class EntityGraphLoader(
     private val storage: GraphStorage,
     private val loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
 ) {
     /** Load the root batch, then evaluate its recursively selected graph. */
-    fun loadRoot(
+    fun <Entity : EntEntity<*>> loadRoot(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,

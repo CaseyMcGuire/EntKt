@@ -13,7 +13,7 @@ private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val READ_QUERY_EVALUATOR =
     ClassName("entkt.runtime.query.execution", "ReadQueryEvaluator")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
+private val STORAGE_QUERY_SPEC = ClassName("entkt.runtime.query", "StorageQuerySpec")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 
 // ------------------------------------------------------------------
@@ -109,16 +109,16 @@ internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
         .build()
 }
 
-/** Prepare a captured query for a framework operation that consumes its storage shape. */
-internal fun buildPrepareEntityQuery(entityClass: ClassName): FunSpec =
-    FunSpec.builder("prepareEntityQuery")
+/** Compile a captured query for a framework operation that consumes its storage shape. */
+internal fun buildCompileEntityQuery(entityClass: ClassName): FunSpec =
+    FunSpec.builder("compileEntityQuery")
         .addAnnotation(ClassName("entkt.query", "EntktInternal"))
         .addModifiers(KModifier.INTERNAL)
         .addParameter("operation", READ_OPERATION)
         .addParameter("privacyContext", PRIVACY_CONTEXT)
-        .returns(FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
+        .returns(STORAGE_QUERY_SPEC.parameterizedBy(entityClass))
         .addStatement(
-            "return _readQueryEvaluator.prepareEntityQuery(captureEntityQuery(), operation, privacyContext)",
+            "return _readQueryEvaluator.compileEntityQuery(captureEntityQuery(), operation, privacyContext)",
         )
         .build()
 

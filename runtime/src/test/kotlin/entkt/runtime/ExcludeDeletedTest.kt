@@ -3,7 +3,7 @@
 package entkt.runtime
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.query.RegisteredInterceptor
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ExcludeDeleted
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.privacy.Viewer
@@ -11,7 +11,7 @@ import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySpecBuilder
 import entkt.runtime.query.EntInterceptorsConfig
-import entkt.runtime.query.execution.EntityQueryPreparation
+import entkt.runtime.query.execution.ReadQueryCompiler
 
 import entkt.query.Op
 import entkt.query.OrderField
@@ -22,7 +22,7 @@ import kotlin.test.assertTrue
 
 /**
  * Unit coverage for [ExcludeDeleted]. Exercises the interceptor
- * directly through query preparation — the soft-delete
+ * directly through query compilation — the soft-delete
  * convention's end-to-end behavior on real reads is covered by the
  * Postgres-backed integration test elsewhere.
  */
@@ -30,7 +30,7 @@ class ExcludeDeletedTest {
 
     private class Post
 
-    private val queryPreparation = EntityQueryPreparation(
+    private val queryCompiler = ReadQueryCompiler(
         driver = NoopDriver,
         registeredInterceptors = { EntInterceptorsConfig() },
     )
@@ -60,15 +60,15 @@ class ExcludeDeletedTest {
     private fun runWith(
         interceptor: ExcludeDeleted<Post>,
         queryBuilder: QuerySpecBuilder<Post> = builder(),
-    ): FrozenQuerySpec<Post> {
-        queryPreparation.runInterceptors(
+    ): StorageQuerySpec<Post> {
+        queryCompiler.runInterceptors(
             builder = queryBuilder,
             context = rootContext(),
             entityName = "Post",
             entityInterceptors = listOf(RegisteredInterceptor("soft-delete", interceptor)),
             globalInterceptors = emptyList(),
         )
-        return queryBuilder.freeze()
+        return queryBuilder.build()
     }
 
     @Test

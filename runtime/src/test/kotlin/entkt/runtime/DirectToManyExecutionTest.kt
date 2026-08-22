@@ -16,7 +16,7 @@ import entkt.runtime.driver.RelatedRow
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.driver.executeDirectToMany
 import entkt.runtime.query.EagerWindowStrategy
-import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.QuerySpecBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,7 +27,7 @@ import kotlin.test.assertTrue
 /**
  * Unit contract for the phase-2A runtime pieces: the
  * [executeDirectToMany] plan/fallback selection with its phase-1 data
- * gates, the [FrozenQuerySpec] structural-attribution slices, and the
+ * gates, the [StorageQuerySpec] structural-attribution slices, and the
  * [QuerySpecBuilder] single-bind-transport budget accounting.
  */
 class DirectToManyExecutionTest {
@@ -214,16 +214,16 @@ class DirectToManyExecutionTest {
         assertFailsWith<IllegalArgumentException> { PerParentWindow(offset = 0, limit = -1) }
     }
 
-    // ---------- FrozenQuerySpec attribution slices ----------
+    // ---------- StorageQuerySpec attribution slices ----------
 
     private fun leaf(field: String): Predicate<Any> = Predicate.Leaf(field, Op.EQ, 1)
 
     @Test
-    fun `frozen spec slices predicates by positional attribution`() {
+    fun `storage query spec slices predicates by positional attribution`() {
         val caller = leaf("a")
         val structural = leaf("b")
         val interceptor = leaf("c")
-        val spec = FrozenQuerySpec(
+        val spec = StorageQuerySpec(
             table = "t",
             predicates = listOf(caller, structural, interceptor),
             orderBy = emptyList(),
@@ -239,8 +239,8 @@ class DirectToManyExecutionTest {
     }
 
     @Test
-    fun `frozen spec attribution defaults treat every predicate as caller-authored`() {
-        val spec = FrozenQuerySpec(
+    fun `storage query spec defaults treat every predicate as caller-authored`() {
+        val spec = StorageQuerySpec(
             table = "t",
             predicates = listOf(leaf("a"), leaf("b")),
             orderBy = emptyList(),
@@ -254,9 +254,9 @@ class DirectToManyExecutionTest {
     }
 
     @Test
-    fun `frozen spec rejects attribution counts that overflow the predicate list`() {
+    fun `storage query spec rejects attribution counts that overflow the predicate list`() {
         assertFailsWith<IllegalArgumentException> {
-            FrozenQuerySpec(
+            StorageQuerySpec(
                 table = "t",
                 predicates = listOf(leaf("a")),
                 orderBy = emptyList(),
@@ -271,7 +271,7 @@ class DirectToManyExecutionTest {
     }
 
     @Test
-    fun `the builder freezes caller structural and interceptor attribution positionally`() {
+    fun `the builder preserves caller structural and interceptor attribution positionally`() {
         val builder = QuerySpecBuilder<Any>(
             table = "t",
             entity = Any::class,
@@ -283,7 +283,7 @@ class DirectToManyExecutionTest {
             flags = emptySet(),
         )
         builder.addInterceptorPredicate(leaf("interceptor"))
-        val frozen = builder.freeze()
+        val frozen = builder.build()
 
         assertEquals(1, frozen.callerPredicateCount)
         assertEquals(1, frozen.structuralPredicateCount)

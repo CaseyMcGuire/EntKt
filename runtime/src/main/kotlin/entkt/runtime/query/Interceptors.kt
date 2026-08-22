@@ -106,8 +106,8 @@ interface InterceptScope<E : Any> {
  * uses the erased [UntypedQueryShape] view.
  *
  * Live-vs-snapshot rule matches [InterceptScope.shape] — the
- * property accessor re-derives on each call; captured values are
- * frozen.
+ * property accessor re-derives on each call; a captured value remains
+ * an immutable snapshot of the state observed at that time.
  */
 interface GlobalInterceptScope {
     /** Read-only erased view of the current query state. */
@@ -125,8 +125,8 @@ interface GlobalInterceptScope {
  *
  * Predicate attribution is tracked in three buckets:
  *  - **caller** — added via `query { where(...) }` at the call site
- *  - **structural** — added by generated query code to express the
- *    operation's intrinsic shape: `id = ?` on a by-id read,
+ *  - **structural** — added by framework-owned query paths to express
+ *    the operation's intrinsic shape: `id = ?` on a by-id read,
  *    `source_id = ?` on an edge traversal, junction-table
  *    constraints on M2M, parent-id `IN` on an eager-load subquery
  *  - **interceptor** — added by framework / per-entity

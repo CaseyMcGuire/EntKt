@@ -232,7 +232,7 @@ fun <E : Any, C> C.isNotNull(): Predicate<E> where C : Column<E, *>, C : Nullabl
  * happens strictly after that check (at the runtime's chain-entry
  * snapshot, or at a driver's render). Deliberately not
  * equality-bearing: predicate equality is meaningful on the runtime's
- * snapshots (shape views, frozen specs), which materialize this view
+ * snapshots (shape views, storage query specs), which materialize this view
  * into a plain list at chain entry.
  */
 private class LazilyMappedOperands<T, R>(

@@ -5,26 +5,18 @@ package entkt.runtime.query
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.query.QueryFlag
-import entkt.query.TraversalSourceShape
 import entkt.runtime.result.EntQueryRejectedException
 
 /**
- * Mutable per-terminal-call query spec the interceptor engine
- * builds up. Tracks predicate attribution (caller / structural /
- * interceptor) in tagged buckets so the spec can re-derive
- * [QueryShape] / [UntypedQueryShape] views on demand.
+ * Mutable query state used by the read compiler while it runs interceptors.
  *
- * Generated wrapper code seeds the builder with caller-authored
- * state from the query builder (`predicates` / `orderBy` /
- * `queryLimit` / `queryOffset` / `flags`) and any structural
- * predicates the operation requires (`id = ?` on by-id, etc.),
- * then runs the interceptor chain. After the chain completes,
- * the spec is frozen and handed to the driver.
+ * Caller, framework-structural, and interceptor predicates remain separately
+ * attributed so interceptor scopes can expose accurate [QueryShape] and
+ * [UntypedQueryShape] views. After every interceptor has run, [build] returns
+ * the immutable [StorageQuerySpec] consumed by the storage layer.
  *
- * Not exposed to application interceptors directly — they see
- * [InterceptScope] / [GlobalInterceptScope] views. Framework-
- * owned interceptors may operate on this type via a future
- * package-private extension; that path isn't part of V1.
+ * Application interceptors mutate this state only through [InterceptScope] or
+ * [GlobalInterceptScope].
  */
 public class QuerySpecBuilder<E : Any> public constructor(
     public val table: String,
@@ -32,10 +24,9 @@ public class QuerySpecBuilder<E : Any> public constructor(
     callerPredicates: List<Predicate<E>>,
     structuralPredicates: List<Predicate<E>>,
     /**
-     * The *effective* ordering storage will execute. On eager-load
-     * subqueries generated code appends the framework's primary-key
-     * ascending term before any interceptor runs; everywhere else
-     * this equals [callerOrderBy].
+     * The effective ordering storage will execute. For selected relationships,
+     * the read compiler appends primary-key ordering as a stable tie-breaker
+     * before running interceptors. Otherwise this equals [callerOrderBy].
      */
     orderBy: List<OrderField<E>>,
     callerLimit: Int?,
@@ -50,8 +41,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
      */
     callerOrderBy: List<OrderField<E>> = orderBy,
     /**
-     * The driver's bind-capacity gate — generated code passes
-     * `{ driver.requireBindCapacity(it, Entity.TABLE) }`. Invoked
+     * The driver's bind-capacity gate supplied by the read compiler. Invoked
      * with the running conservative minimum bind count (summed O(1)
      * `IN`-operand sizes via
      * [entkt.runtime.driver.minimumBindParameters]) immediately
@@ -73,8 +63,8 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * scalar bind limit is not falsely rejected. Caller and
      * interceptor predicates always charge their scalar sizes —
      * they bind normally regardless of the relationship transport.
-     * Generated code passes the driver's direct to-many window
-     * capability here for eager direct to-many steps only.
+     * Database graph storage enables this for native direct-to-many relationship
+     * windows, whose parent keys use one structural bind transport.
      */
     structuralSingleBindTransport: Boolean = false,
 ) {
@@ -84,8 +74,8 @@ public class QuerySpecBuilder<E : Any> public constructor(
     // `where(Predicate<E>)`, structural builders constructed
     // against the same E, interceptor-added
     // `scope.addPredicate(Predicate<E>)`). Erasure happens only
-    // when `freeze()` produces the `FrozenQuerySpec<E>` and the
-    // generated code passes its lists via covariance to the
+    // when [build] produces the [StorageQuerySpec] and the
+    // storage layer passes its lists via covariance to the
     // driver's `List<Predicate<*>>` parameters.
     //
     // Everything is stored as a SEMANTIC SNAPSHOT taken at chain
@@ -225,18 +215,18 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * Copying only the outer lists is insufficient: supported predicate
      * operands such as ByteArray are mutable. The stored spec was already
      * detached at chain entry, but a lifecycle callback can run after one
-     * driver call and before another reuses the same frozen spec
-     * (deleteMany candidate selection is the important example), so the
-     * frozen value recursively snapshots predicate trees, shaped traversal
+     * driver call and before another reuses the same storage query
+     * (for example, deleteMany candidate selection), so the
+     * storage query recursively snapshots predicate trees, shaped traversal
      * sources, distance operands, arrays, and standard collection carriers
-     * again — the FrozenQuerySpec is independent of the builder and of
+     * again — the [StorageQuerySpec] is independent of the builder and of
      * anything any callback can still reach.
      */
-    internal fun freeze(): FrozenQuerySpec<E> {
+    internal fun build(): StorageQuerySpec<E> {
         // The stored list is [caller..., structural..., interceptor...]
         // by construction (entry seeds caller then structural;
         // interceptor additions append), which is the positional
-        // contract FrozenQuerySpec's attribution slices rely on.
+        // contract [StorageQuerySpec]'s attribution slices rely on.
         var caller = 0
         var structural = 0
         for (t in predicates) when (t.source) {
@@ -244,7 +234,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
             Source.STRUCTURAL -> structural++
             Source.INTERCEPTOR -> {}
         }
-        return FrozenQuerySpec(
+        return StorageQuerySpec(
             table = table,
             predicates = predicates.map { it.predicate.semanticSnapshot() },
             orderBy = orderByList.map { it.semanticSnapshot() },
@@ -262,51 +252,30 @@ public class QuerySpecBuilder<E : Any> public constructor(
 }
 
 /**
- * Result of a deferred traversal-source step. Produced by the
- * lambda that generated `queryX()` methods stash on the target
- * query: at terminal time the target's `runReadInterceptors`
- * invokes the lambda, runs the source entity's interceptor chain
- * with operation = `EDGE_TRAVERSAL`, and embeds the post-
- * interceptor source shape — predicates, order, limit, offset —
- * into [bridge] (the `HasEdgeFromShape` / `HasM2MEdgeFromShape`
- * predicate that constrains the target).
- *
- * The deferred-invocation design is what lets canonical terminals
- * capture traversal-source rejections — if the source's
- * `runReadInterceptors` throws `EntQueryRejectedException`, it
- * propagates out of this lambda and into the terminal's capture
- * boundary, which stores it in `ReadResult.Failed`.
- */
-public data class TraversalSourceResult<E : Any> public constructor(
-    val bridge: Predicate<E>,
-    val annotations: Map<String, String>,
-)
-
-/**
- * The final immutable spec the driver receives. Distinct from the
- * mutable [QuerySpecBuilder] so the framework can hand it across a
- * module boundary without exposing the builder API.
+ * The final immutable description of one database read. Distinct from the
+ * mutable [QuerySpecBuilder] so the storage layer receives query values without
+ * gaining access to interceptor mutation APIs.
  *
  * Typed in `E`: every layer above the
- * driver call carries the entity scope through. Generated code's
- * `frozen.predicates: List<Predicate<E>>` flows into
- * `driver.query(table, frozen.predicates, ...)` through the
+ * storage call carries the entity scope through. The compiled query's
+ * `query.predicates: List<Predicate<E>>` flows into
+ * `driver.query(table, query.predicates, ...)` through the
  * `List<out T>` variance — the driver method takes
  * `List<Predicate<*>>` and `List<Predicate<E>>` is assignable to
  * that, so erasure is implicit at the driver call (no `as` cast
  * needed in the caller).
  */
-public data class FrozenQuerySpec<E : Any> public constructor(
+public data class StorageQuerySpec<E : Any> public constructor(
     val table: String,
     /**
-     * The complete frozen predicate list, positionally attributed:
+     * The complete immutable predicate list, positionally attributed:
      * `[caller..., structural..., interceptor...]`. The first
      * [callerPredicateCount] entries are caller-authored, the next
      * [structuralPredicateCount] are framework structural predicates
      * (by-id leaves, traversal bridges, eager relationship `IN`s),
-     * and the remainder are interceptor contributions. [freeze]
-     * produces this order from the builder's tagged buckets, and the
-     * generated edge-predicate walker rewrites entries in place, so
+     * and the remainder are interceptor contributions. [QuerySpecBuilder.build]
+     * produces this order from the builder's tagged buckets. The read compiler
+     * rewrites edge-predicate trees positionally, so
      * the slices stay valid on a positionally-mapped `copy`.
      */
     val predicates: List<Predicate<E>>,
@@ -322,11 +291,11 @@ public data class FrozenQuerySpec<E : Any> public constructor(
 ) {
     init {
         require(callerPredicateCount >= 0 && structuralPredicateCount >= 0) {
-            "FrozenQuerySpec attribution counts must be non-negative: " +
+            "StorageQuerySpec attribution counts must be non-negative: " +
                 "caller=$callerPredicateCount structural=$structuralPredicateCount"
         }
         require(callerPredicateCount + structuralPredicateCount <= predicates.size) {
-            "FrozenQuerySpec attribution overflow: caller=$callerPredicateCount + " +
+            "StorageQuerySpec attribution overflow: caller=$callerPredicateCount + " +
                 "structural=$structuralPredicateCount > predicates.size=${predicates.size}"
         }
     }
@@ -411,8 +380,8 @@ internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation)
 /**
  * Concrete [InterceptScope] implementation backed by a
  * [QuerySpecBuilder]. Forwards mutator calls to the builder and
- * re-derives [shape] on every access (live, not snapshot — captured
- * locals freeze a [QueryShape] data value at capture time).
+ * re-derives [shape] on every access. A captured [QueryShape] remains the
+ * snapshot observed at the time it was read.
  *
  * Limit mutators (`requireLimitAtMost` / `setDefaultLimitIfAbsent` /
  * `rejectIfLimitGreaterThan`) silently no-op when [readOperation]
@@ -525,9 +494,8 @@ internal class GlobalInterceptScopeImpl(
 }
 
 /**
- * A registered interceptor plus its stable name. The engine
- * collects these in registration order from [EntInterceptors]
- * config.
+ * A registered interceptor plus its stable name. The read compiler evaluates
+ * registrations in the order supplied by [EntInterceptors].
  */
 @ConsistentCopyVisibility
 public data class RegisteredInterceptor<E : Any> internal constructor(
