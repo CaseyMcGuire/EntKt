@@ -3,6 +3,7 @@
 package entkt.runtime.query.execution
 
 import entkt.query.EntktInternal
+import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -82,6 +83,26 @@ class ReadQueryCompiler(
         path = path,
         structuralPredicates = structuralPredicates,
         appendPrimaryKeyOrder = true,
+        structuralSingleBindTransport = structuralSingleBindTransport,
+    )
+
+    /** Compile a selected relationship target constrained to the discovered target keys. */
+    fun <Entity : EntEntity<*>> compileRelationshipTargetQuery(
+        query: EntityQuery<Entity>,
+        targetColumn: String,
+        targetKeys: Collection<*>,
+        privacyContext: PrivacyContext,
+        rootEntity: KClass<*>,
+        path: List<EdgeStep>,
+        structuralSingleBindTransport: Boolean = false,
+    ): StorageQuerySpec<Entity> = compileSelectedEdge(
+        query = query,
+        privacyContext = privacyContext,
+        rootEntity = rootEntity,
+        path = path,
+        structuralPredicates = listOf(
+            Predicate.Leaf(targetColumn, Op.IN, targetKeys),
+        ),
         structuralSingleBindTransport = structuralSingleBindTransport,
     )
 
