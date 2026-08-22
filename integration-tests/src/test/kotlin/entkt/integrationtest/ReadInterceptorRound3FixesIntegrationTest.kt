@@ -16,7 +16,6 @@ import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.query.GlobalQueryInterceptor
-import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
@@ -257,8 +256,6 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             ex.message!!.contains("edge-predicate interceptor recursion exceeded depth"),
             "expected clear recursion-guard message, got: ${ex.message}",
         )
-        // Sanity: the cap is the documented constant.
-        assertEquals(32, InterceptorEngine.EDGE_PREDICATE_MAX_DEPTH)
     }
 
     @Test

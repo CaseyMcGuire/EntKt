@@ -44,8 +44,8 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * posture-agnostic accept the shared interface.
  *
  * Each read repo exposes the read surface only — the byId family, the
- * full `query { }` DSL (all terminals come with the query class), the
- * explainById* variants, and the generated index helpers. The write
+ * full `query { }` DSL (all terminals come with the query class), and
+ * the generated index helpers. The write
  * surface (create / update / save / delete* / edge mutators /
  * `withTransaction` / re-scoping / config setters) simply does not
  * exist on these types, so rule code calling it is a compile error —

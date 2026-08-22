@@ -8,6 +8,8 @@ import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.TypeVariableName
+import com.squareup.kotlinpoet.STAR
 import entkt.codegen.SchemaInput
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
@@ -15,6 +17,10 @@ private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val LIST = ClassName("kotlin.collections", "List")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
+private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
+private val LOAD_PRIVACY_EVALUATOR =
+    ClassName("entkt.runtime.query.execution", "LoadPrivacyEvaluator")
 
 /**
  * Emits the generated read-runtime contract: `EntReadRuntime` plus one
@@ -109,6 +115,7 @@ internal class ReadRuntimeGenerator(
     private fun buildReadRuntime(sorted: List<SchemaInput>): TypeSpec {
         val builder = TypeSpec.interfaceBuilder("EntReadRuntime")
             .addAnnotation(ENTKT_INTERNAL)
+            .addSuperinterface(LOAD_PRIVACY_EVALUATOR)
             .addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
                     "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
@@ -139,6 +146,9 @@ internal class ReadRuntimeGenerator(
                     .build()
             )
 
+        builder.addFunction(buildIsLoadPrivacyConfigured(sorted))
+        builder.addFunction(buildEvaluateLoadPrivacy(sorted))
+
         for (input in sorted) {
             val propName = input.clientName
             builder.addProperty(
@@ -149,5 +159,60 @@ internal class ReadRuntimeGenerator(
         }
 
         return builder.build()
+    }
+
+    private fun buildIsLoadPrivacyConfigured(sorted: List<SchemaInput>): FunSpec {
+        val body = com.squareup.kotlinpoet.CodeBlock.builder().add("return when (entity) {\n")
+        for (input in sorted) {
+            body.add(
+                "  %T.GeneratedEntityMapping -> %L.hasLoadPrivacy()\n",
+                ClassName(packageName, "${input.name}Query"),
+                input.clientName,
+            )
+        }
+        body.add(
+            "  else -> error(%P)\n",
+            "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
+        )
+        body.add("}\n")
+        return FunSpec.builder("isConfigured")
+            .addModifiers(KModifier.OVERRIDE)
+            .addParameter("entity", ENTITY_MAPPING.parameterizedBy(STAR))
+            .returns(Boolean::class)
+            .addCode(body.build())
+            .build()
+    }
+
+    private fun buildEvaluateLoadPrivacy(sorted: List<SchemaInput>): FunSpec {
+        val entityType = TypeVariableName("Entity", ENT_ENTITY.parameterizedBy(STAR))
+        val body = com.squareup.kotlinpoet.CodeBlock.builder().add("return when (entity) {\n")
+        for (input in sorted) {
+            body.add(
+                "  %T.GeneratedEntityMapping -> %L.loadDenials(privacyContext, entities as %T<%T>)\n",
+                ClassName(packageName, "${input.name}Query"),
+                input.clientName,
+                LIST,
+                ClassName(packageName, input.name),
+            )
+        }
+        body.add(
+            "  else -> error(%P)\n",
+            "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
+        )
+        body.add("}\n")
+        return FunSpec.builder("evaluate")
+            .addAnnotation(
+                AnnotationSpec.builder(Suppress::class)
+                    .addMember("%S", "UNCHECKED_CAST")
+                    .build(),
+            )
+            .addModifiers(KModifier.OVERRIDE)
+            .addTypeVariable(entityType)
+            .addParameter("entity", ENTITY_MAPPING.parameterizedBy(entityType))
+            .addParameter("privacyContext", PRIVACY_CONTEXT)
+            .addParameter("entities", LIST.parameterizedBy(entityType))
+            .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
+            .addCode(body.build())
+            .build()
     }
 }

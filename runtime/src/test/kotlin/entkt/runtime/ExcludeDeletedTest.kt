@@ -1,6 +1,8 @@
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.runtime
+import entkt.runtime.driver.NoopDriver
 import entkt.runtime.query.RegisteredInterceptor
-import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.query.FrozenQuerySpec
 import entkt.runtime.query.ExcludeDeleted
 import entkt.runtime.query.ReadOperation
@@ -8,6 +10,8 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySpecBuilder
+import entkt.runtime.query.EntInterceptorsConfig
+import entkt.runtime.query.execution.EntityQueryPreparation
 
 import entkt.query.Op
 import entkt.query.OrderField
@@ -18,13 +22,18 @@ import kotlin.test.assertTrue
 
 /**
  * Unit coverage for [ExcludeDeleted]. Exercises the interceptor
- * directly through [InterceptorEngine.apply] — the soft-delete
+ * directly through query preparation — the soft-delete
  * convention's end-to-end behavior on real reads is covered by the
  * Postgres-backed integration test elsewhere.
  */
 class ExcludeDeletedTest {
 
     private class Post
+
+    private val queryPreparation = EntityQueryPreparation(
+        driver = NoopDriver,
+        registeredInterceptors = { EntInterceptorsConfig() },
+    )
 
     private fun builder(): QuerySpecBuilder<Post> = QuerySpecBuilder(
         table = "posts",
@@ -48,14 +57,19 @@ class ExcludeDeletedTest {
         flags = emptySet(),
     )
 
-    private fun runWith(interceptor: ExcludeDeleted<Post>): FrozenQuerySpec<Post> =
-        InterceptorEngine.apply(
-            builder = builder(),
+    private fun runWith(
+        interceptor: ExcludeDeleted<Post>,
+        queryBuilder: QuerySpecBuilder<Post> = builder(),
+    ): FrozenQuerySpec<Post> {
+        queryPreparation.runInterceptors(
+            builder = queryBuilder,
             context = rootContext(),
-            entity = "Post",
+            entityName = "Post",
             entityInterceptors = listOf(RegisteredInterceptor("soft-delete", interceptor)),
             globalInterceptors = emptyList(),
         )
+        return queryBuilder.freeze()
+    }
 
     @Test
     fun `default ExcludeDeleted adds IS_NULL predicate on deleted_at`() {
@@ -88,8 +102,9 @@ class ExcludeDeletedTest {
         // accidentally violate it by inspecting the final predicate
         // set after interception.
         val callerPred = Predicate.Leaf<Post>("title", Op.EQ, "hello")
-        val frozen = InterceptorEngine.apply(
-            builder = QuerySpecBuilder(
+        val frozen = runWith(
+            ExcludeDeleted(),
+            QuerySpecBuilder(
                 table = "posts",
                 entity = Post::class,
                 callerPredicates = listOf(callerPred),
@@ -99,10 +114,6 @@ class ExcludeDeletedTest {
                 offset = null,
                 flags = emptySet(),
             ),
-            context = rootContext(),
-            entity = "Post",
-            entityInterceptors = listOf(RegisteredInterceptor("soft-delete", ExcludeDeleted())),
-            globalInterceptors = emptyList(),
         )
 
         val preds = frozen.predicates

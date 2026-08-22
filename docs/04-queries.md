@@ -646,11 +646,14 @@ query object is discarded.
 The rejection also covers re-entrant selection (`load{Edge}` called
 again from inside its own configuration block) — a failed selection is
 rolled back, so a caught error leaves the query as if it never
-happened. And while a terminal is executing,
-`load{Edge}` and `filterVisible()` throw the same exception anywhere
-in the selected graph — root query and nested target queries alike —
-so an interceptor or privacy rule that captured any of them cannot
-change the in-flight operation's selected graph or privacy posture.
+happened.
+
+A terminal captures an immutable snapshot of the complete selected graph
+before execution begins. If an interceptor or privacy rule retains and mutates
+the reusable query builder during execution, that mutation cannot change the
+in-flight read; it is visible only to a later terminal on the same builder.
+Query builders remain non-thread-safe, so this does not make concurrent
+mutation and execution safe.
 
 ### Terminals That Cannot Load Edges
 

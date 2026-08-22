@@ -554,7 +554,7 @@ internal class RepoGenerator(
                     )
                     .add("  val privacy = client.currentPrivacyContext()\n")
                     .add(
-                        "  val spec = q.runReadInterceptors(%T.DELETE_CANDIDATES, privacy)\n",
+                        "  val spec = q.prepareEntityQuery(%T.DELETE_CANDIDATES, privacy)\n",
                         READ_OPERATION,
                     )
                     .add("  val effectivePredicates = spec.predicates.toList()\n")

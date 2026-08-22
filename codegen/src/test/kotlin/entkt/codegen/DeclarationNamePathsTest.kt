@@ -59,19 +59,19 @@ class DeclarationNamePathsTest {
             .generate("PathDirectory", dir, names(user, dir))
             .toString()
 
-        // EdgeStep feeds InterceptorContext.path and the eager-denial
-        // origin — both are read by application code.
+        // Runtime paths derive their caller-facing EdgeStep from the
+        // typed mapping's declaration name.
         assertTrue(
-            """EdgeStep(PathDirectory::class, "curator", PathUser::class)""" in query,
-            "traversal EdgeStep must use the declaration name\n$query",
+            """override val name: String = "curator""" in query,
+            "the captured edge mapping must use the declaration name\n$query",
         )
         assertTrue(
-            """seedEdgeTraversal(PathDirectory::class, "curator"""" in query,
-            "traversal seeding must use the declaration name\n$query",
+            "target.setEntityQuerySource(QuerySource.Traversal(source, GeneratedCuratorEdgeMapping))" in query,
+            "traversal must retain the declaration-derived typed mapping\n$query",
         )
         assertFalse(
-            """EdgeStep(PathDirectory::class, "legacy_owner", PathUser::class)""" in query,
-            "storage edge name must not reach a caller-facing path\n$query",
+            """override val name: String = "legacy_owner""" in query,
+            "storage edge name must not become the caller-facing mapping name\n$query",
         )
     }
 
@@ -105,19 +105,18 @@ class DeclarationNamePathsTest {
         // The `when` key is the companion EdgeRef's value, so it must
         // stay storage-keyed or the branch never matches...
         assertTrue(
-            """"legacy_owner" -> {""" in query,
+            """"legacy_owner" -> GeneratedCuratorEdgeMapping""" in query,
             "edge-predicate dispatch must key on the storage name\n$query",
         )
-        // ...but what the target query is seeded with — and therefore
-        // what its interceptors and denial paths report — is the
-        // declaration name.
+        // ...while the resolved mapping carries the declaration name
+        // that runtime interceptor and denial paths expose.
         assertTrue(
-            """targetQ.seedEdgeTraversal(PathDirectory::class, "curator"""" in query,
-            "edge-predicate seeding must use the declaration name\n$query",
+            """"legacy_owner" -> GeneratedCuratorEdgeMapping""" in query,
+            "storage dispatch should resolve the declaration-named typed mapping\n$query",
         )
-        assertFalse(
-            """targetQ.seedEdgeTraversal(PathDirectory::class, predicate.edge""" in query,
-            "the storage dispatch key must not leak into the seeded path\n$query",
+        assertTrue(
+            """override val name: String = "curator""" in query,
+            "runtime paths should read the declaration name from the mapping\n$query",
         )
     }
 }

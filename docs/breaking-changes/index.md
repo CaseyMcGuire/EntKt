@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **Rename `Driver` to `DatabaseDriver`** (`runtime`, `postgres`)
+  The public storage-driver interface is now named `DatabaseDriver`; its
+  behavior and responsibilities are unchanged.
+  _Migration:_ replace imports and type references to
+  `entkt.runtime.driver.Driver` with `entkt.runtime.driver.DatabaseDriver`, and
+  update custom driver implementations and decorators to implement the renamed
+  interface.
+
 - **Remove query-explanation APIs** (`runtime`, `codegen`, `postgres`)
   Generated queries and repositories no longer expose `explainAll`,
   `explainFirstOrNull`, `explainRawCount`, `explainRawExists`, or

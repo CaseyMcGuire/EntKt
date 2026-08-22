@@ -320,31 +320,21 @@ class MemberCollisionValidationTest {
     }
 
     @Test
-    fun `edge whose eager backing collides with a fixed query member is rejected`() {
+    fun `edge whose traversal collides with a fixed query member is rejected`() {
         val errors = validate(
             "QueryClashOwner" to QueryClashOwner(),
             "QueryClashTarget" to QueryClashTarget(),
         )
-        assertCollision(errors, "QueryClashOwnerQuery", "eagerDenialBasePath")
+        assertCollision(errors, "QueryClashOwnerQuery", "queryLimit")
     }
 
     @Test
-    fun `edge declared 'edges' collides with the internal loadEdges query member`() {
-        // The complete load{Name} family is reserved before source
-        // emission, so the declaration-derived `loadEdges` hits the
-        // fixed internal executor helper of the same name.
+    fun `edge declared 'edges' is not rejected for a removed loadEdges helper`() {
         val errors = validate(
             "LoadClashOwner" to LoadClashOwner(),
             "LoadClashTarget" to LoadClashTarget(),
         )
-        assertCollision(errors, "LoadClashOwnerQuery", "loadEdges")
-        // The diagnostic names the declaration and storage identities
-        // distinctly — storage-name uniqueness alone proves nothing
-        // about the generated member namespace.
-        assertTrue(
-            errors.any { it.contains("edge declared 'edges' (storage 'owner')") },
-            "diagnostic should carry both declaration and storage identity: $errors",
-        )
+        assertEquals(emptyList(), errors)
     }
 
     @Test
@@ -429,12 +419,11 @@ private class EdgesCopyOwner : EntSchema("edges_copy_owners", clientName = "edge
     val copy by hasMany<EdgesCopyTarget>("owner")
 }
 
-// load{Stem}-family collision fixture. The generated edge-load method
-// for an edge declared `edges` is `loadEdges`, which collides with the
-// fixed internal batch-loading helper of that name on the query class.
+// Regression fixture for an edge whose load method used to collide with
+// the removed generated `loadEdges` helper.
 private class LoadClashTarget : EntSchema("load_clash_targets", clientName = "loadClashTargets") {
     override fun id() = EntId.long()
-    val owner by belongsTo<LoadClashOwner>("owner")
+    val owner by belongsTo<LoadClashOwner>("owner").inverse(LoadClashOwner::edges)
 }
 
 private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "loadClashOwners") {
@@ -442,18 +431,16 @@ private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "load
     val edges by hasMany<LoadClashTarget>("owner")
 }
 
-// Query-artifact collision fixture. `eager{Stem}` is a private backing
-// property on the generated query class, so an edge declared
-// `denialBasePath` generates `eagerDenialBasePath` and collides with
-// the fixed private property of that name.
+// Query-artifact collision fixture. An edge declared `limit` generates
+// `queryLimit`, which collides with the query's fixed bounds property.
 private class QueryClashTarget : EntSchema("query_clash_targets", clientName = "queryClashTargets") {
     override fun id() = EntId.long()
-    val owner by belongsTo<QueryClashOwner>("owner")
+    val owner by belongsTo<QueryClashOwner>("owner").inverse(QueryClashOwner::limit)
 }
 
 private class QueryClashOwner : EntSchema("query_clash_owners", clientName = "queryClashOwners") {
     override fun id() = EntId.long()
-    val denialBasePath by hasMany<QueryClashTarget>("owner")
+    val limit by hasMany<QueryClashTarget>("owner")
 }
 
 private class IsPrefix : EntSchema("is_prefix", clientName = "isPrefixes") {

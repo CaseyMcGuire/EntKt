@@ -1,15 +1,12 @@
 @file:OptIn(entkt.query.EntktInternal::class)
 
 package entkt.runtime.query
-import entkt.runtime.result.EntQueryRejectedException
 
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.query.QueryFlag
 import entkt.query.TraversalSourceShape
-import java.lang.reflect.Array as ReflectArray
-import java.math.BigDecimal
-import java.math.BigInteger
+import entkt.runtime.result.EntQueryRejectedException
 
 /**
  * Mutable per-terminal-call query spec the interceptor engine
@@ -44,15 +41,6 @@ public class QuerySpecBuilder<E : Any> public constructor(
     callerLimit: Int?,
     public val offset: Int?,
     flags: Set<QueryFlag>,
-    /**
-     * Annotations to seed the builder with before any interceptor
-     * runs. Generated code populates this from the source step's
-     * `FrozenQuerySpec.annotations` on traversal terminals, so a
-     * source-step `scope.addAnnotation(...)` is visible to interceptors
-     * on the final step. Interceptors on this step can overwrite these
-     * via `scope.addAnnotation` (last-writer-wins).
-     * Empty on root reads.
-     */
     initialAnnotations: Map<String, String> = emptyMap(),
     /**
      * The caller-authored ordering terms only, for authored-order
@@ -169,7 +157,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
         if (currentLimit == null) currentLimit = default
     }
 
-    /** Writes (or overwrites) an annotation. */
+    /** Writes or overwrites diagnostic metadata for later interceptors. */
     internal fun putAnnotation(key: String, value: String) {
         annotationsMap[key] = value
     }
@@ -232,7 +220,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
     }
 
     /**
-     * Semantic snapshot used by drivers and later lifecycle steps.
+     * Semantic snapshot used by drivers.
      *
      * Copying only the outer lists is insufficient: supported predicate
      * operands such as ByteArray are mutable. The stored spec was already
@@ -273,90 +261,6 @@ public class QuerySpecBuilder<E : Any> public constructor(
     private data class Tagged<E : Any>(val predicate: Predicate<E>, val source: Source)
 }
 
-@Suppress("UNCHECKED_CAST")
-private fun <E : Any> Predicate<E>.semanticSnapshot(): Predicate<E> = when (this) {
-    is Predicate.Leaf -> copy(value = value.semanticSnapshot())
-    is Predicate.And -> Predicate.And(left.semanticSnapshot(), right.semanticSnapshot())
-    is Predicate.Or -> Predicate.Or(left.semanticSnapshot(), right.semanticSnapshot())
-    is Predicate.HasEdge -> this
-    is Predicate.HasEdgeWith<*, *> -> {
-        val typed = this as Predicate.HasEdgeWith<E, Any>
-        Predicate.HasEdgeWith(typed.edge, typed.inner.semanticSnapshot())
-    }
-    is Predicate.HasM2MEdgeFrom<*, *> -> {
-        val typed = this as Predicate.HasM2MEdgeFrom<E, Any>
-        Predicate.HasM2MEdgeFrom(
-            typed.sourceTable,
-            typed.edgeName,
-            typed.sourceFilter?.semanticSnapshot(),
-        )
-    }
-    is Predicate.HasEdgeFromShape<*, *> -> {
-        val typed = this as Predicate.HasEdgeFromShape<E, Any>
-        Predicate.HasEdgeFromShape(typed.edge, typed.source.semanticSnapshot())
-    }
-    is Predicate.HasM2MEdgeFromShape<*, *> -> {
-        val typed = this as Predicate.HasM2MEdgeFromShape<E, Any>
-        Predicate.HasM2MEdgeFromShape(typed.edgeName, typed.source.semanticSnapshot())
-    }
-}
-
-private fun <E : Any> TraversalSourceShape<E>.semanticSnapshot(): TraversalSourceShape<E> = copy(
-    predicates = predicates.map { it.semanticSnapshot() },
-    orderBy = orderBy.map { it.semanticSnapshot() },
-    flags = flags.toSet(),
-)
-
-private fun <E : Any> OrderField<E>.semanticSnapshot(): OrderField<E> {
-    val currentDistance = distance
-    return copy(
-        distance = currentDistance?.copy(
-            operand = currentDistance.operand.semanticSnapshot() ?: currentDistance.operand,
-        ),
-    )
-}
-
-/** Copy the mutable value carriers accepted by the query DSL. */
-private fun Any?.semanticSnapshot(): Any? = when (this) {
-    null -> null
-    is ByteArray -> copyOf()
-    is ShortArray -> copyOf()
-    is IntArray -> copyOf()
-    is LongArray -> copyOf()
-    is FloatArray -> copyOf()
-    is DoubleArray -> copyOf()
-    is CharArray -> copyOf()
-    is BooleanArray -> copyOf()
-    is Array<*> -> {
-        val snapshot = ReflectArray.newInstance(javaClass.componentType, size)
-        for (index in indices) ReflectArray.set(snapshot, index, this[index].semanticSnapshot())
-        snapshot
-    }
-    is List<*> -> map { it.semanticSnapshot() }
-    is Set<*> -> mapTo(linkedSetOf()) { it.semanticSnapshot() }
-    is Collection<*> -> map { it.semanticSnapshot() }
-    is Map<*, *> -> entries.associateTo(linkedMapOf()) {
-        it.key.semanticSnapshot() to it.value.semanticSnapshot()
-    }
-    is Pair<*, *> -> first.semanticSnapshot() to second.semanticSnapshot()
-    is Triple<*, *, *> -> Triple(first.semanticSnapshot(), second.semanticSnapshot(), third.semanticSnapshot())
-    // The primitive wrappers plus BigInteger/BigDecimal are immutable. Raw
-    // low-level predicates may also carry mutable Number implementations
-    // (AtomicInteger/AtomicLong or an application subtype); freeze their
-    // current numeric text into an immutable BigDecimal rather than retaining
-    // an alias that can change between candidate selection and a later write.
-    is Byte, is Short, is Int, is Long, is Float, is Double, is BigInteger, is BigDecimal -> this
-    is Number -> try {
-        BigDecimal(toString())
-    } catch (e: NumberFormatException) {
-        throw IllegalArgumentException(
-            "Cannot freeze mutable predicate Number ${this::class.qualifiedName}: '$this' is not a stable numeric value",
-            e,
-        )
-    }
-    else -> this
-}
-
 /**
  * Result of a deferred traversal-source step. Produced by the
  * lambda that generated `queryX()` methods stash on the target
@@ -365,10 +269,7 @@ private fun Any?.semanticSnapshot(): Any? = when (this) {
  * with operation = `EDGE_TRAVERSAL`, and embeds the post-
  * interceptor source shape — predicates, order, limit, offset —
  * into [bridge] (the `HasEdgeFromShape` / `HasM2MEdgeFromShape`
- * predicate that constrains the target). [annotations] carry
- * forward any
- * `scope.addAnnotation(...)` contributions made by source-step
- * interceptors so they remain visible to the final interceptor step.
+ * predicate that constrains the target).
  *
  * The deferred-invocation design is what lets canonical terminals
  * capture traversal-source rejections — if the source's
@@ -639,62 +540,3 @@ public data class RegisteredGlobalInterceptor internal constructor(
     val name: String,
     val interceptor: GlobalQueryInterceptor,
 )
-
-/**
- * The engine that runs the interceptor chain for a single
- * terminal-call. Generated wrapper code instantiates one per
- * terminal, feeds the caller-authored + structural state, then
- * calls [apply] with the per-entity + global interceptors for the
- * root entity.
- *
- * Returns the [FrozenQuerySpec] the driver should execute, or
- * throws [AbortQueryRejected] if any interceptor in the chain
- * rejects (caught by the wrapper).
- */
-public object InterceptorEngine {
-    /**
-     * Cap on edge-predicate walker recursion. A pathological cycle
-     * in target interceptors (e.g. Post adds Post.author.has() and
-     * User adds User.posts.has() — each interceptor's addPredicate
-     * triggers the walker on the other entity, recursing
-     * indefinitely) trips this limit and surfaces as a clear
-     * IllegalStateException rather than a StackOverflowError.
-     *
-     * Each walker level appends one [EdgeStep] to `parentPath`, so
-     * this is effectively the maximum chained edge-predicate depth
-     * in a single terminal call. 32 is generous for legitimate
-     * traversal trees (which rarely go beyond 3-4 hops) while
-     * tripping immediately on cycles. Internally referenced by
-     * generated `runEdgePredicateInterceptors`.
-     */
-    public const val EDGE_PREDICATE_MAX_DEPTH: Int = 32
-
-    /**
-     * Run the interceptor chain on [builder] with [context] for the
-     * given per-entity ([entityInterceptors]) and global
-     * ([globalInterceptors]) lists. Returns the frozen spec; throws
-     * [AbortQueryRejected] on `scope.reject`. Non-reject interceptor
-     * exceptions propagate unchanged.
-     *
-     * Order: per-entity interceptors first (in registration order),
-     * then globals (in registration order). Each interceptor sees a
-     * live shape reflecting all prior interceptors' mutations.
-     */
-    public fun <E : Any> apply(
-        builder: QuerySpecBuilder<E>,
-        context: QueryContext,
-        entity: String,
-        entityInterceptors: List<RegisteredInterceptor<E>>,
-        globalInterceptors: List<RegisteredGlobalInterceptor>,
-    ): FrozenQuerySpec<E> {
-        for (registered in entityInterceptors) {
-            val scope = InterceptScopeImpl<E>(builder, registered.name, entity, context.operation)
-            registered.interceptor.intercept(scope, context)
-        }
-        for (registered in globalInterceptors) {
-            val scope = GlobalInterceptScopeImpl(builder, registered.name, entity, context.operation)
-            registered.interceptor.intercept(scope, context)
-        }
-        return builder.freeze()
-    }
-}

@@ -223,25 +223,53 @@ private fun addEdgesClassMembers(
 
 /**
  * Members `QueryGenerator` always emits on `${name}Query`, public and
- * private alike. Private members count: Kotlin does not allow a private
- * and a generated public member to share a name on one class, so a
- * declaration that lands on `eagerDenialBasePath` breaks compilation
- * just as surely as one landing on `where`.
+ * private alike. Private members count because Kotlin does not allow a
+ * private and generated public member to share a name on one class.
  *
  * Hand-maintained mirror of `QueryGenerator` — the same contract the
  * other artifact lists in this file follow.
  */
-private val FIXED_QUERY_MEMBERS: List<String> = listOf(
-    "acquireEdgeTopology", "activeTerminals", "aggregateRows", "all",
-    "client", "combinedPredicate", "deferredSourceStep", "driver",
-    "eagerDenialBasePath", "firstOrNull", "limit",
-    "loadEdges", "offset", "orderBy", "orderFields", "predicates", "query",
-    "queryLimit", "queryOffset", "rawCount", "rawExists",
-    "releaseEdgeTopology", "requireClient", "requireNoSelectedEdges",
-    "runEdgePredicateInterceptors", "runReadInterceptors",
-    "seedEagerDenialBasePath", "seedEdgeTraversal", "setDeferredSourceStep",
-    "snapshotForTraversal", "traversalEdgeName", "traversalPath",
-    "traversalSourceEntity", "where",
+private val FIXED_QUERY_PROPERTIES: List<String> = listOf(
+    "_graphLoader",
+    "_queryPreparation",
+    "_queryTerminalExecutor",
+    "client",
+    "driver",
+    "entityQuerySource",
+    "orderFields",
+    "predicates",
+    "queryLimit",
+    "queryOffset",
+)
+
+private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
+    "all",
+    "captureEntityQuery",
+    "combinedPredicate",
+    "firstOrNull",
+    "limit",
+    "offset",
+    "orderBy",
+    "prepareEntityQuery",
+    "rawAvg",
+    "rawAvgBy",
+    "rawCount",
+    "rawCountBy",
+    "rawExists",
+    "rawMax",
+    "rawMaxBy",
+    "rawMin",
+    "rawMinBy",
+    "rawSum",
+    "rawSumBy",
+    "readRootQuery",
+    "requireClient",
+    "setEntityQuerySource",
+    "where",
+)
+
+private val FIXED_QUERY_NESTED_TYPES: List<String> = listOf(
+    "GeneratedEntityMapping",
 )
 
 /**
@@ -249,13 +277,6 @@ private val FIXED_QUERY_MEMBERS: List<String> = listOf(
  * declaration-derived members: `query{Stem}` traversal, `load{Stem}`
  * edge-load entry point, and the private `eager{Stem}` backing
  * property (with its `FilterVisible` companion).
- *
- * All of them take the edge's Kotlin declaration name, so an edge
- * declared `denialBasePath` generates `eagerDenialBasePath` and
- * collides with the fixed private property of that name — and an edge
- * declared `edges` generates `loadEdges` and collides with the fixed
- * internal executor helper. The complete `load{Stem}` family is
- * reserved here before source emission.
  *
  * Source phrases name the delegated declaration and the storage edge
  * name distinctly: the storage string does not name this API, so its
@@ -269,8 +290,14 @@ private fun addQueryClassMembers(
     allEdges: List<entkt.schema.Edge>,
 ) {
     val artifact = queryArtifact(schemaName)
-    for (fixed in FIXED_QUERY_MEMBERS) {
+    for (fixed in FIXED_QUERY_PROPERTIES) {
         manifest.add(artifact, fixed, GeneratedMemberKind.PROPERTY, "fixed query member")
+    }
+    for (fixed in FIXED_QUERY_FUNCTIONS) {
+        manifest.add(artifact, fixed, GeneratedMemberKind.FUNCTION, "fixed query member")
+    }
+    for (fixed in FIXED_QUERY_NESTED_TYPES) {
+        manifest.add(artifact, fixed, GeneratedMemberKind.NESTED_TYPE, "fixed query nested type")
     }
     for (edge in allEdges) {
         val stem = edge.apiName.generatedStem()
@@ -293,6 +320,10 @@ private fun addQueryClassMembers(
         manifest.add(
             artifact, "eager${stem}FilterVisible", GeneratedMemberKind.PROPERTY,
             "eager filterVisible opt-in for $identity",
+        )
+        manifest.add(
+            artifact, "Generated${stem}EdgeMapping", GeneratedMemberKind.NESTED_TYPE,
+            "typed relationship mapping for $identity",
         )
     }
 }

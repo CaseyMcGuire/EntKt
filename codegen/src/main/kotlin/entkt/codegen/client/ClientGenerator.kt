@@ -263,8 +263,8 @@ internal class ClientGenerator(
                 // EntClientConfig.interceptorsConfig in the init
                 // block, inherited unchanged by withTransaction /
                 // withPrivacyContext / fixed clones. Read by
-                // generated wrapper code at each terminal call to
-                // feed the InterceptorEngine.
+                // runtime query preparation at each terminal call
+                // to supply the registered interceptor chain.
                 //
                 // Marked `@EntktInternal` so same-module application
                 // code can't reach the raw EntInterceptorsConfig and

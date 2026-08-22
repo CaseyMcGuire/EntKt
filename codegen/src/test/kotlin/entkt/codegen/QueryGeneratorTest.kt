@@ -33,9 +33,17 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        // The shared helper routes through RAW_AGGREGATE + driver.aggregate.
-        assert(output.contains("ReadOperation.RAW_AGGREGATE")) { "aggregateRows uses RAW_AGGREGATE\n$output" }
-        assert(output.contains("driver.aggregate(Car.TABLE,")) { "aggregateRows calls driver.aggregate\n$output" }
+        // Every overload delegates terminal intent and typed result decoding
+        // to the shared runtime executor.
+        assert(output.contains("_queryTerminalExecutor.rawAggregate(")) {
+            "aggregate terminals should delegate to QueryTerminalExecutor\n$output"
+        }
+        assert(output.contains("function = AggregateFunction.SUM")) {
+            "aggregate terminals should pass their operation explicitly\n$output"
+        }
+        assert(!output.contains("driver.aggregate(Car.TABLE,")) {
+            "generated queries should not own aggregate execution\n$output"
+        }
         assert(!output.contains("checkPrivacyBypassingRead")) {
             "raw aggregates should be available in every read posture\n$output"
         }
@@ -56,7 +64,7 @@ class QueryGeneratorTest {
         }
 
         // Group keys are decoded via the column (enum-safe), not a raw cast.
-        assert(output.contains("groupBy.decodeKey(it.key)")) { "group keys decode via the column\n$output" }
+        assert(output.contains("groupBy.decodeKey(row.key)")) { "group keys decode via the column\n$output" }
 
         // Grouped value terminals exist; the *OrError twins are gone —
         // ReadResult is the single return shape, projections live on it.
@@ -121,41 +129,78 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `firstOrNull returns ReadResult and bounds the fetch by the caller's limit`() {
+    fun `root terminals pass captured query data to an instance-configured entity loader`() {
         val car = Car()
         finalize(car, User())
         // KotlinPoet wraps long driver.query(...) calls mid-argument-list,
         // so match against a whitespace-normalized rendering.
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public fun firstOrNull(): ReadResult<Car?> = try {")) {
-            "firstOrNull is the sole first-row terminal, returning ReadResult<Car?>\n$output"
+        assert(
+            output.contains(
+                "readRootQuery(ReadOperation.FIRST, maximumRows = 1)",
+            ),
+        ) {
+            "firstOrNull should retain its public result type and delegate to runtime\n$output"
         }
-        // `limit(0)` means "no rows" on every terminal family (all()
-        // passes spec.limit straight through; rawExists uses
-        // `minOf(1, spec.limit ?: 1)`). The first-row terminal must not
-        // send a hardwired 1 and return a row anyway.
-        //
-        // Interceptor limit mutators are silent no-ops at FIRST
-        // (InterceptorEngine.limitOpsApply), so spec.limit here holds
-        // nothing but the caller's own bound.
-        assert(!output.contains("spec.orderBy, 1, spec.offset")) {
-            "the first-row terminal should not hardwire limit 1\n$output"
+        assert(
+            output.contains(
+                "internal fun readRootQuery( operation: ReadOperation, maximumRows: Int?, " +
+                    "structuralPredicates: List<Predicate<Car>> = emptyList(), ): " +
+                    "ReadResult<List<Car>> = _graphLoader.readRootQuery(",
+            ),
+        ) {
+            "the query should delegate root reads to its configured entity loader\n$output"
         }
-        assert(output.contains("val limit = minOf(1, spec.limit ?: 1)")) {
-            "firstOrNull should clamp its window to minOf(1, spec.limit ?: 1)\n$output"
+        assert(
+            output.contains(
+                "readRootQuery( captureQuery = { captureEntityQuery(structuralPredicates) }, operation = operation, " +
+                    "maximumRows = maximumRows, )",
+            ),
+        ) {
+            "the loader should receive captured query data and terminal intent directly\n$output"
         }
-        // The exists probe passes `emptyList()` for orderBy, so
-        // `spec.orderBy, limit, spec.offset` picks out exactly the one
-        // first-row driver call: firstOrNull. (The firstVisibleOrNull
-        // scanning twin is deleted with the visible* family.)
-        val bounded = Regex(Regex.escape("spec.orderBy, limit, spec.offset")).findAll(output).count()
-        assert(bounded == 1) {
-            "expected exactly firstOrNull to clamp by spec.limit; found $bounded\n$output"
+        assert(!output.contains("RootQueryRequest")) {
+            "root reads should not allocate an argument-bundling request object\n$output"
+        }
+        assert(
+            output.contains(
+                    "private val _graphLoader: GraphLoader<Car> = GraphLoader( " +
+                    "driver = driver, " +
+                    "privacyContextProvider = { requireClient().currentPrivacyContext() }, " +
+                    "queryPreparation = _queryPreparation, " +
+                    "loadPrivacyEvaluator = { requireClient() }, )",
+            ),
+        ) {
+            "the graph loader should reuse the query's shared preparation dependency\n$output"
+        }
+        assert(output.contains("private val _queryPreparation: EntityQueryPreparation")) {
+            "query preparation should be configured once per generated query\n$output"
+        }
+        assert(output.contains("private val _queryTerminalExecutor: QueryTerminalExecutor<Car>")) {
+            "non-entity terminals should share a runtime executor\n$output"
+        }
+        assert(!output.contains("GeneratedEntitySelection")) {
+            "the captured entity mapping now owns table metadata and decoding\n$output"
+        }
+        assert(!output.contains("override fun capturePrivacyContext")) {
+            "privacy-context capture should be a named loader dependency\n$output"
+        }
+        assert(!output.contains("GeneratedRootQueryPreparation")) {
+            "root query preparation should be owned by the runtime loader\n$output"
+        }
+        assert(!output.contains("GeneratedLoadPrivacyEvaluator")) {
+            "root LOAD privacy should use a configured runtime evaluator instead of a generated type\n$output"
+        }
+        assert(!output.contains("override fun freezeQuery(")) {
+            "freezing must not conceal interceptor execution behind its name\n$output"
+        }
+        assert(!output.contains("fun firstOrNull(): ReadResult<Car?> = try {")) {
+            "the generated terminal must not retain a second execution algorithm\n$output"
         }
     }
 
-    @Test
+    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
     fun `eager loads skip the target fetch when the window admits nothing`() {
         val car = Car()
         val user = User()
@@ -183,7 +228,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Test
+    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
     fun `to-many eager loads probe the driver's native window capability`() {
         val car = Car()
         val user = User()
@@ -219,7 +264,7 @@ class QueryGeneratorTest {
         }
     }
 
-    @Test
+    @Suppress("unused") // Runtime execution coverage: SubgraphLoaderTest.
     fun `a hasOne eager load also skips the fetch for a positive offset`() {
         // hasOne requires its inverse belongsTo to declare `.unique()`
         // (SchemaMetadata enforces it), so the unique index guarantees at
@@ -289,6 +334,167 @@ class QueryGeneratorTest {
     }
 
     @Test
+    fun `captures root query state and selected edges as a recursive entity query`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
+        val output = generator.generate("User", user, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "val selectedEdges = buildList<EdgeSelection<User, *>> {",
+            ),
+        ) {
+            "query capture should include a typed selected-edge list\n$output"
+        }
+        assert(
+            output.contains(
+                "edge = GeneratedCarsEdgeMapping, " +
+                    "target = selectedQuery.captureEntityQuery(), " +
+                    "visibility = if (eagerCarsFilterVisible) " +
+                    "EdgeVisibility.FILTER_INVISIBLE else EdgeVisibility.REQUIRE_VISIBLE",
+            ),
+        ) {
+            "selected edges should capture their nested query and privacy posture\n$output"
+        }
+        assert(
+            output.contains(
+                "return EntityQuery( entity = GeneratedEntityMapping, " +
+                    "source = entityQuerySource, predicates = predicates, " +
+                    "orderBy = orderFields, limit = queryLimit, offset = queryOffset, " +
+                    "edges = selectedEdges, structuralPredicates = structuralPredicates, )",
+            ),
+        ) {
+            "query capture should contain only caller query state and generated mappings\n$output"
+        }
+    }
+
+    @Test
+    fun `generates typed entity and direct-edge mappings`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
+        val output = generator.generate("User", user, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("internal object GeneratedEntityMapping : EntityMapping<User>")) {
+            "each query should expose one generated typed entity mapping\n$output"
+        }
+        assert(output.contains("override val entityName: String = \"User\"")) {
+            "entity mapping should carry the generated entity identity\n$output"
+        }
+        assert(
+            output.contains(
+                "internal object GeneratedCarsEdgeMapping : ToManyEdgeMapping<User, Car>",
+            ),
+        ) {
+            "hasMany should generate a typed to-many mapping\n$output"
+        }
+        assert(
+            output.contains(
+                "EdgeStorage.ForeignKeyOnTarget<User, Car, UUID>(" +
+                    "sourceColumn = \"id\", targetColumn = \"user_id\", " +
+                    "sourceKey = { it.id }, targetForeignKey = { it.userId })",
+            ),
+        ) {
+            "direct edge mapping should carry typed correlation instead of only column names\n$output"
+        }
+        assert(
+            output.contains(
+                "override fun attach(source: User, targets: List<Car>): User = " +
+                    "source.copy(edges = source.edges.copy(cars = EdgeState.Loaded(targets)))",
+            ),
+        ) {
+            "edge mapping should own immutable attachment to the generated entity shape\n$output"
+        }
+    }
+
+    @Test
+    fun `traversal captures its recursive source query`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
+        val output = generator.generate("User", user, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "target.setEntityQuerySource(QuerySource.Traversal(source, GeneratedCarsEdgeMapping))",
+            ),
+        ) {
+            "queryCars should retain the immutable source query and typed relationship\n$output"
+        }
+        assert(output.contains("val source = captureEntityQuery()")) {
+            "traversal should freeze its recursively nested source before target configuration\n$output"
+        }
+        assert(!output.contains("snapshotForTraversal")) {
+            "the immutable recursive source should replace generated query cloning\n$output"
+        }
+    }
+
+    @Test
+    fun `query capture checks the bind lower bound before snapshotting operands`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+
+        assert(
+            output.contains(
+                "// This is a conservative lower bound, not the final rendered bind count.",
+            ),
+        ) {
+            "the generated preflight should explain why the minimum is checked early\n$output"
+        }
+        val capacityCheck = output.indexOf(
+            "driver.requireBindCapacity(minimumRequiredBindParameters, Car.TABLE)",
+        )
+        val entityCapture = output.indexOf("return EntityQuery(")
+        assert(capacityCheck >= 0 && capacityCheck < entityCapture) {
+            "bind capacity must be checked before EntityQuery snapshots operands\n$output"
+        }
+    }
+
+    @Test
+    fun `many-to-many mappings carry the explicit junction entity and key extractors`() {
+        val team = Team()
+        val member = TeamMember()
+        val pet = Pet()
+        val owner = Owner()
+        finalize(team, member, pet, owner)
+        val names = mapOf<EntSchema, String>(
+            team to "Team",
+            member to "TeamMember",
+            pet to "Pet",
+            owner to "Owner",
+        )
+        val output = generator.generate("Team", team, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "internal object GeneratedMembersEdgeMapping : ToManyEdgeMapping<Team, Pet>",
+            ),
+        ) {
+            "many-to-many should generate a typed to-many mapping\n$output"
+        }
+        assert(
+            output.contains(
+                "EdgeStorage.Junction<Team, Pet, TeamMember, Int, Int>(" +
+                    "table = \"team_members\", sourceColumn = \"team_id\", " +
+                    "targetColumn = \"member_id\", " +
+                    "junctionEntity = TeamMemberQuery.GeneratedEntityMapping, " +
+                    "sourceKey = { it.id }, targetKey = { it.id })",
+            ),
+        ) {
+            "junction storage should name its generated entity mapping and typed keys\n$output"
+        }
+    }
+
+    @Test
     fun `does not emit traversal methods for schemas with no edges`() {
         val car = Car()
         finalize(car, User())
@@ -314,7 +520,7 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `does not emit per-edge loadMethods when schemaNames is empty but always emits loadEdges`() {
+    fun `does not emit edge loading machinery when schemaNames is empty`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -322,14 +528,8 @@ class QueryGeneratorTest {
         assert(!output.contains("loadCars")) {
             "Without schemaNames, load{Edge} should be skipped\n$output"
         }
-        // loadEdges is always emitted (link-table M2M helpers fix): an M2M
-        // eager-load block on a source query unconditionally calls
-        // `subQuery.loadEdges(...)` on the target's query class, so
-        // every query class needs the method even when its own schema
-        // has no eager-loadable edges. The body is a no-op for such
-        // schemas (the loop over schema.edges() iterates zero times).
-        assert(output.contains("internal fun loadEdges(")) {
-            "loadEdges should always be emitted, even when schemaNames is empty\n$output"
+        assert(!output.contains("internal fun loadEdges(")) {
+            "selected graph execution belongs to the runtime loader\n$output"
         }
     }
 
@@ -341,52 +541,21 @@ class QueryGeneratorTest {
         val names = mapOf<EntSchema, String>(car to "Car", user to "User")
         val output = generator.generate("Car", car, names).toString().replace("\\s+".toRegex(), " ")
 
-        // The shared private guard enumerates every selected
-        // declaration-derived edge path and throws the configuration
-        // exception naming the rejected operation.
+        assert(!output.contains("private fun requireNoSelectedEdges")) {
+            "selected-edge validation should live in runtime, not each generated query\n$output"
+        }
+        assert(output.contains("_queryTerminalExecutor.rawCount { captureEntityQuery() }")) {
+            "rawCount should delegate its selected-edge validation to runtime\n$output"
+        }
+        assert(output.contains("_queryTerminalExecutor.rawExists { captureEntityQuery() }")) {
+            "rawExists should delegate its selected-edge validation to runtime\n$output"
+        }
+        // Traversal captures the source once, validates that captured graph,
+        // and then gives the immutable source to the target query.
         assert(
             output.contains(
-                "private fun requireNoSelectedEdges(operation: String, reason: String) { " +
-                    "val selected = listOfNotNull( if (eagerUser != null) \"Car.user\" else null, ) " +
-                    "if (selected.isEmpty()) return " +
-                    "throw EntQueryConfigurationException( \"Car\", " +
-                    "operation + \" on CarQuery is incompatible with the selected edge loads [\" + " +
-                    "selected.joinToString(\", \") + \"]: \" + reason, ) }",
-            ),
-        ) {
-            "Should emit the requireNoSelectedEdges guard listing Car.user\n$output"
-        }
-
-        // Result-bearing non-entity terminals open with the guard
-        // inside the capture boundary — the throw becomes
-        // ReadResult.Failed before requireClient / interceptor /
-        // driver work.
-        for (terminal in listOf("rawCount", "rawExists")) {
-            assert(
-                output.contains(
-                    "fun $terminal(): ReadResult<" ,
-                ) && output.contains(
-                    "= try { requireNoSelectedEdges(\"$terminal()\", \"this terminal does not return " +
-                        "entities and cannot expose loaded edges; use an entity terminal such as all() " +
-                        "or firstOrNull(), or remove the load calls\") val c = requireClient()",
-                ),
-            ) {
-                "$terminal should open with the selected-edge guard inside the capture boundary\n$output"
-            }
-        }
-        // Ungrouped and grouped aggregates carry the same guard,
-        // named per terminal.
-        for (terminal in listOf("rawMin", "rawMax", "rawSum", "rawAvg", "rawCountBy", "rawMinBy", "rawMaxBy", "rawSumBy", "rawAvgBy")) {
-            assert(output.contains("requireNoSelectedEdges(\"$terminal()\"")) {
-                "$terminal should carry the selected-edge guard\n$output"
-            }
-        }
-
-        // Traversal is a configuration operation: queryX() itself
-        // throws before constructing the target query.
-        assert(
-            output.contains(
-                "requireNoSelectedEdges(\"queryUser()\", \"traversal changes the result root and " +
+                "val source = captureEntityQuery() source.requireNoSelectedEdges(\"queryUser()\", " +
+                    "\"traversal changes the result root and " +
                     "cannot carry the source query's selected graph; traverse first and select edge " +
                     "loads on the target query, or materialize the source graph with an entity " +
                     "terminal\") val target = UserQuery(driver, client)",
@@ -397,42 +566,27 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `topology-consuming terminals hold the activeTerminals guard for their duration`() {
+    fun `entity terminals execute an immutable captured topology`() {
         val car = Car()
         val user = User()
         finalize(car, user)
         val names = mapOf<EntSchema, String>(car to "Car", user to "User")
         val output = generator.generate("Car", car, names).toString().replace("\\s+".toRegex(), " ")
 
-        // The private counter backs terminal-entry isolation: while a
-        // terminal is executing, load{Name} and
-        // filterVisible() on this query are rejected.
-        assert(output.contains("private var activeTerminals: Int = 0")) {
-            "Should emit the private activeTerminals counter\n$output"
+        assert(!output.contains("activeTerminals")) {
+            "captured immutable graphs should not need a generated in-flight counter\n$output"
         }
-        // Acquire/release walk the entire selected graph: the guard
-        // covers retained nested target queries, not just the root.
-        assert(output.contains("internal fun acquireEdgeTopology() { activeTerminals++ eagerUser?.acquireEdgeTopology() }")) {
-            "acquire should guard this query and recurse into selected targets\n$output"
+        assert(!output.contains("acquireEdgeTopology")) {
+            "runtime execution should not walk mutable generated query objects\n$output"
         }
-        assert(output.contains("internal fun releaseEdgeTopology() { activeTerminals-- eagerUser?.releaseEdgeTopology() }")) {
-            "release should mirror the acquire walk\n$output"
+        assert(!output.contains("releaseEdgeTopology")) {
+            "there should be no generated topology release phase\n$output"
         }
-        // all() / firstOrNull() acquire on entry, before any
-        // interceptor or driver work, and release in a finally.
-        assert(output.contains("fun all(): ReadResult<List<Car>> { acquireEdgeTopology() return try { val c = requireClient()")) {
-            "all() should hold the guard from terminal entry\n$output"
+        assert(output.contains("fun all(): ReadResult<List<Car>> = readRootQuery(ReadOperation.ALL, maximumRows = null)")) {
+            "all() should delegate its complete root boundary to runtime\n$output"
         }
-        assert(output.contains("fun firstOrNull(): ReadResult<Car?> { acquireEdgeTopology() return try { val c = requireClient()")) {
-            "firstOrNull() should hold the guard from terminal entry\n$output"
-        }
-        assert(output.contains("} finally { releaseEdgeTopology() }")) {
-            "guard release must sit in a finally\n$output"
-        }
-        // Non-entity terminals reject selected topology outright and
-        // do not consume it, so they never take the guard.
-        assert(!output.contains("fun rawCount(): ReadResult<Long> { acquireEdgeTopology()")) {
-            "rawCount must not take the guard — it rejects selected edges instead\n$output"
+        assert(output.contains("readRootQuery(ReadOperation.FIRST, maximumRows = 1)")) {
+            "firstOrNull() should delegate its complete root boundary to runtime\n$output"
         }
     }
 
@@ -450,25 +604,22 @@ class QueryGeneratorTest {
         assert(!output.contains("activeTerminals")) {
             "Isolation counter should not exist when nothing can be selected\n$output"
         }
-        // The acquire/release pair still exists as no-ops — a parent
-        // query's guard recursion calls them on every selected target
-        // class unconditionally, mirroring loadEdges.
-        assert(output.contains("internal fun acquireEdgeTopology()")) {
-            "No-op acquire must exist for parent guard recursion\n$output"
+        assert(!output.contains("acquireEdgeTopology")) {
+            "captured query graphs need no generated topology acquisition\n$output"
         }
-        assert(output.contains("internal fun releaseEdgeTopology()")) {
-            "No-op release must exist for parent guard recursion\n$output"
+        assert(!output.contains("releaseEdgeTopology")) {
+            "captured query graphs need no generated topology release\n$output"
         }
     }
 
     @Test
-    fun `always emits loadEdges as a no-op for schemas with no edges`() {
+    fun `does not emit a generated graph executor for schemas with no edges`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("internal fun loadEdges(")) {
-            "loadEdges should always be emitted — needed by M2M eager-load callers from other queries\n$output"
+        assert(!output.contains("internal fun loadEdges(")) {
+            "selected graph execution should remain runtime-owned\n$output"
         }
         // No per-edge eager block since Car has only a belongsTo
         // (currently not eager-loadable via loadMethod). The eager
@@ -517,19 +668,11 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(
-            output.contains(
-                "public fun rawCount(): ReadResult<Long> = try { " +
-                    "val c = requireClient() val privacy = c.currentPrivacyContext()"
-            )
-        ) {
-            "Should generate rawCount(): ReadResult<Long> inside the capture boundary\n$output"
+        assert(output.contains("public fun rawCount(): ReadResult<Long>")) {
+            "Should generate rawCount(): ReadResult<Long>\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.RAW_COUNT, privacy)")) {
-            "rawCount runs interceptors with RAW_COUNT\n$output"
-        }
-        assert(output.contains("ReadResult.Success(driver.count(Car.TABLE, spec.predicates))")) {
-            "rawCount() should delegate to driver.count with the post-interceptor spec\n$output"
+        assert(output.contains("= _queryTerminalExecutor.rawCount { captureEntityQuery() }")) {
+            "rawCount execution and failure capture should be runtime-owned\n$output"
         }
     }
 
@@ -548,29 +691,11 @@ class QueryGeneratorTest {
         assert(!output.contains("visibleExists")) {
             "visibleExists is deleted with the visible* family\n$output"
         }
-        // rawExists bypasses LOAD privacy in every read posture.
-        assert(
-            output.contains(
-                "public fun rawExists(): ReadResult<Boolean> = try { " +
-                    "val c = requireClient() val privacy = c.currentPrivacyContext()"
-            )
-        ) {
-            "Should generate rawExists(): ReadResult<Boolean> inside the capture boundary\n$output"
+        assert(output.contains("public fun rawExists(): ReadResult<Boolean>")) {
+            "Should generate rawExists(): ReadResult<Boolean>\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.RAW_EXISTS, privacy)")) {
-            "rawExists runs interceptors with RAW_EXISTS\n$output"
-        }
-        // It probes one storage row via driver.query (no orderBy) and
-        // checks emptiness. Uses the post-interceptor spec so interceptor
-        // predicates (e.g. tenant_id = X) are honored on the probe, and
-        // the caller's limit(0) window is respected via the clamp.
-        assert(
-            output.contains(
-                "ReadResult.Success(driver.query(Car.TABLE, spec.predicates, emptyList(), limit, " +
-                    "spec.offset).isNotEmpty())"
-            )
-        ) {
-            "rawExists should probe via driver.query with the post-interceptor spec\n$output"
+        assert(output.contains("= _queryTerminalExecutor.rawExists { captureEntityQuery() }")) {
+            "rawExists probe shape and failure capture should be runtime-owned\n$output"
         }
     }
 
@@ -587,51 +712,48 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `row terminals report root LOAD denials through the canonical capture boundary`() {
+    fun `row terminals delegate privacy and selected-edge completion through loader dependencies`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public fun all(): ReadResult<List<Car>> = try {")) {
-            "all() returns ReadResult<List<Car>>\n$output"
-        }
-        // Strict all() submits the selected window to LOAD privacy as
-        // one positional batch, then aggregates every denied root row
-        // into one typed failure.
-        assert(output.contains("val denials = c.cars.loadDenials(privacy, results).filterNotNull()")) {
-            "all() should collect denials through one plural read-surface call\n$output"
-        }
-        assert(!output.contains("results.mapNotNull { c.cars.loadDenialOrNull(privacy, it) }")) {
-            "all() must not regress to per-row LOAD privacy evaluation\n$output"
-        }
         assert(
             output.contains(
-                "return ReadResult.failedForInternalUse(EntPrivacyDeniedException(LoadDenialOrigin.Root, denials))"
-            )
+                "fun all(): ReadResult<List<Car>> = " +
+                    "readRootQuery(ReadOperation.ALL, maximumRows = null)",
+            ),
         ) {
-            "all() should fail with the aggregated Root denial list\n$output"
+            "all() should preserve its public type while delegating to runtime\n$output"
         }
-        // ...while firstOrNull reports exactly its one keyed denial.
-        assert(
-            output.contains(
-                "return ReadResult.failedForInternalUse(EntPrivacyDeniedException(LoadDenialOrigin.Root, listOf(denial)))"
-            )
-        ) {
-            "firstOrNull should fail with its single keyed Root denial\n$output"
+        assert(output.contains("loadPrivacyEvaluator = { requireClient() }")) {
+            "the loader should lazily obtain the runtime-wide typed privacy evaluator\n$output"
         }
-        // Every data terminal shares the canonical capture boundary:
-        // rethrow cancellation, capture Exception. Car emits 21 of them —
-        // all, firstOrNull, rawCount, rawExists, and 17 raw aggregate
-        // overloads.
-        val boundaries = Regex(
-            Regex.escape(
-                "} catch (e: CancellationException) { throw e } " +
-                    "catch (e: Exception) { ReadResult.failedForInternalUse(e) }"
-            )
-        ).findAll(output).count()
-        assert(boundaries == 21) {
-            "every data terminal should end in the canonical capture boundary; found $boundaries\n$output"
+        assert(!output.contains("query.loadEdges(entities, privacyContext)")) {
+            "generated queries should not retain a second graph-loading algorithm\n$output"
+        }
+        assert(!output.contains("catch (e: CancellationException)")) {
+            "all generated read-terminal failure boundaries should now be runtime-owned\n$output"
         }
     }
 
+    @Test
+    fun `captured queries include eager edge subqueries`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val output = generator.generate("User", user, mapOf(user to "User", car to "Car")).toString()
+
+        assert(output.contains("eagerCars?.let { selectedQuery ->")) {
+            "captureEntityQuery should recursively capture selected edges\n$output"
+        }
+        assert(output.contains("target = selectedQuery.captureEntityQuery()")) {
+            "selected edge targets should be recursively immutable\n$output"
+        }
+        assert(!output.contains("buildQueryPlan")) {
+            "generated queries should not emit obsolete planning algorithms\n$output"
+        }
+        assert(!output.contains("runReadInterceptors(ReadOperation.EAGER_LOAD")) {
+            "generated queries should not emit eager interceptor execution\n$output"
+        }
+    }
 }

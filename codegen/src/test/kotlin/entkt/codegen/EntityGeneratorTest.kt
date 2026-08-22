@@ -1,10 +1,12 @@
 package entkt.codegen
 
 import entkt.codegen.entity.EntityGenerator
+import entkt.runtime.entity.EntEntity
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntId
 import entkt.schema.EntSchema
+import entkt.schema.FieldType
 import java.util.UUID
 import kotlin.reflect.KClass
 import kotlin.test.Test
@@ -131,6 +133,54 @@ class EntityGeneratorTest {
         val output = generator.generate("User", user).toString()
 
         assert(output.contains("val id: UUID")) { "Should have UUID id\n$output" }
+    }
+
+    @Test
+    fun `EntId factories, entity contracts, and generated supertypes stay in sync`() {
+        val contractsByType = mapOf(
+            FieldType.INT to EntEntity.IntId::class.java,
+            FieldType.LONG to EntEntity.LongId::class.java,
+            FieldType.UUID to EntEntity.UuidId::class.java,
+            FieldType.STRING to EntEntity.StringId::class.java,
+        )
+        val idFactories = EntId.Companion::class.java.declaredMethods
+            .filter { method ->
+                !method.isSynthetic &&
+                    method.parameterCount == 0 &&
+                    method.returnType == EntId::class.java
+            }
+            .associate { method ->
+                method.name to (method.invoke(EntId.Companion) as EntId)
+            }
+
+        assertEquals(
+            contractsByType.keys,
+            idFactories.values.mapTo(linkedSetOf()) { it.type },
+            "Every EntId factory must have a matching EntEntity ID contract",
+        )
+        assertEquals(
+            contractsByType.values.toSet(),
+            EntEntity::class.java.permittedSubclasses.toSet(),
+            "EntEntity must expose exactly one sealed contract for every supported EntId type",
+        )
+
+        idFactories.forEach { (factoryName, entId) ->
+            val schema = object : EntSchema(
+                "${factoryName}_records",
+                clientName = "${factoryName}Records",
+            ) {
+                override fun id(): EntId = entId
+            }
+            finalize(schema)
+
+            val entityName = "${factoryName.replaceFirstChar { it.uppercaseChar() }}Record"
+            val output = generator.generate(entityName, schema).toString()
+            val contract = contractsByType.getValue(entId.type)
+
+            assert(output.contains("EntEntity.${contract.simpleName}")) {
+                "EntId.$factoryName() must generate ${contract.canonicalName}\n$output"
+            }
+        }
     }
 
     @Test

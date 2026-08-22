@@ -3,6 +3,12 @@
 - Avoid overloaded terms. If a term already has a project meaning, choose a distinct name or document the distinction.
 - When behavior could reasonably surprise a user, prefer an explicit API, validation error, or documentation over implicit behavior.
 
+## Code generation
+- Use code generation when schema-specific types, names, mappings, codecs, or compile-time API surfaces require it.
+- Keep generated code thin: it should primarily describe schema-specific data, wire dependencies, and delegate to ordinary Kotlin code.
+- Put reusable lifecycle algorithms, validation, privacy evaluation, failure handling, storage coordination, and other framework or business logic in non-generated, independently testable runtime code.
+- Do not avoid code generation when it provides meaningful type safety, ergonomics, or compile-time guarantees. Generate the smallest schema-specific adapter that can call the reusable implementation.
+
 ## Reference implementations
 - Use established ORM/entity systems as reference implementations for inspiration when designing schema APIs, generated surfaces, query behavior, privacy, migrations, eager loading, and documentation.
 - Treat these references as comparative input, not authority. Preserve this project's Kotlin-first design, local conventions, and least-surprise behavior.

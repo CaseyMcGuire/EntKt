@@ -222,9 +222,8 @@ class EntUnexpectedMutationException(
 
 /**
  * A read-path interceptor rejected the query before driver execution.
- * Stored in [ReadResult.Failed] by canonical data terminals.
- * [interceptor] is the rejecting interceptor's stable registration name
- * (or `"framework:<id>"`).
+ * Stored in [ReadResult.Failed] by canonical data terminals. [interceptor] is the rejecting
+ * interceptor's stable registration name (or `"framework:<id>"`).
  */
 class EntQueryRejectedException(
     val entityType: String,
@@ -246,9 +245,9 @@ class EntQueryRejectedException(
  * Configuration operations (`load{Name}`, `query{Name}`) throw this
  * immediately. A result-bearing terminal that discovers incompatible
  * existing configuration captures it as [ReadResult.Failed] before
- * any interceptor or driver work; its `getOrThrow()` projection throws
- * this exact exception. [reason] names the rejected operation and the
- * declaration-derived edge paths involved.
+ * any interceptor or driver work — its `getOrThrow()` projection
+ * throws this exact exception. [reason] names the rejected operation
+ * and the declaration-derived edge paths involved.
  */
 class EntQueryConfigurationException(
     val entityType: String,

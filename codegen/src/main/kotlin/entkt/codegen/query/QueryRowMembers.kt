@@ -3,16 +3,25 @@ package entkt.codegen.query
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.asClassName
 
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
-private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
-private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
+private val GRAPH_LOADER = ClassName("entkt.runtime.query.execution", "GraphLoader")
+private val QUERY_TERMINAL_EXECUTOR =
+    ClassName("entkt.runtime.query.execution", "QueryTerminalExecutor")
+private val ENTITY_QUERY_PREPARATION =
+    ClassName("entkt.runtime.query.execution", "EntityQueryPreparation")
+private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
+private val PREDICATE = ClassName("entkt.query", "Predicate")
 
 // ------------------------------------------------------------------
-// Canonical row-shaped terminals (all / firstOrNull).
+// Canonical row-shaped terminals (all / firstOrNull). QueryGenerator
+// assembles these thin runtime delegates.
 // ------------------------------------------------------------------
 
 /**
@@ -29,48 +38,17 @@ private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOr
  * aborts at the throw and the capture boundary stores it).
  *
  * Root privacy completes before eager loading begins; a denied
- * eager target then fails with the `EagerEdge` origin from
- * `loadEdges`. Interceptor rejection is
+ * eager target then fails with an `EagerEdge` origin from graph loading.
+ * Interceptor rejection is
  * `Failed(EntQueryRejectedException)`; any other exception is stored
  * directly.
  */
-internal fun buildAll(schemaName: String, clientName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
-    val repoPropName = clientName
+internal fun buildAll(entityClass: ClassName): FunSpec {
     val listType = List::class.asClassName().parameterizedBy(entityClass)
     val resultType = READ_RESULT.parameterizedBy(listType)
     return FunSpec.builder("all")
         .returns(resultType)
-        .addCode(
-            canonicalReadBody(
-                CodeBlock.builder()
-                    .add("  val c = requireClient()\n")
-                    .add("  val privacy = c.currentPrivacyContext()\n")
-                    .add("  val spec = runReadInterceptors(%T.ALL, privacy)\n", READ_OPERATION)
-                    .add(
-                        "  val rows = driver.query(%T.TABLE, spec.predicates, spec.orderBy, spec.limit, spec.offset)\n",
-                        entityClass,
-                    )
-                    .add("  val results = rows.map { %T.fromRow(it) }\n", entityClass)
-                    .add("  if (c.%L.hasLoadPrivacy()) {\n", repoPropName)
-                    .add("    val denials = c.%L.loadDenials(privacy, results).filterNotNull()\n", repoPropName)
-                    .add("    if (denials.isNotEmpty()) {\n")
-                    .add(
-                        "      return %T.failedForInternalUse(%T(%T.Root, denials))\n",
-                        READ_RESULT, ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN,
-                    )
-                    .add("    }\n")
-                    .add("  }\n")
-                    .add(
-                        "  %T.Success(%L)\n",
-                        READ_RESULT,
-                        if (hasEdges) "loadEdges(results, privacy)" else "results",
-                    )
-                    .build(),
-                // Hold the activeTerminals guard while the terminal
-                // consumes the selected edge-load topology.
-                guardEdgeTopology = hasEdges,
-            ),
-        )
+        .addStatement("return readRootQuery(%T.ALL, maximumRows = null)", READ_OPERATION)
         .build()
 }
 
@@ -90,54 +68,119 @@ internal fun buildAll(schemaName: String, clientName: String, entityClass: Class
  * that authoritative absence is a successful null payload while
  * denial and operational failure remain distinguishable.
  */
-internal fun buildFirstOrNull(schemaName: String, clientName: String, entityClass: ClassName, hasEdges: Boolean): FunSpec {
-    val repoPropName = clientName
+internal fun buildFirstOrNull(entityClass: ClassName): FunSpec {
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
-    val happy = CodeBlock.builder()
-        .add("  val c = requireClient()\n")
-        .add("  val privacy = c.currentPrivacyContext()\n")
-        .add("  val spec = runReadInterceptors(%T.FIRST, privacy)\n", READ_OPERATION)
-        // `first` semantics: at most one row — but `minOf(1, ...)`
-        // rather than a hardwired 1, so an explicit
-        // `query { limit(0) }` still means "no rows" here exactly
-        // as it does for the exists / all / count families.
-        // Interceptor limit mutators are silent no-ops on FIRST, so
-        // the only value `spec.limit` can hold is the caller's own
-        // bound.
-        .add("  val limit = %L\n", SINGLE_ROW_LIMIT_EXPR)
-        .add(
-            "  val row = driver.query(%T.TABLE, spec.predicates, spec.orderBy, limit, spec.offset).firstOrNull()\n",
-            entityClass,
-        )
-        .add("  val entity = row?.let { %T.fromRow(it) }\n", entityClass)
-        .add("  if (entity != null && c.%L.hasLoadPrivacy()) {\n", repoPropName)
-        .add("    val denial = c.%L.loadDenialOrNull(privacy, entity)\n", repoPropName)
-        .add("    if (denial != null) {\n")
-        .add(
-            "      return %T.failedForInternalUse(%T(%T.Root, listOf(denial)))\n",
-            READ_RESULT, ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN,
-        )
-        .add("    }\n")
-        .add("  }\n")
-    if (hasEdges) {
-        // No early return before loadEdges: the EAGER_LOAD
-        // interceptor pass fires on every configured eager subquery
-        // even when no row matched — interceptor firing must not
-        // depend on what the database returned, and
-        // unconditionally. An empty batch loads nothing. (A root row
-        // denied by LOAD privacy has already returned Failed above —
-        // root privacy completes before eager loading begins.)
-        happy.add(
-            "  %T.Success(loadEdges(listOfNotNull(entity), privacy).firstOrNull())\n",
-            READ_RESULT,
-        )
-    } else {
-        happy.add("  %T.Success(entity)\n", READ_RESULT)
-    }
     return FunSpec.builder("firstOrNull")
         .returns(resultType)
-        // Hold the activeTerminals guard while the terminal consumes
-        // the selected edge-load topology.
-        .addCode(canonicalReadBody(happy.build(), guardEdgeTopology = hasEdges))
+        .addCode(
+            "return when (val result = readRootQuery(%T.FIRST, maximumRows = 1)) {\n" +
+                "  is %T.Success -> %T.Success(result.value.firstOrNull())\n" +
+                "  is %T.Failed -> result\n" +
+                "}\n",
+            READ_OPERATION,
+            READ_RESULT,
+            READ_RESULT,
+            READ_RESULT,
+        )
         .build()
 }
+
+/** Capture the recursive query and delegate its terminal intent to the graph loader. */
+internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
+    val entityList = List::class.asClassName().parameterizedBy(entityClass)
+    return FunSpec.builder("readRootQuery")
+        .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        .addModifiers(KModifier.INTERNAL)
+        .addParameter("operation", READ_OPERATION)
+        .addParameter("maximumRows", Int::class.asClassName().copy(nullable = true))
+        .addParameter(
+            com.squareup.kotlinpoet.ParameterSpec.builder(
+                "structuralPredicates",
+                List::class.asClassName().parameterizedBy(PREDICATE.parameterizedBy(entityClass)),
+            )
+                .defaultValue("emptyList()")
+                .build(),
+        )
+        .returns(READ_RESULT.parameterizedBy(entityList))
+        .addCode(
+            "return _graphLoader.readRootQuery(\n" +
+                "  captureQuery = { captureEntityQuery(structuralPredicates) },\n" +
+                "  operation = operation,\n" +
+                "  maximumRows = maximumRows,\n" +
+                ")\n",
+        )
+        .build()
+}
+
+/** Prepare a captured query for a framework operation that consumes its storage shape. */
+internal fun buildPrepareEntityQuery(entityClass: ClassName): FunSpec =
+    FunSpec.builder("prepareEntityQuery")
+        .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        .addModifiers(KModifier.INTERNAL)
+        .addParameter("operation", READ_OPERATION)
+        .addParameter("privacyContext", PRIVACY_CONTEXT)
+        .returns(FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
+        .addStatement(
+            "return _queryPreparation.prepare(captureEntityQuery(), operation, privacyContext)",
+        )
+        .build()
+
+/** Shared query preparation used by every generated terminal delegate. */
+internal fun buildQueryPreparationProperty(): PropertySpec =
+    PropertySpec.builder("_queryPreparation", ENTITY_QUERY_PREPARATION)
+        .addModifiers(KModifier.PRIVATE)
+        .initializer(
+            CodeBlock.builder()
+                .add("%T(\n", ENTITY_QUERY_PREPARATION)
+                .indent()
+                .add("driver = driver,\n")
+                .add("registeredInterceptors = { requireClient().entityInterceptors },\n")
+                .unindent()
+                .add(")")
+                .build(),
+        )
+        .build()
+
+/** Graph loader and its stable dependencies for this generated query instance. */
+internal fun buildGraphLoaderProperty(
+    entityClass: ClassName,
+): PropertySpec =
+    PropertySpec.builder(
+        "_graphLoader",
+        GRAPH_LOADER.parameterizedBy(entityClass),
+    )
+        .addModifiers(KModifier.PRIVATE)
+        .initializer(
+            CodeBlock.builder()
+                .add("%T(\n", GRAPH_LOADER)
+                .indent()
+                .add("driver = driver,\n")
+                .add("privacyContextProvider = { requireClient().currentPrivacyContext() },\n")
+                .add("queryPreparation = _queryPreparation,\n")
+                .add("loadPrivacyEvaluator = { requireClient() },\n")
+                .unindent()
+                .add(")")
+                .build(),
+        )
+        .build()
+
+/** Non-entity terminals for this generated query instance. */
+internal fun buildQueryTerminalExecutorProperty(
+    entityClass: ClassName,
+): PropertySpec = PropertySpec.builder(
+    "_queryTerminalExecutor",
+    QUERY_TERMINAL_EXECUTOR.parameterizedBy(entityClass),
+)
+    .addModifiers(KModifier.PRIVATE)
+    .initializer(
+        CodeBlock.builder()
+            .add("%T(\n", QUERY_TERMINAL_EXECUTOR)
+            .indent()
+            .add("driver = driver,\n")
+            .add("privacyContextProvider = { requireClient().currentPrivacyContext() },\n")
+            .add("queryPreparation = _queryPreparation,\n")
+            .unindent()
+            .add(")")
+            .build(),
+    )
+    .build()

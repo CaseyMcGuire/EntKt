@@ -224,18 +224,18 @@ interface DatabaseDriver {
      * explicit no-op (and may still enforce its own limit at render
      * time).
      *
-     * Generated read paths wire this into the query-spec builder,
-     * which invokes it with a running conservative lower bound (the
-     * summed O(1) sizes of `IN`-list operands, via
+     * Generated read paths invoke this with a conservative lower
+     * bound (the summed O(1) sizes of `IN`-list operands, via
      * [minimumBindParameters]) immediately BEFORE every defensive
-     * operand snapshot — once for the caller and structural
-     * predicates at terminal entry, and again for each
-     * interceptor-added predicate. A query that can never execute
-     * therefore fails fast with the driver's own actionable error,
-     * and an over-budget operand is never iterated or copied,
-     * whoever contributed it. The entry check runs before the
-     * interceptor chain; an interceptor contribution fails at its
-     * own `addPredicate` call.
+     * operand snapshot. Query capture checks caller and structural
+     * predicates before creating its immutable [EntityQuery][entkt.runtime.query.EntityQuery];
+     * the query-spec builder checks again when starting the lifecycle
+     * and before snapshotting each interceptor-added predicate. A query
+     * that can never execute therefore fails fast with the driver's own
+     * actionable error, and an over-budget operand is never iterated or
+     * copied, whoever contributed it. The capture check runs before the
+     * interceptor chain; an interceptor contribution fails at its own
+     * `addPredicate` call.
      *
      * Deliberately abstract, like [registerAll]: a metrics/tracing
      * decorator that forwards each operation by hand would silently
@@ -759,7 +759,7 @@ interface DatabaseDriver {
  * budget provably cannot execute. `Collection.size` is O(1), so the
  * walk allocates nothing and never iterates an operand.
  *
- * Used with [DatabaseDriver.requireBindCapacity] at generated terminal entry,
+ * Used with [DatabaseDriver.requireBindCapacity] during generated query capture,
  * before any defensive operand snapshot. Public for the generated
  * cross-module call sites; not application API.
  */

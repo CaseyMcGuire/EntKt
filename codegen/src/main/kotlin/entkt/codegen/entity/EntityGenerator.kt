@@ -34,6 +34,7 @@ import entkt.schema.FieldType
 
 private val EDGE_REF = ClassName("entkt.query", "EdgeRef")
 private val EDGE_STATE = ClassName("entkt.runtime.query", "EdgeState")
+private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val NOOP_DRIVER = ClassName("entkt.runtime.driver", "NoopDriver")
 private val ANY_NULLABLE = Any::class.asTypeName().copy(nullable = true)
@@ -89,6 +90,7 @@ internal class EntityGenerator(
 
         val typeSpec = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
+            .addSuperinterface(entEntityIdContract(schema.id().type))
             .primaryConstructor(buildConstructor(idField, allFields, edgeFks, edgesClass?.let { edgesClassName }))
             .addProperty(idField)
             .addProperties(allFields.map { buildProperty(it) })
@@ -272,8 +274,17 @@ internal class EntityGenerator(
     private fun buildIdProperty(schema: EntSchema): PropertySpec {
         val idType = schema.id().type.toTypeName()
         return PropertySpec.builder("id", idType)
+            .addModifiers(KModifier.OVERRIDE)
             .initializer("id")
             .build()
+    }
+
+    private fun entEntityIdContract(type: FieldType): ClassName = when (type) {
+        FieldType.INT -> ENT_ENTITY.nestedClass("IntId")
+        FieldType.LONG -> ENT_ENTITY.nestedClass("LongId")
+        FieldType.UUID -> ENT_ENTITY.nestedClass("UuidId")
+        FieldType.STRING -> ENT_ENTITY.nestedClass("StringId")
+        else -> error("unsupported entity id type: $type")
     }
 
     private fun buildProperty(field: Field): PropertySpec {

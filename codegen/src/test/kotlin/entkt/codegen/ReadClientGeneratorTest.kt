@@ -152,6 +152,29 @@ class ReadClientGeneratorTest {
     }
 
     @Test
+    fun `read runtime dispatches recursive LOAD privacy by typed entity mapping`() {
+        val output = readRuntimeOutput().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("public interface EntReadRuntime : LoadPrivacyEvaluator")) {
+            "the runtime host should be the graph loader's privacy dependency\n$output"
+        }
+        assert(
+            output.contains(
+                "CarQuery.GeneratedEntityMapping -> cars.hasLoadPrivacy()",
+            ),
+        ) {
+            "LOAD configuration should dispatch through generated mapping identity\n$output"
+        }
+        assert(
+            output.contains(
+                "CarQuery.GeneratedEntityMapping -> cars.loadDenials(privacyContext, entities as List<Car>)",
+            ),
+        ) {
+            "recursive targets should retain the repository's typed positional LOAD batch\n$output"
+        }
+    }
+
+    @Test
     fun `read repo findById is the full repo's findById modulo the runtime host reference`() {
         // The read client's per-entity repos must not re-implement the
         // primary-key read path: CarReadRepo's findById is byte-identical
@@ -174,17 +197,27 @@ class ReadClientGeneratorTest {
             "read repo findById must match the full repo's modulo the host reference",
         )
 
-        // And the shared span is the canonical primary-key read: a
-        // ReadResult terminal running interceptors at BY_ID with the id
-        // as a structural predicate.
-        assert(readSpan.contains("public fun findById(id: Int): ReadResult<Car?> = try {")) {
-            "findById should return ReadResult<Car?> through the capture boundary\n$readSpan"
+        // The shared span contributes the id predicate and delegates
+        // execution to the runtime query pipeline.
+        assert(readSpan.contains("public fun findById(id: Int): ReadResult<Car?> {")) {
+            "findById should retain its nullable ReadResult surface\n$readSpan"
         }
-        assert(readSpan.contains("operation = ReadOperation.BY_ID,")) {
-            "findById should run interceptors with BY_ID\n$readSpan"
+        assert(
+            readSpan.contains("query.readRootQuery(") &&
+                readSpan.contains("operation = ReadOperation.BY_ID,") &&
+                readSpan.contains("maximumRows = 1,"),
+        ) {
+            "findById should delegate BY_ID execution to GraphLoader\n$readSpan"
         }
-        assert(readSpan.contains("extraStructural = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)),")) {
-            "findById should pass the id as a structural predicate\n$readSpan"
+        assert(
+            readSpan.contains(
+                "structuralPredicates = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id))",
+            ),
+        ) {
+            "findById should contribute the id predicate as framework-owned query structure\n$readSpan"
+        }
+        assert(!readSpan.contains("explain")) {
+            "read repositories should not expose a query explain API\n$readSpan"
         }
     }
 

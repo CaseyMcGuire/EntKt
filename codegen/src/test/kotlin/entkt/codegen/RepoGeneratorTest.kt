@@ -164,29 +164,30 @@ class RepoGeneratorTest {
         finalize(car, User())
         val raw = generator.generate("Car", car).toString()
         val output = raw.replace("\\s+".toRegex(), " ")
+        val body = raw.substring(raw.indexOf("fun findById("), raw.indexOf("fun delete("))
 
-        // The by-id read runs the generated query's interceptor chain
-        // with operation = BY_ID, carrying the id as an extraStructural
-        // leaf, so by-id reads cannot bypass predicate-shaping
-        // interceptors (tenant scoping, soft-delete).
+        // The repo contributes only the typed id predicate and terminal
+        // intent; the runtime root-query pipeline owns preparation,
+        // storage loading, decoding, privacy, and failure capture.
         assert(
             output.contains(
-                "val spec = q.runReadInterceptors( operation = ReadOperation.BY_ID, privacy = privacy, extraStructural = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)), )",
+                "val query = CarQuery(driver, client) return when (val result = " +
+                    "query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1, " +
+                    "structuralPredicates = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)), ))",
             ),
         ) {
-            "findById should run interceptors with BY_ID and the id as an extraStructural leaf\n$output"
+            "findById should build the id-scoped EntityQuery\n$output"
         }
-        // The row read uses driver.query with the post-interceptor
-        // predicates (NOT driver.byId — a PK lookup would ignore
-        // interceptor-added predicates), limit 1.
-        assert(output.contains("driver.query(Car.TABLE, spec.predicates, emptyList(), 1, null).firstOrNull()")) {
-            "findById should query with the post-interceptor spec.predicates, limit 1\n$output"
+        assert(output.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
+            "findById should delegate BY_ID and its single-row bound to GraphLoader\n$output"
         }
-        assert(output.contains("val entity = row?.let { Car.fromRow(it) }")) {
-            "findById should hydrate the driver's row via Car.fromRow\n$output"
+        assert(output.contains("ReadResult.Success(result.value.firstOrNull())")) {
+            "the repo should adapt the runtime entity list to nullable cardinality\n$output"
+        }
+        assert(!body.contains("Car.fromRow")) {
+            "findById decoding should be runtime-owned\n$body"
         }
         // Negative guard on the findById body itself: no raw PK lookup.
-        val body = raw.substring(raw.indexOf("fun findById("), raw.indexOf("fun delete("))
         assert(!body.contains("driver.byId(")) {
             "findById must not use driver.byId — interceptor predicates would be silently dropped\n$body"
         }
@@ -196,25 +197,18 @@ class RepoGeneratorTest {
     fun `findById captures every failure through the canonical read capture boundary`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
+        val raw = generator.generate("Car", car).toString()
+        val output = raw.replace("\\s+".toRegex(), " ")
 
-        // Expression-body try: presence and absence are both Success
-        // (entity is nullable); cancellation rethrows; every other
-        // exception is captured as ReadResult.Failed via the guarded
-        // factory. No EntError / EntResult wrapper anywhere.
-        assert(output.contains("public fun findById(id: Int): ReadResult<Car?> = try {")) {
-            "findById should open the canonical expression-body capture boundary\n$output"
+        val body = raw.substring(
+            raw.indexOf("public fun findById"),
+            raw.indexOf("public fun delete"),
+        ).replace("\\s+".toRegex(), " ")
+        assert(!body.contains("catch (e:")) {
+            "findById should reuse GraphLoader's single failure boundary\n$body"
         }
-        assert(output.contains("ReadResult.Success(entity)")) {
-            "findById should return Success(entity) — Success(null) is authoritative absence\n$output"
-        }
-        assert(
-            output.contains(
-                "} catch (e: CancellationException) { throw e } catch (e: Exception) { ReadResult.failedForInternalUse(e) }",
-            ),
-        ) {
-            "findById should rethrow cancellation and capture other exceptions as ReadResult.Failed\n$output"
+        assert(body.contains("is ReadResult.Failed -> result")) {
+            "findById should preserve runtime failures without wrapping them\n$body"
         }
     }
 
@@ -222,21 +216,18 @@ class RepoGeneratorTest {
     fun `findById enforces load privacy as a typed Root denial`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
+        val raw = generator.generate("Car", car).toString()
+        val output = raw.replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val privacy = client.currentPrivacyContext()")) {
-            "findById should capture the privacy context\n$output"
+        val body = raw.substring(
+            raw.indexOf("public fun findById"),
+            raw.indexOf("public fun delete"),
+        ).replace("\\s+".toRegex(), " ")
+        assert(body.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
+            "findById should use the same GraphLoader root-privacy lifecycle as entity queries\n$body"
         }
-        assert(output.contains("val denial = loadDenialOrNull(privacy, entity)")) {
-            "findById should evaluate LOAD privacy via the decision-returning loadDenialOrNull\n$output"
-        }
-        assert(
-            output.contains(
-                "return ReadResult.failedForInternalUse(EntPrivacyDeniedException(LoadDenialOrigin.Root, listOf(denial)))",
-            ),
-        ) {
-            "a selected-but-denied row should be Failed(EntPrivacyDeniedException(Root, listOf(denial)))\n$output"
+        assert(!body.contains("loadDenialOrNull")) {
+            "the generated repo should not duplicate LOAD-privacy evaluation\n$body"
         }
     }
 
@@ -969,8 +960,8 @@ class RepoGeneratorTest {
         assert(output.contains("val privacy = client.currentPrivacyContext()")) {
             "deleteMany should capture a privacy context for candidate-selection interceptors\n$output"
         }
-        assert(output.contains("runReadInterceptors(ReadOperation.DELETE_CANDIDATES, privacy)")) {
-            "deleteMany should fire interceptors with DELETE_CANDIDATES and its captured privacy context\n$output"
+        assert(output.contains("prepareEntityQuery(ReadOperation.DELETE_CANDIDATES, privacy)")) {
+            "deleteMany should delegate DELETE_CANDIDATES preparation to the runtime pipeline\n$output"
         }
         assert(output.contains("val effectivePredicates = spec.predicates.toList()")) {
             "deleteMany should freeze the intercepted predicate list once\n$output"

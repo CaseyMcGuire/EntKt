@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import entkt.codegen.manifest.buildMemberManifest
+import entkt.codegen.manifest.GeneratedMemberKind
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
@@ -60,6 +61,48 @@ class BuildMemberManifestTest {
         assertTrue("title" in byArtifact["Notebook"]!!)
         assertTrue("component1" in byArtifact["Notebook"]!!)
         assertTrue("component2" in byArtifact["Notebook"]!!)
+
+        assertEquals(
+            mapOf(
+                "_graphLoader" to GeneratedMemberKind.PROPERTY,
+                "_queryPreparation" to GeneratedMemberKind.PROPERTY,
+                "_queryTerminalExecutor" to GeneratedMemberKind.PROPERTY,
+                "client" to GeneratedMemberKind.PROPERTY,
+                "driver" to GeneratedMemberKind.PROPERTY,
+                "entityQuerySource" to GeneratedMemberKind.PROPERTY,
+                "orderFields" to GeneratedMemberKind.PROPERTY,
+                "predicates" to GeneratedMemberKind.PROPERTY,
+                "queryLimit" to GeneratedMemberKind.PROPERTY,
+                "queryOffset" to GeneratedMemberKind.PROPERTY,
+                "all" to GeneratedMemberKind.FUNCTION,
+                "captureEntityQuery" to GeneratedMemberKind.FUNCTION,
+                "combinedPredicate" to GeneratedMemberKind.FUNCTION,
+                "firstOrNull" to GeneratedMemberKind.FUNCTION,
+                "limit" to GeneratedMemberKind.FUNCTION,
+                "offset" to GeneratedMemberKind.FUNCTION,
+                "orderBy" to GeneratedMemberKind.FUNCTION,
+                "prepareEntityQuery" to GeneratedMemberKind.FUNCTION,
+                "rawAvg" to GeneratedMemberKind.FUNCTION,
+                "rawAvgBy" to GeneratedMemberKind.FUNCTION,
+                "rawCount" to GeneratedMemberKind.FUNCTION,
+                "rawCountBy" to GeneratedMemberKind.FUNCTION,
+                "rawExists" to GeneratedMemberKind.FUNCTION,
+                "rawMax" to GeneratedMemberKind.FUNCTION,
+                "rawMaxBy" to GeneratedMemberKind.FUNCTION,
+                "rawMin" to GeneratedMemberKind.FUNCTION,
+                "rawMinBy" to GeneratedMemberKind.FUNCTION,
+                "rawSum" to GeneratedMemberKind.FUNCTION,
+                "rawSumBy" to GeneratedMemberKind.FUNCTION,
+                "readRootQuery" to GeneratedMemberKind.FUNCTION,
+                "requireClient" to GeneratedMemberKind.FUNCTION,
+                "setEntityQuerySource" to GeneratedMemberKind.FUNCTION,
+                "where" to GeneratedMemberKind.FUNCTION,
+                "GeneratedEntityMapping" to GeneratedMemberKind.NESTED_TYPE,
+            ),
+            entries
+                .filter { it.artifact == "NotebookQuery" }
+                .associate { it.name to it.kind },
+        )
 
         // Companion — fixed (fromRow/TABLE/SCHEMA) plus column refs
         // for id + every scalar field.

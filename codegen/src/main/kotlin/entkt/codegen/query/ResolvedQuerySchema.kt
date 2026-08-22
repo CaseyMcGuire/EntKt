@@ -32,7 +32,8 @@ import entkt.schema.EntSchema
  *    targets aren't being generated are skipped everywhere, exactly
  *    as the per-site `schemaNames[edge.target] ?: continue` guards
  *    used to do;
- *  - [ResolvedQueryEdge.join] non-null ⇔ the edge supports eager loading;
+ *  - [ResolvedQueryEdge.join] non-null ⇔ the edge supports eager
+ *    loading;
  *  - [ResolvedQueryEdge.inverse] non-null ⇔ a direct edge supports
  *    `queryX()` traversal (M2M traversal never needs an inverse).
  */
@@ -105,6 +106,8 @@ internal class ResolvedQueryEdge(
      */
     val junctionEntityClass: ClassName?,
     val junctionQueryClass: ClassName?,
+    /** FK properties available on the target entity for typed edge correlation. */
+    val targetEdgeFks: List<EdgeFk>,
 ) {
     /**
      * The edge's **storage** identifier. This is the edge-lookup key in
@@ -121,6 +124,9 @@ internal class ResolvedQueryEdge(
      * wrote `queryCurator()` must not be told about `legacy_owner`.
      */
     val publicName: String get() = edge.apiName
+
+    /** Generated typed mapping for this relationship. */
+    val mappingName: String get() = "Generated${edge.apiName.generatedStem()}EdgeMapping"
 
     val isManyToMany: Boolean get() = edge.kind is EdgeKind.ManyToMany
 }
@@ -173,6 +179,7 @@ internal fun resolveQuerySchema(
             inverse = inverse,
             junctionEntityClass = junctionName?.let { ClassName(packageName, it) },
             junctionQueryClass = junctionName?.let { ClassName(packageName, "${it}Query") },
+            targetEdgeFks = computeEdgeFks(edge.target, schemaNames),
         )
     }
     return ResolvedQuerySchema(

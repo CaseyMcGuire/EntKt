@@ -104,7 +104,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     // discard the caller's bound, so `query { limit(0) }.firstOrNull()`
     // returned a row while `query { limit(0) }.rawExists()` — same
     // query, same rows — answered false. Interceptor limit mutators are
-    // silent no-ops at FIRST (InterceptorEngine.limitOpsApply), so the
+    // silent no-ops at FIRST (see limitOpsApply), so the
     // discarded value was always the caller's own.
 
     private fun seededClient(): EntClient = freshClient().also { client ->

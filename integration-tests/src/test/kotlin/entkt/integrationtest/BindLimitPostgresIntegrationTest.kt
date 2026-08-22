@@ -134,6 +134,25 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     }
 
     @Test
+    fun `rawCount captures an oversized IN failure without copying its operand`() {
+        val recording = RecordingDriver(resetAndDriver())
+        val client = EntClient(recording) {
+            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+        }
+        val virtual = VirtualIds()
+        recording.reset()
+
+        val result = client.users.query {
+            where(Predicate.Leaf<User>("id", Op.IN, virtual))
+        }.rawCount()
+
+        val failed = assertIs<ReadResult.Failed>(result)
+        assertIs<PostgresBindLimitException>(failed.exception)
+        assertEquals(0, virtual.reads, "query capture must check capacity before snapshotting")
+        assertEquals(emptyList(), recording.calls, "no SQL may be submitted")
+    }
+
+    @Test
     fun `an interceptor-added oversized IN is rejected before its snapshot with no SQL submitted`() {
         val recording = RecordingDriver(resetAndDriver())
         val virtual = VirtualIds()

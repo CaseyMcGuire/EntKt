@@ -64,11 +64,8 @@ internal val PREPARED_CREATE = ClassName("entkt.runtime.mutation", "PreparedCrea
 internal val RUN_BATCH_HOOKS_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.hook", "runBatchHooksForInternalUse")
 
-// The read-side emitters reference `kotlin.Exception` (see
-// canonicalReadBody); the mutation side must use the SAME ClassName so
-// a generated file containing both surfaces (the repo) doesn't force
-// KotlinPoet into `java.lang.Exception as LangException` import
-// aliasing.
+// Keep generated mutation code on Kotlin's Exception type so KotlinPoet does
+// not introduce a `java.lang.Exception as LangException` alias in repo files.
 internal val KOTLIN_EXCEPTION = ClassName("kotlin", "Exception")
 
 /**

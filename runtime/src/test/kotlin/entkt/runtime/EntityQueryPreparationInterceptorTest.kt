@@ -1,16 +1,21 @@
+@file:OptIn(entkt.query.EntktInternal::class)
+
 package entkt.runtime
+import entkt.runtime.driver.NoopDriver
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.RegisteredGlobalInterceptor
 import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.query.QuerySpecBuilder
-import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.QueryShape
 import entkt.runtime.query.RegisteredInterceptor
-import entkt.runtime.query.InterceptorEngine
 import entkt.runtime.query.QueryInterceptor
+import entkt.runtime.query.FrozenQuerySpec
+import entkt.runtime.query.EntInterceptorsConfig
+import entkt.runtime.query.execution.EntityQueryPreparation
+import entkt.runtime.result.EntQueryRejectedException
 
 import entkt.query.Op
 import entkt.query.OrderDirection
@@ -29,18 +34,19 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * coverage: the engine that runs the interceptor chain
+ * Coverage for the query-preparation stage that runs the interceptor chain
  * against a [QuerySpecBuilder], plus the live-vs-snapshot behavior
  * of `scope.shape`, the attribution buckets, and the
- * `scope.reject(...) → AbortQueryRejected` short-circuit.
- *
- * No generated wiring yet — these tests construct builders /
- * contexts manually and exercise the engine directly. * integration tests will pin end-to-end behavior on real generated
- * read terminals.
+ * `scope.reject(...)` short-circuit.
  */
-class InterceptorEngineTest {
+class EntityQueryPreparationInterceptorTest {
 
     private class Post
+
+    private val queryPreparation = EntityQueryPreparation(
+        driver = NoopDriver,
+        registeredInterceptors = { EntInterceptorsConfig() },
+    )
 
     private fun builder(
         caller: List<Predicate<Post>> = emptyList(),
@@ -69,7 +75,58 @@ class InterceptorEngineTest {
             flags = emptySet(),
         )
 
+    private fun <Entity : Any> evaluateInterceptors(
+        builder: QuerySpecBuilder<Entity>,
+        context: QueryContext,
+        entity: String,
+        entityInterceptors: List<RegisteredInterceptor<Entity>>,
+        globalInterceptors: List<RegisteredGlobalInterceptor>,
+    ) {
+        queryPreparation.runInterceptors(
+            builder = builder,
+            context = context,
+            entityName = entity,
+            entityInterceptors = entityInterceptors,
+            globalInterceptors = globalInterceptors,
+        )
+    }
+
+    private fun <Entity : Any> applyInterceptors(
+        builder: QuerySpecBuilder<Entity>,
+        context: QueryContext,
+        entity: String,
+        entityInterceptors: List<RegisteredInterceptor<Entity>>,
+        globalInterceptors: List<RegisteredGlobalInterceptor>,
+    ): FrozenQuerySpec<Entity> {
+        evaluateInterceptors(
+            builder,
+            context,
+            entity,
+            entityInterceptors,
+            globalInterceptors,
+        )
+        return builder.freeze()
+    }
+
     // ---- Shape live-vs-snapshot ----
+
+    @Test
+    fun `running interceptors and freezing are separate explicit steps`() {
+        val builder = builder()
+        val added = Predicate.Leaf<Post>("active", Op.EQ, true)
+
+        evaluateInterceptors(
+            builder = builder,
+            context = rootContext(),
+            entity = "Post",
+            entityInterceptors = listOf(
+                RegisteredInterceptor("active") { scope, _ -> scope.addPredicate(added) },
+            ),
+            globalInterceptors = emptyList(),
+        )
+
+        assertEquals(listOf(added), builder.freeze().predicates)
+    }
 
     @Test
     fun `scope-shape sees own addPredicate immediately (live property)`() {
@@ -80,7 +137,7 @@ class InterceptorEngineTest {
             scope.addPredicate(pX)
             captured.add(scope.shape.predicates.size)  // 1
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(),
             context = rootContext(),
             entity = "Post",
@@ -100,7 +157,7 @@ class InterceptorEngineTest {
             snapCount = snap.predicates.size           // frozen
             liveCount = scope.shape.predicates.size    // fresh read
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(),
             context = rootContext(),
             entity = "Post",
@@ -118,7 +175,7 @@ class InterceptorEngineTest {
         val predicate = Predicate.Leaf<Post>("payload", Op.EQ, equalityBytes) and
             Predicate.Leaf("payload", Op.IN, listOf(memberBytes))
 
-        val frozen = InterceptorEngine.apply(
+        val frozen = applyInterceptors(
             builder = builder(caller = listOf(predicate)),
             context = rootContext(),
             entity = "Post",
@@ -138,7 +195,7 @@ class InterceptorEngineTest {
     @Test
     fun `frozen spec detaches mutable Number operands`() {
         val operand = AtomicInteger(7)
-        val frozen = InterceptorEngine.apply(
+        val frozen = applyInterceptors(
             builder = builder(caller = listOf(Predicate.Leaf<Post>("rank", Op.EQ, operand))),
             context = rootContext(),
             entity = "Post",
@@ -164,7 +221,7 @@ class InterceptorEngineTest {
             scope.addPredicate(pY)
             bSawY = scope.shape.predicates.any { it == pY }
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(),
             context = rootContext(),
             entity = "Post",
@@ -194,7 +251,7 @@ class InterceptorEngineTest {
             observedStructural = scope.shape.structuralPredicateCount
             observedInterceptor = scope.shape.interceptorPredicateCount
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(
                 caller = listOf(
                     Predicate.Leaf<Post>("c1", Op.EQ, 1),
@@ -221,7 +278,7 @@ class InterceptorEngineTest {
         val interceptor = QueryInterceptor<Post> { scope, _ ->
             observed = scope.shape
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(
                 caller = emptyList(),
                 structural = listOf(Predicate.Leaf<Post>("id", Op.EQ, 42)),
@@ -251,7 +308,7 @@ class InterceptorEngineTest {
             snapshot = scope.shape
         }
         // Case 1: caller set a limit.
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = 50),
             context = rootContext(),
             entity = "Post",
@@ -267,7 +324,7 @@ class InterceptorEngineTest {
 
         // Case 2: caller did not set a limit; default fires.
         snapshot = null
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = null),
             context = rootContext(),
             entity = "Post",
@@ -288,7 +345,7 @@ class InterceptorEngineTest {
         var observed: Int? = null
         val cap = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(30) }
         val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = 50),
             context = rootContext(),
             entity = "Post",
@@ -303,7 +360,7 @@ class InterceptorEngineTest {
         var observed: Int? = null
         val raiser = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(100) }
         val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = 10),
             context = rootContext(),
             entity = "Post",
@@ -318,7 +375,7 @@ class InterceptorEngineTest {
         var observed: Int? = null
         val def = QueryInterceptor<Post> { scope, _ -> scope.setDefaultLimitIfAbsent(100) }
         val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = 25),
             context = rootContext(),
             entity = "Post",
@@ -335,7 +392,7 @@ class InterceptorEngineTest {
         val rej = QueryInterceptor<Post> { scope, _ -> scope.rejectIfLimitGreaterThan(-1) { "x" } }
         for (interceptor in listOf(cap, def, rej)) {
             assertFailsWith<IllegalArgumentException> {
-                InterceptorEngine.apply(
+                applyInterceptors(
                     builder = builder(),
                     context = rootContext(),
                     entity = "Post",
@@ -352,8 +409,8 @@ class InterceptorEngineTest {
             scope.rejectIfLimitGreaterThan(50) { "max 50" }
         }
         // Unbounded → reject with code max_limit_exceeded.
-        val ex = assertFailsWith<AbortQueryRejected> {
-            InterceptorEngine.apply(
+        val ex = assertFailsWith<EntQueryRejectedException> {
+            applyInterceptors(
                 builder = builder(callerLimit = null),
                 context = rootContext(),
                 entity = "Post",
@@ -361,12 +418,12 @@ class InterceptorEngineTest {
                 globalInterceptors = emptyList(),
             )
         }
-        assertEquals("max_limit_exceeded", ex.rejected.code)
-        assertEquals("rej", ex.rejected.interceptor)
-        assertEquals("max 50", ex.rejected.reason)
+        assertEquals("max_limit_exceeded", ex.code)
+        assertEquals("rej", ex.interceptor)
+        assertEquals("max 50", ex.reason)
 
         // Within max → no rejection.
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = 25),
             context = rootContext(),
             entity = "Post",
@@ -375,7 +432,7 @@ class InterceptorEngineTest {
         )
 
         // Equal to max → not greater, no rejection.
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(callerLimit = 50),
             context = rootContext(),
             entity = "Post",
@@ -397,7 +454,7 @@ class InterceptorEngineTest {
         val b = QueryInterceptor<Post> { scope, _ ->
             bSawA = scope.shape.annotations["k"] ?: "missing"
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(),
             context = rootContext(),
             entity = "Post",
@@ -416,7 +473,7 @@ class InterceptorEngineTest {
             scope.addAnnotation("k", "from-b")
             frozen.putAll(scope.shape.annotations)
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(),
             context = rootContext(),
             entity = "Post",
@@ -429,12 +486,12 @@ class InterceptorEngineTest {
     // ---- Rejection ----
 
     @Test
-    fun `reject throws AbortQueryRejected with the rejecting interceptors name and provided code`() {
+    fun `reject reports the rejecting interceptors name and provided code`() {
         val rejecter = QueryInterceptor<Post> { scope, _ ->
             scope.reject("nope", code = "broad_aggregate")
         }
-        val ex = assertFailsWith<AbortQueryRejected> {
-            InterceptorEngine.apply(
+        val rejection = assertFailsWith<EntQueryRejectedException> {
+            applyInterceptors(
                 builder = builder(),
                 context = rootContext(),
                 entity = "Post",
@@ -442,11 +499,10 @@ class InterceptorEngineTest {
                 globalInterceptors = emptyList(),
             )
         }
-        val r = ex.rejected
-        assertEquals("Post", r.entityType)
-        assertEquals("nope", r.reason)
-        assertEquals("broad_aggregate", r.code)
-        assertEquals("guard", r.interceptor)
+        assertEquals("Post", rejection.entityType)
+        assertEquals("nope", rejection.reason)
+        assertEquals("broad_aggregate", rejection.code)
+        assertEquals("guard", rejection.interceptor)
     }
 
     @Test
@@ -456,8 +512,8 @@ class InterceptorEngineTest {
         val rejecter = QueryInterceptor<Post> { scope, _ -> scope.reject("nope") }
         val b = QueryInterceptor<Post> { _, _ -> bRan = true }
         val g = GlobalQueryInterceptor { _, _ -> globalRan = true }
-        assertFailsWith<AbortQueryRejected> {
-            InterceptorEngine.apply(
+        assertFailsWith<EntQueryRejectedException> {
+            applyInterceptors(
                 builder = builder(),
                 context = rootContext(),
                 entity = "Post",
@@ -487,7 +543,7 @@ class InterceptorEngineTest {
         val g2 = GlobalQueryInterceptor { scope, _ ->
             g2ObservedAnnotations = scope.shape.annotations
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = builder(),
             context = rootContext(),
             entity = "Post",
@@ -516,7 +572,7 @@ class InterceptorEngineTest {
             scope.requireLimitAtMost(50)
             scope.addAnnotation("k", "v")
         }
-        val frozen = InterceptorEngine.apply(
+        val frozen = applyInterceptors(
             builder = b,
             context = rootContext(),
             entity = "Post",
@@ -533,7 +589,7 @@ class InterceptorEngineTest {
     fun `non-reject interceptor exceptions propagate unchanged through engine`() {
         val bug = QueryInterceptor<Post> { _, _ -> error("hook bug") }
         val ex = assertFailsWith<IllegalStateException> {
-            InterceptorEngine.apply(
+            applyInterceptors(
                 builder = builder(),
                 context = rootContext(),
                 entity = "Post",
@@ -564,7 +620,7 @@ class InterceptorEngineTest {
             scope.addPredicate(Predicate.Leaf<Post>("extra", Op.IN, interceptorIds))
             interceptorIds.add(8)
         }
-        val frozen = InterceptorEngine.apply(
+        val frozen = applyInterceptors(
             builder = b,
             context = rootContext(),
             entity = "Post",
@@ -606,7 +662,7 @@ class InterceptorEngineTest {
             observed = scope.shape.callerOrderBy
             observedHasCallerOrderBy = scope.shape.hasCallerOrderBy
         }
-        InterceptorEngine.apply(
+        applyInterceptors(
             builder = b,
             context = rootContext(),
             entity = "Post",
