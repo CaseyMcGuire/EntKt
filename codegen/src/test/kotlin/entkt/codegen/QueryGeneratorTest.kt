@@ -34,9 +34,9 @@ class QueryGeneratorTest {
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         // Every overload delegates terminal intent and typed result decoding
-        // to the shared runtime executor.
-        assert(output.contains("_queryTerminalExecutor.rawAggregate(")) {
-            "aggregate terminals should delegate to QueryTerminalExecutor\n$output"
+        // to the shared runtime evaluator.
+        assert(output.contains("_readQueryEvaluator.rawAggregate(")) {
+            "aggregate terminals should delegate to ReadQueryEvaluator\n$output"
         }
         assert(output.contains("function = AggregateFunction.SUM")) {
             "aggregate terminals should pass their operation explicitly\n$output"
@@ -147,7 +147,7 @@ class QueryGeneratorTest {
             output.contains(
                 "internal fun readRootQuery( operation: ReadOperation, maximumRows: Int?, " +
                     "structuralPredicates: List<Predicate<Car>> = emptyList(), ): " +
-                    "ReadResult<List<Car>> = _graphLoader.readRootQuery(",
+                    "ReadResult<List<Car>> = _readQueryEvaluator.readRootQuery(",
             ),
         ) {
             "the query should delegate root reads to its configured entity loader\n$output"
@@ -165,20 +165,23 @@ class QueryGeneratorTest {
         }
         assert(
             output.contains(
-                    "private val _graphLoader: GraphLoader<Car> = GraphLoader( " +
+                    "private val _readQueryEvaluator: ReadQueryEvaluator<Car> = ReadQueryEvaluator( " +
                     "driver = driver, " +
                     "privacyContextProvider = { requireClient().currentPrivacyContext() }, " +
-                    "queryPreparation = _queryPreparation, " +
-                    "loadPrivacyEvaluator = { requireClient() }, )",
+                    "registeredInterceptorsProvider = { requireClient().entityInterceptors }, " +
+                    "loadPrivacyEvaluatorProvider = { requireClient() }, )",
             ),
         ) {
-            "the graph loader should reuse the query's shared preparation dependency\n$output"
+            "generated queries should configure one runtime read evaluator\n$output"
         }
-        assert(output.contains("private val _queryPreparation: EntityQueryPreparation")) {
-            "query preparation should be configured once per generated query\n$output"
+        assert(!output.contains("private val _queryPreparation")) {
+            "generated queries should not assemble query-preparation dependencies\n$output"
         }
-        assert(output.contains("private val _queryTerminalExecutor: QueryTerminalExecutor<Car>")) {
-            "non-entity terminals should share a runtime executor\n$output"
+        assert(!output.contains("private val _graphLoader")) {
+            "generated queries should not construct graph loaders separately\n$output"
+        }
+        assert(!output.contains("private val _queryTerminalExecutor")) {
+            "generated queries should not construct raw-terminal executors separately\n$output"
         }
         assert(!output.contains("GeneratedEntitySelection")) {
             "the captured entity mapping now owns table metadata and decoding\n$output"
@@ -544,10 +547,10 @@ class QueryGeneratorTest {
         assert(!output.contains("private fun requireNoSelectedEdges")) {
             "selected-edge validation should live in runtime, not each generated query\n$output"
         }
-        assert(output.contains("_queryTerminalExecutor.rawCount { captureEntityQuery() }")) {
+        assert(output.contains("_readQueryEvaluator.rawCount { captureEntityQuery() }")) {
             "rawCount should delegate its selected-edge validation to runtime\n$output"
         }
-        assert(output.contains("_queryTerminalExecutor.rawExists { captureEntityQuery() }")) {
+        assert(output.contains("_readQueryEvaluator.rawExists { captureEntityQuery() }")) {
             "rawExists should delegate its selected-edge validation to runtime\n$output"
         }
         // Traversal captures the source once, validates that captured graph,
@@ -671,7 +674,7 @@ class QueryGeneratorTest {
         assert(output.contains("public fun rawCount(): ReadResult<Long>")) {
             "Should generate rawCount(): ReadResult<Long>\n$output"
         }
-        assert(output.contains("= _queryTerminalExecutor.rawCount { captureEntityQuery() }")) {
+        assert(output.contains("= _readQueryEvaluator.rawCount { captureEntityQuery() }")) {
             "rawCount execution and failure capture should be runtime-owned\n$output"
         }
     }
@@ -694,7 +697,7 @@ class QueryGeneratorTest {
         assert(output.contains("public fun rawExists(): ReadResult<Boolean>")) {
             "Should generate rawExists(): ReadResult<Boolean>\n$output"
         }
-        assert(output.contains("= _queryTerminalExecutor.rawExists { captureEntityQuery() }")) {
+        assert(output.contains("= _readQueryEvaluator.rawExists { captureEntityQuery() }")) {
             "rawExists probe shape and failure capture should be runtime-owned\n$output"
         }
     }
@@ -725,8 +728,8 @@ class QueryGeneratorTest {
         ) {
             "all() should preserve its public type while delegating to runtime\n$output"
         }
-        assert(output.contains("loadPrivacyEvaluator = { requireClient() }")) {
-            "the loader should lazily obtain the runtime-wide typed privacy evaluator\n$output"
+        assert(output.contains("loadPrivacyEvaluatorProvider = { requireClient() }")) {
+            "the evaluator should lazily obtain the runtime-wide typed privacy evaluator\n$output"
         }
         assert(!output.contains("query.loadEdges(entities, privacyContext)")) {
             "generated queries should not retain a second graph-loading algorithm\n$output"

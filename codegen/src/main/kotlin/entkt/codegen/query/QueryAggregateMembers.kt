@@ -31,7 +31,7 @@ internal fun buildRawCount(): FunSpec = FunSpec.builder("rawCount")
         "Count matching rows without materializing entities or evaluating LOAD privacy.\n",
     )
     .returns(READ_RESULT.parameterizedBy(LONG))
-    .addStatement("return _queryTerminalExecutor.rawCount { captureEntityQuery() }")
+    .addStatement("return _readQueryEvaluator.rawCount { captureEntityQuery() }")
     .build()
 
 /** Generate the raw existence terminal as a thin runtime delegation. */
@@ -40,7 +40,7 @@ internal fun buildRawExists(): FunSpec = FunSpec.builder("rawExists")
         "Test whether the configured storage window contains a row without evaluating LOAD privacy.\n",
     )
     .returns(READ_RESULT.parameterizedBy(BOOLEAN))
-    .addStatement("return _queryTerminalExecutor.rawExists { captureEntityQuery() }")
+    .addStatement("return _readQueryEvaluator.rawExists { captureEntityQuery() }")
     .build()
 
 /** Generate typed raw aggregate terminals over the shared runtime aggregate execution. */
@@ -62,7 +62,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         groupBy: String,
         transform: CodeBlock,
     ): CodeBlock = CodeBlock.builder()
-        .add("return _queryTerminalExecutor.rawAggregate(\n")
+        .add("return _readQueryEvaluator.rawAggregate(\n")
         .indent()
         .add("captureQuery = { captureEntityQuery() },\n")
         .add("terminal = %S,\n", terminal)

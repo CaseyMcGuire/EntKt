@@ -10,11 +10,8 @@ import com.squareup.kotlinpoet.asClassName
 
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
-private val GRAPH_LOADER = ClassName("entkt.runtime.query.execution", "GraphLoader")
-private val QUERY_TERMINAL_EXECUTOR =
-    ClassName("entkt.runtime.query.execution", "QueryTerminalExecutor")
-private val ENTITY_QUERY_PREPARATION =
-    ClassName("entkt.runtime.query.execution", "EntityQueryPreparation")
+private val READ_QUERY_EVALUATOR =
+    ClassName("entkt.runtime.query.execution", "ReadQueryEvaluator")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val FROZEN_QUERY_SPEC = ClassName("entkt.runtime.query", "FrozenQuerySpec")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -85,7 +82,7 @@ internal fun buildFirstOrNull(entityClass: ClassName): FunSpec {
         .build()
 }
 
-/** Capture the recursive query and delegate its terminal intent to the graph loader. */
+/** Capture the recursive query and delegate its terminal intent to the read evaluator. */
 internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
     val entityList = List::class.asClassName().parameterizedBy(entityClass)
     return FunSpec.builder("readRootQuery")
@@ -103,7 +100,7 @@ internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
         )
         .returns(READ_RESULT.parameterizedBy(entityList))
         .addCode(
-            "return _graphLoader.readRootQuery(\n" +
+            "return _readQueryEvaluator.readRootQuery(\n" +
                 "  captureQuery = { captureEntityQuery(structuralPredicates) },\n" +
                 "  operation = operation,\n" +
                 "  maximumRows = maximumRows,\n" +
@@ -121,66 +118,29 @@ internal fun buildPrepareEntityQuery(entityClass: ClassName): FunSpec =
         .addParameter("privacyContext", PRIVACY_CONTEXT)
         .returns(FROZEN_QUERY_SPEC.parameterizedBy(entityClass))
         .addStatement(
-            "return _queryPreparation.prepare(captureEntityQuery(), operation, privacyContext)",
+            "return _readQueryEvaluator.prepareEntityQuery(captureEntityQuery(), operation, privacyContext)",
         )
         .build()
 
-/** Shared query preparation used by every generated terminal delegate. */
-internal fun buildQueryPreparationProperty(): PropertySpec =
-    PropertySpec.builder("_queryPreparation", ENTITY_QUERY_PREPARATION)
-        .addModifiers(KModifier.PRIVATE)
-        .initializer(
-            CodeBlock.builder()
-                .add("%T(\n", ENTITY_QUERY_PREPARATION)
-                .indent()
-                .add("driver = driver,\n")
-                .add("registeredInterceptors = { requireClient().entityInterceptors },\n")
-                .unindent()
-                .add(")")
-                .build(),
-        )
-        .build()
-
-/** Graph loader and its stable dependencies for this generated query instance. */
-internal fun buildGraphLoaderProperty(
+/** Single runtime evaluator used by every generated read path. */
+internal fun buildReadQueryEvaluatorProperty(
     entityClass: ClassName,
 ): PropertySpec =
     PropertySpec.builder(
-        "_graphLoader",
-        GRAPH_LOADER.parameterizedBy(entityClass),
+        "_readQueryEvaluator",
+        READ_QUERY_EVALUATOR.parameterizedBy(entityClass),
     )
         .addModifiers(KModifier.PRIVATE)
         .initializer(
             CodeBlock.builder()
-                .add("%T(\n", GRAPH_LOADER)
+                .add("%T(\n", READ_QUERY_EVALUATOR)
                 .indent()
                 .add("driver = driver,\n")
                 .add("privacyContextProvider = { requireClient().currentPrivacyContext() },\n")
-                .add("queryPreparation = _queryPreparation,\n")
-                .add("loadPrivacyEvaluator = { requireClient() },\n")
+                .add("registeredInterceptorsProvider = { requireClient().entityInterceptors },\n")
+                .add("loadPrivacyEvaluatorProvider = { requireClient() },\n")
                 .unindent()
                 .add(")")
                 .build(),
         )
         .build()
-
-/** Non-entity terminals for this generated query instance. */
-internal fun buildQueryTerminalExecutorProperty(
-    entityClass: ClassName,
-): PropertySpec = PropertySpec.builder(
-    "_queryTerminalExecutor",
-    QUERY_TERMINAL_EXECUTOR.parameterizedBy(entityClass),
-)
-    .addModifiers(KModifier.PRIVATE)
-    .initializer(
-        CodeBlock.builder()
-            .add("%T(\n", QUERY_TERMINAL_EXECUTOR)
-            .indent()
-            .add("driver = driver,\n")
-            .add("privacyContextProvider = { requireClient().currentPrivacyContext() },\n")
-            .add("queryPreparation = _queryPreparation,\n")
-            .unindent()
-            .add(")")
-            .build(),
-    )
-    .build()
