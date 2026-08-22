@@ -32,7 +32,7 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
 ) {
     private val queryCompiler = ReadQueryCompiler(
         driver = driver,
-        registeredInterceptors = registeredInterceptorsProvider,
+        registeredInterceptorsProvider = registeredInterceptorsProvider,
     )
 
     private val entityGraphLoader = EntityGraphLoader(
