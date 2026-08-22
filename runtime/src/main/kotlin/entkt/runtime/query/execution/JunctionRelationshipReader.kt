@@ -7,13 +7,10 @@ import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.EdgeSelection
-import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeStorage
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ToManyEdgeMapping
-import kotlin.reflect.KClass
 
 /**
  * Loads one many-to-many relationship through its junction entity.
@@ -46,9 +43,7 @@ internal class JunctionRelationshipReader(
      * @param selection selected many-to-many edge and recursively captured target query.
      * @param sources source entities whose junction memberships should be loaded together.
      * @param storage typed junction metadata for the selected edge.
-     * @param privacyContext viewer context supplied to junction and target interceptors.
-     * @param rootEntity entity type at the root of the complete graph read.
-     * @param targetPath traversal path from the root entity through [selection].
+     * @param context viewer and traversal state for this selected relationship.
      * @return the deduplicated target batch and its deferred source-attachment operation.
      */
     fun <
@@ -61,9 +56,7 @@ internal class JunctionRelationshipReader(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
         storage: EdgeStorage.Junction<Source, Target, JunctionEntity, SourceKey, TargetKey>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target> {
         // Validate the generated edge shape and collect every source key for one batched read.
         val edge = selection.edge as? ToManyEdgeMapping<Source, Target>
@@ -74,9 +67,7 @@ internal class JunctionRelationshipReader(
         val junctionRead = readJunction(
             storage = storage,
             sourceKeys = sourceKeys,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            targetPath = targetPath,
+            context = context,
         )
 
         // Compile and read all discovered targets in the selected target query's order.
@@ -84,9 +75,7 @@ internal class JunctionRelationshipReader(
             query = selection.target,
             targetColumn = "id",
             targetKeys = junctionRead.targetKeys,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            path = targetPath,
+            context = context,
         )
         val targetsInQueryOrder = readTargets(
             entity = selection.target.entity,
@@ -152,15 +141,11 @@ internal class JunctionRelationshipReader(
         > readJunction(
         storage: EdgeStorage.Junction<Source, Target, JunctionEntity, SourceKey, TargetKey>,
         sourceKeys: List<SourceKey>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): JunctionRead<SourceKey, TargetKey> {
         val junctionQuery = queryCompiler.compileJunction(
             entity = storage.junctionEntity,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            path = targetPath,
+            context = context,
             structuralPredicates = listOf(
                 Predicate.Leaf(storage.sourceColumn, Op.IN, sourceKeys),
             ),

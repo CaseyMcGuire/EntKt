@@ -4,6 +4,7 @@ package entkt.runtime.query.execution
 
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EntityQuery
@@ -24,10 +25,31 @@ internal interface GraphStorage {
     fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target>
+}
+
+/** Read state shared by all storage work for one selected relationship. */
+internal class RelationshipReadContext(
+    /** Viewer context supplied to relationship read interceptors. */
+    val privacyContext: PrivacyContext,
+
+    /** Entity type at the root of the complete graph read. */
+    val rootEntity: KClass<*>,
+
+    /** Selected-edge path from the root to this relationship target. */
+    val interceptorPath: List<EdgeStep>,
+) {
+    /** Return the read context for a child selected edge. */
+    fun child(edge: EdgeMapping<*, *>): RelationshipReadContext = RelationshipReadContext(
+        privacyContext = privacyContext,
+        rootEntity = rootEntity,
+        interceptorPath = interceptorPath + EdgeStep(
+            source = edge.source.entityClass,
+            edgeName = edge.name,
+            target = edge.target.entityClass,
+        ),
+    )
 }
 
 /** A loaded target batch and the correlation needed to attach it to its sources. */

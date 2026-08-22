@@ -141,6 +141,11 @@ class JunctionRelationshipReaderTest {
 
     private val privacyContext = PrivacyContext(Viewer.User(7L))
     private val targetPath = listOf(EdgeStep(Source::class, "targets", Target::class))
+    private val relationshipContext = RelationshipReadContext(
+        privacyContext = privacyContext,
+        rootEntity = Source::class,
+        interceptorPath = targetPath,
+    )
 
     @Test
     fun `loads memberships then correlates windowed targets in target-query order`() {
@@ -170,9 +175,7 @@ class JunctionRelationshipReaderTest {
             ),
             sources = listOf(Source(10), Source(20)),
             storage = TargetsEdge.storageStrategy,
-            privacyContext = privacyContext,
-            rootEntity = Source::class,
-            targetPath = targetPath,
+            context = relationshipContext,
         )
 
         assertEquals(listOf(4L, 3L), relationship.targets.map(Target::id))
@@ -208,9 +211,7 @@ class JunctionRelationshipReaderTest {
             ),
             sources = emptyList(),
             storage = TargetsEdge.storageStrategy,
-            privacyContext = privacyContext,
-            rootEntity = Source::class,
-            targetPath = targetPath,
+            context = relationshipContext,
         )
 
         assertEquals(emptyList(), relationship.targets)

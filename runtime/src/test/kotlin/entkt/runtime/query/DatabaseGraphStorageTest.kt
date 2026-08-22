@@ -18,6 +18,7 @@ import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.DatabaseGraphStorage
 import entkt.runtime.query.execution.ReadQueryCompiler
+import entkt.runtime.query.execution.RelationshipReadContext
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -289,9 +290,9 @@ class DatabaseGraphStorageTest {
                 EdgeVisibility.REQUIRE_VISIBLE,
             ),
             sources = listOf(Parent(10, null), Parent(20, null)),
-            privacyContext = privacyContext,
-            rootEntity = Parent::class,
-            targetPath = listOf(EdgeStep(Parent::class, "children", Child::class)),
+            context = relationshipContext(
+                EdgeStep(Parent::class, "children", Child::class),
+            ),
         )
 
         val loaded = relationship.attach(relationship.targets)
@@ -327,9 +328,9 @@ class DatabaseGraphStorageTest {
                 EdgeVisibility.REQUIRE_VISIBLE,
             ),
             sources = listOf(Parent(10, null), Parent(20, null)),
-            privacyContext = privacyContext,
-            rootEntity = Parent::class,
-            targetPath = listOf(EdgeStep(Parent::class, "children", Child::class)),
+            context = relationshipContext(
+                EdgeStep(Parent::class, "children", Child::class),
+            ),
         )
 
         val loaded = relationship.attach(relationship.targets)
@@ -361,20 +362,28 @@ class DatabaseGraphStorageTest {
         var sources = listOf(Parent(10, 7), Parent(20, 8))
 
         val profiles = storage.loadRelationship(
-            EdgeSelection(ProfileEdge, query(ProfileMapping), EdgeVisibility.REQUIRE_VISIBLE),
-            sources,
-            privacyContext,
-            Parent::class,
-            listOf(EdgeStep(Parent::class, "profile", Profile::class)),
+            selection = EdgeSelection(
+                ProfileEdge,
+                query(ProfileMapping),
+                EdgeVisibility.REQUIRE_VISIBLE,
+            ),
+            sources = sources,
+            context = relationshipContext(
+                EdgeStep(Parent::class, "profile", Profile::class),
+            ),
         )
         sources = profiles.attach(profiles.targets)
 
         val favorites = storage.loadRelationship(
-            EdgeSelection(FavoriteEdge, query(FavoriteMapping), EdgeVisibility.REQUIRE_VISIBLE),
-            sources,
-            privacyContext,
-            Parent::class,
-            listOf(EdgeStep(Parent::class, "favorite", Favorite::class)),
+            selection = EdgeSelection(
+                FavoriteEdge,
+                query(FavoriteMapping),
+                EdgeVisibility.REQUIRE_VISIBLE,
+            ),
+            sources = sources,
+            context = relationshipContext(
+                EdgeStep(Parent::class, "favorite", Favorite::class),
+            ),
         )
         sources = favorites.attach(favorites.targets)
 
@@ -384,10 +393,10 @@ class DatabaseGraphStorageTest {
                 query(TagMapping, orderBy = listOf(OrderField("id", OrderDirection.ASC))),
                 EdgeVisibility.REQUIRE_VISIBLE,
             ),
-            sources,
-            privacyContext,
-            Parent::class,
-            listOf(EdgeStep(Parent::class, "tags", Tag::class)),
+            sources = sources,
+            context = relationshipContext(
+                EdgeStep(Parent::class, "tags", Tag::class),
+            ),
         )
         sources = tags.attach(tags.targets)
 
@@ -414,6 +423,13 @@ class DatabaseGraphStorageTest {
             registeredInterceptorsProvider = { interceptors },
         ),
     )
+
+    private fun relationshipContext(step: EdgeStep): RelationshipReadContext =
+        RelationshipReadContext(
+            privacyContext = privacyContext,
+            rootEntity = Parent::class,
+            interceptorPath = listOf(step),
+        )
 
     private fun <Entity : EntEntity<*>> query(
         mapping: EntityMapping<Entity>,

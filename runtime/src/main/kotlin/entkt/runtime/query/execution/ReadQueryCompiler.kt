@@ -64,11 +64,9 @@ class ReadQueryCompiler(
     }
 
     /** Compile one selected edge target with its relationship and traversal context. */
-    fun <Entity : EntEntity<*>> compileSelectedEdge(
+    internal fun <Entity : EntEntity<*>> compileSelectedEdge(
         query: EntityQuery<Entity>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        path: List<EdgeStep>,
+        context: RelationshipReadContext,
         structuralPredicates: List<Predicate<Entity>>,
         structuralSingleBindTransport: Boolean = false,
     ): StorageQuerySpec<Entity> = compileRelatedNode(
@@ -78,28 +76,22 @@ class ReadQueryCompiler(
         limit = query.limit,
         offset = query.offset,
         operation = ReadOperation.EAGER_LOAD,
-        privacyContext = privacyContext,
-        rootEntity = rootEntity,
-        path = path,
+        context = context,
         structuralPredicates = structuralPredicates,
         appendPrimaryKeyOrder = true,
         structuralSingleBindTransport = structuralSingleBindTransport,
     )
 
     /** Compile a selected relationship target constrained to the discovered target keys. */
-    fun <Entity : EntEntity<*>> compileRelationshipTargetQuery(
+    internal fun <Entity : EntEntity<*>> compileRelationshipTargetQuery(
         query: EntityQuery<Entity>,
         targetColumn: String,
         targetKeys: Collection<*>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        path: List<EdgeStep>,
+        context: RelationshipReadContext,
         structuralSingleBindTransport: Boolean = false,
     ): StorageQuerySpec<Entity> = compileSelectedEdge(
         query = query,
-        privacyContext = privacyContext,
-        rootEntity = rootEntity,
-        path = path,
+        context = context,
         structuralPredicates = listOf(
             Predicate.Leaf(targetColumn, Op.IN, targetKeys),
         ),
@@ -107,11 +99,9 @@ class ReadQueryCompiler(
     )
 
     /** Compile the junction-discovery read for a selected many-to-many edge. */
-    fun <Entity : EntEntity<*>> compileJunction(
+    internal fun <Entity : EntEntity<*>> compileJunction(
         entity: EntityMapping<Entity>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        path: List<EdgeStep>,
+        context: RelationshipReadContext,
         structuralPredicates: List<Predicate<Entity>>,
     ): StorageQuerySpec<Entity> = compileRelatedNode(
         entity = entity,
@@ -120,9 +110,7 @@ class ReadQueryCompiler(
         limit = null,
         offset = null,
         operation = ReadOperation.EAGER_JUNCTION,
-        privacyContext = privacyContext,
-        rootEntity = rootEntity,
-        path = path,
+        context = context,
         structuralPredicates = structuralPredicates,
         appendPrimaryKeyOrder = false,
         structuralSingleBindTransport = false,
@@ -135,27 +123,25 @@ class ReadQueryCompiler(
         limit: Int?,
         offset: Int?,
         operation: ReadOperation,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        path: List<EdgeStep>,
+        context: RelationshipReadContext,
         structuralPredicates: List<Predicate<Entity>>,
         appendPrimaryKeyOrder: Boolean,
         structuralSingleBindTransport: Boolean,
     ): StorageQuerySpec<Entity> {
-        val step = path.lastOrNull()
+        val step = context.interceptorPath.lastOrNull()
         val effectiveOrder = if (appendPrimaryKeyOrder && orderBy.none { it.field == "id" }) {
             orderBy + OrderField("id", OrderDirection.ASC)
         } else {
             orderBy
         }
-        val context = QueryContext(
-            privacy = privacyContext,
+        val queryContext = QueryContext(
+            privacy = context.privacyContext,
             operation = operation,
-            rootEntity = rootEntity,
+            rootEntity = context.rootEntity,
             currentEntity = entity.entityClass,
             sourceEntity = step?.source,
             edgeName = step?.edgeName,
-            path = immutablePath(path),
+            path = immutablePath(context.interceptorPath),
             flags = emptySet(),
         )
         return compileStorageQuery(
@@ -167,7 +153,7 @@ class ReadQueryCompiler(
             offset = offset,
             structuralPredicates = structuralPredicates,
             initialAnnotations = emptyMap(),
-            context = context,
+            context = queryContext,
             structuralSingleBindTransport = structuralSingleBindTransport,
         )
     }

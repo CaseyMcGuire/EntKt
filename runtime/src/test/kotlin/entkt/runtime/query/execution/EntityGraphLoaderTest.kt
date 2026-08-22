@@ -81,14 +81,12 @@ class EntityGraphLoaderTest {
         override fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
             selection: EdgeSelection<Source, Target>,
             sources: List<Source>,
-            privacyContext: PrivacyContext,
-            rootEntity: KClass<*>,
-            targetPath: List<EdgeStep>,
+            context: RelationshipReadContext,
         ): LoadedRelationship<Source, Target> {
             val edgeName = selection.edge.name
             events += "load:$edgeName"
-            rootEntitiesByRelationship += rootEntity
-            paths += targetPath.map(EdgeStep::edgeName)
+            rootEntitiesByRelationship += context.rootEntity
+            paths += context.interceptorPath.map(EdgeStep::edgeName)
 
             val edge = selection.edge as? ToManyEdgeMapping<Source, Target>
                 ?: error("Fake graph storage only supports to-many test edges")

@@ -56,8 +56,7 @@ internal class EntityGraphLoader(
             query = query,
             entities = rootEntities,
             denialPolicy = LoadDenialPolicy.FailRoot,
-            privacyContext = privacyContext,
-            context = rootContext(query),
+            context = rootContext(query, privacyContext),
         )
     }
 
@@ -66,19 +65,17 @@ internal class EntityGraphLoader(
         query: EntityQuery<Node>,
         entities: List<Node>,
         denialPolicy: LoadDenialPolicy,
-        privacyContext: PrivacyContext,
         context: NodeEvaluationContext,
     ): List<Node> {
         val authorizedEntities = evaluateLoadPrivacy(
             entity = query.entity,
             entities = entities,
             denialPolicy = denialPolicy,
-            privacyContext = privacyContext,
+            privacyContext = context.read.privacyContext,
         )
         return evaluateSelectedRelationships(
             query = query,
             entities = authorizedEntities,
-            privacyContext = privacyContext,
             context = context,
         )
     }
@@ -87,7 +84,6 @@ internal class EntityGraphLoader(
     private fun <Node : EntEntity<*>> evaluateSelectedRelationships(
         query: EntityQuery<Node>,
         entities: List<Node>,
-        privacyContext: PrivacyContext,
         context: NodeEvaluationContext,
     ): List<Node> {
         var entitiesWithRelationships = entities
@@ -95,7 +91,6 @@ internal class EntityGraphLoader(
             entitiesWithRelationships = evaluateSelection(
                 selection,
                 entitiesWithRelationships,
-                privacyContext,
                 context,
             )
         }
@@ -107,12 +102,10 @@ internal class EntityGraphLoader(
     private fun <Source : EntEntity<*>> evaluateSelection(
         selection: EdgeSelection<Source, *>,
         sources: List<Source>,
-        privacyContext: PrivacyContext,
         context: NodeEvaluationContext,
     ): List<Source> = evaluateTypedSelection(
         selection as EdgeSelection<Source, EntEntity<*>>,
         sources,
-        privacyContext,
         context,
     )
 
@@ -120,16 +113,13 @@ internal class EntityGraphLoader(
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> evaluateTypedSelection(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
-        privacyContext: PrivacyContext,
         context: NodeEvaluationContext,
     ): List<Source> {
         val childContext = context.child(selection)
         val loadedRelationship = storage.loadRelationship(
             selection = selection,
             sources = sources,
-            privacyContext = privacyContext,
-            rootEntity = childContext.rootEntity,
-            targetPath = childContext.interceptorPath,
+            context = childContext.read,
         )
         val evaluatedTargets = evaluateEntityBatch(
             query = selection.target,
@@ -140,7 +130,6 @@ internal class EntityGraphLoader(
                     LoadDenialOrigin.SelectedEdgePath(childContext.denialPath),
                 )
             },
-            privacyContext = privacyContext,
             context = childContext,
         )
         return loadedRelationship.attach(evaluatedTargets)
@@ -203,22 +192,17 @@ private sealed interface LoadDenialPolicy {
     data object FilterDeniedTargets : LoadDenialPolicy
 }
 
-/** Root identity and traversal paths carried through recursive node evaluation. */
-private data class NodeEvaluationContext(
-    val rootEntity: KClass<*>,
-    val interceptorPath: List<EdgeStep>,
+/** Relationship read state and privacy-denial path for one graph node. */
+private class NodeEvaluationContext(
+    val read: RelationshipReadContext,
     val denialPath: List<SelectedEdgeStep>,
 ) {
     fun <Source : EntEntity<*>, Target : EntEntity<*>> child(
         selection: EdgeSelection<Source, Target>,
     ): NodeEvaluationContext {
         val edge = selection.edge
-        return copy(
-            interceptorPath = interceptorPath + EdgeStep(
-                source = edge.source.entityClass,
-                edgeName = edge.name,
-                target = edge.target.entityClass,
-            ),
+        return NodeEvaluationContext(
+            read = read.child(edge),
             denialPath = denialPath + SelectedEdgeStep(
                 sourceEntityType = edge.source.entityName,
                 edgeName = edge.name,
@@ -244,8 +228,14 @@ private fun traversalPath(query: EntityQuery<*>): List<EdgeStep> = when (val sou
     )
 }
 
-private fun rootContext(query: EntityQuery<*>): NodeEvaluationContext = NodeEvaluationContext(
-    rootEntity = rootEntity(query),
-    interceptorPath = traversalPath(query),
+private fun rootContext(
+    query: EntityQuery<*>,
+    privacyContext: PrivacyContext,
+): NodeEvaluationContext = NodeEvaluationContext(
+    read = RelationshipReadContext(
+        privacyContext = privacyContext,
+        rootEntity = rootEntity(query),
+        interceptorPath = traversalPath(query),
+    ),
     denialPath = emptyList(),
 )

@@ -11,7 +11,6 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.EdgeSelection
-import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeStorage
 import entkt.runtime.query.EagerWindowStrategy
 import entkt.runtime.query.EntityQuery
@@ -19,7 +18,6 @@ import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ToManyEdgeMapping
 import entkt.runtime.query.ToOneEdgeMapping
-import kotlin.reflect.KClass
 
 /**
  * Reads root entities and selected relationships from the database for entity-graph evaluation.
@@ -91,44 +89,34 @@ internal class DatabaseGraphStorage(
      *
      * @param selection selected edge and recursively captured target query.
      * @param sources source entities whose relationship targets should be loaded together.
-     * @param privacyContext viewer context supplied to target and junction interceptors.
-     * @param rootEntity entity type at the root of the complete graph read.
-     * @param targetPath traversal path from the root entity through [selection].
+     * @param context viewer and traversal state for this selected relationship.
      * @return the deduplicated target batch and its deferred source-attachment operation.
      */
     @Suppress("UNCHECKED_CAST")
     override fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target> = when (val storage = selection.edge.storageStrategy) {
         is EdgeStorage.ForeignKeyOnSource<*, *, *> -> loadForeignKeyOnSource(
             selection,
             sources,
             storage,
-            privacyContext,
-            rootEntity,
-            targetPath,
+            context,
         )
 
         is EdgeStorage.ForeignKeyOnTarget<*, *, *> -> loadForeignKeyOnTarget(
             selection,
             sources,
             storage,
-            privacyContext,
-            rootEntity,
-            targetPath,
+            context,
         )
 
         is EdgeStorage.Junction<*, *, *, *, *> -> junctionRelationshipReader.loadRelationship(
             selection = selection,
             sources = sources,
             storage = storage as EdgeStorage.Junction<Source, Target, *, *, *>,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            targetPath = targetPath,
+            context = context,
         )
     }
 
@@ -138,9 +126,7 @@ internal class DatabaseGraphStorage(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
         untypedStorage: EdgeStorage.ForeignKeyOnSource<*, *, *>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target> {
         val storage = untypedStorage as EdgeStorage.ForeignKeyOnSource<Source, Target, Any>
         val edge = selection.edge as? ToOneEdgeMapping<Source, Target>
@@ -150,9 +136,7 @@ internal class DatabaseGraphStorage(
             query = selection.target,
             targetColumn = storage.targetColumn,
             targetKeys = targetKeys,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            path = targetPath,
+            context = context,
         )
         val targets = readToOneRelationshipTargets(
             entity = selection.target.entity,
@@ -174,9 +158,7 @@ internal class DatabaseGraphStorage(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
         untypedStorage: EdgeStorage.ForeignKeyOnTarget<*, *, *>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target> {
         val storage = untypedStorage as EdgeStorage.ForeignKeyOnTarget<Source, Target, Any>
         val sourceKeys = sources.map(storage.sourceKey)
@@ -187,9 +169,7 @@ internal class DatabaseGraphStorage(
                 storage,
                 sources,
                 sourceKeys,
-                privacyContext,
-                rootEntity,
-                targetPath,
+                context,
             )
 
             is ToManyEdgeMapping<Source, Target> -> loadToManyForeignKeyOnTarget(
@@ -198,9 +178,7 @@ internal class DatabaseGraphStorage(
                 storage,
                 sources,
                 sourceKeys,
-                privacyContext,
-                rootEntity,
-                targetPath,
+                context,
             )
 
             else -> error("Foreign-key-on-target edge '${edge.name}' must be to-one or to-many")
@@ -214,17 +192,13 @@ internal class DatabaseGraphStorage(
         storage: EdgeStorage.ForeignKeyOnTarget<Source, Target, Any>,
         sources: List<Source>,
         sourceKeys: List<Any>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target> {
         val targetQuery = queryCompiler.compileRelationshipTargetQuery(
             query = selection.target,
             targetColumn = storage.targetColumn,
             targetKeys = sourceKeys,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            path = targetPath,
+            context = context,
         )
         val offset = targetQuery.offset ?: 0
         val limit = targetQuery.limit ?: Int.MAX_VALUE
@@ -253,18 +227,14 @@ internal class DatabaseGraphStorage(
         storage: EdgeStorage.ForeignKeyOnTarget<Source, Target, Any>,
         sources: List<Source>,
         sourceKeys: List<Any>,
-        privacyContext: PrivacyContext,
-        rootEntity: KClass<*>,
-        targetPath: List<EdgeStep>,
+        context: RelationshipReadContext,
     ): LoadedRelationship<Source, Target> {
         val capability = driver.directToManyWindowCapability()
         val targetQuery = queryCompiler.compileRelationshipTargetQuery(
             query = selection.target,
             targetColumn = storage.targetColumn,
             targetKeys = sourceKeys,
-            privacyContext = privacyContext,
-            rootEntity = rootEntity,
-            path = targetPath,
+            context = context,
             structuralSingleBindTransport = capability == DirectToManyWindowCapability.NATIVE,
         )
         val relatedRows = executeDirectToMany(
