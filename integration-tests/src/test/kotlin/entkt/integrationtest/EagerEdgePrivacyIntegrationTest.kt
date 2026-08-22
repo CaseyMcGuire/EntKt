@@ -28,9 +28,9 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.SelectedEdgeStep
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
@@ -41,7 +41,7 @@ import kotlin.test.assertTrue
 
 /**
  * Strict eager-edge privacy: a LOAD-denied eager target makes the
- * ENTIRE root terminal `Failed(EntPrivacyDeniedException(EagerEdge(path),
+ * ENTIRE root terminal `Failed(EntPrivacyDeniedException(SelectedEdgePath(steps),
  * exactly one keyed denial))` — no partial graph, no silent omission.
  * The path names every traversed source type, edge name, and target
  * type (schema names only — no hydrated data). Targets within an edge
@@ -72,7 +72,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
     // ---- to-one eager denial ----
 
     @Test
-    fun `a denied to-one eager target fails the root terminal with an EagerEdge origin`() {
+    fun `a denied to-one eager target fails with a SelectedEdgePath origin`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
@@ -96,8 +96,8 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
-        assertEquals(listOf(EagerEdgeStep("Note", "author", "User")), origin.path)
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
+        assertEquals(listOf(SelectedEdgeStep("Note", "author", "User")), origin.steps)
         // Exactly one keyed denial, no hydrated data.
         assertEquals(1, ex.denials.size)
         val denial = ex.denials.single()
@@ -145,8 +145,8 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
-        assertEquals(listOf(EagerEdgeStep("Post", "tags", "Tag")), origin.path)
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
+        assertEquals(listOf(SelectedEdgeStep("Post", "tags", "Tag")), origin.steps)
         // Exactly ONE denial — the first denied target in traversal
         // order — even though the scalar adapter evaluated and denied
         // both targets in the batch.
@@ -206,7 +206,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         )
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(1, ex.denials.size)
         assertEquals(firstDeniedId, ex.denials.single().entityKey.value)
     }
@@ -250,13 +250,13 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(
             listOf(
-                EagerEdgeStep("Post", "tags", "Tag"),
-                EagerEdgeStep("Tag", "posts", "Post"),
+                SelectedEdgeStep("Post", "tags", "Tag"),
+                SelectedEdgeStep("Tag", "posts", "Post"),
             ),
-            origin.path,
+            origin.steps,
         )
         assertEquals(1, ex.denials.size)
         assertEquals(hidden.id, ex.denials.single().entityKey.value)
@@ -309,8 +309,8 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
-        assertEquals("articles", origin.path.single().edgeName)
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
+        assertEquals("articles", origin.steps.single().edgeName)
         assertEquals(1, ex.denials.size)
         assertEquals(0, groupRuleEvaluations, "later eager edges must not run after the first denial")
     }
@@ -352,7 +352,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
     // ---- visibleOrNull never maps eager denial ----
 
     @Test
-    fun `visibleOrNull propagates an EagerEdge denial unchanged`() {
+    fun `visibleOrNull propagates a SelectedEdgePath denial unchanged`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
             privacyContext { PrivacyContext(Viewer.User(1L)) }
@@ -376,11 +376,15 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         // apparent absence.
         val result = client.notes.query { loadAuthor() }.firstOrNull()
         val failed = assertIs<ReadResult.Failed>(result)
-        assertIs<LoadDenialOrigin.EagerEdge>(
+        assertIs<LoadDenialOrigin.SelectedEdgePath>(
             assertIs<EntPrivacyDeniedException>(failed.exception).origin,
         )
 
         val projected = result.visibleOrNull()
-        assertSame(result, projected, "EagerEdge denial must pass through visibleOrNull unchanged")
+        assertSame(
+            result,
+            projected,
+            "SelectedEdgePath denial must pass through visibleOrNull unchanged",
+        )
     }
 }

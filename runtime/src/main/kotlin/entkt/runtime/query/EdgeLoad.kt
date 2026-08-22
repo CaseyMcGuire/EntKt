@@ -6,7 +6,7 @@ package entkt.runtime.query
  *
  * Ignoring the handle keeps the strict default: a LOAD-denied selected
  * target fails the whole root terminal with
- * `EntPrivacyDeniedException(EagerEdge(path), ...)`. Calling
+ * `EntPrivacyDeniedException(SelectedEdgePath(steps), ...)`. Calling
  * [filterVisible] opts that exact edge into retaining only visible
  * targets — a denied to-one target produces `EdgeState.Loaded(null)`
  * and denied to-many targets are omitted from the non-null loaded

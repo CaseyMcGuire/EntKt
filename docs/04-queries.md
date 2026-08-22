@@ -688,7 +688,7 @@ client.users.query { where(User.active eq true) }
 
 Eager loading is strict by default: if LOAD privacy denies any eagerly
 loaded target, the whole read fails with
-`Failed(EntPrivacyDeniedException(EagerEdge(path), ...))` — no partial
+`Failed(EntPrivacyDeniedException(SelectedEdgePath(steps), ...))` — no partial
 graph, no silently omitted target. The exception's `origin` carries the
 schema-edge path from the root to the denied target, so root denial
 (`Root`) and eager denial stay distinguishable; `visibleOrNull()` maps

@@ -27,10 +27,10 @@ import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireLoaded
-import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.SelectedEdgeStep
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -909,13 +909,13 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(
             listOf(
-                EagerEdgeStep("Group", "users", "User"),
-                EagerEdgeStep("User", "articles", "Article"),
+                SelectedEdgeStep("Group", "users", "User"),
+                SelectedEdgeStep("User", "articles", "Article"),
             ),
-            origin.path,
+            origin.steps,
         )
         assertEquals(1, ex.denials.size)
         assertEquals(deniedId, ex.denials.single().entityKey.value)

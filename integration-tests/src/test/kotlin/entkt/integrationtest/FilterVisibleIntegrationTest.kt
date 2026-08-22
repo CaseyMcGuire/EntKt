@@ -207,8 +207,8 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
-        assertEquals(listOf("tags", "posts"), origin.path.map { it.edgeName })
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
+        assertEquals(listOf("tags", "posts"), origin.steps.map { it.edgeName })
     }
 
     // ---- root denial unaffected ----

@@ -289,7 +289,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
         // Anonymous: the same hops run viewer-scoped through the privacy
         // client, so the users LOAD denial surfaces from inside the
-        // rule's eager load — an EagerEdge-origin EntPrivacyDeniedException
+        // rule's eager load — a SelectedEdgePath-origin EntPrivacyDeniedException
         // naming "User" — instead of the hidden rows influencing the
         // decision. The rule reads through `all().getOrThrow()`, so the
         // rethrown denial is captured by the article's root terminal as
@@ -297,7 +297,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         val failed = assertIs<ReadResult.Failed>(client.articles.findById(article.id))
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertEquals("User", ex.denials.single().entityType)
-        assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
     }
 
     // ---- Transaction scoping ----

@@ -585,7 +585,7 @@ class PrivacyIntegrationTest {
             // Now query ALL published articles with eager author. Bob's article is
             // published (allowed), but eager-loading Bob as the author is denied
             // because RestrictiveUserPolicy only allows viewing yourself — the
-            // denial carries the EagerEdge origin naming the offending edge path.
+            // Denial carries the SelectedEdgePath origin naming the offending edge path.
             val failed = assertIs<ReadResult.Failed>(
                 scoped.articles.query {
                     where(Article.published eq true)
@@ -593,8 +593,8 @@ class PrivacyIntegrationTest {
                 }.all(),
             )
             val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-            val origin = assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
-            assertEquals("author", origin.path.single().edgeName)
+            val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
+            assertEquals("author", origin.steps.single().edgeName)
             assertEquals("User", ex.denials.single().entityType)
         }
     }

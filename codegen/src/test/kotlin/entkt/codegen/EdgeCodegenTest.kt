@@ -1983,11 +1983,11 @@ class EdgeCodegenTest {
         }
         assert(
             output.contains(
-                "throw EntPrivacyDeniedException(LoadDenialOrigin.EagerEdge(eagerDenialPath.map { " +
-                    "EagerEdgeStep(it.source.simpleName!!, it.edgeName, it.target.simpleName!!) }), listOf(denial))",
+                "throw EntPrivacyDeniedException(LoadDenialOrigin.SelectedEdgePath(eagerDenialPath.map { " +
+                    "SelectedEdgeStep(it.source.simpleName!!, it.edgeName, it.target.simpleName!!) }), listOf(denial))",
             ),
         ) {
-            "Strict eager denial should throw EntPrivacyDeniedException with EagerEdge origin\n$output"
+            "Strict eager denial should use a SelectedEdgePath origin\n$output"
         }
         assert(!output.contains("eagerClient.pets.loadDenialOrNull")) {
             "Eager privacy must not regress to per-target singleton calls\n$output"

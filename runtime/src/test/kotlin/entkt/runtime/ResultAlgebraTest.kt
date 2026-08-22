@@ -8,7 +8,6 @@ import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
-import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -21,6 +20,7 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.NestedTransactionUnsupportedException
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.SelectedEdgeStep
 import entkt.runtime.result.TransactionCoordinator
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
@@ -48,8 +48,10 @@ class ResultAlgebraTest {
         denials = listOf(PrivacyDenial("User", EntityKey("id", 1), "not visible")),
     )
 
-    private fun eagerDenial() = EntPrivacyDeniedException(
-        origin = LoadDenialOrigin.EagerEdge(listOf(EagerEdgeStep("User", "posts", "Post"))),
+    private fun selectedEdgeDenial() = EntPrivacyDeniedException(
+        origin = LoadDenialOrigin.SelectedEdgePath(
+            listOf(SelectedEdgeStep("User", "posts", "Post")),
+        ),
         denials = listOf(PrivacyDenial("Post", EntityKey("id", 9), "not visible")),
     )
 
@@ -87,7 +89,7 @@ class ResultAlgebraTest {
 
     @Test
     fun `visibleOrNull propagates eager-edge denial and other failures unchanged`() {
-        val eager: ReadResult<String?> = ReadResult.failedForInternalUse(eagerDenial())
+        val eager: ReadResult<String?> = ReadResult.failedForInternalUse(selectedEdgeDenial())
         assertSame(eager, eager.visibleOrNull())
         val operational: ReadResult<String?> =
             ReadResult.failedForInternalUse(IllegalStateException("connection lost"))

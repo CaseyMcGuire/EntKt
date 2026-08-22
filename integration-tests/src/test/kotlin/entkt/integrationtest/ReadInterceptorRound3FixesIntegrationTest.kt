@@ -364,7 +364,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         val result = client.articles.query { loadAuthor() }.firstOrNull()
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
-        assertIs<LoadDenialOrigin.EagerEdge>(ex.origin)
+        assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         // Eager denial is NOT root invisibility — visibleOrNull leaves
         // the failure untouched.
         assertIs<ReadResult.Failed>(result.visibleOrNull())

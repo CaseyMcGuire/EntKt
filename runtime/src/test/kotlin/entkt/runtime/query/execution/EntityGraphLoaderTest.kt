@@ -271,8 +271,8 @@ class EntityGraphLoaderTest {
             loader.load(query, ReadOperation.ALL, null, privacyContext)
         }
 
-        val origin = assertIs<LoadDenialOrigin.EagerEdge>(failure.origin)
-        assertEquals(listOf("children", "notes"), origin.path.map { it.edgeName })
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(failure.origin)
+        assertEquals(listOf("children", "notes"), origin.steps.map { it.edgeName })
         assertEquals(3L, failure.denials.single().entityKey.value)
         assertEquals(
             listOf("load:root", "privacy:1", "load:children", "privacy:2", "load:notes", "privacy:3"),

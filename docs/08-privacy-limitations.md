@@ -32,7 +32,7 @@ the viewer may see.
 `query.all()` returns `Failed(EntPrivacyDeniedException(Root, ...))` if
 any matching entity in the selected window is denied by LOAD privacy,
 with one keyed `PrivacyDenial` per denied row — never a partial list.
-Eager-loaded edges fail the same way with an `EagerEdge(path)` origin —
+Eager-loaded edges fail the same way with a `SelectedEdgePath(steps)` origin —
 if any eagerly loaded related entity is denied, the entire query fails
 (unless that edge opts into `filterVisible()`).
 

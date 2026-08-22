@@ -11,9 +11,9 @@ import entkt.runtime.query.EdgeVisibility
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.SelectedEdgeStep
 import kotlin.reflect.KClass
 
 /**
@@ -137,7 +137,7 @@ internal class EntityGraphLoader(
             denialPolicy = when (selection.visibility) {
                 EdgeVisibility.FILTER_INVISIBLE -> LoadDenialPolicy.FilterDeniedTargets
                 EdgeVisibility.REQUIRE_VISIBLE -> LoadDenialPolicy.FailEdge(
-                    LoadDenialOrigin.EagerEdge(childContext.denialPath),
+                    LoadDenialOrigin.SelectedEdgePath(childContext.denialPath),
                 )
             },
             privacyContext = privacyContext,
@@ -197,7 +197,7 @@ private sealed interface LoadDenialPolicy {
     data object FailRoot : LoadDenialPolicy
 
     /** Any denied target fails the query and identifies the selected edge that caused it. */
-    data class FailEdge(val origin: LoadDenialOrigin.EagerEdge) : LoadDenialPolicy
+    data class FailEdge(val origin: LoadDenialOrigin.SelectedEdgePath) : LoadDenialPolicy
 
     /** Denied targets are omitted while visible targets remain attached to the selected edge. */
     data object FilterDeniedTargets : LoadDenialPolicy
@@ -207,7 +207,7 @@ private sealed interface LoadDenialPolicy {
 private data class NodeEvaluationContext(
     val rootEntity: KClass<*>,
     val interceptorPath: List<EdgeStep>,
-    val denialPath: List<EagerEdgeStep>,
+    val denialPath: List<SelectedEdgeStep>,
 ) {
     fun <Source : EntEntity<*>, Target : EntEntity<*>> child(
         selection: EdgeSelection<Source, Target>,
@@ -219,7 +219,7 @@ private data class NodeEvaluationContext(
                 edgeName = edge.name,
                 target = edge.target.entityClass,
             ),
-            denialPath = denialPath + EagerEdgeStep(
+            denialPath = denialPath + SelectedEdgeStep(
                 sourceEntityType = edge.source.entityName,
                 edgeName = edge.name,
                 targetEntityType = edge.target.entityName,

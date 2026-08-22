@@ -329,7 +329,7 @@ result:
   if the fetched row is denied; `Success(null)` only when no matching
   row exists
 - Eager-loaded edges (`loadPosts()`, etc.) --
-  `Failed(EntPrivacyDeniedException(EagerEdge(path), ...))` if any
+  `Failed(EntPrivacyDeniedException(SelectedEdgePath(steps), ...))` if any
   eagerly loaded entity is denied, unless that edge opts into
   `filterVisible()` (see
   [Queries → Eager Privacy](04-queries.md#eager-privacy-and-filtervisible))
@@ -614,7 +614,7 @@ throw from the terminal. A denied **read** is
 
 ```kotlin
 class EntPrivacyDeniedException(
-    val origin: LoadDenialOrigin,       // Root, or EagerEdge(path) for a denied eager target
+    val origin: LoadDenialOrigin,       // Root, or SelectedEdgePath(steps) for a denied target
     val denials: List<PrivacyDenial>,   // non-empty; one entry per denied row, in query order
 ) : EntException(...), EntPrivacyFailure
 

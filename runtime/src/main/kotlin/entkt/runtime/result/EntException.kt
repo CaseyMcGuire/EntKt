@@ -256,13 +256,13 @@ class EntQueryConfigurationException(
 
 /**
  * LOAD privacy denied a read. [origin] identifies whether the
- * terminal's root selection ([LoadDenialOrigin.Root]) or an eagerly
- * loaded target ([LoadDenialOrigin.EagerEdge]) produced the denial;
- * root privacy completes before eager loading begins, so one exception
+ * terminal's root selection ([LoadDenialOrigin.Root]) or a selected-edge target
+ * ([LoadDenialOrigin.SelectedEdgePath]) produced the denial; root privacy completes before
+ * selected edges are loaded, so one exception
  * never mixes both. [denials] is never empty: a singular read carries
  * exactly one keyed denial, a strict collection read carries one per
- * denied root row in encountered query order, and a strict eager
- * denial carries exactly the first denied target.
+ * denied root row in encountered query order, and a strict selected-edge denial carries exactly
+ * the first denied target.
  *
  * This exception proves more than `Success(null)`: it says a selected
  * row existed and was denied. Applications must not expose that

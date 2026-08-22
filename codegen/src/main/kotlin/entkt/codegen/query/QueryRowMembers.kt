@@ -34,8 +34,8 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
  * instead of an incomplete denial aggregate (the evaluation loop
  * aborts at the throw and the capture boundary stores it).
  *
- * Root privacy completes before eager loading begins; a denied
- * eager target then fails with an `EagerEdge` origin from graph loading.
+ * Root privacy completes before selected edges are loaded; a denied
+ * selected target then fails with a `SelectedEdgePath` origin from graph loading.
  * Interceptor rejection is
  * `Failed(EntQueryRejectedException)`; any other exception is stored
  * directly.

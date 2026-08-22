@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **Rename eager LOAD-denial path types around selected edges** (`runtime`)
+  Related-entity LOAD denials now report `LoadDenialOrigin.SelectedEdgePath`
+  containing `SelectedEdgeStep` values; the names distinguish the complete path
+  from each individual edge and align with the selected-graph API.
+  _Migration:_ replace `LoadDenialOrigin.EagerEdge(path)` with
+  `LoadDenialOrigin.SelectedEdgePath(steps)`, replace `EagerEdgeStep` with
+  `SelectedEdgeStep`, and read the path through `steps` instead of `path`.
+
 - **Rename `Driver` to `DatabaseDriver`** (`runtime`, `postgres`)
   The public storage-driver interface is now named `DatabaseDriver`; its
   behavior and responsibilities are unchanged.

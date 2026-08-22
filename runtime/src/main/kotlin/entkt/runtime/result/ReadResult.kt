@@ -78,14 +78,14 @@ sealed interface ReadResult<out T> {
  * Success(value)                                -> Success(value)
  * Success(null)                                 -> Success(null)
  * Failed(EntPrivacyDeniedException(Root, ...))  -> Success(null)
- * Failed(EntPrivacyDeniedException(EagerEdge))  -> unchanged
+ * Failed(EntPrivacyDeniedException(SelectedEdgePath)) -> unchanged
  * Failed(otherException)                        -> unchanged
  * ```
  *
  * A pure transformation: no I/O, no LOAD re-evaluation, no scanning
  * beyond the selected SQL window. It answers only whether the selected
- * root is visible — a denied *eager* target does not become root
- * absence, so adding an eager load cannot change root presence into
+ * root is visible — a denied selected-edge target does not become root
+ * absence, so selecting an edge cannot change root presence into
  * apparent absence. The denial details are intentionally discarded;
  * callers that need them must inspect the original [ReadResult.Failed].
  *

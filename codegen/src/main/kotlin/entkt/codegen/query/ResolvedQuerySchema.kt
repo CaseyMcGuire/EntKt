@@ -120,7 +120,7 @@ internal class ResolvedQueryEdge(
     /**
      * The edge's Kotlin declaration name, for caller-facing paths:
      * interceptor context (`InterceptorContext.edgeName`) and
-     * eager-denial origins (`LoadDenialOrigin.EagerEdge`). A caller who
+     * selected-edge denial origins (`LoadDenialOrigin.SelectedEdgePath`). A caller who
      * wrote `queryCurator()` must not be told about `legacy_owner`.
      */
     val publicName: String get() = edge.apiName

@@ -1,6 +1,5 @@
 package entkt.runtime
 
-import entkt.runtime.result.EagerEdgeStep
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntException
@@ -16,6 +15,7 @@ import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
+import entkt.runtime.result.SelectedEdgeStep
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.result.toValidationViolation
@@ -191,12 +191,12 @@ class EntExceptionTest {
     }
 
     @Test
-    fun `eager edge origin requires a non-empty path and carries only schema names`() {
-        val step = EagerEdgeStep("User", "posts", "Post")
-        val origin = LoadDenialOrigin.EagerEdge(listOf(step))
-        assertEquals("posts", origin.path.single().edgeName)
+    fun `selected edge path requires a step and carries only schema names`() {
+        val step = SelectedEdgeStep("User", "posts", "Post")
+        val origin = LoadDenialOrigin.SelectedEdgePath(listOf(step))
+        assertEquals("posts", origin.steps.single().edgeName)
         assertFailsWith<IllegalArgumentException> {
-            LoadDenialOrigin.EagerEdge(emptyList())
+            LoadDenialOrigin.SelectedEdgePath(emptyList())
         }
     }
 
