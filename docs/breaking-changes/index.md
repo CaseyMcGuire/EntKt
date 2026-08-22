@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **Remove query-explanation APIs** (`runtime`, `codegen`, `postgres`)
+  Generated queries and repositories no longer expose `explainAll`,
+  `explainFirstOrNull`, `explainRawCount`, `explainRawExists`, or
+  `explainFindById`. The runtime `QueryPlan` / `QueryExplanation` model and
+  driver `explainQuery` / `explainCount` hooks have also been removed.
+  _Migration:_ remove calls to the deleted `explain*` methods. Use ordinary
+  query terminals plus application-level database observability when execution
+  diagnostics are required.
+
 - **`Driver` gains two abstract members for native direct to-many windows** (`runtime`, `postgres`)
   `directToManyWindowCapability()` and `queryDirectToMany(query)` are new
   and deliberately abstract (like `registerAll` / `requireBindCapacity`),

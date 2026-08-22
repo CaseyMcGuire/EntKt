@@ -430,8 +430,8 @@ can query the database without being blocked by LOAD privacy.
 **Validators are read-only — by type, not by convention.** The context
 exposes `EntValidationReadClient`, whose per-entity repos carry
 `findById`, the full `query { }` DSL with every terminal
-(`all` / `firstOrNull`, `rawCount` / `rawExists`, the raw aggregates,
-`explain*`), and the generated index helpers — and nothing else.
+(`all` / `firstOrNull`, `rawCount` / `rawExists`, and the raw aggregates),
+and the generated index helpers — and nothing else.
 `create`, `update`, `save`, the `delete*` family, edge mutators, and
 `withTransaction` do not exist on it, so a validator that tries to
 mutate fails to compile. Validators answer "is this state valid?", not

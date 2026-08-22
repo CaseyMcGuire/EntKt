@@ -614,18 +614,13 @@ executes depends on the edge kind and the driver. On a driver with
 native per-parent windows (PostgreSQL), a direct to-many edge pushes
 the window into storage — one statement ranks each parent's targets
 with the effective order and returns only in-window rows, with the
-parent keys transported as a single typed array (explain reports the
-`STORAGE_NATIVE` window strategy). Every other edge kind — and every
-driver without the capability — emulates the window in memory: the
+parent keys transported as a single typed array. Every other edge kind —
+and every driver without the capability — emulates the window in memory: the
 driver fetches every matching row and the runtime slices each
 parent's window in Kotlin, so a finite window bounds the result, not
-the rows fetched (`IN_MEMORY_EMULATED` in explain). Both strategies
+the rows fetched. Both strategies
 select exactly the same rows; they follow the same effective order
-with its primary-key tie-breaker. Explain output renders each eager
-step's *logical* relationship query — the batched `IN` shape
-interceptors see — while the native per-parent window statement is a
-driver-private lowering, reported through the typed window-strategy
-metadata rather than as rendered SQL. The same per-parent semantics hold
+with its primary-key tie-breaker. The same per-parent semantics hold
 for to-one edges, where at most one target exists per parent: a
 positive limit is already satisfied, while `limit(0)` loads no target
 and any positive offset steps past the only candidate.
@@ -651,7 +646,7 @@ query object is discarded.
 The rejection also covers re-entrant selection (`load{Edge}` called
 again from inside its own configuration block) — a failed selection is
 rolled back, so a caught error leaves the query as if it never
-happened. And while a terminal or entity explain is executing,
+happened. And while a terminal is executing,
 `load{Edge}` and `filterVisible()` throw the same exception anywhere
 in the selected graph — root query and nested target queries alike —
 so an interceptor or privacy rule that captured any of them cannot
@@ -887,9 +882,8 @@ deterministic application misuse discovered by the query DSL itself —
 selecting one edge twice, or a selected edge-load graph reaching a
 non-entity terminal or a `query{Edge}` traversal. Configuration
 operations throw it immediately; result-bearing terminals capture it
-as `ReadResult.Failed` before any interceptor or driver work; and the
-incompatible `explain*` variants throw it rather than returning a
-rejected plan. It carries `entityType` and `reason`.
+as `ReadResult.Failed` before any interceptor or driver work. It carries
+`entityType` and `reason`.
 
 ### Ordering and traversal
 
