@@ -136,7 +136,7 @@ internal fun buildReadQueryEvaluatorProperty(
                 .add("%T(\n", READ_QUERY_EVALUATOR)
                 .indent()
                 .add("driver = driver,\n")
-                .add("privacyContextProvider = { requireClient().currentPrivacyContext() },\n")
+                .add("privacyContextProvider = requireClient(),\n")
                 .add("registeredInterceptorsProvider = { requireClient().entityInterceptors },\n")
                 .add("loadPrivacyEvaluatorProvider = { requireClient() },\n")
                 .unindent()

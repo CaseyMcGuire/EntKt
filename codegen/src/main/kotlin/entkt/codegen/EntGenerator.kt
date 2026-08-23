@@ -70,7 +70,7 @@ private val FIXED_CLIENT_MEMBERS: Set<String> = setOf(
     "SCHEMAS", "asPrivacyReadClientForInternalUse", "asValidationReadClientForInternalUse",
     "bypassPrivacy_DANGEROUS", "checkTransactionRequirement", "config",
     "currentPrivacyContext", "defaultRelationshipLocking", "defaultUpdateConsistency",
-    "delegate", "driver", "entityInterceptors", "global", "hookClientScopeForInternalUse",
+    "delegate", "driver", "entityInterceptors", "get", "global", "hookClientScopeForInternalUse",
     "hooks", "hooksConfig", "interceptors", "interceptorsConfig", "policies",
     "policiesConfig", "privacyContext", "privacyContextProvider",
     "privacyContextProviderConfig", "readClientImpl", "recordTransactionMutationFailure",

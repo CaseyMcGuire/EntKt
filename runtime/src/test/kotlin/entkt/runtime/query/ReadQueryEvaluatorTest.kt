@@ -10,6 +10,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyContextProvider
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
@@ -76,7 +77,7 @@ class ReadQueryEvaluatorTest {
         }
         val evaluator = ReadQueryEvaluator<Item>(
             driver = driver,
-            privacyContextProvider = { privacyContext },
+            privacyContextProvider = PrivacyContextProvider { privacyContext },
             registeredInterceptorsProvider = { interceptors },
             loadPrivacyEvaluatorProvider = {
                 object : LoadPrivacyEvaluator {

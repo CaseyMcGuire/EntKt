@@ -24,6 +24,8 @@ private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_CONTEXT_PROVIDER =
+    ClassName("entkt.runtime.privacy", "PrivacyContextProvider")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
@@ -117,8 +119,6 @@ internal class ClientGenerator(
             returnType = UNIT,
         )
 
-        val privacyProviderType = LambdaTypeName.get(returnType = PRIVACY_CONTEXT)
-
         val typeSpec = TypeSpec.classBuilder("EntClient")
             // EntClient satisfies the generated read-runtime contract, so
             // repos construct queries exactly as before the contract
@@ -157,10 +157,10 @@ internal class ClientGenerator(
                     .build()
             )
             .addProperty(
-                PropertySpec.builder("privacyContextProvider", privacyProviderType)
+                PropertySpec.builder("privacyContextProvider", PRIVACY_CONTEXT_PROVIDER)
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
-                    .initializer("{ %T(%T.Anonymous) }", PRIVACY_CONTEXT, VIEWER)
+                    .initializer("%T { %T(%T.Anonymous) }", PRIVACY_CONTEXT_PROVIDER, PRIVACY_CONTEXT, VIEWER)
                     .build()
             )
             .addProperty(
@@ -359,7 +359,7 @@ internal class ClientGenerator(
                     .addStatement(
                         "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
                     )
-                    .addStatement("return privacyContextProvider()")
+                    .addStatement("return privacyContextProvider.get()")
                     .build()
             )
             .addFunction(buildReadClientImplBuilder(sorted))
@@ -509,8 +509,6 @@ internal class ClientGenerator(
             receiver = interceptorsClass,
             returnType = UNIT,
         )
-        val privacyProviderType = LambdaTypeName.get(returnType = PRIVACY_CONTEXT)
-
         return TypeSpec.classBuilder(configClass)
             .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
             .addProperty(
@@ -532,7 +530,10 @@ internal class ClientGenerator(
                     .build()
             )
             .addProperty(
-                PropertySpec.builder("privacyContextProviderConfig", privacyProviderType.copy(nullable = true))
+                PropertySpec.builder(
+                    "privacyContextProviderConfig",
+                    PRIVACY_CONTEXT_PROVIDER.copy(nullable = true),
+                )
                     .addModifiers(KModifier.INTERNAL)
                     .mutable(true)
                     .initializer("null")
@@ -585,7 +586,7 @@ internal class ClientGenerator(
             )
             .addFunction(
                 FunSpec.builder("privacyContext")
-                    .addParameter("provider", privacyProviderType)
+                    .addParameter("provider", PRIVACY_CONTEXT_PROVIDER)
                     .addStatement("privacyContextProviderConfig = provider")
                     .build()
             )
@@ -1033,7 +1034,7 @@ internal class ClientGenerator(
     ): FunSpec {
         val body = CodeBlock.builder()
         body.addStatement("val scoped = %T(driver)", clientClass)
-        body.addStatement("scoped.privacyContextProvider = { context }")
+        body.addStatement("scoped.privacyContextProvider = %T { context }", PRIVACY_CONTEXT_PROVIDER)
         body.addStatement("scoped.transactionRequirement = this.transactionRequirement")
         body.addStatement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
         body.addStatement("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")

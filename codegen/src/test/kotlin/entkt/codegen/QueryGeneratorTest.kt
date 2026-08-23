@@ -167,7 +167,7 @@ class QueryGeneratorTest {
             output.contains(
                     "private val _readQueryEvaluator: ReadQueryEvaluator<Car> = ReadQueryEvaluator( " +
                     "driver = driver, " +
-                    "privacyContextProvider = { requireClient().currentPrivacyContext() }, " +
+                    "privacyContextProvider = requireClient(), " +
                     "registeredInterceptorsProvider = { requireClient().entityInterceptors }, " +
                     "loadPrivacyEvaluatorProvider = { requireClient() }, )",
             ),

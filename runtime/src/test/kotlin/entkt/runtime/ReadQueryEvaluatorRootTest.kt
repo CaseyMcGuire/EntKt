@@ -11,6 +11,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyContextProvider
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.EntityQuery
@@ -157,7 +158,7 @@ class ReadQueryEvaluatorRootTest {
 
     private fun queryEvaluator(adapter: Adapter): ReadQueryEvaluator<Item> = ReadQueryEvaluator(
         driver = adapter.driver,
-        privacyContextProvider = {
+        privacyContextProvider = PrivacyContextProvider {
             adapter.events += "privacy-context"
             adapter.privacy
         },

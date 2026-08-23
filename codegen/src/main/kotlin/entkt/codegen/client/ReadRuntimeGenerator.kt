@@ -14,6 +14,8 @@ import com.squareup.kotlinpoet.STAR
 import entkt.codegen.SchemaInput
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
+private val PRIVACY_CONTEXT_PROVIDER =
+    ClassName("entkt.runtime.privacy", "PrivacyContextProvider")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val LIST = ClassName("kotlin.collections", "List")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
@@ -122,6 +124,7 @@ internal class ReadRuntimeGenerator(
     private fun buildReadRuntime(sorted: List<SchemaInput>): TypeSpec {
         val builder = TypeSpec.interfaceBuilder("EntReadRuntime")
             .addAnnotation(ENTKT_INTERNAL)
+            .addSuperinterface(PRIVACY_CONTEXT_PROVIDER)
             .addSuperinterface(LOAD_PRIVACY_EVALUATOR)
             .addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
@@ -138,6 +141,13 @@ internal class ReadRuntimeGenerator(
                     .addModifiers(KModifier.ABSTRACT)
                     .returns(PRIVACY_CONTEXT)
                     .build()
+            )
+            .addFunction(
+                FunSpec.builder("get")
+                    .addModifiers(KModifier.OVERRIDE)
+                    .returns(PRIVACY_CONTEXT)
+                    .addStatement("return currentPrivacyContext()")
+                    .build(),
             )
             .addProperty(
                 // Keeps the concrete property's `@EntktInternal` guard:

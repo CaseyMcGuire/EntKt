@@ -6,6 +6,7 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyContextProvider
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.EntInterceptorsConfig
@@ -26,7 +27,7 @@ import java.util.concurrent.CancellationException
 @EntktInternal
 class ReadQueryEvaluator<Entity : EntEntity<*>>(
     private val driver: DatabaseDriver,
-    private val privacyContextProvider: () -> PrivacyContext,
+    private val privacyContextProvider: PrivacyContextProvider,
     registeredInterceptorsProvider: () -> EntInterceptorsConfig,
     loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
 ) {
@@ -51,7 +52,7 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
         }
         return captureFailure {
             val query = captureQuery()
-            val privacyContext = privacyContextProvider()
+            val privacyContext = privacyContextProvider.get()
             entityGraphLoader.load(
                 query = query,
                 operation = operation,
@@ -128,7 +129,7 @@ class ReadQueryEvaluator<Entity : EntEntity<*>>(
     ): StorageQuerySpec<Entity> = queryCompiler.compile(
         query,
         operation,
-        privacyContextProvider(),
+        privacyContextProvider.get(),
     )
 
     private inline fun <Value> captureFailure(block: () -> Value): ReadResult<Value> = try {

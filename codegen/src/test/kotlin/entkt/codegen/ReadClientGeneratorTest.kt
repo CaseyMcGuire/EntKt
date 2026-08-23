@@ -155,8 +155,15 @@ class ReadClientGeneratorTest {
     fun `read runtime dispatches recursive LOAD privacy by typed entity mapping`() {
         val output = readRuntimeOutput().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public interface EntReadRuntime : LoadPrivacyEvaluator")) {
-            "the runtime host should be the graph loader's privacy dependency\n$output"
+        assert(
+            output.contains(
+                "public interface EntReadRuntime : PrivacyContextProvider, LoadPrivacyEvaluator",
+            ),
+        ) {
+            "the runtime host should provide privacy capture and LOAD evaluation\n$output"
+        }
+        assert(output.contains("override fun `get`(): PrivacyContext = currentPrivacyContext()")) {
+            "the read runtime should adapt its existing privacy method to the named provider\n$output"
         }
         assert(
             output.contains(

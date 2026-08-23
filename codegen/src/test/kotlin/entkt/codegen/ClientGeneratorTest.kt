@@ -411,8 +411,14 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("fun privacyContext(provider: () -> PrivacyContext)")) {
+        assert(output.contains("fun privacyContext(provider: PrivacyContextProvider)")) {
             "Should have privacyContext method on EntClientConfig\n$output"
+        }
+        assert(output.contains("internal var privacyContextProviderConfig: PrivacyContextProvider? = null")) {
+            "The config should store the callback through the named provider contract\n$output"
+        }
+        assert(output.contains("privacyContextProviderConfig = provider")) {
+            "The config should retain the named provider directly\n$output"
         }
     }
 
