@@ -327,8 +327,8 @@ public const val FRAMEWORK_INTERCEPTOR_PREFIX: String = "framework:"
  * DSL-side mutable holder generated `EntClientConfig` exposes
  * through an `interceptors { ... }` block. Application code calls
  * `posts(...)` / `users(...)` (one per entity) and `global(...)`
- * to register; the generated init block then transfers these into
- * the runtime EntClient's per-repo + global lists.
+ * to register. Client construction snapshots the completed holder
+ * before any generated repository becomes visible.
  *
  * Name validation runs at registration time:
  *  - `name` is mandatory (the DSL methods require it as a
@@ -392,8 +392,8 @@ public class EntInterceptorsConfig public constructor() {
     }
 
     /**
-     * Used by the generated EntClient init block to populate
-     * per-repo lists. The unchecked cast here is the other half
+     * Used by generated read compilation to obtain the configured
+     * entity chain. The unchecked cast here is the other half
      * of the soundness boundary established at [addEntity];
      * `@EntktInternal` keeps it off the application-callable
      * surface.
@@ -403,9 +403,27 @@ public class EntInterceptorsConfig public constructor() {
     public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<E>> =
         (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<E>>
 
-    /** Used by the generated EntClient init block to populate the global list. */
+    /** Return a stable copy of the configured global interceptor chain. */
     @entkt.query.EntktInternal
     public fun globals(): List<RegisteredGlobalInterceptor> = globalsList.toList()
+
+    /**
+     * Copy every registration into an independent configuration.
+     *
+     * Interceptor instances themselves are intentionally shared; only the mutable registration
+     * containers are detached. Generated clients call this after their configuration block so a
+     * retained DSL receiver cannot change an already-constructed client or any client derived
+     * from it.
+     */
+    @entkt.query.EntktInternal
+    public fun snapshotForInternalUse(): EntInterceptorsConfig {
+        val snapshot = EntInterceptorsConfig()
+        for ((scopeKey, registrations) in perEntity) {
+            snapshot.perEntity[scopeKey] = registrations.toMutableList()
+        }
+        snapshot.globalsList.addAll(globalsList)
+        return snapshot
+    }
 
     private fun validateApplicationName(name: String, scope: String) {
         require(name.isNotBlank()) { "Interceptor name must not be blank (scope='$scope')" }

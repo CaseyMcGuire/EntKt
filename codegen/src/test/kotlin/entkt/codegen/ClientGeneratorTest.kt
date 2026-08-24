@@ -76,17 +76,12 @@ class ClientGeneratorTest {
         // Ordering is the load-bearing part. Each repo registers its own
         // schema from its property initializer, and property initializers
         // run in declaration order — so the batch call has to live on the
-        // `driver` property (declared first), not in the init block that
-        // follows the repo properties.
-        val clientStart = output.indexOf("public class EntClient(")
+        // `driver` property declared before every repository.
+        val clientStart = output.indexOf("public class EntClient private constructor(")
         val driverProp = output.indexOf("registerAll(SCHEMAS)", clientStart)
         val firstRepo = output.indexOf("override val cars:", clientStart)
-        val initBlock = output.indexOf("init {", clientStart)
         assert(driverProp in 0 until firstRepo) {
             "registerAll must be wired before the first repo property\n$output"
-        }
-        assert(firstRepo in 0 until initBlock) {
-            "repo properties precede the init block — an init-block call would be too late\n$output"
         }
     }
 
@@ -107,21 +102,24 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        // Both the client and the config expose the configurable default,
-        // initialized to OwnerOnly (symmetric link-table writes). Two declarations total.
+        // The public config owns the default; the client reads its resolved value.
         val decls = Regex("defaultRelationshipLocking: RelationshipLocking = RelationshipLocking\\.OwnerOnly")
             .findAll(output).count()
-        assert(decls == 2) {
-            "Expected the client + config to both declare defaultRelationshipLocking = OwnerOnly; found $decls\n$output"
+        assert(decls == 1) {
+            "Expected the config to declare defaultRelationshipLocking = OwnerOnly; found $decls\n$output"
         }
-        // Config copy + the clone-propagation sites thread it through.
+        assert(
+            output.contains(
+                "defaultRelationshipLocking: RelationshipLocking = configuration.defaultRelationshipLocking",
+            ),
+        ) {
+            "The client must initialize the resolved default from configuration\n$output"
+        }
+        // Clone-propagation sites thread runtime overrides through.
         // (The former fixed-context clone is gone — read-side evaluators
         // use asValidationReadClientForInternalUse /
         // asPrivacyReadClientForInternalUse, which carry no write-side
         // defaults by design.)
-        assert(output.contains("defaultRelationshipLocking = cfg.defaultRelationshipLocking")) {
-            "Config copy must thread defaultRelationshipLocking\n$output"
-        }
         assert(output.contains("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
             "withTransaction must propagate defaultRelationshipLocking\n$output"
         }
@@ -133,36 +131,62 @@ class ClientGeneratorTest {
     @Test
     fun `EntClient exposes a repo property per schema`() {
         val schemas = buildSchemas()
-        val output = generator.generate(schemas).toString()
+        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val cars: CarRepo = CarRepo(driver)")) {
+        assert(output.contains("val cars: CarRepo = CarRepo( driver = driver, client = this,")) {
             "Should expose cars: CarRepo\n$output"
         }
-        assert(output.contains("val users: UserRepo = UserRepo(driver)")) {
+        assert(output.contains("val users: UserRepo = UserRepo( driver = driver, client = this,")) {
             "Should expose users: UserRepo\n$output"
         }
     }
 
     @Test
-    fun `EntClient init block attaches client to repos and applies hooks`() {
+    fun `EntClient resolves configuration before constructing complete repos`() {
         val schemas = buildSchemas()
-        val output = generator.generate(schemas).toString()
+        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("cars.attachClientForInternalUse(this)")) {
-            "Should attach client to cars repo without exposing a backlink\n$output"
+        assert(output.contains("EntClientConfig().apply(config).snapshotForInternalUse()")) {
+            "The public constructor should resolve and snapshot its configuration once\n$output"
         }
-        assert(output.contains("users.attachClientForInternalUse(this)")) {
-            "Should attach client to users repo without exposing a backlink\n$output"
+        assert(output.contains("configuredHooks = configuration.hooksConfig.cars")) {
+            "The cars repo should receive configured hooks in its constructor\n$output"
         }
-        assert(output.contains("val cfg = EntClientConfig().apply(config)")) {
-            "Should create config and apply lambda\n$output"
+        assert(output.contains("configuredPrivacy = configuration.policiesConfig.usersPrivacyConfig")) {
+            "The users repo should receive privacy configuration in its constructor\n$output"
         }
-        assert(output.contains("cars.applyHooks(cfg.hooksConfig.cars)")) {
-            "Should apply car hooks from config\n$output"
+        assert(output.contains("configuredValidation = configuration.policiesConfig.usersValidationConfig")) {
+            "The users repo should receive validation configuration in its constructor\n$output"
         }
-        assert(output.contains("users.applyHooks(cfg.hooksConfig.users)")) {
-            "Should apply user hooks from config\n$output"
-        }
+        assert(!output.contains("attachClientForInternalUse") && !output.contains(".applyHooks("))
+    }
+
+    @Test
+    fun `EntClientConfig snapshot detaches every mutable configuration registry`() {
+        val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "snapshot.hooksConfig.cars.beforeSaveHooks.addAll(hooksConfig.cars.beforeSaveHooks)",
+            ),
+        ) { "Hook registrations should be copied into the snapshot\n$output" }
+        assert(
+            output.contains(
+                "snapshot.policiesConfig.usersPrivacyConfig.loadRules.addAll(" +
+                    "policiesConfig.usersPrivacyConfig.loadRules)",
+            ),
+        ) { "Privacy registrations should be copied into the snapshot\n$output" }
+        assert(
+            output.contains(
+                "snapshot.policiesConfig.usersValidationConfig.createRules.addAll(" +
+                    "policiesConfig.usersValidationConfig.createRules)",
+            ),
+        ) { "Validation registrations should be copied into the snapshot\n$output" }
+        assert(
+            output.contains(
+                "snapshot.interceptorsConfig.config = interceptorsConfig.config.snapshotForInternalUse()",
+            ),
+        ) { "Interceptor registrations should be copied into the snapshot\n$output" }
     }
 
     @Test
@@ -197,8 +221,8 @@ class ClientGeneratorTest {
         assert(output.contains("runEntTransaction(driver, { txDriver, coordinator ->")) {
             "withTransaction should delegate to runEntTransaction\n$output"
         }
-        assert(output.contains("val tx = EntClient(txDriver)")) {
-            "makeTxClient should build the transactional client on the tx driver\n$output"
+        assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
+            "makeTxClient should build the transactional client with the resolved configuration\n$output"
         }
         assert(output.contains("tx.transactionCoordinator = coordinator")) {
             "makeTxClient should wire the coordinator into the tx client\n$output"
@@ -255,7 +279,7 @@ class ClientGeneratorTest {
     fun `EntTransactionClient exposes repos and scoped privacy but no nested transaction entry point`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
         val start = output.indexOf("class EntTransactionClient")
-        val end = output.indexOf("class EntClient(", start)
+        val end = output.indexOf("class EntClient private constructor(", start)
         assert(start >= 0 && end > start) { "Could not isolate EntTransactionClient\n$output" }
         val transactionClient = output.substring(start, end)
 
@@ -277,16 +301,14 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `withTransaction copies hooks from original repos to transactional repos`() {
+    fun `withTransaction reuses resolved repository configuration`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("tx.cars.copyHooksFrom(this.cars)")) {
-            "Should copy hooks for cars repo\n$output"
+        assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
+            "Transactional repositories should be constructed from the resolved configuration\n$output"
         }
-        assert(output.contains("tx.users.copyHooksFrom(this.users)")) {
-            "Should copy hooks for users repo\n$output"
-        }
+        assert(!output.contains("copyHooksFrom"))
     }
 
     @Test
@@ -483,44 +505,29 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `withTransaction copies privacy context, privacy config, and validation config`() {
+    fun `withTransaction reuses policy configuration and copies runtime privacy context`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("tx.privacyContextProvider = this.privacyContextProvider")) {
             "withTransaction should copy privacy context provider\n$output"
         }
-        assert(output.contains("tx.cars.copyPrivacyFrom(this.cars)")) {
-            "withTransaction should copy privacy for cars repo\n$output"
+        assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
+            "withTransaction should rebuild repos from the resolved policy configuration\n$output"
         }
-        assert(output.contains("tx.users.copyPrivacyFrom(this.users)")) {
-            "withTransaction should copy privacy for users repo\n$output"
-        }
-        assert(output.contains("tx.cars.copyValidationFrom(this.cars)")) {
-            "withTransaction should copy validation for cars repo\n$output"
-        }
-        assert(output.contains("tx.users.copyValidationFrom(this.users)")) {
-            "withTransaction should copy validation for users repo\n$output"
-        }
+        assert(!output.contains("copyPrivacyFrom") && !output.contains("copyValidationFrom"))
     }
 
     @Test
-    fun `init block applies policies from config`() {
+    fun `repo constructors receive policies from config`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("cars.applyPrivacy(cfg.policiesConfig.carsPrivacyConfig)")) {
-            "Should apply car privacy from policies config\n$output"
-        }
-        assert(output.contains("users.applyPrivacy(cfg.policiesConfig.usersPrivacyConfig)")) {
-            "Should apply user privacy from policies config\n$output"
-        }
-        assert(output.contains("cars.applyValidation(cfg.policiesConfig.carsValidationConfig)")) {
-            "Should apply car validation from policies config\n$output"
-        }
-        assert(output.contains("users.applyValidation(cfg.policiesConfig.usersValidationConfig)")) {
-            "Should apply user validation from policies config\n$output"
-        }
+        assert(output.contains("configuredPrivacy = configuration.policiesConfig.carsPrivacyConfig"))
+        assert(output.contains("configuredPrivacy = configuration.policiesConfig.usersPrivacyConfig"))
+        assert(output.contains("configuredValidation = configuration.policiesConfig.carsValidationConfig"))
+        assert(output.contains("configuredValidation = configuration.policiesConfig.usersValidationConfig"))
+        assert(!output.contains("applyPrivacy") && !output.contains("applyValidation"))
     }
 
     @Test

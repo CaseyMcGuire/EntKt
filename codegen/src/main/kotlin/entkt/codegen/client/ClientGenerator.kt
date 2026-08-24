@@ -22,6 +22,7 @@ import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.companionObject
+import entkt.codegen.kotlinpoet.constructor
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.getter
 import entkt.codegen.kotlinpoet.interfaceType
@@ -73,8 +74,10 @@ private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
  * }
  * ```
  *
- * Hooks are registered once at construction time and automatically
- * inherited by transactional clients via `copyHooksFrom`.
+ * Configuration is resolved before repositories are constructed, so each
+ * repository receives its complete hooks, privacy, and validation inputs in
+ * its constructor. Transactional and privacy-scoped clients reuse that same
+ * resolved configuration.
  */
 internal class ClientGenerator(
     private val packageName: String,
@@ -114,7 +117,13 @@ internal class ClientGenerator(
         val interceptorsType = buildInterceptorsClass(interceptorsClass, schemas)
 
         // Generate EntClientConfig
-        val configType = buildConfigClass(configClass, hooksClass, policiesClass, interceptorsClass)
+        val configType = buildConfigClass(
+            configClass,
+            hooksClass,
+            policiesClass,
+            interceptorsClass,
+            schemas,
+        )
 
         // Generate EntClient
         val configLambda = LambdaTypeName.get(
@@ -131,17 +140,22 @@ internal class ClientGenerator(
             addSuperinterface(MUTATION_RUNTIME)
             addSuperinterface(clientScopeClass)
             primaryConstructor {
+                addModifiers(KModifier.PRIVATE)
+                parameter("driver", DRIVER)
+                parameter("configuration", configClass)
+            }
+            addFunction(constructor {
                 parameter("driver", DRIVER)
                 parameter("config", configLambda) { defaultValue("{}") }
-            }
+                callThisConstructor(
+                    CodeBlock.of("driver"),
+                    CodeBlock.of("%T().apply(config).snapshotForInternalUse()", configClass),
+                )
+            })
             // Batch-register the complete schema set while initializing
-            // the driver property — deliberately here rather than in the
-            // init block below. Repo properties are declared before that
-            // block and each repo registers its own schema from its
-            // initializer, so an init-block call would arrive after the
-            // one-at-a-time registrations had already happened. The
-            // driver property is the first thing constructed, which makes
-            // this the earliest point the whole set is available.
+            // the driver property. Each repository registers its own schema
+            // from a later property initializer, so this is the earliest
+            // point at which the complete set is available.
             //
             // Drivers that materialize storage need the whole set at
             // once: foreign keys between mutually-referencing entities
@@ -152,6 +166,10 @@ internal class ClientGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("driver.also { it.registerAll(SCHEMAS) }")
             }
+            property("configuration", configClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("configuration")
+            }
             property("mutations", MUTATION_EVALUATOR) {
                 addKdoc("Mutation lifecycles shared by this client's generated repositories.")
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
@@ -161,17 +179,22 @@ internal class ClientGenerator(
             property("privacyContextProvider", PRIVACY_CONTEXT_PROVIDER) {
                 addModifiers(KModifier.INTERNAL)
                 mutable(true)
-                initializer("%T { %T(%T.Anonymous) }", PRIVACY_CONTEXT_PROVIDER, PRIVACY_CONTEXT, VIEWER)
+                initializer(
+                    "configuration.privacyContextProviderConfig ?: %T { %T(%T.Anonymous) }",
+                    PRIVACY_CONTEXT_PROVIDER,
+                    PRIVACY_CONTEXT,
+                    VIEWER,
+                )
             }
             property("transactionRequirement", TRANSACTION_REQUIREMENT) {
                 addModifiers(KModifier.INTERNAL)
                 mutable(true)
-                initializer("%T.Optional", TRANSACTION_REQUIREMENT)
+                initializer("configuration.transactionRequirement")
             }
             property("defaultUpdateConsistency", UPDATE_CONSISTENCY) {
                 addModifiers(KModifier.INTERNAL)
                 mutable(true)
-                initializer("%T.ReadCurrent", UPDATE_CONSISTENCY)
+                initializer("configuration.defaultUpdateConsistency")
             }
                 // Client-wide default RelationshipLocking for symmetric
                 // link-table M2M writes. The per-save
@@ -181,7 +204,7 @@ internal class ClientGenerator(
             property("defaultRelationshipLocking", RELATIONSHIP_LOCKING) {
                 addModifiers(KModifier.INTERNAL)
                 mutable(true)
-                initializer("%T.OwnerOnly", RELATIONSHIP_LOCKING)
+                initializer("configuration.defaultRelationshipLocking")
             }
                 // The per-transaction coordinator, non-null only on the
                 // transaction-scoped clone built by withTransaction (and
@@ -252,7 +275,7 @@ internal class ClientGenerator(
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.OVERRIDE)
                 mutable(true)
-                initializer("%T()", ClassName("entkt.runtime.query", "EntInterceptorsConfig"))
+                initializer("configuration.interceptorsConfig.config")
                 setter { addModifiers(KModifier.INTERNAL) }
             }
                 // Generated saves call this at save() / delete() preflight
@@ -304,7 +327,6 @@ internal class ClientGenerator(
                 initializer("%T(this)", hookClientScopeFacadeClass)
             }
             addProperties(sorted.map { buildRepoProperty(it) })
-            addInitializerBlock(buildInitBlock(configClass, sorted))
             function("currentPrivacyContext", PRIVACY_CONTEXT) {
                 addModifiers(KModifier.OVERRIDE)
                 statement("transactionExecutionGuard.checkClientOperation(transactionExecutionToken)")
@@ -317,9 +339,9 @@ internal class ClientGenerator(
             addFunction(buildReadClientImplBuilder(sorted))
             addFunction(buildAsValidationReadClientForInternalUse())
             addFunction(buildAsPrivacyReadClientForInternalUse())
-            addFunction(buildWithPrivacyContext(clientClass, t, sorted))
+            addFunction(buildWithPrivacyContext(clientClass, t))
             addFunction(buildBypassPrivacyDangerous(clientClass, t))
-            addFunction(buildWithTransaction(clientClass, transactionClientClass, t, sorted))
+            addFunction(buildWithTransaction(clientClass, transactionClientClass, t))
             addType(buildCompanionObject(sorted))
         }
 
@@ -434,6 +456,7 @@ internal class ClientGenerator(
         hooksClass: ClassName,
         policiesClass: ClassName,
         interceptorsClass: ClassName,
+        schemas: List<SchemaInput>,
     ): TypeSpec {
         val hooksBlockLambda = LambdaTypeName.get(
             receiver = hooksClass,
@@ -506,40 +529,95 @@ internal class ClientGenerator(
                 parameter("provider", PRIVACY_CONTEXT_PROVIDER)
                 statement("privacyContextProviderConfig = provider")
             }
+            addFunction(buildConfigSnapshot(configClass, schemas))
         }
     }
 
-    private fun buildInitBlock(
+    /** Freeze the mutable construction DSL into the configuration shared by every client scope. */
+    private fun buildConfigSnapshot(
         configClass: ClassName,
         schemas: List<SchemaInput>,
-    ): CodeBlock {
-        return codeBlock {
-            for (input in schemas) {
-                statement("%L.attachClientForInternalUse(this)", input.clientName)
+    ): FunSpec = function("snapshotForInternalUse", configClass) {
+        addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        addModifiers(KModifier.INTERNAL)
+        statement("val snapshot = %T()", configClass)
+        statement("snapshot.privacyContextProviderConfig = privacyContextProviderConfig")
+        statement("snapshot.transactionRequirement = transactionRequirement")
+        statement("snapshot.defaultUpdateConsistency = defaultUpdateConsistency")
+        statement("snapshot.defaultRelationshipLocking = defaultRelationshipLocking")
+
+        for (input in schemas) {
+            val clientName = input.clientName
+            for (phase in listOf(
+                "beforeSave",
+                "beforeCreate",
+                "afterCreate",
+                "beforeUpdate",
+                "afterUpdate",
+                "beforeDelete",
+                "afterDelete",
+            )) {
+                statement(
+                    "snapshot.hooksConfig.%L.%LHooks.addAll(hooksConfig.%L.%LHooks)",
+                    clientName,
+                    phase,
+                    clientName,
+                    phase,
+                )
             }
-            statement("val cfg = %T().apply(config)", configClass)
-            for (input in schemas) {
-                val propName = input.clientName
-                statement("%L.applyHooks(cfg.hooksConfig.%L)", propName, propName)
+
+            for (operation in listOf("load", "create", "update", "delete")) {
+                statement(
+                    "snapshot.policiesConfig.%LPrivacyConfig.%LRules" +
+                        ".addAll(policiesConfig.%LPrivacyConfig.%LRules)",
+                    clientName,
+                    operation,
+                    clientName,
+                    operation,
+                )
             }
-            for (input in schemas) {
-                val propName = input.clientName
-                statement("%L.applyPrivacy(cfg.policiesConfig.%LPrivacyConfig)", propName, propName)
-                statement("%L.applyValidation(cfg.policiesConfig.%LValidationConfig)", propName, propName)
+            statement(
+                "snapshot.policiesConfig.%LPrivacyConfig.updateDerivesFromCreate = " +
+                    "policiesConfig.%LPrivacyConfig.updateDerivesFromCreate",
+                clientName,
+                clientName,
+            )
+            statement(
+                "snapshot.policiesConfig.%LPrivacyConfig.deleteDerivesFromCreate = " +
+                    "policiesConfig.%LPrivacyConfig.deleteDerivesFromCreate",
+                clientName,
+                clientName,
+            )
+
+            for (operation in listOf("create", "update", "delete")) {
+                statement(
+                    "snapshot.policiesConfig.%LValidationConfig.%LRules" +
+                        ".addAll(policiesConfig.%LValidationConfig.%LRules)",
+                    clientName,
+                    operation,
+                    clientName,
+                    operation,
+                )
             }
-            statement("cfg.privacyContextProviderConfig?.let { privacyContextProvider = it }")
-            statement("transactionRequirement = cfg.transactionRequirement")
-            statement("defaultUpdateConsistency = cfg.defaultUpdateConsistency")
-            statement("defaultRelationshipLocking = cfg.defaultRelationshipLocking")
-            statement("entityInterceptors = cfg.interceptorsConfig.config")
+            statement(
+                "snapshot.policiesConfig.%LValidationConfig.updateDerivesFromCreate = " +
+                    "policiesConfig.%LValidationConfig.updateDerivesFromCreate",
+                clientName,
+                clientName,
+            )
         }
+
+        statement(
+            "snapshot.interceptorsConfig.config = " +
+                "interceptorsConfig.config.snapshotForInternalUse()",
+        )
+        statement("return snapshot")
     }
 
     private fun buildWithTransaction(
         clientClass: ClassName,
         transactionClientClass: ClassName,
         t: TypeVariableName,
-        schemas: List<SchemaInput>,
     ): FunSpec {
         val transactionScope = ClassName("entkt.runtime.result", "TransactionScope")
         val transactionResult = ClassName("entkt.runtime.result", "TransactionResult")
@@ -555,7 +633,7 @@ internal class ClientGenerator(
             statement("val executionToken = transactionExecutionGuard.enterTransaction()")
             beginControlFlow("return try")
             beginControlFlow("%M(driver, { txDriver, coordinator ->", runEntTransaction)
-            statement("val tx = %T(txDriver)", clientClass)
+            statement("val tx = %T(txDriver, configuration)", clientClass)
             statement("tx.privacyContextProvider = this.privacyContextProvider")
             statement("tx.transactionRequirement = this.transactionRequirement")
             statement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
@@ -564,12 +642,6 @@ internal class ClientGenerator(
             statement("tx.transactionCoordinator = coordinator")
             statement("tx.transactionExecutionGuard = this.transactionExecutionGuard")
             statement("tx.transactionExecutionToken = executionToken")
-            for (input in schemas) {
-                val propName = input.clientName
-                statement("tx.%L.copyHooksFrom(this.%L)", propName, propName)
-                statement("tx.%L.copyPrivacyFrom(this.%L)", propName, propName)
-                statement("tx.%L.copyValidationFrom(this.%L)", propName, propName)
-            }
             statement("%T(tx)", transactionClientClass)
             endControlFlow()
             add(", block)\n")
@@ -812,6 +884,7 @@ internal class ClientGenerator(
             property("config", ENT_INTERCEPTORS_CONFIG) {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
+                mutable(true)
                 initializer("%T()", ENT_INTERCEPTORS_CONFIG)
             }
 
@@ -882,10 +955,9 @@ internal class ClientGenerator(
     private fun buildWithPrivacyContext(
         clientClass: ClassName,
         t: TypeVariableName,
-        schemas: List<SchemaInput>,
     ): FunSpec {
         val body = codeBlock {
-            statement("val scoped = %T(driver)", clientClass)
+            statement("val scoped = %T(driver, configuration)", clientClass)
             statement("scoped.privacyContextProvider = %T { context }", PRIVACY_CONTEXT_PROVIDER)
             statement("scoped.transactionRequirement = this.transactionRequirement")
             statement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
@@ -894,12 +966,6 @@ internal class ClientGenerator(
             statement("scoped.transactionExecutionGuard = this.transactionExecutionGuard")
             statement("scoped.transactionExecutionToken = this.transactionExecutionToken")
             statement("scoped.entityInterceptors = this.entityInterceptors")
-            for (input in schemas) {
-                val propName = input.clientName
-                statement("scoped.%L.copyHooksFrom(this.%L)", propName, propName)
-                statement("scoped.%L.copyPrivacyFrom(this.%L)", propName, propName)
-                statement("scoped.%L.copyValidationFrom(this.%L)", propName, propName)
-            }
             statement("return block(scoped)")
         }
 
@@ -960,7 +1026,19 @@ internal class ClientGenerator(
         // full repo type for application callers.
         return property(propertyName, repoClass) {
             addModifiers(KModifier.OVERRIDE)
-            initializer("%T(driver)", repoClass)
+            initializer(
+                "%T(\n" +
+                    "  driver = driver,\n" +
+                    "  client = this,\n" +
+                    "  configuredHooks = configuration.hooksConfig.%L,\n" +
+                    "  configuredPrivacy = configuration.policiesConfig.%LPrivacyConfig,\n" +
+                    "  configuredValidation = configuration.policiesConfig.%LValidationConfig,\n" +
+                    ")",
+                repoClass,
+                propertyName,
+                propertyName,
+                propertyName,
+            )
         }
     }
 

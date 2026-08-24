@@ -65,7 +65,6 @@ import entkt.codegen.metadata.EdgeFk
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val LIST = ClassName("kotlin.collections", "List")
-private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val INT = Int::class.asClassName()
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
@@ -93,18 +92,8 @@ private val CREATE_MUTATION_SPEC =
 private val CREATE_MUTATION = ClassName("entkt.runtime.mutation", "CreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
     ClassName("entkt.runtime.mutation", "CreateMutationRepository")
-private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
 private val SNAPSHOT_EDGE_CHANGES =
     MemberName("entkt.runtime.mutation", "snapshotEdgeChangesForInternalUse")
-private val hookPhases = listOf(
-    "beforeSave",
-    "beforeCreate",
-    "afterCreate",
-    "beforeUpdate",
-    "afterUpdate",
-    "beforeDelete",
-    "afterDelete",
-)
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -114,9 +103,10 @@ private val hookPhases = listOf(
  * layout before any other call lands, and every mutation input it hands back is
  * constructed with the same driver reference.
  *
- * Hooks are applied from the client's hooks DSL via [applyHooks] at
- * construction time, and inherited by transactional repos via
- * [copyHooksFrom].
+ * The client supplies the repository's runtime context, hooks, privacy,
+ * and validation configuration through the constructor. A repository is
+ * therefore complete as soon as it is visible; no attach or apply phase is
+ * required after construction.
  */
 internal class RepoGenerator(
     private val packageName: String,
@@ -128,7 +118,6 @@ internal class RepoGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val className = "${schemaName}Repo"
-        val repoClass = ClassName(packageName, className)
         val entityClass = ClassName(packageName, schemaName)
         val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
         val updateClass = ClassName(packageName, "${schemaName}Update")
@@ -172,8 +161,7 @@ internal class RepoGenerator(
         val beforeDeleteHookType = batchHookClass.parameterizedBy(entityClass)
         val afterDeleteHookType = batchHookClass.parameterizedBy(entityClass)
 
-        fun mutableHookList(hookType: com.squareup.kotlinpoet.TypeName) =
-            MUTABLE_LIST.parameterizedBy(hookType)
+        fun hookList(hookType: com.squareup.kotlinpoet.TypeName) = LIST.parameterizedBy(hookType)
 
         val typeSpec = classType(className) {
             // The repo is the entity's read surface: query terminals reach
@@ -182,59 +170,55 @@ internal class RepoGenerator(
             // accessor, which EntClient overrides with this repo.
             addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
             addSuperinterface(
-                CREATE_MUTATION_SPEC.parameterizedBy(
-                    createDraftClass,
-                    mutationClass,
-                    createHookCtxClass,
-                    candidateClass,
-                    entityClass,
-                ),
-            )
-            addSuperinterface(
                 CREATE_MUTATION_REPOSITORY.parameterizedBy(createDraftClass, entityClass),
             )
-            primaryConstructor { parameter("driver", DRIVER) }
+            primaryConstructor {
+                addModifiers(KModifier.INTERNAL)
+                parameter("driver", DRIVER)
+                parameter("client", clientClass)
+                parameter("configuredHooks", entityHooksClass)
+                parameter("configuredPrivacy", privacyConfigClass)
+                parameter("configuredValidation", validationConfigClass)
+            }
             property("driver", DRIVER) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("driver")
             }
-            property("entity", ENTITY_MAPPING.parameterizedBy(entityClass)) {
-                addAnnotation(ENTKT_INTERNAL)
-                addModifiers(KModifier.OVERRIDE)
-                initializer("%T.GeneratedEntityMapping", queryClass)
-            }
-            // Client reference — attached by EntClient after construction.
             // Private so a repository exposed through EntTransactionClient
             // cannot leak its hidden full EntClient and restore the nested
             // transaction entry point.
             property("client", clientClass) {
-                addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
-                mutable(true)
-            }
-            function("attachClientForInternalUse") {
-                addAnnotation(ENTKT_INTERNAL)
-                addModifiers(KModifier.INTERNAL)
-                parameter("client", clientClass)
-                statement("this.client = client")
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
             }
             // Hook list properties
-            addProperty(hookListProperty("beforeSaveHooks", mutableHookList(batchHookClass.parameterizedBy(mutationClass)), createSpecOverride = true))
-            addProperty(hookListProperty("beforeCreateHooks", mutableHookList(beforeCreateHookType), createSpecOverride = true))
-            addProperty(hookListProperty("afterCreateHooks", mutableHookList(afterCreateHookType), createSpecOverride = true))
-            addProperty(hookListProperty("beforeUpdateHooks", mutableHookList(beforeUpdateHookType)))
-            addProperty(hookListProperty("afterUpdateHooks", mutableHookList(afterUpdateHookType)))
-            addProperty(hookListProperty("beforeDeleteHooks", mutableHookList(beforeDeleteHookType)))
-            addProperty(hookListProperty("afterDeleteHooks", mutableHookList(afterDeleteHookType)))
+            addProperty(hookListProperty("beforeSaveHooks", hookList(batchHookClass.parameterizedBy(mutationClass))))
+            addProperty(hookListProperty("beforeCreateHooks", hookList(beforeCreateHookType)))
+            addProperty(hookListProperty("afterCreateHooks", hookList(afterCreateHookType)))
+            addProperty(hookListProperty("beforeUpdateHooks", hookList(beforeUpdateHookType)))
+            addProperty(hookListProperty("afterUpdateHooks", hookList(afterUpdateHookType)))
+            addProperty(hookListProperty("beforeDeleteHooks", hookList(beforeDeleteHookType)))
+            addProperty(hookListProperty("afterDeleteHooks", hookList(afterDeleteHookType)))
             // Privacy config
             property("privacyConfig", privacyConfigClass) {
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", privacyConfigClass)
+                initializer("configuredPrivacy")
             }
             // Validation config
             property("validationConfig", validationConfigClass) {
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", validationConfigClass)
+                initializer("configuredValidation")
             }
+            addProperty(
+                buildCreateMutationSpec(
+                    queryClass = queryClass,
+                    createDraftClass = createDraftClass,
+                    mutationClass = mutationClass,
+                    createHookContextClass = createHookCtxClass,
+                    candidateClass = candidateClass,
+                    entityClass = entityClass,
+                ),
+            )
             addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
@@ -312,10 +296,6 @@ internal class RepoGenerator(
                     helperName = "_classifyDeleteDriverFailure",
                 ),
             )
-            addFunction(buildApplyHooks(entityHooksClass))
-            addFunction(buildCopyHooksFrom(repoClass))
-            addFunction(buildApplyPrivacy(privacyConfigClass))
-            addFunction(buildCopyPrivacyFrom(repoClass))
             addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
             addFunction(buildHasPrivacy("hasCreatePrivacy"))
             addFunction(buildHasPrivacy("hasUpdatePrivacy"))
@@ -336,8 +316,6 @@ internal class RepoGenerator(
             addFunction(buildDeleteDenialReasons(schemaName, entityClass, candidateClass, fields))
             addFunction(buildDeleteDenialReasonOrNull(entityClass, candidateClass))
             addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
-            addFunction(buildApplyValidation(validationConfigClass))
-            addFunction(buildCopyValidationFrom(repoClass))
             addFunction(buildEvaluateCreateValidations(schemaName, candidateClass, fields))
             addFunction(buildEvaluateCreateValidation(candidateClass))
             addFunction(
@@ -920,30 +898,6 @@ internal class RepoGenerator(
             .add("}\n")
         }
 
-    private fun buildApplyPrivacy(privacyConfigClass: ClassName): FunSpec =
-        function("applyPrivacy") {
-            addModifiers(KModifier.INTERNAL)
-            parameter("config", privacyConfigClass)
-            statement("privacyConfig.loadRules.addAll(config.loadRules)")
-            statement("privacyConfig.createRules.addAll(config.createRules)")
-            statement("privacyConfig.updateRules.addAll(config.updateRules)")
-            statement("privacyConfig.deleteRules.addAll(config.deleteRules)")
-            statement("if (config.updateDerivesFromCreate) privacyConfig.updateDerivesFromCreate = true")
-            statement("if (config.deleteDerivesFromCreate) privacyConfig.deleteDerivesFromCreate = true")
-        }
-
-    private fun buildCopyPrivacyFrom(repoClass: ClassName): FunSpec =
-        function("copyPrivacyFrom") {
-            addModifiers(KModifier.INTERNAL)
-            parameter("other", repoClass)
-            statement("privacyConfig.loadRules.addAll(other.privacyConfig.loadRules)")
-            statement("privacyConfig.createRules.addAll(other.privacyConfig.createRules)")
-            statement("privacyConfig.updateRules.addAll(other.privacyConfig.updateRules)")
-            statement("privacyConfig.deleteRules.addAll(other.privacyConfig.deleteRules)")
-            statement("privacyConfig.updateDerivesFromCreate = other.privacyConfig.updateDerivesFromCreate")
-            statement("privacyConfig.deleteDerivesFromCreate = other.privacyConfig.deleteDerivesFromCreate")
-        }
-
     // Privacy is fail-closed: every operation requires an explicit Allow, so
     // every entity is privacy-enforced regardless of which rules are declared.
     // These flags therefore always report true (the call sites that gate on
@@ -1046,8 +1000,7 @@ internal class RepoGenerator(
             "createDenialReasons",
             LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)),
         ) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
+            addModifiers(KModifier.PRIVATE)
             parameter("privacy", PRIVACY_CONTEXT)
             parameter("candidates", LIST.parameterizedBy(candidateClass))
             addCode(codeBlock {
@@ -1285,6 +1238,43 @@ internal class RepoGenerator(
         }
     }
 
+    /** Capture the immutable inputs consumed by the shared runtime create lifecycle. */
+    private fun buildCreateMutationSpec(
+        queryClass: ClassName,
+        createDraftClass: ClassName,
+        mutationClass: ClassName,
+        createHookContextClass: ClassName,
+        candidateClass: ClassName,
+        entityClass: ClassName,
+    ): PropertySpec {
+        val specType = CREATE_MUTATION_SPEC.parameterizedBy(
+            createDraftClass,
+            mutationClass,
+            createHookContextClass,
+            candidateClass,
+            entityClass,
+        )
+        return property("createSpec", specType) {
+            addModifiers(KModifier.PRIVATE)
+            initializer(codeBlock {
+                add("%T(\n", CREATE_MUTATION_SPEC)
+                indent()
+                add("entity = %T.GeneratedEntityMapping,\n", queryClass)
+                add("beforeSaveHooks = beforeSaveHooks,\n")
+                add("beforeCreateHooks = beforeCreateHooks,\n")
+                add("afterCreateHooks = afterCreateHooks,\n")
+                add("beforeSaveHookValue = ::beforeSaveHookValue,\n")
+                add("beforeCreateHookValue = ::beforeCreateHookValue,\n")
+                add("resolve = ::resolve,\n")
+                add("createDenialReasons = ::createDenialReasons,\n")
+                add("validationViolations = ::validationViolations,\n")
+                add("loadDenials = ::loadDenials,\n")
+                unindent()
+                add(")")
+            })
+        }
+    }
+
     private fun buildRepoCreate(
         schema: EntSchema,
         entityClass: ClassName,
@@ -1312,7 +1302,7 @@ internal class RepoGenerator(
                     add("return when (val result = client.mutations.create(\n")
                     .indent()
                     .add("draft = draft,\n")
-                    .add("spec = this,\n")
+                    .add("spec = createSpec,\n")
                     .add("checkReturnedEntityPrivacy = false,\n")
                     .unindent()
                     .add(")) {\n")
@@ -1331,7 +1321,7 @@ internal class RepoGenerator(
             addModifiers(KModifier.OVERRIDE)
             parameter("draft", createDraftClass)
             statement(
-                "return client.mutations.create(draft, this, checkReturnedEntityPrivacy = true)",
+                "return client.mutations.create(draft, createSpec, checkReturnedEntityPrivacy = true)",
             )
         }
 
@@ -1358,8 +1348,7 @@ internal class RepoGenerator(
             }
         }
         return function("beforeSaveHookValue", mutationClass) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
+            addModifiers(KModifier.PRIVATE)
             parameter("draft", createDraftClass)
             statement("return %L", adapter)
         }
@@ -1389,8 +1378,7 @@ internal class RepoGenerator(
             }
         }
         return function("beforeCreateHookValue", createHookContextClass) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
+            addModifiers(KModifier.PRIVATE)
             parameter("draft", createDraftClass)
             statement(
                 "return %T(client.hookClientScopeForInternalUse, %L)",
@@ -1485,7 +1473,7 @@ internal class RepoGenerator(
                     .add(
                             "  return client.mutations.createMany(\n" +
                             "    drafts = drafts,\n" +
-                            "    spec = this,\n" +
+                            "    spec = createSpec,\n" +
                             "    promoteDriverNotPersisted = promoteDriverNotPersisted,\n" +
                             "  )\n",
                     )
@@ -1656,59 +1644,13 @@ internal class RepoGenerator(
         }
     }
 
-
-
-    private fun buildApplyHooks(entityHooksClass: ClassName): FunSpec =
-        function("applyHooks") {
-            addModifiers(KModifier.INTERNAL)
-            parameter("hooks", entityHooksClass)
-            for (phase in hookPhases) {
-                statement("%LHooks.addAll(hooks.%LHooks)", phase, phase)
-            }
-        }
-
-    private fun buildCopyHooksFrom(repoClass: ClassName): FunSpec =
-        function("copyHooksFrom") {
-            addModifiers(KModifier.INTERNAL)
-            parameter("other", repoClass)
-            for (phase in hookPhases) {
-                statement("%LHooks.addAll(other.%LHooks)", phase, phase)
-            }
-        }
-
     private fun hookListProperty(
         name: String,
         type: com.squareup.kotlinpoet.TypeName,
-        createSpecOverride: Boolean = false,
     ): PropertySpec = property(name, type) {
-        if (createSpecOverride) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
-        } else {
-            addModifiers(KModifier.PRIVATE)
-        }
-        initializer("mutableListOf()")
+        addModifiers(KModifier.PRIVATE)
+        initializer("configuredHooks.%LHooks.toList()", name.removeSuffix("Hooks"))
     }
-
-    private fun buildApplyValidation(validationConfigClass: ClassName): FunSpec =
-        function("applyValidation") {
-            addModifiers(KModifier.INTERNAL)
-            parameter("config", validationConfigClass)
-            statement("validationConfig.createRules.addAll(config.createRules)")
-            statement("validationConfig.updateRules.addAll(config.updateRules)")
-            statement("validationConfig.deleteRules.addAll(config.deleteRules)")
-            statement("if (config.updateDerivesFromCreate) validationConfig.updateDerivesFromCreate = true")
-        }
-
-    private fun buildCopyValidationFrom(repoClass: ClassName): FunSpec =
-        function("copyValidationFrom") {
-            addModifiers(KModifier.INTERNAL)
-            parameter("other", repoClass)
-            statement("validationConfig.createRules.addAll(other.validationConfig.createRules)")
-            statement("validationConfig.updateRules.addAll(other.validationConfig.updateRules)")
-            statement("validationConfig.deleteRules.addAll(other.validationConfig.deleteRules)")
-            statement("validationConfig.updateDerivesFromCreate = other.validationConfig.updateDerivesFromCreate")
-        }
 
     // ── Write-side validation evaluators ──────────────────────────
     // DECISION-RETURNING (List<ValidationViolation>; empty = valid),
@@ -1728,8 +1670,7 @@ internal class RepoGenerator(
         val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
         return function("validationViolations", LIST.parameterizedBy(violationList)) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
+            addModifiers(KModifier.PRIVATE)
             parameter("candidates", LIST.parameterizedBy(candidateClass))
             addCode(codeBlock {
                 addStatement("if (candidates.isEmpty()) return emptyList()")

@@ -88,12 +88,12 @@ class MutationEvaluator(
         promoteDriverNotPersisted: Boolean,
     ): CreateMutationOutput<Entity> {
         runHooks(
-            drafts.map(spec::beforeSaveHookValue),
+            drafts.map(spec.beforeSaveHookValue),
             spec.beforeSaveHooks,
         )
 
         runHooks(
-            drafts.map(spec::beforeCreateHookValue),
+            drafts.map(spec.beforeCreateHookValue),
             spec.beforeCreateHooks,
         )
 

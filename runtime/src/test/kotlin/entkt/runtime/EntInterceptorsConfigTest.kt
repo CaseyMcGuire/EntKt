@@ -73,6 +73,24 @@ class EntInterceptorsConfigTest {
     }
 
     @Test
+    fun `snapshot detaches entity and global registration containers`() {
+        val config = EntInterceptorsConfig()
+        config.addEntity("posts", "initial-entity", noop)
+        config.addGlobal("initial-global", noopGlobal)
+
+        val snapshot = config.snapshotForInternalUse()
+
+        config.addEntity("posts", "late-entity", noop)
+        config.addGlobal("late-global", noopGlobal)
+
+        assertEquals(
+            listOf("initial-entity"),
+            snapshot.entityInterceptorsFor<Post>("posts").map { it.name },
+        )
+        assertEquals(listOf("initial-global"), snapshot.globals().map { it.name })
+    }
+
+    @Test
     fun `duplicate name within same entity scope is rejected at registration`() {
         val config = EntInterceptorsConfig()
         config.addEntity("posts", "tenant-scope", noop)

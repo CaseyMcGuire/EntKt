@@ -6,7 +6,6 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.BatchHook
 import entkt.runtime.hook.Hook
 import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
@@ -107,8 +106,8 @@ class MutationEvaluatorTest {
 
     private class RecordingSpec(
         private val events: MutableList<String>,
-        override val entity: EntityMapping<Widget>,
-    ) : CreateMutationSpec<RecordingInput, String, String, Candidate, Widget> {
+        entity: EntityMapping<Widget>,
+    ) {
         var createDenial: String? = null
         var validationViolations: List<ValidationViolation> = emptyList()
         var loadDenial: PrivacyDenial? = null
@@ -116,56 +115,39 @@ class MutationEvaluatorTest {
         var afterCreateAction: (Widget) -> Unit = {}
         val receivedPrivacyContexts = mutableListOf<PrivacyContext>()
 
-        override val beforeSaveHooks: List<BatchHook<String>> =
-            listOf(Hook { value -> events += "before-save:$value" })
-
-        override val beforeCreateHooks: List<BatchHook<String>> = listOf(
-            Hook { value ->
-                events += "before-create:$value"
-                beforeCreateAction()
+        val value = CreateMutationSpec(
+            entity = entity,
+            beforeSaveHooks = listOf(Hook { value -> events += "before-save:$value" }),
+            beforeCreateHooks = listOf(
+                Hook { value ->
+                    events += "before-create:$value"
+                    beforeCreateAction()
+                },
+            ),
+            afterCreateHooks = listOf(
+                Hook { value ->
+                    events += "after-create:${value.id}"
+                    afterCreateAction(value)
+                },
+            ),
+            beforeSaveHookValue = RecordingInput::beforeSaveHookValue,
+            beforeCreateHookValue = RecordingInput::beforeCreateHookValue,
+            resolve = RecordingInput::resolve,
+            createDenialReasons = { privacy, candidates ->
+                events += "create-privacy"
+                receivedPrivacyContexts += privacy
+                candidates.map { createDenial }
+            },
+            validationViolations = { candidates ->
+                events += "validate"
+                candidates.map { validationViolations }
+            },
+            loadDenials = { privacy, entities ->
+                events += "load-privacy"
+                receivedPrivacyContexts += privacy
+                entities.map { loadDenial }
             },
         )
-
-        override val afterCreateHooks: List<BatchHook<Widget>> = listOf(
-            Hook { value ->
-                events += "after-create:${value.id}"
-                afterCreateAction(value)
-            },
-        )
-
-        override fun beforeSaveHookValue(draft: RecordingInput): String =
-            draft.beforeSaveHookValue()
-
-        override fun beforeCreateHookValue(draft: RecordingInput): String =
-            draft.beforeCreateHookValue()
-
-        override fun resolve(draft: RecordingInput): CreatePreparation<Candidate> =
-            draft.resolve()
-
-        override fun createDenialReasons(
-            privacy: PrivacyContext,
-            candidates: List<Candidate>,
-        ): List<String?> {
-            events += "create-privacy"
-            receivedPrivacyContexts += privacy
-            return candidates.map { createDenial }
-        }
-
-        override fun validationViolations(
-            candidates: List<Candidate>,
-        ): List<List<ValidationViolation>> {
-            events += "validate"
-            return candidates.map { validationViolations }
-        }
-
-        override fun loadDenials(
-            privacy: PrivacyContext,
-            entities: List<Widget>,
-        ): List<PrivacyDenial?> {
-            events += "load-privacy"
-            receivedPrivacyContexts += privacy
-            return entities.map { loadDenial }
-        }
     }
 
     private class RecordingInput(
@@ -200,7 +182,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             draft = fixture.input,
-            spec = fixture.spec,
+            spec = fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
 
@@ -242,7 +224,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             fixture.input,
-            fixture.spec,
+            fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
 
@@ -262,7 +244,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             fixture.input,
-            fixture.spec,
+            fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
 
@@ -285,7 +267,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             fixture.input,
-            fixture.spec,
+            fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
 
@@ -313,7 +295,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             fixture.input,
-            fixture.spec,
+            fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
 
@@ -333,7 +315,7 @@ class MutationEvaluatorTest {
 
             val result = fixture.evaluator.create(
                 fixture.input,
-                fixture.spec,
+                fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
             )
 
@@ -358,7 +340,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             fixture.input,
-            fixture.spec,
+            fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
 
@@ -382,7 +364,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.create(
             fixture.input,
-            fixture.spec,
+            fixture.spec.value,
             checkReturnedEntityPrivacy = false,
         )
 
@@ -407,7 +389,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.createMany(
             drafts = listOf(fixture.input, secondInput),
-            spec = fixture.spec,
+            spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
 
@@ -456,7 +438,7 @@ class MutationEvaluatorTest {
 
         val result = fixture.evaluator.createMany(
             drafts = listOf(fixture.input),
-            spec = fixture.spec,
+            spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
 
@@ -479,7 +461,7 @@ class MutationEvaluatorTest {
         val thrown = assertFailsWith<CancellationException> {
             fixture.evaluator.create(
                 fixture.input,
-                fixture.spec,
+                fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
             )
         }

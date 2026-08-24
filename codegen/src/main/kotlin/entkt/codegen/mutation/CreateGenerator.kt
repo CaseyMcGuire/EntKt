@@ -329,8 +329,7 @@ internal class CreateGenerator(
             "resolve",
             returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
         ) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
+            addModifiers(KModifier.PRIVATE)
             parameter("draft", draftClass)
             beginControlFlow("return draft.run")
             emitCreatePreparation(this, schemaName, schema, allFields, edgeFks)

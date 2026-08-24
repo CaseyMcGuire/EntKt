@@ -1190,12 +1190,13 @@ class EdgeCodegenTest {
         // mutation-view adapter, not the concrete draft. This matches the runtime-enforced contract
         // the update path has had since transaction locking and link-table M2M helpers — a hook
         // attempting `ctx.mutation as PetCreateDraft` throws.
-        assert(output.contains("override fun beforeCreateHookValue(draft: PetCreateDraft): PetCreateHookContext")) {
-            "the repo specification should construct the typed hook context\n$output"
+        assert(output.contains("private fun beforeCreateHookValue(draft: PetCreateDraft): PetCreateHookContext")) {
+            "the repo should construct the typed hook context for its create specification\n$output"
         }
-        assert(output.contains("CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
-            "the repo should carry the draft and hook types to MutationEvaluator\n$output"
+        assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
+            "the repo should pass a distinct immutable specification to MutationEvaluator\n$output"
         }
+        assert(!output.contains(": PetReadSurface, CreateMutationSpec"))
         assert(!output.contains("CreateMutationDelegate")) {
             "lifecycle execution should use the runtime specification\n$output"
         }

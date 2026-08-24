@@ -30,6 +30,19 @@ above it.
 
 ## Unreleased
 
+- **Construct generated repositories with complete client configuration** (`codegen`, `runtime`)
+  Generated repository constructors are now internal and receive their client,
+  hooks, privacy rules, and validation rules up front. Repositories no longer
+  expose attach/apply/copy wiring methods or implement the runtime
+  `CreateMutationSpec`; create execution receives a separate immutable spec.
+  The public client constructor snapshots every hook, privacy, validation, and
+  interceptor registry before constructing repositories, so retained DSL
+  scopes cannot mutate a live client or any client derived from it.
+  _Migration:_ construct repositories through `EntClient` instead of calling a
+  `${Entity}Repo` constructor directly. Internal integrations that implemented
+  `CreateMutationSpec` should instantiate it with their entity mapping, hooks,
+  and lifecycle callbacks.
+
 - **Separate create drafts from executable create mutations** (`codegen`, `runtime`)
   Generated `${Entity}Create` builders are replaced by state-only
   `${Entity}CreateDraft` values. Repository `create { ... }` now returns a

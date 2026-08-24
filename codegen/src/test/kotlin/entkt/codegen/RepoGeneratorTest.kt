@@ -400,16 +400,16 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo keeps its client backlink private and exposes only the guarded attach method`() {
+    fun `repo receives its private client backlink in the constructor`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("private lateinit var client: EntClient")) {
+        assert(output.contains("private val client: EntClient")) {
             "The full client backlink must not escape through a transaction facade's repo\n$output"
         }
-        assert(output.contains("internal fun attachClientForInternalUse(client: EntClient)")) {
-            "EntClient should retain a guarded generated wiring path\n$output"
+        assert(!output.contains("attachClientForInternalUse")) {
+            "A fully constructed repo should not need a later attach phase\n$output"
         }
     }
 
@@ -425,37 +425,30 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has applyHooks that copies from entity hooks config`() {
+    fun `repo snapshots configured hooks during construction`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun applyHooks(hooks: CarHooks)")) {
-            "Should have applyHooks method taking CarHooks\n$output"
+        assert(output.contains("configuredHooks: CarHooks")) {
+            "The constructor should receive the entity hook configuration\n$output"
         }
-        assert(output.contains("beforeSaveHooks.addAll(hooks.beforeSaveHooks)")) {
-            "Should copy beforeSaveHooks from config\n$output"
+        assert(output.contains("configuredHooks.beforeSaveHooks.toList()")) {
+            "Should snapshot beforeSaveHooks from config\n$output"
         }
-        assert(output.contains("afterDeleteHooks.addAll(hooks.afterDeleteHooks)")) {
-            "Should copy afterDeleteHooks from config\n$output"
+        assert(output.contains("configuredHooks.afterDeleteHooks.toList()")) {
+            "Should snapshot afterDeleteHooks from config\n$output"
         }
+        assert(!output.contains("fun applyHooks"))
     }
 
     @Test
-    fun `repo has copyHooksFrom that copies all hook lists`() {
+    fun `repo has no post-construction hook copy path`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun copyHooksFrom(other: CarRepo)")) {
-            "Should have copyHooksFrom method\n$output"
-        }
-        assert(output.contains("beforeSaveHooks.addAll(other.beforeSaveHooks)")) {
-            "Should copy beforeSaveHooks\n$output"
-        }
-        assert(output.contains("afterDeleteHooks.addAll(other.afterDeleteHooks)")) {
-            "Should copy afterDeleteHooks\n$output"
-        }
+        assert(!output.contains("copyHooksFrom")) { "Hook configuration is constructor-injected\n$output" }
     }
 
     @Test
@@ -511,7 +504,7 @@ class RepoGeneratorTest {
         assert(
             output.contains(
                 "return client.mutations.createMany( drafts = drafts, " +
-                    "spec = this, " +
+                    "spec = createSpec, " +
                     "promoteDriverNotPersisted = promoteDriverNotPersisted, )",
             ),
         ) {
@@ -683,17 +676,16 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has applyPrivacy and copyPrivacyFrom`() {
+    fun `repo receives privacy configuration in its constructor`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun applyPrivacy(config: CarPrivacyConfig)")) {
-            "Should have applyPrivacy method\n$output"
+        assert(output.contains("configuredPrivacy: CarPrivacyConfig")) {
+            "Should accept privacy configuration in the constructor\n$output"
         }
-        assert(output.contains("fun copyPrivacyFrom(other: CarRepo)")) {
-            "Should have copyPrivacyFrom method\n$output"
-        }
+        assert(output.contains("internal val privacyConfig: CarPrivacyConfig = configuredPrivacy"))
+        assert(!output.contains("applyPrivacy") && !output.contains("copyPrivacyFrom"))
     }
 
     @Test
@@ -1057,17 +1049,16 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has applyValidation and copyValidationFrom`() {
+    fun `repo receives validation configuration in its constructor`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("fun applyValidation(config: CarValidationConfig)")) {
-            "Should have applyValidation method\n$output"
+        assert(output.contains("configuredValidation: CarValidationConfig")) {
+            "Should accept validation configuration in the constructor\n$output"
         }
-        assert(output.contains("fun copyValidationFrom(other: CarRepo)")) {
-            "Should have copyValidationFrom method\n$output"
-        }
+        assert(output.contains("internal val validationConfig: CarValidationConfig = configuredValidation"))
+        assert(!output.contains("applyValidation") && !output.contains("copyValidationFrom"))
     }
 
     @Test
