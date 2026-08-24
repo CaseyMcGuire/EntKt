@@ -38,7 +38,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class MutationEvaluatorTest {
+class MutationExecutorTest {
     private data class Candidate(val name: String)
 
     private data class Widget(
@@ -206,10 +206,10 @@ class MutationEvaluatorTest {
     }
 
     @Test
-    fun `runs the create lifecycle in order and captures privacy once`() {
+    fun `mutation executor runs the create lifecycle in order and captures privacy once`() {
         val fixture = fixture()
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             input = fixture.input.mutationInput(),
             spec = fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -251,7 +251,7 @@ class MutationEvaluatorTest {
             listOf(ValidationViolation("name is required", field = "name")),
         )
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -271,7 +271,7 @@ class MutationEvaluatorTest {
         val fixture = fixture()
         fixture.spec.createDecision = PrivacyDecision.Deny("not yours")
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -293,7 +293,7 @@ class MutationEvaluatorTest {
         val fixture = fixture()
         fixture.spec.createDecision = PrivacyDecision.Continue
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -313,7 +313,7 @@ class MutationEvaluatorTest {
         val driverFailure = IllegalStateException("connection lost")
         fixture.driver.insertFailure = driverFailure
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -341,7 +341,7 @@ class MutationEvaluatorTest {
         )
         fixture.driver.classifiedFailure = classified
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -361,7 +361,7 @@ class MutationEvaluatorTest {
             val callbackFailure = IllegalStateException("after hook failed")
             fixture.spec.afterCreateAction = { throw callbackFailure }
 
-            val result = fixture.evaluator.create(
+            val result = fixture.executor.create(
                 fixture.input.mutationInput(),
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
@@ -386,7 +386,7 @@ class MutationEvaluatorTest {
             reason = "hidden",
         )
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -410,7 +410,7 @@ class MutationEvaluatorTest {
             reason = "hidden",
         )
 
-        val result = fixture.evaluator.create(
+        val result = fixture.executor.create(
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = false,
@@ -436,7 +436,7 @@ class MutationEvaluatorTest {
             )
         }
 
-        val result = fixture.evaluator.createMany(
+        val result = fixture.executor.createMany(
             inputs = listOf(fixture.input.mutationInput(), secondInput.mutationInput()),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
@@ -485,7 +485,7 @@ class MutationEvaluatorTest {
         val callbackFailure = IllegalArgumentException("before create failed")
         fixture.spec.beforeCreateAction = { throw callbackFailure }
 
-        val result = fixture.evaluator.createMany(
+        val result = fixture.executor.createMany(
             inputs = listOf(fixture.input.mutationInput()),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
@@ -508,7 +508,7 @@ class MutationEvaluatorTest {
         fixture.spec.beforeCreateAction = { throw cancellation }
 
         val thrown = assertFailsWith<CancellationException> {
-            fixture.evaluator.create(
+            fixture.executor.create(
                 fixture.input.mutationInput(),
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
@@ -528,7 +528,7 @@ class MutationEvaluatorTest {
         val input = RecordingInput(events)
         val privacyContext = PrivacyContext(Viewer.User(7L))
         val recordedFailures = mutableListOf<EntMutationException>()
-        val evaluator = MutationEvaluator(
+        val executor = MutationExecutor(
             driver = driver,
             mutationRuntime = object : MutationRuntime<Unit, Unit> {
                 override fun get(): PrivacyContext {
@@ -571,7 +571,7 @@ class MutationEvaluatorTest {
             driver = driver,
             spec = spec,
             input = input,
-            evaluator = evaluator,
+            executor = executor,
             privacyContext = privacyContext,
             recordedFailures = recordedFailures,
         )
@@ -582,7 +582,7 @@ class MutationEvaluatorTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val evaluator: MutationEvaluator<Unit, Unit>,
+        val executor: MutationExecutor<Unit, Unit>,
         val privacyContext: PrivacyContext,
         val recordedFailures: MutableList<EntMutationException>,
     )

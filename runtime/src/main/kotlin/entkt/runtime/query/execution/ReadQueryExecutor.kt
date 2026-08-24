@@ -25,7 +25,7 @@ import java.util.concurrent.CancellationException
  * does not assemble or coordinate read execution itself.
  */
 @EntktInternal
-class ReadQueryEvaluator<Entity : EntEntity<*>>(
+class ReadQueryExecutor<Entity : EntEntity<*>>(
     private val driver: DatabaseDriver,
     private val privacyContextProvider: PrivacyContextProvider,
     registeredInterceptorsProvider: () -> EntInterceptorsConfig,

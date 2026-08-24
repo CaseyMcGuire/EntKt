@@ -216,7 +216,7 @@ class ReadClientGeneratorTest {
                 readSpan.contains("operation = ReadOperation.BY_ID,") &&
                 readSpan.contains("maximumRows = 1,"),
         ) {
-            "findById should delegate BY_ID execution to ReadQueryEvaluator\n$readSpan"
+            "findById should delegate BY_ID execution to ReadQueryExecutor\n$readSpan"
         }
         assert(
             readSpan.contains(

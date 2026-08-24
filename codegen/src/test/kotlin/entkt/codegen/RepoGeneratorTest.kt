@@ -183,7 +183,7 @@ class RepoGeneratorTest {
             "findById should build the id-scoped EntityQuery\n$output"
         }
         assert(output.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
-            "findById should delegate BY_ID and its single-row bound to ReadQueryEvaluator\n$output"
+            "findById should delegate BY_ID and its single-row bound to ReadQueryExecutor\n$output"
         }
         assert(output.contains("ReadResult.Success(result.value.firstOrNull())")) {
             "the repo should adapt the runtime entity list to nullable cardinality\n$output"
@@ -209,7 +209,7 @@ class RepoGeneratorTest {
             raw.indexOf("public fun delete"),
         ).replace("\\s+".toRegex(), " ")
         assert(!body.contains("catch (e:")) {
-            "findById should reuse ReadQueryEvaluator's single failure boundary\n$body"
+            "findById should reuse ReadQueryExecutor's single failure boundary\n$body"
         }
         assert(body.contains("is ReadResult.Failed -> result")) {
             "findById should preserve runtime failures without wrapping them\n$body"
@@ -228,7 +228,7 @@ class RepoGeneratorTest {
             raw.indexOf("public fun delete"),
         ).replace("\\s+".toRegex(), " ")
         assert(body.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
-            "findById should use the same ReadQueryEvaluator root-privacy lifecycle as entity queries\n$body"
+            "findById should use the same ReadQueryExecutor root-privacy lifecycle as entity queries\n$body"
         }
         assert(!body.contains("loadDenialOrNull")) {
             "the generated repo should not duplicate LOAD-privacy evaluation\n$body"
@@ -760,7 +760,7 @@ class RepoGeneratorTest {
         }
 
         assert(!output.contains("fun evaluateCreatePrivacy")) {
-            "CREATE privacy should run in MutationEvaluator from the rules in createSpec\n$output"
+            "CREATE privacy should run in MutationExecutor from the rules in createSpec\n$output"
         }
         assert(
             output.contains(
@@ -976,7 +976,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // CREATE classification now belongs to MutationEvaluator; this repo
+        // CREATE classification now belongs to MutationExecutor; this repo
         // retains only the operation-specific helper it still executes.
         assert(!output.contains("_classifyCreateDriverFailure")) {
             "The repo should not generate a redundant CREATE classifier\n$output"
@@ -1057,7 +1057,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         assert(!output.contains("fun evaluateCreateValidation")) {
-            "CREATE validation should run in MutationEvaluator from the rules in createSpec\n$output"
+            "CREATE validation should run in MutationExecutor from the rules in createSpec\n$output"
         }
         assert(output.contains("evaluateUpdateValidation")) {
             "Should have evaluateUpdateValidation\n$output"

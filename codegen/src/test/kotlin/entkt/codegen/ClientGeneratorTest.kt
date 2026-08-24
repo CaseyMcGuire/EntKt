@@ -169,7 +169,7 @@ class ClientGeneratorTest {
         assert(output.contains("override fun privacyRuleClient(privacyContext: PrivacyContext): EntPrivacyReadClient"))
         assert(output.contains("override fun validationRuleClient(): EntValidationReadClient"))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {
-            "The generic mutation evaluator should consume typed rules directly\n$output"
+            "The generic mutation executor should consume typed rules directly\n$output"
         }
     }
 

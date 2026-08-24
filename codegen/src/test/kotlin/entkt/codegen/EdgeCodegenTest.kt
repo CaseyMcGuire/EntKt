@@ -1194,7 +1194,7 @@ class EdgeCodegenTest {
             "the repo should construct the typed hook context for its create specification\n$output"
         }
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
-            "the repo should pass a distinct immutable specification to MutationEvaluator\n$output"
+            "the repo should pass a distinct immutable specification to MutationExecutor\n$output"
         }
         assert(output.contains("resolveDraft = ::resolve, beforeSave = beforeSaveHooks, beforeCreate = beforeCreateHooks, afterCreate = afterCreateHooks, privacyRules = privacyConfig.createRules.toList(), validationRules = validationConfig.createRules.toList(),")) {
             "the create hook lists and rule snapshots should remain explicit specification inputs\n$output"
@@ -1305,7 +1305,7 @@ class EdgeCodegenTest {
         // .field(...), no default). The save body must read the
         // staging field directly so the missing-input failure is a
         // typed invalid preparation, not the property getter's
-        // IllegalStateException. The runtime evaluator maps it to the
+        // IllegalStateException. The runtime executor maps it to the
         // mutation result.
         assert(
             output.contains(

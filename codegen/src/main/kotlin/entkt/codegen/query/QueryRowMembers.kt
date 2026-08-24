@@ -14,8 +14,8 @@ import entkt.codegen.kotlinpoet.statement
 
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
-private val READ_QUERY_EVALUATOR =
-    ClassName("entkt.runtime.query.execution", "ReadQueryEvaluator")
+private val READ_QUERY_EXECUTOR =
+    ClassName("entkt.runtime.query.execution", "ReadQueryExecutor")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val STORAGE_QUERY_SPEC = ClassName("entkt.runtime.query", "StorageQuerySpec")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -84,7 +84,7 @@ internal fun buildFirstOrNull(entityClass: ClassName): FunSpec {
     }
 }
 
-/** Capture the recursive query and delegate its terminal intent to the read evaluator. */
+/** Capture the recursive query and delegate its terminal intent to the read executor. */
 internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
     val entityList = List::class.asClassName().parameterizedBy(entityClass)
     return function(
@@ -102,7 +102,7 @@ internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
             defaultValue("emptyList()")
         }
         addCode(
-            "return _readQueryEvaluator.readRootQuery(\n" +
+            "return _readQueryExecutor.readRootQuery(\n" +
                 "  captureQuery = { captureEntityQuery(structuralPredicates) },\n" +
                 "  operation = operation,\n" +
                 "  maximumRows = maximumRows,\n" +
@@ -122,27 +122,27 @@ internal fun buildCompileEntityQuery(entityClass: ClassName): FunSpec =
         parameter("operation", READ_OPERATION)
         parameter("privacyContext", PRIVACY_CONTEXT)
         statement(
-            "return _readQueryEvaluator.compileEntityQuery(captureEntityQuery(), operation, privacyContext)",
+            "return _readQueryExecutor.compileEntityQuery(captureEntityQuery(), operation, privacyContext)",
         )
     }
 
-/** Single runtime evaluator used by every generated read path. */
-internal fun buildReadQueryEvaluatorProperty(
+/** Single runtime executor used by every generated read path. */
+internal fun buildReadQueryExecutorProperty(
     entityClass: ClassName,
 ): PropertySpec =
     property(
-        "_readQueryEvaluator",
-        READ_QUERY_EVALUATOR.parameterizedBy(entityClass),
+        "_readQueryExecutor",
+        READ_QUERY_EXECUTOR.parameterizedBy(entityClass),
     ) {
         addModifiers(KModifier.PRIVATE)
         // Edge-predicate DSLs construct target queries without a client because
         // they only capture relational structure. Defer the client-dependent
-        // evaluator until a terminal or framework compilation actually runs.
+        // executor until a terminal or framework compilation actually runs.
         delegate(
             codeBlock {
                 add("lazy(%T.NONE) {\n", ClassName("kotlin", "LazyThreadSafetyMode"))
                 indent()
-                add("%T(\n", READ_QUERY_EVALUATOR)
+                add("%T(\n", READ_QUERY_EXECUTOR)
                 indent()
                 add("driver = driver,\n")
                 add("privacyContextProvider = requireClient(),\n")

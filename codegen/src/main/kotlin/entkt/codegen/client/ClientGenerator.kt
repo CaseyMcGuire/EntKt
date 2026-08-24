@@ -42,7 +42,7 @@ private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext
 private val PRIVACY_CONTEXT_PROVIDER =
     ClassName("entkt.runtime.privacy", "PrivacyContextProvider")
 private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
-private val MUTATION_EVALUATOR = ClassName("entkt.runtime.mutation.execution", "MutationEvaluator")
+private val MUTATION_EXECUTOR = ClassName("entkt.runtime.mutation.execution", "MutationExecutor")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
@@ -177,7 +177,7 @@ internal class ClientGenerator(
             }
             property(
                 "mutations",
-                MUTATION_EVALUATOR.parameterizedBy(
+                MUTATION_EXECUTOR.parameterizedBy(
                     ClassName(packageName, "EntPrivacyReadClient"),
                     ClassName(packageName, "EntValidationReadClient"),
                 ),
@@ -185,7 +185,7 @@ internal class ClientGenerator(
                 addKdoc("Mutation lifecycles shared by this client's generated repositories.")
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T(driver, this)", MUTATION_EVALUATOR)
+                initializer("%T(driver, this)", MUTATION_EXECUTOR)
             }
             property("privacyContextProvider", PRIVACY_CONTEXT_PROVIDER) {
                 addModifiers(KModifier.INTERNAL)

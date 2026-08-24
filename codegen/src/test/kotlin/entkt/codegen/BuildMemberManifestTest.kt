@@ -64,7 +64,7 @@ class BuildMemberManifestTest {
 
         assertEquals(
             mapOf(
-                "_readQueryEvaluator" to GeneratedMemberKind.PROPERTY,
+                "_readQueryExecutor" to GeneratedMemberKind.PROPERTY,
                 "client" to GeneratedMemberKind.PROPERTY,
                 "driver" to GeneratedMemberKind.PROPERTY,
                 "entityQuerySource" to GeneratedMemberKind.PROPERTY,

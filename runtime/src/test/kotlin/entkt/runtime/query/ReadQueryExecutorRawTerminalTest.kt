@@ -15,7 +15,7 @@ import entkt.runtime.privacy.PrivacyContextProvider
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
-import entkt.runtime.query.execution.ReadQueryEvaluator
+import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntQueryConfigurationException
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
@@ -25,7 +25,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class ReadQueryEvaluatorRawTerminalTest {
+class ReadQueryExecutorRawTerminalTest {
     private data class Item(
         override val id: Long,
         val parentId: Long? = null,
@@ -133,10 +133,10 @@ class ReadQueryEvaluatorRawTerminalTest {
         edges = edges,
     )
 
-    private fun evaluator(
+    private fun executor(
         driver: RecordingDriver,
         privacyCaptures: () -> Unit = {},
-    ): ReadQueryEvaluator<Item> = ReadQueryEvaluator(
+    ): ReadQueryExecutor<Item> = ReadQueryExecutor(
         driver = driver,
         privacyContextProvider = PrivacyContextProvider {
             privacyCaptures()
@@ -147,24 +147,24 @@ class ReadQueryEvaluatorRawTerminalTest {
     )
 
     @Test
-    fun `raw terminals delegate preparation and storage work to one runtime boundary`() {
+    fun `raw terminals delegate preparation and storage work to one read executor boundary`() {
         val mapping = ItemMapping()
         mapping.childEdge = ChildEdge(mapping)
         val driver = RecordingDriver()
-        val evaluator = evaluator(driver)
+        val executor = executor(driver)
 
-        assertEquals(4L, assertIs<ReadResult.Success<Long>>(evaluator.rawCount { query(mapping) }).value)
+        assertEquals(4L, assertIs<ReadResult.Success<Long>>(executor.rawCount { query(mapping) }).value)
         assertEquals(
             true,
             assertIs<ReadResult.Success<Boolean>>(
-                evaluator.rawExists { query(mapping, offset = 3) },
+                executor.rawExists { query(mapping, offset = 3) },
             ).value,
         )
         assertEquals(emptyList(), driver.queryOrder)
         assertEquals(1, driver.queryLimit)
         assertEquals(3, driver.queryOffset)
 
-        val aggregate = evaluator.rawAggregate(
+        val aggregate = executor.rawAggregate(
             captureQuery = { query(mapping) },
             terminal = "rawSum",
             function = AggregateFunction.SUM,
@@ -188,7 +188,7 @@ class ReadQueryEvaluatorRawTerminalTest {
         )
         val driver = RecordingDriver()
         var privacyCaptures = 0
-        val result = evaluator(driver) { privacyCaptures++ }.rawCount { selected }
+        val result = executor(driver) { privacyCaptures++ }.rawCount { selected }
 
         val failure = assertIs<ReadResult.Failed>(result)
         assertIs<EntQueryConfigurationException>(failure.exception)
@@ -201,7 +201,7 @@ class ReadQueryEvaluatorRawTerminalTest {
     fun `aggregate result decoding failures remain inside ReadResult`() {
         val mapping = ItemMapping()
         mapping.childEdge = ChildEdge(mapping)
-        val result = evaluator(RecordingDriver()).rawAggregate(
+        val result = executor(RecordingDriver()).rawAggregate(
             captureQuery = { query(mapping) },
             terminal = "rawSum",
             function = AggregateFunction.SUM,
@@ -217,7 +217,7 @@ class ReadQueryEvaluatorRawTerminalTest {
         val mapping = ItemMapping()
         mapping.childEdge = ChildEdge(mapping)
         val driver = RecordingDriver()
-        val evaluator = evaluator(driver)
+        val executor = executor(driver)
         val query = query(
             mapping,
             limit = 0,
@@ -225,7 +225,7 @@ class ReadQueryEvaluatorRawTerminalTest {
             orderBy = listOf(OrderField("id", OrderDirection.DESC)),
         )
 
-        assertEquals(false, assertIs<ReadResult.Success<Boolean>>(evaluator.rawExists { query }).value)
+        assertEquals(false, assertIs<ReadResult.Success<Boolean>>(executor.rawExists { query }).value)
         assertEquals(emptyList(), driver.queryOrder)
         assertEquals(0, driver.queryLimit)
         assertEquals(6, driver.queryOffset)
@@ -239,7 +239,7 @@ class ReadQueryEvaluatorRawTerminalTest {
         var privacyCaptures = 0
         val failure = IllegalStateException("capture failed")
 
-        val result = evaluator(driver) { privacyCaptures++ }.rawCount {
+        val result = executor(driver) { privacyCaptures++ }.rawCount {
             throw failure
         }
 

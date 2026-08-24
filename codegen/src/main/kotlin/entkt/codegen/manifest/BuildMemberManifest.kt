@@ -229,7 +229,7 @@ private fun addEdgesClassMembers(
  * other artifact lists in this file follow.
  */
 private val FIXED_QUERY_PROPERTIES: List<String> = listOf(
-    "_readQueryEvaluator",
+    "_readQueryExecutor",
     "client",
     "driver",
     "entityQuerySource",

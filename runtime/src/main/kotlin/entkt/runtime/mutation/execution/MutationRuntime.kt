@@ -8,7 +8,7 @@ import entkt.runtime.privacy.PrivacyContextProvider
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.result.EntMutationException
 
-/** Client capabilities shared by generated mutation evaluators. */
+/** Client capabilities shared by generated mutation executors. */
 @EntktInternal
 interface MutationRuntime<out PrivacyClient, out ValidationClient> :
     PrivacyContextProvider,

@@ -33,7 +33,7 @@ import java.util.concurrent.CancellationException
  * applies returned-entity LOAD privacy when the terminal exposes entities.
  */
 @EntktInternal
-class MutationEvaluator<PrivacyClient, ValidationClient>(
+class MutationExecutor<PrivacyClient, ValidationClient>(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime<PrivacyClient, ValidationClient>,
 ) {
@@ -345,7 +345,7 @@ class MutationEvaluator<PrivacyClient, ValidationClient>(
      * Mutable state for one mutation evaluation. Every phase updates the same [writeState], and
      * the outer exception boundary reads its latest value to report whether persistence did not
      * begin, may have taken effect, or remains pending in a transaction. This state is passed
-     * explicitly rather than stored on [MutationEvaluator] so concurrent mutations evaluated by
+     * explicitly rather than stored on [MutationExecutor] so concurrent mutations executed by
      * the same client cannot overwrite one another's failure classification.
      */
     private inner class MutationAttempt {

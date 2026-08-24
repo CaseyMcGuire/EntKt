@@ -655,7 +655,7 @@ internal fun hookListType(paramType: ClassName) =
  * Emit inline validation checks for a single field's validators.
  * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
  * Update validation returns through its generated `_validationFailed` helper.
- * Create preparation supplies [invalidPreparationType] so the runtime evaluator
+ * Create preparation supplies [invalidPreparationType] so the runtime executor
  * can classify and record the failure at the shared lifecycle boundary.
  */
 internal fun emitFieldValidation(

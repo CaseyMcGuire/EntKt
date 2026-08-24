@@ -25,7 +25,7 @@ import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
-import entkt.runtime.query.execution.ReadQueryEvaluator
+import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
@@ -38,7 +38,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 
-class ReadQueryEvaluatorRootTest {
+class ReadQueryExecutorRootTest {
     private data class Item(
         override val id: Long,
         val loaded: Boolean = false,
@@ -150,13 +150,13 @@ class ReadQueryEvaluatorRootTest {
         adapter: Adapter,
         query: EntityQuery<Item>,
         operation: ReadOperation = ReadOperation.ALL,
-    ): ReadResult<List<Item>> = queryEvaluator(adapter).readRootQuery(
+    ): ReadResult<List<Item>> = queryExecutor(adapter).readRootQuery(
         captureQuery = { query },
         operation = operation,
         maximumRows = null,
     )
 
-    private fun queryEvaluator(adapter: Adapter): ReadQueryEvaluator<Item> = ReadQueryEvaluator(
+    private fun queryExecutor(adapter: Adapter): ReadQueryExecutor<Item> = ReadQueryExecutor(
         driver = adapter.driver,
         privacyContextProvider = PrivacyContextProvider {
             adapter.events += "privacy-context"
@@ -192,7 +192,7 @@ class ReadQueryEvaluatorRootTest {
     )
 
     private fun readAll(adapter: Adapter): ReadResult<List<Item>> =
-        queryEvaluator(adapter).readRootQuery(
+        queryExecutor(adapter).readRootQuery(
             captureQuery = { rootQuery(adapter) },
             operation = ReadOperation.ALL,
             maximumRows = null,
@@ -200,7 +200,7 @@ class ReadQueryEvaluatorRootTest {
 
     private fun readFirstOrNull(adapter: Adapter): ReadResult<Item?> =
         when (
-            val result = queryEvaluator(adapter).readRootQuery(
+            val result = queryExecutor(adapter).readRootQuery(
                 captureQuery = { rootQuery(adapter) },
                 operation = ReadOperation.FIRST,
                 maximumRows = 1,
@@ -211,11 +211,11 @@ class ReadQueryEvaluatorRootTest {
         }
 
     @Test
-    fun `evaluator rejects a negative terminal bound`() {
+    fun `read query executor rejects a negative terminal bound`() {
         val adapter = Adapter(mutableListOf())
 
         assertFailsWith<IllegalArgumentException> {
-            queryEvaluator(adapter).readRootQuery(
+            queryExecutor(adapter).readRootQuery(
                 captureQuery = { rootQuery(adapter) },
                 operation = ReadOperation.ALL,
                 maximumRows = -1,
@@ -229,7 +229,7 @@ class ReadQueryEvaluatorRootTest {
         val adapter = Adapter(events)
         val failure = IllegalStateException("capture failed")
 
-        val result = queryEvaluator(adapter).readRootQuery(
+        val result = queryExecutor(adapter).readRootQuery(
             captureQuery = { throw failure },
             operation = ReadOperation.ALL,
             maximumRows = null,

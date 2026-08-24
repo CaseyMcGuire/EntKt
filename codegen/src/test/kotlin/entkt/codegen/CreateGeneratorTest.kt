@@ -69,7 +69,7 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         assertTrue(!output.contains("EntClient"), output)
-        assertTrue(!output.contains("MutationEvaluator"), output)
+        assertTrue(!output.contains("MutationExecutor"), output)
         assertTrue(!output.contains("beforeSaveHooks"), output)
         assertTrue(!output.contains("fun save("), output)
         assertTrue(!output.contains("CreateMutationInput"), output)

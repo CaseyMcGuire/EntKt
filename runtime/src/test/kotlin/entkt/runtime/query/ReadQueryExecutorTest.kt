@@ -14,14 +14,14 @@ import entkt.runtime.privacy.PrivacyContextProvider
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
-import entkt.runtime.query.execution.ReadQueryEvaluator
+import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
-class ReadQueryEvaluatorTest {
+class ReadQueryExecutorTest {
     private data class Item(override val id: Long) : EntEntity.LongId
 
     private object ItemMapping : EntityMapping<Item> {
@@ -69,13 +69,13 @@ class ReadQueryEvaluatorTest {
     )
 
     @Test
-    fun `one evaluator owns entity and raw query execution`() {
+    fun `one read query executor owns entity and raw query execution`() {
         val driver = RecordingDriver()
         var interceptorRuns = 0
         val interceptors = EntInterceptorsConfig().apply {
             addEntity<Item>("items", "record") { _, _ -> interceptorRuns++ }
         }
-        val evaluator = ReadQueryEvaluator<Item>(
+        val executor = ReadQueryExecutor<Item>(
             driver = driver,
             privacyContextProvider = PrivacyContextProvider { privacyContext },
             registeredInterceptorsProvider = { interceptors },
@@ -93,13 +93,13 @@ class ReadQueryEvaluatorTest {
         )
 
         val entities = assertIs<ReadResult.Success<List<Item>>>(
-            evaluator.readRootQuery(
+            executor.readRootQuery(
                 captureQuery = ::query,
                 operation = ReadOperation.ALL,
                 maximumRows = null,
             ),
         )
-        val count = assertIs<ReadResult.Success<Long>>(evaluator.rawCount(::query))
+        val count = assertIs<ReadResult.Success<Long>>(executor.rawCount(::query))
 
         assertEquals(listOf(Item(1L)), entities.value)
         assertEquals(3L, count.value)

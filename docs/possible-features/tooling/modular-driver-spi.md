@@ -51,8 +51,8 @@ interface Driver {
 }
 
 interface DriverSession :
-    QueryExecutor,
-    MutationExecutor,
+    DriverQueryExecutor,
+    DriverMutationExecutor,
     SchemaMetadataAccess,
     AutoCloseable
 

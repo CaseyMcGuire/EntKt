@@ -23,8 +23,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 
-/** End-to-end parity gate for generated terminals delegated to ReadQueryEvaluator. */
-class ReadQueryEvaluatorIntegrationTest : PostgresTestBase() {
+/** End-to-end parity gate for generated terminals delegated to ReadQueryExecutor. */
+class ReadQueryExecutorIntegrationTest : PostgresTestBase() {
     private object OpenUsers : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {
             privacy { load(allowAll) }

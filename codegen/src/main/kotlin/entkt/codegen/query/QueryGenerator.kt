@@ -144,7 +144,7 @@ internal class QueryGenerator(
             addProperty(buildEntityQuerySourceProperty(entityClass))
             addProperties(eagerEdgeSpecs.map { it.property })
             addProperties(eagerEdgeSpecs.map { it.filterVisibleProperty })
-            addProperty(buildReadQueryEvaluatorProperty(entityClass))
+            addProperty(buildReadQueryExecutorProperty(entityClass))
             addTypes(buildEntityQueryMappings(resolved))
             addFunction(buildWhere(queryClass, predicateForEntity))
             addFunction(buildOrderBy(queryClass, orderFieldForEntity))

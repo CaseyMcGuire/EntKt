@@ -42,7 +42,7 @@ above it.
   `${Entity}Repo` constructor directly. Internal integrations that implemented
   `CreateMutationSpec` should instantiate it with the entity mapping, draft
   resolver, hook lists, and CREATE privacy and validation rule lists. Generated
-  repositories now pass each draft's hook views separately; `MutationEvaluator`
+  repositories now pass each draft's hook views separately; `MutationExecutor`
   owns rule evaluation, persistence, and returned-entity LOAD authorization.
 
 - **Separate create drafts from executable create mutations** (`codegen`, `runtime`)
