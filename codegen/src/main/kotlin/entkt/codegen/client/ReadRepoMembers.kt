@@ -1,14 +1,18 @@
 package entkt.codegen.client
 
 import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.LambdaTypeName
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.UNIT
+import entkt.codegen.kotlinpoet.body
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.getter
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP = ClassName("entkt.query", "Op")
@@ -45,43 +49,37 @@ internal fun buildFindById(
 ): FunSpec {
     val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
-    return FunSpec.builder("findById")
-        .addParameter("id", idType)
-        .returns(resultType)
-        .addCode(
-            CodeBlock.builder()
-                .add("val query = %T(driver, %L)\n", queryClass, clientRef)
-                .add("return when (val result = query.readRootQuery(\n")
-                .add("  operation = %T.BY_ID,\n", READ_OPERATION)
-                .add("  maximumRows = 1,\n")
-                .add(
-                    "  structuralPredicates = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
-                    PREDICATE,
-                    entityClass,
-                    "id",
-                    OP,
-                )
-                .add(")) {\n")
-                .add("  is %T.Success -> %T.Success(result.value.firstOrNull())\n", READ_RESULT, READ_RESULT)
-                .add("  is %T.Failed -> result\n", READ_RESULT)
-                .add("}\n")
-                .build(),
-        )
-        .build()
+    return function("findById", returnType = resultType) {
+        parameter("id", idType)
+        body {
+            add("val query = %T(driver, %L)\n", queryClass, clientRef)
+            add("return when (val result = query.readRootQuery(\n")
+            add("  operation = %T.BY_ID,\n", READ_OPERATION)
+            add("  maximumRows = 1,\n")
+            add(
+                "  structuralPredicates = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
+                PREDICATE,
+                entityClass,
+                "id",
+                OP,
+            )
+            add(")) {\n")
+            add("  is %T.Success -> %T.Success(result.value.firstOrNull())\n", READ_RESULT, READ_RESULT)
+            add("  is %T.Failed -> result\n", READ_RESULT)
+            add("}\n")
+        }
+    }
 }
 
 /** `query(block)` entry point: a fresh `${Entity}Query` bound to [clientRef]. */
 internal fun buildQueryEntry(queryClass: ClassName, clientRef: String): FunSpec {
     val queryLambda = LambdaTypeName.get(receiver = queryClass, returnType = UNIT)
-    return FunSpec.builder("query")
-        .addParameter(
-            ParameterSpec.builder("block", queryLambda)
-                .defaultValue("{}")
-                .build()
-        )
-        .returns(queryClass)
-        .addStatement("return %T(driver, %L).apply(block)", queryClass, clientRef)
-        .build()
+    return function("query", returnType = queryClass) {
+        parameter("block", queryLambda) {
+            defaultValue("{}")
+        }
+        statement("return %T(driver, %L).apply(block)", queryClass, clientRef)
+    }
 }
 
 /**
@@ -90,10 +88,8 @@ internal fun buildQueryEntry(queryClass: ClassName, clientRef: String): FunSpec 
  * itself is stateless (driver + read runtime only).
  */
 internal fun buildIndexesProperty(indexesClass: ClassName, clientRef: String): PropertySpec =
-    PropertySpec.builder("indexes", indexesClass)
-        .getter(
-            FunSpec.getterBuilder()
-                .addStatement("return %T(driver, %L)", indexesClass, clientRef)
-                .build(),
-        )
-        .build()
+    property("indexes", indexesClass) {
+        getter {
+            statement("return %T(driver, %L)", indexesClass, clientRef)
+        }
+    }
