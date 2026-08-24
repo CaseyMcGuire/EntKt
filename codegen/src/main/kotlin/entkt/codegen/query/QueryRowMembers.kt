@@ -131,8 +131,13 @@ internal fun buildReadQueryEvaluatorProperty(
         READ_QUERY_EVALUATOR.parameterizedBy(entityClass),
     )
         .addModifiers(KModifier.PRIVATE)
-        .initializer(
+        // Edge-predicate DSLs construct target queries without a client because
+        // they only capture relational structure. Defer the client-dependent
+        // evaluator until a terminal or framework compilation actually runs.
+        .delegate(
             CodeBlock.builder()
+                .add("lazy(%T.NONE) {\n", ClassName("kotlin", "LazyThreadSafetyMode"))
+                .indent()
                 .add("%T(\n", READ_QUERY_EVALUATOR)
                 .indent()
                 .add("driver = driver,\n")
@@ -140,7 +145,9 @@ internal fun buildReadQueryEvaluatorProperty(
                 .add("registeredInterceptorsProvider = { requireClient().entityInterceptors },\n")
                 .add("loadPrivacyEvaluatorProvider = { requireClient() },\n")
                 .unindent()
-                .add(")")
+                .add(")\n")
+                .unindent()
+                .add("}")
                 .build(),
         )
         .build()

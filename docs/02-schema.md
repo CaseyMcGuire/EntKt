@@ -24,7 +24,7 @@ transforms any of them.
 
 | What you write | What it names |
 |---|---|
-| The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreate`, `UserUpdate` |
+| The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreateDraft`, `UserUpdate` |
 | `clientName = "users"` | Generated client and configuration properties: `client.users`, `privacy.users { }`, `validation.users { }`, `hooks.users { }` |
 | The delegated `val` (`val email by …`) | Every generated field or edge API: `User.email`, `user.email`, `create.email` |
 | The string argument (`string("email")`, `hasMany<Post>("posts")`) | Storage only: columns, tables, indexes, constraints, joins, migration identity |
@@ -196,7 +196,7 @@ invariants separately.
 ### Enums
 
 Enum fields require a Kotlin enum class via the reified `enum<E>()` builder.
-The generated entity, create builder, update builder, and query column
+The generated entity, create draft, update builder, and query column
 references all use the actual enum type:
 
 ```kotlin
@@ -213,7 +213,7 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
 With this declaration:
 
 - The generated `Ticket` entity has `val priority: Priority`
-- The create/update builders have `var priority: Priority?`
+- The create draft and update builder have `var priority: Priority?`
 - Query predicates accept enum values: `Ticket.priority eq Priority.HIGH`
 - The `.default()` method requires a constant from the same enum class —
   passing a value from a different enum (e.g. `OtherEnum.FOO`) is rejected
@@ -892,6 +892,6 @@ class User : EntSchema("users", clientName = "users") {
 }
 ```
 
-Mixin fields are included in the generated entity class, create builder,
+Mixin fields are included in the generated entity class, create draft,
 and update builder. Immutable fields (like `createdAt` above) are omitted
 from the update builder. Relationship edges stay on the host schema.

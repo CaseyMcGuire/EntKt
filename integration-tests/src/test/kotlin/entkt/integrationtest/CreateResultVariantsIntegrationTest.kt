@@ -99,6 +99,30 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     @Test
+    fun `create mutation can be configured incrementally with explicit assignment tracking`() {
+        val client = freshClient()
+        val creation = client.users.create {
+            name = "Casey"
+        }
+
+        creation.configure {
+            assertEquals("Casey", name)
+            assertNull(apiToken)
+            assertTrue(isSet(User.name))
+            assertTrue(!isSet(User.apiToken))
+
+            email = "casey@example.com"
+            apiToken = null
+            assertTrue(isSet(User.apiToken))
+        }
+
+        val created = creation.saveAndLoad().getOrThrow()
+        assertEquals("Casey", created.name)
+        assertEquals("casey@example.com", created.email)
+        assertNull(created.apiToken)
+    }
+
+    @Test
     fun `save does not apply returned-entity LOAD privacy`() {
         // A viewer that can create but never load: save() discloses no
         // entity, so it succeeds where saveAndLoad() would fail.

@@ -780,6 +780,14 @@ private class ExplicitIdLinkPostTag : EntSchema("explicit_id_link_post_tags", cl
 
 class EdgeCodegenTest {
 
+    private fun createResolution(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): String = CreateGenerator("com.example.ent")
+        .buildResolveFunction(schemaName, schema, schemaNames)
+        .toString()
+
     private fun createAllSchemas(): Triple<
         List<EntSchema>,
         Map<EntSchema, String>,
@@ -834,7 +842,7 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder gets FK property without entity setter for unique edge`() {
+    fun `create draft gets FK property without entity setter for unique edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
@@ -851,13 +859,12 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder save validates required edge`() {
+    fun `create resolution validates required edge`() {
         val (_, names, byName) = createAllSchemas()
-        val output = CreateGenerator("com.example.ent")
-            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        val output = createResolution("RequiredPet", byName["RequiredPet"]!!, names)
 
         assert(output.contains("\"ownerId is required\"")) {
-            "Should validate required edge in save()\n$output"
+            "Should validate the required edge while resolving the draft\n$output"
         }
     }
 
@@ -907,33 +914,26 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder required FK getter throws on unassigned read`() {
+    fun `create draft required FK getter returns null until assigned`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // On create builders for
-        // required relationships, reading the FK before assignment must
-        // throw because there is no valid FK value yet. The non-null
-        // public property reads from the private staging field.
-        assert(
-            output.contains(
-                "get() = _ownerIdStaging ?: throw IllegalStateException(\"ownerId is required\")",
-            ),
-        ) {
-            "Required Create FK getter must throw when staging is null\n$output"
+        assert(output.contains("var ownerId: Long? = null")) {
+            "Required create-draft FKs remain nullable while the draft is incomplete\n$output"
         }
+        assert(!output.contains("throw IllegalStateException")) { output }
     }
 
     @Test
-    fun `create builder nullable FK getter returns null on unassigned read`() {
+    fun `create draft nullable FK getter returns null on unassigned read`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // On create builders for nullable relationships, reading
+        // On create drafts for nullable relationships, reading
         // the FK before assignment returns `null`. No custom getter is
         // generated; default-null property behavior is correct.
         assert(!output.contains("get() = field ?: throw IllegalStateException(\"ownerId is required\")")) {
@@ -1046,19 +1046,15 @@ class EdgeCodegenTest {
         val child = ValidatedFkChild()
         finalize(parent, child)
         val names = mapOf<EntSchema, String>(parent to "ValidatedFkParent", child to "ValidatedFkChild")
-        val output = CreateGenerator("com.example.ent")
-            .generate("ValidatedFkChild", child, names).toString()
+        val output = createResolution("ValidatedFkChild", child, names)
             .replace("\\s+".toRegex(), " ")
 
-        // The `.positive()` check should appear in the save body keyed
-        // off the FK property name. The failure returns
-        // MutationResult.Failed(EntValidationException) through the
-        // builder's `_validationFailed` helper — it does not throw; the
-        // backing column name lands in the ValidationViolation `field`
-        // slot.
+        // The `.positive()` check should appear in create preparation keyed
+        // off the FK property name. The shared evaluator turns the invalid
+        // preparation into the typed mutation failure.
         assert(
             output.contains(
-                "if (_entktValueOwnerId <= 0) return _validationFailed(listOf(ValidationViolation(\"value must be positive\", field = \"ownerId\")))",
+                "if (_entktValueOwnerId <= 0) return entkt.runtime.mutation.CreatePreparation.Invalid",
             ),
         ) {
             "Create should return a validation Failed for the .positive() FK validator\n$output"
@@ -1100,8 +1096,8 @@ class EdgeCodegenTest {
         val createOutput = CreateGenerator("com.example.ent")
             .generate("ImmutableFkChild", child, names).toString()
         // Create still exposes the FK so callers can set it on insert.
-        assert(createOutput.contains("override var ownerId: Long\n")) {
-            "Create should still expose ownerId as a non-null override\n$createOutput"
+        assert(createOutput.contains("var ownerId: Long? = null")) {
+            "Create should still expose the immutable FK on its draft\n$createOutput"
         }
 
         val updateOutput = UpdateGenerator("com.example.ent")
@@ -1184,30 +1180,24 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder accepts beforeCreate hooks typed against CreateHookContext`() {
+    fun `create specification adapts drafts to beforeCreate hook contexts`() {
         val (_, names, byName) = createAllSchemas()
-        val output = CreateGenerator("com.example.ent")
+        val output = entkt.codegen.client.RepoGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // beforeCreate hooks receive a restricted CreateHookContext
-        // (mutation view + client), not the concrete Create builder. The
-        // save body constructs the context and passes it to each hook so
-        // the hook can't reach `save()`, `driver`, hook lists, or the
-        // private staging/assigned fields on the concrete builder.
-        assert(output.contains("beforeCreateHooks: List<BatchHook<PetCreateHookContext>>")) {
-            "beforeCreateHooks list should be typed against PetCreateHookContext\n$output"
-        }
         // create-hook adapter: the CreateHookContext now wraps the private
-        // `_createMutationView` adapter, not the concrete builder
-        // (`this`). This matches the runtime-enforced contract
+        // mutation-view adapter, not the concrete draft. This matches the runtime-enforced contract
         // the update path has had since transaction locking and link-table M2M helpers — a hook
-        // attempting `ctx.mutation as PetCreate` throws.
-        assert(output.contains("internal fun beforeCreateHookValueForInternalUse(): PetCreateHookContext = PetCreateHookContext(client.hookClientScopeForInternalUse, _createMutationView)")) {
-            "the shared hook accessor should construct a CreateHookContext wrapping _createMutationView\n$output"
+        // attempting `ctx.mutation as PetCreateDraft` throws.
+        assert(output.contains("override fun beforeCreateHookValue(draft: PetCreateDraft): PetCreateHookContext")) {
+            "the repo specification should construct the typed hook context\n$output"
         }
-        assert(output.contains("runBatchHooksForInternalUse(listOf(beforeCreateHookValueForInternalUse()), beforeCreateHooks)")) {
-            "save() should invoke beforeCreate hooks through the batch contract\n$output"
+        assert(output.contains("CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
+            "the repo should carry the draft and hook types to MutationEvaluator\n$output"
+        }
+        assert(!output.contains("CreateMutationDelegate")) {
+            "lifecycle execution should use the runtime specification\n$output"
         }
     }
 
@@ -1229,15 +1219,15 @@ class EdgeCodegenTest {
         val child = RequiredFkWithDefaultChild()
         finalize(parent, child)
         val names = mapOf(parent to "DefaultedFkParent", child to "RequiredFkWithDefaultChild")
-        val output = CreateGenerator("com.example.ent")
-            .generate("RequiredFkWithDefaultChild", child, names).toString()
+        val output = createResolution("RequiredFkWithDefaultChild", child, names)
             .replace("\\s+".toRegex(), " ")
 
         // Save body reads staging directly so unset falls back to the
         // default instead of throwing via the public non-null getter.
-        assert(output.contains("val _entktValueOwnerId = this._ownerIdStaging ?: 42")) {
-            "Required field-backed FK should read staging-or-default in save\n$output"
+        assert(output.contains("if (isSet(com.example.ent.RequiredFkWithDefaultChild.ownerId)) this.ownerId")) {
+            "Required field-backed FK should distinguish explicit assignment from omission\n$output"
         }
+        assert(output.contains("else 42")) { output }
     }
 
     @Test
@@ -1246,48 +1236,35 @@ class EdgeCodegenTest {
         val child = NullableFkWithDefaultChild()
         finalize(parent, child)
         val names = mapOf(parent to "DefaultedFkParent", child to "NullableFkWithDefaultChild")
-        val output = CreateGenerator("com.example.ent")
+        val draftOutput = CreateGenerator("com.example.ent")
             .generate("NullableFkWithDefaultChild", child, names).toString()
             .replace("\\s+".toRegex(), " ")
+        val output = createResolution("NullableFkWithDefaultChild", child, names)
+            .replace("\\s+".toRegex(), " ")
 
-        // Generator emits an "assigned" tracking flag and a setter that
-        // flips it. Save body uses the flag to distinguish untouched
-        // (default fires) from explicit null (default suppressed).
-        assert(output.contains("private var _ownerIdAssigned: Boolean = false")) {
-            "Nullable field-backed FK with default should track an assigned flag\n$output"
+        // The draft records assignment through the canonical column token.
+        // Resolution uses that state to distinguish untouched (default fires)
+        // from explicit null (default suppressed).
+        assert(draftOutput.contains("assignedFields.mark(NullableFkWithDefaultChild.ownerId)")) {
+            "The canonical column token should record every write, including null\n$draftOutput"
         }
-        assert(output.contains("_ownerIdAssigned = true")) {
-            "Setter should flip the assigned flag on every write (including null)\n$output"
-        }
-        assert(output.contains("val _entktValueOwnerId = if (this._ownerIdAssigned) this.ownerId else 42")) {
-            "Save body should consult the assigned flag, not value-shape\n$output"
+        assert(output.contains("if (isSet(com.example.ent.NullableFkWithDefaultChild.ownerId)) this.ownerId else 42")) {
+            "Resolution should consult assignment state, not value shape\n$output"
         }
     }
 
     @Test
-    fun `create builder applies required-FK semantics to field-backed FKs`() {
+    fun `create draft applies required-FK semantics to field-backed FKs`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("TeamMember", byName["TeamMember"]!!, names).toString()
 
         // TeamMember has `val teamId = int("team_id"); val team =
         // belongsTo<Team>("team").field(teamId)`. A
-        // required field-backed FK must get the same setter/getter
-        // behavior as an implicit FK: non-null public type, private
-        // nullable staging, throw on unassigned read, requireNotNull
-        // at setter entry. It must NOT get scalar-staging semantics.
-        assert(output.contains("override var teamId: Int\n")) {
-            "Field-backed required FK should be non-null typed on Create builder\n$output"
+        assert(output.contains("var teamId: Int? = null")) {
+            "Required field-backed FKs should use the same incomplete draft shape\n$output"
         }
-        assert(output.contains("private var _teamIdStaging: Int?")) {
-            "Field-backed required FK should have a private staging field\n$output"
-        }
-        assert(output.contains("requireNotNull(value) { \"teamId is required\" }")) {
-            "Field-backed required FK should requireNotNull at setter entry\n$output"
-        }
-        assert(!output.contains("override var teamId: Int? = null\n")) {
-            "Field-backed required FK must not fall back to scalar nullable staging\n$output"
-        }
+        assert(output.contains("assignedFields.mark(TeamMember.teamId)")) { output }
     }
 
     @Test
@@ -1311,44 +1288,32 @@ class EdgeCodegenTest {
     @Test
     fun `create save returns validation Failed for missing required FK`() {
         val (_, names, byName) = createAllSchemas()
-        val output = CreateGenerator("com.example.ent")
-            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
+        val output = createResolution("RequiredPet", byName["RequiredPet"]!!, names)
             .replace("\\s+".toRegex(), " ")
 
         // RequiredPet has `val owner = belongsTo<Owner>("owner")` (no
         // .field(...), no default). The save body must read the
         // staging field directly so the missing-input failure is a
-        // typed MutationResult.Failed(EntValidationException) via the
-        // `_validationFailed` helper, not the property getter's
-        // IllegalStateException.
+        // typed invalid preparation, not the property getter's
+        // IllegalStateException. The runtime evaluator maps it to the
+        // mutation result.
         assert(
             output.contains(
-                "val _entktValueOwnerId = this._ownerIdStaging ?: return _validationFailed(listOf(ValidationViolation(\"ownerId is required\", field = \"ownerId\")))",
+                "val _entktValueOwnerId = this.ownerId ?: return entkt.runtime.mutation.CreatePreparation.Invalid",
             ),
         ) {
             "Required FK without default should return a validation Failed from save body\n$output"
         }
-        // The property getter still throws ISE for hook/property reads
-        // (early-read is a usage error, not a save-prep validation).
-        assert(output.contains("get() = _ownerIdStaging ?: throw IllegalStateException(\"ownerId is required\")")) {
-            "Required FK getter should still throw IllegalStateException for hook reads\n$output"
-        }
     }
 
     @Test
-    fun `create builder required FK property is non-null typed`() {
+    fun `create draft required FK property is nullable while incomplete`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
-        // Required to-one edges must expose
-        // non-null FK types on the generated builder. The internal
-        // staging field stays nullable.
-        assert(output.contains("override var ownerId: Long\n")) {
-            "Required Create FK property should be non-null typed (Long, not Long?)\n$output"
-        }
-        assert(output.contains("private var _ownerIdStaging: Long?")) {
-            "Required Create FK should have a private nullable staging field\n$output"
+        assert(output.contains("var ownerId: Long? = null")) {
+            "Required create-draft FK should be nullable until resolution\n$output"
         }
     }
 
@@ -1367,21 +1332,16 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create builder required FK setter rejects null at entry`() {
+    fun `create draft required FK setter records explicit null`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Required FK setters defensively reject Java/platform
-        // null calls at setter entry. The post-hook backstop only
-        // catches paths that bypass the setter entirely.
-        assert(output.contains("@Suppress(\"SENSELESS_COMPARISON\")")) {
-            "Required FK setter should suppress SENSELESS_COMPARISON\n$output"
+        assert(output.contains("assignedFields.mark(RequiredPet.ownerId)")) {
+            "Required FK assignment should preserve explicit-null state for resolution\n$output"
         }
-        assert(output.contains("requireNotNull(value) { \"ownerId is required\" }")) {
-            "Required FK setter should requireNotNull at entry\n$output"
-        }
+        assert(!output.contains("requireNotNull(value)")) { output }
     }
 
     @Test

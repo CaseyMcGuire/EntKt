@@ -12,7 +12,7 @@ package entkt.query
  * (`@Serializable` under the default kotlinx mapper); it is a compile-time
  * witness here (the column ref carries no value).
  */
-open class JsonColumn<E : Any, T>(val name: String)
+open class JsonColumn<E : Any, T>(override val name: String) : ColumnReference<E>
 
 /**
  * A nullable JSON column. Adds [isNull] / [isNotNull] as members (rather than

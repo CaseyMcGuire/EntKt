@@ -26,6 +26,8 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_CONTEXT_PROVIDER =
     ClassName("entkt.runtime.privacy", "PrivacyContextProvider")
+private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
+private val MUTATION_EVALUATOR = ClassName("entkt.runtime.mutation.execution", "MutationEvaluator")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
@@ -125,6 +127,7 @@ internal class ClientGenerator(
             // existed — the query constructors' `EntReadRuntime?` accepts
             // the full client by upcast.
             .addSuperinterface(ClassName(packageName, "EntReadRuntime"))
+            .addSuperinterface(MUTATION_RUNTIME)
             .addSuperinterface(clientScopeClass)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
@@ -155,6 +158,14 @@ internal class ClientGenerator(
                     .addModifiers(KModifier.PRIVATE)
                     .initializer("driver.also { it.registerAll(SCHEMAS) }")
                     .build()
+            )
+            .addProperty(
+                PropertySpec.builder("mutations", MUTATION_EVALUATOR)
+                    .addKdoc("Mutation lifecycles shared by this client's generated repositories.")
+                    .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                    .addModifiers(KModifier.INTERNAL)
+                    .initializer("%T(driver, this)", MUTATION_EVALUATOR)
+                    .build(),
             )
             .addProperty(
                 PropertySpec.builder("privacyContextProvider", PRIVACY_CONTEXT_PROVIDER)
@@ -231,31 +242,13 @@ internal class ClientGenerator(
                 // MutationResult.Failed construction site. No-op outside
                 // a transaction scope.
                 FunSpec.builder("recordTransactionMutationFailure")
-                    .addModifiers(KModifier.INTERNAL)
+                    .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                    .addModifiers(KModifier.OVERRIDE)
                     .addParameter(
                         "exception",
                         ClassName("entkt.runtime.result", "EntMutationException"),
                     )
                     .addStatement("transactionCoordinator?.recordFailure(exception)")
-                    .build()
-            )
-            .addFunction(
-                // Called when a bulk terminal re-reports an
-                // already-recorded row failure as a batch-level one:
-                // the coordinator must retain the batch failure the
-                // terminal actually returned, in the row failure's
-                // encounter position. No-op outside a transaction scope.
-                FunSpec.builder("replaceTransactionMutationFailure")
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter(
-                        "original",
-                        ClassName("entkt.runtime.result", "EntMutationException"),
-                    )
-                    .addParameter(
-                        "replacement",
-                        ClassName("entkt.runtime.result", "EntMutationException"),
-                    )
-                    .addStatement("transactionCoordinator?.replaceFailure(original, replacement)")
                     .build()
             )
             .addProperty(
@@ -304,13 +297,10 @@ internal class ClientGenerator(
                 // one set-based insert); RequiredForMultiWrite fires for the
                 // classified shape, RequiredForAllWrites for any write.
                 FunSpec.builder("checkTransactionRequirement")
-                    .addModifiers(KModifier.INTERNAL)
+                    .addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                    .addModifiers(KModifier.OVERRIDE)
                     .addParameter("operation", String::class)
-                    .addParameter(
-                        ParameterSpec.builder("multiWrite", BOOLEAN)
-                            .defaultValue("false")
-                            .build(),
-                    )
+                    .addParameter("multiWrite", BOOLEAN)
                     .addCode(
                         CodeBlock.builder()
                             .addStatement(
@@ -361,6 +351,13 @@ internal class ClientGenerator(
                     )
                     .addStatement("return privacyContextProvider.get()")
                     .build()
+            )
+            .addFunction(
+                FunSpec.builder("get")
+                    .addModifiers(KModifier.OVERRIDE)
+                    .returns(PRIVACY_CONTEXT)
+                    .addStatement("return currentPrivacyContext()")
+                    .build(),
             )
             .addFunction(buildReadClientImplBuilder(sorted))
             .addFunction(buildAsValidationReadClientForInternalUse())

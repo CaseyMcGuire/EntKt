@@ -7,6 +7,11 @@ package entkt.query
  */
 interface Nullable
 
+/** Common typed identity shared by every generated column-reference kind. */
+interface ColumnReference<E : Any> {
+    val name: String
+}
+
 /**
  * Marker for a column usable as an aggregate group key (the `raw…By` terminals).
  * Carries the column [name] and a [decodeKey] that turns the driver's raw group
@@ -48,7 +53,7 @@ interface NullableGroupableColumn<E : Any, K> : GroupableColumn<E, K>
  * reject `orderBy(col.asc())` at compile time instead of crashing
  * inside the in-memory comparator at runtime.
  */
-open class Column<E : Any, T>(val name: String) {
+open class Column<E : Any, T>(override val name: String) : ColumnReference<E> {
     open infix fun eq(value: T): Predicate<E> = Predicate.Leaf(name, Op.EQ, value)
     open infix fun neq(value: T): Predicate<E> = Predicate.Leaf(name, Op.NEQ, value)
 

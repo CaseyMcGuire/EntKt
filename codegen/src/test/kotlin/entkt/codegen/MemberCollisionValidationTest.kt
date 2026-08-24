@@ -125,17 +125,14 @@ class MemberCollisionValidationTest {
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `field 'save_and_load' collides with the fixed builder saveAndLoad on Create and Update`() {
+    fun `field 'save_and_load' collides with the fixed update terminal only`() {
         class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
             val saveAndLoad by bool("save_and_load")
         }
 
         val errors = validate("S" to S())
-        // `saveAndLoad` is a shared fixed builder member, so the clash
-        // lands on both SCreate (immutable-or-mutable-doesn't-matter,
-        // both have the setter) and SUpdate.
-        assertCollision(errors, "SCreate", "saveAndLoad")
+        // Create drafts contain state only, so this name is available there.
         assertCollision(errors, "SUpdate", "saveAndLoad")
     }
 

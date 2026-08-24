@@ -1,6 +1,6 @@
 package entkt.integrationtest
 
-import entkt.integrationtest.ent.ArticleCreate
+import entkt.integrationtest.ent.ArticleCreateDraft
 import entkt.integrationtest.ent.ArticleCreateHookContext
 import entkt.integrationtest.ent.ArticleCreateMutationView
 import entkt.integrationtest.ent.ArticleMutation
@@ -26,16 +26,16 @@ import kotlin.test.assertNull
  *
  *  - `beforeSave` hooks receive a `${Entity}Mutation`-typed
  *    adapter (`_beforeSaveView`) that fails casts back to
- *    `${Entity}Create` AND to `${Entity}CreateMutationView`.
+ *    `${Entity}CreateDraft` AND to `${Entity}CreateMutationView`.
  *  - `beforeCreate` hooks see `ctx.mutation` as a
  *    `${Entity}CreateMutationView`-typed adapter
  *    (`_createMutationView`) that fails casts to
- *    `${Entity}Create` AND to `${Entity}UpdateMutationView`.
+ *    `${Entity}CreateDraft` AND to `${Entity}UpdateMutationView`.
  *  - The one allowed widening — `ctx.mutation as ${Entity}Mutation`
  *    — succeeds (the create view's declared supertype).
  *  - Hooks can still read and write field values through
  *    either adapter; writes flow back to the outer
- *    `${Entity}Create` and are persisted by the mutation
+ *    `${Entity}CreateDraft` and are persisted by the mutation
  *    terminals (`save(): MutationResult<Unit>` /
  *    `saveAndLoad(): MutationResult<Entity>`).
  */
@@ -68,16 +68,16 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `beforeSave arg cannot be cast to ArticleCreate`() {
+    fun `beforeSave arg cannot be cast to ArticleCreateDraft`() {
         var captured: ClassCastException? = null
         val client = newClient(beforeSave = { mutation ->
-            try { @Suppress("UNUSED_VARIABLE") val asCreate = mutation as ArticleCreate }
+            try { @Suppress("UNUSED_VARIABLE") val asCreate = mutation as ArticleCreateDraft }
             catch (e: ClassCastException) { captured = e }
         })
         val author = seedAuthor(client)
         client.articles.create { title = "x"; published = true; authorId = author.id }.save().getOrThrow()
 
-        assertNotNull(captured, "casting beforeSave arg to ArticleCreate must throw ClassCastException")
+        assertNotNull(captured, "casting beforeSave arg to ArticleCreateDraft must throw ClassCastException")
     }
 
     @Test
@@ -97,16 +97,16 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `beforeCreate ctx-mutation cannot be cast to ArticleCreate`() {
+    fun `beforeCreate ctx-mutation cannot be cast to ArticleCreateDraft`() {
         var captured: ClassCastException? = null
         val client = newClient(beforeCreate = { ctx ->
-            try { @Suppress("UNUSED_VARIABLE") val asCreate = ctx.mutation as ArticleCreate }
+            try { @Suppress("UNUSED_VARIABLE") val asCreate = ctx.mutation as ArticleCreateDraft }
             catch (e: ClassCastException) { captured = e }
         })
         val author = seedAuthor(client)
         client.articles.create { title = "x"; published = true; authorId = author.id }.save().getOrThrow()
 
-        assertNotNull(captured, "casting ctx.mutation to ArticleCreate must throw ClassCastException")
+        assertNotNull(captured, "casting ctx.mutation to ArticleCreateDraft must throw ClassCastException")
     }
 
     @Test
@@ -159,7 +159,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             // Read: returns whatever the caller staged on the builder.
             val before = mutation.title
             assertEquals("draft", before)
-            // Write: flows back to the outer ArticleCreate.
+            // Write: flows back to the outer ArticleCreateDraft.
             mutation.title = "edited-by-beforeSave"
         })
         val author = seedAuthor(client)

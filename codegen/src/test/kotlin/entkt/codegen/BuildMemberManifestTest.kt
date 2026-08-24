@@ -112,29 +112,11 @@ class BuildMemberManifestTest {
         // Mutation interface — just the mutable scalar (no FK on this schema)
         assertEquals(setOf("title"), byArtifact["NotebookMutation"])
 
-        // Create builder — title + fixed members. The canonical terminal
-        // pair is save/saveAndLoad (the OrError/OrThrow variants are
-        // gone), and the internal shared execution member
-        // executeSaveForInternalUse is reserved so declaration-name
-        // capture cannot collide with it.
-        assertNotNull(byArtifact["NotebookCreate"])
-        assertTrue("title" in byArtifact["NotebookCreate"]!!)
-        assertTrue("save" in byArtifact["NotebookCreate"]!!)
-        assertTrue("saveAndLoad" in byArtifact["NotebookCreate"]!!)
-        assertTrue("saveOrError" !in byArtifact["NotebookCreate"]!!, "removed variant must not be reserved")
-        assertTrue("saveOrThrow" !in byArtifact["NotebookCreate"]!!, "removed variant must not be reserved")
-        assertTrue("saveOrNull" !in byArtifact["NotebookCreate"]!!, "removed variant must not be reserved")
-        assertTrue("executeSaveForInternalUse" in byArtifact["NotebookCreate"]!!)
-        assertTrue("beforeSaveHookValueForInternalUse" in byArtifact["NotebookCreate"]!!)
-        assertTrue("beforeCreateHookValueForInternalUse" in byArtifact["NotebookCreate"]!!)
-        assertTrue("configureForCreateManyForInternalUse" in byArtifact["NotebookCreate"]!!)
-        assertTrue("_managedByCreateMany" in byArtifact["NotebookCreate"]!!)
-        assertTrue("_managedSaveFailure" in byArtifact["NotebookCreate"]!!)
-        assertTrue("_managedSaveFailures" in byArtifact["NotebookCreate"]!!)
-        assertTrue("prepareForInternalUse" in byArtifact["NotebookCreate"]!!)
-        assertTrue("client" in byArtifact["NotebookCreate"]!!)
-        assertTrue("driver" in byArtifact["NotebookCreate"]!!)
-        assertTrue("beforeCreateHooks" in byArtifact["NotebookCreate"]!!)
+        // Create drafts contain mutable state plus assignment inspection.
+        assertEquals(
+            setOf("title", "assignedFields", "isSet"),
+            byArtifact["NotebookCreateDraft"],
+        )
 
         // Update builder — title setter + fixed members including id +
         // consistency, the canonical save/saveAndLoad pair, and the

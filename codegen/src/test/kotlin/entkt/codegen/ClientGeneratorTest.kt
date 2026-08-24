@@ -221,7 +221,7 @@ class ClientGeneratorTest {
         }
         assert(
             output.contains(
-                "internal fun recordTransactionMutationFailure(exception: EntMutationException) { " +
+                "override fun recordTransactionMutationFailure(exception: EntMutationException) { " +
                     "transactionCoordinator?.recordFailure(exception) }"
             )
         ) {

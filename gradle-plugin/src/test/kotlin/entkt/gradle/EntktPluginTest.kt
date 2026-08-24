@@ -116,7 +116,7 @@ class EntktPluginTest {
 
             val generatedDir = appDir.resolve("build/generated/entkt/com/example/ent")
             assertTrue(generatedDir.resolve("Pet.kt").exists(), "Should generate Pet.kt")
-            assertTrue(generatedDir.resolve("PetCreate.kt").exists(), "Should generate PetCreate.kt")
+            assertTrue(generatedDir.resolve("PetCreateDraft.kt").exists(), "Should generate PetCreateDraft.kt")
             assertTrue(generatedDir.resolve("PetUpdate.kt").exists(), "Should generate PetUpdate.kt")
             assertTrue(generatedDir.resolve("PetQuery.kt").exists(), "Should generate PetQuery.kt")
             assertTrue(generatedDir.resolve("PetRepo.kt").exists(), "Should generate PetRepo.kt")
@@ -157,7 +157,7 @@ class EntktPluginTest {
             assertTrue(!entityContent.contains("fun query("), "query() should not live on entity")
             assertTrue(!entityContent.contains("fun update("), "update() should not live on entity")
 
-            val createContent = generatedDir.resolve("PetCreate.kt").readText()
+            val createContent = generatedDir.resolve("PetCreateDraft.kt").readText()
             assertTrue(createContent.contains("@EntktDsl"), "Should be annotated @EntktDsl")
             assertTrue(!createContent.contains("var owner: Owner?"), "Must not synthesize owner entity setter")
             assertTrue(createContent.contains("var ownerId: Int?"), "Should have ownerId FK property")
@@ -182,7 +182,8 @@ class EntktPluginTest {
             assertTrue(repoContent.contains("import entkt.runtime.driver.DatabaseDriver"), "Should import DatabaseDriver")
             assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
             assertTrue(
-                repoContent.contains("fun create(block: PetCreate.() -> Unit): PetCreate"),
+                repoContent.contains("fun create(block: PetCreateDraft.() -> Unit):") &&
+                    repoContent.contains("CreateMutation<PetCreateDraft, Pet>"),
                 "Repo should expose create(block)",
             )
             // transaction locking: `update(...)` accepts an optional UpdateConsistency

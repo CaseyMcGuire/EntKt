@@ -71,10 +71,10 @@ private val FIXED_CLIENT_MEMBERS: Set<String> = setOf(
     "bypassPrivacy_DANGEROUS", "checkTransactionRequirement", "config",
     "currentPrivacyContext", "defaultRelationshipLocking", "defaultUpdateConsistency",
     "delegate", "driver", "entityInterceptors", "get", "global", "hookClientScopeForInternalUse",
-    "hooks", "hooksConfig", "interceptors", "interceptorsConfig", "policies",
+    "hooks", "hooksConfig", "interceptors", "interceptorsConfig", "mutations", "policies",
     "policiesConfig", "privacyContext", "privacyContextProvider",
     "privacyContextProviderConfig", "readClientImpl", "recordTransactionMutationFailure",
-    "replaceTransactionMutationFailure", "transactionCoordinator",
+    "transactionCoordinator",
     "transactionExecutionGuard", "transactionExecutionToken", "transactionRequirement",
     "withPrivacyContext", "withTransaction",
 )
@@ -854,7 +854,7 @@ class EntGenerator(
         // Two same-named FileSpecs would silently overwrite each other in
         // writeTo(): raw-name uniqueness doesn't stop a schema name from
         // colliding with another schema's derived artifact (a schema named
-        // `UserCreate` vs schema `User`'s generated create builder). Check
+        // `UserCreateDraft` vs schema `User`'s generated create draft). Check
         // the actual output set so any future generator is covered too.
         val fileCollisions = files
             .groupBy { it.packageName to it.name }
@@ -864,7 +864,7 @@ class EntGenerator(
                 "Generated file collisions detected:\n" +
                     fileCollisions.keys.joinToString("\n") { (_, name) ->
                         "  - more than one artifact generates '$name.kt' — a schema name " +
-                            "collides with a derived artifact name (<Schema>Mutation/Create/" +
+                            "collides with a derived artifact name (<Schema>Mutation/CreateDraft/" +
                             "Update/Query/Repo/Privacy/Validation/Indexes) or a reserved " +
                             "client file (EntClient, EntReadClient, EntReadRuntime)"
                     },

@@ -132,7 +132,8 @@ class RepoGeneratorTest {
         assert(output.contains("fun query(block: CarQuery.() -> Unit = {}): CarQuery")) {
             "Should have query with optional DSL block\n$output"
         }
-        assert(output.contains("fun create(block: CarCreate.() -> Unit): CarCreate")) {
+        assert(output.contains("fun create(block: CarCreateDraft.() -> Unit):") &&
+            output.contains("CreateMutation<CarCreateDraft, Car>")) {
             "Should have create taking DSL block\n$output"
         }
         assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking,\n    block: CarUpdate.() -> Unit,\n  ): CarUpdate")) {
@@ -374,13 +375,16 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `create passes client and hook lists to the builder`() {
+    fun `create constructs a draft and generic mutation wrapper`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks)")) {
-            "create should pass client and hook lists to CarCreate\n$output"
+        assert(output.contains("val draft = CarCreateDraft().apply(block)")) {
+            "create should configure a fresh draft\n$output"
+        }
+        assert(output.contains("return CreateMutation(draft, this)")) {
+            "the generic mutation wrapper should retain the draft and repo\n$output"
         }
     }
 
@@ -478,10 +482,10 @@ class RepoGeneratorTest {
         // the whole atomic batch. The multi-write preflight classifies
         // against the caller's transaction posture; zero blocks are
         // Success(emptyList()) with no transaction work.
-        assert(output.contains("public fun createMany(vararg blocks: CarCreate.() -> Unit): MutationResult<List<Car>>")) {
+        assert(output.contains("public fun createMany(vararg blocks: CarCreateDraft.() -> Unit): MutationResult<List<Car>>")) {
             "Should have createMany with vararg blocks returning MutationResult<List<Car>>\n$output"
         }
-        assert(output.contains("client.checkTransactionRequirement(\"Car createMany\", multiWrite = blocks.size > 1)")) {
+        assert(output.contains("client.mutations.checkCreateManyTransactionRequirement(\"Car\", blocks.size)")) {
             "createMany should run the multi-write transaction-requirement preflight\n$output"
         }
         assert(output.contains("if (blocks.isEmpty()) return MutationResult.Success(emptyList())")) {
@@ -496,49 +500,25 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val managedSaveFailures = ArrayList<EntMutationException>()")) {
-            "createMany should share one encounter-ordered managed-save tracker\n$output"
+        assert(
+            output.contains(
+                "val drafts = ArrayList<CarCreateDraft>(blocks.size) for (block in blocks) { " +
+                    "drafts += CarCreateDraft().apply(block)",
+            ),
+        ) {
+            "createMany should instantiate and configure every draft in input order\n$output"
         }
         assert(
             output.contains(
-                "val builders = ArrayList<CarCreate>(blocks.size) for (block in blocks) { " +
-                    "val builder = create { } val configured = try { " +
-                    "builder.configureForCreateManyForInternalUse(block, managedSaveFailures)",
+                "return client.mutations.createMany( drafts = drafts, " +
+                    "spec = this, " +
+                    "promoteDriverNotPersisted = promoteDriverNotPersisted, )",
             ),
         ) {
-            "createMany should instantiate and safely configure every builder in input order\n$output"
+            "createMany should delegate its shared lifecycle after configuring builders\n$output"
         }
-        assert(output.contains("runBatchHooksForInternalUse(builders.map { it.beforeSaveHookValueForInternalUse() }, beforeSaveHooks)")) {
-            "createMany should run beforeSave once over the full ordered batch\n$output"
-        }
-        assert(output.contains("runBatchHooksForInternalUse(builders.map { it.beforeCreateHookValueForInternalUse() }, beforeCreateHooks)")) {
-            "createMany should run beforeCreate once over the full ordered batch\n$output"
-        }
-        assert(output.contains("val denialReasons = createDenialReasons(privacy, candidates)")) {
-            "CREATE privacy should evaluate the complete candidate list\n$output"
-        }
-        assert(output.contains("val violationsByCandidate = evaluateCreateValidations(candidates)")) {
-            "CREATE validation should evaluate only after batch privacy\n$output"
-        }
-        assert(output.contains("driver.insertMany(Car.TABLE, prepared.map { it.values })")) {
-            "createMany should make one logical set-based driver call\n$output"
-        }
-        assert(
-            output.contains(
-                "if (promoteDriverNotPersisted && prepared.size > 1 && " +
-                    "classified.writeState == MutationWriteState.NotPersisted)",
-            ),
-        ) {
-            "caller-owned multi-input batches should promote statement-level failures to pending\n$output"
-        }
-        assert(output.contains("check(rows.size == prepared.size)")) {
-            "createMany should reject malformed driver cardinality before hydration\n$output"
-        }
-        assert(output.contains("val entities = rows.map { row -> Car.fromRow(row) } runBatchHooksForInternalUse(entities, afterCreateHooks)")) {
-            "createMany should hydrate the whole result before the afterCreate phase\n$output"
-        }
-        assert(!output.contains("executeSaveForInternalUse(applyLoadPrivacy = false)")) {
-            "createMany must not fall back to the scalar per-row pipeline\n$output"
+        assert(!output.contains("driver.insertMany(Car.TABLE") && !output.contains("val candidates = prepared.map")) {
+            "The generated repo should not duplicate the runtime create lifecycle\n$output"
         }
     }
 
@@ -574,10 +554,10 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("loadDenials(completion.privacy, completion.entities).filterNotNull().firstOrNull()")) {
+        assert(output.contains("loadDenials(completion.privacyContext, completion.entities).filterNotNull().firstOrNull()")) {
             "caller-owned createMany should batch LOAD disclosure with the captured context\n$output"
         }
-        assert(output.contains("tx.cars.loadDenials(completion.privacy, completion.entities).filterNotNull().firstOrNull()")) {
+        assert(output.contains("tx.cars.loadDenials(completion.privacyContext, completion.entities).filterNotNull().firstOrNull()")) {
             "owned createMany should batch LOAD disclosure through the transaction repo\n$output"
         }
         assert(
@@ -986,12 +966,7 @@ class RepoGeneratorTest {
         // The invariant is structural: every Failed construction site
         // pairs with a coordinator record call.
         val failed = Regex(Regex.escape("MutationResult.failedForInternalUse(")).findAll(output).count()
-        // Batch-level re-reports notify the coordinator through the
-        // REPLACING helper (the row failure was already recorded and
-        // must be superseded, not duplicated) — both shapes count as
-        // the mandatory coordinator notification.
-        val recorded = Regex(Regex.escape("client.recordTransactionMutationFailure(")).findAll(output).count() +
-            Regex(Regex.escape("client.replaceTransactionMutationFailure(")).findAll(output).count()
+        val recorded = Regex(Regex.escape("client.recordTransactionMutationFailure(")).findAll(output).count()
         assert(failed > 0) { "Expected MutationResult.Failed construction sites\n$output" }
         assert(failed == recorded) {
             "Every MutationResult.failedForInternalUse site should pair with a coordinator notification; found $failed vs $recorded\n$output"
@@ -1020,15 +995,10 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The private helper delegates to driver.classifyException; an
-        // unrecognized exception falls back to the caller's
-        // phase-tracked write state, and a classification without a
-        // state defaults to PersistenceUnknown.
-        assert(output.contains("private fun _classifyCreateDriverFailure(e: Exception, fallback: MutationWriteState): EntMutationException")) {
-            "Should have a CREATE-specific driver classifier\n$output"
-        }
-        assert(output.contains("driver.classifyMutationException(e, \"Car\", EntOperation.CREATE)")) {
-            "The create classifier should use EntOperation.CREATE\n$output"
+        // CREATE classification now belongs to MutationEvaluator; this repo
+        // retains only the operation-specific helper it still executes.
+        assert(!output.contains("_classifyCreateDriverFailure")) {
+            "The repo should not generate a redundant CREATE classifier\n$output"
         }
         assert(output.contains("private fun _classifyDeleteDriverFailure(e: Exception, fallback: MutationWriteState): EntMutationException")) {
             "Should have a DELETE-specific driver classifier\n$output"
@@ -1047,7 +1017,8 @@ class RepoGeneratorTest {
         finalize(session)
         val output = generator.generate("Session", session).toString()
 
-        assert(output.contains("fun create(id: String, block: SessionCreate.() -> Unit): SessionCreate")) {
+        assert(output.contains("fun create(id: String, block: SessionCreateDraft.() -> Unit):") &&
+            output.contains("CreateMutation<SessionCreateDraft, Session>")) {
             "create() should take id as first parameter for EXPLICIT strategy\n$output"
         }
     }
@@ -1058,8 +1029,8 @@ class RepoGeneratorTest {
         finalize(session)
         val output = generator.generate("Session", session).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("SessionCreate(driver, client, beforeSaveHooks, beforeCreateHooks, afterCreateHooks, id = id)")) {
-            "create() should pass id to SessionCreate constructor\n$output"
+        assert(output.contains("SessionCreateDraft(id = id).apply(block)")) {
+            "create() should pass id to SessionCreateDraft constructor\n$output"
         }
     }
 

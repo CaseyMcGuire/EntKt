@@ -60,7 +60,7 @@ handle rather than synthesizing a new column.
 ### Generated code
 
 The `belongsTo(...)` edge synthesizes a typed FK property on the entity
-and its builders:
+and its mutation inputs:
 
 ```kotlin
 // Generated Post entity
@@ -71,7 +71,7 @@ data class Post(
     // ...
 )
 
-// Create builder — FK assignment is the only public to-one write path.
+// Create draft — FK assignment is the only public to-one write path.
 client.posts.create {
     title = "Hello"
     authorId = alice.id

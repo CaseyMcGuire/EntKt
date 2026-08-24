@@ -38,7 +38,7 @@ private class M2mMembershipSchema : EntSchema("memberships", clientName = "m2mMe
 
 // Derived-name collision fixtures. Entity names come from the class, so
 // each class is literally named after the collision it provokes:
-// `Account` + `AccountCreate` collide on the generated AccountCreate.kt
+// `Account` + `AccountCreateDraft` collide on the generated AccountCreateDraft.kt
 // file, and `Post` + `PostLoadBatchPrivacyRule` collide on a generated
 // top-level alias.
 private class Account : EntSchema("artifact_bases", clientName = "accounts") {
@@ -46,7 +46,7 @@ private class Account : EntSchema("artifact_bases", clientName = "accounts") {
     val name by string("name")
 }
 
-private class AccountCreate : EntSchema("artifact_suffixed", clientName = "accountCreates") {
+private class AccountCreateDraft : EntSchema("artifact_suffixed", clientName = "accountCreateDrafts") {
     override fun id() = EntId.int()
     val note by string("note")
 }
@@ -109,8 +109,8 @@ class EntGeneratorTest {
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
-                "Car", "CarMutation", "CarCreate", "CarUpdate", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
-                "User", "UserMutation", "UserCreate", "UserUpdate", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
+                "Car", "CarMutation", "CarCreateDraft", "CarUpdate", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
+                "User", "UserMutation", "UserCreateDraft", "UserUpdate", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserIndexes",
                 "EntReadRuntime",
                 "EntReadClient",
@@ -123,7 +123,7 @@ class EntGeneratorTest {
     @Test
     fun `schema name colliding with a derived artifact name is rejected`() {
         val base = Account()
-        val suffixed = AccountCreate()
+        val suffixed = AccountCreateDraft()
         finalize(base, suffixed)
         val error = assertFailsWith<IllegalStateException> {
             generator.generate(
@@ -133,7 +133,7 @@ class EntGeneratorTest {
                 ),
             )
         }
-        assertContains(error.message!!, "AccountCreate.kt")
+        assertContains(error.message!!, "AccountCreateDraft.kt")
     }
 
     @Test
@@ -273,7 +273,7 @@ class EntGeneratorTest {
             val packageDir = outputDir.resolve("com/example/ent")
             assertTrue(Files.exists(packageDir.resolve("Car.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarMutation.kt")))
-            assertTrue(Files.exists(packageDir.resolve("CarCreate.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarCreateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarUpdate.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarQuery.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarRepo.kt")))
@@ -281,7 +281,7 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("CarValidation.kt")))
             assertTrue(Files.exists(packageDir.resolve("User.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserMutation.kt")))
-            assertTrue(Files.exists(packageDir.resolve("UserCreate.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserCreateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserUpdate.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserQuery.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserRepo.kt")))

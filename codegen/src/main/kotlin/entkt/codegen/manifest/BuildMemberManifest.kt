@@ -34,9 +34,8 @@ import entkt.schema.EntSchema
  *   members. Only present when the schema declares edges.
  * - **mutation interface** (`${name}Mutation`) — mutable scalar
  *   field properties, mutable FK properties.
- * - **create builder** (`${name}Create`) — every mutable scalar
- *   field setter, every FK setter (immutable FKs are create-only
- *   writable, so they appear here), fixed builder members.
+ * - **create draft** (`${name}CreateDraft`) — every scalar and FK
+ *   setter plus explicit-assignment inspection.
  * - **update builder** (`${name}Update`) — mutable scalar field
  *   setters, mutable FK setters, helper-eligible M2M mutator
  *   properties, fixed builder members (including `id`,
@@ -82,7 +81,7 @@ internal fun buildMemberManifest(
     addQueryClassMembers(manifest, schemaName, schema.edges())
     addEntityCompanionMembers(manifest, schemaName, scalars, fks, schema.edges())
     addMutationInterfaceMembers(manifest, schemaName, mutableScalars, mutableFks)
-    addCreateBuilderMembers(manifest, schemaName, scalars, fks)
+    addCreateDraftMembers(manifest, schemaName, scalars, fks)
     addUpdateBuilderMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
     addCreateMutationViewMembers(manifest, schemaName, immutableScalars, immutableFks)
     addUpdateMutationViewMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
@@ -97,7 +96,7 @@ private fun companionArtifact(name: String): String = "$name.Companion"
 private fun edgesArtifact(name: String): String = "$name.Edges"
 private fun queryArtifact(name: String): String = "${name}Query"
 private fun mutationInterfaceArtifact(name: String): String = "${name}Mutation"
-private fun createBuilderArtifact(name: String): String = "${name}Create"
+private fun createDraftArtifact(name: String): String = "${name}CreateDraft"
 private fun updateBuilderArtifact(name: String): String = "${name}Update"
 private fun createViewArtifact(name: String): String = "${name}CreateMutationView"
 private fun updateViewArtifact(name: String): String = "${name}UpdateMutationView"
@@ -410,20 +409,27 @@ private fun addMutationInterfaceMembers(
     }
 }
 
-// ── Create builder ───────────────────────────────────────────────
+// ── Create draft ─────────────────────────────────────────────────
 
-private fun addCreateBuilderMembers(
+private fun addCreateDraftMembers(
     manifest: GeneratedMemberManifest,
     schemaName: String,
     allScalars: List<entkt.schema.Field>,
     allFks: List<EdgeFk>,
 ) {
-    val artifact = createBuilderArtifact(schemaName)
-
-    // Fixed builder members. The hook lists, `client`, `driver`
-    // are constructor parameters in the generated class — they
-    // share the Kotlin member namespace with declared properties.
-    addFixedBuilderMembers(manifest, artifact, includeUpdateOnly = false)
+    val artifact = createDraftArtifact(schemaName)
+    manifest.add(
+        artifact,
+        "assignedFields",
+        GeneratedMemberKind.PROPERTY,
+        "create-draft assignment tracker",
+    )
+    manifest.add(
+        artifact,
+        "isSet",
+        GeneratedMemberKind.FUNCTION,
+        "create-draft assignment inspection",
+    )
 
     // Create allows setting every scalar field (mutable + immutable)
     // and every FK (mutable + immutable). Immutability is a
@@ -457,7 +463,7 @@ private fun addUpdateBuilderMembers(
 ) {
     val artifact = updateBuilderArtifact(schemaName)
 
-    addFixedBuilderMembers(manifest, artifact, includeUpdateOnly = true)
+    addFixedUpdateBuilderMembers(manifest, artifact)
 
     for (field in mutableScalars) {
         manifest.add(
@@ -594,30 +600,23 @@ private fun addUpdateMutationViewMembers(
 
 // ── Fixed builder members ────────────────────────────────────────
 
-private fun addFixedBuilderMembers(
+private fun addFixedUpdateBuilderMembers(
     manifest: GeneratedMemberManifest,
     artifact: String,
-    includeUpdateOnly: Boolean,
 ) {
-    // Shared between Create and Update builders. The internal /
-    // private execution members are registered because a declaration
-    // name can collide with them — these are ordinary lower-camel
-    // identifiers a schema author could plausibly choose.
     val shared = listOf(
         "save" to GeneratedMemberKind.FUNCTION,
         "saveAndLoad" to GeneratedMemberKind.FUNCTION,
         "client" to GeneratedMemberKind.PROPERTY,
-        "driver" to GeneratedMemberKind.PROPERTY,
-        "entity" to GeneratedMemberKind.PROPERTY,
-        "beforeSaveHooks" to GeneratedMemberKind.PROPERTY,
     )
     for ((n, kind) in shared) {
         manifest.add(artifact, n, kind, "fixed builder member '$n'")
     }
-    if (includeUpdateOnly) {
-        // Update-only fixed members.
-        val updateOnly = listOf(
+    val updateOnly = listOf(
             "id" to GeneratedMemberKind.PROPERTY,
+            "driver" to GeneratedMemberKind.PROPERTY,
+            "entity" to GeneratedMemberKind.PROPERTY,
+            "beforeSaveHooks" to GeneratedMemberKind.PROPERTY,
             "consistency" to GeneratedMemberKind.PROPERTY,
             "dirtyFields" to GeneratedMemberKind.PROPERTY,
             "relationshipLocking" to GeneratedMemberKind.PROPERTY,
@@ -638,33 +637,8 @@ private fun addFixedBuilderMembers(
             "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
             "_capturedPendingEdges" to GeneratedMemberKind.PROPERTY,
             "executeSave" to GeneratedMemberKind.FUNCTION,
-        )
-        for ((n, kind) in updateOnly) {
-            manifest.add(artifact, n, kind, "fixed update-builder member '$n'")
-        }
-    } else {
-        // Create-only fixed members.
-        val createOnly = listOf(
-            "beforeCreateHooks" to GeneratedMemberKind.PROPERTY,
-            "afterCreateHooks" to GeneratedMemberKind.PROPERTY,
-            // Private create-hook adapter properties. A schema can no
-            // longer reach these: declaration names must be lower-camel
-            // identifiers, so the framework's `_` prefix is reserved.
-            // Registered anyway so a future *generated* member colliding
-            // with them is caught.
-            "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
-            "_createMutationView" to GeneratedMemberKind.PROPERTY,
-            "_managedByCreateMany" to GeneratedMemberKind.PROPERTY,
-            "_managedSaveFailure" to GeneratedMemberKind.PROPERTY,
-            "_managedSaveFailures" to GeneratedMemberKind.PROPERTY,
-            "beforeSaveHookValueForInternalUse" to GeneratedMemberKind.FUNCTION,
-            "beforeCreateHookValueForInternalUse" to GeneratedMemberKind.FUNCTION,
-            "configureForCreateManyForInternalUse" to GeneratedMemberKind.FUNCTION,
-            "prepareForInternalUse" to GeneratedMemberKind.FUNCTION,
-            "executeSaveForInternalUse" to GeneratedMemberKind.FUNCTION,
-        )
-        for ((n, kind) in createOnly) {
-            manifest.add(artifact, n, kind, "fixed create-builder member '$n'")
-        }
+    )
+    for ((n, kind) in updateOnly) {
+        manifest.add(artifact, n, kind, "fixed update-builder member '$n'")
     }
 }

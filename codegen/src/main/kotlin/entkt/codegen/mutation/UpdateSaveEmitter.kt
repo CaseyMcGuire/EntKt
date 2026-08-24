@@ -483,13 +483,13 @@ internal class UpdateSaveEmitter(
         // ---- Field-level validation on Set entries of the effective patch. ----
         for (field in mutableFields) {
             if (field.validators.isEmpty()) continue
-            emitPatchEntryValidation(builder, schemaName, field)
+            emitPatchEntryValidation(builder, field)
         }
         for (fk in edgeFks) {
             if (fk.validators.isEmpty()) continue
             // Backing-field validators apply to the FK on update too —
             // run them on Set entries of the effective patch.
-            emitFkPatchEntryValidation(builder, schemaName, fk)
+            emitFkPatchEntryValidation(builder, fk)
         }
 
         // ---- Build the database write set from the effective patch. ----
@@ -891,7 +891,7 @@ private fun emitEffectivePatchConstruction(
  * validators only run when the patched value is non-null (validators
  * don't validate null on nullable fields).
  */
-private fun emitPatchEntryValidation(builder: FunSpec.Builder, schemaName: String, field: Field) {
+private fun emitPatchEntryValidation(builder: FunSpec.Builder, field: Field) {
     val prop = field.apiName
     val localName = "${prop}_eff"
     builder.addStatement("val %L = effectivePatch.%L", localName, prop)
@@ -899,11 +899,11 @@ private fun emitPatchEntryValidation(builder: FunSpec.Builder, schemaName: Strin
     if (field.nullable) {
         builder.addStatement("val %L_v = %L.value", prop, localName)
         builder.beginControlFlow("if (%L_v != null)", prop)
-        emitFieldValidation(builder, schemaName, "${prop}_v", prop, field.validators, nullable = false)
+        emitFieldValidation(builder, "${prop}_v", prop, field.validators, nullable = false)
         builder.endControlFlow()
     } else {
         builder.addStatement("val %L_v = %L.value", prop, localName)
-        emitFieldValidation(builder, schemaName, "${prop}_v", prop, field.validators, nullable = false)
+        emitFieldValidation(builder, "${prop}_v", prop, field.validators, nullable = false)
     }
     builder.endControlFlow()
 }
@@ -914,7 +914,7 @@ private fun emitPatchEntryValidation(builder: FunSpec.Builder, schemaName: Strin
  * keyed off [EdgeFk.required] (whose nullability follows the
  * relationship) rather than scalar `field.nullable`.
  */
-private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, schemaName: String, fk: EdgeFk) {
+private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, fk: EdgeFk) {
     val prop = fk.propertyName
     val localName = "${prop}_eff"
     builder.addStatement("val %L = effectivePatch.%L", localName, prop)
@@ -922,11 +922,11 @@ private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, schemaName: Str
     if (!fk.required) {
         builder.addStatement("val %L_v = %L.value", prop, localName)
         builder.beginControlFlow("if (%L_v != null)", prop)
-        emitFieldValidation(builder, schemaName, "${prop}_v", fk.propertyName, fk.validators, nullable = false)
+        emitFieldValidation(builder, "${prop}_v", fk.propertyName, fk.validators, nullable = false)
         builder.endControlFlow()
     } else {
         builder.addStatement("val %L_v = %L.value", prop, localName)
-        emitFieldValidation(builder, schemaName, "${prop}_v", fk.propertyName, fk.validators, nullable = false)
+        emitFieldValidation(builder, "${prop}_v", fk.propertyName, fk.validators, nullable = false)
     }
     builder.endControlFlow()
 }

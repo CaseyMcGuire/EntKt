@@ -30,6 +30,23 @@ above it.
 
 ## Unreleased
 
+- **Separate create drafts from executable create mutations** (`codegen`, `runtime`)
+  Generated `${Entity}Create` builders are replaced by state-only
+  `${Entity}CreateDraft` values. Repository `create { ... }` now returns a
+  generic `CreateMutation<Draft, Entity>` whose `configure { ... }`, `save()`,
+  and `saveAndLoad()` methods own the executable operation. Draft fields are
+  nullable while the draft is incomplete, reading an unspecified field returns
+  `null`, and `isSet(Entity.field)` distinguishes unspecified from explicitly
+  assigned `null`. A create mutation is single-use: its first save terminal
+  consumes it, and later configuration or save attempts throw
+  `EntMutationAlreadyConsumedException`. `createMany` blocks configure plain
+  drafts and no longer expose scalar save terminals.
+  _Migration:_ replace explicit `${Entity}Create` type references with
+  `${Entity}CreateDraft`; move conditional changes after `create { ... }` into
+  `.configure { ... }`; guard reads that must distinguish omission with
+  `isSet(Entity.field)`; and move any `save()` / `saveAndLoad()` call out of a
+  `create` or `createMany` configuration block and onto the returned mutation.
+
 - **Rename eager LOAD-denial path types around selected edges** (`runtime`)
   Related-entity LOAD denials now report `LoadDenialOrigin.SelectedEdgePath`
   containing `SelectedEdgeStep` values; the names distinguish the complete path

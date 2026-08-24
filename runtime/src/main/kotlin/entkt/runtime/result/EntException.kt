@@ -16,6 +16,18 @@ abstract class EntException(
     cause: Throwable? = null,
 ) : RuntimeException(message, cause)
 
+/** A one-shot mutation was configured or executed after a terminal had consumed it. */
+class EntMutationAlreadyConsumedException(
+    val operation: EntOperation,
+    val attemptedAction: String,
+) : EntException(
+    "Cannot $attemptedAction: $operation mutation has already been consumed",
+) {
+    init {
+        require(attemptedAction.isNotBlank()) { "attemptedAction must not be blank" }
+    }
+}
+
 /**
  * A batch privacy or validation rule violated its correlated-result contract.
  * [lifecycle] is the framework-supplied lifecycle description used for

@@ -65,15 +65,15 @@ class GeneratedMemberManifestTest {
         // Add out of order; expect sorted output.
         manifest.add("PostUpdate", "zeta", GeneratedMemberKind.PROPERTY, "a")
         manifest.add("PostUpdate", "zeta", GeneratedMemberKind.FUNCTION, "b")
-        manifest.add("PostCreate", "alpha", GeneratedMemberKind.PROPERTY, "a")
-        manifest.add("PostCreate", "alpha", GeneratedMemberKind.PROPERTY, "b")
+        manifest.add("PostCreateDraft", "alpha", GeneratedMemberKind.PROPERTY, "a")
+        manifest.add("PostCreateDraft", "alpha", GeneratedMemberKind.PROPERTY, "b")
         manifest.add("PostUpdate", "alpha", GeneratedMemberKind.PROPERTY, "a")
         manifest.add("PostUpdate", "alpha", GeneratedMemberKind.PROPERTY, "b")
 
         val collisions = manifest.findCollisions()
         assertEquals(3, collisions.size)
-        // (artifact, name) ordering: PostCreate/alpha, PostUpdate/alpha, PostUpdate/zeta
-        assertEquals("PostCreate" to "alpha", collisions[0].artifact to collisions[0].name)
+        // (artifact, name) ordering: PostCreateDraft/alpha, PostUpdate/alpha, PostUpdate/zeta
+        assertEquals("PostCreateDraft" to "alpha", collisions[0].artifact to collisions[0].name)
         assertEquals("PostUpdate" to "alpha", collisions[1].artifact to collisions[1].name)
         assertEquals("PostUpdate" to "zeta", collisions[2].artifact to collisions[2].name)
     }

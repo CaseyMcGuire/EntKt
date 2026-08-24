@@ -129,7 +129,7 @@ boolean `active` that defaults to `true`.
 
 ## Using the Generated Code
 
-After code generation, you get typed entity classes, builders, and
+After code generation, you get typed entity classes, mutation drafts, and
 an `EntClient`:
 
 ```kotlin
@@ -170,6 +170,28 @@ fun main() {
 }
 ```
 
+`create { ... }` returns a single-use create mutation. You can retain it and
+apply more draft changes before choosing a terminal:
+
+```kotlin
+val creation = client.users.create {
+    name = "Alice"
+    email = "alice@example.com"
+}
+
+if (includeAge) {
+    creation.configure { age = 30 }
+}
+
+val alice = creation.saveAndLoad().getOrThrow()
+```
+
+Create-draft fields are nullable while the input is incomplete, so reading an
+unspecified field returns `null`. Use `isSet(User.age)` when application logic
+must distinguish an omitted value from an explicit `age = null`. The first
+`save()` or `saveAndLoad()` consumes the mutation; later configuration or save
+attempts throw `EntMutationAlreadyConsumedException`.
+
 Every data operation returns an exhaustive result — `ReadResult<T>` for
 reads, `MutationResult<T>` for writes — that callers either match with
 `when` (`Success` / `Failed`) or project with `.getOrThrow()`, which
@@ -188,7 +210,8 @@ write users:
 | Surface | Purpose |
 |---------|---------|
 | `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
-| `UserCreate` / `UserUpdate` | Typed create and update builders with the `save()` / `saveAndLoad()` terminals |
+| `UserCreateDraft` | Mutable create input returned through `client.users.create { ... }`; the resulting `CreateMutation` supplies `configure`, `save`, and `saveAndLoad` |
+| `UserUpdate` | Typed update builder with the `save()` / `saveAndLoad()` terminals |
 | `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
 | Privacy and validation rule types | Typed contexts and scopes for application policies |

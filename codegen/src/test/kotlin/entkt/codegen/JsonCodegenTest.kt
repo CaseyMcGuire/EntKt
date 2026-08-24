@@ -98,7 +98,7 @@ class JsonCodegenTest {
 
     @Test
     fun `create preparation detaches typed JSON before the write map and candidate`() {
-        val create = gen().getValue("JsonArticleCreate")
+        val create = gen().getValue("JsonArticleRepo")
         assertTrue(
             """val _entktPreparedMetadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", _entktValueMetadata)""" in create,
             create,
@@ -182,7 +182,7 @@ class JsonCodegenTest {
 
     @Test
     fun `generic create preparation detaches the typed value without a cast`() {
-        val create = genGeneric().getValue("JsonBoardCreate")
+        val create = genGeneric().getValue("JsonBoardRepo")
         assertTrue(
             """val _entktPreparedRects = driver.copyJsonValue(JsonBoard.TABLE, "rects", _entktValueRects)""" in create,
             create,

@@ -165,14 +165,15 @@ class QueryGeneratorTest {
         }
         assert(
             output.contains(
-                    "private val _readQueryEvaluator: ReadQueryEvaluator<Car> = ReadQueryEvaluator( " +
+                    "private val _readQueryEvaluator: ReadQueryEvaluator<Car> by " +
+                    "lazy(LazyThreadSafetyMode.NONE) { ReadQueryEvaluator( " +
                     "driver = driver, " +
                     "privacyContextProvider = requireClient(), " +
                     "registeredInterceptorsProvider = { requireClient().entityInterceptors }, " +
-                    "loadPrivacyEvaluatorProvider = { requireClient() }, )",
+                    "loadPrivacyEvaluatorProvider = { requireClient() }, ) }",
             ),
         ) {
-            "generated queries should configure one runtime read evaluator\n$output"
+            "generated queries should configure one deferred runtime read evaluator\n$output"
         }
         assert(!output.contains("private val _queryCompiler")) {
             "generated queries should not assemble query-compilation dependencies\n$output"

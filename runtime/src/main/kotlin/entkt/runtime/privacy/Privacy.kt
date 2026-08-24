@@ -64,7 +64,6 @@ data class PrivacyContext(
 )
 
 /** Supplies the privacy context active when a framework operation begins execution. */
-@EntktInternal
 fun interface PrivacyContextProvider {
     /** Return the privacy context for the operation that is starting now. */
     fun get(): PrivacyContext
